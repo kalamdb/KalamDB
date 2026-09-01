@@ -54,6 +54,7 @@ Contributor guides for building and developing KalamDB.
 Decision-complete implementation plans for major initiatives.
 
 - **[2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md](plans/2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md)** – Migration plan for FlatBuffers/FlexBuffers with Vortex serde learnings
+- **[2026-08-30-scalar-secondary-indexes.md](plans/2026-08-30-scalar-secondary-indexes.md)** – Unified indexing core (optional `kalamdb-index` crate); scalar USER/SHARED indexes; vector search extends the core; `system.schemas` + CLI schema-diff
 
 ### [API-Kalam/](API-Kalam/)
 Bruno API collection for testing endpoints.

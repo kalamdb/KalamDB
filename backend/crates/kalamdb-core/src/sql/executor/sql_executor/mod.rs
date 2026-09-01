@@ -2045,7 +2045,8 @@ impl SqlExecutor {
 
     /// Execute DataFusion meta commands (EXPLAIN, SET, SHOW, etc.)
     ///
-    /// PostgreSQL `EXPLAIN (option, ...)` is rewritten for DataFusion first.
+    /// PostgreSQL / JDBC `EXPLAIN (option, ...)` is adapted for DataFusion first
+    /// (JSON → pgjson, strip `BUFFERS`). DataFusion owns METRICS / LEVEL / FORMAT.
     /// No plan caching is performed since these are diagnostic/config commands.
     /// Authorization is already checked in the classifier (admin only).
     #[cfg_attr(

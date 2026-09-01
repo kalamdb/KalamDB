@@ -274,7 +274,7 @@ async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
     let rewritten = rewrite_explain_for_datafusion(original)
         .expect("postgres EXPLAIN should parse")
         .expect("parenthesized EXPLAIN");
-    assert_eq!(rewritten.sql, "EXPLAIN ANALYZE FORMAT pgjson SELECT 1");
+    assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, FORMAT pgjson) SELECT 1");
 
     let result = session.sql(&rewritten.sql).await;
     assert!(
@@ -284,4 +284,43 @@ async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
     );
     let batches = result.unwrap().collect().await.expect("EXPLAIN ANALYZE should run");
     assert!(!batches.is_empty(), "EXPLAIN ANALYZE should return a plan");
+}
+
+#[tokio::test]
+async fn datafusion_explain_metrics_option_runs_under_duckdb_dialect() {
+    use kalamdb_sql::rewrite_explain_for_datafusion;
+
+    let session = exec_ctx().create_session_with_user();
+    let native = "EXPLAIN (ANALYZE, FORMAT pgjson, METRICS 'rows', LEVEL summary) SELECT 1";
+    let native_result = session.sql(native).await;
+    assert!(
+        native_result.is_ok(),
+        "DataFusion-native EXPLAIN options should plan under DuckDB dialect: {:?}",
+        native_result.err()
+    );
+    let native_batches = native_result
+        .unwrap()
+        .collect()
+        .await
+        .expect("native EXPLAIN ANALYZE should run");
+    assert!(!native_batches.is_empty());
+
+    let rewritten = rewrite_explain_for_datafusion(
+        "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS, METRICS 'rows', LEVEL summary) SELECT 1",
+    )
+    .expect("postgres EXPLAIN should parse")
+    .expect("parenthesized EXPLAIN");
+    assert_eq!(
+        rewritten.sql,
+        "EXPLAIN (ANALYZE, FORMAT pgjson, LEVEL summary, METRICS 'rows') SELECT 1"
+    );
+
+    let adapted = session.sql(&rewritten.sql).await;
+    assert!(
+        adapted.is_ok(),
+        "adapted JDBC EXPLAIN with METRICS should plan: {:?}",
+        adapted.err()
+    );
+    let adapted_batches = adapted.unwrap().collect().await.expect("adapted EXPLAIN should run");
+    assert!(!adapted_batches.is_empty());
 }

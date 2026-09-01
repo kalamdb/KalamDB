@@ -24,7 +24,7 @@ use kalamdb_live::{
 use kalamdb_raft::{GroupId, RaftExecutor};
 use kalamdb_rls::LiveAuthorizationRoute;
 use kalamdb_sharding::ShardRouter;
-use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider};
+use kalamdb_tables::{BoundLiveAuthorization, SharedTableProvider, TableError};
 
 use crate::{
     app_context::AppContext,
@@ -79,6 +79,18 @@ impl LiveAuthorizationBinderAdapter {
     }
 }
 
+fn live_authorization_bind_error(error: TableError) -> LiveError {
+    match error {
+        TableError::NotFound(message) => LiveError::NotFound(message),
+        TableError::TableNotFound(message) => LiveError::TableNotFound(message),
+        TableError::InvalidOperation(message)
+        | TableError::AlreadyExists(message)
+        | TableError::ConstraintViolation(message) => LiveError::InvalidOperation(message),
+        TableError::Serialization(message) => LiveError::SerializationError(message),
+        error => LiveError::ExecutionError(error.to_string()),
+    }
+}
+
 #[async_trait]
 impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
     async fn bind(
@@ -108,11 +120,8 @@ impl LiveAuthorizationBinder for LiveAuthorizationBinderAdapter {
         let bound = provider
             .bind_live_authorization(user_id, role)
             .await
-            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?;
-        let live_route = match bound
-            .live_route()
-            .map_err(|error| LiveError::PermissionDenied(error.to_string()))?
-        {
+            .map_err(live_authorization_bind_error)?;
+        let live_route = match bound.live_route().map_err(LiveError::InvalidOperation)? {
             LiveAuthorizationRoute::Broadcast => LiveRoute::Broadcast,
             LiveAuthorizationRoute::Deny => LiveRoute::Deny,
             LiveAuthorizationRoute::Keyed(keys) => {
@@ -229,5 +238,22 @@ impl LiveApplyBarrier for RaftApplyBarrierAdapter {
             .await
             .map(|_| ())
             .map_err(|err| LiveError::ExecutionError(err.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authorization_binding_preserves_non_permission_failures() {
+        let error = super::live_authorization_bind_error(TableError::InvalidOperation(
+            "RLS relation app:conversation_members is changing; authorization fails closed"
+                .to_string(),
+        ));
+
+        assert!(
+            matches!(error, LiveError::InvalidOperation(message) if message.contains("RLS relation"))
+        );
     }
 }

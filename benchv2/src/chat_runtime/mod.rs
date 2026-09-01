@@ -1,4 +1,7 @@
+pub mod ai;
 pub mod chat_realtime_bench;
+pub mod common;
+pub mod shared;
 
 use crate::benchmarks::Benchmark;
 

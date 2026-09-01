@@ -1,0 +1,92 @@
+{
+  "version": "0.6.0-rc.0",
+  "server_url": "http://127.0.0.1:2900",
+  "timestamp": "2026-08-30T20:54:40.185177+00:00",
+  "config": {
+    "iterations": 1,
+    "warmup": 0,
+    "concurrency": 10,
+    "namespace": "bench_204936",
+    "max_subscribers": 100000
+  },
+  "system": {
+    "hostname": "MacBook-Pro.local",
+    "machine_model": "Mac17,9",
+    "os_name": "Darwin",
+    "os_version": "macOS 26.6.2",
+    "kernel_version": "25.6.0",
+    "architecture": "aarch64",
+    "cpu_model": "Apple M5 Pro",
+    "cpu_logical_cores": 15,
+    "cpu_physical_cores": 15,
+    "total_memory_bytes": 25769803776,
+    "available_memory_bytes": 16577134592,
+    "used_memory_bytes": 9192669184,
+    "used_memory_percent": 35.672251383463546
+  },
+  "results": [
+    {
+      "name": "chat_realtime",
+      "category": "Load",
+      "description": "Realtime chat scenario for 5m with 1000 regular users, 100 conversations (50 AI USER-table, 40 shared pair, 10 shared triple), and 20 messages/min per conversation",
+      "full_description": "Creates 1000 regular KalamDB users, then runs 100 concurrent conversations for 5 minute(s): 50 personal AI chats on USER tables (conversations_ai/messages_ai) with a topic-consuming agent, plus 40 2-user and 10 3-user rooms on SHARED conversations/messages with CREATE POLICY membership RLS. Each conversation paces at 20 messages/min per conversation. Workers alternate update/delete every 10 messages, load historic messages before a cutoff, disconnect and reconnect with snapshot replay, and reopen a conversation with SELECT.",
+      "details": [
+        {
+          "label": "Runtime",
+          "value": "5 minute(s)"
+        },
+        {
+          "label": "Regular Users",
+          "value": "1000"
+        },
+        {
+          "label": "Active Conversations",
+          "value": "100"
+        },
+        {
+          "label": "AI Conversations",
+          "value": "50"
+        },
+        {
+          "label": "Shared Pair Conversations",
+          "value": "40"
+        },
+        {
+          "label": "Shared Triple Conversations",
+          "value": "10"
+        },
+        {
+          "label": "Conversation Message Rate",
+          "value": "20 messages/min per conversation"
+        },
+        {
+          "label": "Message Mutations",
+          "value": "alternate update/delete every 10 messages"
+        },
+        {
+          "label": "Tables",
+          "value": "USER conversations_ai/messages_ai, SHARED conversations/conversation_members/messages with RLS, STREAM typing_events, TOPIC AI inbox"
+        }
+      ],
+      "iterations": 1,
+      "total_us": 300512317,
+      "mean_us": 300512317.0,
+      "median_us": 300512317.0,
+      "p95_us": 300512317.0,
+      "p99_us": 300512317.0,
+      "min_us": 300512317.0,
+      "max_us": 300512317.0,
+      "stddev_us": 0.0,
+      "ops_per_sec": 0.0033276506267129143,
+      "success": true,
+      "error": null
+    }
+  ],
+  "summary": {
+    "total_benchmarks": 1,
+    "passed": 1,
+    "failed": 0,
+    "total_duration_ms": 303216.970541,
+    "measured_duration_ms": 300512.317
+  }
+}

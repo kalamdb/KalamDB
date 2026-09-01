@@ -205,6 +205,9 @@ mod tests {
             "EXPLAIN (FORMAT JSON, BUFFERS) select * from system.users"
         ));
         assert!(SqlExecutor::is_explain_analyze("EXPLAIN ANALYZE SELECT 1"));
+        assert!(SqlExecutor::is_explain_analyze(
+            "EXPLAIN (ANALYZE, METRICS 'rows', LEVEL summary) SELECT 1"
+        ));
     }
 
     #[test]

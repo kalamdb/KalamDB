@@ -1,15 +1,14 @@
-//! PostgreSQL `EXPLAIN` option-list compatibility.
+//! Thin wire adapter for PostgreSQL / JDBC `EXPLAIN (option, ...)`.
 //!
-//! Clients such as DBeaver/JDBC emit:
+//! DataFusion 55 already owns the option list (`ANALYZE`, `VERBOSE`, `FORMAT`,
+//! `METRICS`, `LEVEL`, `TIMING`, `SUMMARY`, `COSTS`) under DuckDB dialect.
+//! This module only:
 //!
-//! ```sql
-//! EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) SELECT ...
-//! ```
+//! - aliases Postgres `FORMAT JSON` to DataFusion `FORMAT pgjson`
+//! - omits Postgres `FORMAT TEXT` so the session default applies
+//! - strips JDBC-only options DataFusion rejects (`BUFFERS`, `WAL`, …)
 //!
-//! DataFusion's DuckDB-dialect parser does not accept that list (`FORMAT JSON`
-//! followed by more options fails to parse, `BUFFERS` is rejected, and `JSON`
-//! is not a DataFusion format name). This module translates the PostgreSQL
-//! grammar into a DataFusion `EXPLAIN` statement.
+//! Source: https://datafusion.apache.org/user-guide/sql/explain.html
 
 use std::fmt::{Display, Formatter};
 
@@ -40,10 +39,11 @@ pub struct RewrittenPostgresExplain {
     pub format:  PostgresExplainFormat,
 }
 
-/// Rewrite PostgreSQL `EXPLAIN (option, ...)` into DataFusion SQL.
+/// Adapt PostgreSQL `EXPLAIN (option, ...)` into DataFusion SQL.
 ///
 /// Returns `Ok(None)` for legacy keyword form (`EXPLAIN ANALYZE SELECT ...`)
-/// and for parenthesized queries (`EXPLAIN (SELECT 1)`).
+/// and for parenthesized queries (`EXPLAIN (SELECT 1)`). DataFusion-native
+/// options (`METRICS`, `LEVEL`, `FORMAT pgjson`) are forwarded unchanged.
 ///
 /// # Errors
 ///
@@ -82,9 +82,17 @@ pub fn rewrite_explain_for_datafusion(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedExplainOptions {
-    analyze: bool,
-    verbose: bool,
-    format:  PostgresExplainFormat,
+    analyze:   bool,
+    verbose:   bool,
+    /// Client-visible reshape (`QUERY PLAN` JSON vs text).
+    format:    PostgresExplainFormat,
+    /// DataFusion `FORMAT` name (`indent`, `tree`, `pgjson`, `graphviz`).
+    df_format: Option<String>,
+    metrics:   Option<String>,
+    level:     Option<String>,
+    timing:    Option<bool>,
+    summary:   Option<bool>,
+    costs:     Option<bool>,
 }
 
 fn strip_explain_keyword(sql: &str) -> Result<Option<&str>, String> {
@@ -167,38 +175,54 @@ fn option_list_is_parenthesized_query(options: &str) -> bool {
 
 fn parse_explain_options(src: &str) -> Result<ParsedExplainOptions, String> {
     let mut options = ParsedExplainOptions {
-        analyze: false,
-        verbose: false,
-        format:  PostgresExplainFormat::Text,
+        analyze:   false,
+        verbose:   false,
+        format:    PostgresExplainFormat::Text,
+        df_format: None,
+        metrics:   None,
+        level:     None,
+        timing:    None,
+        summary:   None,
+        costs:     None,
     };
     let tokens = tokenize_options(src)?;
     let mut idx = 0usize;
     while idx < tokens.len() {
         let name = tokens[idx].to_ascii_uppercase();
         idx += 1;
-        let arg = if idx < tokens.len() && !is_option_name(&tokens[idx]) {
-            let value = tokens[idx].clone();
-            idx += 1;
-            Some(value)
-        } else {
-            None
-        };
-
         match name.as_str() {
             "ANALYZE" | "ANALYSE" => {
-                options.analyze = parse_bool_option("ANALYZE", arg.as_deref())?;
+                options.analyze = take_optional_bool(&tokens, &mut idx, "ANALYZE")?;
             },
             "VERBOSE" => {
-                options.verbose = parse_bool_option("VERBOSE", arg.as_deref())?;
+                options.verbose = take_optional_bool(&tokens, &mut idx, "VERBOSE")?;
             },
             "FORMAT" => {
-                let format =
-                    arg.ok_or_else(|| "EXPLAIN option FORMAT requires an argument".to_string())?;
-                options.format = parse_format(&format)?;
+                let format = take_required_arg(&tokens, &mut idx, "FORMAT")?;
+                let (client, df_format) = parse_format(&format)?;
+                options.format = client;
+                options.df_format = df_format;
             },
-            // PostgreSQL accepts these; KalamDB has no equivalent counters.
-            "BUFFERS" | "WAL" | "SETTINGS" | "GENERIC_PLAN" | "MEMORY" | "TIMING" | "SUMMARY"
-            | "COSTS" | "SERIALIZE" => {},
+            "METRICS" => {
+                options.metrics = Some(take_required_arg(&tokens, &mut idx, "METRICS")?);
+            },
+            "LEVEL" => {
+                options.level = Some(take_required_arg(&tokens, &mut idx, "LEVEL")?);
+            },
+            "TIMING" => {
+                options.timing = Some(take_optional_bool(&tokens, &mut idx, "TIMING")?);
+            },
+            "SUMMARY" => {
+                options.summary = Some(take_optional_bool(&tokens, &mut idx, "SUMMARY")?);
+            },
+            "COSTS" => {
+                options.costs = Some(take_optional_bool(&tokens, &mut idx, "COSTS")?);
+            },
+            // JDBC/Postgres extras DataFusion rejects; drop without stealing
+            // the next option name (`BUFFERS, METRICS 'rows'`).
+            "BUFFERS" | "WAL" | "SETTINGS" | "GENERIC_PLAN" | "MEMORY" | "SERIALIZE" => {
+                let _ = take_optional_bool(&tokens, &mut idx, &name);
+            },
             other => {
                 return Err(format!("unrecognized EXPLAIN option \"{other}\""));
             },
@@ -207,22 +231,29 @@ fn parse_explain_options(src: &str) -> Result<ParsedExplainOptions, String> {
     Ok(options)
 }
 
-fn is_option_name(token: &str) -> bool {
+fn take_required_arg(tokens: &[String], idx: &mut usize, name: &str) -> Result<String, String> {
+    let Some(value) = tokens.get(*idx) else {
+        return Err(format!("EXPLAIN option {name} requires an argument"));
+    };
+    *idx += 1;
+    Ok(value.clone())
+}
+
+fn take_optional_bool(tokens: &[String], idx: &mut usize, name: &str) -> Result<bool, String> {
+    let Some(value) = tokens.get(*idx) else {
+        return Ok(true);
+    };
+    if !is_bool_token(value) {
+        return Ok(true);
+    }
+    *idx += 1;
+    parse_bool_option(name, Some(value.as_str()))
+}
+
+fn is_bool_token(token: &str) -> bool {
     matches!(
-        token.to_ascii_uppercase().as_str(),
-        "ANALYZE"
-            | "ANALYSE"
-            | "VERBOSE"
-            | "FORMAT"
-            | "BUFFERS"
-            | "WAL"
-            | "SETTINGS"
-            | "GENERIC_PLAN"
-            | "MEMORY"
-            | "TIMING"
-            | "SUMMARY"
-            | "COSTS"
-            | "SERIALIZE"
+        unquote(token).to_ascii_uppercase().as_str(),
+        "TRUE" | "FALSE" | "ON" | "OFF" | "1" | "0"
     )
 }
 
@@ -230,19 +261,27 @@ fn parse_bool_option(name: &str, arg: Option<&str>) -> Result<bool, String> {
     let Some(arg) = arg else {
         return Ok(true);
     };
-    match arg.to_ascii_uppercase().as_str() {
+    match unquote(arg).to_ascii_uppercase().as_str() {
         "TRUE" | "ON" | "1" => Ok(true),
         "FALSE" | "OFF" | "0" => Ok(false),
         other => Err(format!("unrecognized value for EXPLAIN option {name}: \"{other}\"")),
     }
 }
 
-fn parse_format(value: &str) -> Result<PostgresExplainFormat, String> {
+fn parse_format(value: &str) -> Result<(PostgresExplainFormat, Option<String>), String> {
     match unquote(value).to_ascii_uppercase().as_str() {
-        "TEXT" => Ok(PostgresExplainFormat::Text),
-        "JSON" => Ok(PostgresExplainFormat::Json),
-        "XML" | "YAML" => Err(format!("EXPLAIN FORMAT {value} is not supported; use TEXT or JSON")),
-        other => Err(format!("unrecognized EXPLAIN FORMAT \"{other}\"; expected TEXT or JSON")),
+        "TEXT" => Ok((PostgresExplainFormat::Text, None)),
+        "JSON" | "PGJSON" => Ok((PostgresExplainFormat::Json, Some("pgjson".to_string()))),
+        "INDENT" => Ok((PostgresExplainFormat::Text, Some("indent".to_string()))),
+        "TREE" => Ok((PostgresExplainFormat::Text, Some("tree".to_string()))),
+        "GRAPHVIZ" => Ok((PostgresExplainFormat::Text, Some("graphviz".to_string()))),
+        "XML" | "YAML" => {
+            Err(format!("EXPLAIN FORMAT {value} is not supported; use TEXT, JSON, or pgjson"))
+        },
+        other => Err(format!(
+            "unrecognized EXPLAIN FORMAT \"{other}\"; expected TEXT, JSON, pgjson, indent, tree, \
+             or graphviz"
+        )),
     }
 }
 
@@ -325,20 +364,48 @@ fn is_ident_start(ch: char) -> bool {
 }
 
 fn render_datafusion_explain(options: &ParsedExplainOptions, statement: &str) -> String {
-    let mut sql = String::from("EXPLAIN");
+    let mut parts = Vec::new();
     if options.analyze {
-        sql.push_str(" ANALYZE");
+        parts.push("ANALYZE".to_string());
     }
     // DataFusion rejects VERBOSE combined with FORMAT.
-    if options.verbose && options.format == PostgresExplainFormat::Text {
-        sql.push_str(" VERBOSE");
+    if options.verbose && options.df_format.is_none() {
+        parts.push("VERBOSE".to_string());
     }
-    if options.format == PostgresExplainFormat::Json {
-        sql.push_str(" FORMAT pgjson");
+    if let Some(format) = &options.df_format {
+        parts.push(format!("FORMAT {format}"));
     }
-    sql.push(' ');
-    sql.push_str(statement);
-    sql
+    if let Some(level) = &options.level {
+        parts.push(format!("LEVEL {level}"));
+    }
+    if let Some(metrics) = &options.metrics {
+        parts.push(format!("METRICS {metrics}"));
+    }
+    if let Some(timing) = options.timing {
+        parts.push(bool_option("TIMING", timing));
+    }
+    if options.level.is_none() {
+        if let Some(summary) = options.summary {
+            parts.push(bool_option("SUMMARY", summary));
+        }
+    }
+    if let Some(costs) = options.costs {
+        parts.push(bool_option("COSTS", costs));
+    }
+
+    if parts.is_empty() {
+        format!("EXPLAIN {statement}")
+    } else {
+        format!("EXPLAIN ({}) {statement}", parts.join(", "))
+    }
+}
+
+fn bool_option(name: &str, value: bool) -> String {
+    if value {
+        name.to_string()
+    } else {
+        format!("{name} OFF")
+    }
 }
 
 #[cfg(test)]
@@ -352,7 +419,7 @@ mod tests {
         )
         .expect("rewrite")
         .expect("parenthesized EXPLAIN");
-        assert_eq!(rewritten.sql, "EXPLAIN ANALYZE FORMAT pgjson select * from system.users");
+        assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, FORMAT pgjson) select * from system.users");
         assert!(rewritten.analyze);
         assert_eq!(rewritten.format, PostgresExplainFormat::Json);
     }
@@ -364,7 +431,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(rewritten.sql, "EXPLAIN ANALYZE FORMAT pgjson SELECT 1");
+        assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, FORMAT pgjson) SELECT 1");
         assert!(rewritten.analyze);
         assert_eq!(rewritten.format, PostgresExplainFormat::Json);
     }
@@ -376,7 +443,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(rewritten.sql, "EXPLAIN VERBOSE SELECT id FROM t");
+        assert_eq!(rewritten.sql, "EXPLAIN (VERBOSE) SELECT id FROM t");
         assert!(!rewritten.analyze);
         assert_eq!(rewritten.format, PostgresExplainFormat::Text);
     }
@@ -387,7 +454,7 @@ mod tests {
             rewrite_explain_for_datafusion("EXPLAIN (ANALYZE FALSE, FORMAT JSON) SELECT 1")
                 .unwrap()
                 .unwrap();
-        assert_eq!(rewritten.sql, "EXPLAIN FORMAT pgjson SELECT 1");
+        assert_eq!(rewritten.sql, "EXPLAIN (FORMAT pgjson) SELECT 1");
         assert!(!rewritten.analyze);
     }
 
@@ -427,6 +494,44 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(rewritten.sql, "EXPLAIN FORMAT pgjson SELECT * FROM t WHERE id IN (1, 2, 3)");
+        assert_eq!(rewritten.sql, "EXPLAIN (FORMAT pgjson) SELECT * FROM t WHERE id IN (1, 2, 3)");
+    }
+
+    #[test]
+    fn forwards_datafusion_metrics_and_level() {
+        let rewritten = rewrite_explain_for_datafusion(
+            "EXPLAIN (ANALYZE, METRICS 'rows', LEVEL summary) SELECT 1",
+        )
+        .expect("rewrite")
+        .expect("parenthesized EXPLAIN");
+        assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, LEVEL summary, METRICS 'rows') SELECT 1");
+        assert!(rewritten.analyze);
+        assert_eq!(rewritten.format, PostgresExplainFormat::Text);
+    }
+
+    #[test]
+    fn aliases_json_and_forwards_pgjson_with_metrics() {
+        let rewritten = rewrite_explain_for_datafusion(
+            "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS, METRICS 'rows', LEVEL summary) SELECT 1",
+        )
+        .expect("rewrite")
+        .expect("parenthesized EXPLAIN");
+        assert_eq!(
+            rewritten.sql,
+            "EXPLAIN (ANALYZE, FORMAT pgjson, LEVEL summary, METRICS 'rows') SELECT 1"
+        );
+        assert!(rewritten.analyze);
+        assert_eq!(rewritten.format, PostgresExplainFormat::Json);
+    }
+
+    #[test]
+    fn forwards_timing_costs_and_native_format() {
+        let rewritten = rewrite_explain_for_datafusion(
+            "EXPLAIN (ANALYZE, FORMAT indent, TIMING, COSTS OFF) SELECT 1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, FORMAT indent, TIMING, COSTS OFF) SELECT 1");
+        assert_eq!(rewritten.format, PostgresExplainFormat::Text);
     }
 }
