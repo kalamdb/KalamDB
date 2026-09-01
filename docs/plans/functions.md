@@ -4148,3 +4148,406 @@ The feature SHALL follow these requirements:
 **Actor crashes must not automatically replay client transactional functions.**
 
 **The root execution owns commit or rollback for all nested business logic.**
+
+---
+
+# 102. Scheduled Procedures
+
+Scheduling extends the existing Kalam Functions model without introducing a new application runtime abstraction.
+
+The rule is simple:
+
+```text
+Scheduler decides when
+        ↓
+CALL existing procedure
+        ↓
+existing ExecutionContext
+        ↓
+existing transaction/runtime
+```
+
+A scheduled operation is therefore still a normal KalamDB procedure defined by SQL:
+
+```sql
+CREATE TYPE reports.daily_summary_request AS (
+    report_date DATE
+);
+
+CREATE PROCEDURE reports.generate_daily_summary(
+    request reports.daily_summary_request
+)
+RETURNS VOID;
+```
+
+The scheduler does not own business state and does not create a second function implementation model.
+
+---
+
+# 103. SQL Schedule Syntax
+
+Use a MySQL-familiar `CREATE EVENT` statement because scheduling is a database concern and should remain declarative SQL.
+
+Support three schedule forms:
+
+```text
+AT      one-time execution
+EVERY   fixed interval
+CRON    calendar schedule
+```
+
+## One-time execution
+
+```sql
+CREATE EVENT billing.expire_campaign
+ON SCHEDULE AT TIMESTAMP '2026-10-01 00:00:00Z'
+DO CALL billing.expire_campaign('fall-2026');
+```
+
+## Fixed interval
+
+```sql
+CREATE EVENT sessions.cleanup
+ON SCHEDULE EVERY INTERVAL '15 minutes'
+DO CALL sessions.remove_expired();
+```
+
+## Cron
+
+```sql
+CREATE EVENT reports.daily_summary
+ON SCHEDULE CRON '0 9 * * *'
+TIME ZONE 'Asia/Jerusalem'
+DO CALL reports.generate_daily_summary(
+    ROW(CURRENT_DATE())::reports.daily_summary_request
+);
+```
+
+The exact parser representation may differ internally, but the user-facing model SHALL remain SQL-first.
+
+Cron should initially use standard five-field minute-based expressions.
+
+Default time zone:
+
+```text
+UTC
+```
+
+Named time zones should use IANA identifiers.
+
+---
+
+# 104. Schedule Lifecycle
+
+Scheduled events are schema objects and should support normal DDL lifecycle operations.
+
+```sql
+ALTER EVENT reports.daily_summary ENABLE;
+ALTER EVENT reports.daily_summary DISABLE;
+DROP EVENT reports.daily_summary;
+```
+
+Reapplying the same schema must not create duplicate schedules.
+
+`kalam dev` and `kalam deploy` should treat event definitions in the SQL schema the same way they treat procedures, topics and triggers:
+
+```text
+parse
+validate referenced procedure
+apply catalog change
+activate schedule
+```
+
+A schedule cannot reference an unknown procedure or an incompatible procedure signature.
+
+---
+
+# 105. Schedule Execution Semantics
+
+Every scheduled occurrence creates a normal root execution.
+
+```text
+schedule becomes due
+        ↓
+ProcedureRegistry
+        ↓
+ExecutionContext
+        ↓
+Procedure
+        ↓
+lazy transaction
+```
+
+This means scheduled procedures automatically reuse the design already defined in this document:
+
+```text
+ExecutionControl
+TransactionScope
+Function Stack
+lazy DataFusion
+runtime limits
+cancellation
+observability
+```
+
+A scheduled procedure is not a special function type.
+
+It is the same procedure invoked from another SQL-defined source.
+
+Scheduled execution should expose source metadata such as:
+
+```text
+event_name
+scheduled_at
+started_at
+retry_count
+```
+
+inside the root execution metadata and `system.function_runs` view where useful.
+
+---
+
+# 106. Schedule Reliability, Retry and Overlap
+
+Scheduled work must survive:
+
+```text
+server restart
+node failure
+cluster failover
+function module reload
+```
+
+The durable schedule definition is authoritative. In-memory timers are only an optimization.
+
+Recommended event options:
+
+```sql
+CREATE EVENT reports.daily_summary
+ON SCHEDULE CRON '0 9 * * *'
+TIME ZONE 'UTC'
+DO CALL reports.generate_daily_summary(...)
+WITH (
+    retries = 3,
+    retry_backoff = '5s',
+    overlap = 'skip',
+    misfire = 'run_once'
+);
+```
+
+Recommended `overlap` values:
+
+```text
+skip   previous occurrence still running → skip the new occurrence
+queue  preserve the occurrence and run it later
+allow  permit concurrent occurrences
+```
+
+Recommended default:
+
+```text
+skip
+```
+
+Recommended `misfire` values:
+
+```text
+run_once  after recovery run one missed occurrence
+skip      ignore occurrences missed while unavailable
+catch_up  run missed occurrences up to a configured bound
+```
+
+Recommended default:
+
+```text
+run_once
+```
+
+`catch_up` must always have a maximum bound.
+
+Retries re-invoke the same logical scheduled occurrence. They must not create a new independent schedule occurrence.
+
+---
+
+# 107. Schedule Catalog and Runtime
+
+Add schedule metadata as normal system catalog state.
+
+Suggested table:
+
+```text
+system.schedules
+  schedule_id
+  namespace
+  event_name
+  schedule_kind       -- at | every | cron
+  schedule_expression
+  timezone
+  procedure_id
+  arguments
+  enabled
+  retries
+  retry_backoff
+  overlap_policy
+  misfire_policy
+  next_run_at
+  last_run_at
+  created_at
+  updated_at
+```
+
+The scheduler must not create one process, actor, or OS timer for every schedule.
+
+Recommended architecture:
+
+```text
+system.schedules
+       ↓
+query/index upcoming schedules
+       ↓
+small scheduler service
+       ↓
+due event
+       ↓
+ProcedureRegistry
+       ↓
+normal root execution
+```
+
+Use an index ordered by `next_run_at` so the scheduler does not scan every schedule on every tick.
+
+In a cluster, only one owner should dispatch a specific scheduled occurrence. Ownership may use the existing cluster leadership/lease mechanisms.
+
+The procedure execution itself remains normal KalamDB function execution and may run on the appropriate execution node.
+
+---
+
+# 108. Scheduled Procedures and Transactions
+
+Each scheduled procedure invocation gets the same automatic transaction behavior as a direct `CALL`.
+
+Example:
+
+```text
+09:00 schedule fires
+      ↓
+CALL reports.generate_daily_summary(...)
+      ↓
+BEGIN lazily
+      ↓
+INSERT summary
+UPDATE counters
+PUBLISH report.completed
+      ↓
+COMMIT
+```
+
+On failure:
+
+```text
+ROLLBACK
+   ↓
+retry according to schedule policy
+```
+
+If the procedure publishes a topic, the publication participates in the same transaction as already defined in §72.
+
+The scheduler must only mark the occurrence successful after the procedure transaction commits.
+
+---
+
+# 109. Topics and Consumers Remain First-Class
+
+Scheduled procedures and topic-triggered procedures do **not** replace KalamDB topics or the consumer APIs.
+
+The existing model remains available:
+
+```text
+KalamDB Topic
+     ↓
+consumer group
+     ↓
+external service / agent / worker
+```
+
+Users must still be able to consume events using the existing topic APIs and SDKs, including explicit consume/ACK semantics.
+
+Conceptually:
+
+```text
+@kalamdb/consumer
+Rust consumer API
+Python consumer API
+other external systems
+```
+
+remain valid first-class integration paths.
+
+A topic-triggered procedure is only a convenience when the desired handler should execute **inside KalamDB's function runtime**.
+
+An external consumer is preferred when the event should be handled by:
+
+```text
+another service
+another runtime
+an existing worker fleet
+an integration platform
+an external AI agent
+```
+
+The same topic may have both:
+
+```text
+internal function trigger consumer group
++
+external application consumer group
+```
+
+because consumer groups keep offsets independently.
+
+Therefore the model remains:
+
+```text
+CALL             synchronous function execution
+CREATE EVENT     scheduled function execution
+TOPIC TRIGGER    internal event-driven function execution
+CONSUME / ACK    external event consumption
+```
+
+These are complementary capabilities, not replacements for one another.
+
+---
+
+# 110. Scheduler Design Requirements
+
+The scheduler addition SHALL follow these requirements:
+
+**Scheduling is defined through SQL.**
+
+**Scheduled work always targets an existing `CREATE PROCEDURE` contract.**
+
+**`CREATE TYPE`, table row types, typed procedure parameters and typed return values remain unchanged.**
+
+**`CREATE EVENT ... ON SCHEDULE ... DO CALL ...` is the primary scheduling abstraction.**
+
+**Support one-time `AT`, interval `EVERY`, and `CRON` schedules.**
+
+**A scheduled occurrence enters the same `ExecutionContext`, transaction and runtime used by direct and topic-triggered procedure calls.**
+
+**Do not create another function runtime specifically for scheduled work.**
+
+**Do not make process-local timers authoritative.**
+
+**Schedule metadata is durable catalog state.**
+
+**Schedule dispatch must work after restart and cluster failover.**
+
+**The scheduler should query/index upcoming work rather than allocating one runtime object per scheduled event.**
+
+**Retries occur only after failed procedure execution and follow explicit schedule policy.**
+
+**Overlap and misfire behavior are explicit and deterministic.**
+
+**Topics, consumer groups, `CONSUME`, ACK and external consumer SDKs remain first-class and are not replaced by scheduled functions or topic triggers.**
+
+**KalamDB remains a SQL database with server functions; scheduling only adds another SQL-defined way to invoke those functions.**
