@@ -1,8 +1,8 @@
-# KalamDB Functions, Typed Actions, Triggers & Durable Schedules
+# KalamDB Server Functions, Typed Contracts & Topic Triggers
 
-**Status:** Proposed  
-**Version:** 0.2  
-**Primary design principle:** SQL is the source of truth for the backend contract, and KalamDB remains the source of truth for durable application state.
+**Status:** Proposed
+**Version:** 0.1
+**Primary design principle:** SQL is the source of truth for the complete backend contract.
 
 ---
 
@@ -22,252 +22,111 @@ into:
 SQL Database
 + Realtime
 + Durable Topics
-+ Typed server-side business logic
-+ Durable background execution
-+ Durable schedules / cron
-+ Generated typed SDKs
++ Server-side application logic
++ Generated typed client SDK
 ```
 
-without turning KalamDB into a general-purpose actor platform or introducing a second REST endpoint model.
+without introducing a separate REST endpoint model.
 
-The core model is:
+Applications should use one programming interface:
 
 ```text
-Database owns durable state.
-Functions own behavior.
-Topics own durable asynchronous events.
-Schedules decide when behavior should run.
-Generated SDKs make procedures feel like typed actions.
+SELECT       → query
+INSERT       → direct write
+UPDATE       → direct write
+DELETE       → direct write
+SUBSCRIBE    → realtime
+PUBLISH      → asynchronous event
+CALL         → application/business operation
 ```
 
-Applications should use one backend programming model:
+Server-side functions may be invoked in two ways:
 
 ```text
-SELECT       -> query
-INSERT       -> direct write
-UPDATE       -> direct write
-DELETE       -> direct write
-SUBSCRIBE    -> realtime state
-PUBLISH      -> durable asynchronous event
-CALL         -> synchronous business operation
-EVENT        -> scheduled business operation
+Client
+  │
+  │ CALL chat.create_message(...)
+  ▼
+Procedure
 ```
 
-A procedure may be invoked from:
+or:
 
 ```text
-Client CALL
-Topic trigger
-Scheduled event
-Dynamic schedule
-Background enqueue
-Nested procedure call
+Topic
+  │
+  ▼
+Trigger
+  │
+  ▼
+Procedure
 ```
 
-All of them enter the same procedure runtime and the same `ExecutionContext` model.
+The same procedure implementation may be used by either invocation mechanism.
 
 ---
 
-# 2. What KalamDB should learn from actor runtimes
+# 2. Core terminology
 
-Actor systems provide several useful application-runtime ideas:
+Use **Kalam Functions** as the product/feature name.
 
-```text
-Typed actions
-Per-entity ordering
-Durable queues
-Durable timers / cron
-Lifecycle and cancellation
-Simple client invocation
-```
-
-KalamDB should adopt the useful semantics without adopting actor-owned state.
-
-## Keep
-
-### Typed action ergonomics
-
-Generated SDKs should make a SQL procedure feel like:
-
-```ts
-await kalam.chat.createMessage({
-  conversationId,
-  body,
-});
-```
-
-instead of requiring callers to manually build `CALL` statements.
-
-### Durable keyed work
-
-Background work should support an ordering key such as:
-
-```text
-conversation:123
-user:42
-order:9001
-```
-
-so related work can execute in order while unrelated keys execute concurrently.
-
-### Durable schedules
-
-One-shot timers, fixed intervals, and cron schedules must survive:
-
-```text
-server restart
-node failure
-cluster failover
-deployment
-function revision change
-```
-
-### Stable invocation identity
-
-Retries of the same topic message or schedule occurrence should keep the same logical invocation identity so database work and external side effects can be made idempotent.
-
-## Do not copy
-
-### No actor-local durable state
-
-Do not create:
-
-```text
-one process + one private database per user / room / agent
-```
-
-Application state remains normal KalamDB tables.
-
-### No actor-per-entity runtime requirement
-
-A chat room, agent, user, order, or document is identified by data keys, not by a permanently owned process.
-
-### No user-visible sleep / wake lifecycle
-
-KalamDB may internally load, unload, cache, or migrate runtimes, but application correctness must never depend on `onWake`, `onSleep`, or process-local memory.
-
-### No critical `setTimeout` / `setInterval`
-
-Functions must not rely on process-local timers for durable work. Use Kalam schedules.
-
-### No ephemeral background work for required side effects
-
-If work must happen after a request returns, it must be durably enqueued, published, or scheduled before the transaction commits.
-
-The desired difference is:
-
-```text
-Actor model:
-actor owns state + behavior
-
-KalamDB model:
-database owns state
-worker temporarily owns execution
-```
-
----
-
-# 3. Core terminology
-
-Use **Kalam Functions** as the product feature name.
-
-Internally distinguish these concepts.
+Internally distinguish three concepts.
 
 ## Procedure
 
-A typed business operation invoked with `CALL`.
+A transactional business operation.
+
+Example:
 
 ```sql
-CALL chat.create_message($1, $2);
+CALL chat.create_message(...);
 ```
 
 A procedure may:
 
-- read tables
-- insert/update/delete
-- publish topics
-- call other procedures
-- enqueue background procedures
-- create or cancel schedules
-- return typed values
-- run with an authenticated execution context
-
-Procedures are the KalamDB equivalent of a typed application action.
+* read tables
+* insert/update/delete
+* publish topics
+* call other procedures
+* return values
+* run under an authenticated execution context
 
 ## Function
 
-Reserved for expression-style computation used inside SQL expressions.
+Reserved for expression-style/read-only computation.
+
+Example:
 
 ```sql
 SELECT COSINE_DISTANCE(...);
 SELECT SNOWFLAKE_ID();
 ```
 
-Existing DataFusion UDF behavior remains separate from server procedures.
+Existing DataFusion UDFs remain unchanged.
 
 ## Trigger
 
-Connects a durable event source to a procedure.
+Connects an event source to a procedure.
 
-V1:
-
-```text
-TOPIC -> PROCEDURE
-```
-
-Possible later sources:
+Initially only:
 
 ```text
-TABLE CHANGE -> PROCEDURE
+TOPIC → PROCEDURE
 ```
 
-Table changes can already route through topics, so a separate table-trigger runtime is not required initially.
+Later:
 
-## Event
-
-A named scheduled invocation definition.
-
-Use MySQL-familiar syntax:
-
-```sql
-CREATE EVENT jobs.daily_report
-ON SCHEDULE CRON '0 9 * * *'
-TIME ZONE 'UTC'
-DO CALL jobs.generate_report();
-```
-
-An event is a schema object. It is not an ephemeral websocket event.
-
-## Dynamic schedule
-
-A durable one-shot schedule created at runtime from procedure code.
-
-Example:
-
-```ts
-await ctx.functions.billing.expireTrial.scheduleAt({
-  at: input.expiresAt,
-  input: { trialId: input.trialId },
-  key: `trial:${input.trialId}`,
-});
-```
-
-## Background invocation
-
-A procedure invocation durably queued to execute as a new root execution after the current transaction commits.
-
-```ts
-await ctx.functions.notifications.send.enqueue({
-  input: { userId, messageId },
-  key: `user:${userId}`,
-});
+```text
+TABLE CHANGE → PROCEDURE
+SCHEDULE → PROCEDURE
+HTTP → PROCEDURE
 ```
 
 ---
 
-# 4. SQL remains the source of truth
+# 3. SQL remains the source of truth
 
-A project may contain:
+A Kalam project may contain:
 
 ```text
 my-app/
@@ -278,7 +137,7 @@ my-app/
     └── generated/
 ```
 
-Or later:
+Or eventually:
 
 ```text
 schema/
@@ -286,11 +145,10 @@ schema/
 ├── types.sql
 ├── topics.sql
 ├── procedures.sql
-├── triggers.sql
-└── events.sql
+└── triggers.sql
 ```
 
-SQL defines:
+These SQL files describe:
 
 ```text
 Tables
@@ -298,71 +156,112 @@ Types
 Topics
 Procedures
 Triggers
-Scheduled events
 Policies
 Permissions
 ```
 
-Function implementation code does **not** redefine procedure signatures.
-
-Dynamic schedule instances are runtime data, not schema definitions. Their target procedure contract still comes from SQL.
+The implementation code **does not redefine procedure signatures**.
 
 ---
 
-# 5. Table row types
+# 4. Table row types
 
-Every table automatically exposes a logical row type.
+Every KalamDB table automatically creates a logical row type.
+
+Example:
 
 ```sql
 CREATE USER TABLE chat.messages (
-    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-    conversation_id TEXT NOT NULL,
+    id BIGINT PRIMARY KEY,
+    group_id TEXT NOT NULL,
     sender_id TEXT NOT NULL,
     body TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    created_at TIMESTAMP NOT NULL
 );
 ```
 
-The logical type is:
+This automatically creates the logical type:
 
 ```text
 chat.messages
 ```
 
-A procedure can return it directly:
+A procedure can therefore return one message directly:
 
 ```sql
 CREATE PROCEDURE chat.create_message(
-    conversation_id TEXT,
+    group_id TEXT,
     body TEXT
 )
 RETURNS chat.messages;
 ```
 
-No duplicate response model is required.
+No response structure needs to be repeated.
 
-Multiple rows use PostgreSQL-like `SETOF`:
+The implementation must return one row matching `chat.messages`.
+
+---
+
+# 5. Returning multiple table rows
+
+Use PostgreSQL-like `SETOF`.
 
 ```sql
 CREATE PROCEDURE chat.get_recent_messages(
-    conversation_id TEXT,
+    group_id TEXT,
     limit_count INT
 )
 RETURNS SETOF chat.messages;
 ```
 
+Generated TypeScript:
+
+```ts
+type Result = Message[];
+```
+
+Client:
+
+```ts
+const messages =
+    await kalam.chat.getRecentMessages({
+        groupId,
+        limitCount: 50
+    });
+```
+
 ---
 
-# 6. Reusable contract types
+# 6. Reusable response types
 
-Use named SQL composite types for request, response, and event contracts.
+Many procedures will return structures that are not tables.
+
+Do **not** repeat:
+
+```sql
+RETURNS TABLE (
+   message ...,
+   unread_count ...,
+   ...
+)
+```
+
+three times.
+
+Instead add SQL composite types.
+
+Example:
 
 ```sql
 CREATE TYPE chat.recipient_result AS (
     user_id TEXT,
     delivered BOOLEAN
 );
+```
 
+And:
+
+```sql
 CREATE TYPE chat.send_message_result AS (
     message chat.messages,
     recipients chat.recipient_result[],
@@ -370,331 +269,452 @@ CREATE TYPE chat.send_message_result AS (
 );
 ```
 
-Then:
+Now several procedures may reuse it:
 
 ```sql
 CREATE PROCEDURE chat.create_message(
-    conversation_id TEXT,
+    group_id TEXT,
     body TEXT
 )
 RETURNS chat.send_message_result;
 ```
 
-Named types may contain:
+```sql
+CREATE PROCEDURE chat.retry_message(
+    message_id BIGINT
+)
+RETURNS chat.send_message_result;
+```
 
-- scalar types
-- table row types
-- other named composite types
-- arrays
-- JSON/JSONB
-- nullable fields
+```sql
+CREATE PROCEDURE chat.forward_message(
+    message_id BIGINT,
+    target_group_id TEXT
+)
+RETURNS chat.send_message_result;
+```
 
-For V1, composite types are contract types. KalamDB does not need arbitrary nested composite physical table columns yet.
+One type definition.
+
+Three procedures.
 
 ---
 
-# 7. Procedure parameters and results
+# 7. Generated TypeScript
 
-Procedure parameters may use scalars or named types.
+The SQL above generates something equivalent to:
+
+```ts
+export type Message = {
+    id: bigint;
+    groupId: string;
+    senderId: string;
+    body: string;
+    createdAt: Date;
+};
+
+export interface RecipientResult {
+    userId: string;
+    delivered: boolean;
+}
+
+export interface SendMessageResult {
+    message: Message;
+    recipients: RecipientResult[];
+    fanoutCount: number;
+}
+```
+
+Notice:
+
+```ts
+message: Message
+```
+
+reuses the generated table type.
+
+No duplication.
+
+---
+
+# 8. Supported procedure return types
+
+Procedures should support six result categories.
+
+## No result
+
+```sql
+RETURNS VOID
+```
+
+Generated:
+
+```ts
+Promise<void>
+```
+
+## Scalar
+
+```sql
+RETURNS BIGINT
+RETURNS TEXT
+RETURNS BOOLEAN
+RETURNS UUID
+RETURNS TIMESTAMP
+```
+
+Generated:
+
+```ts
+Promise<bigint>
+Promise<string>
+Promise<boolean>
+```
+
+## Table row
+
+```sql
+RETURNS chat.messages
+```
+
+Generated:
+
+```ts
+Promise<Message>
+```
+
+## Multiple table rows
+
+```sql
+RETURNS SETOF chat.messages
+```
+
+Generated:
+
+```ts
+Promise<Message[]>
+```
+
+## Named composite type
+
+```sql
+RETURNS chat.send_message_result
+```
+
+Generated:
+
+```ts
+Promise<SendMessageResult>
+```
+
+## Arbitrary JSON
+
+```sql
+RETURNS JSONB
+```
+
+Generated:
+
+```ts
+Promise<JsonValue>
+```
+
+Use arbitrary `JSONB` only where there genuinely is no stable contract.
+
+Prefer named types whenever possible.
+
+---
+
+# 9. JSON response behavior
+
+A named composite result:
+
+```sql
+RETURNS chat.send_message_result
+```
+
+is logically typed, but the HTTP SQL endpoint can serialize it naturally as JSON:
+
+```json
+{
+  "message": {
+    "id": "923472934",
+    "groupId": "g1",
+    "senderId": "u1",
+    "body": "Hello"
+  },
+  "recipients": [
+    {
+      "userId": "u2",
+      "delivered": true
+    }
+  ],
+  "fanoutCount": 1
+}
+```
+
+Therefore **typed object results do not need to be declared `JSONB` merely because the frontend wants JSON**.
+
+The logical type remains:
+
+```text
+chat.send_message_result
+```
+
+while the transport encoding can be JSON.
+
+This keeps type generation possible.
+
+---
+
+# 10. Nested reusable types
+
+Types may contain:
+
+* scalar types
+* table row types
+* other named composite types
+* arrays
+* JSON/JSONB
+* nullable fields
+
+Example:
+
+```sql
+CREATE TYPE users.user_summary AS (
+    id TEXT,
+    display_name TEXT,
+    avatar_url TEXT
+);
+```
+
+```sql
+CREATE TYPE chat.message_details AS (
+    message chat.messages,
+    sender users.user_summary,
+    reactions JSONB,
+    participants users.user_summary[]
+);
+```
+
+Then:
+
+```sql
+CREATE PROCEDURE chat.get_message_details(
+    message_id BIGINT
+)
+RETURNS chat.message_details;
+```
+
+Generated:
+
+```ts
+interface MessageDetails {
+    message: Message;
+    sender: UserSummary;
+    reactions: JsonValue;
+    participants: UserSummary[];
+}
+```
+
+---
+
+# 11. Physical table columns
+
+For V1, named composite types should primarily be **contract types** used by:
+
+```text
+Procedure parameters
+Procedure returns
+Topic payloads
+Generated SDKs
+```
+
+Do not initially require KalamDB storage to support arbitrary nested composite columns.
+
+That avoids substantially increasing the Arrow/RocksDB storage implementation scope.
+
+Physical table support for composite types can be added later.
+
+---
+
+# 12. Procedure parameters may also use named types
+
+Example:
 
 ```sql
 CREATE TYPE chat.create_message_request AS (
-    conversation_id TEXT,
+    group_id TEXT,
     body TEXT,
     reply_to BIGINT
 );
+```
 
+Then:
+
+```sql
 CREATE PROCEDURE chat.create_message(
     request chat.create_message_request
 )
 RETURNS chat.send_message_result;
 ```
 
-Supported V1 result categories:
-
-```text
-RETURNS VOID
-RETURNS scalar
-RETURNS table_row_type
-RETURNS SETOF table_row_type
-RETURNS named_composite_type
-RETURNS JSONB
-```
-
-Prefer named contracts over arbitrary `JSONB` whenever the shape is stable.
-
-Transport encoding may still be JSON. Logical typing and wire encoding are separate concerns.
-
----
-
-# 8. Generated typed action API
-
-Users should normally not write `CALL` manually.
-
-TypeScript:
+Generated:
 
 ```ts
-const result = await kalam.chat.createMessage({
-  conversationId,
-  body: 'Hello',
+await kalam.chat.createMessage({
+    request: {
+        groupId,
+        body,
+        replyTo
+    }
 });
 ```
 
-Dart:
+For simple functions, ordinary parameters remain preferable:
 
-```dart
-final result = await kalam.chat.createMessage(
-  conversationId: conversationId,
-  body: 'Hello',
+```sql
+CREATE PROCEDURE chat.create_message(
+    group_id TEXT,
+    body TEXT
+)
+...
+```
+
+---
+
+# 13. Callable procedures
+
+Invocation uses SQL:
+
+```sql
+CALL chat.create_message(
+    $1,
+    $2
 );
 ```
 
-Rust:
+The existing KalamDB SQL endpoint remains the only required HTTP endpoint.
 
-```rust
-let result = client
-    .chat()
-    .create_message(conversation_id, "Hello")
-    .await?;
+Conceptually:
+
+```text
+POST /v1/api/sql
+
+        │
+        ▼
+
+CALL chat.create_message(...)
+
+        │
+        ▼
+
+SqlExecutor
+
+        │
+        ▼
+
+ProcedureHandler
+
+        │
+        ▼
+
+Runtime
+
+        │
+        ▼
+
+Result
 ```
 
-The generated SDK compiles these calls to:
+No endpoint needs to be dynamically created.
+
+---
+
+# 14. Generated client invocation
+
+Users should normally not manually write `CALL`.
+
+Generated TypeScript:
+
+```ts
+const result =
+    await kalam.chat.createMessage({
+        groupId,
+        body: "Hello!"
+    });
+```
+
+Internally:
 
 ```sql
 CALL chat.create_message($1, $2)
 ```
 
-through the existing SQL transport.
+Generated Dart:
 
-The desired developer mental model is:
-
-```text
-SQL procedure = typed action
+```dart
+final result =
+    await kalam.chat.createMessage(
+        groupId: groupId,
+        body: 'Hello!',
+    );
 ```
 
-not:
+Generated Rust:
 
-```text
-SQL procedure = manually assembled SQL string
+```rust
+let result = client
+    .chat()
+    .create_message(group_id, "Hello!")
+    .await?;
 ```
+
+One server contract generates all clients.
 
 ---
 
-# 9. Generated server procedure handles
+# 15. User execution context
 
-Inside a server function, generated procedure handles should support four execution modes.
-
-## Nested synchronous call
-
-```ts
-const result = await ctx.functions.chat.fanout({
-  messageId,
-});
-```
-
-This reuses the same root `ExecutionContext` and transaction.
-
-## Background enqueue
-
-```ts
-const invocation = await ctx.functions.search.reindexDocument.enqueue({
-  input: { documentId },
-  key: `document:${documentId}`,
-});
-```
-
-This stages durable background work that starts only after the current transaction commits.
-
-## Schedule at an exact time
-
-```ts
-const schedule = await ctx.functions.billing.expireTrial.scheduleAt({
-  at: expiresAt,
-  input: { trialId },
-  key: `trial:${trialId}`,
-});
-```
-
-## Schedule after a delay
-
-```ts
-const schedule = await ctx.functions.chat.expireTyping.scheduleAfter({
-  delay: '15s',
-  input: { conversationId, userId },
-  key: `typing:${conversationId}:${userId}`,
-});
-```
-
-The generated handle knows the procedure input contract. Incorrect inputs fail at compile time where the language supports it and at runtime on every platform.
-
----
-
-# 10. Synchronous vs background execution
-
-A synchronous `CALL` executes immediately and returns the procedure result.
-
-A background invocation:
-
-```text
-current transaction
-      |
-      +-- stage invocation
-      |
-    COMMIT
-      |
-      v
-internal durable invocation topic
-      |
-      v
-new root ExecutionContext
-      |
-      v
-procedure
-```
-
-If the current transaction rolls back, the background invocation must not become visible.
-
-This gives the same important guarantee as transactional topic publication:
-
-```text
-database write
-+
-background work request
-```
-
-commit together.
-
-Background invocation is intentionally different from spawning an arbitrary task or calling `setTimeout`.
-
-## V1 client behavior
-
-Client-facing SDKs should keep synchronous `CALL` as the primary API.
-
-Applications that need durable asynchronous behavior can use:
-
-```text
-typed topic + trigger
-```
-
-or, once background invocation is exposed publicly, a generated `.enqueue()` method.
-
-Do not require public async invocation in the first implementation phase.
-
----
-
-# 11. Keyed background ordering
-
-Actor queues are useful because they serialize work for one entity. KalamDB should provide the same outcome using topics and keys rather than an actor mailbox.
-
-Example:
-
-```ts
-await ctx.functions.chat.processMessage.enqueue({
-  input: { conversationId, messageId },
-  key: `conversation:${conversationId}`,
-});
-```
-
-Semantics:
-
-```text
-same ordering key
-    -> same internal partition
-    -> FIFO processing for that partition/key
-
-different keys
-    -> may execute concurrently
-```
-
-The implementation SHOULD reuse KalamDB's existing topic partition and consumer-group machinery.
-
-Do not introduce a second standalone queue subsystem.
-
-## Important limitation
-
-V1 does **not** promise global keyed serialization for ordinary synchronous client `CALL`s.
-
-If strict per-key ordering is required, use:
-
-```text
-background enqueue
-or
-typed topic + trigger
-```
-
-This avoids a distributed lock service in the synchronous request path.
-
----
-
-# 12. User and execution context
-
-Every root invocation receives a unified `ExecutionContext`.
+Every client procedure invocation receives KalamDB's existing authentication context.
 
 Conceptually:
 
 ```text
+ExecutionContext
+
 user_id
 role
 namespace
 request_id
-execution_id
-execution_source
-attempt
-idempotency_key
+ip_address
 transaction
-cancellation
 ```
 
-Server SDK:
+Inside a function:
 
 ```ts
 ctx.user.id
 ctx.user.role
 ctx.requestId
-ctx.execution.id
-ctx.execution.source
-ctx.execution.attempt
-ctx.execution.idempotencyKey
-ctx.abortSignal
 ```
 
-Background sources additionally expose source metadata.
+or Rust:
 
-Topic trigger:
-
-```text
-ctx.topic.name
-ctx.topic.partition
-ctx.topic.offset
-ctx.topic.eventId
-ctx.actorUser
-ctx.executionPrincipal
+```rust
+ctx.user_id()
+ctx.role()
 ```
 
-Scheduled invocation:
-
-```text
-ctx.schedule.scheduleId
-ctx.schedule.eventName
-ctx.schedule.scheduledAt
-ctx.schedule.occurrenceId
-```
-
-`actorUser` means the user whose action originally caused the work when known.
-
-`executionPrincipal` means the identity whose permissions are used to execute background work.
-
-Never silently grant administrator privileges to background functions.
-
----
-
-# 13. Procedure security
-
-Direct procedures default to:
+A client procedure defaults to:
 
 ```text
 SECURITY INVOKER
 ```
+
+Meaning the procedure operates using the permissions of the calling user.
+
+Example:
 
 ```sql
 CREATE PROCEDURE chat.create_message(...)
@@ -702,171 +722,140 @@ RETURNS chat.messages
 SECURITY INVOKER;
 ```
 
-Use SQL permissions:
-
-```sql
-GRANT EXECUTE ON PROCEDURE chat.create_message TO app_user;
-```
-
-Background invocations persist both:
-
-```text
-actor user, when available
-execution principal
-```
-
-so an audit record can distinguish who caused the action from which service identity executed it.
-
-Static scheduled events execute using the event owner / configured execution principal because there is no live client session at fire time.
+This should be the default even when omitted.
 
 ---
 
-# 14. Transaction semantics
+# 16. Transaction semantics
 
-Every root procedure invocation is transactional by default.
+Every procedure invocation is transactional by default.
 
 ```text
 CALL chat.create_message()
-        |
-        v
-ExecutionContext
-        |
-        v
-lazy transaction
-        |
-        +-- INSERT
-        +-- UPDATE
-        +-- nested CALL
-        +-- PUBLISH
-        +-- enqueue background function
-        +-- create dynamic schedule
-        |
-      success?
-       /   \
-     yes    no
-      |      |
-   COMMIT  ROLLBACK
+
+        │
+        ▼
+
+BEGIN
+
+INSERT message
+
+UPDATE recipient state
+
+UPDATE unread counters
+
+PUBLISH topic
+
+        │
+        ▼
+
+success?
+   │
+ ┌─┴─┐
+ │   │
+yes  no
+ │   │
+COMMIT ROLLBACK
 ```
 
-Topic publishes, background enqueues, and dynamic schedule creation performed through the host API should participate in the root transaction.
+All mutations should commit atomically.
 
-This prevents database/event/job dual-write problems.
+Publishing a topic from a procedure must be staged until transaction commit.
+
+This is especially important for:
+
+```text
+database mutation
++
+topic publication
+```
+
+because it prevents the classic transactional-outbox inconsistency.
 
 ---
 
-# 15. Lazy transaction creation
+# 17. Calling multiple procedures
 
-Do not open a transaction just because a function started.
-
-Initial state:
-
-```text
-TransactionScope::None
-```
-
-The first transactional mutation starts the transaction lazily.
-
-```text
-INSERT
-UPDATE
-DELETE
-transactional topic publish
-background enqueue
-dynamic schedule mutation
-```
-
-A read-only procedure may complete without creating a write transaction.
-
----
-
-# 16. Nested procedure calls
-
-Nested calls reuse the same root execution.
-
-```text
-function1
-  -> function2
-     -> function3
-```
-
-means:
-
-```text
-one ExecutionContext
-one root transaction
-one cancellation token
-one active execution record
-one function stack
-```
-
-not:
-
-```text
-three actors
-three transactions
-three active execution registrations
-```
-
-Track nested procedures with compact IDs such as:
-
-```rust
-SmallVec<[ProcedureId; 4]>
-```
-
-V1 failure semantics follow PostgreSQL's strict transaction model: an unrecoverable transactional failure aborts the root transaction even if application code catches the error.
-
-Savepoints may be added later.
-
----
-
-# 17. Explicit SQL transactions
-
-A procedure called inside an explicit SQL transaction borrows it.
+The SQL-first model allows:
 
 ```sql
 BEGIN;
+
 CALL shop.create_order($1);
-INSERT INTO audit.entries ...;
 CALL shop.reserve_inventory($1);
+CALL audit.order_created($1);
+
 COMMIT;
 ```
 
-The procedures do not commit independently.
+All procedures share:
 
-Logical transaction states:
+```text
+same authenticated user
+same request
+same transaction
+```
 
-```rust
-pub enum TransactionScope {
-    None,
-    Owned(TransactionId),
-    Borrowed(TransactionId),
-    Aborted(TransactionId),
-    Committing(TransactionId),
-}
+If one fails:
+
+```text
+ROLLBACK everything
+```
+
+Procedures may also invoke another procedure through the host runtime.
+
+A recursion/depth limit must prevent accidental cycles.
+
+Suggested default:
+
+```text
+maximum nested procedure depth = 16
 ```
 
 ---
 
-# 18. Topics and typed events
+# 18. Topics
 
-KalamDB already supports durable topics, partitions, consumer groups, replay, offsets, and ACK semantics.
+KalamDB already supports durable topics, consumer groups, replay, offsets and ACK semantics.
 
-Extend topics with optional payload contracts.
+Extend topics with optional payload typing.
+
+Example:
 
 ```sql
 CREATE TYPE chat.message_created_event AS (
     message_id BIGINT,
-    conversation_id TEXT,
+    group_id TEXT,
     sender_id TEXT
 );
+```
 
+Then:
+
+```sql
 CREATE TOPIC chat.message_created
 TYPE chat.message_created_event;
 ```
 
-Untyped topics remain supported and behave like JSON payloads.
+A publish to that topic must match the declared type.
 
-Database-to-topic routes remain unchanged.
+Untyped topics remain supported:
+
+```sql
+CREATE TOPIC events.generic;
+```
+
+Their payload type is effectively:
+
+```text
+JSONB
+```
+
+---
+
+# 19. Database-to-topic routes remain unchanged
+
+Existing functionality such as:
 
 ```sql
 ALTER TOPIC chat.message_created
@@ -875,27 +864,64 @@ ON INSERT
 WITH (payload = 'full');
 ```
 
-KalamDB should prefer live SQL queries for authoritative UI state and topics for durable asynchronous processing.
+continues to work.
 
-Do not add a second actor-style `broadcast` abstraction merely to duplicate realtime tables and topics.
+Where possible, KalamDB can derive the payload type from:
+
+```text
+chat.messages
+```
+
+If one topic has multiple heterogeneous sources, either:
+
+* declare a common named type
+* use JSONB
+* use a future tagged-union type
+
+Do not complicate V1 with union types.
 
 ---
 
-# 19. Topic-triggered procedures
+# 20. Topic-triggered procedures
+
+Add:
 
 ```sql
-CREATE TRIGGER chat.message_created_handler
+CREATE TRIGGER chat.process_message
 ON TOPIC chat.message_created
-EXECUTE PROCEDURE chat.after_message_created(PAYLOAD)
-WITH (
-    start = 'latest',
-    retries = 5,
-    concurrency = 8,
-    retry_backoff = '1s'
-);
+EXECUTE PROCEDURE chat.on_message_created(PAYLOAD);
 ```
 
-Reserved trigger arguments for V1:
+Example procedure:
+
+```sql
+CREATE PROCEDURE chat.on_message_created(
+    event chat.message_created_event
+)
+RETURNS VOID;
+```
+
+The trigger maps:
+
+```text
+topic payload
+     ↓
+procedure argument
+```
+
+The procedure may also be called manually:
+
+```sql
+CALL chat.on_message_created(...);
+```
+
+if desired.
+
+---
+
+# 21. Trigger argument expressions
+
+V1 should support reserved values:
 
 ```text
 PAYLOAD
@@ -906,439 +932,151 @@ PARTITION
 OFFSET
 ```
 
-Each trigger owns a durable consumer group automatically.
-
-```text
-trigger id: TRG_123
-consumer group: __kalam_function_trigger_TRG_123
-```
-
-Users do not need to manage that group manually.
-
-## Ordering
-
-The trigger runtime should preserve source partition order by default.
-
-Different partitions may execute concurrently.
-
-Applications that require per-entity ordering should publish with a stable topic key so all events for that entity map to the same partition.
-
----
-
-# 20. Topic delivery and retry semantics
-
-Topic-triggered execution is at-least-once.
-
-```text
-read event
-   |
-   v
-invoke procedure
-   |
-   v
-transaction
-   |
-   v
-commit
-   |
-   v
-ACK offset
-```
-
-On failure:
-
-```text
-rollback
-no ACK
-retry
-```
-
-After maximum retries, the trigger may route the event to an internal DLQ topic.
-
-The source identity:
-
-```text
-topic + consumer group + partition + offset
-```
-
-must remain stable across retries and should become the invocation idempotency identity.
-
----
-
-# 21. Durable scheduled functions
-
-Scheduled work is a first-class feature.
-
-KalamDB should support three schedule forms:
-
-```text
-AT       -> one time at an absolute timestamp
-EVERY    -> fixed interval
-CRON     -> calendar recurrence
-```
-
-Use MySQL-familiar `CREATE EVENT ... ON SCHEDULE ... DO CALL ...` syntax because PostgreSQL does not have a built-in scheduler, while `pg_cron` establishes familiar cron-expression behavior.
-
-## One-time event
-
-```sql
-CREATE EVENT billing.expire_campaign
-ON SCHEDULE AT TIMESTAMP '2026-10-01 00:00:00Z'
-DO CALL billing.expire_campaign('fall-2026');
-```
-
-## Fixed interval
-
-```sql
-CREATE EVENT presence.cleanup
-ON SCHEDULE EVERY 15 SECOND
-DO CALL presence.remove_stale_sessions();
-```
-
-Intervals are anchored to scheduled deadlines and should not drift based on procedure runtime.
-
-## Cron
-
-```sql
-CREATE EVENT reports.daily_summary
-ON SCHEDULE CRON '0 9 * * *'
-TIME ZONE 'Asia/Jerusalem'
-DO CALL reports.generate_daily_summary();
-```
-
-V1 cron expressions use standard five-field minute-based syntax.
-
-Time zones use IANA names. Default timezone is `UTC`.
-
----
-
-# 22. Scheduled event options
-
-A scheduled event may configure execution policy.
-
-```sql
-CREATE EVENT reports.daily_summary
-ON SCHEDULE CRON '0 9 * * *'
-TIME ZONE 'Asia/Jerusalem'
-WITH (
-    retries = 5,
-    retry_backoff = '5s',
-    overlap = 'skip',
-    misfire = 'run_once'
-)
-DO CALL reports.generate_daily_summary();
-```
-
-Recommended policies:
-
-## `overlap`
-
-```text
-skip   -- default; if previous occurrence is still running, do not start another
-queue  -- preserve every occurrence and run later
-allow  -- overlapping occurrences may run concurrently
-```
-
-Default:
-
-```text
-skip
-```
-
-This is safer for cron-style maintenance work.
-
-## `misfire`
-
-Controls what happens when KalamDB was unavailable when an occurrence should have fired.
-
-```text
-run_once  -- default; run one recovery occurrence after restart
-skip      -- ignore missed occurrences
-catch_up  -- enqueue missed occurrences up to a configured bound
-```
-
-`catch_up` must always have a maximum bound to prevent unbounded restart storms.
-
-## `retries`
-
-Scheduled executions use the same retry/backoff infrastructure as topic-triggered procedures.
-
----
-
-# 23. Scheduled event lifecycle SQL
-
-Support familiar DDL operations:
-
-```sql
-ALTER EVENT reports.daily_summary ENABLE;
-ALTER EVENT reports.daily_summary DISABLE;
-DROP EVENT reports.daily_summary;
-```
-
-Later `ALTER EVENT` can support replacing schedule expressions and options.
-
-Schema deployment treats named events idempotently. Reapplying the same schema must not create duplicate schedules.
-
----
-
-# 24. Schedule invocation metadata
-
-Every occurrence receives stable metadata.
-
-Reserved schedule values:
-
-```text
-SCHEDULED_AT
-FIRED_AT
-OCCURRENCE_ID
-EVENT_NAME
-```
-
 Example:
 
 ```sql
-CREATE PROCEDURE reports.generate_daily_summary(
-    scheduled_at TIMESTAMP,
-    occurrence_id TEXT
-)
-RETURNS VOID;
-
-CREATE EVENT reports.daily_summary
-ON SCHEDULE CRON '0 9 * * *'
-TIME ZONE 'UTC'
-DO CALL reports.generate_daily_summary(
-    SCHEDULED_AT,
-    OCCURRENCE_ID
+CREATE TRIGGER chat.process_message
+ON TOPIC chat.message_created
+EXECUTE PROCEDURE chat.process_message(
+    PAYLOAD,
+    EVENT_ID
 );
 ```
 
-`OCCURRENCE_ID` must be deterministic for the logical occurrence and remain unchanged across retries.
+Procedure:
 
-For recurring events it can be derived from:
-
-```text
-event_id + scheduled_at
+```sql
+CREATE PROCEDURE chat.process_message(
+    event chat.message_created_event,
+    event_id TEXT
+)
+RETURNS VOID;
 ```
+
+Future versions may support expressions such as:
+
+```sql
+PAYLOAD.message_id
+```
+
+but this is not required for V1.
 
 ---
 
-# 25. Dynamic one-shot schedules
+# 22. Topic consumer identity
 
-Static `CREATE EVENT` is ideal for schema-defined recurring work.
+Each trigger automatically owns a durable consumer group.
 
-Applications also need millions of entity-specific timers such as:
+The user does **not** configure it manually.
+
+Conceptually:
 
 ```text
-expire a session
-send a reminder
-end a trial
-release a reservation
-retry a delayed workflow
+trigger id:
+TRG_123
+
+consumer group:
+__kalam_function_trigger_TRG_123
 ```
 
-Do not create a schema object for every user timer.
+That gives every trigger its own:
 
-Use dynamic schedule rows.
-
-Generated server API:
-
-```ts
-const schedule = await ctx.functions.billing.expireTrial.scheduleAt({
-  at: input.expiresAt,
-  input: {
-    trialId: input.trialId,
-  },
-  key: `trial:${input.trialId}`,
-});
-```
-
-Relative delay:
-
-```ts
-await ctx.functions.chat.expireTyping.scheduleAfter({
-  delay: '15s',
-  input: { conversationId, userId },
-  key: `typing:${conversationId}:${userId}`,
-});
-```
-
-Cancel:
-
-```ts
-await ctx.schedules.cancel(schedule.id);
-```
-
-Optional upsert key:
-
-```ts
-await ctx.functions.billing.expireTrial.scheduleAt({
-  at: input.expiresAt,
-  input: { trialId },
-  name: `trial-expiry:${trialId}`,
-  replace: true,
-});
-```
-
-A named dynamic schedule may replace an existing pending schedule instead of creating duplicates.
+* offset
+* retry state
+* replay position
+* metrics
+* lifecycle
 
 ---
 
-# 26. Dynamic schedules are transactional
+# 23. Topic delivery semantics
 
-Creating or cancelling a dynamic schedule inside a procedure participates in that procedure transaction.
-
-```text
-BEGIN
-
-INSERT trial
-SCHEDULE expire_trial
-
-COMMIT
-```
-
-If the transaction rolls back:
+Use KalamDB's existing:
 
 ```text
-trial not created
-schedule not created
+at-least-once
 ```
 
-This is significantly safer than application-managed process timers.
+semantics.
+
+Execution:
+
+```text
+read topic message
+       ↓
+invoke procedure
+       ↓
+begin transaction
+       ↓
+perform work
+       ↓
+commit
+       ↓
+ACK topic offset
+```
+
+If execution fails:
+
+```text
+no ACK
+   ↓
+retry
+```
+
+Suggested trigger options:
+
+```sql
+CREATE TRIGGER chat.process_message
+ON TOPIC chat.message_created
+EXECUTE PROCEDURE chat.on_message_created(PAYLOAD)
+WITH (
+    start = 'latest',
+    retries = 5,
+    concurrency = 4,
+    retry_backoff = '1s'
+);
+```
+
+After maximum retries:
+
+```text
+DLQ
+```
+
+can use an internal system topic.
 
 ---
 
-# 27. Schedule runtime architecture
+# 24. Trigger security context
 
-Do not create one OS timer, actor, or Tokio task per schedule.
-
-Use durable rows plus a small scheduling subsystem.
-
-```text
-system.schedules / system.scheduled_invocations
-              |
-              v
-      Scheduler ownership
-              |
-        near-term heap/index
-              |
-              v
-       due occurrence
-              |
-              v
-internal durable invocation topic
-              |
-              v
-      Function Runtime
-```
-
-The scheduler owns *when to enqueue* work. It does not own the application state or execute the procedure itself.
-
-In a cluster, exactly one scheduler owner must claim each schedule partition using existing cluster leadership or leases.
-
-Execution is distributed through the normal durable invocation path.
-
-This keeps scheduler coordination lightweight and allows function execution to scale independently.
-
----
-
-# 28. Schedule durability and recovery
-
-The durable schedule store is authoritative.
-
-In-memory timers/heaps are caches only.
-
-On restart or failover:
-
-```text
-load due / near-future schedules
-apply misfire policy
-enqueue occurrences with stable occurrence IDs
-continue
-```
-
-A schedule must survive function module replacement because the schedule points to the SQL procedure contract, not directly to a source file or runtime object.
-
-Deployment must reject a revision that removes or incompatibly changes a procedure still referenced by an enabled event.
-
----
-
-# 29. Idempotent execution identity
-
-At-least-once delivery is unavoidable around crashes and retries.
-
-KalamDB should make idempotency easy by giving every background root execution a stable identity.
-
-Examples:
-
-```text
-topic trigger:
-  topic/group/partition/offset
-
-scheduled event:
-  occurrence_id
-
-background enqueue:
-  invocation_id
-```
+Topic-triggered execution needs two identities.
 
 Expose:
 
-```ts
-ctx.execution.idempotencyKey
-```
-
-The key remains stable across retries of the same logical work.
-
-## Internal database effects
-
-KalamDB SHOULD maintain a durable completion marker for background invocation identities.
-
-If a committed invocation is redelivered because an ACK or dispatcher response was lost:
-
 ```text
-same identity detected
-  -> do not repeat committed KalamDB mutations
-  -> acknowledge / mark completed
+ctx.actorUser
+ctx.executionPrincipal
 ```
 
-This can provide effectively-once database effects even though transport remains at-least-once.
+`actorUser`:
 
-## External side effects
+> the user who originally caused the event, when available.
 
-HTTP calls, email, payment APIs, and other external systems cannot be rolled back with the KalamDB transaction.
+`executionPrincipal`:
 
-Functions must pass the stable idempotency key to external systems whenever duplicate effects would be harmful.
+> the function/module identity under which the background consumer executes.
+
+Do not silently grant background functions administrator privileges.
+
+Triggers should execute with explicitly assigned module/function permissions.
 
 ---
 
-# 30. Direct client idempotency
+# 25. Procedure code project
 
-Generated clients should optionally support an idempotency key for mutation procedures.
+A function deployment is a **complete application project**, not one source file per function.
 
-```ts
-await kalam.payments.createCharge(
-  { orderId, amount },
-  { idempotencyKey: `charge:${orderId}` },
-);
-```
-
-This is opt-in rather than mandatory for every `CALL`.
-
-A successful result may be cached durably for a configured TTL under:
-
-```text
-principal + procedure + idempotency key
-```
-
-Repeated calls return the committed result instead of running the procedure again.
-
-Do not add this persistence cost to procedures that do not request idempotency.
-
----
-
-# 31. Procedure implementation project
-
-A function deployment is a complete application project, not one isolated source file per function.
+Example TypeScript project:
 
 ```text
 functions/
@@ -1347,11 +1085,20 @@ functions/
 ├── src/
 │   ├── chat/
 │   │   ├── create_message.ts
+│   │   ├── delete_message.ts
 │   │   └── process_message.ts
-│   ├── billing/
-│   │   └── expire_trial.ts
+│   │
+│   ├── users/
+│   │   └── profile.ts
+│   │
 │   ├── services/
+│   │   ├── fanout.ts
+│   │   └── moderation.ts
+│   │
 │   └── common/
+│       ├── validation.ts
+│       └── permissions.ts
+│
 └── .kalam/
     └── generated/
         ├── contracts.ts
@@ -1360,18 +1107,37 @@ functions/
 
 Developers may use:
 
-- multiple files
-- helper modules
-- classes
-- npm dependencies compatible with the runtime
-- shared utilities
-- tests
+* subfolders
+* helper functions
+* classes
+* modules
+* npm dependencies
+* shared utilities
+* tests
 
-Only public procedure entrypoints follow Kalam conventions.
+Only public procedure entrypoints have a convention.
 
 ---
 
-# 32. No manual SQL-to-code mapping
+# 26. No manual SQL → code mapping
+
+The developer must **not** write:
+
+```text
+chat.create_message = src/foo/create.ts
+```
+
+manually.
+
+Instead:
+
+```text
+schema.sql
+      ↓
+kalam generate
+      ↓
+generated registry
+```
 
 For:
 
@@ -1379,13 +1145,19 @@ For:
 CREATE PROCEDURE chat.create_message(...)
 ```
 
-Kalam can use the conventional implementation path:
+Kalam knows the conventional implementation path:
 
 ```text
 functions/src/chat/create_message.ts
 ```
 
-`kalam generate` may scaffold a missing implementation once.
+If it does not exist:
+
+```bash
+kalam generate
+```
+
+prints:
 
 ```text
 New procedure detected:
@@ -1395,142 +1167,123 @@ Created:
   functions/src/chat/create_message.ts
 ```
 
-Generated stubs are never overwritten after creation.
+The file is scaffolded once.
 
-The generated registry maps SQL contracts to implementation exports automatically.
+It is never overwritten afterward.
 
 ---
 
-# 33. Generated TypeScript server entrypoint
+# 27. Generated TypeScript server entrypoint
+
+Example generated scaffold:
 
 ```ts
 import {
   defineProcedure,
-  type ChatCreateMessage,
-} from '../.kalam/generated/contracts';
+  type ChatCreateMessage
+} from "../.kalam/generated/contracts";
 
 export default defineProcedure<ChatCreateMessage>(
   async (ctx, input) => {
+
     // implementation
-  },
+
+  }
 );
 ```
 
-The generated contract knows:
-
-```text
-input
-output
-context
-nested procedure handles
-```
-
-Changing the SQL signature causes compile-time errors until implementation code is updated.
-
----
-
-# 34. Reuse generated table types and Drizzle
-
-Functions should reuse existing `@kalamdb/orm` table definitions.
+The generated `ChatCreateMessage` contract already knows:
 
 ```ts
-import { messages } from '@generated/schema';
+Input
+Output
+Context
+```
+
+Changing the SQL signature causes TypeScript compilation errors until the implementation is updated.
+
+---
+
+# 28. Using generated table types inside procedures
+
+The server function project should reuse the same generated table definitions already used by KalamDB's TypeScript ORM.
+
+Example:
+
+```ts
+import { messages } from "@generated/schema";
 
 export default defineProcedure<ChatCreateMessage>(
   async (ctx, input) => {
-    const [message] = await ctx.db
-      .insert(messages)
-      .values({
-        conversationId: input.conversationId,
-        senderId: ctx.user.id,
-        body: input.body,
-      })
-      .returning();
+
+    const message =
+      await ctx.db
+        .insert(messages)
+        .values({
+          groupId: input.groupId,
+          senderId: ctx.user.id,
+          body: input.body
+        })
+        .returningOne();
 
     return message;
-  },
+  }
 );
 ```
 
-Drizzle owns table/query ergonomics.
+`message` already has the generated `Message` row type.
 
-KalamDB owns procedure, topic, trigger, schedule, and execution contracts.
+Therefore returning:
+
+```sql
+RETURNS chat.messages
+```
+
+requires no extra model class.
 
 ---
 
-# 35. Do not call KalamDB over HTTP from server functions
+# 29. Do not use HTTP from server functions to KalamDB itself
 
-Never implement internal DB access as:
+`ctx.db` should use an in-process host API.
 
-```text
-V8 / Wasm
-  -> HTTP
-  -> KalamDB
-```
-
-Use:
+Do not implement:
 
 ```text
-V8 / Wasm
-  -> Kalam Host API
-  -> existing executor / transaction layer
+WASM/V8
+   ↓
+HTTP
+   ↓
+KalamDB
 ```
 
-The host API automatically inherits:
+Implement:
 
 ```text
-identity
-namespace
-transaction
-cancellation
-execution ID
+WASM/V8
+   ↓
+Kalam Host API
+   ↓
+existing executor / transaction layer
 ```
 
-No server function manually passes transaction IDs or user IDs between internal operations.
+The Drizzle-like API may compile to host calls internally.
 
 ---
 
-# 36. Host capabilities
+# 30. Runtime abstraction
 
-Initial function capabilities:
+A deployed module should not expose runtime implementation details to callers.
 
-```text
-ctx.db
-ctx.functions
-ctx.topics
-ctx.schedules
-ctx.user
-ctx.request
-ctx.execution
-ctx.log
-ctx.abortSignal
-```
-
-Do not automatically expose:
+KalamDB understands:
 
 ```text
-filesystem
-arbitrary TCP
-process spawning
-raw environment variables
-native Node addons
+Procedure contract
+        +
+Module artifact
 ```
 
-External HTTP should be an explicit capability.
-
-```toml
-[functions.capabilities]
-http = false
-filesystem = false
-```
-
-When HTTP is enabled, KalamDB should still enforce timeout, cancellation, and optional hostname allowlists.
-
----
-
-# 37. Runtime abstraction
-
-Keep language runtime independent of function contracts.
+Suggested runtime interface:
 
 ```text
 KalamModuleRuntime
@@ -1540,46 +1293,217 @@ invoke(procedure, context, args)
 shutdown()
 ```
 
-Possible implementations:
+Implementations:
 
 ```text
-TypescriptRuntime
 WasmRuntime
+TypescriptRuntime
 ```
-
-Recommended initial language strategy:
-
-```text
-TypeScript -> bundled JavaScript -> sandboxed V8 isolate
-Rust       -> Wasm Component     -> Wasmtime
-```
-
-Do not expose V8 or Wasmtime implementation details in generated clients.
 
 ---
 
-# 38. TypeScript project support
+# 31. Rust and compiled languages
 
-A complete TypeScript project means:
+Rust implementation:
 
 ```text
-multiple files
-subfolders
-package.json
-pure JS/TS npm packages
-classes
-async/await
-bundling
-tests
+Rust project
+   ↓
+Wasm Component
+   ↓
+Wasmtime
 ```
 
-It does not mean unrestricted Node.js.
+The whole Rust project may contain unlimited source files/modules and dependencies compatible with the WASI/Wasm environment.
 
-The runtime sandbox remains capability-based.
+One compiled module may export many Kalam procedures.
 
-Configuration:
+---
+
+# 32. Full TypeScript project support
+
+Yes, KalamDB can support a **real multi-file TypeScript project**.
+
+Two runtime strategies are viable.
+
+## Option A — TypeScript + V8
+
+Recommended for first-class TypeScript support.
+
+Build:
+
+```text
+TypeScript project
+      ↓
+tsc/esbuild
+      ↓
+bundled JavaScript
+      ↓
+V8 isolate
+```
+
+Advantages:
+
+* real TypeScript syntax
+* normal classes/modules
+* npm ecosystem
+* async/await
+* familiar JavaScript semantics
+* smaller conceptual jump for web developers
+
+This is similar to the architecture SpacetimeDB 2.0 currently uses for TypeScript modules.
+
+## Option B — TypeScript → JavaScript → Wasm Component
+
+Build:
+
+```text
+TypeScript
+    ↓
+transpile
+    ↓
+JavaScript
+    ↓
+componentize-js
+    ↓
+WebAssembly Component
+    ↓
+Wasmtime
+```
+
+This is technically possible today.
+
+It keeps one runtime technology in KalamDB:
+
+```text
+Wasmtime
+```
+
+but has tradeoffs:
+
+* JS engine is embedded in the component
+* larger artifacts
+* Node compatibility is incomplete
+* not every npm package works
+* native Node addons do not work
+* filesystem/network APIs require explicit capabilities
+
+---
+
+# 33. Recommended TypeScript decision
+
+Support:
 
 ```toml
+[functions]
+runtime = "typescript"
+path = "functions"
+```
+
+The public contract should not say whether TypeScript internally uses V8 forever.
+
+For the initial implementation I recommend:
+
+```text
+TypeScript → V8
+Rust       → Wasmtime
+```
+
+because it gives users genuine TypeScript rather than a TypeScript-like language.
+
+Later optionally add:
+
+```text
+typescript_component
+```
+
+for users who explicitly want Wasm isolation.
+
+---
+
+# 34. Important npm limitation
+
+"Complete TypeScript project" should mean:
+
+* multiple files
+* subfolders
+* package.json
+* pure JavaScript/TypeScript npm packages
+* classes
+* async code
+* bundling
+* tests
+
+It should **not** mean unrestricted Node.js.
+
+Functions must not automatically receive:
+
+```text
+fs
+net
+child_process
+process.env
+native .node addons
+```
+
+Those would bypass the KalamDB sandbox.
+
+Capabilities must be explicit.
+
+---
+
+# 35. Function host capabilities
+
+Initial server functions receive:
+
+```text
+ctx.db.query()
+ctx.db.execute()
+
+ctx.topics.publish()
+
+ctx.user
+ctx.request
+
+ctx.log
+```
+
+No default:
+
+```text
+filesystem
+arbitrary TCP
+process spawning
+environment variables
+HTTP
+```
+
+External HTTP can be added later as an explicit capability.
+
+Example:
+
+```toml
+[functions.capabilities]
+http = false
+filesystem = false
+```
+
+---
+
+# 36. Module/project configuration
+
+Extend `kalam.toml`.
+
+Example:
+
+```toml
+[project]
+name = "masky"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+
 [functions]
 enabled = true
 path = "functions"
@@ -1595,75 +1519,1217 @@ timeout_ms = 5000
 [functions.capabilities]
 http = false
 filesystem = false
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+
+[schema.targets.dart]
+output = "lib/generated/kalam.dart"
+```
+
+This configures the **module project**, not individual functions.
+
+There is still no per-procedure mapping.
+
+---
+
+# 37. Generated artifacts
+
+One command:
+
+```bash
+kalam generate
+```
+
+should generate all client/server contracts.
+
+Conceptually:
+
+```text
+schema.sql
+    │
+    ▼
+Kalam Schema Compiler
+    │
+    ├── tables
+    ├── types
+    ├── topics
+    ├── procedures
+    └── triggers
+          │
+          ▼
+     Schema IR
+          │
+ ┌────────┼────────┬─────────┐
+ ▼        ▼        ▼         ▼
+TS      Dart     Rust     Server contracts
 ```
 
 ---
 
-# 39. Unified `ExecutionContext`
+# 38. TypeScript client generation
 
-Do not introduce a second heavyweight `FunctionExecutionContext`.
+Generated:
 
-Extend the existing KalamDB `ExecutionContext`.
+```ts
+export interface SendMessageResult {
+   message: Message;
+   recipients: RecipientResult[];
+   fanoutCount: number;
+}
+
+export interface KalamProcedures {
+   chat: {
+      createMessage(
+        input: CreateMessageInput
+      ): Promise<SendMessageResult>;
+   };
+}
+```
+
+User:
+
+```ts
+const result =
+    await kalam.chat.createMessage({
+        groupId,
+        body
+    });
+```
+
+---
+
+# 39. Existing Drizzle integration
+
+Continue generating tables through the existing KalamDB ORM integration.
+
+Conceptually generated output contains both:
+
+```ts
+// database schema
+export const messages = ...
+
+export type Message =
+    typeof messages.$inferSelect;
+```
+
+and:
+
+```ts
+// application operations
+export interface SendMessageResult {
+    message: Message;
+    fanoutCount: number;
+}
+
+export const chat = {
+    createMessage: ...
+};
+```
+
+Drizzle owns table/query ergonomics.
+
+KalamDB owns procedure/topic contracts.
+
+Do not modify Drizzle itself to understand Kalam procedures.
+
+---
+
+# 40. Local development
+
+Extend:
+
+```bash
+kalam dev
+```
+
+to watch:
+
+```text
+schema.sql
+functions/src/**
+package.json
+```
+
+Development loop:
+
+```text
+schema changes
+      ↓
+parse/validate
+      ↓
+regenerate types
+      ↓
+rebuild function project
+      ↓
+validate module contract
+      ↓
+hot activate new revision
+```
+
+Function source change:
+
+```text
+source changes
+      ↓
+rebuild
+      ↓
+new local revision
+      ↓
+hot swap
+```
+
+---
+
+# 41. Deployment
+
+```bash
+kalam deploy
+```
+
+should perform:
+
+```text
+1. Parse SQL schema
+2. Generate canonical contract
+3. Build function project
+4. Inspect built module exports
+5. Validate implementation against SQL
+6. Validate permissions/capabilities
+7. Apply schema migration (types, routines, triggers → catalog rows)
+8. Upload module artifact bytes
+9. Insert revision + artifact catalog rows
+10. Activate revision (point module at new revision)
+11. Run health validation
+```
+
+A contract mismatch prevents deployment.
+
+Deploy is transactional with respect to catalog state: either the new types/routines/revision/artifact rows become the active contract together, or none of them do.
+
+---
+
+# 42. Module versions
+
+Version the **whole function module**, not every individual source file.
+
+Example:
+
+```text
+backend
+
+revision 41
+revision 42
+revision 43 ← active
+```
+
+Revision metadata is stored as rows in `system.function_revisions` (see §49), including:
+
+```text
+revision_id
+module_name
+artifact_id
+artifact_hash
+source_hash
+schema_hash
+runtime
+created_at
+created_by
+status
+```
+
+Each revision is immutable. Artifact file bytes are retained for every non-purged revision so rollback can switch the active pointer without rebuilding.
+
+---
+
+# 43. Rollback
+
+```bash
+kalam functions rollback backend 42
+```
+
+switches:
+
+```text
+revision 43
+    ↓
+revision 42
+```
+
+without rebuilding.
+
+Rollback updates the active revision pointer on `system.function_modules`; it does not rewrite historical revision or artifact rows.
+
+Rollback is allowed only if the old module is compatible with the current procedure/schema contract.
+
+---
+
+# 44. Source code management
+
+KalamDB should not replace Git.
+
+Recommended:
+
+```text
+Git
+ ↓
+TypeScript/Rust source code
+ ↓
+kalam build
+ ↓
+deployable artifact
+ ↓
+KalamDB catalog + artifact store
+```
+
+KalamDB stores in the **system catalog** (and linked artifact storage):
+
+* compiled artifact file bytes (`system.function_artifacts`)
+* revision metadata (`system.function_revisions`)
+* module active pointer (`system.function_modules`)
+* types and type fields (`system.types`, `system.type_fields`)
+* procedures and parameters (`system.routines`, `system.routine_parameters`)
+* triggers (`system.triggers`)
+* manifest
+* schema digest
+* source commit/hash
+* optionally source archive (as an additional artifact row)
+
+Git remains source control.
+
+A hosted Kalam Cloud service could later offer remote builds from source.
+
+---
+
+# 45. Build manifest
+
+Build output includes an automatically generated manifest.
+
+Example:
+
+```json
+{
+  "module": "backend",
+  "schemaHash": "...",
+  "procedures": {
+    "chat.create_message": {
+      "input": "...",
+      "output": "chat.send_message_result"
+    },
+    "chat.process_message": {
+      "input": "...",
+      "output": "void"
+    }
+  }
+}
+```
+
+The user never writes this manually.
+
+---
+
+# 46. Runtime validation
+
+Static type generation is not enough.
+
+KalamDB validates:
+
+```text
+arguments
+return value
+topic payload
+```
+
+at runtime.
+
+Example:
+
+SQL says:
+
+```sql
+RETURNS chat.messages
+```
+
+but implementation returns:
+
+```json
+{
+  "foo": "bar"
+}
+```
+
+Invocation fails with:
+
+```text
+PROCEDURE_RETURN_TYPE_MISMATCH
+```
+
+before returning invalid data to the client.
+
+---
+
+# 47. SQL response model
+
+Existing SQL HTTP endpoint should return procedure results through the standard result format.
+
+For:
+
+```sql
+CALL chat.create_message(...);
+```
+
+table result:
+
+```json
+{
+  "type": "procedure",
+  "columns": [...],
+  "rows": [...]
+}
+```
+
+Named composite results may be represented naturally as an object:
+
+```json
+{
+  "type": "procedure",
+  "value": {
+    "message": {...},
+    "fanoutCount": 5
+  }
+}
+```
+
+The SDK normalizes these wire representations automatically.
+
+---
+
+# 48. PGWire behavior
+
+For simple results:
+
+```text
+scalar → one column
+table row → normal columns
+SETOF → normal rows
+```
+
+For nested composite types, V1 may encode nested values as JSON/JSONB rather than immediately implementing PostgreSQL composite OIDs.
+
+The generated Kalam SDK hides this implementation detail.
+
+Native PostgreSQL composite type protocol support can be added later.
+
+---
+
+# 49. Procedure catalog and artifact storage
+
+Function contracts, types, revisions, and deployable files are first-class **system catalog** data — the same durability and queryability model as existing `system.*` metadata tables.
+
+Add system metadata tables:
+
+```text
+system.types
+system.type_fields
+system.routines
+system.routine_parameters
+system.triggers
+system.function_modules
+system.function_revisions
+system.function_artifacts
+system.function_runs
+```
+
+`information_schema.routines` (and related type views where useful) should expose standards-compatible routine information where possible.
+
+## Catalog ownership
+
+| Concern | Catalog |
+|---|---|
+| Named composite / request / response / event types | `system.types`, `system.type_fields` |
+| Procedure signatures and return contracts | `system.routines`, `system.routine_parameters` |
+| Topic → procedure bindings | `system.triggers` |
+| Deployable module identity + active revision | `system.function_modules` |
+| Immutable module revisions | `system.function_revisions` |
+| Compiled wasm / JS bundle / optional source archive bytes | `system.function_artifacts` |
+| Execution history / observability | `system.function_runs` |
+
+Types declared with `CREATE TYPE` are inserted as catalog rows at schema apply time, next to tables/topics — not only generated into client SDKs.
+
+## Suggested row shapes
+
+### `system.types` / `system.type_fields`
+
+```text
+system.types
+  type_id
+  namespace
+  type_name
+  kind            -- composite | enum | alias (V1: composite)
+  schema_hash
+  created_at
+  updated_at
+
+system.type_fields
+  type_id
+  field_ordinal
+  field_name
+  field_type      -- scalar, table row ref, nested type, array
+  is_nullable
+```
+
+### `system.routines` / `system.routine_parameters`
+
+```text
+system.routines
+  routine_id
+  namespace
+  routine_name
+  routine_kind    -- procedure | function
+  return_kind     -- scalar | row | setof | composite | void | jsonb
+  return_type_id  -- nullable FK → system.types / table type
+  module_name     -- implementing function module
+  security_mode
+  created_at
+  updated_at
+
+system.routine_parameters
+  routine_id
+  param_ordinal
+  param_name
+  param_mode      -- in | out | inout
+  param_type
+  is_nullable
+  default_expr    -- optional
+```
+
+### `system.function_modules` / `system.function_revisions` / `system.function_artifacts`
+
+```text
+system.function_modules
+  module_name
+  runtime         -- typescript | wasm | ...
+  active_revision_id
+  status          -- active | disabled
+  created_at
+  updated_at
+
+system.function_revisions
+  revision_id
+  module_name
+  revision_number
+  artifact_id     -- FK → system.function_artifacts
+  artifact_hash
+  source_hash
+  schema_hash
+  manifest_json
+  created_at
+  created_by
+  status          -- pending | active | inactive | failed
+
+system.function_artifacts
+  artifact_id
+  module_name
+  revision_id
+  kind            -- compiled_module | source_archive | manifest
+  content_type    -- application/wasm | application/javascript | ...
+  content_hash
+  size_bytes
+  storage_backend -- catalog_blob | filestore (implementation choice)
+  storage_key     -- opaque locator when bytes live in filestore
+  created_at
+```
+
+Artifact **bytes** may be stored either:
+
+1. inline / in the catalog blob store behind `system.function_artifacts`, or
+2. in the existing filestore / object-store path, with `storage_key` + hash recorded in the catalog row.
+
+Either way, the **catalog row is authoritative**: deploy, activate, rollback, and load always resolve files through `system.function_artifacts` joined to the active revision.
+
+## Deploy writes catalog rows
+
+On successful `kalam deploy`:
+
+```text
+1. Upsert CREATE TYPE definitions → system.types / system.type_fields
+2. Upsert CREATE PROCEDURE definitions → system.routines / system.routine_parameters
+3. Upsert CREATE TRIGGER definitions → system.triggers
+4. Insert compiled artifact → system.function_artifacts (+ bytes)
+5. Insert immutable revision → system.function_revisions
+6. Point system.function_modules.active_revision_id at the new revision
+```
+
+Runtime load path:
+
+```text
+CALL / trigger
+  → system.routines (contract)
+  → system.function_modules.active_revision_id
+  → system.function_revisions
+  → system.function_artifacts
+  → ModuleRuntime.load(artifact bytes)
+```
+
+## Durability rules
+
+* Revision and artifact rows are immutable after insert.
+* Activating or rolling back only updates `system.function_modules.active_revision_id`.
+* Dropping a type/procedure/trigger updates catalog rows through normal schema DDL; active revisions must remain compatible with the live contract or deploy/rollback is rejected.
+* Purging old inactive revisions may delete artifact bytes only after an explicit retention/GC policy; catalog history should remain queryable for retained revisions.
+
+---
+
+
+# 50. Observability
+
+Every procedure execution receives:
+
+```text
+execution_id
+request_id
+procedure
+module_revision
+user
+start_time
+duration
+status
+error
+```
+
+Topic-triggered execution additionally records:
+
+```text
+topic
+partition
+offset
+event_id
+retry_count
+```
+
+CLI:
+
+```bash
+kalam functions logs
+kalam functions logs chat.create_message
+kalam functions runs chat.create_message
+```
+
+---
+
+# 51. Resource limits
+
+Every runtime invocation must enforce:
+
+```text
+timeout
+memory
+maximum return size
+maximum nested procedure depth
+maximum DB operations
+maximum rows
+```
+
+Wasm additionally:
+
+```text
+fuel / epoch interruption
+```
+
+V8:
+
+```text
+isolate memory limit
+execution deadline
+termination
+```
+
+One broken user procedure must never compromise the KalamDB server.
+
+---
+
+# 52. Recommended `create_message` example
+
+Schema:
+
+```sql
+CREATE USER TABLE chat.messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    group_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TYPE chat.delivery_result AS (
+    user_id TEXT,
+    delivered BOOLEAN
+);
+
+CREATE TYPE chat.send_message_result AS (
+    message chat.messages,
+    deliveries chat.delivery_result[],
+    fanout_count INT
+);
+
+CREATE TYPE chat.message_created_event AS (
+    message_id BIGINT,
+    group_id TEXT,
+    sender_id TEXT
+);
+
+CREATE TOPIC chat.message_created
+TYPE chat.message_created_event;
+
+CREATE PROCEDURE chat.create_message(
+    group_id TEXT,
+    body TEXT
+)
+RETURNS chat.send_message_result
+SECURITY INVOKER;
+
+CREATE PROCEDURE chat.after_message_created(
+    event chat.message_created_event
+)
+RETURNS VOID;
+
+CREATE TRIGGER chat.message_created_handler
+ON TOPIC chat.message_created
+EXECUTE PROCEDURE chat.after_message_created(PAYLOAD)
+WITH (
+    retries = 5,
+    concurrency = 4
+);
+```
+
+---
+
+# 53. TypeScript implementation
+
+Generated implementation file:
+
+```text
+functions/src/chat/create_message.ts
+```
+
+User writes:
+
+```ts
+import { defineProcedure } from "@kalamdb/server";
+import type {
+  ChatCreateMessage
+} from "../.kalam/generated/contracts";
+
+export default defineProcedure<ChatCreateMessage>(
+  async (ctx, input) => {
+
+    const message =
+      await ctx.db.messages.insert({
+        groupId: input.groupId,
+        senderId: ctx.user.id,
+        body: input.body
+      });
+
+    const members =
+      await ctx.db.groupMembers
+        .where({ groupId: input.groupId });
+
+    const deliveries = [];
+
+    for (const member of members) {
+
+      await ctx.db.userUpdates.upsert({
+        userId: member.userId,
+        groupId: input.groupId,
+        lastSeq: message._seq
+      });
+
+      deliveries.push({
+        userId: member.userId,
+        delivered: true
+      });
+    }
+
+    await ctx.topics.publish(
+      "chat.message_created",
+      {
+        messageId: message.id,
+        groupId: message.groupId,
+        senderId: message.senderId
+      }
+    );
+
+    return {
+      message,
+      deliveries,
+      fanoutCount: deliveries.length
+    };
+  }
+);
+```
+
+All operations participate in one KalamDB transaction.
+
+---
+
+# 54. Client usage
+
+The generated frontend API becomes:
+
+```ts
+const result =
+    await kalam.chat.createMessage({
+        groupId,
+        body: text
+    });
+
+console.log(result.message);
+console.log(result.fanoutCount);
+```
+
+No:
+
+```text
+REST controller
+DTO
+API route
+fetch()
+manual JSON model
+topic fanout worker
+```
+
+is required.
+
+---
+
+# 55. Proposed implementation architecture
+
+```text
+                         schema.sql
+                             │
+                             ▼
+                     Schema Compiler
+                             │
+                         Contract IR
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+         Table types     Procedures      Topics
+              │              │              │
+              └──────────────┼──────────────┘
+                             │
+                      Code Generation
+                             │
+             ┌───────────────┴──────────────┐
+             ▼                              ▼
+        Client SDK                  Server Contracts
+
+
+Client
+   │
+   │ CALL procedure
+   ▼
+SqlExecutor
+   │
+   ▼
+ProcedureHandler
+   │
+   ▼
+ProcedureRegistry
+   │
+   ▼
+ModuleRuntime
+   │
+ ┌─┴─────────────┐
+ ▼               ▼
+Wasmtime         V8
+   │               │
+   └──────┬────────┘
+          ▼
+     Kalam Host API
+          │
+  ┌───────┼────────┐
+  ▼       ▼        ▼
+ DB     Topics   Context
+```
+
+Topic execution enters at:
+
+```text
+Topic Store
+    │
+    ▼
+Trigger Dispatcher
+    │
+    ▼
+ProcedureRegistry
+```
+
+and then uses exactly the same procedure runtime.
+
+---
+
+# 56. Implementation phases
+
+## Phase 1 — Contract system
+
+Implement:
+
+```text
+CREATE TYPE
+CREATE PROCEDURE
+system.types / system.type_fields catalog rows
+system.routines / system.routine_parameters catalog rows
+schema parser
+schema IR
+```
+
+Support:
+
+```text
+scalar returns
+table row returns
+SETOF table
+composite returns
+JSONB
+VOID
+```
+
+## Phase 2 — Callable procedures
+
+Implement:
+
+```text
+CALL namespace.procedure(...)
+ExecutionContext propagation
+transactions
+result conversion
+nested procedure calls
+```
+
+Start with Rust/Wasm or TypeScript runtime.
+
+## Phase 3 — Code generation
+
+Extend:
+
+```bash
+kalam schema gen
+```
+
+into:
+
+```bash
+kalam generate
+```
+
+Generate:
+
+```text
+Drizzle tables
+custom types
+procedure request/response types
+client methods
+server contracts
+entrypoint stubs
+```
+
+## Phase 4 — Topic triggers
+
+Implement:
+
+```text
+CREATE TRIGGER ... ON TOPIC
+durable trigger consumers
+retry
+ACK
+DLQ
+trigger execution context
+```
+
+Reuse existing topic offsets/consumer machinery.
+
+## Phase 5 — TypeScript projects
+
+Add:
+
+```text
+functions/package.json
+functions/tsconfig.json
+multi-file build
+V8 sandbox
+generated server SDK
+hot reload
+```
+
+## Phase 6 — Deployment/versioning
+
+Implement:
+
+```text
+system.function_modules / function_revisions / function_artifacts
+immutable revisions with catalog rows
+artifact file storage linked from catalog
+type + routine catalog upserts on deploy
+compatibility checks
+activation / rollback via active_revision_id
+logs
+metrics
+```
+
+## Phase 7 — Additional runtimes
+
+Add:
+
+```text
+Rust/Wasm
+TypeScript Component/Wasm
+possibly C#
+```
+
+all behind the same procedure ABI.
+
+---
+
+# 57. Final product model
+
+KalamDB project:
+
+```text
+                      schema.sql
+                          │
+               Backend source of truth
+                          │
+       ┌──────────────────┼──────────────────┐
+       │                  │                  │
+     Tables            Procedures          Topics
+       │                  │                  │
+       │                  └─────────┐        │
+       │                            ▼        │
+       │                     Functions code │
+       │                     TS / Rust      │
+       │                            │        │
+       │                            ▼        │
+       │                        Runtime      │
+       │                            │        │
+       └────────────────────────────┼────────┘
+                                    │
+                              kalam generate
+                                    │
+                   ┌────────────────┼────────────────┐
+                   ▼                ▼                ▼
+              TypeScript           Dart            Rust
+                   │
+                   ▼
+             Application
+
+await kalam.chat.createMessage(...)
+```
+
+The developer owns:
+
+```text
+1. SQL contract
+2. Business logic source code
+```
+
+KalamDB owns everything else:
+
+```text
+type generation
+client bindings
+function registration
+topic consumption
+authentication context
+transactions
+deployment
+versioning
+runtime isolation
+retries
+observability
+```
+
+---
+
+# 58. Key design decisions
+
+**SQL is the only backend contract source of truth.**
+
+**Tables are automatically reusable row types.**
+
+**`CREATE TYPE` provides reusable request/response/event objects.**
+
+**`CALL` is used for side-effecting business logic.**
+
+**Topic triggers invoke the exact same procedure runtime.**
+
+**No manual procedure-to-source mapping is required.**
+
+**A function module is a complete multi-file codebase, not a collection of isolated snippets.**
+
+**TypeScript should be supported as a real TypeScript project.**
+
+**For maximum TypeScript/npm compatibility, use a sandboxed V8 runtime; for Rust and other compiled languages, use Wasmtime.**
+
+**Generated SDKs make `CALL` feel like a normal typed method call.**
+
+The resulting abstraction is effectively:
+
+> **SQL defines your backend. Code implements its behavior. KalamDB generates and runs the API.**
+
+
+# 59. Unified Execution Model
+
+KalamDB SHALL use a single root execution abstraction for SQL requests, callable procedures and topic-triggered functions.
+
+The existing:
+
+```rust
+ExecutionContext
+```
+
+SHALL be extended rather than introducing a parallel `FunctionExecutionContext`.
 
 Conceptually:
 
+```text
+                     ExecutionContext
+                            │
+          ┌─────────────────┼──────────────────┐
+          │                 │                  │
+          ▼                 ▼                  ▼
+      Identity        TransactionScope      Control
+  user / role / ns                           │
+                                             │
+                       ┌─────────────────────┼────────────┐
+                       ▼                     ▼            ▼
+                   Functions            DataFusion      Topics
+                       │                    lazy
+                       ▼
+                 nested functions
+```
+
+The same context flows through the entire root execution.
+
+---
+
+# 60. ExecutionContext Responsibilities
+
+Extend the existing KalamDB `ExecutionContext` to conceptually contain:
+
 ```rust
 pub struct ExecutionContext {
+    // Existing
     auth_session: AuthSession,
     namespace_id: Option<NamespaceId>,
 
     base_session_context: Arc<SessionContext>,
     session_context_cache: Arc<OnceCell<SessionContext>>,
 
+    // New
     transaction_scope: TransactionScope,
-    execution_control: Option<Arc<ExecutionControl>>,
-    function_stack: SmallVec<[ProcedureId; 4]>,
 
-    source_context: ExecutionSourceContext,
+    execution_control: Option<Arc<ExecutionControl>>,
+
+    function_stack: SmallVec<[ProcedureId; 4]>,
 }
 ```
 
-The semantic ownership is:
+The actual implementation may optimize or separate fields internally.
+
+The semantic ownership SHALL remain:
 
 ```text
 ExecutionContext
-  |- identity
-  |- namespace
-  |- transaction scope
-  |- cancellation
-  |- function nesting
-  |- source metadata
-  `- lazy DataFusion context
+    ├── identity
+    ├── namespace
+    ├── transaction scope
+    ├── cancellation
+    ├── function nesting
+    └── lazy DataFusion context
 ```
+
+The existing DataFusion design already lazily creates a per-user `SessionContext` from a shared base session and caches it in `OnceCell`, so this model extends the current architecture rather than replacing it.
 
 ---
 
-# 40. Root execution sources
+# 61. Root Execution
 
-A root execution is created for independently tracked business work.
+A **root execution** is created for any independently executing server operation that requires lifecycle tracking.
+
+Examples:
 
 ```text
-client CALL
-PGWire CALL
+CALL procedure
 topic-triggered procedure
-scheduled event
-dynamic schedule
-background invocation
+PGWire procedure invocation
+scheduled procedure — future
 ```
 
-Ordinary lightweight SQL queries may continue using the existing ephemeral context without active execution registration.
+A normal lightweight SQL query MAY continue using the existing ephemeral `ExecutionContext` without registering itself as a tracked execution.
 
-This keeps observability out of the normal SQL fast path.
+This prevents execution observability from adding unnecessary overhead to the ordinary SQL fast path.
 
 ---
 
-# 41. DataFusion remains lazy
+# 62. Execution Runtime Is Not DataFusion
 
-DataFusion is an execution engine used by `ExecutionContext`; it is not the root runtime abstraction.
+DataFusion is an execution engine used by an `ExecutionContext`.
 
-A procedure may complete without creating a DataFusion session.
+It is not the root execution abstraction.
 
-If it needs:
+For example:
+
+```text
+CALL chat.create_message(...)
+       │
+       ▼
+ExecutionContext
+       │
+       ▼
+TypeScript / Wasm
+       │
+       ├── INSERT
+       ├── Topic publish
+       │
+       └── ctx.db.query()
+                  │
+                  ▼
+              DataFusion
+```
+
+A server function may complete without ever creating a DataFusion `SessionContext`.
+
+Therefore:
+
+```text
+ExecutionContext
+```
+
+owns:
+
+```text
+DataFusion
+```
+
+rather than the reverse.
+
+---
+
+# 63. Lazy DataFusion Creation
+
+Preserve the current lazy DataFusion behavior.
+
+Initially:
+
+```text
+ExecutionContext
+
+DataFusion SessionContext:
+NOT CREATED
+```
+
+If execution requires:
 
 ```text
 SELECT
@@ -1672,18 +2738,708 @@ aggregation
 DataFusion expression evaluation
 ```
 
-reuse the current lazy per-user `SessionContext` cache.
+the existing:
+
+```rust
+session_context_cache:
+    OnceCell<SessionContext>
+```
+
+creates the per-user DataFusion session.
+
+Subsequent queries inside the same root execution reuse it.
+
+The current implementation already shares heavy DataFusion state and clones mostly `Arc`-backed `SessionState`; KalamDB's current source estimates the per-request clone in the low-microsecond range.
+
+---
+
+# 64. Automatic Function Transaction
+
+A root procedure invocation SHALL behave as one transactional unit by default.
+
+Example:
+
+```sql
+CALL app.function1();
+```
+
+where:
 
 ```text
-ExecutionContext
-  -> function runtime
-      -> host DB query
-          -> lazy DataFusion SessionContext
+function1
+    │
+    ├── INSERT A
+    ├── UPDATE B
+    │
+    └── function2
+           │
+           ├── INSERT C
+           └── UPDATE D
+```
+
+SHALL behave as:
+
+```text
+                 Root Execution EX100
+                         │
+                         ▼
+                    Transaction TX1
+                         │
+        ┌────────────────┼─────────────────┐
+        ▼                ▼                 ▼
+    INSERT A         UPDATE B          function2
+                                         │
+                                  ┌──────┴──────┐
+                                  ▼             ▼
+                              INSERT C       UPDATE D
+
+                         │
+                         ▼
+                    all successful?
+                       /     \
+                     yes      no
+                      │        │
+                   COMMIT   ROLLBACK
+```
+
+If `function2` fails:
+
+```text
+A rolled back
+B rolled back
+C rolled back
+D rolled back
 ```
 
 ---
 
-# 42. Procedure CALL fast path
+# 65. Lazy Transaction Creation
+
+A procedure SHALL NOT necessarily create a database transaction immediately.
+
+Example:
+
+```typescript
+return {
+    userId: ctx.user.id
+};
+```
+
+may require no database transaction.
+
+Initial state:
+
+```text
+TransactionScope::None
+```
+
+The first transactional mutation:
+
+```text
+INSERT
+UPDATE
+DELETE
+transactional topic publish
+```
+
+starts a transaction lazily.
+
+Example:
+
+```text
+CALL create_message()
+
+TransactionScope = NONE
+
+        │
+        ▼
+
+INSERT message
+
+        │
+        ▼
+
+BEGIN TX42
+
+TransactionScope = OWNED(TX42)
+```
+
+All later transactional work uses `TX42`.
+
+---
+
+# 66. TransactionScope
+
+Introduce a logical abstraction:
+
+```rust
+pub enum TransactionScope {
+    None,
+
+    Owned(TransactionId),
+
+    Borrowed(TransactionId),
+
+    Aborted(TransactionId),
+
+    Committing(TransactionId),
+}
+```
+
+## Owned
+
+The root procedure created the transaction.
+
+It is responsible for:
+
+```text
+COMMIT
+ROLLBACK
+```
+
+## Borrowed
+
+The procedure is executing inside an existing SQL transaction.
+
+It participates in that transaction but does not own its final commit.
+
+---
+
+# 67. Procedure Inside Explicit SQL Transaction
+
+Example:
+
+```sql
+BEGIN;
+
+CALL app.function1();
+
+INSERT INTO ...;
+
+CALL app.function3();
+
+COMMIT;
+```
+
+The transaction is:
+
+```text
+SQL transaction TX55
+        │
+        ├── function1
+        ├── INSERT
+        └── function3
+```
+
+Each function receives:
+
+```text
+TransactionScope::Borrowed(TX55)
+```
+
+The procedure MUST NOT commit `TX55`.
+
+Only:
+
+```sql
+COMMIT
+```
+
+ends the transaction.
+
+---
+
+# 68. Nested Function Calls
+
+Nested procedure calls SHALL reuse the same root `ExecutionContext`.
+
+Example:
+
+```text
+function1()
+   ↓
+function2()
+   ↓
+function3()
+```
+
+SHALL NOT normally create:
+
+```text
+3 actors
+3 transactions
+3 execution registries
+```
+
+Instead:
+
+```text
+                    Root Execution
+                          │
+                    ExecutionContext
+                          │
+                    Transaction TX1
+                          │
+                   Function Stack
+                          │
+               function1 → function2 → function3
+```
+
+This keeps nested calls extremely cheap.
+
+---
+
+# 69. Function Stack
+
+Track nested functions using IDs rather than allocated names.
+
+Recommended representation:
+
+```rust
+SmallVec<[ProcedureId; 4]>
+```
+
+Example:
+
+```text
+EX100
+
+chat.create_message
+   → chat.fanout
+      → notifications.enqueue
+```
+
+The stack may be exposed for debugging.
+
+Procedure names are resolved from catalog metadata only when required.
+
+---
+
+# 70. Nested Failure Semantics
+
+For V1, a database/runtime failure inside any nested procedure SHALL abort the transaction.
+
+Example:
+
+```typescript
+try {
+    await ctx.functions.billing.charge();
+} catch (e) {
+    // application catches error
+}
+```
+
+If `billing.charge()` caused a transactional failure:
+
+```text
+TransactionScope = ABORTED
+```
+
+The caller cannot later commit the transaction.
+
+This follows a strict transactional model similar to PostgreSQL failed transactions.
+
+Future versions may support:
+
+```text
+SAVEPOINT
+```
+
+or isolated child transactions.
+
+Not required for V1.
+
+---
+
+# 71. Topic Trigger Transactions
+
+A topic-triggered function gets the exact same execution model.
+
+```text
+Topic event
+    │
+    ▼
+ExecutionContext
+    │
+    ▼
+Procedure
+    │
+    ▼
+lazy Transaction
+```
+
+Success:
+
+```text
+COMMIT
+  ↓
+ACK topic offset
+```
+
+Failure:
+
+```text
+ROLLBACK
+  ↓
+NO ACK
+  ↓
+retry according to trigger policy
+```
+
+This integrates naturally with KalamDB's existing durable topic consumer and ACK model.
+
+---
+
+# 72. Topic Publication Inside Transactions
+
+A function may perform:
+
+```typescript
+await ctx.topics.publish(...);
+```
+
+If the root execution has a transactional scope, publication SHOULD participate in that transaction.
+
+Example:
+
+```text
+BEGIN
+
+INSERT message
+UPDATE inbox
+PUBLISH messages.created
+
+COMMIT
+```
+
+If execution fails:
+
+```text
+message       not committed
+inbox update  not committed
+topic event   not published
+```
+
+This avoids the traditional database/event dual-write problem.
+
+---
+
+# 73. Root Execution Cancellation
+
+Tracked executions receive an:
+
+```text
+ExecutionControl
+```
+
+attached to the existing `ExecutionContext`.
+
+Do not create another full execution context.
+
+Suggested lightweight form:
+
+```rust
+pub struct ExecutionControl {
+    id: ExecutionId,
+
+    procedure_id: ProcedureId,
+
+    started_at: Instant,
+
+    state: AtomicU8,
+    operation: AtomicU8,
+
+    cancellation: CancellationToken,
+}
+```
+
+Implementation should prefer numeric IDs/enums over strings.
+
+---
+
+# 74. ActiveExecutionRegistry
+
+Introduce:
+
+```text
+ActiveExecutionRegistry
+```
+
+rather than a heavyweight:
+
+```text
+FunctionExecutionManager
+```
+
+The registry contains only **currently active tracked executions**.
+
+Conceptually:
+
+```rust
+DashMap<ExecutionId, Arc<ExecutionControl>>
+```
+
+The registry MUST NOT persist execution start/end events to RocksDB or Raft.
+
+---
+
+# 75. Registry Cost Model
+
+Function invocation rate may be much higher than concurrent function count.
+
+Example:
+
+```text
+10,000 invocations/sec
+average duration = 2 ms
+```
+
+Expected average active executions:
+
+```text
+≈ 20
+```
+
+Therefore memory usage is primarily based on:
+
+```text
+concurrency
+```
+
+rather than:
+
+```text
+requests per second
+```
+
+The key hot-path cost is insert/remove churn.
+
+Implementation must minimize:
+
+```text
+allocations
+locking
+string construction
+logging
+UUID formatting
+```
+
+---
+
+# 76. Execution IDs
+
+Use compact numeric execution IDs.
+
+Preferred:
+
+```rust
+u64
+```
+
+Options:
+
+```text
+per-node AtomicU64
+Snowflake-compatible distributed ID
+node bits + local sequence
+```
+
+Avoid allocating UUID strings on the hot path.
+
+Human-readable formatting happens only at the API/view boundary.
+
+---
+
+# 77. RAII Execution Registration
+
+Execution tracking SHOULD use an RAII guard.
+
+Conceptually:
+
+```rust
+let guard =
+    active_executions.register(...);
+```
+
+When execution completes:
+
+```text
+drop guard
+    ↓
+remove from registry
+```
+
+This guarantees cleanup on:
+
+```text
+success
+failure
+early return
+cancellation
+panic boundary
+```
+
+---
+
+# 78. `system.function_runs`
+
+Retain:
+
+```sql
+SELECT *
+FROM system.function_runs;
+```
+
+as a virtual in-memory view.
+
+However, its implementation SHALL read from:
+
+```text
+ActiveExecutionRegistry
+```
+
+and enrich IDs from:
+
+```text
+procedure catalog
+module catalog
+transaction coordinator
+```
+
+only when the view is queried.
+
+Normal function execution should not allocate all display strings.
+
+---
+
+# 79. Suggested Active Execution Fields
+
+Core registry fields should remain minimal.
+
+The view may expose:
+
+```text
+execution_id
+procedure_name
+module_name
+module_revision
+
+source
+state
+
+user_id
+request_id
+transaction_id
+
+topic
+partition
+offset
+
+current_operation
+started_at
+age_ms
+
+node_id
+```
+
+Not every field must physically exist inside `ExecutionControl`.
+
+For example:
+
+```text
+procedure_id → procedure_name
+```
+
+is resolved from the catalog when rendering.
+
+---
+
+# 80. Current Operation
+
+Use a compact enum.
+
+Example:
+
+```rust
+#[repr(u8)]
+enum ExecutionOperation {
+    Runtime = 0,
+    DbQuery = 1,
+    DbWrite = 2,
+    TopicPublish = 3,
+    FunctionCall = 4,
+    Commit = 5,
+}
+```
+
+Store:
+
+```text
+AtomicU8
+```
+
+instead of strings.
+
+Convert to:
+
+```text
+db_query
+db_write
+topic_publish
+```
+
+only when displaying system views.
+
+---
+
+# 81. No Per-Invocation Persistent Logging
+
+High-frequency functions MUST NOT automatically emit:
+
+```text
+FUNCTION START
+FUNCTION END
+```
+
+logs.
+
+At:
+
+```text
+10,000 invocations/sec
+```
+
+that would create:
+
+```text
+20,000 log messages/sec
+```
+
+for no useful purpose.
+
+Instead maintain low-cost metrics:
+
+```text
+function_invocations_total
+function_errors_total
+function_cancellations_total
+function_duration_histogram
+```
+
+Detailed logs should be produced for:
+
+```text
+explicit ctx.log()
+errors
+slow executions
+sampled traces
+```
+
+---
+
+# 82. Procedure CALL Fast Path
+
+A procedure call SHOULD bypass DataFusion planning when possible.
 
 For:
 
@@ -1691,50 +3447,103 @@ For:
 CALL chat.create_message($1, $2);
 ```
 
-execution should bypass DataFusion planning where possible.
+execution becomes:
 
 ```text
 SQL parse/classify
-      |
-      v
-ProcedureCallPlan
-      |
-      v
+      │
+      ▼
+CALL procedure
+      │
+      ▼
 ProcedureHandler
-      |
-      v
+      │
+      ▼
 Function Runtime
 ```
 
-Only queries issued by the function need DataFusion.
-
-Generated SDKs will repeatedly issue identical `CALL` shapes, so procedure resolution should reuse existing SQL/plan cache infrastructure.
-
-Cached plan data can contain:
+Do not generate:
 
 ```text
+DataFusion LogicalPlan
+Optimizer
+PhysicalPlan
+```
+
+unless the function itself performs a DataFusion-backed query.
+
+---
+
+# 83. CALL Plan Caching
+
+Generated SDKs will repeatedly issue identical calls.
+
+Example:
+
+```sql
+CALL chat.create_message($1, $2);
+```
+
+KalamDB SHOULD cache resolution:
+
+```text
+SQL
+ ↓
+ProcedureCallPlan
+
 procedure_id
 signature_id
 argument bindings
 return type
 ```
 
+Subsequent calls:
+
+```text
+cache lookup
+   ↓
+bind arguments
+   ↓
+invoke procedure
+```
+
+KalamDB already has SQL cache/plan-cache infrastructure, so procedure resolution SHOULD reuse or extend the existing cache rather than introducing an unrelated cache.
+
 ---
 
-# 43. Execution cancellation
+# 84. DataFusion Cancellation Context
 
-Tracked root executions receive lightweight `ExecutionControl`.
+When DataFusion is created from an execution, inject execution cancellation information into the DataFusion session extensions.
 
-```rust
-pub struct ExecutionControl {
-    id: ExecutionId,
-    procedure_id: ProcedureId,
-    started_at: Instant,
-    state: AtomicU8,
-    operation: AtomicU8,
-    cancellation: CancellationToken,
-}
+Current KalamDB already injects user context into DataFusion's session state.
+
+Add conceptually:
+
+```text
+SessionUserContext
+ExecutionCancellationContext
+TransactionQueryContext
 ```
+
+Thus:
+
+```sql
+KILL EXECUTION 100
+```
+
+can interrupt:
+
+```text
+Function
+   ↓
+DataFusion query
+```
+
+using the same root cancellation state.
+
+---
+
+# 85. Kill Execution
 
 Expose:
 
@@ -1742,152 +3551,267 @@ Expose:
 KILL EXECUTION 100;
 ```
 
-Cancellation should propagate to:
+Flow:
 
 ```text
-V8
-Wasmtime
-DataFusion
-host DB calls
-nested procedures
-HTTP capability
+KILL EXECUTION
+      │
+      ▼
+ActiveExecutionRegistry
+      │
+      ▼
+ExecutionControl
+      │
+      ▼
+CancellationToken
+      │
+      ├── Wasmtime
+      ├── V8
+      ├── DataFusion
+      ├── host DB calls
+      └── nested functions
 ```
 
-Once a transaction enters durable commit, cancellation must not falsely report rollback.
+Then:
 
-Return a clear PostgreSQL-style cancellation/commit-in-progress error instead.
+```text
+rollback owned transaction
+```
+
+when safe.
 
 ---
 
-# 44. Active execution registry
+# 86. Commit Cancellation Boundary
 
-Use a lightweight in-memory registry of currently active tracked executions.
+Once execution enters durable transaction commit:
+
+```text
+COMMITTING
+```
+
+KalamDB must not claim cancellation if the transaction may already be in the Raft commit path.
+
+The current transaction coordinator moves transaction state to `Committing` before handing staged mutations to the durable apply path.
+
+Therefore:
+
+```sql
+KILL EXECUTION 100;
+```
+
+may return:
+
+```text
+EXECUTION_COMMIT_IN_PROGRESS
+```
+
+rather than reporting a false rollback.
+
+---
+
+# 87. Actor Model
+
+KalamDB MAY use an actor framework to implement execution/runtime ownership, but the actor framework SHALL remain an implementation detail.
+
+The semantics SHALL be defined by:
+
+```text
+ExecutionContext
+TransactionScope
+ExecutionControl
+ActiveExecutionRegistry
+```
+
+rather than by a specific actor library.
+
+---
+
+# 88. Recommended Actor Usage
+
+Use actors primarily for long-lived infrastructure components.
+
+Example:
+
+```text
+                    Runtime Supervisor
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+ Topic Dispatcher    Runtime Manager    Trigger Manager
+      actor               actor              actor
+```
+
+High-frequency root executions may run as ordinary Tokio tasks:
+
+```text
+HTTP / Topic
+     │
+     ▼
+Tokio Task
+     │
+     ▼
+ExecutionContext
+```
+
+This avoids mailbox/address allocation on every trivial request.
+
+---
+
+# 89. Optional Root Execution Actors
+
+KalamDB MAY optionally implement every tracked root execution as a lightweight actor if benchmarks demonstrate acceptable overhead.
+
+Conceptually:
 
 ```rust
-DashMap<ExecutionId, Arc<ExecutionControl>>
+struct ExecutionActor {
+    context: ExecutionContext,
+}
 ```
 
-Memory cost should scale with concurrent execution count, not invocation rate.
+Actor identity:
 
-Use compact numeric IDs and enums rather than allocated strings on the hot path.
+```text
+ActorId = ExecutionId
+```
 
-RAII registration is preferred so cleanup happens on success, failure, cancellation, early return, or panic boundary.
+This provides:
+
+```text
+lifecycle
+cancellation
+visibility
+panic isolation
+monitoring
+```
+
+without changing transaction semantics.
 
 ---
 
-# 45. Active run view and history
+# 90. Actor Framework Selection
 
-Avoid the previous ambiguity between active executions and historical logs.
+No specific framework is mandated by the contract.
 
-Use two concepts.
-
-## `system.function_runs`
-
-A virtual in-memory snapshot of currently active root executions.
-
-Possible columns:
+Candidates include:
 
 ```text
-execution_id
-procedure_name
-module_name
-module_revision
-source
-state
-user_id
-request_id
-transaction_id
-current_operation
-started_at
-age_ms
-node_id
-
-topic
-partition
-offset
-
-event_name
-schedule_id
-scheduled_at
-occurrence_id
-attempt
-```
-
-Names are resolved from catalog IDs only when the view is queried.
-
-## `system.function_run_history`
-
-Optional persistent/sampled execution history for:
-
-```text
-errors
-slow executions
-scheduled runs
-topic retry diagnostics
-explicit tracing
-```
-
-Do not persist start/end rows for every high-frequency successful call by default.
-
----
-
-# 46. Metrics and logging
-
-Low-cost metrics:
-
-```text
-function_invocations_total
-function_errors_total
-function_cancellations_total
-function_duration_histogram
-function_background_queue_depth
-function_background_lag
-schedule_due_total
-schedule_errors_total
-schedule_lag_ms
-trigger_retry_total
-```
-
-Detailed logs are emitted for:
-
-```text
-explicit ctx.log()
-errors
-slow executions
-sampled traces
-schedule failures
-DLQ transitions
-```
-
-Do not automatically write `FUNCTION START` and `FUNCTION END` logs for every invocation.
-
----
-
-# 47. Actor frameworks are implementation details
-
-KalamDB may use actors internally for long-lived infrastructure components such as:
-
-```text
-Runtime Supervisor
-Topic Trigger Dispatcher
-Schedule Dispatcher
-Module Manager
-```
-
-High-frequency root executions should default to ordinary Tokio tasks unless benchmarks show that actor-per-execution overhead is acceptable.
-
-Do not define SQL/function semantics in terms of a particular actor framework.
-
-Possible internal implementations:
-
-```text
-plain Tokio
 Kameo
 Ractor
 Actix actors
+plain Tokio tasks
 ```
 
-The contract remains:
+The implementation SHOULD benchmark at least:
+
+```text
+Tokio ExecutionScope
+
+vs
+
+actor-per-root-execution
+```
+
+before deciding.
+
+A framework such as Kameo is attractive because it provides actor IDs, supervision and monitoring, but KalamDB must not couple SQL/function semantics to actor-library behavior.
+
+---
+
+# 91. Required Actor Benchmark
+
+Benchmark:
+
+```text
+10,000 CALL/sec
+50,000 CALL/sec
+100,000 CALL/sec
+```
+
+with function durations:
+
+```text
+1 ms
+10 ms
+100 ms
+```
+
+Compare:
+
+```text
+plain Tokio task
+actor-per-execution
+```
+
+Measure:
+
+```text
+p50 latency
+p95 latency
+p99 latency
+allocations/invocation
+CPU
+RSS
+registry churn
+actor/mailbox memory
+spawn/despawn throughput
+cancellation latency
+```
+
+Actor-per-execution should only become the default if overhead is acceptably small.
+
+---
+
+# 92. Actor Supervision Rules
+
+Transactional executions MUST NOT automatically restart after a crash.
+
+This is unsafe:
+
+```text
+function crashes
+     ↓
+actor restart
+     ↓
+run function again automatically
+```
+
+because the system may not know whether side effects reached a commit boundary.
+
+For client `CALL`:
+
+```text
+failure
+  ↓
+rollback if possible
+  ↓
+terminate execution
+  ↓
+return error
+```
+
+For topic triggers:
+
+```text
+failure
+  ↓
+rollback
+  ↓
+no ACK
+  ↓
+durable topic retry policy decides retry
+```
+
+Actor supervision MAY restart long-lived infrastructure workers.
+
+---
+
+# 93. ExecutionRuntime Abstraction
+
+Keep execution scheduling independent from the actor implementation.
+
+Conceptually:
 
 ```rust
 pub trait ExecutionRuntime {
@@ -1903,964 +3827,727 @@ pub trait ExecutionRuntime {
 }
 ```
 
-Transactional client calls must never be automatically replayed merely because an actor/task crashed.
+Potential implementations:
 
-Topic and schedule retry policies decide background replay.
+```text
+TokioExecutionRuntime
+KameoExecutionRuntime
+```
+
+This lets KalamDB benchmark and change implementations without changing SQL semantics.
 
 ---
 
-# 48. Procedure runtime errors
+# 94. Function Runtime Relationship
 
-Where an equivalent PostgreSQL error exists, keep PostgreSQL-like SQLSTATE behavior.
-
-Examples:
+The execution runtime and language runtime are separate.
 
 ```text
-42883  undefined routine / procedure
-42501  insufficient privilege
-57014  execution canceled
-40001  serialization failure
+              ExecutionRuntime
+
+               /          \
+            Tokio        Actor
+               │
+               ▼
+         ExecutionContext
+               │
+      ┌────────┴─────────┐
+      ▼                  ▼
+ WasmtimeRuntime       V8Runtime
 ```
 
-Runtime contract mismatches should use stable KalamDB error codes in addition to SQLSTATE where appropriate.
+This separation is important.
 
-Example:
+Actors manage:
 
 ```text
-PROCEDURE_RETURN_TYPE_MISMATCH
+lifecycle
+ownership
+cancellation
 ```
 
-Generated SDK errors should preserve:
+Language runtimes execute:
 
 ```text
-message
-sqlState
-code
-details
-executionId
+Rust/Wasm
+TypeScript
 ```
 
 ---
 
-# 49. Runtime validation
+# 95. Automatic Transaction Example
 
-KalamDB validates at runtime:
-
-```text
-procedure arguments
-procedure return value
-topic payload
-schedule input payload
-background invocation payload
-```
-
-Example:
-
-SQL:
+Given:
 
 ```sql
-RETURNS chat.messages
+CREATE PROCEDURE app.function1()
+RETURNS app.result;
 ```
 
-implementation returns:
+Implementation:
 
-```json
-{"foo":"bar"}
+```typescript
+async function function1(ctx) {
+
+    await ctx.db.insert(...);
+
+    await ctx.db.update(...);
+
+    await ctx.functions.function2();
+
+    return {...};
+}
 ```
 
-Invocation fails before invalid data reaches the caller.
+and:
 
----
+```typescript
+async function function2(ctx) {
 
-# 50. SQL and PGWire result behavior
+    await ctx.db.insert(...);
 
-The HTTP SQL endpoint returns procedure results using the normal SQL response model.
+    await ctx.db.update(...);
+}
+```
 
-Simple scalar:
+Runtime:
 
 ```text
-one value
+CALL app.function1()
+        │
+        ▼
+Execution EX100
+        │
+        ▼
+ExecutionContext
+        │
+        ▼
+TransactionScope::None
+        │
+        │ first INSERT
+        ▼
+TransactionScope::Owned(TX77)
+        │
+        ├── INSERT
+        ├── UPDATE
+        │
+        └── function2
+              │
+              ├── INSERT
+              └── UPDATE
+
+                success
+                   │
+                   ▼
+               COMMIT TX77
 ```
 
-Table row:
+If anything fails:
 
 ```text
-normal columns
-```
-
-`SETOF`:
-
-```text
-normal rows
-```
-
-Nested composite values may use JSON encoding in V1 rather than implementing PostgreSQL composite OIDs immediately.
-
-Generated Kalam SDKs hide transport details.
-
----
-
-# 51. Catalog model
-
-Add or extend these system objects:
-
-```text
-system.types
-system.type_fields
-system.routines
-system.routine_parameters
-system.triggers
-system.schedules
-system.scheduled_invocations
-system.function_modules
-system.function_revisions
-system.function_artifacts
-system.function_idempotency
-system.function_runs            -- virtual active view
-system.function_run_history     -- optional persistent/sampled
-```
-
-`information_schema.routines` should expose standards-compatible routine metadata where possible.
-
----
-
-# 52. Suggested routine catalog
-
-```text
-system.routines
-  routine_id
-  namespace
-  routine_name
-  routine_kind
-  return_kind
-  return_type_id
-  module_name
-  security_mode
-  created_at
-  updated_at
-
-system.routine_parameters
-  routine_id
-  param_ordinal
-  param_name
-  param_mode
-  param_type
-  is_nullable
-  default_expr
+ROLLBACK TX77
 ```
 
 ---
 
-# 53. Suggested trigger catalog
+# 96. Database Calls From Functions
+
+Database operations executed through:
 
 ```text
-system.triggers
-  trigger_id
-  namespace
-  trigger_name
-  source_type          -- topic
-  source_id
-  procedure_id
-  consumer_group
-  start_position
-  retries
-  retry_backoff_ms
-  concurrency
-  status
-  owner_principal
-  created_at
-  updated_at
+ctx.db
+```
+
+SHALL automatically inherit:
+
+```text
+user identity
+namespace
+transaction scope
+execution cancellation
+DataFusion context
+```
+
+The function author never manually passes:
+
+```text
+transaction_id
+execution_id
+user_id
+```
+
+between operations.
+
+---
+
+# 97. Nested Function API
+
+Generated server SDKs SHOULD allow:
+
+```typescript
+await ctx.functions.chat.fanout({
+    messageId: message.id
+});
+```
+
+The SDK internally invokes the procedure with the same:
+
+```text
+ExecutionContext
+TransactionScope
+CancellationToken
+```
+
+rather than routing through HTTP or generating another root execution.
+
+---
+
+# 98. Root vs Nested Invocation
+
+These are intentionally different.
+
+External:
+
+```sql
+CALL chat.fanout(...);
+```
+
+creates:
+
+```text
+new root ExecutionContext
+```
+
+Internal:
+
+```typescript
+ctx.functions.chat.fanout(...)
+```
+
+uses:
+
+```text
+existing root ExecutionContext
+```
+
+This distinction prevents unnecessary actor/task creation and preserves transaction atomicity.
+
+---
+
+# 99. Function Return Does Not Commit Nested Calls
+
+A nested procedure returning successfully does not commit anything.
+
+Example:
+
+```text
+function2 returns
+    │
+    ▼
+writes remain staged in TX77
+```
+
+Only the root transaction owner commits.
+
+This guarantees:
+
+```text
+root success → commit everything
+root failure → rollback everything
 ```
 
 ---
 
-# 54. Suggested schedule catalog
+# 100. Updated High-Level Runtime
 
-Static recurring events:
+The final runtime architecture becomes:
+
+```text
+                       Client / Topic
+                              │
+                              ▼
+                       Root Execution
+                              │
+                              ▼
+                      ExecutionContext
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+    ExecutionControl    TransactionScope      Function Stack
+          │                   │                   │
+          │                   │                   ▼
+          │                   │              nested CALLs
+          │                   │
+          │          ┌────────┴────────┐
+          │          ▼                 ▼
+          │       DB Writes        Topic Publish
+          │
+          ▼
+      Cancellation
+
+                       DataFusion
+                          │
+                       lazy only
+
+                Language Runtime
+                 /             \
+              Wasm              V8
+```
+
+---
+
+# 101. Updated Core Requirements
+
+The feature SHALL follow these requirements:
+
+**The existing KalamDB `ExecutionContext` becomes the unified root runtime context.**
+
+**Do not create a second heavyweight per-function execution context.**
+
+**DataFusion remains lazily initialized inside the root context.**
+
+**A root procedure invocation automatically provides one transaction boundary.**
+
+**Transactions begin lazily on the first mutation.**
+
+**Nested procedure calls reuse the root transaction.**
+
+**Nested procedure calls reuse the root execution rather than spawning new execution actors.**
+
+**A function invoked inside an explicit SQL transaction borrows that transaction rather than committing independently.**
+
+**Any unrecoverable nested transactional error aborts the root transaction in V1.**
+
+**Topic-triggered functions use the same execution and transaction model.**
+
+**Topic ACK occurs only after successful function transaction commit.**
+
+**Transactional topic publishes commit or rollback with database mutations.**
+
+**Only currently running tracked executions are indexed in memory.**
+
+**`system.function_runs` remains a virtual snapshot view.**
+
+**The active execution registry uses compact IDs and enum/atomic state rather than allocated strings.**
+
+**Detailed function start/end logging is not enabled by default.**
+
+**Procedure `CALL` should bypass DataFusion planning where possible.**
+
+**Procedure resolution should be cached.**
+
+**Actors are optional execution infrastructure, not part of the SQL contract.**
+
+**Long-lived runtime subsystems are good actor candidates.**
+
+**Actor-per-root-execution is allowed only after benchmark validation.**
+
+**Plain Tokio and actor-backed implementations should share one `ExecutionRuntime` contract.**
+
+**Actor crashes must not automatically replay client transactional functions.**
+
+**The root execution owns commit or rollback for all nested business logic.**
+
+---
+
+# 102. Scheduled Procedures
+
+Scheduling extends the existing Kalam Functions model without introducing a new application runtime abstraction.
+
+The rule is simple:
+
+```text
+Scheduler decides when
+        ↓
+CALL existing procedure
+        ↓
+existing ExecutionContext
+        ↓
+existing transaction/runtime
+```
+
+A scheduled operation is therefore still a normal KalamDB procedure defined by SQL:
+
+```sql
+CREATE TYPE reports.daily_summary_request AS (
+    report_date DATE
+);
+
+CREATE PROCEDURE reports.generate_daily_summary(
+    request reports.daily_summary_request
+)
+RETURNS VOID;
+```
+
+The scheduler does not own business state and does not create a second function implementation model.
+
+---
+
+# 103. SQL Schedule Syntax
+
+Use a MySQL-familiar `CREATE EVENT` statement because scheduling is a database concern and should remain declarative SQL.
+
+Support three schedule forms:
+
+```text
+AT      one-time execution
+EVERY   fixed interval
+CRON    calendar schedule
+```
+
+## One-time execution
+
+```sql
+CREATE EVENT billing.expire_campaign
+ON SCHEDULE AT TIMESTAMP '2026-10-01 00:00:00Z'
+DO CALL billing.expire_campaign('fall-2026');
+```
+
+## Fixed interval
+
+```sql
+CREATE EVENT sessions.cleanup
+ON SCHEDULE EVERY INTERVAL '15 minutes'
+DO CALL sessions.remove_expired();
+```
+
+## Cron
+
+```sql
+CREATE EVENT reports.daily_summary
+ON SCHEDULE CRON '0 9 * * *'
+TIME ZONE 'Asia/Jerusalem'
+DO CALL reports.generate_daily_summary(
+    ROW(CURRENT_DATE())::reports.daily_summary_request
+);
+```
+
+The exact parser representation may differ internally, but the user-facing model SHALL remain SQL-first.
+
+Cron should initially use standard five-field minute-based expressions.
+
+Default time zone:
+
+```text
+UTC
+```
+
+Named time zones should use IANA identifiers.
+
+---
+
+# 104. Schedule Lifecycle
+
+Scheduled events are schema objects and should support normal DDL lifecycle operations.
+
+```sql
+ALTER EVENT reports.daily_summary ENABLE;
+ALTER EVENT reports.daily_summary DISABLE;
+DROP EVENT reports.daily_summary;
+```
+
+Reapplying the same schema must not create duplicate schedules.
+
+`kalam dev` and `kalam deploy` should treat event definitions in the SQL schema the same way they treat procedures, topics and triggers:
+
+```text
+parse
+validate referenced procedure
+apply catalog change
+activate schedule
+```
+
+A schedule cannot reference an unknown procedure or an incompatible procedure signature.
+
+---
+
+# 105. Schedule Execution Semantics
+
+Every scheduled occurrence creates a normal root execution.
+
+```text
+schedule becomes due
+        ↓
+ProcedureRegistry
+        ↓
+ExecutionContext
+        ↓
+Procedure
+        ↓
+lazy transaction
+```
+
+This means scheduled procedures automatically reuse the design already defined in this document:
+
+```text
+ExecutionControl
+TransactionScope
+Function Stack
+lazy DataFusion
+runtime limits
+cancellation
+observability
+```
+
+A scheduled procedure is not a special function type.
+
+It is the same procedure invoked from another SQL-defined source.
+
+Scheduled execution should expose source metadata such as:
+
+```text
+event_name
+scheduled_at
+started_at
+retry_count
+```
+
+inside the root execution metadata and `system.function_runs` view where useful.
+
+---
+
+# 106. Schedule Reliability, Retry and Overlap
+
+Scheduled work must survive:
+
+```text
+server restart
+node failure
+cluster failover
+function module reload
+```
+
+The durable schedule definition is authoritative. In-memory timers are only an optimization.
+
+Recommended event options:
+
+```sql
+CREATE EVENT reports.daily_summary
+ON SCHEDULE CRON '0 9 * * *'
+TIME ZONE 'UTC'
+DO CALL reports.generate_daily_summary(...)
+WITH (
+    retries = 3,
+    retry_backoff = '5s',
+    overlap = 'skip',
+    misfire = 'run_once'
+);
+```
+
+Recommended `overlap` values:
+
+```text
+skip   previous occurrence still running → skip the new occurrence
+queue  preserve the occurrence and run it later
+allow  permit concurrent occurrences
+```
+
+Recommended default:
+
+```text
+skip
+```
+
+Recommended `misfire` values:
+
+```text
+run_once  after recovery run one missed occurrence
+skip      ignore occurrences missed while unavailable
+catch_up  run missed occurrences up to a configured bound
+```
+
+Recommended default:
+
+```text
+run_once
+```
+
+`catch_up` must always have a maximum bound.
+
+Retries re-invoke the same logical scheduled occurrence. They must not create a new independent schedule occurrence.
+
+---
+
+# 107. Schedule Catalog and Runtime
+
+Add schedule metadata as normal system catalog state.
+
+Suggested table:
 
 ```text
 system.schedules
   schedule_id
   namespace
   event_name
-  schedule_kind        -- at | every | cron
-  schedule_expr
+  schedule_kind       -- at | every | cron
+  schedule_expression
   timezone
   procedure_id
-  args_blob
-  owner_principal
+  arguments
   enabled
+  retries
+  retry_backoff
   overlap_policy
   misfire_policy
-  retry_limit
-  retry_backoff_ms
-  next_fire_at
-  last_fire_at
+  next_run_at
+  last_run_at
   created_at
   updated_at
 ```
 
-Dynamic one-shot invocations:
+The scheduler must not create one process, actor, or OS timer for every schedule.
+
+Recommended architecture:
 
 ```text
-system.scheduled_invocations
-  schedule_id
-  procedure_id
-  actor_user_id
-  execution_principal
-  input_blob
-  ordering_key
-  name
-  fire_at
-  status               -- pending | claimed | running | completed | failed | canceled
-  occurrence_id
-  attempt
-  created_at
-  updated_at
+system.schedules
+       ↓
+query/index upcoming schedules
+       ↓
+small scheduler service
+       ↓
+due event
+       ↓
+ProcedureRegistry
+       ↓
+normal root execution
 ```
 
-A durable index on:
+Use an index ordered by `next_run_at` so the scheduler does not scan every schedule on every tick.
 
-```text
-status + fire_at
-```
+In a cluster, only one owner should dispatch a specific scheduled occurrence. Ownership may use the existing cluster leadership/lease mechanisms.
 
-is required.
-
-Do not scan all schedule rows on every scheduler tick.
+The procedure execution itself remains normal KalamDB function execution and may run on the appropriate execution node.
 
 ---
 
-# 55. Function module catalog
+# 108. Scheduled Procedures and Transactions
+
+Each scheduled procedure invocation gets the same automatic transaction behavior as a direct `CALL`.
+
+Example:
 
 ```text
-system.function_modules
-  module_name
-  runtime
-  active_revision_id
-  status
-  created_at
-  updated_at
-
-system.function_revisions
-  revision_id
-  module_name
-  revision_number
-  artifact_id
-  artifact_hash
-  source_hash
-  schema_hash
-  manifest_json
-  created_at
-  created_by
-  status
-
-system.function_artifacts
-  artifact_id
-  module_name
-  revision_id
-  kind
-  content_type
-  content_hash
-  size_bytes
-  storage_backend
-  storage_key
-  created_at
+09:00 schedule fires
+      ↓
+CALL reports.generate_daily_summary(...)
+      ↓
+BEGIN lazily
+      ↓
+INSERT summary
+UPDATE counters
+PUBLISH report.completed
+      ↓
+COMMIT
 ```
 
-Revision and artifact rows are immutable.
+On failure:
 
-Rollback changes the active revision pointer rather than rewriting history.
+```text
+ROLLBACK
+   ↓
+retry according to schedule policy
+```
+
+If the procedure publishes a topic, the publication participates in the same transaction as already defined in §72.
+
+The scheduler must only mark the occurrence successful after the procedure transaction commits.
 
 ---
 
-# 56. Idempotency catalog
+# 109. Topics and Consumers Remain First-Class
 
-Optional direct-call idempotency and background completion markers may use:
+Scheduled procedures and topic-triggered procedures do **not** replace KalamDB topics or the consumer APIs.
 
-```text
-system.function_idempotency
-  identity_key
-  procedure_id
-  principal_id
-  status
-  result_blob
-  created_at
-  expires_at
-```
-
-The implementation may use a more compact internal key/value representation if this table becomes too expensive as a physical row store.
-
-The semantic contract matters more than the exact physical layout.
-
----
-
-# 57. Build manifest
-
-Build output includes a generated manifest.
-
-```json
-{
-  "module": "backend",
-  "schemaHash": "...",
-  "procedures": {
-    "chat.create_message": {
-      "input": "chat.create_message_request",
-      "output": "chat.send_message_result"
-    },
-    "billing.expire_trial": {
-      "input": "billing.expire_trial_request",
-      "output": "void"
-    }
-  }
-}
-```
-
-Users never edit the manifest manually.
-
----
-
-# 58. Local development
-
-Extend `kalam dev` to watch:
+The existing model remains available:
 
 ```text
-schema.sql
-functions/src/**
-package.json
+KalamDB Topic
+     ↓
+consumer group
+     ↓
+external service / agent / worker
 ```
 
-Schema change loop:
-
-```text
-parse / validate schema
-regenerate contracts
-build function project
-validate module exports
-apply local schema
-activate new local revision
-refresh static schedules
-```
-
-Function-only source change:
-
-```text
-rebuild
-validate exports
-activate local revision
-```
-
-Static scheduled events should be visible during development without requiring an external cron service.
-
-For testing a scheduled procedure, developers can call the underlying procedure directly.
-
----
-
-# 59. Code generation
-
-`kalam generate` should generate:
-
-```text
-Drizzle tables
-custom SQL types
-procedure input/output contracts
-client action methods
-server procedure contracts
-nested procedure handles
-background enqueue handles
-schedule handles
-entrypoint stubs
-```
+Users must still be able to consume events using the existing topic APIs and SDKs, including explicit consume/ACK semantics.
 
 Conceptually:
 
 ```text
-schema.sql
-   |
-   v
-Schema Compiler
-   |
-   v
-Contract IR
-   |
-   +-- tables
-   +-- types
-   +-- topics
-   +-- procedures
-   +-- triggers
-   `-- scheduled events
-        |
-        v
-    generators
-   /    |     \
- TS   Dart   Rust
+@kalamdb/consumer
+Rust consumer API
+Python consumer API
+other external systems
 ```
+
+remain valid first-class integration paths.
+
+A topic-triggered procedure is only a convenience when the desired handler should execute **inside KalamDB's function runtime**.
+
+An external consumer is preferred when the event should be handled by:
+
+```text
+another service
+another runtime
+an existing worker fleet
+an integration platform
+an external AI agent
+```
+
+The same topic may have both:
+
+```text
+internal function trigger consumer group
++
+external application consumer group
+```
+
+because consumer groups keep offsets independently.
+
+Therefore the model remains:
+
+```text
+CALL             synchronous function execution
+CREATE EVENT     scheduled function execution
+TOPIC TRIGGER    internal event-driven function execution
+CONSUME / ACK    external event consumption
+```
+
+These are complementary capabilities, not replacements for one another.
 
 ---
 
-# 60. Deployment
+# 110. Scheduler Design Requirements
 
-`kalam deploy` should eventually perform:
+The scheduler addition SHALL follow these requirements:
 
-```text
-1. Parse SQL schema
-2. Generate canonical contract
-3. Build function project
-4. Inspect exports
-5. Validate implementation against SQL
-6. Validate permissions / capabilities
-7. Validate triggers and scheduled-event targets
-8. Apply schema migration
-9. Upload module artifact
-10. Insert immutable revision metadata
-11. Activate revision
-12. Apply / update named schedules idempotently
-13. Run health validation
-```
+**Scheduling is defined through SQL.**
 
-A contract mismatch blocks deployment.
+**Scheduled work always targets an existing `CREATE PROCEDURE` contract.**
 
-Catalog activation should be atomic where possible so the active procedure contract, module revision, triggers, and schedules cannot point at incompatible versions.
+**`CREATE TYPE`, table row types, typed procedure parameters and typed return values remain unchanged.**
 
----
+**`CREATE EVENT ... ON SCHEDULE ... DO CALL ...` is the primary scheduling abstraction.**
 
-# 61. Deployment compatibility rules
+**Support one-time `AT`, interval `EVERY`, and `CRON` schedules.**
 
-Reject deployment when:
+**A scheduled occurrence enters the same `ExecutionContext`, transaction and runtime used by direct and topic-triggered procedure calls.**
 
-```text
-an enabled trigger references a removed procedure
-an enabled event references a removed procedure
-an active dynamic schedule references an incompatible procedure signature
-rollback revision does not satisfy current SQL contracts
-```
+**Do not create another function runtime specifically for scheduled work.**
 
-Changing only implementation code does not require rewriting schedule rows because schedules reference the stable procedure contract.
+**Do not make process-local timers authoritative.**
 
-When a dynamic schedule already stores an old serialized input contract, schema evolution must either:
+**Schedule metadata is durable catalog state.**
 
-```text
-remain backward compatible
-migrate pending schedule payloads
-or block deployment
-```
+**Schedule dispatch must work after restart and cluster failover.**
 
-Do not silently deserialize old payloads into a new incompatible contract.
+**The scheduler should query/index upcoming work rather than allocating one runtime object per scheduled event.**
 
----
+**Retries occur only after failed procedure execution and follow explicit schedule policy.**
 
-# 62. Rollback
+**Overlap and misfire behavior are explicit and deterministic.**
 
-```bash
-kalam functions rollback backend 42
-```
+**Topics, consumer groups, `CONSUME`, ACK and external consumer SDKs remain first-class and are not replaced by scheduled functions or topic triggers.**
 
-switches the active module revision without rebuilding.
-
-Rollback is allowed only when the old module still satisfies the current SQL procedure contracts.
-
-Static and dynamic schedules continue targeting procedure IDs, so they automatically use the rolled-back compatible implementation.
-
----
-
-# 63. Example: chat message with background work
-
-Schema:
-
-```sql
-CREATE USER TABLE chat.messages (
-    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
-    conversation_id TEXT NOT NULL,
-    sender_id TEXT NOT NULL,
-    body TEXT NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE TYPE chat.create_message_request AS (
-    conversation_id TEXT,
-    body TEXT
-);
-
-CREATE TYPE chat.message_created_event AS (
-    message_id BIGINT,
-    conversation_id TEXT,
-    sender_id TEXT
-);
-
-CREATE TOPIC chat.message_created
-TYPE chat.message_created_event;
-
-CREATE PROCEDURE chat.create_message(
-    request chat.create_message_request
-)
-RETURNS chat.messages
-SECURITY INVOKER;
-
-CREATE PROCEDURE chat.summarize_conversation(
-    conversation_id TEXT
-)
-RETURNS VOID;
-```
-
-Implementation:
-
-```ts
-export default defineProcedure<ChatCreateMessage>(
-  async (ctx, input) => {
-    const [message] = await ctx.db
-      .insert(messages)
-      .values({
-        conversationId: input.request.conversationId,
-        senderId: ctx.user.id,
-        body: input.request.body,
-      })
-      .returning();
-
-    await ctx.topics.publish('chat.message_created', {
-      messageId: message.id,
-      conversationId: message.conversationId,
-      senderId: message.senderId,
-    });
-
-    await ctx.functions.chat.summarizeConversation.enqueue({
-      input: {
-        conversationId: message.conversationId,
-      },
-      key: `conversation:${message.conversationId}`,
-    });
-
-    return message;
-  },
-);
-```
-
-If the message transaction rolls back, neither the topic event nor the background summary invocation becomes visible.
-
----
-
-# 64. Example: topic-triggered AI worker
-
-```sql
-CREATE PROCEDURE chat.on_message_created(
-    event chat.message_created_event
-)
-RETURNS VOID;
-
-CREATE TRIGGER chat.message_created_handler
-ON TOPIC chat.message_created
-EXECUTE PROCEDURE chat.on_message_created(PAYLOAD)
-WITH (
-    retries = 5,
-    concurrency = 8,
-    retry_backoff = '1s'
-);
-```
-
-The topic key should be the conversation ID when strict conversation ordering is required.
-
-Then:
-
-```text
-conversation A events -> partition X -> ordered
-conversation B events -> partition Y -> may run concurrently
-```
-
-No actor per conversation is required.
-
----
-
-# 65. Example: daily cron
-
-```sql
-CREATE PROCEDURE analytics.rollup_daily_usage(
-    scheduled_at TIMESTAMP,
-    occurrence_id TEXT
-)
-RETURNS VOID;
-
-CREATE EVENT analytics.daily_usage_rollup
-ON SCHEDULE CRON '5 0 * * *'
-TIME ZONE 'UTC'
-WITH (
-    retries = 3,
-    retry_backoff = '10s',
-    overlap = 'skip',
-    misfire = 'run_once'
-)
-DO CALL analytics.rollup_daily_usage(
-    SCHEDULED_AT,
-    OCCURRENCE_ID
-);
-```
-
-No Kubernetes CronJob, external scheduler, or application `setInterval` is required.
-
----
-
-# 66. Example: per-user reminder without actors
-
-Millions of user reminders should be durable rows, not millions of sleeping processes.
-
-```ts
-await ctx.functions.reminders.sendReminder.scheduleAt({
-  at: input.remindAt,
-  input: {
-    userId: ctx.user.id,
-    reminderId: input.reminderId,
-  },
-  key: `user:${ctx.user.id}`,
-});
-```
-
-Runtime:
-
-```text
-scheduled row
-   |
-   | time arrives
-   v
-internal invocation topic
-   |
-   v
-worker
-   |
-   v
-CALL reminders.send_reminder(...)
-   |
-   v
-KalamDB tables / topics / live queries
-```
-
-The compute process may disappear immediately after execution because durable state remains in KalamDB.
-
----
-
-# 67. Example: trial expiry replacement
-
-A user changes their plan, so the existing expiry should move.
-
-```ts
-await ctx.functions.billing.expireTrial.scheduleAt({
-  name: `trial-expiry:${trialId}`,
-  replace: true,
-  at: newExpiry,
-  input: { trialId },
-  key: `trial:${trialId}`,
-});
-```
-
-The named schedule behaves like an upsert key.
-
-This avoids duplicate timers and is safer than retaining an application timer ID in process memory.
-
----
-
-# 68. Recommended implementation phases
-
-## Phase 1 - Contract system
-
-Implement:
-
-```text
-CREATE TYPE
-CREATE PROCEDURE
-system.types
-system.type_fields
-system.routines
-system.routine_parameters
-schema IR
-```
-
-Support all V1 return categories.
-
-## Phase 2 - Synchronous callable procedures
-
-Implement:
-
-```text
-CALL
-ExecutionContext propagation
-lazy transaction
-nested calls
-result conversion
-security
-CALL fast path
-procedure plan caching
-```
-
-## Phase 3 - Code generation
-
-Generate:
-
-```text
-Drizzle table types
-procedure request/response types
-typed client methods
-server contracts
-nested procedure handles
-```
-
-## Phase 4 - Topic triggers
-
-Implement:
-
-```text
-CREATE TRIGGER ... ON TOPIC
-automatic consumer groups
-transaction + ACK semantics
-retry / backoff
-DLQ
-stable invocation identity
-```
-
-## Phase 5 - Static scheduled events
-
-Implement:
-
-```text
-CREATE EVENT
-AT
-EVERY
-CRON
-TIME ZONE
-ENABLE / DISABLE
-retries
-overlap policy
-misfire policy
-system.schedules
-scheduler ownership / failover
-```
-
-## Phase 6 - Dynamic schedules
-
-Implement:
-
-```text
-scheduleAt
-scheduleAfter
-cancel
-named replacement
-system.scheduled_invocations
-transactional schedule writes
-```
-
-## Phase 7 - Durable background invocation
-
-Implement generated:
-
-```text
-procedure.enqueue()
-ordering key
-internal invocation topic
-stable invocation ID
-completion marker
-```
-
-Reuse topics instead of adding another queue subsystem.
-
-## Phase 8 - TypeScript runtime
-
-Add:
-
-```text
-multi-file TS project
-V8 sandbox
-capability host API
-hot reload
-```
-
-## Phase 9 - Deployment and versioning
-
-Implement:
-
-```text
-module artifacts
-immutable revisions
-activation / rollback
-trigger compatibility
-schedule compatibility
-observability
-```
-
-## Phase 10 - Additional runtimes
-
-Add:
-
-```text
-Rust / Wasm
-TypeScript Component / Wasm
-possibly C# later
-```
-
-behind the same procedure ABI.
-
----
-
-# 69. Performance requirements
-
-Kalam Functions may be invoked thousands of times per second.
-
-The implementation must avoid turning every function into heavyweight infrastructure.
-
-Required principles:
-
-```text
-no per-call database connection
-no per-call DataFusion session unless needed
-no actor/mailbox allocation unless benchmarks justify it
-no UUID strings on hot path when numeric IDs work
-no persistent start/end logs by default
-no HTTP loopback to KalamDB
-no timer task per schedule
-```
-
-Benchmark at minimum:
-
-```text
-10k CALL/sec
-50k CALL/sec
-100k CALL/sec
-```
-
-with:
-
-```text
-1 ms
-10 ms
-100 ms
-```
-
-procedure durations.
-
-Measure:
-
-```text
-p50 / p95 / p99
-allocations per invocation
-CPU
-RSS
-active registry churn
-cancellation latency
-DataFusion session creation rate
-background queue lag
-schedule dispatch lag
-```
-
----
-
-# 70. Final architecture
-
-```text
-                           schema.sql
-                               |
-                               v
-                        Schema Compiler
-                               |
-                         Contract IR
-                               |
-          +--------------------+--------------------+
-          |                    |                    |
-          v                    v                    v
-       Tables              Procedures            Topics
-          |                    |                    |
-          |                    +----------+         |
-          |                               |         |
-          |                               v         |
-          |                       Function Runtime  |
-          |                        TS / Wasm        |
-          |                               |         |
-          +-------------------------------+---------+
-                                          |
-                                          v
-                                      Kalam Host API
-                                          |
-                       +------------------+------------------+
-                       |                  |                  |
-                       v                  v                  v
-                      DB                Topics            Schedules
-                       |                  |                  |
-                       +------------------+------------------+
-                                          |
-                                          v
-                                   Durable KalamDB state
-```
-
-Background execution:
-
-```text
-Topic / Schedule / Enqueue
-          |
-          v
- durable partitioned invocation
-          |
-          v
-     Root Execution
-          |
-          v
-    ExecutionContext
-          |
-          v
-      Procedure
-```
-
----
-
-# 71. Final design decisions
-
-**SQL is the backend contract source of truth.**
-
-**KalamDB tables remain the durable application state; functions do not own actor-local state.**
-
-**Procedures are typed application actions generated into TypeScript, Dart, Rust, and future SDKs.**
-
-**`CALL` is synchronous and transactional.**
-
-**Nested calls reuse one root `ExecutionContext` and one transaction.**
-
-**Background work is durable, not an ephemeral task.**
-
-**Background procedure enqueue reuses KalamDB topics rather than introducing another queue implementation.**
-
-**Ordering keys provide actor-like per-entity sequencing without actor-per-entity processes.**
-
-**Strict keyed ordering is provided on durable async paths, not by distributed locks on normal synchronous `CALL`.**
-
-**Topic triggers use the same procedure runtime and preserve durable source identity across retries.**
-
-**Scheduled functions are first-class schema objects using `CREATE EVENT ... ON SCHEDULE ... DO CALL ...`.**
-
-**Schedules support one-time `AT`, fixed `EVERY`, and `CRON` expressions with IANA time zones.**
-
-**Dynamic one-shot schedules are durable rows and may be created transactionally from functions.**
-
-**No process-local timer is authoritative.**
-
-**Recurring schedules define overlap and misfire policies explicitly.**
-
-**Every background invocation has a stable idempotency identity.**
-
-**KalamDB should deduplicate already-committed background invocations where possible while keeping transport semantics at-least-once.**
-
-**External side effects remain the function author's responsibility and should receive the stable idempotency key.**
-
-**The existing `ExecutionContext` is extended instead of adding a second function context.**
-
-**DataFusion remains lazy and is created only when a function actually needs query planning/execution.**
-
-**Procedure `CALL` should bypass DataFusion planning when possible and reuse plan-cache infrastructure.**
-
-**Only active tracked executions live in the hot in-memory registry.**
-
-**Persistent function history is sampled/error-focused rather than one row per successful call.**
-
-**Actors may be used internally for long-lived infrastructure, but actor semantics are not part of the KalamDB programming model.**
-
-**Function code talks to KalamDB through an in-process host API, never through loopback HTTP.**
-
-**TypeScript should be a real multi-file project with a sandboxed runtime and explicit capabilities.**
-
-**Function revisions are immutable artifacts and can be rolled back when compatible with the live SQL contract.**
-
-The resulting abstraction is:
-
-> **SQL defines the state and contract. Code implements behavior. Topics and schedules decide when behavior runs. KalamDB keeps it durable, transactional, realtime, typed, and resumable.**
+**KalamDB remains a SQL database with server functions; scheduling only adds another SQL-defined way to invoke those functions.**
