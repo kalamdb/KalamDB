@@ -2,9 +2,11 @@
 
 > **Source design:** See [functions.md](functions.md) for the complete product vision, rationale, examples, deferred runtimes, actor analysis, and scheduler design.
 
+> **HTTP/security companion:** See [functions-http-api-security.md](functions-http-api-security.md) for the REST invocation and routine authorization contract.
+
 > **For Codex:** implement this plan task-by-task using test-driven development and verification-before-completion.
 
-**Goal:** Deliver SQL-defined, typed server procedures with generated SDKs, PostgreSQL-style composite/row types, transactional execution, topic triggers, and production CLI deployment.
+**Goal:** Deliver SQL-defined, typed server procedures with generated SDKs, PostgreSQL-style composite/row types, transactional execution, direct REST/SQL invocation, routine ACLs, `SECURITY INVOKER` / `SECURITY DEFINER`, topic triggers, and production CLI deployment.
 
 **Architecture:** SQL files compile locally into one canonical `ContractSnapshot`. That snapshot drives schema diffing, generated types, DataFusion/Arrow type resolution, storage codecs, module build validation, server catalog state, and compatibility checks. Runtime artifacts are uploaded before one Meta-Raft activation atomically installs the contract metadata and active module revision.
 
@@ -19,7 +21,7 @@ SQL is the only source of truth for:
 - PostgreSQL-style schemas/namespaces, tables, policies, topics, and topic sources;
 - named composite types, implicit PostgreSQL-style table row types, optional singular row aliases (`ROW TYPE` / `FROM TABLE`), and enums;
 - nested composite/row-type table columns backed by DataFusion/Arrow `Struct`;
-- procedure signatures and execute permissions;
+- procedure signatures, routine security mode, and execute permissions;
 - topic-to-procedure triggers.
 
 Implementation code supplies behavior only. It must not redefine procedure signatures or duplicate SQL object shapes.
@@ -27,7 +29,8 @@ Implementation code supplies behavior only. It must not redefine procedure signa
 Supported invocation paths:
 
 ```text
-CALL              synchronous client or PGWire invocation
+CALL              synchronous SQL / PGWire invocation
+HTTP REST         POST /v1/functions/{schema}/{procedure}
 ctx.functions     nested procedure invocation in the same root execution
 TOPIC TRIGGER     asynchronous, at-least-once invocation
 ```
@@ -35,12 +38,11 @@ TOPIC TRIGGER     asynchronous, at-least-once invocation
 Not in V1:
 
 - scheduled procedures / `CREATE EVENT`;
-- `SECURITY DEFINER`;
 - procedure overloads, defaults, `OUT`, `INOUT`, or variadic parameters;
 - recursive composite types, unions/interfaces, multidimensional arrays, or nullable array elements;
 - distributed transactions across multiple data Raft groups;
 - same-partition parallel trigger processing;
-- Rust/Wasm, TypeScript Component/Wasm, C#, external HTTP, filesystem, TCP, subprocesses, or environment access.
+- Rust/Wasm, TypeScript Component/Wasm, C#, outbound external HTTP from procedure code, filesystem, TCP, subprocesses, or environment access.
 
 These require separate follow-on plans.
 
@@ -232,12 +234,22 @@ RETURNS chat.send_message_result
 SECURITY INVOKER;
 ```
 
+A privileged backend-style procedure may instead use:
+
+```sql
+CREATE PROCEDURE api.create_order(
+    request api.create_order_request
+)
+RETURNS api.create_order_result
+SECURITY DEFINER;
+```
+
 Rules:
 
 - One procedure per `schema.name`; overloads are rejected in V1.
 - Parameters are `IN` only and nullable unless `NOT NULL` is present. `NONEMPTY` follows the same field rules.
-- `SECURITY INVOKER` is required semantically and is the default when omitted.
-- `SECURITY DEFINER` is rejected.
+- `SECURITY INVOKER` is the default when omitted and executes with the effective privileges of the caller frame.
+- `SECURITY DEFINER` executes with the privileges of the procedure owner for that frame while preserving the original actor/session identity for audit.
 - Procedure DDL supports `CREATE`, `CREATE OR REPLACE`, `DROP [IF EXISTS] ... RESTRICT|CASCADE`.
 - Replacement must remain compatible with the artifact being activated.
 
@@ -259,23 +271,113 @@ JSONB
 array) are rejected in V1. `T[]` as a procedure return is rejected; wrap it
 in a composite or use `SETOF`.
 
-### 2.5 Permissions
+### 2.5 Permissions and routine security
+
+Procedure access uses PostgreSQL-like `EXECUTE` privileges, separate from table/column grants and row-level security:
 
 ```sql
-GRANT EXECUTE ON PROCEDURE chat.create_message TO user;
-REVOKE EXECUTE ON PROCEDURE chat.create_message FROM PUBLIC;
+REVOKE EXECUTE ON PROCEDURE api.create_order FROM PUBLIC;
+GRANT EXECUTE ON PROCEDURE api.create_order TO user;
 ```
 
 Rules:
 
+- `EXECUTE` decides whether a principal may enter a routine.
+- Table/column privileges continue to decide which relational operations are allowed.
+- RLS policies continue to decide which rows are visible/mutable for the **effective execution principal**.
 - Routine ACLs support `PUBLIC` and existing KalamDB roles.
 - The owner, DBA, and system role may manage a routine.
-- Direct `CALL` uses the caller as both actor and execution principal.
-- A trigger names an existing service-role user as its execution principal.
-- The execution principal drives authorization, RLS, and `CURRENT_USER`.
-- The actor is immutable audit metadata and never grants permissions.
+- KalamDB should default application procedures to no `PUBLIC` execute privilege; public API procedures must be granted deliberately.
+- The authenticated caller is retained as immutable `actor` / session identity for audit.
+- `SECURITY INVOKER`: effective principal is inherited from the caller frame.
+- `SECURITY DEFINER`: effective principal becomes the procedure owner only for that invocation frame and is restored on return.
+- `CURRENT_USER`, authorization checks, and RLS use the effective principal.
+- Actor identity never grants permissions by itself.
 
-### 2.6 Typed topics and triggers
+This separation allows a user to call a safe API procedure without granting that user direct write access to the underlying table:
+
+```sql
+REVOKE INSERT ON TABLE app.orders FROM user;
+REVOKE EXECUTE ON PROCEDURE api.create_order FROM PUBLIC;
+GRANT EXECUTE ON PROCEDURE api.create_order TO user;
+```
+
+with `api.create_order ... SECURITY DEFINER` owning only the minimum table privileges required by the operation.
+
+### 2.6 REST procedure invocation
+
+Every executable procedure is automatically addressable through the KalamDB HTTP API without defining a second controller/router contract.
+
+Canonical V1 route:
+
+```text
+POST /v1/functions/{schema}/{procedure}
+```
+
+Example:
+
+```text
+POST /v1/functions/api/create_order
+```
+
+The request body is the JSON edge representation of the procedure's named SQL parameters. For a single composite request parameter:
+
+```http
+POST /v1/functions/api/create_order
+Authorization: Bearer ...
+Content-Type: application/json
+X-Client-Version: 4.1
+
+{
+  "request": {
+    "product_id": "p123",
+    "quantity": 2
+  }
+}
+```
+
+The HTTP adapter performs the same contract resolution, argument validation, `EXECUTE` authorization, security-mode selection, transaction creation, procedure invocation, and return validation as SQL `CALL`. It must not implement a second procedure runtime.
+
+The default HTTP body is derived from the declared SQL return type. Composite/row/SETOF/JSONB returns are formatted as JSON at the edge; scalar text/bytes may use an explicitly selected content type.
+
+An HTTP-root procedure receives a stable Kalam-owned request/response adapter, not the raw Actix request object:
+
+```ts
+interface ProcedureHttpContext {
+  request: {
+    method: string;
+    path: string;
+    headers: ReadonlyHeaders;
+    query: ReadonlyQuery;
+    cookies: ReadonlyCookies;
+  };
+  response: {
+    status(code: number): void;
+    header(name: string, value: string): void;
+    contentType(value: string): void;
+  };
+}
+```
+
+Examples:
+
+```ts
+const clientVersion = ctx.http?.request.headers.get("x-client-version");
+ctx.http?.response.status(201);
+ctx.http?.response.header("Location", `/orders/${order.id}`);
+```
+
+Rules:
+
+- `ctx.http` is non-null only when the root invocation originated through the HTTP function route.
+- Nested procedures may read the inherited root HTTP request metadata.
+- Only the root HTTP procedure may mutate response status/headers/content type; nested helpers cannot unexpectedly finalize the outer response.
+- PGWire, scheduler, table-trigger, and topic-trigger roots have `ctx.http = null`.
+- Request context is host-created, immutable on the request side, excluded from SQL parameters, and cannot be forged by a client body.
+- Sensitive request values must never be logged automatically.
+- No parallel REST schema/controller definition is introduced; the SQL procedure contract remains authoritative.
+
+### 2.7 Typed topics and triggers
 
 ```sql
 CREATE TOPIC chat.message_created
@@ -330,6 +432,7 @@ interface ProcedureContext {
   parent: ProcedureCall | null;
   stack: readonly ProcedureCall[];
   depth: number;
+  http: ProcedureHttpContext | null;
   db: ProcedureDatabase;
   functions: GeneratedProcedures;
   topics: ProcedureTopics;
@@ -337,16 +440,17 @@ interface ProcedureContext {
 }
 ```
 
-Direct `CALL` sets `source.kind = "call"` and uses the authenticated caller as
-both principal and actor. A topic trigger sets `source.kind = "topic"`, uses the
-configured service principal for authorization, and copies the original actor
-from the event when available.
+`principal` is the **effective execution principal for the current routine frame**, not necessarily the authenticated actor.
 
-Nested `ctx.functions` calls preserve the root `source`, principal, actor,
-request, transaction, cancellation, and pinned revision. The host pushes a
-`ProcedureId` onto the root `SmallVec` (cap 16). `parent`, `stack`, and `depth`
-are views over that vector. Names are resolved only when user code reads them or
-when an error is reported. Do not clone JS stack objects on every nested invoke.
+Direct `CALL` / REST invocation sets `source.kind = "call"` and preserves the authenticated caller as `actor`. A `SECURITY INVOKER` root uses the caller as `principal`; a `SECURITY DEFINER` root uses the routine owner as `principal`. A topic trigger preserves the original actor when available and establishes its configured service principal as the invocation principal before applying the target procedure's security mode.
+
+Nested `ctx.functions` calls preserve the root `source`, actor, request, transaction, cancellation, and pinned revision, but routine security is evaluated per frame:
+
+- nested `SECURITY INVOKER` inherits the caller frame's effective principal;
+- nested `SECURITY DEFINER` uses the callee procedure owner's principal;
+- returning from a nested frame restores the caller frame's principal.
+
+The host pushes a `ProcedureId` onto the root `SmallVec` (cap 16). `parent`, `stack`, and `depth` are views over that vector. Names are resolved only when user code reads them or when an error is reported. Do not clone JS stack objects on every nested invoke.
 
 `parent` and `stack` are identity-only frames. They do not clone host APIs, so
 reading nested context cannot impersonate a parent or rebind `db` / `functions`.
@@ -371,7 +475,7 @@ Nested calls from JavaScript use the generated `ctx.functions` client, not
 export default defineProcedure<ChatCreateMessage>(async (ctx, input) => {
   const message = await ctx.db.messages.insert({
     groupId: input.groupId,
-    senderId: ctx.principal.id,
+    senderId: ctx.actor?.id ?? ctx.principal.id,
     body: input.body,
   });
 
@@ -390,9 +494,9 @@ export default defineProcedure<ChatCreateMessage>(async (ctx, input) => {
 ```
 
 `fanout_message` and `notify_members` are ordinary SQL procedures. Inside them,
-`ctx.source` is still the original `CALL chat.create_message`, `ctx.parent` is
+`ctx.source` is still the original root source, `ctx.parent` is
 `chat.create_message`, and a thrown error reports that host stack. All three
-share one transaction.
+share one transaction while each routine frame applies its own security mode.
 
 Rules:
 
@@ -432,7 +536,7 @@ types, row-type bindings, procedures, grants, triggers, dependency graph,
 canonical naming map, compiler version, contract hash
 ```
 
-Hashing ignores whitespace, comments, and file order. It includes normalized identifiers, type aliases, nullability, field/parameter order, policies, permissions, and trigger options.
+Hashing ignores whitespace, comments, and file order. It includes normalized identifiers, type aliases, nullability, field/parameter order, policies, permissions, routine security modes, and trigger options.
 
 One deep compiler module must be reused by CLI generation, semantic diffing, deployment, server validation, and type-to-Arrow resolution. Do not add another ad-hoc schema parser or a runtime-only type registry.
 
@@ -521,8 +625,8 @@ Design rules:
 All interfaces use the same signature-directed contract and scalar conversion rules:
 
 ```text
-HTTP params ↔ forwarded params ↔ ProcedureHandler ↔ V8 host ABI
-           ↔ PGWire ↔ generated TypeScript/Dart/Rust SDKs
+HTTP REST body ↔ forwarded params ↔ ProcedureHandler ↔ V8 host ABI
+               ↔ PGWire ↔ generated TypeScript/Dart/Rust SDKs
 ```
 
 For the generated Kalam SDK and V8 host ABI, prefer typed binary/direct host conversion over JSON round-trips. JSON is required only when the SQL type is `JSON`/`JSONB` or an edge protocol explicitly requests JSON.
@@ -584,7 +688,7 @@ Procedure results remain compatible with the existing SQL `QueryResult`:
 - JSONB: one `value` JSON column;
 - VOID: successful result with zero rows.
 
-Do not add a parallel `{type: procedure, value: ...}` HTTP response envelope.
+The generic SQL/HTTP query endpoint should not add a parallel `{type: procedure, value: ...}` envelope. The dedicated `/v1/functions/...` route returns the procedure result itself as the response body, formatted from the SQL return contract.
 
 ---
 
@@ -594,21 +698,27 @@ Reuse the existing execution context through a deep root-execution module:
 
 ```text
 ExecutionRoot (Arc)
-  identity, actor, request metadata, cancellation,
+  actor/session identity, root request metadata, cancellation,
   pinned deployment revision, lazy transaction lease,
   root InvocationSource,
   SmallVec<[ProcedureId; 4]> function_stack
 
 InvocationFrame
-  index into the root stack, local operation state
+  procedure id,
+  effective principal,
+  security mode,
+  index into the root stack,
+  local operation state
 ```
 
 Rules:
 
-- External `CALL` and each trigger message create a root execution.
+- External SQL `CALL`, HTTP REST function invocation, and each trigger message create a root execution.
+- The authenticated caller remains immutable actor/session identity for the full root.
+- Every routine frame computes an effective principal from its `SECURITY INVOKER` / `SECURITY DEFINER` mode.
 - Nested `ctx.functions` calls push/pop one `ProcedureId` on the root and reuse the same isolate, transaction, and node.
 - Maximum nested depth is 16. Exceeding it fails with a stable error that includes the host stack.
-- Each frame can read the inherited root source plus its own `parent`/`stack`.
+- Each frame can read the inherited root source plus its own `parent`/`stack` and effective principal.
 - Nested calls are host-mediated, so JS `Error.stack` cannot see parent procedures. Failed roots report the host procedure stack plus a truncated JS exception from the failing frame only.
 - Do not persist execution stacks, JS heaps, or per-invocation start/end rows to RocksDB or Raft.
 - The first transactional mutation begins the transaction through a single-flight path.
@@ -619,11 +729,11 @@ Rules:
 - `StagedOperation` must include both table mutations and topic publications.
 - Cancellation stops V8, DataFusion, host calls, and nested frames. Cancellation cannot claim rollback after durable commit begins.
 - An invocation pins one module revision; activation or rollback affects only new roots.
-- A root and all nested frames run on one node. If SQL routing must forward, forward the whole `CALL`, never individual nested procedures.
-- In-flight executions are per-node memory. Node failure fails the CALL; trigger leases/offsets let another node retry the same event identity.
+- A root and all nested frames run on one node. If SQL routing must forward, forward the whole `CALL`/REST invocation, never individual nested procedures.
+- In-flight executions are per-node memory. Node failure fails a synchronous invocation; trigger leases/offsets let another node retry the same event identity.
 - Isolate pooling is bounded per node and shared by concurrent roots of the same revision. Nested frames do not create isolates.
 
-The `CALL` path bypasses DataFusion planning. DataFusion remains lazy and is used for queries and scalar coercion/evaluation; DataFusion/Arrow types are still the common in-memory value model even when no `SessionContext` is created.
+The `CALL`/REST procedure path bypasses DataFusion planning. DataFusion remains lazy and is used for queries and scalar coercion/evaluation; DataFusion/Arrow types are still the common in-memory value model even when no `SessionContext` is created.
 
 ---
 
@@ -644,10 +754,11 @@ The TypeScript adapter must provide:
 
 - multi-file TypeScript bundled to one JavaScript artifact;
 - async host calls for `ctx.db`, `ctx.functions`, `ctx.topics`, and `ctx.log`;
+- read-only HTTP request metadata plus root-only HTTP response controls when `ctx.http` is present;
 - generated typed conversion between V8 objects and `RoutineValue` without a JSON stringify/parse round-trip;
 - isolate memory and deadline enforcement;
 - bounded instance pooling and cold-start metrics;
-- no filesystem, network, subprocess, native addon, or environment access;
+- no filesystem, outbound network, subprocess, native addon, or environment access;
 - ABI version validation and panic/exception isolation;
 - return contract validation before commit.
 
@@ -689,6 +800,8 @@ http = false
 filesystem = false
 ```
 
+`[functions.capabilities].http = false` controls **outbound HTTP/network capability from function code**. It does not disable the inbound `/v1/functions/...` invocation route.
+
 All paths are relative, remain inside the project, and are validated. V1 supports one function module per project.
 
 Required commands:
@@ -710,7 +823,7 @@ Deployment order:
 3. Generate client/server contracts from the local snapshot. Scaffold missing
    server entrypoints once; never overwrite existing implementations.
 4. Build with the configured command and inspect the generated manifest/exports.
-5. Validate permissions, limits, ABI, hashes, type/serde compatibility, and function contracts locally.
+5. Validate permissions, routine security modes, limits, ABI, hashes, type/serde compatibility, and function contracts locally.
 6. Apply pending physical schema migrations and verify the live base-schema hash.
 7. Upload the immutable, content-addressed artifact to `kalamdb-filestore`.
 8. Submit an idempotent activation request with expected current revision/hash.
@@ -735,7 +848,7 @@ system.triggers, system.trigger_attempts
 system.function_modules, system.function_revisions, system.function_artifacts
 ```
 
-Use type-safe IDs and models, one model per file. Store normalized type references and resolved type metadata, not free-form type strings.
+Use type-safe IDs and models, one model per file. Store normalized type references and resolved type metadata, not free-form type strings. `system.routines` must persist owner and security mode; `system.routine_grants` persists routine ACLs independently of table/RLS policy state.
 
 Ownership:
 
@@ -744,7 +857,7 @@ Ownership:
 - `kalamdb-system`: catalog models and providers.
 - `kalamdb-tables` / storage layer: nested Struct/List persistence through the shared row codec; RocksDB binary values and Parquet nested Arrow columns.
 - `kalamdb-filestore`: artifact bytes, hashes, lifecycle, retention, and GC.
-- `kalamdb-core`: SQL/procedure orchestration and transaction integration.
+- `kalamdb-core`: SQL/procedure orchestration, HTTP function adapter, authorization/security-frame selection, and transaction integration.
 - `kalamdb-publisher`: trigger leases, retry state, ACK/DLQ coordination.
 - new `kalamdb-functions` crate: runtime interface, V8 adapter, revision cache, and sandbox host ABI. It consumes the shared type/serde APIs rather than defining its own.
 - CLI: project discovery, generation/build orchestration, upload, activation, and UX.
@@ -766,6 +879,7 @@ Observability:
 - Aggregate invocation/error/cancellation/duration metrics are always recorded.
 - Errors, slow calls, explicit `ctx.log`, and sampled traces use the existing observability pipeline.
 - There is no automatic persistent start/end row per invocation.
+- Audit/error records distinguish immutable actor/session identity from effective execution principal and routine security mode.
 
 ---
 
@@ -775,7 +889,7 @@ Observability:
 
 **Files:** `backend/crates/kalamdb-dialect/src/`, `backend/crates/kalamdb-commons/src/models/`, `docs/architecture/decisions/`
 
-**Acceptance:** Typed ASTs and IDs exist for PostgreSQL-style `CREATE SCHEMA`, `SET search_path`, implicit table row types, optional `FROM TABLE` / `ROW TYPE` aliases, `CREATE TYPE ... AS (...)`, `ALTER TYPE` composite operations, enums, composite/row-type columns, `NOT NULL`, `NONEMPTY`, and reserved `UNION`/`INTERFACE` errors. Unsupported V1 syntax fails with stable errors; the ADR records crate and activation ownership.
+**Acceptance:** Typed ASTs and IDs exist for PostgreSQL-style `CREATE SCHEMA`, `SET search_path`, implicit table row types, optional `FROM TABLE` / `ROW TYPE` aliases, `CREATE TYPE ... AS (...)`, `ALTER TYPE` composite operations, enums, composite/row-type columns, `NOT NULL`, `NONEMPTY`, `SECURITY INVOKER`, `SECURITY DEFINER`, routine ownership/ACLs, and reserved `UNION`/`INTERFACE` errors. Unsupported V1 syntax fails with stable errors; the ADR records crate and activation ownership.
 
 **Verification:** `cargo nextest run -p kalamdb-dialect -p kalamdb-commons`
 
@@ -783,7 +897,7 @@ Observability:
 
 **Files:** `backend/crates/kalamdb-dialect/src/contracts/`, `cli/crates/kalam-schema-diff/src/`, shared type-conversion modules
 
-**Acceptance:** Multi-file SQL resolves independent of file order; `SET search_path TO chat` and the existing `USE chat` alias canonicalize identically; every table gets an implicit same-named row type; optional singular aliases bind to that row type without copying fields; named/row composites resolve deterministically to Arrow `Struct`; arrays resolve to `List`; cycles/collisions/missing refs fail; canonical hashes ignore formatting and comments; diff includes creates, changes, removals, and nested type evolution.
+**Acceptance:** Multi-file SQL resolves independent of file order; `SET search_path TO chat` and the existing `USE chat` alias canonicalize identically; every table gets an implicit same-named row type; optional singular aliases bind to that row type without copying fields; named/row composites resolve deterministically to Arrow `Struct`; arrays resolve to `List`; cycles/collisions/missing refs fail; canonical hashes ignore formatting and comments; diff includes creates, changes, removals, routine security/ACL changes, and nested type evolution.
 
 **Verification:** Golden compiler/diff/type-resolution tests plus `cargo nextest run -p kalamdb-dialect -p kalam-schema-diff -p kalamdb-commons`
 
@@ -791,7 +905,7 @@ Observability:
 
 **Files:** `backend/crates/kalamdb-commons/src/system_tables.rs`, `backend/crates/kalamdb-commons/src/serialization/`, FlatBuffers schemas/generated code, `backend/crates/kalamdb-system/src/providers/`, `backend/crates/kalamdb-system/src/registry.rs`
 
-**Acceptance:** Every contract object persists through typed `EntityStore` models and is introspectable; implicit row types and aliases have explicit catalog relationships; dependency-restricted drop behavior is tested. The existing `KSerializable`/EntityEnvelope path encodes/decodes schema-known `Struct`/`List` recursively with FlatBuffers, no supported nested value reaches string fallback, and old values with a newly added nullable field decode as `NULL` without rewriting all RocksDB rows.
+**Acceptance:** Every contract object persists through typed `EntityStore` models and is introspectable; implicit row types and aliases have explicit catalog relationships; routine owner/security mode/ACLs persist and are queryable; dependency-restricted drop behavior is tested. The existing `KSerializable`/EntityEnvelope path encodes/decodes schema-known `Struct`/`List` recursively with FlatBuffers, no supported nested value reaches string fallback, and old values with a newly added nullable field decode as `NULL` without rewriting all RocksDB rows.
 
 **Verification:** `cargo nextest run -p kalamdb-commons -p kalamdb-system` plus codec round-trip, compatibility, malformed payload, allocation/payload-size, and nested-depth tests.
 
@@ -812,7 +926,7 @@ Observability:
 
 **Files:** new `backend/crates/kalamdb-functions/`, root workspace manifests, ADR update
 
-**Acceptance:** A bundled fixture loads and invokes through the versioned ABI; scalar, nested Struct, row alias, List, and JSONB arguments/results round-trip; typed values cross the host boundary without JSON stringify/parse; timeout, memory, cancellation, forbidden capabilities, exceptions, and invalid returns are tested; runtime dependency choice is benchmarked and recorded.
+**Acceptance:** A bundled fixture loads and invokes through the versioned ABI; scalar, nested Struct, row alias, List, and JSONB arguments/results round-trip; typed values cross the host boundary without JSON stringify/parse; `ProcedureContext` exposes actor, effective principal, source, stack, and optional HTTP context correctly; timeout, memory, cancellation, forbidden capabilities, exceptions, and invalid returns are tested; runtime dependency choice is benchmarked and recorded.
 
 **Verification:** `cargo nextest run -p kalamdb-functions`; report cold-start and warm invocation seconds plus typed codec encode/decode benchmarks.
 
@@ -829,21 +943,29 @@ Observability:
 - A revision can be built, uploaded, activated, loaded, and rolled back without `CALL`.
 - Failure injection confirms the previous revision remains active.
 
-### Task 7: Implement direct typed `CALL`
+### Task 7: Implement direct typed `CALL` and REST function invocation
 
-**Files:** dialect classifier/parser, `kalamdb-core` SQL handlers, HTTP params/response adapters, PGWire adapter, forwarded SQL protobuf/model
+**Files:** dialect classifier/parser, `kalamdb-core` SQL handlers, `/v1/functions/{schema}/{procedure}` HTTP adapter, HTTP params/response adapters, PGWire adapter, forwarded SQL protobuf/model
 
-**Acceptance:** Scalar, implicit/aliased table row, setof, named composite, nested Struct/List, JSONB, and VOID calls work through HTTP and PGWire; composite/array params forward losslessly using the shared typed value model; generated SDK/V8 paths avoid JSON round-trips for typed values; every implementation receives a trusted direct-call context with `source.kind = "call"`, `parent = null`, and a one-frame `stack`; client attempts to pass or override context are rejected; execute permissions and stable error codes are enforced; existing `QueryResult` compatibility remains.
+**Acceptance:** Scalar, implicit/aliased table row, setof, named composite, nested Struct/List, JSONB, and VOID calls work through `POST /v1/functions/{schema}/{procedure}`, generic SQL HTTP, and PGWire. JSON REST input binds to the same SQL procedure signature; composite/array params forward losslessly using the shared typed value model; generated SDK/V8 paths avoid JSON round-trips for typed values. HTTP-root procedures can read headers/query/cookies through `ctx.http.request` and can set root response status/headers/content type while the declared SQL return remains the response body contract. Every implementation receives a trusted direct-call context with `source.kind = "call"`, `parent = null`, and a one-frame `stack`; client attempts to pass or override context are rejected. `REVOKE/GRANT EXECUTE`, `SECURITY INVOKER`, `SECURITY DEFINER`, actor/effective-principal separation, RLS under the effective principal, and stable error codes are enforced. Existing `QueryResult` compatibility remains.
 
-**Verification:** Backend integration tests plus TypeScript client call tests, including nested composite columns read from RocksDB and a cold Parquet scan.
+**Verification:** Backend integration tests plus TypeScript client call tests covering:
+
+- `POST /v1/functions/api/create_order`;
+- denied call without `EXECUTE`;
+- `REVOKE EXECUTE ... FROM PUBLIC` followed by `GRANT EXECUTE ... TO user`;
+- invoker procedure obeying caller table grants/RLS;
+- definer procedure succeeding without caller direct table write privilege while preserving actor identity;
+- request header read and 201/`Location` response customization;
+- nested composite columns read from RocksDB and a cold Parquet scan.
 
 ### Task 8: Add automatic and nested transactions
 
 **Files:** `backend/crates/kalamdb-core/src/sql/context/`, transaction coordinator/write-set, `kalamdb-functions` host calls
 
-**Acceptance:** Root-owned and borrowed transactions behave correctly; nested calls inherit root source/principal/actor/request/cancellation while receiving a derived procedure frame with readable `parent` and `stack`; nested calls reuse the root, isolate, node, and pinned revision; typed values are passed directly between nested in-process procedures where possible; a nested exception returns the full host procedure stack in SQL/HTTP/PGWire details and in the thrown parent error; concurrent first mutations cannot create two transactions; caught transactional failures still prevent commit; cross-group/stream/system writes fail clearly.
+**Acceptance:** Root-owned and borrowed transactions behave correctly; nested calls inherit root source/actor/request/cancellation while receiving a derived procedure frame with readable `parent`, `stack`, and frame-local effective principal; nested invoker/definer transitions restore principals correctly; nested calls reuse the root, isolate, node, and pinned revision; typed values are passed directly between nested in-process procedures where possible; a nested exception returns the full host procedure stack in SQL/HTTP/PGWire details and in the thrown parent error; concurrent first mutations cannot create two transactions; caught transactional failures still prevent commit; cross-group/stream/system writes fail clearly.
 
-**Verification:** Transaction integration tests covering success, nested failure, return mismatch, cancellation, explicit SQL transaction, commit boundary, nested-context fields (`source`, `parent`, `stack`, `depth`) on both root and child frames, and a three-deep failure whose error details list every procedure in the chain.
+**Verification:** Transaction integration tests covering success, nested failure, return mismatch, cancellation, explicit SQL transaction, commit boundary, nested-context fields (`source`, `actor`, `principal`, `parent`, `stack`, `depth`) on both root and child frames, nested invoker/definer combinations, and a three-deep failure whose error details list every procedure in the chain.
 
 ### Task 9: Add transactional topic publish
 
@@ -855,14 +977,14 @@ Observability:
 
 ### Checkpoint C
 
-- Generated client → `CALL` → nested DB/topic work → typed result succeeds end-to-end.
-- Rollback, cancellation, permissions, one-group limits, and typed binary serialization are proven.
+- Generated client/REST → procedure → nested DB/topic work → typed result succeeds end-to-end.
+- Rollback, cancellation, EXECUTE permissions, routine security modes, one-group limits, and typed binary serialization are proven.
 
 ### Task 10: Implement durable trigger delivery
 
 **Files:** dialect trigger AST/handler, publisher trigger dispatcher, system trigger/attempt providers, `kalamdb-functions`
 
-**Acceptance:** Per-partition order is preserved; trigger implementations receive trusted topic context plus typed payload input (`source.kind = "topic"`, `parent = null`); nested calls from a trigger keep that topic source while exposing the trigger procedure as `parent`; retries preserve the same source identity and survive restart/failover; leases expire safely; event IDs are stable; ACK follows commit; DLQ transition is atomic; disabling/dropping/redeploying a trigger preserves defined offset behavior.
+**Acceptance:** Per-partition order is preserved; trigger implementations receive trusted topic context plus typed payload input (`source.kind = "topic"`, `parent = null`); the configured trigger principal establishes the caller frame for invoker semantics and a definer target may switch to its owner; nested calls from a trigger keep that topic source while exposing the trigger procedure as `parent`; retries preserve the same source identity and survive restart/failover; leases expire safely; event IDs are stable; ACK follows commit; DLQ transition is atomic; disabling/dropping/redeploying a trigger preserves defined offset behavior.
 
 **Verification:** Multi-partition, poison message, crash-before-ACK, crash-after-commit, lease expiry, DLQ replay, and schema-version backlog tests.
 
@@ -876,11 +998,11 @@ Observability:
 
 ### Task 12: Security, observability, performance, and final documentation
 
-**Files:** auth/permission handlers, observability metrics/views, canonical SDK/CLI/SQL docs, `../kalamdb-skills` mirrors
+**Files:** auth/permission handlers, HTTP function adapter, observability metrics/views, canonical SDK/CLI/SQL docs, `../kalamdb-skills` mirrors
 
-**Acceptance:** Sandbox escape and privilege tests pass; secrets never enter manifests/logs; active-run view and aggregate metrics work; failed invocations emit one structured error with host procedure stack and truncated JS exception, not per-frame start/end logs; public docs describe PostgreSQL-style composite/row semantics, nested column behavior, schema evolution, codec limits, retries, idempotency, rollback, stack traces, and wire mappings. Benchmarks demonstrate the typed binary path does not regress supported scalar encoding and is materially better than JSON for representative nested procedure payloads.
+**Acceptance:** Sandbox escape and privilege tests pass; `EXECUTE` ACLs are separate from table/column grants and RLS; `SECURITY DEFINER` has explicit owner/effective-principal semantics and cannot overwrite actor identity; nested security-mode transitions restore correctly; unsafe privilege escalation paths are covered; HTTP request secrets are never automatically logged; secrets never enter manifests/logs; active-run view and aggregate metrics work; failed invocations emit one structured error with actor/effective principal, host procedure stack and truncated JS exception, not per-frame start/end logs; public docs describe `/v1/functions/{schema}/{procedure}`, request context, response customization, `REVOKE/GRANT EXECUTE`, INVOKER/DEFINER, PostgreSQL-style composite/row semantics, nested column behavior, schema evolution, codec limits, retries, idempotency, rollback, stack traces, and wire mappings. Benchmarks demonstrate the typed binary path does not regress supported scalar encoding and is materially better than JSON for representative nested procedure payloads.
 
-**Verification:** Security review, codec/runtime benchmarks, production-like server build, CLI smoke tests, and `python3 scripts/versions.py verify` when SDK versions change.
+**Verification:** Security review, REST/ACL/security-mode integration tests, codec/runtime benchmarks, production-like server build, CLI smoke tests, and `python3 scripts/versions.py verify` when SDK versions change.
 
 ---
 
@@ -891,9 +1013,9 @@ Observability:
 - Production-like server build succeeds.
 - PostgreSQL-like composite columns, implicit table row types, singular aliases, `ALTER TYPE`, and `search_path` behavior pass dialect/integration tests.
 - RocksDB FlatBuffers/KSerializable and Parquet Arrow nested Struct/List round trips pass without JSON intermediates for typed values.
-- Direct calls, nested calls, nested error stack traces, rollback, trigger retry/DLQ, restart, and cluster failover pass end-to-end.
+- `POST /v1/functions/{schema}/{procedure}`, SQL/PGWire direct calls, nested calls, nested error stack traces, request-header access, typed HTTP responses, `EXECUTE` ACLs, `SECURITY INVOKER`, `SECURITY DEFINER`, actor/effective-principal separation, rollback, trigger retry/DLQ, restart, and cluster failover pass end-to-end.
 - Runtime limits and security checklist are verified.
-- Relevant runtime, serde, and trigger performance tests report seconds and show no unacceptable regression.
+- Relevant runtime, serde, HTTP adapter, ACL/security-mode, and trigger performance tests report seconds and show no unacceptable regression.
 - SDK and canonical skill documentation are updated.
 
 Implementation must stop at each checkpoint for review. Do not begin schedules or additional runtimes as part of V1.
