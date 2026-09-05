@@ -19,3 +19,5 @@ mod scenario_10_multi_tenant;
 mod scenario_11_multi_storage;
 #[path = "../scenario_14_vector_rag.rs"]
 mod scenario_14_vector_rag;
+#[path = "../scenario_15_v07_storage_indexes.rs"]
+mod scenario_15_v07_storage_indexes;
