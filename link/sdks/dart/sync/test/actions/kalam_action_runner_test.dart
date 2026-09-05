@@ -43,6 +43,47 @@ void main() {
     );
   }
 
+  test('dispose drains started work and leaves the backlog queued', () async {
+    final started = Completer<void>();
+    final release = Completer<void>();
+    var count = 0;
+    final runner = KalamActionRunner(
+      store: store,
+      accountKey: 'account',
+      registry: KalamActionRegistry([
+        definition(
+          execute: (_, __) async {
+            count++;
+            if (count == 8) started.complete();
+            await release.future;
+          },
+        ),
+      ]),
+    );
+    for (var i = 0; i < 20; i++) {
+      await runner.enqueue(
+        actionKey: 'messages.send',
+        actionId: 'action-$i',
+        orderingKey: 'chat-$i',
+        payload: const SendMessage('hello'),
+      );
+    }
+    final flushing = runner.flush();
+    await started.future;
+    var disposed = false;
+    final disposing = runner.dispose().then((_) => disposed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(disposed, isFalse);
+    expect(count, 8);
+    release.complete();
+    await disposing;
+    await flushing;
+    expect(count, 8);
+    expect(await runner.flush(), 0);
+    final rows = await database.select(database.kalamActions).get();
+    expect(rows.where((a) => a.status == 'queued').length, 12);
+  });
+
   test(
     'encodes typed payloads and keeps the action id as idempotency key',
     () async {

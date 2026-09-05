@@ -4,6 +4,14 @@ Local-first Flutter sync for [KalamDB](https://kalamdb.org). One Drift cache, li
 
 → **[Docs](https://kalamdb.org/docs/dart-sdk/sync)** · [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions) · [kalam_link](https://pub.dev/packages/kalam_link) · [GitHub](https://github.com/kalamdb/KalamDB)
 
+## Shutdown and replay load
+
+Always await `Kalam.dispose()` before clearing application projection data. It
+drains active consumer callbacks and action executions before closing SQLite.
+The outbox runs at most eight independent ordering keys concurrently; queued
+work remains durable when a session is disposed. Standalone action runners must
+likewise await `KalamActionRunner.dispose()` before closing their store.
+
 ## Install
 
 ```bash

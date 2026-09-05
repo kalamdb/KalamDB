@@ -112,6 +112,12 @@ final class KalamSyncCoordinator {
     await _connectionSubscription?.cancel();
     await _actionSubscription?.cancel();
     _retryTimer?.cancel();
+    // Subscription cancellation does not await asynchronous projectors.
+    // They and the outbox still need the database until their writes finish.
+    while (_inFlightApplies > 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    await actions.dispose();
     await _states.close();
   }
 
@@ -216,7 +222,8 @@ final class KalamSyncCoordinator {
         apply: () async {
           var appliedThrough = committed?.seq;
           for (final change in changes) {
-            if (appliedThrough != null && change.seq <= appliedThrough) continue;
+            if (appliedThrough != null && change.seq <= appliedThrough)
+              continue;
             await consumer.handle(change, context);
             appliedThrough = change.seq;
           }
@@ -250,7 +257,7 @@ final class KalamSyncCoordinator {
   }
 
   Future<void> _flushActions() async {
-    if (_flushInProgress || !_connected || _paused) return;
+    if (_flushInProgress || !_connected || _paused || _disposed) return;
     _flushInProgress = true;
     _emit(_state.copyWith(phase: KalamSyncPhase.flushing, clearError: true));
     try {

@@ -353,7 +353,7 @@ packages:
       path: "../link"
       relative: true
     source: path
-    version: "0.6.0-rc.0"
+    version: "0.6.0-rc.1"
   kalam_sync_chat_backend:
     dependency: "direct dev"
     description:
