@@ -1,5 +1,7 @@
 # KalamDB Server Functions, Typed Contracts & Topic Triggers
 
+> **0.7 program:** Functions V1 is one of three essential tracks for KalamDB 0.7. Implement it alongside [centralized serialization](2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md) and [scalar secondary indexes](2026-08-30-scalar-secondary-indexes.md). Combined sequence and release gate: [2026-09-01-kalamdb-0.7.md](2026-09-01-kalamdb-0.7.md).
+
 > **Development plan:** See [functions-v1-implementation.md](functions-v1-implementation.md) for the frozen V1 scope, dependency-ordered tasks, verification checkpoints, and corrected CLI deployment sequence.
 
 **Status:** Proposed  

@@ -2,6 +2,10 @@
 
 > Revised 2026-09-01. This replaces the earlier design that spread FlatBuffers/FlexBuffers logic across model, storage, Raft, topic, and stream modules.
 
+> **0.7 program:** This is one of three essential tracks for KalamDB 0.7. Implement it alongside [functions V1](functions-v1-implementation.md) and [scalar secondary indexes](2026-08-30-scalar-secondary-indexes.md). Combined sequence and release gate: [2026-09-01-kalamdb-0.7.md](2026-09-01-kalamdb-0.7.md).
+
+Functions nested `STRUCT`/`List` persistence **is** this plan's row codec (Phase 2), not a second serializer. Secondary-index JSON values **are** Phase 4 cleanup, not a private index codec.
+
 ## 1. Goal
 
 KalamDB must have exactly one internal serialization subsystem for persisted database objects.
@@ -954,6 +958,8 @@ After this phase, no caller should directly choose an internal persistence codec
 
 ### Phase 2 - Move Row Serialization Completely Out of Commons/Models
 
+This phase is the 0.7 Wave 1 serialization gate and **unblocks Functions Task 3**. Nested `STRUCT`/`List` for `CREATE TYPE` / procedure payloads is implemented here, not in `kalamdb-functions`.
+
 1. Move `row_codec.rs`, row `.fbs`, generated code, and scalar storage conversion into the new crate.
 2. Convert row format from name-keyed columns to true schema-ordinal values.
 3. Add nested `STRUCT`/list/map recursion in the same scalar/value implementation.
@@ -970,6 +976,8 @@ After this phase, no caller should directly choose an internal persistence codec
 4. Ensure row stores use the optimized row profile while ordinary `EntityStore` objects use the generic profile.
 
 ### Phase 4 - System, Topic, Vector, and Index Cleanup
+
+Coordinate with the [scalar secondary index plan](2026-08-30-scalar-secondary-indexes.md): item 6 is the 0.7 index-value format. Do not leave JSON PK arrays as the shipped 0.7 path.
 
 1. Remove all `KSerializable` implementations from system models.
 2. Do not add per-system-model `.fbs` schemas.

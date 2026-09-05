@@ -1,5 +1,7 @@
 # KalamDB Unified Type, Field & Serialization Plan
 
+> **0.7 program:** Persistence implementation for 0.7 is [kalamdb-serialization](2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md), sequenced with functions and indexes in [2026-09-01-kalamdb-0.7.md](2026-09-01-kalamdb-0.7.md). This document remains the type/field companion to [`functions.md`](functions.md); it does not authorize a second codec.
+
 > **Scope:** Normative companion to [`functions.md`](functions.md), especially its type-system, storage, schema-evolution, topic, catalog, deployment, and serialization sections. This document narrows the implementation architecture without replacing the existing functions design.
 
 **Status:** Proposed  

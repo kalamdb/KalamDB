@@ -1,120 +1,51 @@
 # KalamDB Quick Start
 
-Fast path: build, run, and issue your first SQL query.
+Run a realtime React chat app with a topic worker, then open it in two tabs to see changes arrive live. The worker uses a simulated reply, so you do not need an external AI key.
 
-## 1. Prerequisites
+## 1. Install the CLI
 
-- Git
-- Rust 1.92+
-- C++ toolchain (build-essential / Xcode CLT / MSVC)
-
-For full setup and troubleshooting, see [Development Setup](../development/development-setup.md).
-
-## 2. Clone and build
+Use a current Node.js LTS release with npm. The native CLI supports macOS Apple Silicon, Linux x86-64 and ARM64, and Windows x86-64. Initial setup downloads the CLI, starter, and dependencies, so it needs internet access.
 
 ```bash
-git clone https://github.com/kalamdb/KalamDB.git
-cd KalamDB/backend
-
-cargo build --release --bin kalamdb-server
+npm install -g @kalamdb/cli
+kalam version
 ```
 
-## 3. Run the server
+## 2. Create and start your app
 
 ```bash
-cargo run --release --bin kalamdb-server
+mkdir my-app && cd my-app
+kalam init --yes --template chat-with-ai --languages typescript --package-manager npm
+kalam dev
 ```
 
-You should see logs indicating the server is listening on `http://127.0.0.1:2900`.
+`kalam init` downloads the chat starter and installs its dependencies. `kalam dev` starts or reuses a local KalamDB server, applies `kalam/schema.sql`, generates TypeScript tables, and runs the browser app and topic worker.
 
-## 4. Healthcheck
+## 3. See a change travel through the app
 
-```bash
-curl http://127.0.0.1:2900/v1/api/healthcheck
+Open the app URL printed in your terminal in two browser tabs. Send a message such as:
+
+```text
+latency spike after deploy
 ```
 
-Expected:
+You should see the message in both tabs, live worker progress, and a saved reply. The reply is deterministic demo logic; you can replace it with your own model call in `src/agent.ts`.
 
-```json
-{"status":"healthy","api_version":"v1"}
-```
+The starter uses local demo credentials (`root` / `kalamdb123`) and connects to `http://127.0.0.1:2900` by default. These privileged demo sessions are for exploring the data flow. Use ordinary user sessions and the starter's SQL policies when building your application's access controls.
 
-## 5. Create namespace and table
+## 4. Make it yours
 
-KalamDB requires an `Authorization` header for `POST /v1/api/sql`.
+- Edit `src/App.tsx` to change the interface.
+- Read `kalam/schema.sql` for shared rooms, membership policies, STREAM progress events, and the topic route.
+- Edit `src/agent.ts` to change how the worker responds to new messages.
+- Keep `kalam dev` running to apply schema changes and regenerate types as you work. The demo schema includes reset statements; inspect it before adapting it to data you want to keep.
 
-For local development (localhost / `127.0.0.1`), the default `root` user can authenticate with an empty password, so you can use `curl -u root:`.
+The [chat example guide](../../examples/chat-with-ai/README.md) explains the complete flow. To start smaller, run `kalam init` in a new empty folder and choose a minimal template. To inspect available starters, run `kalam init --list-templates`.
 
-```bash
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"CREATE NAMESPACE app;"}
-JSON
+## Next steps
 
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"CREATE TABLE app.messages (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), content TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW()) WITH (TYPE='USER', FLUSH_POLICY='rows:1000');"}
-JSON
-```
-
-## 6. Insert and query
-
-```bash
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"INSERT INTO app.messages (content) VALUES ('Hello from KalamDB');"}
-JSON
-
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"SELECT * FROM app.messages ORDER BY created_at DESC LIMIT 10;"}
-JSON
-```
-
-## 7. Next steps
-
-### Optional: `EXECUTE AS`
-
-Use wrapper syntax only. Ordinary USER-table and STREAM-table access stays
-scoped to the authenticated user; explicit `EXECUTE AS` follows the role
-hierarchy: system can target any role, DBA can target DBA/service/user,
-service can target service/user, and regular users can only target themselves.
-
-```bash
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"EXECUTE AS 'user_123' (SELECT * FROM app.messages LIMIT 1);"}
-JSON
-```
-
-### Optional: Topic/consume and storage maintenance
-
-```bash
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"CREATE TOPIC app.new_messages PARTITIONS 2;"}
-JSON
-
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"CONSUME FROM app.new_messages GROUP 'quickstart-worker' FROM LATEST LIMIT 10;"}
-JSON
-
-curl -u root: -X POST http://127.0.0.1:2900/v1/api/sql \
-  -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
-{"sql":"STORAGE FLUSH ALL IN app;"}
-JSON
-```
-
-- `../reference/sql.md` – more SQL examples
-- `../api/api-reference.md` – HTTP API reference
-- `../api/websocket-protocol.md` – WebSocket subscriptions
-- `../getting-started/cli.md` – `kalam` command-line client
+- [CLI workflow](cli.md) — schema generation, migrations, environments, and deployment.
+- [SQL reference](../reference/sql.md) — USER, SHARED, and STREAM tables, policies, and topics.
+- [API reference](../api/api-reference.md) — SQL requests from your own client.
+- [WebSocket protocol](../api/websocket-protocol.md) — live subscriptions.
+- [Development setup](../development/development-setup.md) — build KalamDB from source and contribute.

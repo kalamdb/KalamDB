@@ -1,5 +1,7 @@
 # Scalar Secondary Indexes Implementation Plan
 
+> **0.7 program:** This is one of three essential tracks for KalamDB 0.7. Implement it alongside [centralized serialization](2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md) and [functions V1](functions-v1-implementation.md). Combined sequence and release gate: [2026-09-01-kalamdb-0.7.md](2026-09-01-kalamdb-0.7.md).
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Give USER and SHARED tables PK-shaped scalar secondary indexes so equality (and later composite) lookups are prefix scans, flattening chat history/reconnect and RLS membership bind as tables grow.
@@ -8,9 +10,9 @@
 
 **Tech Stack:** Rust workspace, `IndexedEntityStore` / extracted index crate, storekey prefix encoding, DataFusion 55 `TableProvider` filter pushdown, `kalamdb-dialect` ALTER TABLE, `kalam-schema-diff`. Vector crate depends on the shared core.
 
-**Related:** [2026-08-20-shared-table-rls.md](2026-08-20-shared-table-rls.md) already requires covering `(principal, relation_key)` indexes and forbids a parallel RLS index system. [2026-08-25-indexed-live-rls-routing.md](2026-08-25-indexed-live-rls-routing.md) covers live *fan-out* keys; this plan covers *SQL/storage* lookups.
+**Related:** [2026-08-20-shared-table-rls.md](2026-08-20-shared-table-rls.md) already requires covering `(principal, relation_key)` indexes and forbids a parallel RLS index system. [2026-08-25-indexed-live-rls-routing.md](2026-08-25-indexed-live-rls-routing.md) covers live *fan-out* keys; this plan covers *SQL/storage* lookups. Index catalog and non-unique index **values** persist through `kalamdb-serialization` ([serialization plan](2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md) §3.5 / Phase 4); do not keep JSON PK arrays as the 0.7 format. Functions/chat procedures on `messages` and `conversation_members` need these indexes in the same 0.7 release.
 
-**Out of scope:** Teaching USearch to answer scalar `WHERE col = ?` (ANN ≠ prefix scan). Table-wide membership invalidation / per-principal live rebind. Growing `kalamdb-store::SecondaryIndex` JSON maps as a second user/shared index runtime — fold useful bits into the one core or leave them as a legacy system-table path that we stop copying.
+**Out of scope:** Teaching USearch to answer scalar `WHERE col = ?` (ANN ≠ prefix scan). Table-wide membership invalidation / per-principal live rebind. Growing `kalamdb-store::SecondaryIndex` JSON maps as a second user/shared index runtime — fold useful bits into the one core or leave them as a legacy system-table path that we stop copying. A private index persistence codec.
 
 ---
 
@@ -95,6 +97,8 @@ Equality on `conversation_id` alone is enough to stop *global* table growth in t
 4. Do not implement indexes in this task.
 
 ### Task 2: Persist index catalog on `TableDefinition` and `system.schemas`
+
+Catalog bytes follow the 0.7 serialization track: persist `TableDefinition` through `kalamdb-serialization` / `EntityStore` once Phase 3 lands. Do not add a JSON-only index catalog sidecar.
 
 **Files:**
 - Modify: `backend/crates/kalamdb-commons/src/models/schemas/table_definition.rs` (and `TableDefinitionRepr` / binary serde tuple — old rows must deserialize)
@@ -254,4 +258,4 @@ Do not ship a release where flushed rows disappear from indexed queries, or wher
 
 ## Suggested order
 
-Task 1 is a written DataFusion decision (no storage work). Task 2 is the catalog (`TableDefinition` + `system.schemas`). Task 3 extracts/rewrites the **one** indexing core and points vector hot PK at it. Tasks 4–5 unlock hot-path chat SELECTs using that core and DF-pushed filters. Task 6 makes indexes user-declarable. Task 7 is CLI schema-diff so `schema.sql` is not a lie. Task 8 is flush-time Parquet blooms + min/max/row-group prune for indexed columns (correctness and cold speed). Task 9 is RLS scale. Task 10 proves the original bench.
+Follow [0.7 waves](2026-09-01-kalamdb-0.7.md) when working this plan next to serialization and functions. Task 1 is a written DataFusion decision (no storage work). Task 2 is the catalog (`TableDefinition` + `system.schemas`). Task 3 extracts/rewrites the **one** indexing core and points vector hot PK at it. Tasks 4–5 unlock hot-path chat SELECTs using that core and DF-pushed filters. Task 6 makes indexes user-declarable. Task 7 is CLI schema-diff so `schema.sql` is not a lie. Task 8 is flush-time Parquet blooms + min/max/row-group prune for indexed columns (correctness and cold speed). Task 9 is RLS scale. Task 10 proves the original bench.

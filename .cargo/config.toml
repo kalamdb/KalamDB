@@ -47,7 +47,8 @@ rustflags = [
 rustflags = ["-Z", "threads=8"]
 
 [build]
-incremental = true
+# Avoid retaining large per-crate incremental caches in this workspace.
+incremental = false
 rustflags = ["-Z", "threads=8"]
 
 # Cranelift is not the default codegen backend. It drops aws-lc-sys C symbols
