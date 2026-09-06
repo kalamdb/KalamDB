@@ -155,9 +155,9 @@ fn find_top_level_char(input: &str, target: char) -> Option<usize> {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WordSpan<'a> {
-    pub(crate) text: &'a str,
+    pub(crate) text:  &'a str,
     pub(crate) start: usize,
-    pub(crate) end: usize,
+    pub(crate) end:   usize,
 }
 
 pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
@@ -171,9 +171,9 @@ pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
             (None, true) => start = Some(i),
             (Some(s), false) => {
                 words.push(WordSpan {
-                    text: &input[s..i],
+                    text:  &input[s..i],
                     start: s,
-                    end: i,
+                    end:   i,
                 });
                 start = None;
             },
@@ -183,9 +183,9 @@ pub(crate) fn word_spans(input: &str) -> Vec<WordSpan<'_>> {
 
     if let Some(s) = start {
         words.push(WordSpan {
-            text: &input[s..],
+            text:  &input[s..],
             start: s,
-            end: input.len(),
+            end:   input.len(),
         });
     }
 

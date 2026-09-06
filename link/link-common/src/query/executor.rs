@@ -74,9 +74,9 @@ fn build_progress_stream(
 #[derive(Clone)]
 struct MultipartUploadFile {
     placeholder_name: String,
-    filename: String,
-    data: Bytes,
-    mime_type: Option<String>,
+    filename:         String,
+    data:             Bytes,
+    mime_type:        Option<String>,
 }
 
 #[cfg(feature = "file-uploads")]
@@ -95,9 +95,9 @@ impl From<(String, String, Vec<u8>, Option<String>)> for MultipartUploadFile {
 
 #[derive(Serialize)]
 struct BorrowedQueryRequest<'a> {
-    sql: &'a str,
+    sql:          &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    params: Option<&'a [serde_json::Value]>,
+    params:       Option<&'a [serde_json::Value]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     namespace_id: Option<&'a str>,
 }
@@ -116,10 +116,10 @@ pub(crate) type OwnedQueryUploadFile = (String, String, Vec<u8>, Option<String>)
 /// Handles SQL query execution via HTTP.
 #[derive(Clone)]
 pub struct QueryExecutor {
-    sql_url: String,
-    http_client: reqwest::Client,
-    auth: Arc<Mutex<AuthProvider>>,
-    max_retries: u32,
+    sql_url:        String,
+    http_client:    reqwest::Client,
+    auth:           Arc<Mutex<AuthProvider>>,
+    max_retries:    u32,
     auth_refresher: Option<AuthRefreshCallback>,
 }
 
@@ -625,7 +625,7 @@ impl QueryExecutor {
 
         Err(KalamLinkError::ServerError {
             status_code: status.as_u16(),
-            message: error_text,
+            message:     error_text,
         })
     }
 }

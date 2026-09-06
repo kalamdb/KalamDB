@@ -3,34 +3,34 @@ use crate::{CLIError, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterGroupActionRow {
-    action: String,
-    group_id: Option<String>,
-    success: Option<bool>,
-    error: Option<String>,
+    action:         String,
+    group_id:       Option<String>,
+    success:        Option<bool>,
+    error:          Option<String>,
     snapshot_index: Option<u64>,
     target_node_id: Option<u64>,
-    upto: Option<u64>,
-    snapshots_dir: Option<String>,
+    upto:           Option<u64>,
+    snapshots_dir:  Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterJoinRow {
-    node_id: u64,
-    rpc_addr: String,
-    api_addr: String,
+    node_id:             u64,
+    rpc_addr:            String,
+    api_addr:            String,
     rebalance_requested: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct ClusterClearRow {
-    snapshots_dir: String,
-    snapshots_dir_exists: bool,
+    snapshots_dir:         String,
+    snapshots_dir_exists:  bool,
     total_snapshots_found: u64,
-    total_size_bytes: u64,
-    snapshots_cleared: u64,
-    cleared_size_bytes: u64,
-    error_count: u64,
-    errors: Vec<String>,
+    total_size_bytes:      u64,
+    snapshots_cleared:     u64,
+    cleared_size_bytes:    u64,
+    error_count:           u64,
+    errors:                Vec<String>,
 }
 
 impl CLISession {
@@ -73,14 +73,14 @@ fn parse_group_action_rows(
     Ok(rows
         .into_iter()
         .map(|row| ClusterGroupActionRow {
-            action: cell_text(&row, "action").unwrap_or_else(|| "cluster".to_string()),
-            group_id: cell_text(&row, "group_id"),
-            success: cell_bool(&row, "success"),
-            error: cell_text(&row, "error"),
+            action:         cell_text(&row, "action").unwrap_or_else(|| "cluster".to_string()),
+            group_id:       cell_text(&row, "group_id"),
+            success:        cell_bool(&row, "success"),
+            error:          cell_text(&row, "error"),
             snapshot_index: cell_u64(&row, "snapshot_index"),
             target_node_id: cell_u64(&row, "target_node_id"),
-            upto: cell_u64(&row, "upto"),
-            snapshots_dir: cell_text(&row, "snapshots_dir"),
+            upto:           cell_u64(&row, "upto"),
+            snapshots_dir:  cell_text(&row, "snapshots_dir"),
         })
         .collect())
 }
@@ -92,9 +92,9 @@ fn parse_cluster_join_row(response: &kalam_client::QueryResponse) -> Result<Clus
     };
 
     Ok(ClusterJoinRow {
-        node_id: cell_u64(row, "node_id").unwrap_or(0),
-        rpc_addr: cell_text(row, "rpc_addr").unwrap_or_else(|| "-".to_string()),
-        api_addr: cell_text(row, "api_addr").unwrap_or_else(|| "-".to_string()),
+        node_id:             cell_u64(row, "node_id").unwrap_or(0),
+        rpc_addr:            cell_text(row, "rpc_addr").unwrap_or_else(|| "-".to_string()),
+        api_addr:            cell_text(row, "api_addr").unwrap_or_else(|| "-".to_string()),
         rebalance_requested: cell_bool(row, "rebalance_requested").unwrap_or(false),
     })
 }
@@ -191,7 +191,8 @@ fn render_cluster_group_action_text(rows: &[ClusterGroupActionRow]) -> String {
 
 fn render_cluster_join_text(row: &ClusterJoinRow) -> String {
     format!(
-        "Cluster join completed for node {}\nRPC address: {}\nAPI address: {}\nData leader rebalance requested: {}",
+        "Cluster join completed for node {}\nRPC address: {}\nAPI address: {}\nData leader \
+         rebalance requested: {}",
         row.node_id,
         row.rpc_addr,
         row.api_addr,
@@ -264,24 +265,24 @@ mod tests {
     fn renders_group_action_summary_from_rows() {
         let text = render_cluster_group_action_text(&[
             ClusterGroupActionRow {
-                action: "snapshot".to_string(),
-                group_id: Some("meta".to_string()),
-                success: Some(true),
-                error: None,
+                action:         "snapshot".to_string(),
+                group_id:       Some("meta".to_string()),
+                success:        Some(true),
+                error:          None,
                 snapshot_index: Some(42),
                 target_node_id: None,
-                upto: None,
-                snapshots_dir: Some("/tmp/snaps".to_string()),
+                upto:           None,
+                snapshots_dir:  Some("/tmp/snaps".to_string()),
             },
             ClusterGroupActionRow {
-                action: "snapshot".to_string(),
-                group_id: Some("data:user:0".to_string()),
-                success: Some(false),
-                error: Some("not leader".to_string()),
+                action:         "snapshot".to_string(),
+                group_id:       Some("data:user:0".to_string()),
+                success:        Some(false),
+                error:          Some("not leader".to_string()),
                 snapshot_index: None,
                 target_node_id: None,
-                upto: None,
-                snapshots_dir: Some("/tmp/snaps".to_string()),
+                upto:           None,
+                snapshots_dir:  Some("/tmp/snaps".to_string()),
             },
         ]);
 
@@ -294,9 +295,9 @@ mod tests {
     #[test]
     fn renders_join_summary() {
         let text = render_cluster_join_text(&ClusterJoinRow {
-            node_id: 2,
-            rpc_addr: "10.0.0.2:2910".to_string(),
-            api_addr: "http://10.0.0.2:2900".to_string(),
+            node_id:             2,
+            rpc_addr:            "10.0.0.2:2910".to_string(),
+            api_addr:            "http://10.0.0.2:2900".to_string(),
             rebalance_requested: true,
         });
 
@@ -307,14 +308,14 @@ mod tests {
     #[test]
     fn renders_clear_missing_directory_message() {
         let text = render_cluster_clear_text(&ClusterClearRow {
-            snapshots_dir: "/tmp/missing".to_string(),
-            snapshots_dir_exists: false,
+            snapshots_dir:         "/tmp/missing".to_string(),
+            snapshots_dir_exists:  false,
             total_snapshots_found: 0,
-            total_size_bytes: 0,
-            snapshots_cleared: 0,
-            cleared_size_bytes: 0,
-            error_count: 0,
-            errors: Vec::new(),
+            total_size_bytes:      0,
+            snapshots_cleared:     0,
+            cleared_size_bytes:    0,
+            error_count:           0,
+            errors:                Vec::new(),
         });
 
         assert_eq!(text, "No snapshots directory found at: /tmp/missing\nNothing to clear.");

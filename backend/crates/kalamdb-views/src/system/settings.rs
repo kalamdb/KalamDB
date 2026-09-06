@@ -76,7 +76,8 @@ impl SettingsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Setting name (e.g., server.host, storage.data_path)".to_string())),
+                Some("Setting name (e.g., server.host, storage.data_path)".to_string()),
+            ),
             ColumnDefinition::new(
                 2,
                 "value",
@@ -86,7 +87,8 @@ impl SettingsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Current setting value".to_string())),
+                Some("Current setting value".to_string()),
+            ),
             ColumnDefinition::new(
                 3,
                 "description",
@@ -96,7 +98,8 @@ impl SettingsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Human-readable description of the setting".to_string())),
+                Some("Human-readable description of the setting".to_string()),
+            ),
             ColumnDefinition::new(
                 4,
                 "category",
@@ -106,13 +109,15 @@ impl SettingsView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Setting category (server, storage, limits, etc.)".to_string())),
+                Some("Setting category (server, storage, limits, etc.)".to_string()),
+            ),
         ];
 
         system_view_definition(
             SystemTable::Settings,
             columns,
-            "Server configuration settings (read-only view)")
+            "Server configuration settings (read-only view)",
+        )
     }
 
     /// Create a new settings view
@@ -728,7 +733,8 @@ impl VirtualView for SettingsView {
                 Arc::new(values.finish()) as ArrayRef,
                 Arc::new(descriptions.finish()) as ArrayRef,
                 Arc::new(categories.finish()) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|e| {
             crate::error::RegistryError::Other(format!("Failed to build settings batch: {}", e))
         })

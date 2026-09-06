@@ -16,12 +16,11 @@ use kalamdb_commons::{
 use kalamdb_raft::{applier::MetaApplier, RaftError};
 use kalamdb_system::{providers::jobs::models::Job, JobNode, JobStatus, Storage, User};
 
+use super::utils::run_blocking_raft;
 use crate::{
     app_context::AppContext,
     applier::{executor::CommandExecutorImpl, ApplierError},
 };
-
-use super::utils::run_blocking_raft;
 
 /// Unified applier that persists all metadata operations to system tables
 ///
@@ -37,7 +36,7 @@ use super::utils::run_blocking_raft;
 /// - Storage operations → StorageExecutor
 /// - Job operations → Local (jobs are Raft-only, no SQL handlers)
 pub struct ProviderMetaApplier {
-    executor: CommandExecutorImpl,
+    executor:    CommandExecutorImpl,
     app_context: Arc<AppContext>,
 }
 

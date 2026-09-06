@@ -4,8 +4,13 @@ import { asc, desc, eq } from 'drizzle-orm';
 import { getExampleClient, isExampleDemoMode } from './client';
 import { Aside } from './components/Aside';
 import { Conversation } from './components/Conversation';
-import { approval_actions as approvalActions, conversations, messages, typing_tokens as typingTokens } from './schema.generated';
-import type { Conversations as ConversationRow } from './schema.generated';
+import {
+  react_ai_chat_approval_actions as approvalActions,
+  react_ai_chat_conversations as conversations,
+  react_ai_chat_messages as messages,
+  react_ai_chat_typing_tokens as typingTokens,
+} from './schema.generated';
+import type { ReactAiChatConversations as ConversationRow } from './schema.generated';
 
 const SELECTED_CONVERSATION_KEY = 'kalamdb-react-ai-chat-selected-v3';
 const DEFAULT_CONVERSATION_ID = 'project-alpha';

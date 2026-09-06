@@ -19,7 +19,7 @@ mod tests {
     #[test]
     fn auth_basic_converts_to_native() {
         let auth = DartAuthProvider::BasicAuth {
-            user: "alice".into(),
+            user:     "alice".into(),
             password: "secret".into(),
         };
         // into_native() should not panic
@@ -47,10 +47,10 @@ mod tests {
     #[test]
     fn schema_field_with_no_flags() {
         let sf = SchemaField {
-            name: "id".into(),
+            name:      "id".into(),
             data_type: KalamDataType::Int,
-            index: 0,
-            flags: None,
+            index:     0,
+            flags:     None,
         };
         let dart: DartSchemaField = sf.into();
         assert_eq!(dart.name, "id");
@@ -64,10 +64,10 @@ mod tests {
         flags.insert(FieldFlag::PrimaryKey);
         flags.insert(FieldFlag::NonNull);
         let sf = SchemaField {
-            name: "user_id".into(),
+            name:      "user_id".into(),
             data_type: KalamDataType::Text,
-            index: 1,
-            flags: Some(flags),
+            index:     1,
+            flags:     Some(flags),
         };
         let dart: DartSchemaField = sf.into();
         assert_eq!(dart.name, "user_id");
@@ -85,10 +85,10 @@ mod tests {
         flags.insert(FieldFlag::NonNull);
         flags.insert(FieldFlag::Unique);
         let sf = SchemaField {
-            name: "email".into(),
+            name:      "email".into(),
             data_type: KalamDataType::Text,
-            index: 2,
-            flags: Some(flags),
+            index:     2,
+            flags:     Some(flags),
         };
         let dart: DartSchemaField = sf.into();
         let fl = dart.flags.unwrap();
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn error_detail_converts() {
         let e = ErrorDetail {
-            code: "table_not_found".into(),
+            code:    "table_not_found".into(),
             message: "Table 'x' does not exist".into(),
             details: Some("namespace: default".into()),
         };
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn error_detail_without_details() {
         let e = ErrorDetail {
-            code: "syntax".into(),
+            code:    "syntax".into(),
             message: "Bad SQL".into(),
             details: None,
         };
@@ -131,23 +131,23 @@ mod tests {
     #[test]
     fn query_response_success() {
         let qr = QueryResult {
-            schema: vec![SchemaField {
-                name: "name".into(),
+            schema:     vec![SchemaField {
+                name:      "name".into(),
                 data_type: KalamDataType::Text,
-                index: 0,
-                flags: None,
+                index:     0,
+                flags:     None,
             }],
-            rows: Some(vec![vec![kalam_client::KalamCellValue::text("Alice")]]),
+            rows:       Some(vec![vec![kalam_client::KalamCellValue::text("Alice")]]),
             named_rows: None,
-            row_count: 1,
-            message: None,
-            as_user: None,
+            row_count:  1,
+            message:    None,
+            as_user:    None,
         };
         let resp = QueryResponse {
-            status: ResponseStatus::Success,
+            status:  ResponseStatus::Success,
             results: vec![qr],
-            took: Some(1.5),
-            error: None,
+            took:    Some(1.5),
+            error:   None,
         };
         let dart: DartQueryResponse = resp.into();
         assert!(dart.success);
@@ -164,11 +164,11 @@ mod tests {
     #[test]
     fn query_response_error() {
         let resp = QueryResponse {
-            status: ResponseStatus::Error,
+            status:  ResponseStatus::Error,
             results: vec![],
-            took: None,
-            error: Some(ErrorDetail {
-                code: "scan_fail".into(),
+            took:    None,
+            error:   Some(ErrorDetail {
+                code:    "scan_fail".into(),
                 message: "IO error".into(),
                 details: None,
             }),
@@ -183,12 +183,12 @@ mod tests {
     #[test]
     fn query_result_empty_rows() {
         let qr = QueryResult {
-            schema: vec![],
-            rows: None,
+            schema:     vec![],
+            rows:       None,
             named_rows: None,
-            row_count: 0,
-            message: Some("Table created".into()),
-            as_user: None,
+            row_count:  0,
+            message:    Some("Table created".into()),
+            as_user:    None,
         };
         let dart: DartQueryResult = qr.into();
         assert!(dart.columns.is_empty());
@@ -204,16 +204,16 @@ mod tests {
     #[test]
     fn login_response_converts() {
         let l = LoginResponse {
-            access_token: "tok123".into(),
-            refresh_token: Some("ref456".into()),
-            expires_at: "2026-02-25T12:00:00Z".into(),
+            access_token:       "tok123".into(),
+            refresh_token:      Some("ref456".into()),
+            expires_at:         "2026-02-25T12:00:00Z".into(),
             refresh_expires_at: Some("2026-03-25T12:00:00Z".into()),
-            admin_ui_access: true,
-            user: LoginUserInfo {
-                id: "user-1".into(),
-                role: kalam_client::Role::Dba,
-                name: Some("Alice Example".into()),
-                email: Some("alice@example.com".into()),
+            admin_ui_access:    true,
+            user:               LoginUserInfo {
+                id:         "user-1".into(),
+                role:       kalam_client::Role::Dba,
+                name:       Some("Alice Example".into()),
+                email:      Some("alice@example.com".into()),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 updated_at: "2026-02-01T00:00:00Z".into(),
             },
@@ -244,13 +244,13 @@ mod tests {
     fn change_event_ack_converts() {
         let e = ChangeEvent::Ack {
             subscription_id: "sub-1".into(),
-            total_rows: 100,
-            batch_control: make_batch_control(0, true, BatchStatus::Loading),
-            schema: vec![SchemaField {
-                name: "id".into(),
+            total_rows:      100,
+            batch_control:   make_batch_control(0, true, BatchStatus::Loading),
+            schema:          vec![SchemaField {
+                name:      "id".into(),
                 data_type: KalamDataType::Int,
-                index: 0,
-                flags: None,
+                index:     0,
+                flags:     None,
             }],
         };
         let dart: DartChangeEvent = e.into();
@@ -281,8 +281,8 @@ mod tests {
         row.insert("name".to_string(), kalam_client::KalamCellValue::text("Alice"));
         let e = ChangeEvent::InitialDataBatch {
             subscription_id: "sub-2".into(),
-            rows: vec![row],
-            batch_control: make_batch_control(1, false, BatchStatus::Ready),
+            rows:            vec![row],
+            batch_control:   make_batch_control(1, false, BatchStatus::Ready),
         };
         let dart: DartChangeEvent = e.into();
         match dart {
@@ -311,7 +311,7 @@ mod tests {
         row.insert("name".to_string(), kalam_client::KalamCellValue::text("Bob"));
         let e = ChangeEvent::Insert {
             subscription_id: "sub-3".into(),
-            rows: vec![row],
+            rows:            vec![row],
         };
         let dart: DartChangeEvent = e.into();
         match dart {
@@ -338,8 +338,8 @@ mod tests {
         old_row.insert("name".to_string(), kalam_client::KalamCellValue::text("Bob"));
         let e = ChangeEvent::Update {
             subscription_id: "sub-4".into(),
-            rows: vec![new_row],
-            old_rows: vec![old_row],
+            rows:            vec![new_row],
+            old_rows:        vec![old_row],
         };
         let dart: DartChangeEvent = e.into();
         match dart {
@@ -366,7 +366,7 @@ mod tests {
         row.insert("id".to_string(), kalam_client::KalamCellValue::int(99));
         let e = ChangeEvent::Delete {
             subscription_id: "sub-5".into(),
-            old_rows: vec![row],
+            old_rows:        vec![row],
         };
         let dart: DartChangeEvent = e.into();
         match dart {
@@ -385,8 +385,8 @@ mod tests {
     fn change_event_error_converts() {
         let e = ChangeEvent::Error {
             subscription_id: "sub-6".into(),
-            code: "auth_fail".into(),
-            message: "Token expired".into(),
+            code:            "auth_fail".into(),
+            message:         "Token expired".into(),
         };
         let dart: DartChangeEvent = e.into();
         match dart {
@@ -424,11 +424,11 @@ mod tests {
     #[test]
     fn subscription_config_minimal() {
         let cfg = DartSubscriptionConfig {
-            sql: "SELECT * FROM t".into(),
-            id: None,
-            batch_size: None,
-            last_rows: None,
-            from: None,
+            sql:          "SELECT * FROM t".into(),
+            id:           None,
+            batch_size:   None,
+            last_rows:    None,
+            from:         None,
             explicit_ack: false,
         };
         let native = cfg.into_native();
@@ -440,11 +440,11 @@ mod tests {
     #[test]
     fn subscription_config_with_all_options() {
         let cfg = DartSubscriptionConfig {
-            sql: "SELECT * FROM t".into(),
-            id: Some("my-sub-1".into()),
-            batch_size: Some(500),
-            last_rows: Some(10),
-            from: Some(42),
+            sql:          "SELECT * FROM t".into(),
+            id:           Some("my-sub-1".into()),
+            batch_size:   Some(500),
+            last_rows:    Some(10),
+            from:         Some(42),
             explicit_ack: false,
         };
         let native = cfg.into_native();
@@ -459,11 +459,11 @@ mod tests {
     #[test]
     fn subscription_config_with_from_only() {
         let cfg = DartSubscriptionConfig {
-            sql: "SELECT * FROM events".into(),
-            id: None,
-            batch_size: None,
-            last_rows: None,
-            from: Some(12345),
+            sql:          "SELECT * FROM events".into(),
+            id:           None,
+            batch_size:   None,
+            last_rows:    None,
+            from:         Some(12345),
             explicit_ack: false,
         };
         let native = cfg.into_native();
@@ -477,11 +477,11 @@ mod tests {
     #[test]
     fn subscription_config_enables_explicit_acknowledgement() {
         let cfg = DartSubscriptionConfig {
-            sql: "SELECT * FROM events".into(),
-            id: Some("durable-events".into()),
-            batch_size: Some(250),
-            last_rows: None,
-            from: Some(41),
+            sql:          "SELECT * FROM events".into(),
+            id:           Some("durable-events".into()),
+            batch_size:   Some(250),
+            last_rows:    None,
+            from:         Some(41),
             explicit_ack: true,
         };
 
@@ -500,12 +500,12 @@ mod tests {
         use kalam_client::{models::SubscriptionInfo, SeqId};
 
         let native = SubscriptionInfo {
-            id: "sub-42".to_string(),
-            query: "SELECT * FROM users".to_string(),
-            last_seq_id: Some(SeqId::new(999)),
+            id:                 "sub-42".to_string(),
+            query:              "SELECT * FROM users".to_string(),
+            last_seq_id:        Some(SeqId::new(999)),
             last_event_time_ms: Some(1700000000000),
-            created_at_ms: 1700000000000,
-            closed: false,
+            created_at_ms:      1700000000000,
+            closed:             false,
         };
         let dart: DartSubscriptionInfo = native.into();
         assert_eq!(dart.id, "sub-42");
@@ -521,12 +521,12 @@ mod tests {
         use kalam_client::models::SubscriptionInfo;
 
         let native = SubscriptionInfo {
-            id: "sub-0".to_string(),
-            query: "SELECT 1".to_string(),
-            last_seq_id: None,
+            id:                 "sub-0".to_string(),
+            query:              "SELECT 1".to_string(),
+            last_seq_id:        None,
             last_event_time_ms: None,
-            created_at_ms: 1700000000000,
-            closed: true,
+            created_at_ms:      1700000000000,
+            closed:             true,
         };
         let dart: DartSubscriptionInfo = native.into();
         assert_eq!(dart.id, "sub-0");
@@ -553,10 +553,10 @@ mod tests {
         ];
         for (dt, expected) in cases {
             let sf = SchemaField {
-                name: "col".into(),
+                name:      "col".into(),
                 data_type: dt,
-                index: 0,
-                flags: None,
+                index:     0,
+                flags:     None,
             };
             let dart: DartSchemaField = sf.into();
             assert_eq!(dart.data_type, expected);

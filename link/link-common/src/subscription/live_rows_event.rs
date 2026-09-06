@@ -6,13 +6,13 @@ pub enum LiveRowsEvent {
     /// The current materialized row set.
     Rows {
         subscription_id: String,
-        rows: Vec<RowData>,
-        last_seq_id: Option<SeqId>,
+        rows:            Vec<RowData>,
+        last_seq_id:     Option<SeqId>,
     },
     /// A server-side subscription error.
     Error {
         subscription_id: String,
-        code: String,
-        message: String,
+        code:            String,
+        message:         String,
     },
 }

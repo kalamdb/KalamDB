@@ -2,13 +2,16 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        Array, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-        Int8Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt16Array,
-        UInt32Array, UInt64Array, UInt8Array,
+        Array, BooleanArray, Date32Array, Date64Array, Float32Array, Float64Array, Int16Array,
+        Int32Array, Int64Array, Int8Array, LargeStringArray, RecordBatch, StringArray,
+        StringViewArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+        TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
+        UInt8Array,
     },
-    datatypes::{DataType, Field, SchemaRef},
+    datatypes::{DataType, Field, SchemaRef, TimeUnit},
     util::display::array_value_to_string,
 };
+use chrono::{DateTime, NaiveDate};
 use futures_util::{stream, StreamExt};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
@@ -108,9 +111,7 @@ fn field_info_for_arrow(
     index: usize,
     column_format: Option<&Format>,
 ) -> PgWireResult<FieldInfo> {
-    let format = column_format
-        .map(|fmt| fmt.format_for(index))
-        .unwrap_or(FieldFormat::Text);
+    let format = column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
     Ok(FieldInfo::new(
         field.name().clone(),
         None,
@@ -190,6 +191,34 @@ fn encode_array_value(
         return encoder.encode_field(&array.value(row_index));
     }
 
+    match array.data_type() {
+        DataType::Timestamp(TimeUnit::Second, _) => {
+            let array = array.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            return encode_timestamp_micros(encoder, seconds_to_micros(array.value(row_index))?);
+        },
+        DataType::Timestamp(TimeUnit::Millisecond, _) => {
+            let array = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            return encode_timestamp_micros(encoder, millis_to_micros(array.value(row_index))?);
+        },
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            let array = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            return encode_timestamp_micros(encoder, array.value(row_index));
+        },
+        DataType::Timestamp(TimeUnit::Nanosecond, _) => {
+            let array = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            return encode_timestamp_micros(encoder, array.value(row_index) / 1_000);
+        },
+        DataType::Date32 => {
+            let array = array.as_any().downcast_ref::<Date32Array>().unwrap();
+            return encode_date32(encoder, array.value(row_index));
+        },
+        DataType::Date64 => {
+            let array = array.as_any().downcast_ref::<Date64Array>().unwrap();
+            return encode_date64(encoder, array.value(row_index));
+        },
+        _ => {},
+    }
+
     if !supports_display_fallback(array.data_type()) {
         return Err(unsupported_type_error(array.data_type()));
     }
@@ -204,15 +233,52 @@ fn encode_array_value(
     encoder.encode_field(&value)
 }
 
+fn encode_timestamp_micros(encoder: &mut DataRowEncoder, micros: i64) -> PgWireResult<()> {
+    let datetime = DateTime::from_timestamp_micros(micros)
+        .ok_or_else(|| encode_value_error(format!("timestamp value {micros} is out of range")))?;
+    encoder.encode_field(&datetime.naive_utc())
+}
+
+fn encode_date32(encoder: &mut DataRowEncoder, days: i32) -> PgWireResult<()> {
+    encoder.encode_field(&unix_days_to_naive_date(days)?)
+}
+
+fn encode_date64(encoder: &mut DataRowEncoder, millis: i64) -> PgWireResult<()> {
+    let datetime = DateTime::from_timestamp_millis(millis)
+        .ok_or_else(|| encode_value_error(format!("date value {millis} is out of range")))?;
+    encoder.encode_field(&datetime.date_naive())
+}
+
+fn unix_days_to_naive_date(days: i32) -> PgWireResult<NaiveDate> {
+    NaiveDate::from_ymd_opt(1970, 1, 1)
+        .and_then(|epoch| epoch.checked_add_signed(chrono::Duration::days(i64::from(days))))
+        .ok_or_else(|| encode_value_error(format!("date value {days} is out of range")))
+}
+
+fn seconds_to_micros(seconds: i64) -> PgWireResult<i64> {
+    seconds
+        .checked_mul(1_000_000)
+        .ok_or_else(|| encode_value_error(format!("timestamp value {seconds} overflows")))
+}
+
+fn millis_to_micros(millis: i64) -> PgWireResult<i64> {
+    millis
+        .checked_mul(1_000)
+        .ok_or_else(|| encode_value_error(format!("timestamp value {millis} overflows")))
+}
+
+fn encode_value_error(message: String) -> PgWireError {
+    PgWireError::UserError(Box::new(ErrorInfo::new(
+        "ERROR".to_string(),
+        "XX000".to_string(),
+        message,
+    )))
+}
+
 fn supports_display_fallback(data_type: &DataType) -> bool {
     matches!(
         data_type,
-        DataType::Null
-            | DataType::Date32
-            | DataType::Date64
-            | DataType::Timestamp(_, _)
-            | DataType::Decimal128(_, _)
-            | DataType::Decimal256(_, _)
+        DataType::Null | DataType::Decimal128(_, _) | DataType::Decimal256(_, _)
     )
 }
 
@@ -235,9 +301,9 @@ mod tests {
         },
         datatypes::{DataType, Field, Schema, TimeUnit},
     };
+    use pgwire::api::portal::Format;
 
     use super::*;
-    use pgwire::api::portal::Format;
 
     #[test]
     fn encodes_supported_scalar_and_fallback_types() {
@@ -372,5 +438,95 @@ mod tests {
             panic!("expected query response");
         };
         assert!(query.row_schema.iter().all(|field| field.format() == FieldFormat::Binary));
+    }
+
+    fn timestamp_date_batch() -> (SchemaRef, RecordBatch) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("day", DataType::Date32, false),
+            Field::new("created_at", DataType::Timestamp(TimeUnit::Microsecond, None), false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Date32Array::from(vec![1])) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(vec![1_000_000])) as ArrayRef,
+            ],
+        )
+        .expect("batch is valid");
+        (schema, batch)
+    }
+
+    fn first_encoded_row(responses: Vec<Response>) -> pgwire::messages::data::DataRow {
+        use futures_util::{FutureExt, StreamExt};
+
+        let Response::Query(mut query) = responses.into_iter().next().expect("query response")
+        else {
+            panic!("expected query response");
+        };
+        query
+            .data_rows
+            .next()
+            .now_or_never()
+            .expect("encoded row is ready")
+            .expect("row stream item")
+            .expect("row encodes")
+    }
+
+    fn field_payloads(row: &pgwire::messages::data::DataRow) -> Vec<&[u8]> {
+        let mut payloads = Vec::new();
+        let mut offset = 0;
+        for _ in 0..row.field_count {
+            let len = i32::from_be_bytes(row.data[offset..offset + 4].try_into().expect("length"));
+            offset += 4;
+            assert!(len >= 0, "temporal payload should not be SQL NULL");
+            let end = offset + len as usize;
+            payloads.push(&row.data[offset..end]);
+            offset = end;
+        }
+        payloads
+    }
+
+    #[test]
+    fn encodes_timestamps_and_dates_as_postgres_text() {
+        let (schema, batch) = timestamp_date_batch();
+        let responses = execution_result_to_responses(ExecutionResult::Rows {
+            batches:   vec![batch],
+            row_count: 1,
+            schema:    Some(schema),
+        })
+        .expect("temporal values encode");
+        let row = first_encoded_row(responses);
+        let payloads = field_payloads(&row);
+        let date = std::str::from_utf8(payloads[0]).expect("date text");
+        let timestamp = std::str::from_utf8(payloads[1]).expect("timestamp text");
+
+        assert_eq!(date, "1970-01-02");
+        assert!(
+            !timestamp.contains('T'),
+            "PostgreSQL timestamp text must not use Arrow's T separator: {timestamp}"
+        );
+        assert!(
+            timestamp.starts_with("1970-01-01"),
+            "expected unix epoch second as postgres timestamp, got {timestamp}"
+        );
+    }
+
+    #[test]
+    fn encodes_timestamps_and_dates_as_postgres_binary() {
+        let (schema, batch) = timestamp_date_batch();
+        let responses = execution_result_to_responses_with_format(
+            ExecutionResult::Rows {
+                batches:   vec![batch],
+                row_count: 1,
+                schema:    Some(schema),
+            },
+            Some(&Format::UnifiedBinary),
+        )
+        .expect("temporal values encode");
+        let row = first_encoded_row(responses);
+        let payloads = field_payloads(&row);
+
+        assert_eq!(payloads[0].len(), 4, "DATE binary is i32 days since 2000-01-01");
+        assert_eq!(payloads[1].len(), 8, "TIMESTAMP binary is i64 microseconds since 2000-01-01");
     }
 }

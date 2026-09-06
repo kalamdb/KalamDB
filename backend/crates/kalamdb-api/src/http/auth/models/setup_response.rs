@@ -8,7 +8,7 @@ use super::UserInfo;
 #[derive(Debug, Serialize)]
 pub struct ServerSetupResponse {
     /// Created DBA user information
-    pub user: UserInfo,
+    pub user:    UserInfo,
     /// Success message
     pub message: String,
 }

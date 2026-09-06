@@ -49,17 +49,17 @@ pub type DataFusionResult<T> = Result<T, DataFusionError>;
 /// - `TableProvider` implementation (schema)
 #[derive(Clone, Copy)]
 pub struct IndexedProviderDefinition<K> {
-    pub table_name: &'static str,
+    pub table_name:         &'static str,
     pub primary_key_column: &'static str,
-    pub schema: fn() -> arrow::datatypes::SchemaRef,
-    pub parse_key: fn(&str) -> Option<K>,
+    pub schema:             fn() -> arrow::datatypes::SchemaRef,
+    pub parse_key:          fn(&str) -> Option<K>,
 }
 
 /// Shared static metadata for non-indexed/simple system table providers.
 #[derive(Clone, Copy)]
 pub struct SimpleProviderDefinition {
     pub table_name: &'static str,
-    pub schema: fn() -> arrow::datatypes::SchemaRef,
+    pub schema:     fn() -> arrow::datatypes::SchemaRef,
 }
 
 /// Exact pushdown strategy for providers that evaluate filters inside their
@@ -112,8 +112,9 @@ fn normalize_legacy_system_timestamp_rows(
                     ScalarValue::TimestampMicrosecond(
                         Some(seconds.checked_mul(1_000_000).ok_or_else(|| {
                             format!(
-                            "timestamp value {seconds} overflows when converted to microseconds"
-                        )
+                                "timestamp value {seconds} overflows when converted to \
+                                 microseconds"
+                            )
                         })?),
                         timezone.clone(),
                     )
@@ -274,11 +275,11 @@ where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Clone + Send + Sync + 'static,
 {
-    provider: P,
-    pruning: PruningRequest,
+    provider:        P,
+    pruning:         PruningRequest,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    output_schema: arrow::datatypes::SchemaRef,
-    _marker: std::marker::PhantomData<(K, V)>,
+    output_schema:   arrow::datatypes::SchemaRef,
+    _marker:         std::marker::PhantomData<(K, V)>,
 }
 
 impl<P, K, V> std::fmt::Debug for IndexedSystemScanSource<P, K, V>
@@ -343,11 +344,11 @@ where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: KSerializable + Clone + Send + Sync + 'static,
 {
-    provider: P,
-    pruning: PruningRequest,
+    provider:        P,
+    pruning:         PruningRequest,
     physical_filter: Option<Arc<dyn PhysicalExpr>>,
-    output_schema: arrow::datatypes::SchemaRef,
-    _marker: std::marker::PhantomData<(K, V)>,
+    output_schema:   arrow::datatypes::SchemaRef,
+    _marker:         std::marker::PhantomData<(K, V)>,
 }
 
 impl<P, K, V> std::fmt::Debug for SimpleSystemScanSource<P, K, V>
@@ -660,16 +661,16 @@ mod tests {
     impl KSerializable for DummyValue {}
 
     struct RecordingBackend {
-        inner: InMemoryBackend,
-        last_scan: Mutex<Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<usize>)>>,
+        inner:      InMemoryBackend,
+        last_scan:  Mutex<Option<(Option<Vec<u8>>, Option<Vec<u8>>, Option<usize>)>>,
         scan_calls: AtomicUsize,
     }
 
     impl RecordingBackend {
         fn new() -> Self {
             Self {
-                inner: InMemoryBackend::new(),
-                last_scan: Mutex::new(None),
+                inner:      InMemoryBackend::new(),
+                last_scan:  Mutex::new(None),
                 scan_calls: AtomicUsize::new(0),
             }
         }

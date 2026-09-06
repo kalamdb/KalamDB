@@ -273,8 +273,8 @@ fn test_subscription_request_with_options() {
     let opts = SubscriptionOptions::new().with_batch_size(100).with_last_rows(25);
 
     let request = SubscriptionRequest {
-        id: "sub-123".to_string(),
-        sql: "SELECT * FROM chat.messages".to_string(),
+        id:      "sub-123".to_string(),
+        sql:     "SELECT * FROM chat.messages".to_string(),
         options: Some(opts),
     };
 
@@ -288,8 +288,8 @@ fn test_subscription_request_with_options() {
 #[test]
 fn test_subscription_request_with_default_options() {
     let request = SubscriptionRequest {
-        id: "sub-456".to_string(),
-        sql: "SELECT * FROM users".to_string(),
+        id:      "sub-456".to_string(),
+        sql:     "SELECT * FROM users".to_string(),
         options: None,
     };
 
@@ -306,7 +306,7 @@ fn test_client_message_authenticate_jwt_serialization() {
         credentials: WsAuthCredentials::Jwt {
             token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test".to_string(),
         },
-        protocol: ProtocolOptions::default(),
+        protocol:    ProtocolOptions::default(),
     };
 
     let json = serde_json::to_string(&msg).unwrap();
@@ -319,8 +319,8 @@ fn test_client_message_authenticate_jwt_serialization() {
 fn test_client_message_subscribe_serialization() {
     let msg = ClientMessage::Subscribe {
         subscription: SubscriptionRequest {
-            id: "test-sub".to_string(),
-            sql: "SELECT * FROM chat.messages".to_string(),
+            id:      "test-sub".to_string(),
+            sql:     "SELECT * FROM chat.messages".to_string(),
             options: Some(SubscriptionOptions::new().with_batch_size(50)),
         },
     };
@@ -337,8 +337,8 @@ fn test_client_message_subscribe_with_resume() {
     let seq_id = SeqId::from(12345i64);
     let msg = ClientMessage::Subscribe {
         subscription: SubscriptionRequest {
-            id: "resume-sub".to_string(),
-            sql: "SELECT * FROM timeline.events".to_string(),
+            id:      "resume-sub".to_string(),
+            sql:     "SELECT * FROM timeline.events".to_string(),
             options: Some(SubscriptionOptions::new().with_from(seq_id)),
         },
     };
@@ -355,9 +355,9 @@ fn test_client_message_subscribe_with_resume() {
 fn test_batch_control_with_seq_id() {
     let seq_id = SeqId::from(999i64);
     let batch_control = BatchControl {
-        batch_num: 0,
-        has_more: true,
-        status: BatchStatus::Loading,
+        batch_num:   0,
+        has_more:    true,
+        status:      BatchStatus::Loading,
         last_seq_id: Some(seq_id),
     };
 
@@ -371,9 +371,9 @@ fn test_batch_control_with_seq_id() {
 #[test]
 fn test_batch_control_ready_status() {
     let batch_control = BatchControl {
-        batch_num: 5,
-        has_more: false,
-        status: BatchStatus::Ready,
+        batch_num:   5,
+        has_more:    false,
+        status:      BatchStatus::Ready,
         last_seq_id: Some(SeqId::from(1000i64)),
     };
 
@@ -506,8 +506,8 @@ fn test_connection_options_exponential_backoff_calculation() {
 #[test]
 fn test_query_request_serialization() {
     let request = QueryRequest {
-        sql: "SELECT * FROM users WHERE id = $1".to_string(),
-        params: Some(vec![json!(42)]),
+        sql:          "SELECT * FROM users WHERE id = $1".to_string(),
+        params:       Some(vec![json!(42)]),
         namespace_id: None,
     };
 
@@ -522,33 +522,33 @@ fn test_change_event_helpers() {
     insert_row.insert("id".to_string(), KalamCellValue::int(1));
     let insert = ChangeEvent::Insert {
         subscription_id: "sub-1".to_string(),
-        rows: vec![insert_row],
+        rows:            vec![insert_row],
     };
     assert_eq!(insert.subscription_id(), Some("sub-1"));
     assert!(!insert.is_error());
 
     let error = ChangeEvent::Error {
         subscription_id: "sub-2".to_string(),
-        code: "ERR".to_string(),
-        message: "test error".to_string(),
+        code:            "ERR".to_string(),
+        message:         "test error".to_string(),
     };
     assert!(error.is_error());
     assert_eq!(error.subscription_id(), Some("sub-2"));
 
     let ack = ChangeEvent::Ack {
         subscription_id: "sub-1".to_string(),
-        total_rows: 0,
-        batch_control: BatchControl {
-            batch_num: 0,
-            has_more: false,
-            status: BatchStatus::Ready,
+        total_rows:      0,
+        batch_control:   BatchControl {
+            batch_num:   0,
+            has_more:    false,
+            status:      BatchStatus::Ready,
             last_seq_id: None,
         },
-        schema: vec![SchemaField {
-            name: "id".to_string(),
+        schema:          vec![SchemaField {
+            name:      "id".to_string(),
             data_type: KalamDataType::BigInt,
-            index: 0,
-            flags: None,
+            index:     0,
+            flags:     None,
         }],
     };
     assert_eq!(ack.subscription_id(), Some("sub-1"));
@@ -568,10 +568,14 @@ fn test_schema_field_flags_deserializes_array() {
 #[test]
 fn test_schema_field_flags_serializes_as_array() {
     let field = SchemaField {
-        name: "id".to_string(),
+        name:      "id".to_string(),
         data_type: KalamDataType::BigInt,
-        index: 0,
-        flags: Some(BTreeSet::from([FieldFlag::PrimaryKey, FieldFlag::NonNull, FieldFlag::Unique])),
+        index:     0,
+        flags:     Some(BTreeSet::from([
+            FieldFlag::PrimaryKey,
+            FieldFlag::NonNull,
+            FieldFlag::Unique,
+        ])),
     };
 
     let json = serde_json::to_string(&field).unwrap();

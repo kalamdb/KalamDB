@@ -1,6 +1,7 @@
 # KalamDB project state
 .env
 kalam/cli/logs/
+kalam/cli/dev.session.json
 kalam/server/
 kalam/.schema-baseline.sql
 {{#if typescript}}

@@ -19,7 +19,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserRowId {
     user_id: UserId,
-    row_id: Vec<u8>,
+    row_id:  Vec<u8>,
 }
 
 impl UserRowId {
@@ -45,7 +45,7 @@ impl UserRowId {
     pub fn from_strings(user_id: &str, row_id: &str) -> Self {
         Self {
             user_id: UserId::new(user_id),
-            row_id: row_id.as_bytes().to_vec(),
+            row_id:  row_id.as_bytes().to_vec(),
         }
     }
 

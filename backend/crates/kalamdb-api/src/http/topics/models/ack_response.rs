@@ -6,7 +6,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct AckResponse {
     /// Whether acknowledgment was successful
-    pub success: bool,
+    pub success:             bool,
     /// The offset that was acknowledged
     pub acknowledged_offset: u64,
 }

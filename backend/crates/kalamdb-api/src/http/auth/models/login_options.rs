@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct AuthLoginOptionsResponse {
     pub local: LocalLoginOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub oidc: Option<OidcLoginOptions>,
+    pub oidc:  Option<OidcLoginOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,12 +31,12 @@ pub struct OidcLoginOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OidcDeviceFlowOptions {
-    pub direct_supported: bool,
-    pub broker_supported: bool,
+    pub direct_supported:              bool,
+    pub broker_supported:              bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_authorization_endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub broker_start_endpoint: Option<String>,
+    pub broker_start_endpoint:         Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub broker_poll_endpoint: Option<String>,
+    pub broker_poll_endpoint:          Option<String>,
 }

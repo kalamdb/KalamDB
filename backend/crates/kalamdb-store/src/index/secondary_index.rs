@@ -61,7 +61,8 @@ where
     pub fn unique<F>(
         backend: Arc<dyn StorageBackend>,
         partition_name: &str,
-        key_extractor: F) -> Self
+        key_extractor: F,
+    ) -> Self
     where
         F: Fn(&T) -> K + Send + Sync + 'static,
     {
@@ -98,7 +99,8 @@ where
     pub fn non_unique<F>(
         backend: Arc<dyn StorageBackend>,
         partition_name: &str,
-        key_extractor: F) -> Self
+        key_extractor: F,
+    ) -> Self
     where
         F: Fn(&T) -> K + Send + Sync + 'static,
     {

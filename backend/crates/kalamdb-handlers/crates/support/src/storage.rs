@@ -23,10 +23,10 @@ pub fn ensure_filesystem_directory(path: &str) -> Result<(), KalamDbError> {
 mod tests {
     use std::{env, fs};
 
+    use kalamdb_core::error::KalamDbError;
     use uuid::Uuid;
 
     use super::ensure_filesystem_directory;
-    use kalamdb_core::error::KalamDbError;
 
     #[test]
     fn ensure_filesystem_directory_rejects_empty_path() {

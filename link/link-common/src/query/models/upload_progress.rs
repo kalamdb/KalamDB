@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadProgress {
     /// 1-based index of the current file being uploaded.
-    pub file_index: usize,
+    pub file_index:  usize,
     /// Total number of files in the upload.
     pub total_files: usize,
     /// Filename being uploaded.
-    pub file_name: String,
+    pub file_name:   String,
     /// Bytes sent so far for this file.
-    pub bytes_sent: u64,
+    pub bytes_sent:  u64,
     /// Total bytes for this file.
     pub total_bytes: u64,
     /// Percent complete for this file (0-100).
-    pub percent: f64,
+    pub percent:     f64,
 }

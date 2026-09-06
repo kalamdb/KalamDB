@@ -358,10 +358,16 @@ impl SharedTableAuthorization {
         filter: Option<&Expr>,
     ) -> Option<String> {
         if scan_context.policies.bypasses_rls() {
-            return Some("RlsAuthorization bypass=admin".to_string());
+            return Some(append_policy_explain(
+                "RlsAuthorization bypass=admin",
+                &scan_context.policies,
+            ));
         }
         if scan_context.policies.is_default_deny() {
-            return Some("RlsAuthorization strategy=DefaultDeny".to_string());
+            return Some(append_policy_explain(
+                "RlsAuthorization strategy=DefaultDeny",
+                &scan_context.policies,
+            ));
         }
         if let Some((policy, relation)) = scan_context.policies.single_membership_policy() {
             let constraint = relation
@@ -394,12 +400,18 @@ impl SharedTableAuthorization {
             let strategy = constraint
                 .map(|constraint| format!("{:?}", constraint.strategy))
                 .unwrap_or_else(|| "CachedAuthorizationSet".to_string());
-            return Some(format!(
-                "RlsAuthorization strategy={strategy}, auth_cache={}",
-                if cache_hit { "hit" } else { "miss" }
+            return Some(append_policy_explain(
+                &format!(
+                    "RlsAuthorization strategy={strategy}, auth_cache={}",
+                    if cache_hit { "hit" } else { "miss" }
+                ),
+                &scan_context.policies,
             ));
         }
-        Some("RlsAuthorization strategy=RowLocal".to_string())
+        Some(append_policy_explain(
+            "RlsAuthorization strategy=RowLocal",
+            &scan_context.policies,
+        ))
     }
 
     pub async fn pre_authorize_scan(
@@ -531,6 +543,13 @@ pub(crate) fn resolve_relation_provider(
                 "RLS relation {relation_table} must be a shared table"
             ))
         })
+}
+
+fn append_policy_explain(details: &str, policies: &BoundTablePolicies) -> String {
+    match policies.explain_policies() {
+        Some(fragment) => format!("{details}, {fragment}"),
+        None => details.to_string(),
+    }
 }
 
 fn principal_pk_scalar(

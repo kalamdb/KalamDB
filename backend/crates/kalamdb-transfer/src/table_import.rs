@@ -13,12 +13,12 @@ use crate::table_export::{
 
 pub struct TableExportFileData {
     pub metadata: TableExportArchiveFile,
-    pub data: Vec<u8>,
+    pub data:     Vec<u8>,
 }
 
 pub struct TableExportArchive {
     pub metadata: TableExportArchiveMetadata,
-    pub files: Vec<TableExportFileData>,
+    pub files:    Vec<TableExportFileData>,
 }
 
 pub fn read_table_export_archive(zip_bytes: Vec<u8>) -> Result<TableExportArchive, KalamDbError> {

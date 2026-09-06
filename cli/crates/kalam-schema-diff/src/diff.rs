@@ -9,7 +9,7 @@ use crate::{emitter::diff_schema, parser::parse_schema};
 /// UP and DOWN SQL statements for a migration step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationStatements {
-    pub up: String,
+    pub up:   String,
     pub down: String,
 }
 
@@ -18,7 +18,7 @@ pub struct MigrationStatements {
 pub enum SchemaDiffError {
     #[error("failed to read schema file '{path}': {source}")]
     ReadFile {
-        path: String,
+        path:   String,
         source: std::io::Error,
     },
     #[error("{message}")]
@@ -200,7 +200,8 @@ mod tests {
         let source_pos = diff
             .up
             .find(
-                "ALTER TOPIC app.message_events ADD SOURCE message_streams ON INSERT WHERE body IS NOT NULL WITH (payload = 'full');",
+                "ALTER TOPIC app.message_events ADD SOURCE message_streams ON INSERT WHERE body \
+                 IS NOT NULL WITH (payload = 'full');",
             )
             .expect("topic source emitted");
 
@@ -240,7 +241,8 @@ mod tests {
         assert!(!diff.up.contains("CREATE TOPIC app.message_events;"), "{}", diff.up);
         assert!(
             diff.up.contains(
-                "ALTER TOPIC app.message_events ADD SOURCE message_streams ON UPDATE WITH (payload = 'diff');"
+                "ALTER TOPIC app.message_events ADD SOURCE message_streams ON UPDATE WITH \
+                 (payload = 'diff');"
             ),
             "{}",
             diff.up

@@ -16,19 +16,19 @@ use crate::schema_registry::TableType;
 /// Slow query log entry
 #[derive(Debug, Clone)]
 pub struct SlowQueryEntry {
-    pub query: String,
+    pub query:         String,
     pub duration_secs: f64,
-    pub row_count: usize,
-    pub user_id: UserId,
-    pub table_type: TableType, /* use backend/crates/kalamdb-commons/src/models/schemas/
-                                * table_type.rs */
-    pub table_name: Option<TableName>,
-    pub timestamp: i64,
+    pub row_count:     usize,
+    pub user_id:       UserId,
+    pub table_type:    TableType, /* use backend/crates/kalamdb-commons/src/models/schemas/
+                                   * table_type.rs */
+    pub table_name:    Option<TableName>,
+    pub timestamp:     i64,
 }
 
 /// Lightweight slow query logger using async channel
 pub struct SlowQueryLogger {
-    sender: mpsc::UnboundedSender<SlowQueryEntry>,
+    sender:       mpsc::UnboundedSender<SlowQueryEntry>,
     threshold_ms: u64,
 }
 

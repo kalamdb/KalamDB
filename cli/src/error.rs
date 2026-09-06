@@ -8,6 +8,8 @@ use std::fmt;
 
 use kalam_client::KalamLinkError;
 
+use crate::agent_error::AgentError;
+
 /// Result type for CLI operations
 pub type Result<T> = std::result::Result<T, CLIError>;
 
@@ -46,6 +48,9 @@ pub enum CLIError {
 
     /// Server requires initial setup
     SetupRequired(String),
+
+    /// Structured agent-mode CLI failure
+    Agent(AgentError),
 }
 
 // Allow dead code for error variants that will be used in future features
@@ -126,7 +131,14 @@ impl fmt::Display for CLIError {
             CLIError::FormatError(msg) => write!(f, "Format error: {}", msg),
             CLIError::SubscriptionError(msg) => write!(f, "Subscription error: {}", msg),
             CLIError::SetupRequired(msg) => write!(f, "Server setup required: {}", msg),
+            CLIError::Agent(error) => write!(f, "{error}"),
         }
+    }
+}
+
+impl From<AgentError> for CLIError {
+    fn from(error: AgentError) -> Self {
+        CLIError::Agent(error)
     }
 }
 

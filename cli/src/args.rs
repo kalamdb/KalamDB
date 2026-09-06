@@ -10,8 +10,8 @@ mod workflow;
 
 use parsers::parse_watch_interval;
 pub use workflow::{
-    DbArgs, DbCommand, DeployArgs, DevArgs, InitArgs, LinkArgs, MigrationArgs, MigrationCommand,
-    SchemaArgs, SchemaCommand, StatusArgs,
+    DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, InitArgs, LinkArgs, MigrationArgs,
+    MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
 };
 
 // Build information - Create a static version string at compile time
@@ -31,12 +31,12 @@ macro_rules! version_string {
     };
 }
 
-/// Kalam CLI - Terminal client for KalamDB
+/// KalamDB CLI for projects, SQL, development, and deployment
 #[derive(Parser, Debug)]
 #[command(name = "kalam")]
 #[command(author = "KalamDB Team")]
 #[command(version = version_string!())]
-#[command(about = "Interactive SQL terminal for KalamDB", long_about = None)]
+#[command(about = "KalamDB CLI for projects, SQL, development, and deployment", long_about = None)]
 pub struct Cli {
     /// Command to run (for example: login, logout, whoami, doctor, update)
     #[command(subcommand)]
@@ -313,7 +313,8 @@ pub enum CliCommand {
     /// Run database migration operations for the linked project
     Db(DbArgs),
 
-    /// Run the local development orchestrator for this project
+    /// Run the local KalamDB development environment (`--agent` for coding agents)
+    #[command(about = "Run the local KalamDB development environment")]
     Dev(DevArgs),
 
     /// Show project workflow status for the current environment
@@ -458,10 +459,11 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, time::Duration};
+
     use clap::Parser;
 
-    use super::{parse_watch_interval, Cli, CliCommand, TokenCommand, TokenRole};
-    use std::{path::Path, time::Duration};
+    use super::{parse_watch_interval, Cli, CliCommand, DevCommand, TokenCommand, TokenRole};
 
     #[test]
     fn parse_watch_interval_defaults_to_seconds() {
@@ -608,5 +610,44 @@ mod tests {
             Cli::try_parse_from(std::iter::once("kalam").chain(args.iter().copied()))
                 .expect("utility command should parse");
         }
+    }
+
+    #[test]
+    fn dev_lifecycle_subcommands_parse() {
+        let start = Cli::try_parse_from(["kalam", "dev", "start", "--agent", "--force"])
+            .expect("dev start should parse");
+        let Some(CliCommand::Dev(args)) = start.subcommand else {
+            panic!("expected dev command");
+        };
+        assert!(args.agent);
+        assert!(args.force);
+        assert!(matches!(args.command, Some(DevCommand::Start)));
+
+        let before_flag = Cli::try_parse_from(["kalam", "dev", "--agent", "status"])
+            .expect("dev --agent status should parse");
+        let Some(CliCommand::Dev(args)) = before_flag.subcommand else {
+            panic!("expected dev command");
+        };
+        assert!(args.agent);
+        assert!(matches!(args.command, Some(DevCommand::Status)));
+
+        let logs = Cli::try_parse_from(["kalam", "dev", "logs", "--follow", "-n", "20"])
+            .expect("dev logs should parse");
+        let Some(CliCommand::Dev(args)) = logs.subcommand else {
+            panic!("expected dev command");
+        };
+        match args.command {
+            Some(DevCommand::Logs(logs_args)) => {
+                assert!(logs_args.follow);
+                assert_eq!(logs_args.lines, 20);
+            },
+            other => panic!("expected logs command, got {other:?}"),
+        }
+
+        let stop = Cli::try_parse_from(["kalam", "dev", "stop"]).expect("dev stop should parse");
+        let Some(CliCommand::Dev(args)) = stop.subcommand else {
+            panic!("expected dev command");
+        };
+        assert!(matches!(args.command, Some(DevCommand::Stop)));
     }
 }

@@ -13,11 +13,11 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClusterMetrics {
-    pub cluster_id: String,
+    pub cluster_id:       String,
     pub cluster_rpc_addr: String,
     pub cluster_api_addr: String,
-    pub user_shards: u32,
-    pub shared_shards: u32,
+    pub user_shards:      u32,
+    pub shared_shards:    u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,38 +35,38 @@ pub struct ServerConfigMetrics {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntityCounts {
-    pub total_users: usize,
+    pub total_users:      usize,
     pub total_namespaces: usize,
-    pub total_tables: usize,
-    pub total_jobs: usize,
-    pub jobs_running: usize,
-    pub jobs_queued: usize,
-    pub jobs_failed: usize,
-    pub total_storages: usize,
+    pub total_tables:     usize,
+    pub total_jobs:       usize,
+    pub jobs_running:     usize,
+    pub jobs_queued:      usize,
+    pub jobs_failed:      usize,
+    pub total_storages:   usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LiveQueryMetrics {
-    pub total_live_queries: usize,
-    pub active_connections: usize,
-    pub active_connections_peak: usize,
+    pub total_live_queries:         usize,
+    pub active_connections:         usize,
+    pub active_connections_peak:    usize,
     pub max_connections_configured: usize,
-    pub active_subscriptions: usize,
-    pub active_subscriptions_peak: usize,
-    pub websocket_sessions: usize,
-    pub websocket_sessions_peak: usize,
+    pub active_subscriptions:       usize,
+    pub active_subscriptions_peak:  usize,
+    pub websocket_sessions:         usize,
+    pub websocket_sessions_peak:    usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CacheMetrics {
-    pub schema_cache_size: usize,
-    pub schema_registry_size: usize,
-    pub schema_cache_total_entries: usize,
-    pub plan_cache_size: Option<usize>,
-    pub topic_cache_topic_count: usize,
-    pub topic_cache_table_route_count: usize,
-    pub topic_cache_total_routes: usize,
-    pub topic_consumer_group_count: usize,
+    pub schema_cache_size:              usize,
+    pub schema_registry_size:           usize,
+    pub schema_cache_total_entries:     usize,
+    pub plan_cache_size:                Option<usize>,
+    pub topic_cache_topic_count:        usize,
+    pub topic_cache_table_route_count:  usize,
+    pub topic_cache_total_routes:       usize,
+    pub topic_consumer_group_count:     usize,
     pub topic_consumer_partition_count: usize,
     pub string_interner_unique_strings: usize,
 }

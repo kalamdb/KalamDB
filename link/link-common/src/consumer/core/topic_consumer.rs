@@ -19,10 +19,10 @@ use crate::{
 pub struct TopicConsumer {
     #[allow(dead_code)] // retained for lifetime — owns the reqwest::Client
     config: ConsumerConfig,
-    poller: ConsumerPoller,
-    offsets: OffsetManager,
+    poller:           ConsumerPoller,
+    offsets:          OffsetManager,
     last_auto_commit: Instant,
-    closed: bool,
+    closed:           bool,
 }
 
 impl TopicConsumer {
@@ -55,10 +55,10 @@ impl TopicConsumer {
         })?;
 
         let request = AckRequest {
-            topic_id: self.config.topic.clone(),
-            group_id: self.config.group_id.clone(),
+            topic_id:     self.config.topic.clone(),
+            group_id:     self.config.group_id.clone(),
             partition_id: self.config.partition_id,
-            upto_offset: offset,
+            upto_offset:  offset,
         };
 
         let result = self.poller.ack(request).await?;
@@ -205,43 +205,43 @@ impl Drop for TopicConsumer {
 }
 
 pub struct ConsumerBuilder {
-    client: Option<KalamLinkClient>,
-    base_url: Option<String>,
-    auth: AuthProvider,
-    timeouts: KalamLinkTimeouts,
-    connection_options: ConnectionOptions,
-    group_id: Option<String>,
-    client_id: Option<String>,
-    topic: Option<String>,
-    auto_offset_reset: Option<AutoOffsetReset>,
-    enable_auto_commit: Option<bool>,
+    client:               Option<KalamLinkClient>,
+    base_url:             Option<String>,
+    auth:                 AuthProvider,
+    timeouts:             KalamLinkTimeouts,
+    connection_options:   ConnectionOptions,
+    group_id:             Option<String>,
+    client_id:            Option<String>,
+    topic:                Option<String>,
+    auto_offset_reset:    Option<AutoOffsetReset>,
+    enable_auto_commit:   Option<bool>,
     auto_commit_interval: Option<Duration>,
-    max_poll_records: Option<u32>,
-    poll_timeout: Option<Duration>,
-    partition_id: Option<u32>,
-    request_timeout: Option<Duration>,
-    retry_backoff: Option<Duration>,
+    max_poll_records:     Option<u32>,
+    poll_timeout:         Option<Duration>,
+    partition_id:         Option<u32>,
+    request_timeout:      Option<Duration>,
+    retry_backoff:        Option<Duration>,
 }
 
 impl ConsumerBuilder {
     pub(crate) fn new() -> Self {
         Self {
-            client: None,
-            base_url: None,
-            auth: AuthProvider::none(),
-            timeouts: KalamLinkTimeouts::default(),
-            connection_options: ConnectionOptions::default(),
-            group_id: None,
-            client_id: None,
-            topic: None,
-            auto_offset_reset: None,
-            enable_auto_commit: None,
+            client:               None,
+            base_url:             None,
+            auth:                 AuthProvider::none(),
+            timeouts:             KalamLinkTimeouts::default(),
+            connection_options:   ConnectionOptions::default(),
+            group_id:             None,
+            client_id:            None,
+            topic:                None,
+            auto_offset_reset:    None,
+            enable_auto_commit:   None,
             auto_commit_interval: None,
-            max_poll_records: None,
-            poll_timeout: None,
-            partition_id: None,
-            request_timeout: None,
-            retry_backoff: None,
+            max_poll_records:     None,
+            poll_timeout:         None,
+            partition_id:         None,
+            request_timeout:      None,
+            retry_backoff:        None,
         }
     }
 

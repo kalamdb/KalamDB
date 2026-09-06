@@ -145,7 +145,7 @@ export const TABLE_TYPE_OPTIONS: Array<{
   {
     value: "shared",
     label: "Shared",
-    description: "shared data with an explicit access level for the table.",
+    description: "shared rows protected by CREATE POLICY row-level security.",
     icon: Users,
     iconClassName: "text-cyan-400",
   },
@@ -161,13 +161,28 @@ export const TABLE_TYPE_OPTIONS: Array<{
 export const COMPRESSION_OPTIONS = ["none", "snappy", "zstd"] as const;
 export type DraftCompression = (typeof COMPRESSION_OPTIONS)[number];
 
-export const ACCESS_LEVEL_OPTIONS = [
-  "private",
-  "public",
-  "restricted",
-  "dba",
+export const POLICY_COMMANDS = [
+  "all",
+  "select",
+  "insert",
+  "update",
+  "delete",
 ] as const;
-export type DraftAccessLevel = (typeof ACCESS_LEVEL_OPTIONS)[number];
+export type DraftPolicyCommand = (typeof POLICY_COMMANDS)[number];
+
+export const POLICY_TARGETS = ["public", "user", "service"] as const;
+export type DraftPolicyTarget = (typeof POLICY_TARGETS)[number];
+
+export interface DraftTablePolicy {
+  id: string;
+  name: string;
+  command: DraftPolicyCommand;
+  targets: DraftPolicyTarget[];
+  usingExpr: string;
+  withCheckExpr: string;
+  isNew: boolean;
+  isDeleted: boolean;
+}
 
 export const EVICTION_STRATEGY_OPTIONS = [
   "time_based",
@@ -190,7 +205,6 @@ export interface DraftTableOptions {
   flushPolicyKind: DraftFlushPolicyKind;
   flushRows: string;
   flushIntervalSeconds: string;
-  accessLevel: DraftAccessLevel;
   ttlSeconds: string;
   evictionStrategy: DraftEvictionStrategy;
   maxStreamSizeBytes: string;
@@ -203,12 +217,86 @@ export interface DraftTable {
   tableType: DraftTableType;
   options: DraftTableOptions;
   columns: DraftColumn[];
+  policies: DraftTablePolicy[];
 }
 
 function newId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
+}
+
+export function newDraftPolicy(): DraftTablePolicy {
+  return {
+    id: newId(),
+    name: "",
+    command: "select",
+    targets: ["user", "service"],
+    usingExpr: "",
+    withCheckExpr: "",
+    isNew: true,
+    isDeleted: false,
+  };
+}
+
+function normalizePolicyCommand(value: unknown): DraftPolicyCommand {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const nested = record.command ?? record.Command;
+    if (nested != null) return normalizePolicyCommand(nested);
+  }
+  const normalized = String(value ?? "all")
+    .trim()
+    .toLowerCase();
+  return POLICY_COMMANDS.includes(normalized as DraftPolicyCommand)
+    ? (normalized as DraftPolicyCommand)
+    : "all";
+}
+
+function pushPolicyTarget(
+  targets: DraftPolicyTarget[],
+  candidate: string,
+): void {
+  if (!POLICY_TARGETS.includes(candidate as DraftPolicyTarget)) return;
+  const target = candidate as DraftPolicyTarget;
+  if (!targets.includes(target)) targets.push(target);
+}
+
+function parsePolicyTarget(value: unknown, targets: DraftPolicyTarget[]): void {
+  if (typeof value === "string") {
+    pushPolicyTarget(targets, value.trim().toLowerCase());
+    return;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key.toLowerCase() === "public")) {
+    pushPolicyTarget(targets, "public");
+    return;
+  }
+  const role = record.role ?? record.Role;
+  if (typeof role === "string") {
+    pushPolicyTarget(targets, role.trim().toLowerCase());
+  }
+}
+
+export function normalizePolicyTargets(value: unknown): DraftPolicyTarget[] {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return ["public"];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      parsed = trimmed.split(",").map((part) => part.trim());
+    }
+  }
+  const items = Array.isArray(parsed) ? parsed : parsed == null ? [] : [parsed];
+  const targets: DraftPolicyTarget[] = [];
+  for (const item of items) {
+    parsePolicyTarget(item, targets);
+  }
+  if (targets.includes("public")) return ["public"];
+  return targets;
 }
 
 export function newDraftColumn(): DraftColumn {
@@ -234,7 +322,6 @@ export function defaultTableOptions(
     flushPolicyKind: "none",
     flushRows: "10000",
     flushIntervalSeconds: "300",
-    accessLevel: "private",
     ttlSeconds: tableType === "stream" ? "86400" : "3600",
     evictionStrategy: "time_based",
     maxStreamSizeBytes: "0",
@@ -293,15 +380,6 @@ function normalizeCompression(value: unknown): DraftCompression {
   return COMPRESSION_OPTIONS.includes(normalized as DraftCompression)
     ? (normalized as DraftCompression)
     : "snappy";
-}
-
-function normalizeAccessLevel(value: unknown): DraftAccessLevel {
-  const normalized = String(value ?? "private")
-    .trim()
-    .toLowerCase();
-  return ACCESS_LEVEL_OPTIONS.includes(normalized as DraftAccessLevel)
-    ? (normalized as DraftAccessLevel)
-    : "private";
 }
 
 function normalizeEvictionStrategy(value: unknown): DraftEvictionStrategy {
@@ -389,7 +467,6 @@ export function tableToDraft(table: {
   name: string;
   tableType?: string;
   storageId?: string | null;
-  accessLevel?: string | null;
   useUserStorage?: boolean | null;
   options?: Record<string, unknown> | null;
   columns: Array<{
@@ -397,6 +474,13 @@ export function tableToDraft(table: {
     dataType: string;
     isNullable: boolean;
     isPrimaryKey: boolean;
+  }>;
+  policies?: Array<{
+    name: string;
+    command?: unknown;
+    targets?: unknown;
+    usingSql?: string | null;
+    withCheckSql?: string | null;
   }>;
 }): DraftTable {
   const tableType = normalizeTableType(table.tableType);
@@ -407,11 +491,6 @@ export function tableToDraft(table: {
     table.storageId ?? readOption(optionsFromJson, "storage_id", "storageId"),
   );
   if (storageId) options = { ...options, storageId };
-
-  const accessLevel =
-    table.accessLevel ??
-    readOption(optionsFromJson, "access_level", "accessLevel");
-  options = { ...options, accessLevel: normalizeAccessLevel(accessLevel) };
 
   const useUserStorage = normalizeBooleanOption(
     table.useUserStorage ??
@@ -458,12 +537,29 @@ export function tableToDraft(table: {
       isNew: false,
       isDeleted: false,
     }));
+  const policies: DraftTablePolicy[] =
+    tableType === "shared"
+      ? (table.policies ?? []).map((policy) => ({
+          id: newId(),
+          name: policy.name,
+          command: normalizePolicyCommand(policy.command),
+          targets: (() => {
+            const targets = normalizePolicyTargets(policy.targets);
+            return targets.length > 0 ? targets : ["public"];
+          })(),
+          usingExpr: policy.usingSql?.trim() ?? "",
+          withCheckExpr: policy.withCheckSql?.trim() ?? "",
+          isNew: false,
+          isDeleted: false,
+        }))
+      : [];
   return {
     namespace: table.namespace,
     name: table.name,
     tableType,
     options,
     columns,
+    policies,
   };
 }
 
@@ -483,5 +579,6 @@ export function emptyDraft(
     tableType,
     options: defaultTableOptions(tableType),
     columns: [idCol],
+    policies: [],
   };
 }

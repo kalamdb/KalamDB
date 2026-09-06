@@ -94,7 +94,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Slow query timestamp in RFC 3339 format".to_string())),
+                Some("Slow query timestamp in RFC 3339 format".to_string()),
+            ),
             ColumnDefinition::new(
                 2,
                 "timestamp_ms",
@@ -104,7 +105,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Slow query timestamp as epoch milliseconds".to_string())),
+                Some("Slow query timestamp as epoch milliseconds".to_string()),
+            ),
             ColumnDefinition::new(
                 3,
                 "duration_ms",
@@ -114,7 +116,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Query duration in milliseconds".to_string())),
+                Some("Query duration in milliseconds".to_string()),
+            ),
             ColumnDefinition::new(
                 4,
                 "user_id",
@@ -124,7 +127,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("User that executed the query".to_string())),
+                Some("User that executed the query".to_string()),
+            ),
             ColumnDefinition::new(
                 5,
                 "table_type",
@@ -134,7 +138,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Resolved table type for the query".to_string())),
+                Some("Resolved table type for the query".to_string()),
+            ),
             ColumnDefinition::new(
                 6,
                 "table_name",
@@ -144,7 +149,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Resolved table name when available".to_string())),
+                Some("Resolved table name when available".to_string()),
+            ),
             ColumnDefinition::new(
                 7,
                 "row_count",
@@ -154,7 +160,8 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Rows returned or affected".to_string())),
+                Some("Rows returned or affected".to_string()),
+            ),
             ColumnDefinition::new(
                 8,
                 "query",
@@ -164,13 +171,15 @@ impl SlowQueriesView {
                 false,
                 false,
                 ColumnDefault::None,
-                Some("Redacted SQL text".to_string())),
+                Some("Redacted SQL text".to_string()),
+            ),
         ];
 
         system_view_definition(
             SystemTable::SlowQueries,
             columns,
-            "Recent slow queries from the bounded slow-query JSONL log view")
+            "Recent slow queries from the bounded slow-query JSONL log view",
+        )
     }
 
     pub fn new(logs_path: impl Into<PathBuf>) -> Self {
@@ -301,7 +310,8 @@ impl VirtualView for SlowQueriesView {
                 Arc::new(table_names.finish()) as ArrayRef,
                 Arc::new(row_counts.finish()) as ArrayRef,
                 Arc::new(queries.finish()) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|error| {
             RegistryError::Other(format!("Failed to build slow_queries batch: {}", error))
         })

@@ -1,3 +1,14 @@
+/**
+ * Topic worker for the chat demo.
+ *
+ * `kalam dev` starts this with `npm run agent`. It listens on
+ * `chat_demo.ai_inbox` (every INSERT into chat_demo.messages) and:
+ *   1. writes STREAM rows as the sending user so their tab sees thinking / typing
+ *   2. inserts the assistant reply as the agent principal (root). EXECUTE AS USER
+ *      is not allowed on SHARED tables — only USER and STREAM tables.
+ *
+ * There is no external model. `buildReply()` is a deterministic demo answer.
+ */
 import { config as loadEnv } from 'dotenv';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,15 +22,25 @@ import {
   chat_demo_messages as chatMessages,
   chat_demo_messagesConfig as chatMessagesConfig,
   type ChatDemoMessages as ChatMessageRow,
-} from './schema.generated.js';
+} from './generated/kalam.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(__dirname, '../.env.local'), quiet: true });
 loadEnv({ path: resolve(__dirname, '../.env'), quiet: true });
 
-const KALAMDB_URL = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
-const KALAMDB_USER = process.env.KALAMDB_USER ?? 'root';
-const KALAMDB_PASSWORD = process.env.KALAMDB_PASSWORD ?? 'kalamdb123';
+function envValue(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+const KALAMDB_URL = envValue('KALAM_URL', 'KALAMDB_URL') ?? 'http://127.0.0.1:2900';
+const KALAMDB_USER = envValue('KALAM_USER', 'KALAMDB_USER') ?? 'root';
+const KALAMDB_PASSWORD = envValue('KALAM_PASSWORD', 'KALAMDB_PASSWORD') ?? 'kalamdb123';
 const THINKING_DELAY_MS = 250;
 const STREAM_DELAY_MS = 120;
 const STREAM_CHUNK_SIZE = 64;
@@ -35,6 +56,7 @@ type StartAgentOptions = {
 };
 
 type AgentEventStage = 'thinking' | 'typing' | 'message_saved' | 'complete' | 'log';
+type TopicMessageRow = ChatMessageRow & { _seq?: string | number | null };
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,7 +83,7 @@ export function buildReply(content: string): string {
     extra = 'Queue growth usually means a downstream dependency is flattening. This is a good fit for another agent wired to a different topic.';
   }
 
-  return `AI reply: KalamDB stored "${trimmed}" in chat_demo.messages, streamed the drafting state through chat_demo.agent_events, and committed the final reply with EXECUTE AS USER. ${extra}`;
+  return `AI reply: KalamDB stored "${trimmed}" in chat_demo.messages, streamed the drafting state through chat_demo.agent_events, and committed the final reply as the agent principal. ${extra}`;
 }
 
 export async function startChatAgent(options: StartAgentOptions = {}): Promise<void> {
@@ -99,17 +121,15 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     senderUsername: string,
     reply: string,
   ): Promise<void> => {
-    await executeAsUser(
-      client,
-      db.insert(chatMessages).values({
-        room,
-        role: 'assistant',
-        author: 'KalamDB Copilot',
-        sender_username: senderUsername,
-        content: reply,
-      }),
-      assertValidUser(senderUsername),
-    );
+    // SHARED tables reject EXECUTE AS USER. The agent is DBA/root, which
+    // bypasses FORCE RLS; the row still records the chatting user for display.
+    await db.insert(chatMessages).values({
+      room,
+      role: 'assistant',
+      author: 'KalamDB Copilot',
+      sender_username: senderUsername,
+      content: reply,
+    });
   };
 
   console.log(`[chat-demo-agent] starting (url=${KALAMDB_URL}, user=${KALAMDB_USER}, mode=topic-consumer)`);
@@ -119,7 +139,7 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
 
   let awaitingReconnect = false;
 
-  await runConsumer<ChatMessageRow>({
+  await runConsumer<TopicMessageRow>({
     client,
     name: 'chat-ai-agent',
     topic: TOPIC_NAME,
@@ -129,8 +149,8 @@ export async function startChatAgent(options: StartAgentOptions = {}): Promise<v
     timeoutSeconds: 30,
     stopSignal: options.stopSignal,
 
-    onChange: async (_ctx: ConsumerRunContext<ChatMessageRow>, change: ConsumerChange<ChatMessageRow>) => {
-      const row = change.data as ChatMessageRow;
+    onChange: async (_ctx: ConsumerRunContext<TopicMessageRow>, change: ConsumerChange<TopicMessageRow>) => {
+      const row = change.data;
       if (row.role !== 'user') {
         console.log(`[agent] skipping non-user message id=${row.id} role=${row.role}`);
         return;

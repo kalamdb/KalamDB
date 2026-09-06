@@ -77,15 +77,15 @@ pub struct KalamLinkTimeouts {
 impl Default for KalamLinkTimeouts {
     fn default() -> Self {
         Self {
-            connection_timeout: Duration::from_secs(10),
-            receive_timeout: Duration::from_secs(30),
-            send_timeout: Duration::from_secs(10),
-            subscribe_timeout: Duration::from_secs(5),
-            auth_timeout: Duration::from_secs(5),
+            connection_timeout:   Duration::from_secs(10),
+            receive_timeout:      Duration::from_secs(30),
+            send_timeout:         Duration::from_secs(10),
+            subscribe_timeout:    Duration::from_secs(5),
+            auth_timeout:         Duration::from_secs(5),
             initial_data_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::ZERO, // Disabled by default
-            keepalive_interval: Duration::from_secs(10),
-            pong_timeout: Duration::from_secs(5),
+            idle_timeout:         Duration::ZERO, // Disabled by default
+            keepalive_interval:   Duration::from_secs(10),
+            pong_timeout:         Duration::from_secs(5),
         }
     }
 }
@@ -101,15 +101,15 @@ impl KalamLinkTimeouts {
     /// Uses shorter timeouts suitable for localhost connections.
     pub fn fast() -> Self {
         Self {
-            connection_timeout: Duration::from_secs(2),
-            receive_timeout: Duration::from_secs(5),
-            send_timeout: Duration::from_secs(2),
-            subscribe_timeout: Duration::from_secs(2),
-            auth_timeout: Duration::from_secs(2),
+            connection_timeout:   Duration::from_secs(2),
+            receive_timeout:      Duration::from_secs(5),
+            send_timeout:         Duration::from_secs(2),
+            subscribe_timeout:    Duration::from_secs(2),
+            auth_timeout:         Duration::from_secs(2),
             initial_data_timeout: Duration::from_secs(10),
-            idle_timeout: Duration::ZERO,
-            keepalive_interval: Duration::from_secs(15),
-            pong_timeout: Duration::from_secs(5),
+            idle_timeout:         Duration::ZERO,
+            keepalive_interval:   Duration::from_secs(15),
+            pong_timeout:         Duration::from_secs(5),
         }
     }
 
@@ -118,15 +118,15 @@ impl KalamLinkTimeouts {
     /// Uses longer timeouts suitable for cloud/remote connections.
     pub fn relaxed() -> Self {
         Self {
-            connection_timeout: Duration::from_secs(30),
-            receive_timeout: Duration::from_secs(120),
-            send_timeout: Duration::from_secs(30),
-            subscribe_timeout: Duration::from_secs(15),
-            auth_timeout: Duration::from_secs(15),
+            connection_timeout:   Duration::from_secs(30),
+            receive_timeout:      Duration::from_secs(120),
+            send_timeout:         Duration::from_secs(30),
+            subscribe_timeout:    Duration::from_secs(15),
+            auth_timeout:         Duration::from_secs(15),
             initial_data_timeout: Duration::from_secs(120),
-            idle_timeout: Duration::ZERO,
-            keepalive_interval: Duration::from_secs(30),
-            pong_timeout: Duration::from_secs(10),
+            idle_timeout:         Duration::ZERO,
+            keepalive_interval:   Duration::from_secs(30),
+            pong_timeout:         Duration::from_secs(10),
         }
     }
 
@@ -136,15 +136,15 @@ impl KalamLinkTimeouts {
     /// initial data rather than waiting forever for changes.
     pub fn for_testing(subscription_timeout_secs: u64) -> Self {
         Self {
-            connection_timeout: Duration::from_secs(5),
-            receive_timeout: Duration::from_secs(10),
-            send_timeout: Duration::from_secs(5),
-            subscribe_timeout: Duration::from_secs(3),
-            auth_timeout: Duration::from_secs(3),
+            connection_timeout:   Duration::from_secs(5),
+            receive_timeout:      Duration::from_secs(10),
+            send_timeout:         Duration::from_secs(5),
+            subscribe_timeout:    Duration::from_secs(3),
+            auth_timeout:         Duration::from_secs(3),
             initial_data_timeout: Duration::from_secs(subscription_timeout_secs),
-            idle_timeout: Duration::from_secs(subscription_timeout_secs),
-            keepalive_interval: Duration::from_secs(5),
-            pong_timeout: Duration::from_secs(3),
+            idle_timeout:         Duration::from_secs(subscription_timeout_secs),
+            keepalive_interval:   Duration::from_secs(5),
+            pong_timeout:         Duration::from_secs(3),
         }
     }
 

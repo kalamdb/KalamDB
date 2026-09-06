@@ -1,5 +1,6 @@
 //! Shared workflow module surface for project lifecycle commands.
 
+pub(crate) mod agent;
 pub(crate) mod auth;
 pub mod db;
 pub mod deploy;
@@ -15,19 +16,20 @@ pub(crate) mod sql;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub(crate) use io::display_project_path;
+use std::path::PathBuf;
 
 pub use db::reset::DbResetOptions;
-
-use std::path::PathBuf;
+pub(crate) use io::display_project_path;
 
 use crate::{
     config::{CLIConfiguration, WorkflowLoggingPolicy},
     error::{CLIError, Result},
     output::{WorkflowDisplayMode, WorkflowOutput},
     workflow::{
-        db::migrate::apply_migrations_for_db_command,
-        db::reset::{reset_local_dev_server_data, reset_remote_namespace_if_ready},
+        db::{
+            migrate::apply_migrations_for_db_command,
+            reset::{reset_local_dev_server_data, reset_remote_namespace_if_ready},
+        },
         migration::{
             apply::{
                 load_server_migration_state, save_server_migration_record,
@@ -56,14 +58,17 @@ use crate::{
 /// Shared workflow context for command handlers.
 #[derive(Debug, Clone)]
 pub struct WorkflowContext {
-    pub project_root: PathBuf,
-    pub config: KalamProjectConfig,
-    pub cli_config: CLIConfiguration,
-    pub use_color: bool,
-    pub project_dir: Option<PathBuf>,
-    pub env_override: Option<String>,
+    pub project_root:       PathBuf,
+    pub config:             KalamProjectConfig,
+    pub cli_config:         CLIConfiguration,
+    pub use_color:          bool,
+    pub animations:         bool,
+    pub agent:              bool,
+    pub json:               bool,
+    pub project_dir:        Option<PathBuf>,
+    pub env_override:       Option<String>,
     pub namespace_override: Option<String>,
-    pub url_override: Option<String>,
+    pub url_override:       Option<String>,
 }
 
 impl WorkflowContext {
@@ -82,6 +87,9 @@ impl WorkflowContext {
             config,
             cli_config: cli_config.clone(),
             use_color,
+            animations: true,
+            agent: false,
+            json: false,
             project_dir: project_dir.map(PathBuf::from),
             env_override,
             namespace_override,
@@ -96,23 +104,38 @@ impl WorkflowContext {
             &self.config.logging,
             self.cli_config.workflow_logging.as_ref(),
         );
-        WorkflowOutput::new(self.use_color, logging)
+        let display_mode = if self.agent {
+            WorkflowDisplayMode::Agent
+        } else {
+            WorkflowDisplayMode::Normal
+        };
+        WorkflowOutput::new(self.use_color && !self.agent, logging)
+            .with_animations(self.animations && !self.agent)
+            .with_display_mode(display_mode)
+            .with_json(self.json)
     }
 
     pub fn resolved_environment(&self) -> Result<ResolvedEnvironment> {
         resolve_environment(
             &self.config,
             &EnvironmentOverrides {
-                env: self.env_override.as_deref(),
-                url: self.url_override.as_deref(),
+                env:       self.env_override.as_deref(),
+                url:       self.url_override.as_deref(),
                 namespace: self.namespace_override.as_deref(),
             },
         )
     }
 }
 
-pub async fn init_project(options: InitOptions, use_color: bool) -> Result<()> {
-    let output = WorkflowOutput::new(use_color, WorkflowLoggingPolicy::disabled());
+pub async fn init_project(
+    options: InitOptions,
+    use_color: bool,
+    animations: bool,
+    json: bool,
+) -> Result<()> {
+    let output = WorkflowOutput::new(use_color, WorkflowLoggingPolicy::disabled())
+        .with_animations(animations)
+        .with_json(json);
     run_init(options, &output).await
 }
 
@@ -127,7 +150,14 @@ pub fn generate_schema(ctx: &WorkflowContext, languages: Option<Vec<String>>) ->
 pub fn pull_schema(ctx: &WorkflowContext) -> Result<()> {
     let output = ctx.output();
     let env = ctx.resolved_environment()?;
-    let snapshot = pull_remote_schema(&ctx.project_root, &ctx.config, &env.url, &env.namespace)?;
+    let snapshot = {
+        let _spinner = output.status_spinner(format!(
+            "pulling schema from {} namespace {}",
+            env.url,
+            env.namespace.as_str()
+        ));
+        pull_remote_schema(&ctx.project_root, &ctx.config, &env.url, &env.namespace)?
+    };
 
     if let Some(path) = ctx.config.schema_source_path(&ctx.project_root) {
         let sql = render_snapshot_as_sql(&snapshot);
@@ -255,16 +285,38 @@ pub async fn migrate_database(ctx: &WorkflowContext) -> Result<()> {
     apply_migrations_for_db_command(ctx, &output).await
 }
 
+pub async fn start_dev(ctx: &WorkflowContext, force: bool) -> Result<()> {
+    dev::session::start_background_session(ctx, force).await
+}
+
+pub async fn dev_session_status(ctx: &WorkflowContext) -> Result<()> {
+    dev::session::show_background_status(ctx).await
+}
+
+pub async fn dev_session_logs(ctx: &WorkflowContext, follow: bool, lines: usize) -> Result<()> {
+    dev::session::print_background_logs(ctx, follow, lines).await
+}
+
+pub async fn stop_dev(ctx: &WorkflowContext) -> Result<()> {
+    dev::session::stop_background_session(ctx).await
+}
+
 pub async fn run_dev(
     ctx: &WorkflowContext,
     force: bool,
     display_mode: WorkflowDisplayMode,
 ) -> Result<()> {
+    let display_mode = if ctx.agent {
+        WorkflowDisplayMode::Agent
+    } else {
+        display_mode
+    };
     dev::run_dev_session(
         ctx,
         dev::DevSessionOptions {
             force,
             display_mode,
+            agent: ctx.agent,
         },
     )
     .await

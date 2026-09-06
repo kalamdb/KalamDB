@@ -340,15 +340,13 @@ The current PostgreSQL bridge is transaction-aware, but it is not a full two-pha
 The wire listener is configured under `[postgres_wire]` and is disabled by
 default unless explicitly enabled:
 
-- `enabled`: starts the PostgreSQL wire listener
+- `enabled`: starts the PostgreSQL wire listener (also registers `pg_catalog` shims)
 - `addr`: listener address, for example `127.0.0.1:5433`
 - `tls_enabled`: enables PostgreSQL wire TLS
 - `tls_cert_path` and `tls_key_path`: PEM certificate and private key paths when
   TLS is enabled
 - `prepared_statement_limit`: per-connection cap for named prepared statements
 - `portal_limit`: per-connection cap for portals
-- `pg_catalog_enabled`: registers minimal PostgreSQL-compatible catalog shims
-  for client browsing
 
 Prepared statement and portal state is protocol state and lives in
 `kalamdb-postgres-wire`. It is bounded per connection and is cleared on protocol
@@ -372,7 +370,7 @@ Useful runtime views:
 
 These are the best places to verify that a PostgreSQL backend is reusing one remote transaction id across multiple foreign statements.
 
-When `postgres_wire.pg_catalog_enabled = true`, admins can also query
+When `postgres_wire.enabled = true`, admins can also query
 `pg_catalog.pg_stat_activity`, which projects from the same session snapshot
 source as `system.sessions`.
 

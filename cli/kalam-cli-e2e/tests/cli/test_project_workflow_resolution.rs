@@ -1,7 +1,8 @@
 use std::fs;
 
-use crate::common::*;
 use tempfile::TempDir;
+
+use crate::common::*;
 
 fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
     let project_dir = temp.path().join("resolution-app");
@@ -29,7 +30,8 @@ fn scaffold_sql_project(temp: &TempDir) -> std::path::PathBuf {
 
     let kalam_toml = fs::read_to_string(project_dir.join("kalam.toml")).expect("read kalam.toml");
     let augmented = format!(
-        "{kalam_toml}\n[connection.prod]\nurl = \"https://config.example.com\"\nnamespace = \"config_ns\"\n"
+        "{kalam_toml}\n[connection.prod]\nurl = \"https://config.example.com\"\nnamespace = \
+         \"config_ns\"\n"
     );
     fs::write(project_dir.join("kalam.toml"), augmented).expect("write prod connection");
 

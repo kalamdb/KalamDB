@@ -39,6 +39,10 @@ async fn main() {
 }
 
 fn print_cli_error(err: &CLIError) {
+    if let CLIError::Agent(error) = err {
+        eprintln!("{}", error.render());
+        return;
+    }
     let message = err.to_string();
     if message.contains('\n') {
         eprintln!("Error:\n{message}");

@@ -4,6 +4,7 @@ import {
   DEFAULT_NONE,
   TABLE_TYPE_OPTIONS,
   defaultPresetsForType,
+  normalizePolicyTargets,
 } from "./types";
 
 describe("table editor type metadata", () => {
@@ -23,7 +24,7 @@ describe("table editor type metadata", () => {
       {
         value: "shared",
         label: "Shared",
-        description: expect.stringContaining("shared"),
+        description: expect.stringContaining("CREATE POLICY"),
       },
       {
         value: "stream",
@@ -49,6 +50,17 @@ describe("table editor type metadata", () => {
       DEFAULT_NONE,
       "SNOWFLAKE_ID()",
       DEFAULT_CUSTOM,
+    ]);
+  });
+
+  it("normalizes catalog policy targets including PUBLIC", () => {
+    expect(normalizePolicyTargets([{ role: "user" }, { role: "service" }])).toEqual([
+      "user",
+      "service",
+    ]);
+    expect(normalizePolicyTargets("public")).toEqual(["public"]);
+    expect(normalizePolicyTargets(["public", { role: "user" }])).toEqual([
+      "public",
     ]);
   });
 });

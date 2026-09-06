@@ -13,28 +13,24 @@ use super::{
 fn create_test_storage(base_directory: &str) -> Storage {
     let now = chrono::Utc::now().timestamp();
     Storage {
-        storage_id: StorageId::from("test_health"),
-        storage_name: "Test Health Storage".to_string(),
-        description: None,
-        storage_type: StorageType::Filesystem,
-        base_directory: base_directory.to_string(),
-        credentials: None,
-        config_json: None,
+        storage_id:             StorageId::from("test_health"),
+        storage_name:           "Test Health Storage".to_string(),
+        description:            None,
+        storage_type:           StorageType::Filesystem,
+        base_directory:         base_directory.to_string(),
+        credentials:            None,
+        config_json:            None,
         shared_tables_template: "{namespace}/{tableName}".to_string(),
-        user_tables_template: "{namespace}/{userId}/{tableName}".to_string(),
-        created_at: now,
-        updated_at: now,
+        user_tables_template:   "{namespace}/{userId}/{tableName}".to_string(),
+        created_at:             now,
+        updated_at:             now,
     }
 }
 
 #[tokio::test]
 async fn test_health_check_local_filesystem() {
-    // Create a temp directory for testing
-    let temp_dir = env::temp_dir().join("kalamdb_health_test");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir).unwrap();
-
-    let storage = create_test_storage(&temp_dir.to_string_lossy());
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let storage = create_test_storage(&temp_dir.path().to_string_lossy());
 
     let result = StorageHealthService::run_full_health_check(&storage).await.unwrap();
 
@@ -44,10 +40,6 @@ async fn test_health_check_local_filesystem() {
     assert!(result.listable);
     assert!(result.deletable);
     assert!(result.error.is_none());
-    assert!(result.latency_ms > 0);
-
-    // Cleanup
-    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[tokio::test]

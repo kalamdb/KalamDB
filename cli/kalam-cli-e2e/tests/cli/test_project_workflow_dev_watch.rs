@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 
-use crate::common::*;
 use kalam_cli::{
     workflow::project::config::{KalamProjectConfig, KALAM_TOML},
     FileCredentialStore,
@@ -15,6 +14,8 @@ use kalam_cli::{
 use kalam_client::credentials::Credentials;
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
+
+use crate::common::*;
 
 fn store_test_dev_credentials(credentials_path: &std::path::Path) {
     let mut credential_store = FileCredentialStore::with_path(credentials_path.to_path_buf())

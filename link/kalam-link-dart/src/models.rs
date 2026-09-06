@@ -22,7 +22,7 @@ pub struct DartDisconnectReason {
     /// Human-readable description of why the connection closed.
     pub message: String,
     /// WebSocket close code, if available (e.g. 1000 = normal, 1006 = abnormal).
-    pub code: Option<i32>,
+    pub code:    Option<i32>,
 }
 
 /// Error information from a connection or protocol error.
@@ -30,7 +30,7 @@ pub struct DartDisconnectReason {
 /// Mirrors `kalam_client::ConnectionError`.
 pub struct DartConnectionError {
     /// Human-readable error message.
-    pub message: String,
+    pub message:     String,
     /// Whether this error is recoverable (auto-reconnect may succeed).
     pub recoverable: bool,
 }
@@ -102,7 +102,7 @@ pub struct DartQueryResponse {
     pub results: Vec<DartQueryResult>,
     /// Execution time in milliseconds.
     pub took_ms: Option<f64>,
-    pub error: Option<DartErrorDetail>,
+    pub error:   Option<DartErrorDetail>,
 }
 
 impl From<QueryResponse> for DartQueryResponse {
@@ -111,22 +111,22 @@ impl From<QueryResponse> for DartQueryResponse {
             success: r.status == ResponseStatus::Success,
             results: r.results.into_iter().map(DartQueryResult::from).collect(),
             took_ms: r.took,
-            error: r.error.map(DartErrorDetail::from),
+            error:   r.error.map(DartErrorDetail::from),
         }
     }
 }
 
 pub struct DartQueryResult {
-    pub columns: Vec<DartSchemaField>,
+    pub columns:         Vec<DartSchemaField>,
     /// Each row is a JSON-encoded string (array of values).
     /// Dart side parses this into typed values.
-    pub rows_json: Vec<String>,
+    pub rows_json:       Vec<String>,
     /// Each row as a JSON-encoded object (`{"col": value, ...}`).
     /// Pre-computed from `schema` + `rows` so the Dart SDK doesn't need to
     /// perform the schema → map transformation itself.
     pub named_rows_json: Vec<String>,
-    pub row_count: i64,
-    pub message: Option<String>,
+    pub row_count:       i64,
+    pub message:         Option<String>,
 }
 
 impl From<QueryResult> for DartQueryResult {
@@ -155,21 +155,21 @@ impl From<QueryResult> for DartQueryResult {
 }
 
 pub struct DartSchemaField {
-    pub name: String,
+    pub name:      String,
     pub data_type: String,
-    pub index: i32,
+    pub index:     i32,
     /// Comma-separated flag short names, e.g. `"pk,nn,uq"`.
     /// `None` when no flags are present.
-    pub flags: Option<String>,
+    pub flags:     Option<String>,
 }
 
 impl From<SchemaField> for DartSchemaField {
     fn from(f: SchemaField) -> Self {
         Self {
-            name: f.name,
+            name:      f.name,
             data_type: format!("{:?}", f.data_type),
-            index: f.index as i32,
-            flags: f.flags.map(|fl| {
+            index:     f.index as i32,
+            flags:     f.flags.map(|fl| {
                 fl.iter()
                     .map(|flag| match flag {
                         kalam_client::FieldFlag::PrimaryKey => "pk",
@@ -184,7 +184,7 @@ impl From<SchemaField> for DartSchemaField {
 }
 
 pub struct DartErrorDetail {
-    pub code: String,
+    pub code:    String,
     pub message: String,
     pub details: Option<String>,
 }
@@ -192,7 +192,7 @@ pub struct DartErrorDetail {
 impl From<ErrorDetail> for DartErrorDetail {
     fn from(e: ErrorDetail) -> Self {
         Self {
-            code: e.code,
+            code:    e.code,
             message: e.message,
             details: e.details,
         }
@@ -204,23 +204,23 @@ impl From<ErrorDetail> for DartErrorDetail {
 // ---------------------------------------------------------------------------
 
 pub struct DartLoginResponse {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub expires_at: String,
+    pub access_token:       String,
+    pub refresh_token:      Option<String>,
+    pub expires_at:         String,
     pub refresh_expires_at: Option<String>,
-    pub admin_ui_access: bool,
-    pub user: DartLoginUserInfo,
+    pub admin_ui_access:    bool,
+    pub user:               DartLoginUserInfo,
 }
 
 impl From<LoginResponse> for DartLoginResponse {
     fn from(l: LoginResponse) -> Self {
         Self {
-            access_token: l.access_token,
-            refresh_token: l.refresh_token,
-            expires_at: l.expires_at,
+            access_token:       l.access_token,
+            refresh_token:      l.refresh_token,
+            expires_at:         l.expires_at,
             refresh_expires_at: l.refresh_expires_at,
-            admin_ui_access: l.admin_ui_access,
-            user: DartLoginUserInfo::from(l.user),
+            admin_ui_access:    l.admin_ui_access,
+            user:               DartLoginUserInfo::from(l.user),
         }
     }
 }
@@ -246,9 +246,9 @@ impl From<Role> for DartRole {
 }
 
 pub struct DartLoginUserInfo {
-    pub id: String,
-    pub role: DartRole,
-    pub email: Option<String>,
+    pub id:         String,
+    pub role:       DartRole,
+    pub email:      Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -256,9 +256,9 @@ pub struct DartLoginUserInfo {
 impl From<LoginUserInfo> for DartLoginUserInfo {
     fn from(u: LoginUserInfo) -> Self {
         Self {
-            id: u.id.to_string(),
-            role: DartRole::from(u.role),
-            email: u.email,
+            id:         u.id.to_string(),
+            role:       DartRole::from(u.role),
+            email:      u.email,
             created_at: u.created_at,
             updated_at: u.updated_at,
         }
@@ -274,58 +274,58 @@ pub enum DartChangeEvent {
     /// Subscription acknowledged — contains schema info.
     Ack {
         subscription_id: String,
-        total_rows: i32,
-        schema: Vec<DartSchemaField>,
-        batch_num: i32,
-        has_more: bool,
-        status: String,
+        total_rows:      i32,
+        schema:          Vec<DartSchemaField>,
+        batch_num:       i32,
+        has_more:        bool,
+        status:          String,
     },
     /// Batch of initial data rows.
     InitialDataBatch {
         subscription_id: String,
         /// Each entry is a JSON-encoded row object (`{"col": value, ...}`).
-        rows_json: Vec<String>,
-        batch_num: i32,
-        has_more: bool,
-        status: String,
+        rows_json:       Vec<String>,
+        batch_num:       i32,
+        has_more:        bool,
+        status:          String,
     },
     /// One or more rows were inserted.
     Insert {
         subscription_id: String,
         /// Each entry is a JSON-encoded row object.
-        rows_json: Vec<String>,
+        rows_json:       Vec<String>,
     },
     /// One or more rows were updated.
     Update {
         subscription_id: String,
         /// Delta rows — only changed columns + PK + `_seq`.
         /// Changed user columns are the non-system keys: filter by `!key.starts_with('_')`.
-        rows_json: Vec<String>,
-        old_rows_json: Vec<String>,
+        rows_json:       Vec<String>,
+        old_rows_json:   Vec<String>,
     },
     /// One or more rows were deleted.
     Delete {
         subscription_id: String,
-        old_rows_json: Vec<String>,
+        old_rows_json:   Vec<String>,
     },
     /// Server-side error on this subscription.
     Error {
         subscription_id: String,
-        code: String,
-        message: String,
+        code:            String,
+        message:         String,
     },
 }
 
 /// Configuration for Rust-side live row materialization.
 pub struct DartLiveRowsConfig {
-    pub limit: Option<i32>,
+    pub limit:       Option<i32>,
     pub key_columns: Option<Vec<String>>,
 }
 
 impl DartLiveRowsConfig {
     pub(crate) fn into_native(self) -> LiveRowsConfig {
         LiveRowsConfig {
-            limit: self.limit.map(|value| value.max(0) as usize),
+            limit:       self.limit.map(|value| value.max(0) as usize),
             key_columns: self.key_columns.map(|columns| {
                 columns
                     .into_iter()
@@ -341,13 +341,13 @@ impl DartLiveRowsConfig {
 pub enum DartLiveRowsEvent {
     Rows {
         subscription_id: String,
-        rows_json: Vec<String>,
-        last_seq_id: Option<i64>,
+        rows_json:       Vec<String>,
+        last_seq_id:     Option<i64>,
     },
     Error {
         subscription_id: String,
-        code: String,
-        message: String,
+        code:            String,
+        message:         String,
     },
 }
 
@@ -431,8 +431,8 @@ impl From<ChangeEvent> for DartChangeEvent {
             },
             ChangeEvent::Unknown { raw } => Self::Error {
                 subscription_id: String::new(),
-                code: "unknown".to_owned(),
-                message: serde_json::to_string(&raw).unwrap_or_default(),
+                code:            "unknown".to_owned(),
+                message:         serde_json::to_string(&raw).unwrap_or_default(),
             },
         }
     }
@@ -465,14 +465,14 @@ impl From<LiveRowsEvent> for DartLiveRowsEvent {
 
 /// Subscription configuration.
 pub struct DartSubscriptionConfig {
-    pub sql: String,
+    pub sql:          String,
     /// Optional subscription ID (auto-generated if omitted).
-    pub id: Option<String>,
-    pub batch_size: Option<i32>,
-    pub last_rows: Option<i32>,
+    pub id:           Option<String>,
+    pub batch_size:   Option<i32>,
+    pub last_rows:    Option<i32>,
     /// Resume from a specific sequence ID.
     /// When set, the server only sends changes after this seq_id.
-    pub from: Option<i64>,
+    pub from:         Option<i64>,
     /// Require explicit consumer acknowledgement before reconnect progress advances.
     pub explicit_ack: bool,
 }
@@ -480,15 +480,15 @@ pub struct DartSubscriptionConfig {
 impl DartSubscriptionConfig {
     pub(crate) fn into_native(self) -> kalam_client::SubscriptionConfig {
         kalam_client::SubscriptionConfig {
-            id: self.id.unwrap_or_else(|| uuid_v4()),
-            sql: self.sql,
-            options: Some(kalam_client::SubscriptionOptions {
-                batch_size: self.batch_size.map(|v| v as usize),
-                last_rows: self.last_rows.map(|v| v as u32),
-                from: self.from.map(kalam_client::SeqId::new),
+            id:       self.id.unwrap_or_else(|| uuid_v4()),
+            sql:      self.sql,
+            options:  Some(kalam_client::SubscriptionOptions {
+                batch_size:         self.batch_size.map(|v| v as usize),
+                last_rows:          self.last_rows.map(|v| v as u32),
+                from:               self.from.map(kalam_client::SeqId::new),
                 auto_fetch_batches: None,
             }),
-            ws_url: None,
+            ws_url:   None,
             ack_mode: if self.explicit_ack {
                 kalam_client::SubscriptionAckMode::Explicit
             } else {
@@ -509,28 +509,28 @@ fn uuid_v4() -> String {
 /// Returned by [`dart_list_subscriptions`].
 pub struct DartSubscriptionInfo {
     /// Subscription ID assigned when subscribing.
-    pub id: String,
+    pub id:                 String,
     /// The SQL query this subscription is tracking.
-    pub query: String,
+    pub query:              String,
     /// Last received sequence ID (for resume on reconnect), as i64.
-    pub last_seq_id: Option<i64>,
+    pub last_seq_id:        Option<i64>,
     /// Timestamp (millis since epoch) of the last received event.
     pub last_event_time_ms: Option<i64>,
     /// Timestamp (millis since epoch) when the subscription was created.
-    pub created_at_ms: i64,
+    pub created_at_ms:      i64,
     /// Whether the subscription has been closed.
-    pub closed: bool,
+    pub closed:             bool,
 }
 
 impl From<kalam_client::models::SubscriptionInfo> for DartSubscriptionInfo {
     fn from(info: kalam_client::models::SubscriptionInfo) -> Self {
         Self {
-            id: info.id,
-            query: info.query,
-            last_seq_id: info.last_seq_id.map(|s| s.as_i64()),
+            id:                 info.id,
+            query:              info.query,
+            last_seq_id:        info.last_seq_id.map(|s| s.as_i64()),
             last_event_time_ms: info.last_event_time_ms.map(|v| v as i64),
-            created_at_ms: info.created_at_ms as i64,
-            closed: info.closed,
+            created_at_ms:      info.created_at_ms as i64,
+            closed:             info.closed,
         }
     }
 }
@@ -541,25 +541,25 @@ impl From<kalam_client::models::SubscriptionInfo> for DartSubscriptionInfo {
 
 /// Typed FILE column reference (mirrors [`kalam_client::FileRef`]).
 pub struct DartFileRef {
-    pub id: String,
-    pub sub: String,
-    pub name: String,
-    pub size: u64,
-    pub mime: String,
+    pub id:     String,
+    pub sub:    String,
+    pub name:   String,
+    pub size:   u64,
+    pub mime:   String,
     pub sha256: String,
-    pub shard: Option<u32>,
+    pub shard:  Option<u32>,
 }
 
 impl From<FileRef> for DartFileRef {
     fn from(file_ref: FileRef) -> Self {
         Self {
-            id: file_ref.id,
-            sub: file_ref.sub,
-            name: file_ref.name,
-            size: file_ref.size,
-            mime: file_ref.mime,
+            id:     file_ref.id,
+            sub:    file_ref.sub,
+            name:   file_ref.name,
+            size:   file_ref.size,
+            mime:   file_ref.mime,
             sha256: file_ref.sha256,
-            shard: file_ref.shard,
+            shard:  file_ref.shard,
         }
     }
 }
@@ -567,13 +567,13 @@ impl From<FileRef> for DartFileRef {
 impl From<&FileRef> for DartFileRef {
     fn from(file_ref: &FileRef) -> Self {
         Self {
-            id: file_ref.id.clone(),
-            sub: file_ref.sub.clone(),
-            name: file_ref.name.clone(),
-            size: file_ref.size,
-            mime: file_ref.mime.clone(),
+            id:     file_ref.id.clone(),
+            sub:    file_ref.sub.clone(),
+            name:   file_ref.name.clone(),
+            size:   file_ref.size,
+            mime:   file_ref.mime.clone(),
             sha256: file_ref.sha256.clone(),
-            shard: file_ref.shard,
+            shard:  file_ref.shard,
         }
     }
 }
@@ -581,13 +581,13 @@ impl From<&FileRef> for DartFileRef {
 impl From<DartFileRef> for FileRef {
     fn from(file_ref: DartFileRef) -> Self {
         Self {
-            id: file_ref.id,
-            sub: file_ref.sub,
-            name: file_ref.name,
-            size: file_ref.size,
-            mime: file_ref.mime,
+            id:     file_ref.id,
+            sub:    file_ref.sub,
+            name:   file_ref.name,
+            size:   file_ref.size,
+            mime:   file_ref.mime,
             sha256: file_ref.sha256,
-            shard: file_ref.shard,
+            shard:  file_ref.shard,
         }
     }
 }
@@ -595,9 +595,9 @@ impl From<DartFileRef> for FileRef {
 /// Multipart upload payload for SQL `FILE("placeholder")` expressions.
 pub struct DartFileUpload {
     pub placeholder: String,
-    pub filename: String,
-    pub data: Vec<u8>,
-    pub mime: Option<String>,
+    pub filename:    String,
+    pub data:        Vec<u8>,
+    pub mime:        Option<String>,
 }
 
 impl From<DartFileUpload> for FileUpload {
@@ -612,16 +612,16 @@ impl From<DartFileUpload> for FileUpload {
 
 /// Bytes and HTTP metadata from [`KalamLinkClient::download_file`].
 pub struct DartFileDownload {
-    pub bytes: Vec<u8>,
-    pub content_type: Option<String>,
+    pub bytes:               Vec<u8>,
+    pub content_type:        Option<String>,
     pub content_disposition: Option<String>,
 }
 
 impl From<FileDownload> for DartFileDownload {
     fn from(download: FileDownload) -> Self {
         Self {
-            bytes: download.bytes,
-            content_type: download.content_type,
+            bytes:               download.bytes,
+            content_type:        download.content_type,
             content_disposition: download.content_disposition,
         }
     }

@@ -1,180 +1,246 @@
-use std::{fs, path::Path};
-
-#[cfg(windows)]
-use std::process::{Command, Stdio};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use crate::{release_download::copy_file_with_executable_bit, CLIError, Result};
 
-/// Result of attempting to install a downloaded binary over the running executable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReplaceMode {
-    /// The on-disk binary was replaced before returning.
-    Completed,
-    /// A helper process will replace the binary after the current process exits.
-    ScheduledExit,
-}
+#[cfg(windows)]
+const REPLACE_RETRY_ATTEMPTS: u32 = 10;
 
 /// Replace `current_exe` with `new_binary`.
 ///
-/// On Unix this is an atomic rename. On Windows the running executable is locked,
-/// so a detached helper waits for this process to exit before replacing the file.
-pub fn replace_installed_binary(
-    current_exe: &Path,
-    new_binary: &Path,
-    #[cfg_attr(not(windows), allow(unused_variables))] temp_dir: &Path,
-) -> Result<ReplaceMode> {
+/// On Unix this is an atomic rename over the existing file. On Windows a running
+/// executable cannot be overwritten, but it *can* be renamed, so the current file
+/// is moved aside first and the new binary takes its original path before return.
+/// That is the rustup / `self-replace` pattern: the next process sees the new
+/// binary immediately, without waiting for this process to exit or for a reboot.
+pub fn replace_installed_binary(current_exe: &Path, new_binary: &Path) -> Result<()> {
+    cleanup_stale_update_artifacts(current_exe);
+
     #[cfg(unix)]
     {
-        replace_immediately(current_exe, new_binary)?;
-        Ok(ReplaceMode::Completed)
+        replace_by_rename_over(current_exe, new_binary)
     }
 
     #[cfg(windows)]
     {
-        schedule_deferred_replace(current_exe, new_binary, temp_dir)?;
-        Ok(ReplaceMode::ScheduledExit)
+        replace_by_renaming_aside(current_exe, new_binary)
     }
 }
 
 #[cfg(unix)]
-fn replace_immediately(current_exe: &Path, new_binary: &Path) -> Result<()> {
-    let temp_path = current_exe.with_extension("kalam-update-tmp");
-    copy_file_with_executable_bit(new_binary, &temp_path)?;
+fn replace_by_rename_over(current_exe: &Path, new_binary: &Path) -> Result<()> {
+    let staging_path = sibling_with_suffix(current_exe, ".kalam-new");
+    copy_file_with_executable_bit(new_binary, &staging_path)?;
 
-    if let Err(error) = fs::rename(&temp_path, current_exe) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(CLIError::FileError(format!(
-            "Failed to replace {}: {}",
-            current_exe.display(),
-            error
-        )));
+    if let Err(error) = fs::rename(&staging_path, current_exe) {
+        let _ = fs::remove_file(&staging_path);
+        return Err(replace_error(current_exe, error));
     }
 
     Ok(())
 }
 
 #[cfg(windows)]
-fn schedule_deferred_replace(current_exe: &Path, new_binary: &Path, temp_dir: &Path) -> Result<()> {
-    use std::os::windows::process::CommandExt;
+fn replace_by_renaming_aside(current_exe: &Path, new_binary: &Path) -> Result<()> {
+    let old_path = sibling_with_suffix(current_exe, ".kalam-old");
+    let staging_path = sibling_with_suffix(current_exe, ".kalam-new");
+    let _ = fs::remove_file(&old_path);
+    let _ = fs::remove_file(&staging_path);
 
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-
-    let staging_path = temp_dir.join("kalam-update-staged.exe");
-    copy_file_with_executable_bit(new_binary, &staging_path)?;
-
-    let script_path = temp_dir.join("kalam-update-helper.ps1");
-    let leftover_tmp = current_exe.with_extension("kalam-update-tmp");
-    let script = build_powershell_helper_script(
-        std::process::id(),
-        &staging_path,
-        current_exe,
-        temp_dir,
-        &script_path,
-        &leftover_tmp,
-    );
-    fs::write(&script_path, script).map_err(|error| {
-        CLIError::FileError(format!("Failed to write Windows update helper script: {}", error))
+    retry_io(|| fs::rename(current_exe, &old_path)).map_err(|error| {
+        CLIError::FileError(format!(
+            "Failed to move aside {}: {}. Close other kalam processes and retry",
+            current_exe.display(),
+            error
+        ))
     })?;
 
-    Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            &script_path.to_string_lossy(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-        .spawn()
-        .map_err(|error| {
-            CLIError::FileError(format!("Failed to launch Windows update helper: {}", error))
-        })?;
+    if let Err(error) = copy_file_with_executable_bit(new_binary, &staging_path) {
+        let _ = retry_io(|| fs::rename(&old_path, current_exe));
+        let _ = fs::remove_file(&staging_path);
+        return Err(error);
+    }
+
+    if let Err(error) = retry_io(|| fs::rename(&staging_path, current_exe)) {
+        let _ = fs::remove_file(&staging_path);
+        let _ = retry_io(|| fs::rename(&old_path, current_exe));
+        return Err(replace_error(current_exe, error));
+    }
+
+    if fs::remove_file(&old_path).is_err() {
+        schedule_delete_after_exit(&old_path);
+    }
 
     Ok(())
 }
 
-#[cfg(windows)]
-fn build_powershell_helper_script(
-    parent_pid: u32,
-    staging_path: &Path,
-    target_path: &Path,
-    temp_dir: &Path,
-    script_path: &Path,
-    leftover_tmp: &Path,
-) -> String {
-    format!(
-        r#"$ErrorActionPreference = 'Stop'
-Wait-Process -Id {parent_pid} -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 300
-if (Test-Path -LiteralPath '{leftover_tmp}') {{
-    Remove-Item -LiteralPath '{leftover_tmp}' -Force -ErrorAction SilentlyContinue
-}}
-$attempts = 12
-for ($i = 0; $i -lt $attempts; $i++) {{
-    try {{
-        Move-Item -LiteralPath '{staging_path}' -Destination '{target_path}' -Force
-        break
-    }} catch {{
-        if ($i -eq ($attempts - 1)) {{
-            throw
-        }}
-        Start-Sleep -Milliseconds 500
-    }}
-}}
-Remove-Item -LiteralPath '{temp_dir}' -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath '{script_path}' -Force -ErrorAction SilentlyContinue
-"#,
-        parent_pid = parent_pid,
-        leftover_tmp = escape_powershell_single_quoted(leftover_tmp),
-        staging_path = escape_powershell_single_quoted(staging_path),
-        target_path = escape_powershell_single_quoted(target_path),
-        temp_dir = escape_powershell_single_quoted(temp_dir),
-        script_path = escape_powershell_single_quoted(script_path),
-    )
+fn cleanup_stale_update_artifacts(current_exe: &Path) {
+    let Some(parent) = current_exe.parent() else {
+        return;
+    };
+    let Some(file_name) = current_exe.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.");
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with(&prefix)
+            && (name.ends_with(".kalam-old") || name.ends_with(".kalam-new"))
+        {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn sibling_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("kalam"));
+    name.push(".");
+    name.push(std::process::id().to_string());
+    name.push(suffix);
+    path.with_file_name(name)
 }
 
 #[cfg(windows)]
-fn escape_powershell_single_quoted(value: &Path) -> String {
-    value.display().to_string().replace('\'', "''")
+fn retry_io<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    use std::{thread, time::Duration};
+
+    let mut last_error = None;
+    for attempt in 0..REPLACE_RETRY_ATTEMPTS {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                last_error = Some(error);
+                thread::sleep(Duration::from_millis(50 * u64::from(attempt + 1)));
+            },
+        }
+    }
+    Err(last_error.expect("replace retry attempts is greater than zero"))
+}
+
+fn replace_error(current_exe: &Path, error: io::Error) -> CLIError {
+    CLIError::FileError(format!("Failed to replace {}: {}", current_exe.display(), error))
+}
+
+#[cfg(windows)]
+fn schedule_delete_after_exit(path: &Path) {
+    use std::{
+        os::windows::process::CommandExt,
+        process::{Command, Stdio},
+    };
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+    let command = format!("ping -n 3 127.0.0.1 >nul & del /F /Q {}", quote_cmd_path(path));
+    let spawn_cleanup = |breakaway: bool| {
+        let mut flags = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        if breakaway {
+            flags |= CREATE_BREAKAWAY_FROM_JOB;
+        }
+        Command::new("cmd.exe")
+            .args(["/C", &command])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(flags)
+            .spawn()
+            .map(|_| ())
+    };
+
+    if spawn_cleanup(true).is_err() {
+        if let Err(error) = spawn_cleanup(false) {
+            eprintln!(
+                "Updated kalam, but left leftover {} (could not schedule cleanup: {})",
+                path.display(),
+                error
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+fn quote_cmd_path(path: &Path) -> String {
+    format!("\"{}\"", path.to_string_lossy().replace('"', "\"\""))
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
-    use super::{build_powershell_helper_script, escape_powershell_single_quoted};
-    #[cfg(windows)]
-    use std::path::Path;
+    use std::fs;
 
-    #[cfg(windows)]
+    use tempfile::TempDir;
+
+    use super::{cleanup_stale_update_artifacts, replace_installed_binary, sibling_with_suffix};
+
     #[test]
-    fn powershell_path_escape_doubles_single_quotes() {
-        assert_eq!(
-            escape_powershell_single_quoted(Path::new(r"C:\Users\O'Brien\kalam.exe")),
-            r"C:\Users\O'Brien\kalam.exe".replace('\'', "''")
-        );
+    fn sibling_suffix_keeps_original_file_name() {
+        let path = std::path::Path::new("dist").join("kalam.exe");
+        let sibling = sibling_with_suffix(&path, ".kalam-old");
+        let name = sibling.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("kalam.exe."));
+        assert!(name.ends_with(".kalam-old"));
+        assert!(!name.ends_with("kalam.kalam-old"));
     }
 
-    #[cfg(windows)]
     #[test]
-    fn helper_script_waits_for_parent_and_moves_staged_binary() {
-        let script = build_powershell_helper_script(
-            4242,
-            Path::new(r"C:\Temp\kalam-update\kalam-update-staged.exe"),
-            Path::new(r"C:\npm\dist\kalam.exe"),
-            Path::new(r"C:\Temp\kalam-update"),
-            Path::new(r"C:\Temp\kalam-update\kalam-update-helper.ps1"),
-            Path::new(r"C:\npm\dist\kalam.kalam-update-tmp"),
-        );
+    fn replace_installed_binary_overwrites_destination_contents() {
+        let temp = TempDir::new().expect("temp dir");
+        let current = temp.path().join("kalam-current");
+        let incoming = temp.path().join("kalam-new");
+        fs::write(&current, b"old-binary").expect("write current");
+        fs::write(&incoming, b"new-binary").expect("write incoming");
 
-        assert!(script.contains("Wait-Process -Id 4242"));
-        assert!(script.contains("kalam-update-staged.exe"));
-        assert!(script.contains("Move-Item -LiteralPath"));
+        replace_installed_binary(&current, &incoming).expect("replace");
+
+        assert_eq!(fs::read(&current).expect("read replaced"), b"new-binary");
+        assert!(fs::read_dir(temp.path()).expect("read dir").flatten().all(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            !name.contains(".kalam-new")
+        }));
+    }
+
+    #[test]
+    fn cleanup_removes_stale_update_artifacts() {
+        let temp = TempDir::new().expect("temp dir");
+        let current = temp.path().join("kalam.exe");
+        fs::write(&current, b"current").expect("write current");
+        fs::write(temp.path().join("kalam.exe.1.kalam-old"), b"old").expect("write old");
+        fs::write(temp.path().join("kalam.exe.2.kalam-new"), b"new").expect("write new");
+        fs::write(temp.path().join("unrelated.exe.kalam-old"), b"keep").expect("write unrelated");
+
+        cleanup_stale_update_artifacts(&current);
+
+        assert!(current.is_file());
+        assert!(!temp.path().join("kalam.exe.1.kalam-old").exists());
+        assert!(!temp.path().join("kalam.exe.2.kalam-new").exists());
+        assert!(temp.path().join("unrelated.exe.kalam-old").exists());
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::path::Path;
+
+    use super::quote_cmd_path;
+
+    #[test]
+    fn cmd_path_quote_wraps_and_escapes_quotes() {
+        assert_eq!(
+            quote_cmd_path(Path::new(r#"C:\Users\O"Brien\kalam.exe.old"#)),
+            r#""C:\Users\O""Brien\kalam.exe.old""#
+        );
     }
 }

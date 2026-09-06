@@ -7,8 +7,8 @@ pub enum AlterPolicyOperation {
         new_name: String,
     },
     Apply {
-        targets: Option<Vec<PolicyTarget>>,
-        using_sql: Option<String>,
+        targets:        Option<Vec<PolicyTarget>>,
+        using_sql:      Option<String>,
         with_check_sql: Option<String>,
     },
 }

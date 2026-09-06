@@ -64,7 +64,8 @@ impl TableServices {
         notification_service: Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>>,
         cluster_coordinator: Arc<dyn ClusterCoordinatorTrait>,
         commit_sequence_source: Arc<dyn CommitSequenceSource>,
-        topic_publisher: Option<Arc<dyn TopicPublisherTrait>>) -> Self {
+        topic_publisher: Option<Arc<dyn TopicPublisherTrait>>,
+    ) -> Self {
         Self {
             schema_registry,
             system_columns,
@@ -129,7 +130,8 @@ impl TableProviderCore {
         services: Arc<TableServices>,
         primary_key_field_name: String,
         schema: SchemaRef,
-        column_defaults: HashMap<String, Expr>) -> Self {
+        column_defaults: HashMap<String, Expr>,
+    ) -> Self {
         use kalamdb_commons::{constants::SystemColumnNames, schemas::ColumnDefault};
 
         // Precompute non-nullable columns from the schema.
@@ -204,7 +206,8 @@ impl TableProviderCore {
 
     /// NotificationService accessor
     pub fn notification_service(
-        &self) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
+        &self,
+    ) -> &Arc<dyn NotificationServiceTrait<Notification = ChangeNotification>> {
         &self.services.notification_service
     }
 
@@ -299,7 +302,8 @@ impl TableProviderCore {
         table_id: &TableId,
         op: kalamdb_commons::models::TopicOp,
         row: &kalamdb_commons::models::rows::Row,
-        user_id: Option<&kalamdb_commons::models::UserId>) {
+        user_id: Option<&kalamdb_commons::models::UserId>,
+    ) {
         let topic_pub = match self.services.topic_publisher.as_ref() {
             Some(tp) if tp.has_topics_for_table(table_id) => tp,
             _ => return,
@@ -333,7 +337,8 @@ impl TableProviderCore {
         table_id: &TableId,
         op: kalamdb_commons::models::TopicOp,
         rows: &[kalamdb_commons::models::rows::Row],
-        user_id: Option<&kalamdb_commons::models::UserId>) {
+        user_id: Option<&kalamdb_commons::models::UserId>,
+    ) {
         if rows.is_empty() {
             return;
         }

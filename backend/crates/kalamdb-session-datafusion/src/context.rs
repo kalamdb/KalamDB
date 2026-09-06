@@ -1,14 +1,17 @@
 use std::any::Any;
 
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
-use kalamdb_commons::{models::{ReadContext, Role, UserId}, PolicyCommand};
+use kalamdb_commons::{
+    models::{ReadContext, Role, UserId},
+    PolicyCommand,
+};
 use kalamdb_session::UserContext;
 
 /// Session-level user context stored in DataFusion config extensions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionUserContext {
-    pub user_id: UserId,
-    pub role: Role,
+    pub user_id:      UserId,
+    pub role:         Role,
     pub read_context: ReadContext,
 }
 
@@ -37,8 +40,8 @@ impl SessionUserContext {
 impl From<UserContext> for SessionUserContext {
     fn from(value: UserContext) -> Self {
         Self {
-            user_id: value.user_id,
-            role: value.role,
+            user_id:      value.user_id,
+            role:         value.role,
             read_context: value.read_context,
         }
     }
@@ -47,8 +50,8 @@ impl From<UserContext> for SessionUserContext {
 impl From<&UserContext> for SessionUserContext {
     fn from(value: &UserContext) -> Self {
         Self {
-            user_id: value.user_id.clone(),
-            role: value.role,
+            user_id:      value.user_id.clone(),
+            role:         value.role,
             read_context: value.read_context,
         }
     }

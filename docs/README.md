@@ -53,7 +53,10 @@ Contributor guides for building and developing KalamDB.
 ### [plans/](plans/)
 Decision-complete implementation plans for major initiatives.
 
-- **[2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md](plans/2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md)** – Migration plan for FlatBuffers/FlexBuffers with Vortex serde learnings
+- **[2026-09-01-kalamdb-0.7.md](plans/2026-09-01-kalamdb-0.7.md)** – **0.7 program:** implement serialization, scalar secondary indexes, and functions V1 together
+- **[2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md](plans/2026-02-14-flatbuffers-flexbuffers-vortex-migration-plan.md)** – One `kalamdb-serialization` crate; nested `STRUCT`/`List`; Vortex as design reference only
+- **[2026-08-30-scalar-secondary-indexes.md](plans/2026-08-30-scalar-secondary-indexes.md)** – Unified indexing core (optional `kalamdb-index` crate); scalar USER/SHARED indexes; vector search extends the core; `system.schemas` + CLI schema-diff
+- **[functions-v1-implementation.md](plans/functions-v1-implementation.md)** – SQL procedures, generated SDKs, typed `CALL`, topic triggers ([design](plans/functions.md))
 
 ### [API-Kalam/](API-Kalam/)
 Bruno API collection for testing endpoints.
@@ -104,5 +107,5 @@ KalamDB stores each user's messages in isolated storage partitions instead of a 
 
 ---
 
-**Last Updated**: February 2026  
-**KalamDB Version**: 0.1.x
+**Last Updated**: September 2026  
+**KalamDB Version**: 0.6.x (0.7 program: serialization + scalar indexes + functions V1)

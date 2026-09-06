@@ -14,7 +14,7 @@ pub(crate) enum ValueExpr {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ColumnRef {
-    name: String,
+    name:       String,
     lower_name: String,
     upper_name: String,
 }

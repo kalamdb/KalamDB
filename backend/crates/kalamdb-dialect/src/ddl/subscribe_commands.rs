@@ -71,11 +71,11 @@ pub struct SubscribeStatement {
     /// Full SELECT query (e.g., "SELECT event_type FROM app.messages WHERE user_id = 'alice'")
     pub select_query: String,
     /// Namespace name (e.g., "app") - extracted from query
-    pub namespace: NamespaceId,
+    pub namespace:    NamespaceId,
     /// Table name (e.g., "messages") - extracted from query
-    pub table_name: TableName,
+    pub table_name:   TableName,
     /// Optional subscription options (e.g., last_rows=10, batch_size=100, from=123)
-    pub options: SubscriptionOptions,
+    pub options:      SubscriptionOptions,
 }
 
 impl SubscribeStatement {
@@ -203,10 +203,9 @@ impl SubscribeStatement {
         }
 
         if saw_options && !has_options_clause {
-            return Err(
-                "OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS (last_rows=10)"
-                    .to_string(),
-            );
+            return Err("OPTIONS clause must be wrapped in parentheses, e.g., OPTIONS \
+                        (last_rows=10)"
+                .to_string());
         }
 
         if !has_options_clause {
@@ -756,7 +755,8 @@ mod tests {
     #[test]
     fn test_security_where_rejects_in_subquery_system_table() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE user_id IN (SELECT user_id FROM system.users WHERE role = 'admin')",
+            "SUBSCRIBE TO app.messages WHERE user_id IN (SELECT user_id FROM system.users WHERE \
+             role = 'admin')",
         );
         assert!(result.is_err(), "IN (SELECT …) must be blocked");
         assert!(result.unwrap_err().contains("subqueries"));
@@ -774,7 +774,8 @@ mod tests {
     #[test]
     fn test_security_where_rejects_exists_admin_check() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE EXISTS (SELECT 1 FROM system.users WHERE role = 'admin' AND user_id = 'attacker')",
+            "SUBSCRIBE TO app.messages WHERE EXISTS (SELECT 1 FROM system.users WHERE role = \
+             'admin' AND user_id = 'attacker')",
         );
         assert!(result.is_err(), "EXISTS (…) must be blocked");
         assert!(result.unwrap_err().contains("subqueries"));
@@ -783,7 +784,8 @@ mod tests {
     #[test]
     fn test_security_where_rejects_not_in_subquery_blocklist_bypass() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE user_id NOT IN (SELECT blocked_user FROM security.blocklist)",
+            "SUBSCRIBE TO app.messages WHERE user_id NOT IN (SELECT blocked_user FROM \
+             security.blocklist)",
         );
         assert!(result.is_err(), "NOT IN (SELECT …) must be blocked");
         assert!(result.unwrap_err().contains("subqueries"));
@@ -794,7 +796,8 @@ mod tests {
         // Attempts to check if the user holds a secret API key by correlating
         // with a privileged table.
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages WHERE token IN (SELECT api_key FROM system.api_keys WHERE scope = 'superadmin')",
+            "SUBSCRIBE TO app.messages WHERE token IN (SELECT api_key FROM system.api_keys WHERE \
+             scope = 'superadmin')",
         );
         assert!(result.is_err(), "IN (SELECT …) on privileged table must be blocked");
         assert!(result.unwrap_err().contains("subqueries"));
@@ -812,7 +815,8 @@ mod tests {
     #[test]
     fn test_security_rejects_stacked_update_escalation() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO app.messages; UPDATE system.users SET role = 'admin' WHERE user_id = 'attacker'",
+            "SUBSCRIBE TO app.messages; UPDATE system.users SET role = 'admin' WHERE user_id = \
+             'attacker'",
         );
         assert!(result.is_err(), "Stacked UPDATE for privilege escalation must be rejected");
     }
@@ -846,7 +850,8 @@ mod tests {
     #[test]
     fn test_security_rejects_union_all_api_keys() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT body FROM app.messages UNION ALL SELECT token FROM system.api_keys",
+            "SUBSCRIBE TO SELECT body FROM app.messages UNION ALL SELECT token FROM \
+             system.api_keys",
         );
         assert!(result.is_err(), "UNION ALL must be blocked");
     }
@@ -856,7 +861,8 @@ mod tests {
     #[test]
     fn test_security_rejects_inner_join_system_tables() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT msg.body FROM app.messages JOIN system.users ON msg.user_id = system.users.id",
+            "SUBSCRIBE TO SELECT msg.body FROM app.messages JOIN system.users ON msg.user_id = \
+             system.users.id",
         );
         assert!(result.is_err(), "INNER JOIN must be blocked");
         let err = result.unwrap_err();
@@ -866,7 +872,8 @@ mod tests {
     #[test]
     fn test_security_rejects_left_join_secrets_table() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT m.body FROM app.messages m LEFT JOIN app.secrets s ON m.user_id = s.user_id",
+            "SUBSCRIBE TO SELECT m.body FROM app.messages m LEFT JOIN app.secrets s ON m.user_id \
+             = s.user_id",
         );
         // Either the JOIN guard or the table-alias guard fires first.
         assert!(result.is_err(), "LEFT JOIN must be blocked");
@@ -877,7 +884,8 @@ mod tests {
     #[test]
     fn test_security_projection_rejects_scalar_subquery_leak() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT (SELECT password FROM system.users WHERE username = 'admin'), body FROM app.messages",
+            "SUBSCRIBE TO SELECT (SELECT password FROM system.users WHERE username = 'admin'), \
+             body FROM app.messages",
         );
         assert!(result.is_err(), "Scalar subquery in SELECT list must be blocked");
         assert!(result.unwrap_err().contains("direct column references"));
@@ -898,7 +906,8 @@ mod tests {
     #[test]
     fn test_security_projection_rejects_case_when_leaking_data() {
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT CASE WHEN role = 'admin' THEN api_key ELSE 'hidden' END FROM app.users",
+            "SUBSCRIBE TO SELECT CASE WHEN role = 'admin' THEN api_key ELSE 'hidden' END FROM \
+             app.users",
         );
         assert!(result.is_err(), "CASE expression in projection must be blocked");
         assert!(result.unwrap_err().contains("direct column references"));
@@ -969,7 +978,8 @@ mod tests {
     fn test_security_rejects_cte_via_stacked_statement() {
         // WITH … SELECT is a second statement stacked after the subscription.
         let result = SubscribeStatement::parse(
-            "SUBSCRIBE TO SELECT body FROM app.messages; WITH leaked AS (SELECT * FROM system.users) SELECT * FROM leaked",
+            "SUBSCRIBE TO SELECT body FROM app.messages; WITH leaked AS (SELECT * FROM \
+             system.users) SELECT * FROM leaked",
         );
         assert!(result.is_err(), "CTE via stacked statement must be blocked");
     }

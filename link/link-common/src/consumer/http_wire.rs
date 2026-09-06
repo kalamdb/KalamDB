@@ -9,9 +9,9 @@ use crate::{
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConsumeRequestContext {
     #[serde(default)]
-    pub topic_id: String,
+    pub topic_id:     String,
     #[serde(default)]
-    pub group_id: String,
+    pub group_id:     String,
     #[serde(default)]
     pub partition_id: u32,
 }
@@ -24,36 +24,36 @@ pub struct AckRequestContext {
 
 #[derive(Debug, Deserialize)]
 struct RawAckResponse {
-    success: Option<bool>,
+    success:             Option<bool>,
     acknowledged_offset: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawConsumeResponse {
     #[serde(default)]
-    messages: Vec<RawConsumeMessage>,
+    messages:    Vec<RawConsumeMessage>,
     #[serde(default)]
     next_offset: u64,
     #[serde(default)]
-    has_more: bool,
+    has_more:    bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawConsumeMessage {
     #[serde(default, alias = "message_id")]
-    key: Option<String>,
+    key:          Option<String>,
     #[serde(default)]
-    op: Option<TopicOp>,
+    op:           Option<TopicOp>,
     #[serde(default, rename = "timestamp_ms", alias = "ts")]
     timestamp_ms: Option<u64>,
     #[serde(default)]
-    offset: u64,
+    offset:       u64,
     partition_id: Option<u32>,
-    topic_id: Option<String>,
+    topic_id:     Option<String>,
     #[serde(default, alias = "username", alias = "user_id")]
-    user: Option<UserId>,
+    user:         Option<UserId>,
     #[serde(default, alias = "value")]
-    payload: Option<serde_json::Value>,
+    payload:      Option<serde_json::Value>,
 }
 
 pub fn decode_consume_response(
@@ -83,7 +83,7 @@ pub fn decode_ack_response(
         .map_err(|error| format!("Failed to parse ack response: {}", error))?;
 
     Ok(AckResponse {
-        success: raw.success.unwrap_or(true),
+        success:             raw.success.unwrap_or(true),
         acknowledged_offset: raw.acknowledged_offset.unwrap_or(request_context.upto_offset),
     })
 }
@@ -93,7 +93,9 @@ fn decode_consume_message(
     request_context: &ConsumeRequestContext,
 ) -> Result<ConsumeMessage, String> {
     let user = raw.user.ok_or_else(|| {
-        "Consume response message is missing required user metadata; upgrade the server or republish the topic event with a user id".to_string()
+        "Consume response message is missing required user metadata; upgrade the server or \
+         republish the topic event with a user id"
+            .to_string()
     })?;
 
     Ok(ConsumeMessage {
@@ -134,8 +136,8 @@ mod tests {
     #[test]
     fn decode_consume_response_requires_user_metadata() {
         let request_context = ConsumeRequestContext {
-            topic_id: "orders".to_string(),
-            group_id: "billing".to_string(),
+            topic_id:     "orders".to_string(),
+            group_id:     "billing".to_string(),
             partition_id: 0,
         };
 
@@ -162,8 +164,8 @@ mod tests {
     #[test]
     fn decode_consume_response_accepts_user_id_alias() {
         let request_context = ConsumeRequestContext {
-            topic_id: "orders".to_string(),
-            group_id: "billing".to_string(),
+            topic_id:     "orders".to_string(),
+            group_id:     "billing".to_string(),
             partition_id: 0,
         };
 

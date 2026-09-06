@@ -8,8 +8,8 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropPolicyStatement {
     pub policy_name: String,
-    pub table_id: TableId,
-    pub if_exists: bool,
+    pub table_id:    TableId,
+    pub if_exists:   bool,
 }
 
 impl DropPolicyStatement {

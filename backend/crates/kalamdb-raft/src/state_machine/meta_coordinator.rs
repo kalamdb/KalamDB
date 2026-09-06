@@ -40,7 +40,7 @@ impl MetadataCoordinator {
     pub fn new() -> Self {
         Self {
             current_index: AtomicU64::new(0),
-            notify: Notify::new(),
+            notify:        Notify::new(),
         }
     }
 

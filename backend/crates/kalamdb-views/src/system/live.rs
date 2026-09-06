@@ -63,7 +63,8 @@ impl LiveView {
             SystemTable::Live => {
                 let mut definition = LiveQuery::definition();
                 definition.table_comment = Some(
-                    "Active in-memory live subscriptions (computed on each query)".to_string());
+                    "Active in-memory live subscriptions (computed on each query)".to_string(),
+                );
                 definition
             },
             _ => unreachable!("LiveView only supports system.live"),
@@ -143,7 +144,8 @@ impl VirtualView for LiveView {
                 Arc::new(changes.finish()) as ArrayRef,
                 Arc::new(node_ids.finish()) as ArrayRef,
                 Arc::new(last_ping_ats.finish()) as ArrayRef,
-            ])
+            ],
+        )
         .map_err(|e| {
             crate::error::RegistryError::Other(format!("Failed to build live view batch: {}", e))
         })

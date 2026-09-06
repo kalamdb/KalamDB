@@ -57,6 +57,7 @@ impl PgCatalogView for PgNamespaceView {
         let mut owners = Int64Builder::new();
 
         let mut namespace_names = BTreeSet::new();
+        namespace_names.insert("pg_catalog".to_string());
         if include_explicit_namespaces(role) {
             let explicit_namespaces =
                 self.system_registry.namespaces().list_namespaces().map_err(|error| {

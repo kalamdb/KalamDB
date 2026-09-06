@@ -497,14 +497,12 @@ impl SharedTableProvider {
     pub async fn row_by_pk_value(&self, pk_value: &str) -> Result<Option<Row>, KalamDbError> {
         let pk_name = self.primary_key_field_name();
         let schema = self.schema_ref();
-        let pk_field = schema.field_with_name(pk_name).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("PK column lookup failed: {e}"))
-        })?;
-        let pk_scalar = kalamdb_commons::conversions::parse_string_as_scalar(
-            pk_value,
-            pk_field.data_type(),
-        )
-        .map_err(KalamDbError::InvalidOperation)?;
+        let pk_field = schema
+            .field_with_name(pk_name)
+            .map_err(|e| KalamDbError::InvalidOperation(format!("PK column lookup failed: {e}")))?;
+        let pk_scalar =
+            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
+                .map_err(KalamDbError::InvalidOperation)?;
 
         if let Some((_, row)) = self.find_by_pk(&pk_scalar).await? {
             return Ok(Some(row.fields));

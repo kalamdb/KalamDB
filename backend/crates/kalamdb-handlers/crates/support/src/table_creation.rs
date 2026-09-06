@@ -34,7 +34,8 @@ pub fn create_table(
     app_context: Arc<AppContext>,
     stmt: CreateTableStatement,
     user_id: &UserId,
-    user_role: Role) -> Result<String, KalamDbError> {
+    user_role: Role,
+) -> Result<String, KalamDbError> {
     let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
     let table_type = stmt.table_type;
 
@@ -51,7 +52,8 @@ pub fn create_table(
         &stmt.namespace_id,
         "CREATE",
         "TABLE",
-        Some(stmt.table_name.as_str()))?;
+        Some(stmt.table_name.as_str()),
+    )?;
 
     // Reject SYSTEM tables
     if stmt.table_type == TableType::System {
@@ -60,7 +62,8 @@ pub fn create_table(
             table_id_str
         );
         return Err(KalamDbError::InvalidOperation(
-            "Cannot create SYSTEM tables via SQL".to_string()));
+            "Cannot create SYSTEM tables via SQL".to_string(),
+        ));
     }
 
     // Shared tables are FORCE RLS. Omitting CREATE POLICY is default-deny for
@@ -126,7 +129,8 @@ pub fn create_table(
 /// Log table creation with type-specific details
 fn log_table_created(
     table_def: &kalamdb_commons::models::schemas::TableDefinition,
-    table_id: &TableId) {
+    table_id: &TableId,
+) {
     use kalamdb_commons::models::schemas::TableOptions;
 
     let pk_col = table_def
@@ -149,8 +153,8 @@ fn log_table_created(
         },
         TableOptions::Shared(opts) => {
             log::info!(
-                "✅ SHARED TABLE created: {} | storage: {} | columns: {} | pk: {} | system_columns: \
-                 [_seq, _deleted]",
+                "✅ SHARED TABLE created: {} | storage: {} | columns: {} | pk: {} | \
+                 system_columns: [_seq, _deleted]",
                 table_id,
                 opts.storage_id.as_str(),
                 table_def.columns.len(),
@@ -193,7 +197,8 @@ pub fn build_table_definition(
     app_context: Arc<AppContext>,
     stmt: &CreateTableStatement,
     user_id: &UserId,
-    user_role: Role) -> Result<kalamdb_commons::models::schemas::TableDefinition, KalamDbError> {
+    user_role: Role,
+) -> Result<kalamdb_commons::models::schemas::TableDefinition, KalamDbError> {
     use kalamdb_commons::{
         datatypes::{FromArrowType, KalamDataType},
         models::schemas::{ColumnDefinition, TableDefinition, TableOptions},
@@ -215,7 +220,8 @@ pub fn build_table_definition(
         &stmt.namespace_id,
         "CREATE",
         "TABLE",
-        Some(stmt.table_name.as_str()))?;
+        Some(stmt.table_name.as_str()),
+    )?;
 
     // RBAC check
     if !kalamdb_session::can_create_table(user_role, stmt.table_type) {
@@ -272,12 +278,14 @@ pub fn build_table_definition(
             if stmt.ttl_seconds.is_none() {
                 log::error!("❌ CREATE TABLE STREAM {}: TTL clause is required", table_id_str);
                 return Err(KalamDbError::InvalidOperation(
-                    "STREAM tables require TTL clause (e.g., TTL 3600)".to_string()));
+                    "STREAM tables require TTL clause (e.g., TTL 3600)".to_string(),
+                ));
             }
         },
         TableType::System => {
             return Err(KalamDbError::InvalidOperation(
-                "Cannot create SYSTEM tables via SQL".to_string()));
+                "Cannot create SYSTEM tables via SQL".to_string(),
+            ));
         },
     }
 
@@ -342,7 +350,8 @@ pub fn build_table_definition(
                 is_pk,
                 false,
                 default_val,
-                None))
+                None,
+            ))
         })
         .collect::<Result<Vec<_>, KalamDbError>>()?;
 
@@ -361,7 +370,8 @@ pub fn build_table_definition(
         stmt.table_type,
         columns,
         table_options.clone(),
-        None)
+        None,
+    )
     .map_err(KalamDbError::SchemaError)?;
 
     // Apply table-level options from DDL
@@ -412,7 +422,8 @@ pub fn build_table_definition(
 
 fn resolve_storage_info(
     app_context: &Arc<AppContext>,
-    requested: Option<&StorageId>) -> Result<(StorageId, StorageType), KalamDbError> {
+    requested: Option<&StorageId>,
+) -> Result<(StorageId, StorageType), KalamDbError> {
     let storages_provider = app_context.system_tables().storages();
     let storage_id = requested.cloned().unwrap_or_else(|| StorageId::from("local"));
 

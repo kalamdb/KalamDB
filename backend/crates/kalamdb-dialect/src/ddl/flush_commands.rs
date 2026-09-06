@@ -86,7 +86,7 @@ const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE FLUSH ALL IN namespace";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushTableStatement {
     /// Namespace containing the table
-    pub namespace: NamespaceId,
+    pub namespace:  NamespaceId,
     /// Table name to flush
     pub table_name: TableName,
 }
@@ -131,7 +131,7 @@ impl FlushTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE FLUSH TABLE")?;
 
         Ok(Self {
-            namespace: NamespaceId::from(namespace),
+            namespace:  NamespaceId::from(namespace),
             table_name: TableName::from(table_name),
         })
     }
@@ -228,6 +228,14 @@ mod tests {
         let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events;").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
+    }
+
+    #[test]
+    fn test_parse_flush_table_strips_quoted_identifiers() {
+        let stmt =
+            FlushTableStatement::parse(r#"STORAGE FLUSH TABLE "test_kalam_60"."users""#).unwrap();
+        assert_eq!(stmt.namespace, NamespaceId::from("test_kalam_60"));
+        assert_eq!(stmt.table_name, TableName::from("users"));
     }
 
     #[test]

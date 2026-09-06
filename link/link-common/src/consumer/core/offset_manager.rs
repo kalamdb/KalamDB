@@ -2,9 +2,9 @@ use crate::consumer::models::ConsumerOffsets;
 
 #[derive(Debug, Clone, Default)]
 pub struct OffsetManager {
-    position: Option<u64>,
+    position:          Option<u64>,
     highest_processed: Option<u64>,
-    last_committed: Option<u64>,
+    last_committed:    Option<u64>,
 }
 
 impl OffsetManager {
@@ -45,8 +45,8 @@ impl OffsetManager {
 
     pub fn snapshot(&self) -> ConsumerOffsets {
         ConsumerOffsets {
-            position: self.position.unwrap_or(0),
-            last_committed: self.last_committed,
+            position:          self.position.unwrap_or(0),
+            last_committed:    self.last_committed,
             highest_processed: self.highest_processed,
         }
     }

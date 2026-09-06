@@ -53,7 +53,9 @@ fn find_marker_line_start(sql: &str, marker: &str) -> Option<usize> {
 mod tests {
     use super::*;
 
-    const SAMPLE_MIGRATION: &str = "-- Migration: draft\n-- Updated: 2026-06-08T17:45:18Z\n\n-- UP\nCREATE TABLE users (id INTEGER);\n\n-- DOWN\nDROP TABLE users;";
+    const SAMPLE_MIGRATION: &str = "-- Migration: draft\n-- Updated: 2026-06-08T17:45:18Z\n\n-- \
+                                    UP\nCREATE TABLE users (id INTEGER);\n\n-- DOWN\nDROP TABLE \
+                                    users;";
 
     #[test]
     fn extract_up_section_ignores_updated_header() {

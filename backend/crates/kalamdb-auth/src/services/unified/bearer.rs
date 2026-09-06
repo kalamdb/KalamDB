@@ -5,18 +5,16 @@ use kalamdb_commons::{
     models::{ConnectionInfo, UserId},
     AuthType, Role,
 };
-use kalamdb_system::providers::storages::models::StorageMode;
-use kalamdb_system::{AuthData, User};
+use kalamdb_system::{providers::storages::models::StorageMode, AuthData, User};
 use tracing::Instrument;
 
+use super::bearer_session_cache::{lookup_cached_bearer_session, store_cached_bearer_session};
 use crate::{
     errors::error::{AuthError, AuthResult},
     models::context::AuthenticatedUser,
     providers::{jwt_auth, jwt_config, jwt_config::JwtConfig},
     repository::user_repo::UserRepository,
 };
-
-use super::bearer_session_cache::{lookup_cached_bearer_session, store_cached_bearer_session};
 
 pub(super) async fn authenticate_bearer(
     token: &str,
@@ -287,24 +285,24 @@ async fn try_accept_external_oidc_invite(
     verify_claimed_role(&user_id, claims.role.as_ref(), invite.role)?;
     let now = chrono::Utc::now().timestamp_millis();
     let user = User {
-        created_at: now,
-        updated_at: now,
-        locked_until: None,
-        last_login_at: None,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        invited_by: None,
-        user_id: user_id.clone(),
-        password_hash: String::new(),
-        name: claims.name.clone(),
-        email: Some(email.to_ascii_lowercase()),
-        auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
-        storage_id: invite.storage_id.clone(),
+        created_at:            now,
+        updated_at:            now,
+        locked_until:          None,
+        last_login_at:         None,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        invited_by:            None,
+        user_id:               user_id.clone(),
+        password_hash:         String::new(),
+        name:                  claims.name.clone(),
+        email:                 Some(email.to_ascii_lowercase()),
+        auth_data:             Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
+        storage_id:            invite.storage_id.clone(),
         failed_login_attempts: 0,
-        role: invite.role,
-        auth_type: AuthType::Oidc,
-        storage_mode: invite.storage_mode,
+        role:                  invite.role,
+        auth_type:             AuthType::Oidc,
+        storage_mode:          invite.storage_mode,
     };
 
     repo.accept_oidc_invite(&invite.user_id, user).await?;
@@ -339,24 +337,24 @@ async fn auto_provision_external_user(
 ) -> AuthResult<User> {
     let now = chrono::Utc::now().timestamp_millis();
     let user = User {
-        created_at: now,
-        updated_at: now,
-        locked_until: None,
-        last_login_at: None,
-        last_seen: None,
-        deleted_at: None,
-        invite_expires_at: None,
-        user_id: user_id.clone(),
-        password_hash: String::new(),
-        name: claims.name.clone(),
-        email: claims.email.clone(),
-        auth_data: Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
-        storage_id: None,
-        invited_by: None,
+        created_at:            now,
+        updated_at:            now,
+        locked_until:          None,
+        last_login_at:         None,
+        last_seen:             None,
+        deleted_at:            None,
+        invite_expires_at:     None,
+        user_id:               user_id.clone(),
+        password_hash:         String::new(),
+        name:                  claims.name.clone(),
+        email:                 claims.email.clone(),
+        auth_data:             Some(AuthData::new(claims.iss.clone(), claims.sub.clone())),
+        storage_id:            None,
+        invited_by:            None,
         failed_login_attempts: 0,
-        role: default_role,
-        auth_type: AuthType::Oidc,
-        storage_mode: StorageMode::Table,
+        role:                  default_role,
+        auth_type:             AuthType::Oidc,
+        storage_mode:          StorageMode::Table,
     };
 
     match repo.create_user(user).await {
@@ -485,21 +483,21 @@ mod tests {
     #[derive(Default)]
     struct CountingRepo {
         lookups: AtomicUsize,
-        users: Mutex<HashMap<UserId, User>>,
+        users:   Mutex<HashMap<UserId, User>>,
     }
 
     impl CountingRepo {
         fn with_user(user: User) -> Self {
             Self {
                 lookups: AtomicUsize::new(0),
-                users: Mutex::new(HashMap::from([(user.user_id.clone(), user)])),
+                users:   Mutex::new(HashMap::from([(user.user_id.clone(), user)])),
             }
         }
 
         fn with_users(users: Vec<User>) -> Self {
             Self {
                 lookups: AtomicUsize::new(0),
-                users: Mutex::new(
+                users:   Mutex::new(
                     users.into_iter().map(|user| (user.user_id.clone(), user)).collect(),
                 ),
             }
@@ -582,16 +580,16 @@ mod tests {
 
     fn internal_claims(user_id: &UserId, role: Role, auth_type: AuthType) -> jwt_auth::JwtClaims {
         jwt_auth::JwtClaims {
-            sub: user_id.as_str().to_string(),
-            iss: jwt_auth::KALAMDB_ISSUER.to_string(),
-            exp: 99_999_999,
-            iat: 1_700_000_000,
-            name: None,
-            email: Some("user@example.com".to_string()),
+            sub:            user_id.as_str().to_string(),
+            iss:            jwt_auth::KALAMDB_ISSUER.to_string(),
+            exp:            99_999_999,
+            iat:            1_700_000_000,
+            name:           None,
+            email:          Some("user@example.com".to_string()),
             email_verified: None,
-            role: Some(role),
-            auth_type: Some(auth_type),
-            token_type: Some(jwt_auth::TokenType::Access),
+            role:           Some(role),
+            auth_type:      Some(auth_type),
+            token_type:     Some(jwt_auth::TokenType::Access),
         }
     }
 

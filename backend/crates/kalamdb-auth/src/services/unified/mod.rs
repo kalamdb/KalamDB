@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_extract_user_id_from_credentials() {
         let request = AuthRequest::Credentials {
-            user: "testuser".to_string(),
+            user:     "testuser".to_string(),
             password: "secret".to_string(),
         };
         assert_eq!(extract_user_id_for_audit(&request), UserId::from("testuser"));

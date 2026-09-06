@@ -39,12 +39,14 @@ pub mod user_commands;
 pub type DdlResult<T> = Result<T, String>;
 
 pub(crate) const ACCESS_LEVEL_UNSUPPORTED: &str = "ACCESS_LEVEL is not supported. Shared tables \
-    use FORCE row-level security; grant access with CREATE POLICY";
+                                                   use FORCE row-level security; grant access \
+                                                   with CREATE POLICY";
 
 pub(crate) fn reject_access_level_sql(sql: &str) -> DdlResult<()> {
-    static ACCESS_LEVEL_SQL_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(
-        || regex::Regex::new(r"(?i)\bACCESS[_\s]+LEVEL\b").expect("access-level reject regex"),
-    );
+    static ACCESS_LEVEL_SQL_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| {
+            regex::Regex::new(r"(?i)\bACCESS[_\s]+LEVEL\b").expect("access-level reject regex")
+        });
     if ACCESS_LEVEL_SQL_RE.is_match(sql) {
         Err(ACCESS_LEVEL_UNSUPPORTED.to_string())
     } else {

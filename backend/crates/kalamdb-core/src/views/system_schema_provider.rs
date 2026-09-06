@@ -41,17 +41,17 @@ use crate::schema_registry::SchemaRegistry;
 /// Configuration for view initialization
 pub struct ViewConfig {
     /// Server configuration (for settings view)
-    pub config: Arc<ServerConfig>,
+    pub config:            Arc<ServerConfig>,
     /// Logs path (for server_logs view)
-    pub logs_path: PathBuf,
+    pub logs_path:         PathBuf,
     /// Command executor (for cluster views, set after Raft init)
-    pub executor: RwLock<Option<Arc<dyn CommandExecutor>>>,
+    pub executor:          RwLock<Option<Arc<dyn CommandExecutor>>>,
     /// Pre-created StatsView for callback wiring
-    pub stats_view: Arc<StatsView>,
+    pub stats_view:        Arc<StatsView>,
     /// Pre-created system.live view for callback wiring.
-    pub live_view: Arc<LiveView>,
+    pub live_view:         Arc<LiveView>,
     /// Pre-created system.sessions view for callback wiring.
-    pub sessions_view: Arc<SessionsView>,
+    pub sessions_view:     Arc<SessionsView>,
     /// Pre-created system.transactions view for callback wiring.
     pub transactions_view: Arc<TransactionsView>,
 }
@@ -76,9 +76,9 @@ pub struct SystemSchemaProvider {
     /// Canonical schema/provider cache for all table types
     schema_registry: Arc<SchemaRegistry>,
     /// Registry of persisted system tables (fallback for providers not yet in cache)
-    system_tables: Arc<SystemTablesRegistry>,
+    system_tables:   Arc<SystemTablesRegistry>,
     /// Configuration for lazy view initialization
-    view_config: Arc<ViewConfig>,
+    view_config:     Arc<ViewConfig>,
 }
 
 impl SystemSchemaProvider {

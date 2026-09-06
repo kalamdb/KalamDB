@@ -129,15 +129,15 @@ mod tests {
         let provider = MigrationsTableProvider::new(Arc::new(InMemoryBackend::new()));
         let migration = Migration {
             migration_key: MigrationId::new("app:0001_init.sql"),
-            migration_id: "0001_init.sql".to_string(),
-            namespace: "app".to_string(),
-            name: "init".to_string(),
-            checksum: "abc".to_string(),
-            status: "applied".to_string(),
-            started_at: Some(1_700_000_000_000),
-            finished_at: Some(1_700_000_000_100),
+            migration_id:  "0001_init.sql".to_string(),
+            namespace:     "app".to_string(),
+            name:          "init".to_string(),
+            checksum:      "abc".to_string(),
+            status:        "applied".to_string(),
+            started_at:    Some(1_700_000_000_000),
+            finished_at:   Some(1_700_000_000_100),
             error_message: None,
-            source: Some("0001_init.sql".to_string()),
+            source:        Some("0001_init.sql".to_string()),
             kalam_version: Some("test".to_string()),
         };
 
@@ -156,15 +156,15 @@ mod tests {
         let provider = MigrationsTableProvider::new(Arc::new(InMemoryBackend::new()));
         let app_migration = Migration {
             migration_key: MigrationId::new("app:0001_init.sql"),
-            migration_id: "0001_init.sql".to_string(),
-            namespace: "app".to_string(),
-            name: "init".to_string(),
-            checksum: "abc".to_string(),
-            status: "applied".to_string(),
-            started_at: Some(1_700_000_000_000),
-            finished_at: Some(1_700_000_000_100),
+            migration_id:  "0001_init.sql".to_string(),
+            namespace:     "app".to_string(),
+            name:          "init".to_string(),
+            checksum:      "abc".to_string(),
+            status:        "applied".to_string(),
+            started_at:    Some(1_700_000_000_000),
+            finished_at:   Some(1_700_000_000_100),
             error_message: None,
-            source: Some("0001_init.sql".to_string()),
+            source:        Some("0001_init.sql".to_string()),
             kalam_version: Some("test".to_string()),
         };
         let prod_migration = Migration {

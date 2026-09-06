@@ -24,6 +24,9 @@ pub trait WorkflowModalPrompt {
     fn default_index(&self) -> usize;
     fn decision_from_selected_index(&self, index: usize) -> Result<Self::Decision>;
     fn read_noninteractive_decision(&self) -> Result<Self::Decision>;
+    fn read_agent_decision(&self) -> Result<Self::Decision> {
+        self.read_noninteractive_decision()
+    }
 }
 
 pub fn run_workflow_modal_prompt<P: WorkflowModalPrompt>(
@@ -47,6 +50,10 @@ pub fn run_workflow_modal_prompt<P: WorkflowModalPrompt>(
                 println!("{line}");
             }
             println!();
+        }
+
+        if output.is_agent() || output.json {
+            return prompt.read_agent_decision();
         }
 
         if !interactive_available() {

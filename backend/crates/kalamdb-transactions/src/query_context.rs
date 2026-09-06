@@ -75,11 +75,11 @@ pub trait TransactionMutationSink: std::fmt::Debug + Send + Sync {
 /// Query-time transaction context shared between the coordinator and providers.
 #[derive(Debug, Clone)]
 pub struct TransactionQueryContext {
-    pub transaction_id: TransactionId,
+    pub transaction_id:      TransactionId,
     pub snapshot_commit_seq: u64,
-    pub overlay_view: Arc<dyn TransactionOverlayView>,
-    pub mutation_sink: Arc<dyn TransactionMutationSink>,
-    pub access_validator: Arc<dyn TransactionAccessValidator>,
+    pub overlay_view:        Arc<dyn TransactionOverlayView>,
+    pub mutation_sink:       Arc<dyn TransactionMutationSink>,
+    pub access_validator:    Arc<dyn TransactionAccessValidator>,
 }
 
 impl TransactionQueryContext {

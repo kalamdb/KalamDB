@@ -14,13 +14,13 @@ use serde_json::Value;
 
 #[derive(Clone)]
 pub struct TestHttpClient {
-    inner: Client<HttpConnector, Full<Bytes>>,
+    inner:   Client<HttpConnector, Full<Bytes>>,
     timeout: Duration,
 }
 
 pub struct TestHttpResponse {
     pub status: StatusCode,
-    pub body: String,
+    pub body:   String,
 }
 
 impl TestHttpClient {

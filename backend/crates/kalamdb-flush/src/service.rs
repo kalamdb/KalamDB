@@ -68,13 +68,13 @@ pub struct ManifestService {
     /// Optional registries for path/object store resolution.
     ///
     /// In production these are injected via `new_with_registries()`
-    schema_registry: Option<Arc<dyn SchemaRegistryTrait<Error = TableError>>>,
+    schema_registry:  Option<Arc<dyn SchemaRegistryTrait<Error = TableError>>>,
     storage_registry: Option<Arc<StorageRegistry>>,
 }
 
 pub(crate) struct ManifestCompactionScopeGuard {
     active_compactions: Arc<DashSet<ManifestId>>,
-    manifest_id: ManifestId,
+    manifest_id:        ManifestId,
 }
 
 impl Drop for ManifestCompactionScopeGuard {
@@ -1309,8 +1309,8 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestSchemaRegistry {
-        table_id: TableId,
-        table_def: Arc<TableDefinition>,
+        table_id:   TableId,
+        table_def:  Arc<TableDefinition>,
         storage_id: StorageId,
     }
 
@@ -1352,8 +1352,8 @@ mod tests {
     fn test_config() -> ManifestCacheSettings {
         ManifestCacheSettings {
             eviction_interval_seconds: 300,
-            max_entries: 1000,
-            eviction_ttl_days: 7,
+            max_entries:               1000,
+            eviction_ttl_days:         7,
         }
     }
 
@@ -1525,8 +1525,8 @@ mod tests {
     ) -> (ManifestService, Arc<StorageRegistry>) {
         let storage_registry = create_test_storage_registry(temp_dir, Arc::clone(&backend));
         let schema_registry = Arc::new(TestSchemaRegistry {
-            table_id: table_id.clone(),
-            table_def: create_test_table(table_id, table_type),
+            table_id:   table_id.clone(),
+            table_def:  create_test_table(table_id, table_type),
             storage_id: StorageId::local(),
         });
         let service = ManifestService::new_with_registries(

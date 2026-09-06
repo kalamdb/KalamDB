@@ -41,7 +41,7 @@ async fn fetch_session_rows_at(env: &TestEnv, base_url: &str, backend_pid: u32) 
             base_url,
             &format!(
                 "SELECT session_id, state, transaction_id, transaction_state FROM system.sessions \
-             WHERE backend_pid = {backend_pid} ORDER BY last_seen_at DESC"
+                 WHERE backend_pid = {backend_pid} ORDER BY last_seen_at DESC"
             ),
         )
         .await,
@@ -57,9 +57,9 @@ async fn fetch_transaction_rows_at(
         &env.kalamdb_sql_at(
             base_url,
             &format!(
-            "SELECT transaction_id, owner_id, origin, state, write_count FROM system.transactions \
-             WHERE transaction_id = '{transaction_id}'"
-        ),
+                "SELECT transaction_id, owner_id, origin, state, write_count FROM \
+                 system.transactions WHERE transaction_id = '{transaction_id}'"
+            ),
         )
         .await,
     )

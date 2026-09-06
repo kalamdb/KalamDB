@@ -20,8 +20,8 @@ const STALE_IDLE_SESSION_PRUNE_INTERVAL_MS: i64 = 1_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendSessionError {
     DuplicateSession {
-        session_id: String,
-        existing_origin: SessionOrigin,
+        session_id:       String,
+        existing_origin:  SessionOrigin,
         requested_origin: SessionOrigin,
     },
     SessionNotFound(String),
@@ -71,11 +71,11 @@ impl std::error::Error for BackendSessionError {}
 pub type BackendSessionResult<T> = Result<T, BackendSessionError>;
 
 pub struct BackendSessionManager {
-    sessions: DashMap<String, BackendSession>,
-    transaction_engine: Arc<dyn TransactionEngine>,
-    cleanup_runs: AtomicU64,
-    cleanup_removed_sessions: AtomicU64,
-    closed_sessions: AtomicU64,
+    sessions:                  DashMap<String, BackendSession>,
+    transaction_engine:        Arc<dyn TransactionEngine>,
+    cleanup_runs:              AtomicU64,
+    cleanup_removed_sessions:  AtomicU64,
+    closed_sessions:           AtomicU64,
     last_passive_pruned_at_ms: AtomicU64,
 }
 
@@ -316,9 +316,9 @@ impl BackendSessionManager {
 
     pub fn cleanup_counters(&self) -> BackendSessionCleanupCounters {
         BackendSessionCleanupCounters {
-            runs: self.cleanup_runs.load(Ordering::Relaxed),
+            runs:             self.cleanup_runs.load(Ordering::Relaxed),
             removed_sessions: self.cleanup_removed_sessions.load(Ordering::Relaxed),
-            closed_sessions: self.closed_sessions.load(Ordering::Relaxed),
+            closed_sessions:  self.closed_sessions.load(Ordering::Relaxed),
         }
     }
 
@@ -460,9 +460,9 @@ impl BackendSessionManager {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendSessionCleanupCounters {
-    pub runs: u64,
+    pub runs:             u64,
     pub removed_sessions: u64,
-    pub closed_sessions: u64,
+    pub closed_sessions:  u64,
 }
 
 fn current_timestamp_ms() -> i64 {

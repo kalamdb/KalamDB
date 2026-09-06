@@ -42,9 +42,8 @@ async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table
     client
         .execute_query(
             &format!(
-                "CREATE STREAM TABLE IF NOT EXISTS {table_name} (\
-                 id INT PRIMARY KEY, message TEXT, created_at TIMESTAMP DEFAULT NOW()\
-                 ) WITH (TTL_SECONDS = 3600)"
+                "CREATE STREAM TABLE IF NOT EXISTS {table_name} (id INT PRIMARY KEY, message \
+                 TEXT, created_at TIMESTAMP DEFAULT NOW()) WITH (TTL_SECONDS = 3600)"
             ),
             None,
             None,
@@ -61,7 +60,8 @@ async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table
     client
         .execute_query(
             &format!(
-                "ALTER TOPIC {topic_name} ADD SOURCE {table_name} ON INSERT WITH (payload = 'full')"
+                "ALTER TOPIC {topic_name} ADD SOURCE {table_name} ON INSERT WITH (payload = \
+                 'full')"
             ),
             None,
             None,
@@ -761,16 +761,16 @@ fn test_offset_tracking() {
 
     // Create a mock record
     let record = ConsumerRecord {
-        topic_id: "topic-123".to_string(),
-        topic_name: "test.topic".to_string(),
+        topic_id:     "topic-123".to_string(),
+        topic_name:   "test.topic".to_string(),
         partition_id: 0,
-        offset: 42,
-        message_id: Some("msg-1".to_string()),
+        offset:       42,
+        message_id:   Some("msg-1".to_string()),
         source_table: "test.table".to_string(),
-        op: kalam_client::TopicOp::Insert,
+        op:           kalam_client::TopicOp::Insert,
         timestamp_ms: 1700000000000,
         payload_mode: kalam_client::PayloadMode::Full,
-        payload: vec![1, 2, 3],
+        payload:      vec![1, 2, 3],
     };
 
     assert_eq!(record.offset, 42);

@@ -13,10 +13,10 @@ pub(crate) async fn healthcheck_handler(req: HttpRequest) -> HttpResponse {
     }
 
     HttpResponse::Ok().json(HealthCheckResponse {
-        status: "healthy".to_string(),
-        version: SERVER_VERSION.to_string(),
+        status:      "healthy".to_string(),
+        version:     SERVER_VERSION.to_string(),
         api_version: "v1".to_string(),
-        build_date: Some(BUILD_DATE.to_string()),
+        build_date:  Some(BUILD_DATE.to_string()),
     })
 }
 

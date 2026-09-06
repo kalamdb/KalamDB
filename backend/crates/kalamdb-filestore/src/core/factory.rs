@@ -279,17 +279,17 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_millis();
         let storage = Storage {
-            storage_id: StorageId::from("test_build"),
-            storage_name: "test_build".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: temp_dir.to_string_lossy().to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from("test_build"),
+            storage_name:           "test_build".to_string(),
+            description:            None,
+            storage_type:           StorageType::Filesystem,
+            base_directory:         temp_dir.to_string_lossy().to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: "{namespace}/{table}".to_string(),
-            user_tables_template: "{namespace}/{user}/{table}".to_string(),
-            created_at: now,
-            updated_at: now,
+            user_tables_template:   "{namespace}/{user}/{table}".to_string(),
+            created_at:             now,
+            updated_at:             now,
         };
 
         let timeouts = RemoteStorageTimeouts::default();

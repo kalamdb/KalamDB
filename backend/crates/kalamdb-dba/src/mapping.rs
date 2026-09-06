@@ -107,11 +107,11 @@ mod tests {
     #[test]
     fn dba_timestamp_models_store_microseconds_and_decode_milliseconds() {
         let row = NotificationRow {
-            id: "notif-1".to_string(),
-            user_id: kalamdb_commons::models::UserId::new("user-1"),
-            title: "Maintenance complete".to_string(),
-            body: None,
-            is_read: false,
+            id:         "notif-1".to_string(),
+            user_id:    kalamdb_commons::models::UserId::new("user-1"),
+            title:      "Maintenance complete".to_string(),
+            body:       None,
+            is_read:    false,
             created_at: 1_700_000_000_000,
             updated_at: 1_700_000_000_500,
         };

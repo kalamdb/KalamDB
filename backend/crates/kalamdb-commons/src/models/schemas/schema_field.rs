@@ -177,7 +177,7 @@ mod tests {
             "price",
             KalamDataType::Decimal {
                 precision: 10,
-                scale: 2,
+                scale:     2,
             },
             2,
         );

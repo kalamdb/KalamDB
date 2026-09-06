@@ -139,9 +139,9 @@ impl TypedStatementHandler<CheckStorageStatement> for CheckStorageHandler {
             .into_kalamdb_error("Failed to build result batch")?;
 
         Ok(ExecutionResult::Rows {
-            batches: vec![batch],
+            batches:   vec![batch],
             row_count: 1,
-            schema: Some(schema),
+            schema:    Some(schema),
         })
     }
 
@@ -177,7 +177,7 @@ mod tests {
         let handler = CheckStorageHandler::new(app_ctx);
         let stmt = CheckStorageStatement {
             storage_id: StorageId::local(),
-            extended: false,
+            extended:   false,
         };
 
         // User role should be denied
@@ -197,7 +197,7 @@ mod tests {
         let handler = CheckStorageHandler::new(app_ctx);
         let stmt = CheckStorageStatement {
             storage_id: StorageId::from("nonexistent_storage"),
-            extended: false,
+            extended:   false,
         };
         let ctx = create_test_context(Role::System);
 
@@ -214,7 +214,7 @@ mod tests {
         let handler = CheckStorageHandler::new(app_ctx);
         let stmt = CheckStorageStatement {
             storage_id: StorageId::local(),
-            extended: false,
+            extended:   false,
         };
         let ctx = create_test_context(Role::System);
 

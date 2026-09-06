@@ -131,30 +131,30 @@ impl SystemColumnsService {
         // _seq contains embedded timestamp (Snowflake ID format)
         let seq_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
-            column_id: seq_column_id,
-            column_name: SystemColumnNames::SEQ.to_string(),
+            column_id:        seq_column_id,
+            column_name:      SystemColumnNames::SEQ.to_string(),
             ordinal_position: next_ordinal,
-            data_type: kalamdb_commons::models::datatypes::KalamDataType::BigInt,
-            is_nullable: false,
-            is_primary_key: false, // User-defined PK required separately
+            data_type:        kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+            is_nullable:      false,
+            is_primary_key:   false, // User-defined PK required separately
             is_partition_key: false,
-            default_value: ColumnDefault::None,
-            column_comment: Some("Version ID (MVCC) with embedded timestamp".to_string()),
+            default_value:    ColumnDefault::None,
+            column_comment:   Some("Version ID (MVCC) with embedded timestamp".to_string()),
         });
         table_def.next_column_id += 1;
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
         let deleted_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
-            column_id: deleted_column_id,
-            column_name: SystemColumnNames::DELETED.to_string(),
+            column_id:        deleted_column_id,
+            column_name:      SystemColumnNames::DELETED.to_string(),
             ordinal_position: next_ordinal + 1,
-            data_type: kalamdb_commons::models::datatypes::KalamDataType::Boolean,
-            is_nullable: false,
-            is_primary_key: false,
+            data_type:        kalamdb_commons::models::datatypes::KalamDataType::Boolean,
+            is_nullable:      false,
+            is_primary_key:   false,
             is_partition_key: false,
-            default_value: ColumnDefault::Literal(serde_json::json!(false)),
-            column_comment: Some("Soft delete flag".to_string()),
+            default_value:    ColumnDefault::Literal(serde_json::json!(false)),
+            column_comment:   Some("Soft delete flag".to_string()),
         });
         table_def.next_column_id += 1;
 

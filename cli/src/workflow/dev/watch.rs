@@ -46,6 +46,7 @@ pub async fn run_schema_pipeline(
         if matches!(config.schema.mode, SchemaMode::Sql)
             && !has_pending_numbered_migrations(ctx, output).await?
         {
+            seed_baseline_for_applied_history(project_root, config, output)?;
             draft_updated = update_draft_migration(project_root, config, output)?.is_some();
         }
         let apply_options = if force {
@@ -63,7 +64,8 @@ pub async fn run_schema_pipeline(
         } else {
             output.progress_detail(
                 "schema",
-                "schema draft is pending; baseline will update after the draft is sealed and applied",
+                "schema draft is pending; baseline will update after the draft is sealed and \
+                 applied",
             );
         }
         baseline_decided = true;
@@ -81,6 +83,31 @@ pub async fn run_schema_pipeline(
 
 fn should_update_baseline_after_apply(draft_updated: bool, draft_still_pending: bool) -> bool {
     !draft_updated || !draft_still_pending
+}
+
+/// Seed `kalam/.schema-baseline.sql` when numbered history is already applied.
+///
+/// That file is gitignored, so a second checkout (Flutter app, TypeScript app,
+/// or a fresh clone) often has `schema.sql` + numbered migrations but no
+/// baseline. Diffing against an empty baseline would emit a recreate-everything
+/// draft. Caller must have already verified there are no pending numbered files.
+fn seed_baseline_for_applied_history(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    let baseline = config.schema_baseline_path(project_root);
+    if baseline.is_file() {
+        return Ok(());
+    }
+    if list_migration_files(&config.migrations_dir(project_root))?.is_empty() {
+        return Ok(());
+    }
+
+    output.status(
+        "seeded schema baseline from schema.sql because numbered migrations are already applied",
+    );
+    update_schema_baseline(project_root, config, output)
 }
 
 async fn has_pending_numbered_migrations(
@@ -178,23 +205,67 @@ pub async fn wait_for_stable_schema_file(path: &Path) -> Option<SystemTime> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SchemaFileStamp {
     modified: Option<SystemTime>,
-    len: Option<u64>,
+    len:      Option<u64>,
 }
 
 fn schema_file_stamp(path: &Path) -> SchemaFileStamp {
     let metadata = fs::metadata(path).ok();
     SchemaFileStamp {
         modified: metadata.as_ref().and_then(|m| m.modified().ok()),
-        len: metadata.map(|m| m.len()),
+        len:      metadata.map(|m| m.len()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
 
+    use super::*;
     use crate::{config::WorkflowLoggingPolicy, workflow::test_support::watch_test_config};
+
+    #[test]
+    fn seed_baseline_skips_when_no_numbered_migrations() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("kalam/migrations")).unwrap();
+        fs::write(root.join("schema.sql"), "CREATE TABLE users (id INT);").unwrap();
+        let config = watch_test_config();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+
+        seed_baseline_for_applied_history(root, &config, &output).unwrap();
+
+        assert!(
+            !config.schema_baseline_path(root).is_file(),
+            "first-run projects with no numbered history should keep an empty baseline"
+        );
+    }
+
+    #[test]
+    fn seed_baseline_copies_schema_when_numbered_history_exists() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("kalam/migrations")).unwrap();
+        let schema = "CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  display_name TEXT\n);\n";
+        fs::write(root.join("schema.sql"), schema).unwrap();
+        fs::write(
+            root.join("kalam/migrations/0001_init.sql"),
+            "-- UP\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  display_name \
+             TEXT\n);\n\n-- DOWN\n",
+        )
+        .unwrap();
+        let config = watch_test_config();
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+
+        seed_baseline_for_applied_history(root, &config, &output).unwrap();
+
+        let baseline = fs::read_to_string(config.schema_baseline_path(root)).unwrap();
+        assert_eq!(baseline, schema);
+        assert!(
+            crate::workflow::migration::create::update_draft_migration(root, &config, &output)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn update_baseline_copies_schema_source() {
@@ -261,6 +332,9 @@ mod tests {
             config,
             cli_config: crate::config::CLIConfiguration::default(),
             use_color: false,
+            animations: true,
+            agent: false,
+            json: false,
             project_dir: None,
             env_override: None,
             namespace_override: None,

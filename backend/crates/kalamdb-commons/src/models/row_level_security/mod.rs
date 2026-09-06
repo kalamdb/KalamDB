@@ -24,12 +24,11 @@ pub use table_policy::TablePolicy;
 
 #[cfg(test)]
 mod tests {
-    use crate::{Role, TableId, UserId};
-
     use super::{
         AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
         PolicyProgram, PolicyTarget, PrincipalExpr, TablePolicy,
     };
+    use crate::{Role, TableId, UserId};
 
     #[test]
     fn table_policy_serialization_preserves_compiled_authorization_metadata() {
@@ -40,19 +39,26 @@ mod tests {
             table_id.clone(),
             "member_read",
             PolicyCommand::Select,
-            vec![PolicyTarget::Role(Role::User), PolicyTarget::Role(Role::Service)],
-            Some("group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = CURRENT_USER)".to_string()),
+            vec![
+                PolicyTarget::Role(Role::User),
+                PolicyTarget::Role(Role::Service),
+            ],
+            Some(
+                "group_id IN (SELECT group_id FROM chat.group_members WHERE user_id = \
+                 CURRENT_USER)"
+                    .to_string(),
+            ),
             None,
             Some(PolicyProgram::AuthorizationRelation(AuthorizationRelation {
-                protected_table: table_id,
-                protected_keys: vec![2],
-                relation_table: relation_id.clone(),
-                relation_keys: vec![2],
-                principal_column: 1,
-                principal: PrincipalExpr::CurrentUser,
+                protected_table:   table_id,
+                protected_keys:    vec![2],
+                relation_table:    relation_id.clone(),
+                relation_keys:     vec![2],
+                principal_column:  1,
+                principal:         PrincipalExpr::CurrentUser,
                 static_predicates: Vec::new(),
-                dependencies: vec![relation_id],
-                invalidation: InvalidationStrategy::TargetedPrincipal,
+                dependencies:      vec![relation_id],
+                invalidation:      InvalidationStrategy::TargetedPrincipal,
             })),
             None,
             7,

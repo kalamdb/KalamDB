@@ -265,9 +265,11 @@ pub fn copy_dir_to_dir(src: &Path, dst: &Path) -> Result<u64, KalamDbError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Write;
+
     use tempfile::tempdir;
+
+    use super::*;
 
     fn octal_bytes(value: u64, width: usize) -> Vec<u8> {
         let mut bytes = vec![b'0'; width];

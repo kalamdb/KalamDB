@@ -36,24 +36,24 @@ fn test_pending_buffer_add_and_drain() {
 
     // Add commands with different required_meta_index values
     buffer.add(PendingCommand {
-        log_index: 10,
-        log_term: 1,
+        log_index:           10,
+        log_term:            1,
         required_meta_index: 5,
-        command_bytes: vec![1, 2, 3],
+        command_bytes:       vec![1, 2, 3],
     });
 
     buffer.add(PendingCommand {
-        log_index: 11,
-        log_term: 1,
+        log_index:           11,
+        log_term:            1,
         required_meta_index: 7,
-        command_bytes: vec![4, 5, 6],
+        command_bytes:       vec![4, 5, 6],
     });
 
     buffer.add(PendingCommand {
-        log_index: 12,
-        log_term: 1,
+        log_index:           12,
+        log_term:            1,
         required_meta_index: 5,
-        command_bytes: vec![7, 8, 9],
+        command_bytes:       vec![7, 8, 9],
     });
 
     assert_eq!(buffer.len(), 3);
@@ -85,24 +85,24 @@ fn test_pending_buffer_log_order_preserved() {
 
     // Add commands out of log order, same required_meta_index
     buffer.add(PendingCommand {
-        log_index: 15,
-        log_term: 1,
+        log_index:           15,
+        log_term:            1,
         required_meta_index: 10,
-        command_bytes: vec![1],
+        command_bytes:       vec![1],
     });
 
     buffer.add(PendingCommand {
-        log_index: 13,
-        log_term: 1,
+        log_index:           13,
+        log_term:            1,
         required_meta_index: 10,
-        command_bytes: vec![2],
+        command_bytes:       vec![2],
     });
 
     buffer.add(PendingCommand {
-        log_index: 14,
-        log_term: 1,
+        log_index:           14,
+        log_term:            1,
         required_meta_index: 10,
-        command_bytes: vec![3],
+        command_bytes:       vec![3],
     });
 
     let drained = buffer.drain_satisfied(10);
@@ -118,17 +118,17 @@ fn test_pending_buffer_persistence_roundtrip() {
     let buffer = PendingBuffer::new();
 
     buffer.add(PendingCommand {
-        log_index: 100,
-        log_term: 5,
+        log_index:           100,
+        log_term:            5,
         required_meta_index: 50,
-        command_bytes: vec![1, 2, 3, 4, 5],
+        command_bytes:       vec![1, 2, 3, 4, 5],
     });
 
     buffer.add(PendingCommand {
-        log_index: 101,
-        log_term: 5,
+        log_index:           101,
+        log_term:            5,
         required_meta_index: 55,
-        command_bytes: vec![6, 7, 8, 9, 10],
+        command_bytes:       vec![6, 7, 8, 9, 10],
     });
 
     // Get all for persistence
@@ -225,13 +225,13 @@ async fn test_user_data_buffering_when_meta_behind() {
 
     // Create a command with required_meta_index higher than current
     let cmd = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::default(), "users".into()),
-        user_id: UserId::new("user1"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::default(), "users".into()),
+        user_id:             UserId::new("user1"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: current_meta + 100, // Well above current, so must buffer
-        transaction_id: None,
+        transaction_id:      None,
     };
 
     let cmd_bytes = encode_user_data_command(&cmd).unwrap();
@@ -247,13 +247,13 @@ async fn test_user_data_buffering_when_meta_behind() {
 
     // Apply another command (with lower requirement) which will trigger drain
     let cmd2 = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::default(), "users".into()),
-        user_id: UserId::new("user2"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::default(), "users".into()),
+        user_id:             UserId::new("user2"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: 0, // Can apply immediately, also triggers drain
-        transaction_id: None,
+        transaction_id:      None,
     };
 
     let cmd2_bytes = encode_user_data_command(&cmd2).unwrap();
@@ -274,13 +274,13 @@ async fn test_user_data_immediate_apply_when_meta_caught_up() {
 
     // Create a command with required_meta_index lower than current
     let cmd = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::default(), "orders".into()),
-        user_id: UserId::new("user2"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::default(), "orders".into()),
+        user_id:             UserId::new("user2"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: 500, // Meta is at 1000, so this applies immediately
-        transaction_id: None,
+        transaction_id:      None,
     };
 
     let cmd_bytes = encode_user_data_command(&cmd).unwrap();
@@ -308,13 +308,13 @@ async fn test_user_data_snapshot_includes_pending_commands() {
 
     // Create and buffer a command (well above current meta)
     let cmd = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::new("ns"), "table".into()),
-        user_id: UserId::new("user"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::new("ns"), "table".into()),
+        user_id:             UserId::new("user"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: current_meta + 1000, // Will be buffered
-        transaction_id: None,
+        transaction_id:      None,
     };
 
     let cmd_bytes = encode_user_data_command(&cmd).unwrap();
@@ -349,13 +349,13 @@ async fn test_shared_data_buffering() {
 
     // Create a command with required_meta_index well above current
     let cmd = SharedDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::system(), "shared_table".into()),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::system(), "shared_table".into()),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: current_meta + 500,
-        transaction_id: None,
-        actor_user_id: None,
+        transaction_id:      None,
+        actor_user_id:       None,
     };
 
     let cmd_bytes = encode_shared_data_command(&cmd).unwrap();
@@ -370,13 +370,13 @@ async fn test_shared_data_buffering() {
 
     // Apply another command to trigger drain
     let cmd2 = SharedDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::system(), "other".into()),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::system(), "other".into()),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: 0,
-        transaction_id: None,
-        actor_user_id: None,
+        transaction_id:      None,
+        actor_user_id:       None,
     };
     let cmd2_bytes = encode_shared_data_command(&cmd2).unwrap();
     sm.apply(2, 1, &cmd2_bytes).await.unwrap();
@@ -395,13 +395,13 @@ async fn test_shared_data_snapshot_roundtrip() {
     let current_meta = get_coordinator().current_index();
 
     let cmd = SharedDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::system(), "config".into()),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::system(), "config".into()),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: current_meta + 2000, // Will be buffered
-        transaction_id: None,
-        actor_user_id: None,
+        transaction_id:      None,
+        actor_user_id:       None,
     };
 
     let cmd_bytes = encode_shared_data_command(&cmd).unwrap();
@@ -452,13 +452,13 @@ async fn test_rejoin_ordering_scenario() {
 
     for (log_index, term, required_meta) in &entries {
         let cmd = UserDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::default(), "test".into()),
-            user_id: UserId::new("user"),
-            rows: vec![Row {
+            table_id:            TableId::new(NamespaceId::default(), "test".into()),
+            user_id:             UserId::new("user"),
+            rows:                vec![Row {
                 values: BTreeMap::new(),
             }],
             required_meta_index: *required_meta,
-            transaction_id: None,
+            transaction_id:      None,
         };
 
         let cmd_bytes = encode_user_data_command(&cmd).unwrap();
@@ -473,13 +473,13 @@ async fn test_rejoin_ordering_scenario() {
 
     // Apply another command to trigger drain
     let trigger_cmd = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::default(), "trigger".into()),
-        user_id: UserId::new("trigger"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::default(), "trigger".into()),
+        user_id:             UserId::new("trigger"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: 0, // Immediate
-        transaction_id: None,
+        transaction_id:      None,
     };
     let trigger_bytes = encode_user_data_command(&trigger_cmd).unwrap();
     sm.apply(56, 1, &trigger_bytes).await.unwrap();
@@ -492,13 +492,13 @@ async fn test_rejoin_ordering_scenario() {
 
     // Trigger drain again
     let trigger_cmd2 = UserDataCommand::Insert {
-        table_id: TableId::new(NamespaceId::default(), "trigger2".into()),
-        user_id: UserId::new("trigger2"),
-        rows: vec![Row {
+        table_id:            TableId::new(NamespaceId::default(), "trigger2".into()),
+        user_id:             UserId::new("trigger2"),
+        rows:                vec![Row {
             values: BTreeMap::new(),
         }],
         required_meta_index: 0,
-        transaction_id: None,
+        transaction_id:      None,
     };
     let trigger2_bytes = encode_user_data_command(&trigger_cmd2).unwrap();
     sm.apply(57, 1, &trigger2_bytes).await.unwrap();

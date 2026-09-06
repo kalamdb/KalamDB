@@ -104,9 +104,9 @@ pub fn cluster_join_rows(
     })?;
 
     Ok(ExecutionResult::Rows {
-        batches: vec![batch],
+        batches:   vec![batch],
         row_count: 1,
-        schema: Some(schema),
+        schema:    Some(schema),
     })
 }
 

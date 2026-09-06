@@ -8,10 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use datafusion::{
-    arrow::{
-        datatypes::SchemaRef,
-        record_batch::RecordBatch,
-    },
+    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
     catalog::{SchemaProvider, Session},
     common::DFSchema,
     datasource::{TableProvider, TableType},
@@ -41,6 +38,7 @@ pub mod attribute;
 pub mod class;
 pub mod database;
 pub mod empty;
+pub mod get_keywords;
 pub mod namespace;
 pub mod stat_activity;
 pub mod tables;
@@ -111,7 +109,8 @@ impl<V: PgCatalogView + 'static> DeferredBatchSource for PgCatalogScanSource<V> 
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name())
+            self.source_name(),
+        )
     }
 }
 
@@ -130,7 +129,8 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         if let Some(system_table) = self.view.required_system_table() {
             PermissionChecker::check_system_table(state, &system_table.table_id())?;
         }
@@ -163,7 +163,8 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(pushdown_results_for_filters(filters, |_| FilterCapability::Exact))
     }
 }
@@ -176,40 +177,61 @@ pub struct PgCatalogSchemaProvider {
 impl PgCatalogSchemaProvider {
     pub fn new(
         system_registry: Arc<SystemTablesRegistry>,
-        sessions_snapshot_callback: SessionsSnapshotCallback) -> Self {
+        sessions_snapshot_callback: SessionsSnapshotCallback,
+    ) -> Self {
         let mut providers = BTreeMap::<String, Arc<dyn TableProvider>>::new();
         providers.insert(
             "pg_namespace".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(namespace::PgNamespaceView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
         providers.insert(
             "pg_class".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(class::PgClassView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
         providers.insert(
             "pg_attribute".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(attribute::PgAttributeView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
         providers.insert(
             "pg_type".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(r#type::PgTypeView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
         providers.insert(
             "pg_database".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(database::PgDatabaseView::new(
-                "kalam")))));
+                "kalam",
+            )))),
+        );
         providers.insert(
             "pg_stat_activity".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(
-                stat_activity::PgStatActivityView::new(sessions_snapshot_callback)))));
+                stat_activity::PgStatActivityView::new(sessions_snapshot_callback),
+            ))),
+        );
         providers.insert(
             "pg_tables".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(tables::PgTablesView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
         providers.insert(
             "pg_views".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(views::PgViewsView::new(
-                Arc::clone(&system_registry))))));
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_get_keywords".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(get_keywords::PgGetKeywordsView))),
+        );
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -261,7 +283,8 @@ pub(crate) fn stable_oid(parts: &[&str]) -> i64 {
 
 pub(crate) fn visible_table_definitions(
     system_registry: &SystemTablesRegistry,
-    role: Role) -> Result<Vec<TableDefinition>, RegistryError> {
+    role: Role,
+) -> Result<Vec<TableDefinition>, RegistryError> {
     let mut definitions = BTreeMap::<(String, String), TableDefinition>::new();
 
     let tables = system_registry
@@ -284,13 +307,15 @@ pub(crate) fn visible_table_definitions(
 
 fn insert_catalog_definition(
     definitions: &mut BTreeMap<(String, String), TableDefinition>,
-    table: TableDefinition) {
+    table: TableDefinition,
+) {
     let key = (table.namespace_id.as_str().to_string(), table.table_name.as_str().to_string());
     definitions.entry(key).or_insert(table);
 }
 
 fn supplemental_catalog_definitions(
-    system_registry: &SystemTablesRegistry) -> Vec<TableDefinition> {
+    system_registry: &SystemTablesRegistry,
+) -> Vec<TableDefinition> {
     let mut definitions = system_registry
         .expected_system_table_definitions()
         .into_iter()

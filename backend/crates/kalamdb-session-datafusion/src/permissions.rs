@@ -46,14 +46,16 @@ pub fn extract_user_context(session: &dyn Session) -> Result<(&UserId, Role), Se
 }
 
 pub fn extract_full_user_context(
-    session: &dyn Session) -> Result<(&UserId, Role, ReadContext), SessionError> {
+    session: &dyn Session,
+) -> Result<(&UserId, Role, ReadContext), SessionError> {
     let ctx = extract_session_context(session)?;
     Ok((&ctx.user_id, ctx.role, ctx.read_context))
 }
 
 pub fn check_system_table_access(
     session: &dyn Session,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     let role = extract_user_role(session);
 
     if can_access_system_table(role) {
@@ -70,7 +72,8 @@ pub fn check_system_table_access(
 
 pub fn check_user_table_access(
     session: &dyn Session,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     let role = extract_user_role(session);
 
     if can_access_user_table(role) {
@@ -87,7 +90,8 @@ pub fn check_user_table_access(
 
 pub fn check_user_table_write_access(
     session: &dyn Session,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     let role = extract_user_role(session);
 
     if can_write_user_table(role) {
@@ -104,7 +108,8 @@ pub fn check_user_table_write_access(
 
 pub fn check_shared_table_access(
     session: &dyn Session,
-    table_def: &TableDefinition) -> Result<(), SessionError> {
+    table_def: &TableDefinition,
+) -> Result<(), SessionError> {
     let role = extract_user_role(session);
     if !matches!(role, Role::Anonymous) {
         Ok(())
@@ -120,7 +125,8 @@ pub fn check_shared_table_access(
 
 pub fn check_shared_table_write_access(
     session: &dyn Session,
-    table_def: &TableDefinition) -> Result<(), SessionError> {
+    table_def: &TableDefinition,
+) -> Result<(), SessionError> {
     let role = extract_user_role(session);
     if !matches!(role, Role::Anonymous) {
         Ok(())
@@ -137,7 +143,8 @@ pub fn check_shared_table_write_access(
 pub fn check_system_table_access_by_name(
     session: &dyn Session,
     namespace_id: &NamespaceId,
-    table_name: &TableName) -> Result<(), SessionError> {
+    table_name: &TableName,
+) -> Result<(), SessionError> {
     let table_id = TableId::new(namespace_id.clone(), table_name.clone());
     check_system_table_access(session, &table_id)
 }
@@ -155,19 +162,22 @@ impl PermissionChecker {
 
     pub fn check_shared_table(
         session: &dyn Session,
-        table_def: &TableDefinition) -> DataFusionResult<()> {
+        table_def: &TableDefinition,
+    ) -> DataFusionResult<()> {
         check_shared_table_access(session, table_def).map_err(session_error_to_datafusion)
     }
 
     pub fn check_shared_table_write(
         session: &dyn Session,
-        table_def: &TableDefinition) -> DataFusionResult<()> {
+        table_def: &TableDefinition,
+    ) -> DataFusionResult<()> {
         check_shared_table_write_access(session, table_def).map_err(session_error_to_datafusion)
     }
 
     pub fn check_user_table_write(
         session: &dyn Session,
-        table_id: &TableId) -> DataFusionResult<()> {
+        table_id: &TableId,
+    ) -> DataFusionResult<()> {
         check_user_table_write_access(session, table_id).map_err(session_error_to_datafusion)
     }
 

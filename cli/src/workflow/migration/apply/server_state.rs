@@ -9,15 +9,15 @@ use crate::{
 #[derive(Debug, Deserialize)]
 struct ServerMigrationRecord {
     migration_key: String,
-    migration_id: String,
-    namespace: String,
-    name: String,
-    checksum: String,
-    status: MigrationStatus,
-    started_at: Option<i64>,
-    finished_at: Option<i64>,
+    migration_id:  String,
+    namespace:     String,
+    name:          String,
+    checksum:      String,
+    status:        MigrationStatus,
+    started_at:    Option<i64>,
+    finished_at:   Option<i64>,
     error_message: Option<String>,
-    source: Option<String>,
+    source:        Option<String>,
     kalam_version: Option<String>,
 }
 
@@ -26,7 +26,9 @@ pub(crate) async fn load_server_migration_state(
     namespace: &kalamdb_commons::NamespaceId,
 ) -> Result<MigrationState> {
     let sql = format!(
-        "SELECT migration_key, migration_id, namespace, name, checksum, status, started_at, finished_at, error_message, source, kalam_version FROM system.migrations WHERE namespace = {}",
+        "SELECT migration_key, migration_id, namespace, name, checksum, status, started_at, \
+         finished_at, error_message, source, kalam_version FROM system.migrations WHERE namespace \
+         = {}",
         sql_string(namespace.as_str())
     );
     let response = client.execute_query(&sql, None, None, None).await.map_err(CLIError::from)?;
@@ -102,7 +104,9 @@ pub(crate) async fn upsert_server_migration_record(
 
 fn build_update_sql(record: &MigrationRecord, migration_key: &str) -> Result<String> {
     Ok(format!(
-        "UPDATE system.migrations SET namespace = {}, name = {}, checksum = {}, status = {}, started_at = {}, finished_at = {}, error_message = {}, source = {}, kalam_version = {} WHERE migration_key = {}",
+        "UPDATE system.migrations SET namespace = {}, name = {}, checksum = {}, status = {}, \
+         started_at = {}, finished_at = {}, error_message = {}, source = {}, kalam_version = {} \
+         WHERE migration_key = {}",
         sql_string(record.namespace.as_str()),
         sql_string(&record.name),
         sql_string(&record.checksum),
@@ -118,7 +122,9 @@ fn build_update_sql(record: &MigrationRecord, migration_key: &str) -> Result<Str
 
 fn build_insert_sql(record: &MigrationRecord, migration_key: &str) -> Result<String> {
     Ok(format!(
-        "INSERT INTO system.migrations (migration_key, migration_id, namespace, name, checksum, status, started_at, finished_at, error_message, source, kalam_version) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO system.migrations (migration_key, migration_id, namespace, name, checksum, \
+         status, started_at, finished_at, error_message, source, kalam_version) VALUES ({}, {}, \
+         {}, {}, {}, {}, {}, {}, {}, {}, {})",
         sql_string(migration_key),
         sql_string(&record.migration_id),
         sql_string(record.namespace.as_str()),
@@ -182,15 +188,15 @@ fn server_migration_record_from_row(
 ) -> Result<ServerMigrationRecord> {
     Ok(ServerMigrationRecord {
         migration_key: required_string(&row, "migration_key")?,
-        migration_id: required_string(&row, "migration_id")?,
-        namespace: required_string(&row, "namespace")?,
-        name: required_string(&row, "name")?,
-        checksum: required_string(&row, "checksum")?,
-        status: parse_status(&required_string(&row, "status")?)?,
-        started_at: optional_timestamp_millis(&row, "started_at"),
-        finished_at: optional_timestamp_millis(&row, "finished_at"),
+        migration_id:  required_string(&row, "migration_id")?,
+        namespace:     required_string(&row, "namespace")?,
+        name:          required_string(&row, "name")?,
+        checksum:      required_string(&row, "checksum")?,
+        status:        parse_status(&required_string(&row, "status")?)?,
+        started_at:    optional_timestamp_millis(&row, "started_at"),
+        finished_at:   optional_timestamp_millis(&row, "finished_at"),
         error_message: optional_string(&row, "error_message"),
-        source: optional_string(&row, "source"),
+        source:        optional_string(&row, "source"),
         kalam_version: optional_string(&row, "kalam_version"),
     })
 }
@@ -237,17 +243,17 @@ fn timestamp_micros_to_millis(value: i64) -> i64 {
 impl From<ServerMigrationRecord> for MigrationRecord {
     fn from(record: ServerMigrationRecord) -> Self {
         Self {
-            migration_id: record.migration_id,
-            namespace: kalamdb_commons::NamespaceId::new(record.namespace),
+            migration_id:  record.migration_id,
+            namespace:     kalamdb_commons::NamespaceId::new(record.namespace),
             migration_key: Some(record.migration_key),
-            name: record.name,
-            checksum: record.checksum,
-            status: record.status,
-            started_at: record.started_at.map(timestamp_millis_to_rfc3339),
-            finished_at: record.finished_at.map(timestamp_millis_to_rfc3339),
+            name:          record.name,
+            checksum:      record.checksum,
+            status:        record.status,
+            started_at:    record.started_at.map(timestamp_millis_to_rfc3339),
+            finished_at:   record.finished_at.map(timestamp_millis_to_rfc3339),
             error_message: record.error_message,
-            sql: None,
-            source: record.source,
+            sql:           None,
+            source:        record.source,
             kalam_version: record.kalam_version,
         }
     }
@@ -266,17 +272,17 @@ mod tests {
     #[test]
     fn server_migration_key_prefers_loaded_primary_key() {
         let record = MigrationRecord {
-            migration_id: "0001_init.sql".into(),
-            namespace: kalamdb_commons::NamespaceId::new("okf_sync"),
+            migration_id:  "0001_init.sql".into(),
+            namespace:     kalamdb_commons::NamespaceId::new("okf_sync"),
             migration_key: Some("legacy-key:0001_init.sql".into()),
-            name: "init".into(),
-            checksum: "abc".into(),
-            status: MigrationStatus::Failed,
-            started_at: None,
-            finished_at: None,
+            name:          "init".into(),
+            checksum:      "abc".into(),
+            status:        MigrationStatus::Failed,
+            started_at:    None,
+            finished_at:   None,
             error_message: None,
-            sql: None,
-            source: None,
+            sql:           None,
+            source:        None,
             kalam_version: None,
         };
 

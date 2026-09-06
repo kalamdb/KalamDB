@@ -1,11 +1,13 @@
 use kalamdb_commons::{models::NamespaceId, Role, TableId};
-use sqlparser::ast::{ObjectName, Owner, Statement};
-use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::{
+    ast::{ObjectName, Owner, Statement},
+    dialect::PostgreSqlDialect,
+};
 
 use crate::{ddl::DdlResult, parser::utils::parse_sql_statements};
 
-mod alter_policy_statement;
 mod alter_policy_operation;
+mod alter_policy_statement;
 mod create_policy_statement;
 mod drop_policy_statement;
 

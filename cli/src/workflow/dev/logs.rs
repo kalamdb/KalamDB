@@ -15,7 +15,7 @@ pub enum ServiceColor {
 
 #[derive(Debug, Clone)]
 pub struct ServiceLogSource {
-    pub name: String,
+    pub name:  String,
     pub color: ServiceColor,
 }
 
@@ -49,8 +49,8 @@ impl ServiceLogSource {
 
 #[derive(Debug, Clone)]
 pub struct ServiceLogRegistry {
-    sources: HashMap<String, ServiceLogSource>,
-    palette: [ServiceColor; 5],
+    sources:    HashMap<String, ServiceLogSource>,
+    palette:    [ServiceColor; 5],
     next_color: usize,
 }
 
@@ -63,8 +63,8 @@ impl Default for ServiceLogRegistry {
 impl ServiceLogRegistry {
     pub fn new() -> Self {
         Self {
-            sources: HashMap::new(),
-            palette: [
+            sources:    HashMap::new(),
+            palette:    [
                 ServiceColor::Cyan,
                 ServiceColor::Magenta,
                 ServiceColor::Yellow,

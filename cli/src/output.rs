@@ -12,8 +12,10 @@ use std::{
 };
 
 use colored::Colorize;
+use indicatif::ProgressBar;
 
 use crate::{
+    agent_error::{format_agent_event, format_agent_event_json},
     config::WorkflowLoggingPolicy,
     error::{CLIError, Result},
     terminal_ui::{self, ProgressTaskStatus, ProgressTasks},
@@ -25,14 +27,14 @@ const TERMINAL_SERVICE_VIEW_LINES: usize = 5;
 
 #[derive(Debug)]
 struct TerminalLogBuffer {
-    cli_lines: VecDeque<String>,
+    cli_lines:     VecDeque<String>,
     service_lines: VecDeque<String>,
 }
 
 impl TerminalLogBuffer {
     fn new() -> Self {
         Self {
-            cli_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
+            cli_lines:     VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
             service_lines: VecDeque::with_capacity(TERMINAL_LOG_BUFFER_CAPACITY),
         }
     }
@@ -81,15 +83,18 @@ pub enum WorkflowDisplayMode {
     Normal,
     Progress,
     Verbose,
+    Agent,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkflowOutput {
-    pub use_color: bool,
-    pub logging: WorkflowLoggingPolicy,
-    pub display_mode: WorkflowDisplayMode,
-    progress_tasks: Option<ProgressTasks>,
-    terminal_paused: Arc<AtomicBool>,
+    pub use_color:       bool,
+    pub logging:         WorkflowLoggingPolicy,
+    pub display_mode:    WorkflowDisplayMode,
+    pub animations:      bool,
+    pub json:            bool,
+    progress_tasks:      Option<ProgressTasks>,
+    terminal_paused:     Arc<AtomicBool>,
     terminal_log_buffer: Arc<Mutex<TerminalLogBuffer>>,
 }
 
@@ -109,10 +114,46 @@ impl WorkflowOutput {
             use_color,
             logging,
             display_mode: WorkflowDisplayMode::Normal,
+            animations: true,
+            json: false,
             progress_tasks: None,
             terminal_paused: Arc::new(AtomicBool::new(false)),
             terminal_log_buffer: Arc::new(Mutex::new(TerminalLogBuffer::new())),
         }
+    }
+
+    pub fn with_animations(mut self, animations: bool) -> Self {
+        self.animations = animations;
+        self
+    }
+
+    pub fn with_json(mut self, json: bool) -> Self {
+        self.json = json;
+        self
+    }
+
+    pub fn is_agent(&self) -> bool {
+        self.display_mode == WorkflowDisplayMode::Agent
+    }
+
+    /// Emit a compact agent/automation event. Human mode ignores these.
+    pub fn agent_event(&self, event: &str, fields: &[(&str, &str)]) {
+        let persisted = format_agent_event(event, fields);
+        if self.json {
+            println!("{}", format_agent_event_json(event, fields));
+        } else if self.is_agent() {
+            eprintln!("{persisted}");
+        }
+        self.append_log(&persisted);
+    }
+
+    pub fn emit_json(&self, value: &serde_json::Value) {
+        println!("{value}");
+        self.append_log(&value.to_string());
+    }
+
+    fn emits_human_status(&self) -> bool {
+        !self.is_agent() && !self.json
     }
 
     pub fn with_display_mode(mut self, display_mode: WorkflowDisplayMode) -> Self {
@@ -125,20 +166,61 @@ impl WorkflowOutput {
 
     pub fn status(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
+        if !self.emits_human_status() {
+            self.append_log(line);
+            return;
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(line);
             return;
         }
-        let formatted = if self.use_color {
+        self.emit_cli_line(&self.colorize_status(line), line);
+    }
+
+    /// Show an in-progress `[cli]` status until the returned guard is dropped.
+    ///
+    /// On an interactive TTY this animates with elapsed time so long-running
+    /// steps do not look stuck. Otherwise it prints the same static status line
+    /// used for completed work.
+    #[must_use]
+    pub fn status_spinner(&self, message: impl AsRef<str>) -> StatusSpinnerGuard {
+        let running = message.as_ref();
+        if self.should_animate_status() {
+            let display = format_cli_line(&self.colorize_status(running));
+            self.buffer_terminal_line(&display, TerminalLineKind::Cli);
+            self.append_log(running);
+            StatusSpinnerGuard {
+                bar: Some(terminal_ui::create_spinner_with_elapsed(&display)),
+            }
+        } else {
+            self.status(running);
+            StatusSpinnerGuard { bar: None }
+        }
+    }
+
+    fn colorize_status(&self, line: &str) -> String {
+        if self.use_color {
             line.green().to_string()
         } else {
             line.to_string()
-        };
-        self.emit_cli_line(&formatted, line);
+        }
+    }
+
+    fn should_animate_status(&self) -> bool {
+        should_animate_status(
+            self.animations,
+            self.terminal_output_paused(),
+            self.display_mode,
+            io::stderr().is_terminal(),
+        )
     }
 
     pub fn warn(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
+        if !self.emits_human_status() {
+            self.append_log(&format!("WARN: {line}"));
+            return;
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(&format!("WARN: {line}"));
             return;
@@ -154,6 +236,10 @@ impl WorkflowOutput {
 
     pub fn error(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
+        if !self.emits_human_status() {
+            self.append_log(&format!("ERROR: {line}"));
+            return;
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(&format!("ERROR: {line}"));
             return;
@@ -169,6 +255,10 @@ impl WorkflowOutput {
 
     pub fn detail(&self, message: impl AsRef<str>) {
         let line = message.as_ref();
+        if !self.emits_human_status() {
+            self.append_log(line);
+            return;
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             self.append_log(line);
             return;
@@ -205,6 +295,13 @@ impl WorkflowOutput {
         process_output: bool,
     ) {
         let formatted = source.format_line(message, self.use_color);
+        if self.is_agent() || self.json {
+            if self.logging.capture_process_output {
+                let persisted = format!("[{}] {}", source.name, message);
+                self.append_log(&redact_secrets(&persisted));
+            }
+            return;
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             if process_output && source.name == "server" {
                 if let Some(progress_tasks) = &self.progress_tasks {
@@ -223,6 +320,14 @@ impl WorkflowOutput {
     }
 
     pub fn progress_task(&self, id: &str, status: ProgressTaskStatus, message: impl AsRef<str>) {
+        if self.is_agent() || self.json {
+            if status == ProgressTaskStatus::Failed {
+                self.append_log(&format!("ERROR: {}", message.as_ref()));
+            } else {
+                self.append_log(message.as_ref());
+            }
+            return;
+        }
         if !self.terminal_output_paused() {
             if let Some(progress_tasks) = &self.progress_tasks {
                 progress_tasks.update_task(id, status, message.as_ref());
@@ -281,6 +386,9 @@ impl WorkflowOutput {
     }
 
     pub fn run_terminal_modal<F: FnOnce() -> Result<R>, R>(&self, f: F) -> Result<R> {
+        if self.is_agent() || self.json {
+            return f();
+        }
         terminal_ui::alert_action_required();
         let result = self.suspend_progress(|| {
             let _pause = self.pause_terminal_output();
@@ -303,6 +411,9 @@ impl WorkflowOutput {
 
     /// Replay the recent dev-session log view after a modal prompt clears the screen.
     pub fn restore_dev_session_view(&self) -> Result<()> {
+        if self.is_agent() || self.json {
+            return Ok(());
+        }
         if self.display_mode == WorkflowDisplayMode::Progress {
             if let Some(progress_tasks) = &self.progress_tasks {
                 if io::stdout().is_terminal() {
@@ -373,6 +484,11 @@ impl WorkflowOutput {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_buffered_terminal_lines(&self) -> Vec<String> {
+        self.buffered_terminal_lines()
+    }
+
+    #[cfg(test)]
     fn progress_lines(&self) -> Vec<String> {
         self.progress_tasks
             .as_ref()
@@ -383,6 +499,25 @@ impl WorkflowOutput {
     #[cfg(test)]
     fn buffered_terminal_lines(&self) -> Vec<String> {
         self.terminal_log_buffer.lock().expect("terminal log buffer").all_lines()
+    }
+}
+
+/// Guard that keeps an in-progress `[cli]` spinner alive until dropped.
+pub struct StatusSpinnerGuard {
+    bar: Option<ProgressBar>,
+}
+
+impl StatusSpinnerGuard {
+    pub fn is_animating(&self) -> bool {
+        self.bar.is_some()
+    }
+}
+
+impl Drop for StatusSpinnerGuard {
+    fn drop(&mut self) {
+        if let Some(bar) = self.bar.take() {
+            bar.finish_and_clear();
+        }
     }
 }
 
@@ -404,6 +539,19 @@ enum TerminalLineKind {
 
 fn format_cli_line(line: &str) -> String {
     format!("[cli] {line}")
+}
+
+fn should_animate_status(
+    animations: bool,
+    paused: bool,
+    display_mode: WorkflowDisplayMode,
+    is_tty: bool,
+) -> bool {
+    animations
+        && !paused
+        && display_mode != WorkflowDisplayMode::Progress
+        && display_mode != WorkflowDisplayMode::Agent
+        && is_tty
 }
 
 fn formatted_service_line(line: &str) -> String {
@@ -539,6 +687,46 @@ mod tests {
                 "[server]\tserver tick during prompt"
             ]
         );
+    }
+
+    #[test]
+    fn status_spinner_requires_tty_and_animations() {
+        assert!(should_animate_status(true, false, WorkflowDisplayMode::Normal, true));
+        assert!(!should_animate_status(false, false, WorkflowDisplayMode::Normal, true));
+        assert!(!should_animate_status(true, true, WorkflowDisplayMode::Normal, true));
+        assert!(!should_animate_status(true, false, WorkflowDisplayMode::Progress, true));
+        assert!(!should_animate_status(true, false, WorkflowDisplayMode::Agent, true));
+        assert!(!should_animate_status(true, false, WorkflowDisplayMode::Normal, false));
+        assert!(should_animate_status(true, false, WorkflowDisplayMode::Verbose, true));
+    }
+
+    #[test]
+    fn status_spinner_prints_running_line_when_animations_are_disabled() {
+        let output =
+            WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled()).with_animations(false);
+        {
+            let spinner = output.status_spinner("installing npm dependencies");
+            assert!(!spinner.is_animating());
+            assert_eq!(output.buffered_terminal_lines(), vec!["[cli] installing npm dependencies"]);
+        }
+        output.status("installed npm dependencies");
+        assert_eq!(
+            output.buffered_terminal_lines(),
+            vec![
+                "[cli] installing npm dependencies",
+                "[cli] installed npm dependencies"
+            ]
+        );
+    }
+
+    #[test]
+    fn status_spinner_does_not_print_in_progress_display_mode() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled())
+            .with_display_mode(WorkflowDisplayMode::Progress)
+            .with_animations(true);
+        let spinner = output.status_spinner("applying schema");
+        assert!(!spinner.is_animating());
+        assert!(output.buffered_terminal_lines().is_empty());
     }
 }
 

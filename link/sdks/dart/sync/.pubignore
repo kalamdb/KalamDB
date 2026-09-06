@@ -1,0 +1,5 @@
+# Keep the published archive on the public package surface.
+pubspec_overrides.yaml
+example/pubspec_overrides.yaml
+example/backend/
+publish.sh

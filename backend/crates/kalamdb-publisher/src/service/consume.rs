@@ -17,8 +17,8 @@ impl TopicPublisherService {
             let latest =
                 self.latest_offset(topic_id, partition_id)?.map(|last| last + 1).unwrap_or(0);
             return Err(CommonError::InvalidInput(format!(
-                "OffsetOutOfRange: requested offset {} is before earliest available offset {} \
-                 for topic {} partition {} (latest next offset {})",
+                "OffsetOutOfRange: requested offset {} is before earliest available offset {} for \
+                 topic {} partition {} (latest next offset {})",
                 offset,
                 earliest,
                 topic_id.as_str(),

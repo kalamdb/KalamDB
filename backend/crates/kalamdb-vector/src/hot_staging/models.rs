@@ -19,23 +19,23 @@ pub enum VectorHotOpType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VectorHotOp {
     /// Table identifier (namespace + table).
-    pub table_id: TableId,
+    pub table_id:    TableId,
     /// Indexed column name.
     pub column_name: String,
     /// Primary key value for the row.
-    pub pk: String,
+    pub pk:          String,
     /// Operation kind.
-    pub op_type: VectorHotOpType,
+    pub op_type:     VectorHotOpType,
     /// Embedding payload when available.
-    pub vector: Option<Vec<f32>>,
+    pub vector:      Option<Vec<f32>>,
     /// External reference when vector is resolved asynchronously.
-    pub vector_ref: Option<String>,
+    pub vector_ref:  Option<String>,
     /// Declared embedding dimensions.
-    pub dimensions: u32,
+    pub dimensions:  u32,
     /// Similarity metric for this vector column.
-    pub metric: VectorMetric,
+    pub metric:      VectorMetric,
     /// Last update timestamp (unix millis).
-    pub updated_at: i64,
+    pub updated_at:  i64,
 }
 
 impl VectorHotOp {
@@ -69,8 +69,8 @@ impl KSerializable for VectorHotOp {}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserVectorHotOpId {
     pub user_id: UserId,
-    pub seq: SeqId,
-    pub pk: String,
+    pub seq:     SeqId,
+    pub pk:      String,
 }
 
 impl UserVectorHotOpId {
@@ -110,7 +110,7 @@ impl StorageKey for UserVectorHotOpId {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SharedVectorHotOpId {
     pub seq: SeqId,
-    pub pk: String,
+    pub pk:  String,
 }
 
 impl SharedVectorHotOpId {

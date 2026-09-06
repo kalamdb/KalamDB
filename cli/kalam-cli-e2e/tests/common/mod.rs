@@ -219,7 +219,7 @@ pub fn shared_http_client() -> Client {
 
 #[derive(Clone, Debug)]
 struct CachedLeaderUrl {
-    url: String,
+    url:          String,
     confirmed_at: Instant,
 }
 static AUTO_TEST_SERVER_EXIT_CLEANUP_REGISTERED: OnceLock<()> = OnceLock::new();
@@ -373,7 +373,8 @@ impl TestAuthManager {
         }
 
         let root_password = root_password_from_env();
-        let admin_user = std::env::var("KALAMDB_ADMIN_USER").unwrap_or_else(|_| admin_username().to_string());
+        let admin_user =
+            std::env::var("KALAMDB_ADMIN_USER").unwrap_or_else(|_| admin_username().to_string());
         let setup_response = self
             .send_with_retry(client.post(format!("{}/v1/api/auth/setup", base_url)).json(&json!({
                 "user": admin_user,
@@ -889,11 +890,11 @@ fn test_auth_manager() -> &'static TestAuthManager {
 }
 
 struct AutoTestServer {
-    base_url: String,
+    base_url:    String,
     storage_dir: PathBuf,
-    pid: u32,
-    log_path: PathBuf,
-    child: Option<Child>,
+    pid:         u32,
+    log_path:    PathBuf,
+    child:       Option<Child>,
 }
 
 impl Drop for AutoTestServer {
@@ -908,12 +909,12 @@ impl Drop for AutoTestServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedAutoTestServerState {
-    base_url: String,
+    base_url:    String,
     storage_dir: PathBuf,
-    pid: u32,
+    pid:         u32,
     /// Path to the fresh-server stdout/stderr log (usually absolute).
     #[serde(default)]
-    log_path: Option<PathBuf>,
+    log_path:    Option<PathBuf>,
 }
 
 fn auto_test_server_state_root() -> PathBuf {
@@ -1246,11 +1247,11 @@ fn register_auto_test_server_exit_cleanup() {
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
-    pub server_url: String,
-    pub username: String,
-    pub password: String,
-    pub is_cluster: bool,
-    pub cluster_urls: Vec<String>,
+    pub server_url:       String,
+    pub username:         String,
+    pub password:         String,
+    pub is_cluster:       bool,
+    pub cluster_urls:     Vec<String>,
     pub cluster_urls_raw: Vec<String>,
 }
 
@@ -1438,10 +1439,10 @@ fn ensure_auto_test_server() -> Option<(String, PathBuf)> {
 
                 let server = start_result.map_err(|err| err.to_string())?;
                 let state = SharedAutoTestServerState {
-                    base_url: server.base_url.clone(),
+                    base_url:    server.base_url.clone(),
                     storage_dir: server.storage_dir.clone(),
-                    pid: server.pid,
-                    log_path: Some(server.log_path.clone()),
+                    pid:         server.pid,
+                    log_path:    Some(server.log_path.clone()),
                 };
                 write_auto_test_server_state_locked(&state)?;
                 shared_state = Some(state);
@@ -1872,7 +1873,7 @@ fn leader_cache() -> &'static Mutex<Option<CachedLeaderUrl>> {
 fn cache_leader_url(url: &str) {
     if let Ok(mut guard) = leader_cache().lock() {
         *guard = Some(CachedLeaderUrl {
-            url: url.to_string(),
+            url:          url.to_string(),
             confirmed_at: Instant::now(),
         });
     }
@@ -3424,8 +3425,8 @@ pub fn execute_sql_via_cli(sql: &str) -> Result<String, Box<dyn std::error::Erro
 
 /// Timing information for CLI execution
 pub struct CliTiming {
-    pub output: String,
-    pub total_time_ms: u128,
+    pub output:         String,
+    pub total_time_ms:  u128,
     pub server_time_ms: Option<f64>,
 }
 
@@ -4088,7 +4089,7 @@ pub fn client_builder_for_url_no_auth(base_url: &str) -> KalamLinkClientBuilder 
 /// This version automatically uses the first available server (cluster or single-node)
 struct RootClientCache {
     base_url: String,
-    client: KalamLinkClient,
+    client:   KalamLinkClient,
 }
 
 fn shared_root_client_cache() -> &'static Mutex<Option<RootClientCache>> {
@@ -4111,7 +4112,7 @@ fn get_shared_root_client_for_url(base_url: &str) -> KalamLinkClient {
         let client = build_root_client(base_url);
         *guard = Some(RootClientCache {
             base_url: base_url.to_string(),
-            client: client.clone(),
+            client:   client.clone(),
         });
         return client;
     }
@@ -4281,10 +4282,10 @@ fn execute_sql_via_client_internal(
                                     let msg = e.to_string();
                                     if is_flush_sql(&sql) && is_idempotent_conflict(&msg) {
                                         return Ok(kalam_client::QueryResponse {
-                                            status: kalam_client::models::ResponseStatus::Success,
+                                            status:  kalam_client::models::ResponseStatus::Success,
                                             results: Vec::new(),
-                                            took: None,
-                                            error: None,
+                                            took:    None,
+                                            error:   None,
                                         });
                                     }
                                     if is_refreshable_token_error(&msg) {
@@ -4519,9 +4520,8 @@ pub fn grant_public_select_shared_table(qualified_table: &str) {
     let sql = format!(
         "CREATE POLICY {table_ident}_select ON {qualified_table} FOR SELECT TO PUBLIC USING (true)"
     );
-    execute_sql_as_root_via_client(&sql).unwrap_or_else(|err| {
-        panic!("failed to grant public SELECT on {qualified_table}: {err}")
-    });
+    execute_sql_as_root_via_client(&sql)
+        .unwrap_or_else(|err| panic!("failed to grant public SELECT on {qualified_table}: {err}"));
 }
 
 /// Execute SQL as root user via kalam-client with query parameters
@@ -5257,8 +5257,8 @@ pub fn wait_for_jobs_finished(
 /// macOS TCP connection limits.
 pub struct SubscriptionListener {
     event_receiver: std_mpsc::Receiver<String>,
-    stop_sender: Option<tokio::sync::oneshot::Sender<()>>,
-    _handle: Option<std::thread::JoinHandle<()>>,
+    stop_sender:    Option<tokio::sync::oneshot::Sender<()>>,
+    _handle:        Option<std::thread::JoinHandle<()>>,
     pending_events: VecDeque<String>,
 }
 
@@ -5295,7 +5295,12 @@ impl SubscriptionListener {
         query: &str,
         timeout_secs: u64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::start_as_user_with_timeout(query, default_username(), default_password(), timeout_secs)
+        Self::start_as_user_with_timeout(
+            query,
+            default_username(),
+            default_password(),
+            timeout_secs,
+        )
     }
 
     /// Start a subscription listener as a specific user with a timeout.
@@ -5395,8 +5400,8 @@ impl SubscriptionListener {
 
         Ok(Self {
             event_receiver: event_rx,
-            stop_sender: Some(stop_tx),
-            _handle: Some(handle),
+            stop_sender:    Some(stop_tx),
+            _handle:        Some(handle),
             pending_events: VecDeque::new(),
         })
     }
@@ -5569,17 +5574,17 @@ pub fn get_storage_dir() -> std::path::PathBuf {
 #[derive(Debug)]
 pub struct FlushStorageVerificationResult {
     /// Whether manifest.json was found
-    pub manifest_found: bool,
+    pub manifest_found:     bool,
     /// Size of manifest.json in bytes (0 if not found)
-    pub manifest_size: u64,
+    pub manifest_size:      u64,
     /// Number of parquet files found
     pub parquet_file_count: usize,
     /// Total size of all parquet files in bytes
     pub parquet_total_size: u64,
     /// Path to the manifest.json file (if found)
-    pub manifest_path: Option<std::path::PathBuf>,
+    pub manifest_path:      Option<std::path::PathBuf>,
     /// Paths to all parquet files found
-    pub parquet_paths: Vec<std::path::PathBuf>,
+    pub parquet_paths:      Vec<std::path::PathBuf>,
 }
 
 impl FlushStorageVerificationResult {
@@ -5658,12 +5663,12 @@ pub fn verify_flush_storage_files_user(
     let table_dir = storage_dir.join(namespace).join(table_name);
 
     let mut result = FlushStorageVerificationResult {
-        manifest_found: false,
-        manifest_size: 0,
+        manifest_found:     false,
+        manifest_size:      0,
         parquet_file_count: 0,
         parquet_total_size: 0,
-        manifest_path: None,
-        parquet_paths: Vec::new(),
+        manifest_path:      None,
+        parquet_paths:      Vec::new(),
     };
 
     if !table_dir.exists() {
@@ -5700,12 +5705,12 @@ fn verify_flush_storage_files_in_dir(dir: &std::path::Path) -> FlushStorageVerif
     use std::fs;
 
     let mut result = FlushStorageVerificationResult {
-        manifest_found: false,
-        manifest_size: 0,
+        manifest_found:     false,
+        manifest_size:      0,
         parquet_file_count: 0,
         parquet_total_size: 0,
-        manifest_path: None,
-        parquet_paths: Vec::new(),
+        manifest_path:      None,
+        parquet_paths:      Vec::new(),
     };
 
     if !dir.exists() {
@@ -5820,9 +5825,9 @@ fn escape_sql_string(value: &str) -> String {
 
 #[derive(Debug, Clone)]
 pub struct ServerMemorySample {
-    pub pid: Option<u32>,
+    pub pid:         Option<u32>,
     pub reported_mb: u64,
-    pub rss_mb: Option<u64>,
+    pub rss_mb:      Option<u64>,
 }
 
 impl ServerMemorySample {

@@ -48,13 +48,13 @@ type PersistentGroupSet = (MetaGroup, Vec<UserDataGroup>, Vec<SharedDataGroup>);
 #[derive(Debug, Clone)]
 pub struct SnapshotInfo {
     /// The Raft group ID
-    pub group_id: GroupId,
+    pub group_id:       GroupId,
     /// The snapshot index (if available)
     pub snapshot_index: Option<u64>,
     /// Whether the snapshot was triggered successfully
-    pub success: bool,
+    pub success:        bool,
     /// Error message if the snapshot failed
-    pub error: Option<String>,
+    pub error:          Option<String>,
 }
 
 /// Information about a cluster action result
@@ -63,22 +63,22 @@ pub struct ClusterActionResult {
     /// The Raft group ID
     pub group_id: GroupId,
     /// Whether the action was successful
-    pub success: bool,
+    pub success:  bool,
     /// Error message if the action failed
-    pub error: Option<String>,
+    pub error:    Option<String>,
 }
 
 /// Summary of all snapshots in the cluster
 #[derive(Debug, Clone)]
 pub struct SnapshotsSummary {
     /// Total number of Raft groups
-    pub total_groups: usize,
+    pub total_groups:          usize,
     /// Number of groups with snapshots
     pub groups_with_snapshots: usize,
     /// Directory where snapshots are stored
-    pub snapshots_dir: String,
+    pub snapshots_dir:         String,
     /// Details for each group
-    pub group_details: Vec<(GroupId, Option<u64>)>,
+    pub group_details:         Vec<(GroupId, Option<u64>)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -539,7 +539,8 @@ impl RaftManager {
                 meta_last_applied,
             );
         } else {
-            // Create self node with auto-detected system metadata (hostname, version, memory, os, arch)
+            // Create self node with auto-detected system metadata (hostname, version, memory, os,
+            // arch)
             let self_node = KalamNode::with_auto_metadata(
                 self.config.rpc_addr.clone(),
                 self.config.api_addr.clone(),
@@ -652,8 +653,7 @@ impl RaftManager {
 
                 for peer in &peers {
                     log::info!(
-                        "[CLUSTER] Waiting for configured peer {} to come online (rpc={}, \
-                         api={})",
+                        "[CLUSTER] Waiting for configured peer {} to come online (rpc={}, api={})",
                         peer.node_id,
                         peer.rpc_addr,
                         peer.api_addr,
@@ -673,8 +673,7 @@ impl RaftManager {
                     {
                         Ok(_) => {
                             log::info!(
-                                "[CLUSTER] Configured peer {} is online; starting join \
-                                 sequence",
+                                "[CLUSTER] Configured peer {} is online; starting join sequence",
                                 peer.node_id
                             );
 
@@ -972,8 +971,7 @@ impl RaftManager {
         self.register_peer(node_id, rpc_addr.clone(), api_addr.clone());
 
         log::info!(
-            "[CLUSTER] Node {} joined cluster successfully and now participates in {} Raft \
-             groups",
+            "[CLUSTER] Node {} joined cluster successfully and now participates in {} Raft groups",
             node_id,
             self.group_count()
         );
@@ -1400,8 +1398,8 @@ impl RaftManager {
             if let Some(existing_group) = expected_group {
                 if existing_group != group_id {
                     return Err(RaftError::InvalidState(format!(
-                        "explicit transactions must remain within one data raft group; '{}' mapped \
-                         to {:?} while prior mutations mapped to {:?}",
+                        "explicit transactions must remain within one data raft group; '{}' \
+                         mapped to {:?} while prior mutations mapped to {:?}",
                         mutation.table_id, group_id, existing_group
                     )));
                 }
@@ -1722,20 +1720,20 @@ impl RaftManager {
             Ok(()) => {
                 let snapshot_idx = self.meta.snapshot_index();
                 results.push(SnapshotInfo {
-                    group_id: GroupId::Meta,
+                    group_id:       GroupId::Meta,
                     snapshot_index: snapshot_idx,
-                    success: true,
-                    error: None,
+                    success:        true,
+                    error:          None,
                 });
                 log::info!("[SNAPSHOT] ✓ Meta snapshot triggered (index: {:?})", snapshot_idx);
             },
             Err(e) => {
                 errors.push(format!("Meta: {}", e));
                 results.push(SnapshotInfo {
-                    group_id: GroupId::Meta,
+                    group_id:       GroupId::Meta,
                     snapshot_index: None,
-                    success: false,
-                    error: Some(e.to_string()),
+                    success:        false,
+                    error:          Some(e.to_string()),
                 });
             },
         }

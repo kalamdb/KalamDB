@@ -1,5 +1,7 @@
 # Chat action module
 
+Codegen for durable chat actions. **New Flutter app?** Use `kalam init --languages dart` instead of this example.
+
 This package is the source of truth for the offline-first chat actions used by
 `kalam_sync` and `kalam_link`.
 

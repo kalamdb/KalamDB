@@ -18,7 +18,6 @@ use kalamdb_commons::{
 use kalamdb_core::{app_context::AppContext, sql::context::ExecutionContext};
 use kalamdb_store::test_utils::TestDb;
 use kalamdb_system::FileRef;
-
 use support::{create_cluster_app_context, create_executor, execute_ok, unique_namespace};
 
 async fn create_user_file_table(
@@ -256,8 +255,8 @@ async fn sql_on_conflict_update_deletes_replaced_shared_file_after_commit() {
     execute_ok(&executor, &exec_ctx, &insert).await;
 
     let upsert = format!(
-        "INSERT INTO {}.{} (id, file_ref) VALUES (1, {}) \
-         ON CONFLICT (id) DO UPDATE SET file_ref = EXCLUDED.file_ref",
+        "INSERT INTO {}.{} (id, file_ref) VALUES (1, {}) ON CONFLICT (id) DO UPDATE SET file_ref \
+         = EXCLUDED.file_ref",
         table_id.namespace_id(),
         table_id.table_name(),
         sql_string(&new_ref.to_json())

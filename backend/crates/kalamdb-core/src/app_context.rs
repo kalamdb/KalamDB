@@ -66,7 +66,8 @@ impl SchemaRegistryTopicPrimaryKeyLookup {
 impl TopicPrimaryKeyLookup for SchemaRegistryTopicPrimaryKeyLookup {
     fn primary_key_columns(
         &self,
-        table_id: &kalamdb_commons::models::TableId) -> kalamdb_commons::errors::Result<Vec<String>> {
+        table_id: &kalamdb_commons::models::TableId,
+    ) -> kalamdb_commons::errors::Result<Vec<String>> {
         let table_def = self.schema_registry.get_table_if_exists(table_id).map_err(|error| {
             kalamdb_commons::errors::CommonError::Internal(format!(
                 "Failed to load table definition for {}: {}",
@@ -105,7 +106,7 @@ pub struct AppContext {
     schema_registry: Arc<SchemaRegistry>,
 
     // ===== Stores =====
-    user_table_store: Arc<UserTableStore>,
+    user_table_store:   Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
 
     // ===== Core Infrastructure =====
@@ -114,9 +115,9 @@ pub struct AppContext {
     // ===== Managers =====
     /// Type-erased job manager (concrete type is `kalamdb_jobs::JobsManager`).
     /// Consumers downcast via the `kalamdb_jobs::AppContextJobsExt` trait.
-    job_manager: OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
+    job_manager:        OnceCell<Arc<dyn std::any::Any + Send + Sync>>,
     /// Lightweight waker so the Raft applier can notify the job loop.
-    job_waker: OnceCell<Arc<dyn JobWaker>>,
+    job_waker:          OnceCell<Arc<dyn JobWaker>>,
     live_query_manager: OnceCell<Arc<LiveQueryManager>>,
 
     // ===== Notification Service =====
@@ -129,7 +130,7 @@ pub struct AppContext {
     storage_registry: Arc<StorageRegistry>,
 
     // ===== DataFusion Session Management =====
-    session_factory: Arc<DataFusionSessionFactory>,
+    session_factory:      Arc<DataFusionSessionFactory>,
     base_session_context: Arc<SessionContext>,
 
     // ===== System Tables Registry =====
@@ -235,7 +236,8 @@ impl AppContext {
         storage_backend: Arc<dyn StorageBackend>,
         node_id: NodeId,
         storage_base_path: String,
-        config: ServerConfig) -> Arc<AppContext> {
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
         Self::create_impl(storage_backend, node_id, storage_base_path, config, true)
     }
 
@@ -249,7 +251,8 @@ impl AppContext {
         storage_backend: Arc<dyn StorageBackend>,
         node_id: NodeId,
         storage_base_path: String,
-        config: ServerConfig) -> Arc<AppContext> {
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
         Self::create_impl(storage_backend, node_id, storage_base_path, config, true)
     }
 
@@ -263,7 +266,8 @@ impl AppContext {
         storage_backend: Arc<dyn StorageBackend>,
         node_id: NodeId,
         storage_base_path: String,
-        config: ServerConfig) -> Arc<AppContext> {
+        config: ServerConfig,
+    ) -> Arc<AppContext> {
         Self::create_impl(storage_backend, node_id, storage_base_path, config, false)
     }
 
@@ -275,17 +279,20 @@ impl AppContext {
         node_id: NodeId,
         storage_base_path: String,
         config: ServerConfig,
-        persistent_raft: bool) -> Arc<AppContext> {
+        persistent_raft: bool,
+    ) -> Arc<AppContext> {
         let node_id = Arc::new(node_id); // Wrap NodeId in Arc for zero-copy sharing (FR-000)
         let config = Arc::new(config); // Wrap config in Arc for zero-copy sharing
         {
             // Create stores using constants from kalamdb_commons
             let user_table_store = Arc::new(UserTableStore::new(
                 storage_backend.clone(),
-                ColumnFamilyNames::USER_TABLE_PREFIX.to_string()));
+                ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
+            ));
             let shared_table_store = Arc::new(SharedTableStore::new(
                 storage_backend.clone(),
-                ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string()));
+                ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
+            ));
 
             // Create system table providers registry FIRST (needed by StorageRegistry and
             // information_schema)
@@ -296,7 +303,8 @@ impl AppContext {
                 system_tables.storages(),
                 storage_base_path,
                 config.storage.remote_timeouts.clone(),
-                config.storage.parquet.clone()));
+                config.storage.parquet.clone(),
+            ));
 
             // Create schema cache (Phase 10 unified cache)
             let schema_registry = Arc::new(SchemaRegistry::new(256));
@@ -307,7 +315,8 @@ impl AppContext {
                 Arc::clone(&schema_registry),
                 Arc::clone(&system_tables),
                 Arc::clone(&config),
-                std::path::PathBuf::from(&config.logging.logs_path)));
+                std::path::PathBuf::from(&config.logging.logs_path),
+            ));
 
             // Get virtual view references for callback wiring later
             let stats_view = system_schema.stats_view();
@@ -319,7 +328,8 @@ impl AppContext {
             // Use config-driven DataFusion settings for parallelism
             let session_factory = Arc::new(
                 DataFusionSessionFactory::with_config(&config.datafusion)
-                    .expect("Failed to create DataFusion session factory"));
+                    .expect("Failed to create DataFusion session factory"),
+            );
             let base_session_context = Arc::new(session_factory.create_session());
 
             // Wire up SchemaRegistry with base_session_context for automatic table registration
@@ -329,14 +339,16 @@ impl AppContext {
             // Use constant catalog name "kalam" - configured in DataFusionSessionFactory
             let catalog = base_session_context.catalog("kalam").expect(
                 "Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly \
-                 configured");
+                 configured",
+            );
 
             // Register the system schema provider with the catalog
             // Views are created on first access, not eagerly at startup
             catalog
                 .register_schema(
                     SYSTEM_NAMESPACE,
-                    Arc::clone(&system_schema) as Arc<dyn SchemaProvider>)
+                    Arc::clone(&system_schema) as Arc<dyn SchemaProvider>,
+                )
                 .expect("Failed to register system schema");
 
             // Register existing namespaces as DataFusion schemas
@@ -364,11 +376,13 @@ impl AppContext {
             let catalog_list = Arc::clone(base_session_context.state().catalog_list());
             let information_schema = Arc::new(KalamInformationSchemaProvider::new(
                 catalog_list,
-                Arc::clone(&system_tables)));
+                Arc::clone(&system_tables),
+            ));
             catalog
                 .register_schema(
                     "information_schema",
-                    information_schema as Arc<dyn SchemaProvider>)
+                    information_schema as Arc<dyn SchemaProvider>,
+                )
                 .expect("Failed to register information_schema schema");
 
             // Create job registry and register all 13 executors (Phase 9, T154)
@@ -390,13 +404,15 @@ impl AppContext {
                 client_timeout,
                 auth_timeout,
                 heartbeat_interval,
-                ws_max_connections);
+                ws_max_connections,
+            );
 
             // Create slow query logger (Phase 11)
             let slow_log_path = format!("{}/slow.jsonl", config.logging.logs_path);
             let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
                 slow_log_path,
-                config.logging.slow_query_threshold_ms);
+                config.logging.slow_query_threshold_ms,
+            );
 
             // Create system columns service (Phase 12, US5, T027)
             // Extract worker_id from node_id for Snowflake ID generation
@@ -407,9 +423,11 @@ impl AppContext {
             // Create unified manifest service (memory cache + RocksDB + cold storage)
             let mut manifest_service_obj = crate::manifest::ManifestService::new(
                 system_tables.manifest(),
-                config.manifest_cache.clone());
+                config.manifest_cache.clone(),
+            );
             manifest_service_obj.set_schema_registry(Arc::new(TablesSchemaRegistryAdapter::new(
-                schema_registry.clone())));
+                schema_registry.clone(),
+            )));
             manifest_service_obj.set_storage_registry(storage_registry.clone());
             let manifest_service = Arc::new(manifest_service_obj);
 
@@ -420,7 +438,8 @@ impl AppContext {
                 config.files.max_files_per_folder,
                 config.files.max_size_bytes,
                 config.files.max_files_per_request,
-                config.files.allowed_mime_types.clone()));
+                config.files.allowed_mime_types.clone(),
+            ));
 
             // Create command executor (Phase 20 - Unified Raft Executor)
             // ALWAYS use RaftExecutor - same code path for standalone and cluster
@@ -450,8 +469,10 @@ impl AppContext {
                     kalamdb_raft::manager::RaftManager::new_persistent(
                         raft_config,
                         storage_backend.clone(),
-                        snapshots_dir)
-                    .expect("Failed to create persistent RaftManager"))
+                        snapshots_dir,
+                    )
+                    .expect("Failed to create persistent RaftManager"),
+                )
             } else {
                 Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config))
             };
@@ -480,7 +501,8 @@ impl AppContext {
                 Arc::new(TopicPublisherService::with_visibility_timeout_and_primary_key_lookup(
                     storage_backend.clone(),
                     visibility_timeout,
-                    Some(topic_primary_key_lookup)));
+                    Some(topic_primary_key_lookup),
+                ));
 
             // Create the shared committed snapshot tracker used by the transaction coordinator
             let commit_sequence_tracker = Arc::new(CommitSequenceTracker::new(0));
@@ -521,7 +543,9 @@ impl AppContext {
             app_ctx.base_session_context.register_udtf(
                 "vector_search",
                 Arc::new(VectorSearchTableFunction::new(Arc::new(CoreVectorSearchRuntime::new(
-                    Arc::downgrade(&app_ctx))))));
+                    Arc::downgrade(&app_ctx),
+                )))),
+            );
 
             // Set AppContext in SchemaRegistry to break circular dependency
             schema_registry.set_app_context(app_ctx.clone());
@@ -547,7 +571,8 @@ impl AppContext {
                         "Restored {} topics into TopicPublisherService cache (routes={}, offsets \
                          ready)",
                         count,
-                        topic_publisher.cache_stats().total_routes);
+                        topic_publisher.cache_stats().total_routes
+                    );
                 },
                 Err(e) => {
                     log::warn!("Failed to restore topic cache on startup: {}", e);
@@ -563,7 +588,8 @@ impl AppContext {
 
             let transaction_coordinator = Arc::new(TransactionCoordinator::new(
                 Arc::clone(&app_ctx),
-                Arc::clone(&commit_sequence_tracker)));
+                Arc::clone(&commit_sequence_tracker),
+            ));
             if app_ctx.transaction_coordinator.set(transaction_coordinator).is_err() {
                 panic!("TransactionCoordinator already initialized");
             }
@@ -594,7 +620,8 @@ impl AppContext {
                     KalamPgService::new(mtls, pg_auth_token)
                         .with_bearer_auth(pg_user_repo)
                         .with_backend_session_manager(app_ctx.backend_session_manager())
-                        .with_operation_executor(pg_executor));
+                        .with_operation_executor(pg_executor),
+                );
                 let app_ctx_for_sessions = Arc::clone(&app_ctx);
                 let sessions_snapshot_callback: SessionsSnapshotCallback = Arc::new(move || {
                     let active_transactions_by_owner = app_ctx_for_sessions
@@ -664,13 +691,15 @@ impl AppContext {
                         .collect()
                 });
                 sessions_view.set_snapshot_callback(Arc::clone(&sessions_snapshot_callback));
-                if app_ctx.config().postgres_wire.pg_catalog_enabled {
+                if app_ctx.config().postgres_wire.enabled {
                     let pg_catalog_schema = Arc::new(PgCatalogSchemaProvider::new(
                         app_ctx.system_tables(),
-                        sessions_snapshot_callback));
+                        sessions_snapshot_callback,
+                    ));
                     let catalog = app_ctx.base_session_context().catalog("kalam").expect(
                         "Catalog 'kalam' not found - ensure DataFusionSessionFactory is properly \
-                         configured");
+                         configured",
+                    );
                     catalog
                         .register_schema("pg_catalog", pg_catalog_schema as Arc<dyn SchemaProvider>)
                         .expect("Failed to register pg_catalog schema");
@@ -687,17 +716,17 @@ impl AppContext {
                         .active_metrics()
                         .into_iter()
                         .map(|metric| TransactionSnapshot {
-                            transaction_id: metric.transaction_id.to_string(),
-                            owner_id: metric.owner_id.to_string(),
-                            origin: metric.origin.as_str().to_string(),
-                            state: metric.state.lifecycle_str().to_string(),
-                            age_ms: metric.age_ms.min(i64::MAX as u64) as i64,
-                            idle_ms: metric.idle_ms.min(i64::MAX as u64) as i64,
-                            write_count: metric.write_count.min(i64::MAX as usize) as i64,
-                            write_bytes: metric.write_bytes.min(i64::MAX as usize) as i64,
+                            transaction_id:       metric.transaction_id.to_string(),
+                            owner_id:             metric.owner_id.to_string(),
+                            origin:               metric.origin.as_str().to_string(),
+                            state:                metric.state.lifecycle_str().to_string(),
+                            age_ms:               metric.age_ms.min(i64::MAX as u64) as i64,
+                            idle_ms:              metric.idle_ms.min(i64::MAX as u64) as i64,
+                            write_count:          metric.write_count.min(i64::MAX as usize) as i64,
+                            write_bytes:          metric.write_bytes.min(i64::MAX as usize) as i64,
                             touched_tables_count: metric.touched_tables_count.min(i64::MAX as usize)
                                 as i64,
-                            snapshot_commit_seq: metric.snapshot_commit_seq.min(i64::MAX as u64)
+                            snapshot_commit_seq:  metric.snapshot_commit_seq.min(i64::MAX as u64)
                                 as i64,
                         })
                         .collect()
@@ -706,7 +735,8 @@ impl AppContext {
 
             let live_query_manager = Arc::new(LiveQueryManager::new(
                 Arc::new(SchemaRegistryLookup::new(app_ctx.schema_registry())),
-                app_ctx.connection_registry()));
+                app_ctx.connection_registry(),
+            ));
             if app_ctx.live_query_manager.set(live_query_manager).is_err() {
                 panic!("LiveQueryManager already initialized");
             }
@@ -724,7 +754,8 @@ impl AppContext {
             // This allows system.manifest to show if an entry is in the process memory cache.
             let manifest_for_checker = Arc::clone(&app_ctx.manifest_service);
             app_ctx.system_tables().manifest().set_in_memory_checker(Arc::new(
-                move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key)));
+                move |cache_key: &str| manifest_for_checker.is_in_hot_cache_by_string(cache_key),
+            ));
 
             app_ctx
         }
@@ -839,10 +870,12 @@ impl AppContext {
         // Create stores
         let user_table_store = Arc::new(UserTableStore::new(
             storage_backend.clone(),
-            ColumnFamilyNames::USER_TABLE_PREFIX.to_string()));
+            ColumnFamilyNames::USER_TABLE_PREFIX.to_string(),
+        ));
         let shared_table_store = Arc::new(SharedTableStore::new(
             storage_backend.clone(),
-            ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string()));
+            ColumnFamilyNames::SHARED_TABLE_PREFIX.to_string(),
+        ));
 
         // Create system tables registry
         let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
@@ -852,14 +885,16 @@ impl AppContext {
             system_tables.storages(),
             "/tmp/kalamdb-test".to_string(),
             kalamdb_configs::config::types::RemoteStorageTimeouts::default(),
-            kalamdb_configs::config::types::ParquetWriteSettings::default()));
+            kalamdb_configs::config::types::ParquetWriteSettings::default(),
+        ));
 
         // Create minimal schema registry
         let schema_registry = Arc::new(SchemaRegistry::new(100));
 
         // Create DataFusion session
         let session_factory = Arc::new(
-            DataFusionSessionFactory::new().expect("Failed to create test session factory"));
+            DataFusionSessionFactory::new().expect("Failed to create test session factory"),
+        );
         let base_session_context = Arc::new(session_factory.create_session());
 
         // Job registry creation is deferred to kalamdb-jobs (set_job_manager)
@@ -890,7 +925,8 @@ impl AppContext {
             "./data/storage".to_string(),
             config.manifest_cache.clone(),
             Arc::new(TablesSchemaRegistryAdapter::new(schema_registry.clone())),
-            storage_registry.clone()));
+            storage_registry.clone(),
+        ));
 
         // Create file storage service for tests
         let file_storage_service = Arc::new(kalamdb_filestore::FileStorageService::new(
@@ -899,13 +935,15 @@ impl AppContext {
             1000,
             1024 * 1024 * 100,
             10,
-            vec!["*/*".to_string()]));
+            vec!["*/*".to_string()],
+        ));
 
         // Create RaftExecutor with single-node config for tests
         // This uses the same code path as production (unified Raft mode)
         let raft_config = kalamdb_raft::manager::RaftManagerConfig::for_single_node(
             "kalamdb-test".to_string(),
-            "127.0.0.1:2900".to_string());
+            "127.0.0.1:2900".to_string(),
+        );
         let manager = Arc::new(kalamdb_raft::manager::RaftManager::new(raft_config));
         let server_start_time = Instant::now();
         let executor: Arc<dyn CommandExecutor> =
@@ -922,7 +960,8 @@ impl AppContext {
             Arc::new(TopicPublisherService::with_visibility_timeout_and_primary_key_lookup(
                 storage_backend.clone(),
                 visibility_timeout,
-                Some(topic_primary_key_lookup)));
+                Some(topic_primary_key_lookup),
+            ));
 
         // Create transaction snapshot tracker for tests
         let commit_sequence_tracker = Arc::new(CommitSequenceTracker::new(0));
@@ -962,7 +1001,9 @@ impl AppContext {
         app_ctx.base_session_context.register_udtf(
             "vector_search",
             Arc::new(VectorSearchTableFunction::new(Arc::new(CoreVectorSearchRuntime::new(
-                Arc::downgrade(&app_ctx))))));
+                Arc::downgrade(&app_ctx),
+            )))),
+        );
 
         // Topic publishing is now synchronous in table providers — no need to wire
         // into notification service.
@@ -976,7 +1017,8 @@ impl AppContext {
 
         let transaction_coordinator = Arc::new(TransactionCoordinator::new(
             Arc::clone(&app_ctx),
-            Arc::clone(&commit_sequence_tracker)));
+            Arc::clone(&commit_sequence_tracker),
+        ));
         if app_ctx.transaction_coordinator.set(transaction_coordinator).is_err() {
             panic!("TransactionCoordinator already initialized");
         }
@@ -990,7 +1032,8 @@ impl AppContext {
 
         let live_query_manager = Arc::new(LiveQueryManager::new(
             Arc::new(SchemaRegistryLookup::new(app_ctx.schema_registry())),
-            app_ctx.connection_registry()));
+            app_ctx.connection_registry(),
+        ));
         if app_ctx.live_query_manager.set(live_query_manager).is_err() {
             panic!("LiveQueryManager already initialized");
         }
@@ -1038,7 +1081,8 @@ impl AppContext {
     pub fn set_job_manager(
         &self,
         mgr: Arc<dyn std::any::Any + Send + Sync>,
-        waker: Arc<dyn JobWaker>) {
+        waker: Arc<dyn JobWaker>,
+    ) {
         if self.job_manager.set(mgr).is_err() {
             panic!("JobsManager already initialized");
         }
@@ -1303,7 +1347,8 @@ impl AppContext {
     pub fn set_cached_user_repo(self: &Arc<Self>, user_repo: Arc<CachedUsersRepo>) {
         if self.cached_user_repo.set(user_repo).is_err() {
             log::warn!(
-                "CachedUsersRepo already initialized in AppContext; ignoring duplicate registration"
+                "CachedUsersRepo already initialized in AppContext; ignoring duplicate \
+                 registration"
             );
         }
     }
@@ -1321,14 +1366,16 @@ impl AppContext {
         if let Some(lqm) = self.live_query_manager.get() {
             let adapter = Arc::new(crate::live_adapters::SqlExecutorAdapter::new(
                 Arc::clone(&executor),
-                Arc::clone(&self.base_session_context)));
+                Arc::clone(&self.base_session_context),
+            ));
             lqm.set_sql_executor(adapter);
 
             let barrier =
                 Arc::new(crate::live_adapters::RaftApplyBarrierAdapter::new(Arc::clone(self)));
             lqm.set_apply_barrier(barrier);
             let authorization_binder = Arc::new(
-                crate::live_adapters::LiveAuthorizationBinderAdapter::new(Arc::clone(self)));
+                crate::live_adapters::LiveAuthorizationBinderAdapter::new(Arc::clone(self)),
+            );
             lqm.set_authorization_binder(authorization_binder);
         }
 
@@ -1370,7 +1417,8 @@ impl AppContext {
     /// Async variant of [`compute_metrics`] that offloads the sync RocksDB
     /// scans to a blocking thread so the tokio worker pool is not starved.
     pub async fn compute_metrics_async(
-        self: &Arc<Self>) -> Result<Vec<(String, String)>, crate::error::KalamDbError> {
+        self: &Arc<Self>,
+    ) -> Result<Vec<(String, String)>, crate::error::KalamDbError> {
         let ctx = Arc::clone(self);
         tokio::task::spawn_blocking(move || ctx.compute_metrics()).await.map_err(|e| {
             crate::error::KalamDbError::ExecutionError(format!("Task join error: {}", e))

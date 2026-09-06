@@ -58,10 +58,10 @@ pub enum RaftError {
          timeout={timeout_ms}ms)"
     )]
     ReplicationTimeout {
-        group: String,
+        group:            String,
         committed_log_id: String,
-        detail: String,
-        timeout_ms: u64,
+        detail:           String,
+        timeout_ms:       u64,
     },
 
     /// Raft is shutting down
@@ -181,10 +181,11 @@ mod tests {
         assert!(RaftError::Timeout(std::time::Duration::from_secs(1)).is_retryable());
         assert!(RaftError::Network("connection lost".to_string()).is_retryable());
         assert!(RaftError::ReplicationTimeout {
-            group: "g1".to_string(),
+            group:            "g1".to_string(),
             committed_log_id: "1-100".to_string(),
-            detail: "local apply barrier did not reach the required read point".to_string(),
-            timeout_ms: 5000,
+            detail:           "local apply barrier did not reach the required read point"
+                .to_string(),
+            timeout_ms:       5000,
         }
         .is_retryable());
 
@@ -227,10 +228,10 @@ mod tests {
     #[test]
     fn test_replication_timeout_error() {
         let err = RaftError::ReplicationTimeout {
-            group: "meta".to_string(),
+            group:            "meta".to_string(),
             committed_log_id: "1-250".to_string(),
-            detail: "learner 2 did not catch up to the leader".to_string(),
-            timeout_ms: 3000,
+            detail:           "learner 2 did not catch up to the leader".to_string(),
+            timeout_ms:       3000,
         };
         let msg = format!("{}", err);
         assert!(msg.contains("meta"));
@@ -242,7 +243,7 @@ mod tests {
     fn test_all_error_variants_are_errors() {
         let errors: Vec<RaftError> = vec![
             RaftError::NotLeader {
-                group: "g".to_string(),
+                group:  "g".to_string(),
                 leader: None,
             },
             RaftError::GroupNotFound("g".to_string()),
@@ -256,10 +257,11 @@ mod tests {
             RaftError::Config("e".to_string()),
             RaftError::Timeout(std::time::Duration::from_secs(1)),
             RaftError::ReplicationTimeout {
-                group: "g".to_string(),
+                group:            "g".to_string(),
                 committed_log_id: "1".to_string(),
-                detail: "local apply barrier did not reach the required read point".to_string(),
-                timeout_ms: 100,
+                detail:           "local apply barrier did not reach the required read point"
+                    .to_string(),
+                timeout_ms:       100,
             },
             RaftError::Shutdown,
             RaftError::InvalidState("s".to_string()),

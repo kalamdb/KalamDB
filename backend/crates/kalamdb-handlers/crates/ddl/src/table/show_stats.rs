@@ -95,9 +95,9 @@ impl TypedStatementHandler<ShowTableStatsStatement> for ShowStatsHandler {
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
         Ok(ExecutionResult::Rows {
-            batches: vec![batch],
+            batches:   vec![batch],
             row_count: 1,
-            schema: None,
+            schema:    None,
         })
     }
 

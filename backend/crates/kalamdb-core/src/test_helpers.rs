@@ -152,10 +152,10 @@ pub fn init_test_app_context() -> Arc<TestDb> {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
                     namespace_id: default_namespace,
-                    name: "default".to_string(),
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                    options: Some(serde_json::json!({})),
-                    table_count: 0,
+                    name:         "default".to_string(),
+                    created_at:   chrono::Utc::now().timestamp_millis(),
+                    options:      Some(serde_json::json!({})),
+                    table_count:  0,
                 })
                 .unwrap();
         }

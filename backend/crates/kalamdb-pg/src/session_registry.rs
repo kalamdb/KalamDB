@@ -27,28 +27,28 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
 /// Authenticated bridge identity stored at session-open time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BridgeAuth {
-    pub user_id: UserId,
-    pub role: Role,
-    pub auth_mode: String,
+    pub user_id:             UserId,
+    pub role:                Role,
+    pub auth_mode:           String,
     pub lease_expires_at_ms: i64,
 }
 
 /// Bridge session projection for gRPC activity metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemotePgSession {
-    session_id: String,
+    session_id:     String,
     current_schema: Option<String>,
-    last_method: Option<String>,
-    bridge_auth: Option<BridgeAuth>,
+    last_method:    Option<String>,
+    bridge_auth:    Option<BridgeAuth>,
 }
 
 impl RemotePgSession {
     fn new(session_id: impl Into<String>) -> Self {
         Self {
-            session_id: session_id.into(),
+            session_id:     session_id.into(),
             current_schema: None,
-            last_method: None,
-            bridge_auth: None,
+            last_method:    None,
+            bridge_auth:    None,
         }
     }
 
@@ -107,14 +107,14 @@ impl RemotePgSession {
 /// Thin adapter over `BackendSessionManager` with a local fallback for unit tests.
 #[derive(Debug, Default)]
 pub(crate) struct SessionRegistry {
-    manager: Option<Arc<BackendSessionManager>>,
+    manager:        Option<Arc<BackendSessionManager>>,
     local_sessions: DashMap<String, RemotePgSession>,
 }
 
 impl SessionRegistry {
     pub(crate) fn with_manager(manager: Arc<BackendSessionManager>) -> Self {
         Self {
-            manager: Some(manager),
+            manager:        Some(manager),
             local_sessions: DashMap::new(),
         }
     }

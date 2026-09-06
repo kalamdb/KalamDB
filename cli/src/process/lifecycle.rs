@@ -1,11 +1,10 @@
 //! Process-group setup and teardown for supervised CLI child processes.
 
+#[cfg(windows)]
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use tokio::process::Child;
-
-#[cfg(windows)]
-use std::process::{Command, Stdio};
 
 /// How aggressively to terminate a supervised child.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

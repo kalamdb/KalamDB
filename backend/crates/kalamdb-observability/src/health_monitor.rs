@@ -32,46 +32,46 @@ pub fn get_websocket_session_peak_count() -> usize {
 /// Health metrics snapshot
 #[derive(Debug, Clone)]
 pub struct HealthMetrics {
-    pub memory_mb: Option<u64>,
-    pub cpu_usage: Option<f32>,
-    pub open_files: usize,
-    pub open_file_breakdown: Option<OpenFileBreakdown>,
-    pub namespace_count: usize,
-    pub table_count: usize,
+    pub memory_mb:               Option<u64>,
+    pub cpu_usage:               Option<f32>,
+    pub open_files:              usize,
+    pub open_file_breakdown:     Option<OpenFileBreakdown>,
+    pub namespace_count:         usize,
+    pub table_count:             usize,
     pub storage_partition_count: Option<usize>,
-    pub subscription_count: usize,
-    pub connection_count: usize,
-    pub ws_session_count: usize,
-    pub jobs_running: usize,
-    pub jobs_queued: usize,
-    pub jobs_failed: usize,
-    pub jobs_total: usize,
+    pub subscription_count:      usize,
+    pub connection_count:        usize,
+    pub ws_session_count:        usize,
+    pub jobs_running:            usize,
+    pub jobs_queued:             usize,
+    pub jobs_failed:             usize,
+    pub jobs_total:              usize,
 }
 
 /// Aggregated counts for health metrics.
 #[derive(Debug, Clone, Copy)]
 pub struct HealthCounts {
-    pub namespace_count: usize,
-    pub table_count: usize,
+    pub namespace_count:         usize,
+    pub table_count:             usize,
     pub storage_partition_count: Option<usize>,
-    pub subscription_count: usize,
-    pub connection_count: usize,
-    pub jobs_running: usize,
-    pub jobs_queued: usize,
-    pub jobs_failed: usize,
-    pub jobs_total: usize,
+    pub subscription_count:      usize,
+    pub connection_count:        usize,
+    pub jobs_running:            usize,
+    pub jobs_queued:             usize,
+    pub jobs_failed:             usize,
+    pub jobs_total:              usize,
 }
 
 /// Descriptor class breakdown captured from process file descriptors.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenFileBreakdown {
-    pub total: usize,
-    pub regular: usize,
+    pub total:       usize,
+    pub regular:     usize,
     pub directories: usize,
-    pub kqueue: usize,
-    pub unix: usize,
-    pub ipv4: usize,
-    pub other: usize,
+    pub kqueue:      usize,
+    pub unix:        usize,
+    pub ipv4:        usize,
+    pub other:       usize,
 }
 
 /// Monitor for system health and job statistics

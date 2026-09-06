@@ -1,200 +1,98 @@
 # kalam_sync
 
-Local-first Flutter synchronization for KalamDB. The package adds one Drift
-cache, durable resume checkpoints, optimistic row state, an offline action
-outbox, retries, lifecycle handling, and widget-scoped event consumers on top
-of the existing shared `kalam_link` connection.
+Local-first Flutter sync for [KalamDB](https://kalamdb.org). One Drift cache, live SQL, optimistic rows, and an offline action outbox on top of [`kalam_link`](https://pub.dev/packages/kalam_link).
 
-## Open one account-scoped cache
+→ **[Docs](https://kalamdb.org/docs/dart-sdk/sync)** · [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions) · [kalam_link](https://pub.dev/packages/kalam_link) · [GitHub](https://github.com/kalamdb/KalamDB)
 
-```dart
-final kalam = await Kalam.open(
-  url: 'https://db.example.com',
-  subject: signedInUser.id,
-  authProvider: () async => Auth.jwt(await tokens.freshAccessToken()),
-  actionDefinitions: messageActionsDefinitions(MessageActions(api)),
-);
+## Shutdown and replay load
 
-runApp(KalamScope(kalam: kalam, child: const App()));
+Always await `Kalam.dispose()` before clearing application projection data. It
+drains active consumer callbacks and action executions before closing SQLite.
+The outbox runs at most eight independent ordering keys concurrently; queued
+work remains durable when a session is disposed. Standalone action runners must
+likewise await `KalamActionRunner.dispose()` before closing their store.
+
+## Install
+
+```bash
+kalam init --yes --languages dart --template simple-live
+kalam schema gen --languages dart
+kalam dev
 ```
 
-`subject` is required. The server URL, namespace, and authenticated subject
-form the local database identity, so one user's cached rows and queued actions
-cannot be opened or flushed as another user.
+Or add the package to an existing app:
 
-The WebSocket is lazy. Opening the cache does not wait for a network
-connection; the first active consumer or queued action starts the existing
-`kalam_link` socket.
+```bash
+flutter pub add kalam_sync
+```
 
-## Bidirectional todos
+## Get started
 
-`kalam schema gen --languages dart` writes row codecs and `KalamTableSpec`
-values (for example `KalamTables.todos`). Kalam only needs that table codec
-and does not create a second todo model:
+Open an account-scoped cache. The WebSocket stays lazy until a consumer or queued action needs it.
 
 ```dart
-final todos = kalam.table(
-  KalamTableSpec<Todo>(
-    tableId: 'app.todos',
-    keyColumn: 'id',
-    mode: KalamSyncMode.bidirectional,
-    keyOf: (todo) => todo.id,
-    encode: (todo) => todo.toJson(),
-    decode: Todo.fromJson,
-  ),
-);
+import 'package:flutter/material.dart';
+import 'package:kalam_sync/kalam_sync.dart';
 
-late final KalamSyncSubscription todoSync;
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-Future<void> startTodos() async {
-  todoSync = await kalam.subscribe(
-    todos.consumer(sql: 'SELECT * FROM app.todos', batchSize: 250),
+  final kalam = await Kalam.open(
+    url: 'http://localhost:2900',
+    subject: 'dev-user',
+    authProvider: () async => Auth.basic('root', 'kalamdb123'),
   );
-}
 
-Future<void> addTodo(String title) {
-  return todos.insert(
-    Todo(id: Kalam.id(), title: title, completed: false),
-    actionId: Kalam.id(),
-  );
+  runApp(KalamScope(kalam: kalam, child: const App()));
 }
 ```
 
-`insert`, `update`, and `delete` change the local row and enqueue one generic
-Kalam DML action in the same SQLite transaction. `todos.watch()` is always
-local and continues to work offline. Use `watchWithSyncState()` when the UI
-needs pending, retry, failure, or awaiting-server-echo state beside each row.
+`subject` is required. Cached rows and queued actions are keyed by server URL, namespace, and authenticated user.
 
-## Subscribe inside a widget
+## Sync a table
 
-Consumers are not registered in one global `events: []` list. A widget or
-feature starts only the query it needs and cancels it when unloaded:
+`kalam schema gen --languages dart` writes row codecs and `KalamTables.*`. Bind that spec, subscribe the SQL the screen needs, and write locally:
 
 ```dart
-class ConversationState extends State<Conversation> {
-  late final KalamTableBinding<Message> messages;
-  KalamSyncSubscription? sync;
+final todos = kalam.table(KalamTables.todos);
 
-  @override
-  void initState() {
-    super.initState();
-    final kalam = KalamScope.read(context);
-    messages = kalam.table(AppTables.messages);
-    final conversationId = widget.conversationId;
-    if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(conversationId)) {
-      throw ArgumentError.value(conversationId, 'conversationId');
-    }
-    kalam
-        .subscribe(messages.consumer(
-          sql: 'SELECT * FROM app.messages WHERE conversation_id = \$1',
-          params: [conversationId],
-        ))
-        .then((value) {
-          if (mounted) {
-            sync = value;
-          } else {
-            unawaited(value.cancel());
-          }
-        });
-  }
+await kalam.subscribe(
+  todos.consumer(sql: 'SELECT * FROM app.todos'),
+);
 
-  @override
-  void dispose() {
-    sync?.cancel();
-    super.dispose();
-  }
-}
-```
-
-`liveEvents` / `liveEventsWithAck` accept the same `params` list as `query()`.
-
-Headless catch-up uses that same live query (`from:` the committed checkpoint,
-`batchSize:` the row limit) and disconnects when the bound is hit:
-
-```dart
-final result = await Kalam.catchUp(
-  url: serverUrl,
-  subject: userId,
-  namespace: 'public',
-  authProvider: () async => Auth.jwt(await tokens.freshAccessToken()),
-  consumers: [messages.consumer(sql: 'SELECT * FROM public.messages')],
-  rowLimit: 100,
-  timeout: const Duration(seconds: 30),
+await todos.insert(
+  Todos(id: Kalam.id(), title: 'Ship it', completed: false),
+  actionId: Kalam.id(),
 );
 ```
 
-## Backend-authoritative messages with offline actions
-
-For a custom HTTP workflow, make the table `replicaOnly`. The backend remains
-authoritative, while the action owns an optimistic overlay:
+`insert` / `update` / `delete` change the local row and enqueue DML in the same SQLite transaction. `watch()` keeps working offline.
 
 ```dart
-@KalamActionPayload()
-class SendMessageArgs {
-  const SendMessageArgs({
-    required this.messageId,
-    required this.conversationId,
-    required this.text,
-    required this.createdAt,
-    required this.author,
-  });
-  final String messageId;
-  final String conversationId;
-  final String text;
-  final DateTime createdAt;
-  final String author;
-}
-
-@KalamActionModule(namespace: 'chat')
-class ChatActions {
-  ChatActions(this.api);
-  final ChatActionApi api;
-
-  @KalamAction(name: 'sendMessage')
-  Future<void> sendMessage(
-    KalamActionContext context,
-    SendMessageArgs args,
-  ) async {
-    await context.step<bool>(
-      'persist',
-      run: (key) async {
-        await api.persistMessage(args, idempotencyKey: key);
-        return true;
-      },
-      encode: (value) => value,
-      decode: (value) => value == true,
+StreamBuilder<List<KalamSyncedRow<Todos>>>(
+  stream: todos.watchWithSyncState(),
+  builder: (context, snapshot) {
+    final rows = snapshot.data ?? const [];
+    return ListView(
+      children: [
+        for (final row in rows)
+          ListTile(
+            title: Text(row.value.title),
+            trailing: Icon(row.isSynced ? Icons.cloud_done : Icons.cloud_upload),
+          ),
+      ],
     );
-    );
-    await context.step<bool>(
-      'deliver',
-      run: (key) async {
-        await api.markDelivered(args, idempotencyKey: key);
-        return true;
-      },
-      encode: (value) => value,
-      decode: (value) => value == true,
-    );
-  }
-}
+  },
+)
 ```
 
-Run `dart run build_runner build` in `link/sdks/dart/generator/example`.
-`kalam_sync_generator` generates the JSON codec, `chat.sendMessage` definition,
-and `ChatActionsQueue.sendMessage()`:
+Cancel the subscription when the widget unloads: `sync?.cancel()`.
+
+## Custom actions
+
+For backend-authoritative tables (`replicaOnly`), generate a durable queue with `kalam_sync_generator` instead of calling `insert` directly:
 
 ```dart
-final messageRows = kalam.table(chatMessagesSpec('chat.messages'));
-final actions = ChatActionsQueue(kalam.actions);
-final message = ChatMessage(
-  id: Kalam.id(),
-  conversationId: conversationId,
-  role: ChatMessageRole.user,
-  author: userId,
-  text: text,
-  status: ChatDeliveryStatus.pending,
-  createdAt: DateTime.now().toUtc(),
-);
-
 await actions.sendMessage(
   SendMessageArgs(
     messageId: message.id,
@@ -204,61 +102,14 @@ await actions.sendMessage(
     author: message.author,
   ),
   orderingKey: conversationId,
-  optimistic: messageRows.optimisticInsert(message),
+  optimistic: messages.optimisticInsert(message),
 );
 ```
 
-The generated queue method commits the optimistic row, sidecar sync state, and
-serialized action together. On connectivity, the executor calls the backend
-with the stable action UUID. The row becomes `synced` only after the backend's
-KalamDB write arrives and is committed locally.
+Walkthrough: [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions).
 
-For multi-endpoint workflows, use `context.step(...)`. A completed named step
-is persisted and reused after retry or process restart. Every remote endpoint
-must still honor the supplied idempotency key because a response can be lost
-after the server commits.
+## Links
 
-Multipart `FILE("placeholder")` uploads use the same step machinery:
-
-```dart
-await context.queryWithFiles(
-  'upload',
-  sql: r"INSERT INTO app.messages (id, attachment) VALUES ($1, FILE('file'))",
-  files: [
-    KalamFileUpload(
-      placeholder: 'file',
-      filename: 'photo.jpg',
-      data: bytes,
-      mime: 'image/jpeg',
-    ),
-  ],
-  params: [messageId],
-);
-```
-
-## Generation boundary
-
-- Drift owns generated table row/companion types.
-- `kalam_sync_generator` owns action payload codecs, definitions, and queues.
-- Kalam uses one generic internal envelope for direct create/update/delete;
-  it does not generate three extra action model classes for every table.
-- The complete offline-first chat app, REST engine, schema, and five live-server
-use-case tests live in [`example/`](example). Conversations use bidirectional
-DML; messages stay `replicaOnly` and sync through generated `sendMessage` /
-`markMsgRead` actions.
-
-## Correctness guarantees
-
-- Local mirror row + outbox enqueue are one Drift transaction.
-- Applied server row + durable sequence checkpoint are one Drift transaction.
-- Server deliveries are acknowledged only after that transaction commits;
-  the next delivery is not pulled before acknowledgement.
-- Duplicate or older events are ignored.
-- Actions, retry metadata, named steps, optimistic rows, and checkpoints
-  survive process restart.
-- Manual lifecycle pause/resume cancels and reopens subscriptions from the
-  SQLite-committed checkpoint.
-
-`kalam_sync` uses the additive `kalam_link.liveEventsWithAck` API. Existing
-`liveEvents` callers keep automatic progress, while sync subscriptions resume
-from the SQLite-committed cursor after reconnect or process restart.
+- Docs: [https://kalamdb.org/docs/dart-sdk/sync](https://kalamdb.org/docs/dart-sdk/sync)
+- Chat example: [`example/`](example)
+- License: Apache-2.0

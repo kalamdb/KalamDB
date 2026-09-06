@@ -966,10 +966,6 @@ pub struct PostgresWireSettings {
     #[serde(default)]
     pub tls_key_path: Option<String>,
 
-    /// Enable pg_catalog compatibility setup when the wire dependency supports it.
-    #[serde(default)]
-    pub pg_catalog_enabled: bool,
-
     /// Maximum prepared statements tracked per wire connection.
     #[serde(default = "default_postgres_wire_prepared_statement_limit")]
     pub prepared_statement_limit: usize,
@@ -988,7 +984,6 @@ impl Default for PostgresWireSettings {
             tls_enabled:              false,
             tls_cert_path:            None,
             tls_key_path:             None,
-            pg_catalog_enabled:       false,
             prepared_statement_limit: default_postgres_wire_prepared_statement_limit(),
             portal_limit:             default_postgres_wire_portal_limit(),
         }

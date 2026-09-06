@@ -103,11 +103,9 @@ perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs
 if [[ "${KALAMDB_ENABLE_PGWIRE:-false}" == "true" ]]; then
     PGWIRE_HOST="${KALAMDB_PGWIRE_HOST:-127.0.0.1}"
     PGWIRE_PORT="${KALAMDB_PGWIRE_PORT:-5432}"
-    PGWIRE_CATALOG_ENABLED="${KALAMDB_PGWIRE_CATALOG_ENABLED:-true}"
     if grep -q '^\[postgres_wire\]' "$WORK_DIR/server.toml"; then
         perl -0pi -e '
             s/(\[postgres_wire\][\s\S]*?)enabled = false/${1}enabled = true/g;
-            s/(\[postgres_wire\][\s\S]*?)pg_catalog_enabled = false/${1}pg_catalog_enabled = '"$PGWIRE_CATALOG_ENABLED"'/g;
             s/(\[postgres_wire\][\s\S]*?)host = "[^"]*"/${1}host = "'"$PGWIRE_HOST"'"/g;
             s/(\[postgres_wire\][\s\S]*?)port = [0-9]+/${1}port = '"$PGWIRE_PORT"'/g;
         ' "$WORK_DIR/server.toml"
@@ -118,7 +116,6 @@ if [[ "${KALAMDB_ENABLE_PGWIRE:-false}" == "true" ]]; then
 enabled = true
 host = "$PGWIRE_HOST"
 port = $PGWIRE_PORT
-pg_catalog_enabled = $PGWIRE_CATALOG_ENABLED
 EOF
     fi
 fi

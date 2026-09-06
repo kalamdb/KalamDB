@@ -13,6 +13,7 @@ pub const CLI_BUILD_DATE: &str = match option_env!("BUILD_DATE") {
     None => "unknown",
 };
 
+pub mod agent_error;
 pub mod completer;
 pub mod config;
 pub mod credentials;
@@ -21,6 +22,7 @@ pub mod formatter;
 pub mod fs_atomic;
 pub mod history;
 pub mod history_menu;
+pub mod identifiers;
 pub mod output;
 pub mod parser;
 pub mod process;
@@ -35,6 +37,7 @@ pub mod terminal_ui;
 pub mod update_check;
 pub mod workflow;
 
+pub use agent_error::{AgentError, AgentErrorCode};
 pub use config::CLIConfiguration;
 pub use credentials::FileCredentialStore;
 pub use error::{CLIError, Result};

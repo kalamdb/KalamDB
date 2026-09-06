@@ -73,25 +73,25 @@ pub struct ClusterNodeInfo {
 #[derive(Debug, Clone)]
 pub struct ClusterInfo {
     /// Cluster ID
-    pub cluster_id: String,
+    pub cluster_id:              String,
     /// Current node ID
-    pub current_node_id: NodeId,
+    pub current_node_id:         NodeId,
     /// Whether in cluster mode
-    pub is_cluster_mode: bool,
+    pub is_cluster_mode:         bool,
     /// All nodes in the cluster
-    pub nodes: Vec<ClusterNodeInfo>,
+    pub nodes:                   Vec<ClusterNodeInfo>,
     /// Total number of Raft groups
-    pub total_groups: u32,
+    pub total_groups:            u32,
     /// Number of user data shards
-    pub user_shards: u32,
+    pub user_shards:             u32,
     /// Number of shared data shards  
-    pub shared_shards: u32,
+    pub shared_shards:           u32,
     /// Current Raft term (from MetaSystem group)
-    pub current_term: u64,
+    pub current_term:            u64,
     /// Last log index (from MetaSystem group)
-    pub last_log_index: Option<u64>,
+    pub last_log_index:          Option<u64>,
     /// Last applied log index (from MetaSystem group)
-    pub last_applied: Option<u64>,
+    pub last_applied:            Option<u64>,
     /// Milliseconds since quorum acknowledgment (leader health indicator)
     pub millis_since_quorum_ack: Option<u64>,
 }
@@ -266,16 +266,16 @@ mod tests {
     #[test]
     fn test_cluster_info_construction() {
         let cluster_info = ClusterInfo {
-            cluster_id: "test-cluster".to_string(),
-            current_node_id: NodeId::from(1),
-            is_cluster_mode: true,
-            nodes: vec![],
-            total_groups: 14,
-            user_shards: 12,
-            shared_shards: 1,
-            current_term: 5,
-            last_log_index: Some(250),
-            last_applied: Some(250),
+            cluster_id:              "test-cluster".to_string(),
+            current_node_id:         NodeId::from(1),
+            is_cluster_mode:         true,
+            nodes:                   vec![],
+            total_groups:            14,
+            user_shards:             12,
+            shared_shards:           1,
+            current_term:            5,
+            last_log_index:          Some(250),
+            last_applied:            Some(250),
             millis_since_quorum_ack: Some(20),
         };
 
@@ -290,16 +290,16 @@ mod tests {
     #[test]
     fn test_cluster_info_standalone_mode() {
         let standalone = ClusterInfo {
-            cluster_id: "standalone".to_string(),
-            current_node_id: NodeId::from(0),
-            is_cluster_mode: false,
-            nodes: vec![],
-            total_groups: 0,
-            user_shards: 0,
-            shared_shards: 0,
-            current_term: 0,
-            last_log_index: None,
-            last_applied: None,
+            cluster_id:              "standalone".to_string(),
+            current_node_id:         NodeId::from(0),
+            is_cluster_mode:         false,
+            nodes:                   vec![],
+            total_groups:            0,
+            user_shards:             0,
+            shared_shards:           0,
+            current_term:            0,
+            last_log_index:          None,
+            last_applied:            None,
             millis_since_quorum_ack: None,
         };
 

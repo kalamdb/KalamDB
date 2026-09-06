@@ -30,9 +30,9 @@ use crate::sql::{
 
 /// Public facade for SQL execution routing.
 pub struct SqlExecutor {
-    app_context: Arc<crate::app_context::AppContext>,
-    handler_registry: Arc<HandlerRegistry>,
-    sql_cache_registry: Arc<SqlCacheRegistry>,
+    app_context:              Arc<crate::app_context::AppContext>,
+    handler_registry:         Arc<HandlerRegistry>,
+    sql_cache_registry:       Arc<SqlCacheRegistry>,
     prepared_statement_cache: moka::sync::Cache<(PlanCacheKey, bool), PreparedExecutionStatement>,
     point_read_session_cache: moka::sync::Cache<
         point_read_session_cache_key::PointReadSessionCacheKey,
@@ -45,15 +45,15 @@ pub struct SqlExecutor {
 /// Optional execution context prepared by upstream callers (e.g. API layer).
 #[derive(Debug, Clone)]
 pub struct PreparedExecutionStatement {
-    pub sql: String,
-    pub table_id: Option<TableId>,
-    pub table_type: Option<TableType>,
+    pub sql:                  String,
+    pub table_id:             Option<TableId>,
+    pub table_type:           Option<TableType>,
     pub classified_statement: Option<SqlStatement>,
     /// Precomputed at prepare time; checked with a single bool on the execution hot path.
-    pub track_slow_query: bool,
+    pub track_slow_query:     bool,
     /// DML sqlparser AST parsed once at prepare; reused by literal insert, batch insert,
     /// and system.migrations handlers so execute does not re-parse.
-    pub parsed_dml: Option<Statement>,
+    pub parsed_dml:           Option<Statement>,
 }
 
 impl PreparedExecutionStatement {

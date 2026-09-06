@@ -190,8 +190,8 @@ describe('generateSchema unit behavior', () => {
 
     assert.equal(queries[0], 'SHOW TABLES');
     assert.equal(queries.filter((query) => query === 'DESCRIBE commerce.orders').length, 1);
-    assert.ok(schema.includes('export const orders = kTable.user("orders"'));
-    assert.ok(schema.includes('export const events = kTable.stream("events"'));
+    assert.ok(schema.includes('export const commerce_orders = kTable.user("commerce.orders"'));
+    assert.ok(schema.includes('export const commerce_events = kTable.stream("commerce.events"'));
     assert.ok(!schema.includes('archive_orders'));
     assert.ok(schema.includes('/** server generated id */'));
     assert.ok(schema.includes('id: bigint("id", { mode: "bigint" }).default(sql``).primaryKey()'));
@@ -207,11 +207,11 @@ describe('generateSchema unit behavior', () => {
     assert.ok(schema.includes('class: text("class")'));
     assert.ok(schema.includes('...kSystemColumns(["_seq","_deleted","_commit_seq"] as const),'));
     assert.ok(schema.includes('}, { systemColumns: "all" });'));
-    assert.ok(schema.includes('export const ordersConfig = getKalamTableConfig(orders)!;'));
-    assert.ok(schema.includes('export type Orders = typeof orders.$inferSelect;'));
+    assert.ok(schema.includes('export const commerce_ordersConfig = getKalamTableConfig(commerce_orders)!;'));
+    assert.ok(schema.includes('export type CommerceOrders = typeof commerce_orders.$inferSelect;'));
   });
 
-  it('uses unqualified table names and simple exports for single-namespace output', async () => {
+  it('keeps namespaced exports for single-namespace output', async () => {
     const client = {
       async query(sql) {
         assert.equal(sql, 'SHOW TABLES');
@@ -231,10 +231,33 @@ describe('generateSchema unit behavior', () => {
 
     const schema = await generateSchema(client, { namespaces: ['chat'] });
 
+    assert.ok(schema.includes('export const chat_messages = kTable.shared("chat.messages"'));
+    assert.ok(schema.includes('export const chat_messagesConfig = getKalamTableConfig(chat_messages)!;'));
+    assert.ok(schema.includes('export type ChatMessages = typeof chat_messages.$inferSelect;'));
+    assert.ok(!schema.includes('export const messages = kTable.shared("messages"'));
+  });
+
+  it('can still emit unqualified names when explicitly requested', async () => {
+    const client = {
+      async query(sql) {
+        assert.equal(sql, 'SHOW TABLES');
+        return {
+          results: [{
+            named_rows: [{
+              table_id: 'chat:messages',
+              table_name: 'messages',
+              namespace_id: 'chat',
+              table_type: 'Shared',
+              columns: columnsJson,
+            }],
+          }],
+        };
+      },
+    };
+
+    const schema = await generateSchema(client, { namespaces: ['chat'], unqualifiedNames: true });
+
     assert.ok(schema.includes('export const messages = kTable.shared("messages"'));
-    assert.ok(schema.includes('export const messagesConfig = getKalamTableConfig(messages)!;'));
-    assert.ok(schema.includes('export type Messages = typeof messages.$inferSelect;'));
-    assert.ok(!schema.includes('chat_messages'));
     assert.ok(!schema.includes('"chat.messages"'));
   });
 

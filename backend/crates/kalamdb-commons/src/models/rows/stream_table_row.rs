@@ -17,19 +17,19 @@ pub struct StreamTableRow {
     pub user_id: UserId,
     /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
     /// Maps to SQL column `_seq`
-    pub _seq: SeqId,
+    pub _seq:    SeqId,
     /// All event data (serialized as JSON map)
-    pub fields: Row,
+    pub fields:  Row,
 }
 
 impl From<StreamTableRow> for KTableRow {
     fn from(row: StreamTableRow) -> Self {
         KTableRow {
-            user_id: row.user_id,
-            _seq: row._seq,
+            user_id:     row.user_id,
+            _seq:        row._seq,
             _commit_seq: 0,
-            _deleted: false,
-            fields: row.fields,
+            _deleted:    false,
+            fields:      row.fields,
         }
     }
 }

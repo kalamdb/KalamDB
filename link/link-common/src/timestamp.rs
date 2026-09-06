@@ -23,14 +23,14 @@ const MONTH_NAMES: [&str; 12] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UtcDateTimeParts {
-    year: i32,
-    month: u8,
-    day: u8,
-    hour: u8,
-    minute: u8,
-    second: u8,
+    year:        i32,
+    month:       u8,
+    day:         u8,
+    hour:        u8,
+    minute:      u8,
+    second:      u8,
     millisecond: u16,
-    weekday: u8,
+    weekday:     u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

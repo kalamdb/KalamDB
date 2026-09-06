@@ -14,8 +14,8 @@ use crate::remote_executor::RemoteBackendExecutor;
 /// Global state holding the remote connection + tokio runtime for the PostgreSQL extension
 /// in remote mode for a single backend/config pair.
 pub struct RemoteExtensionState {
-    client: RemoteKalamClient,
-    runtime: Arc<tokio::runtime::Runtime>,
+    client:     RemoteKalamClient,
+    runtime:    Arc<tokio::runtime::Runtime>,
     session_id: String,
 }
 
@@ -51,16 +51,16 @@ impl HasSessionId for RemoteExtensionState {
 }
 
 struct RemoteStateRegistry<T> {
-    by_config: HashMap<RemoteServerConfig, Arc<T>>,
-    by_session_id: HashMap<String, Arc<T>>,
+    by_config:               HashMap<RemoteServerConfig, Arc<T>>,
+    by_session_id:           HashMap<String, Arc<T>>,
     exit_handler_registered: bool,
 }
 
 impl<T> Default for RemoteStateRegistry<T> {
     fn default() -> Self {
         Self {
-            by_config: HashMap::new(),
-            by_session_id: HashMap::new(),
+            by_config:               HashMap::new(),
+            by_session_id:           HashMap::new(),
             exit_handler_registered: false,
         }
     }
@@ -251,8 +251,8 @@ mod tests {
 
     #[derive(Default)]
     struct CountingState {
-        open_session_calls: AtomicUsize,
-        close_session_calls: AtomicUsize,
+        open_session_calls:   AtomicUsize,
+        close_session_calls:  AtomicUsize,
         recorded_session_ids: Mutex<Vec<String>>,
     }
 
@@ -324,7 +324,7 @@ mod tests {
         ) -> Result<Response<ScanRpcResponse>, Status> {
             Ok(Response::new(ScanRpcResponse {
                 ipc_batches: Vec::new(),
-                schema_ipc: None,
+                schema_ipc:  None,
             }))
         }
 
@@ -395,8 +395,8 @@ mod tests {
         ) -> Result<Response<ExecuteQueryRpcResponse>, Status> {
             self.state.record_session_id(request.get_ref().session_id.clone());
             Ok(Response::new(ExecuteQueryRpcResponse {
-                success: true,
-                message: "ok".to_string(),
+                success:     true,
+                message:     "ok".to_string(),
                 ipc_batches: Vec::<Bytes>::new(),
             }))
         }

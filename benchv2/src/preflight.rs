@@ -1,14 +1,11 @@
-use std::process::Command;
-use std::time::Instant;
+use std::{process::Command, time::Instant};
 
-use crate::benchmarks::enabled_in_default_suite;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::enabled_in_default_suite, client::KalamClient, config::Config};
 
 /// Result of a single pre-flight check.
 #[derive(Debug)]
 pub struct CheckResult {
-    pub name: String,
+    pub name:   String,
     pub status: CheckStatus,
     pub detail: String,
 }
@@ -23,21 +20,21 @@ pub enum CheckStatus {
 impl CheckResult {
     fn pass(name: &str, detail: impl Into<String>) -> Self {
         Self {
-            name: name.to_string(),
+            name:   name.to_string(),
             status: CheckStatus::Pass,
             detail: detail.into(),
         }
     }
     fn warn(name: &str, detail: impl Into<String>) -> Self {
         Self {
-            name: name.to_string(),
+            name:   name.to_string(),
             status: CheckStatus::Warn,
             detail: detail.into(),
         }
     }
     fn fail(name: &str, detail: impl Into<String>) -> Self {
         Self {
-            name: name.to_string(),
+            name:   name.to_string(),
             status: CheckStatus::Fail,
             detail: detail.into(),
         }
@@ -107,11 +104,17 @@ pub async fn run_preflight_checks(client: &KalamClient, config: &Config) -> bool
     let warned = checks.iter().any(|c| c.status == CheckStatus::Warn);
 
     if failed {
-        println!("\x1b[31m  ✖ Pre-flight checks FAILED. Fix the issues above before running benchmarks.\x1b[0m\n");
+        println!(
+            "\x1b[31m  ✖ Pre-flight checks FAILED. Fix the issues above before running \
+             benchmarks.\x1b[0m\n"
+        );
         return false;
     }
     if warned {
-        println!("\x1b[33m  ⚡ Some warnings detected — benchmarks will proceed but results may be affected.\x1b[0m\n");
+        println!(
+            "\x1b[33m  ⚡ Some warnings detected — benchmarks will proceed but results may be \
+             affected.\x1b[0m\n"
+        );
     } else {
         println!("\x1b[32m  ✔ All pre-flight checks passed.\x1b[0m\n");
     }
@@ -148,7 +151,10 @@ fn check_subscriber_scale_target_capacity(config: &Config) -> CheckResult {
         return CheckResult::fail(
             "subscriber_scale target",
             format!(
-                "Single WS target ({}) would require about {} WebSocket connections at {} subscriptions/connection, which likely hits the local ephemeral-port ceiling on this host near {}. Use --urls with multiple endpoints or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1.",
+                "Single WS target ({}) would require about {} WebSocket connections at {} \
+                 subscriptions/connection, which likely hits the local ephemeral-port ceiling on \
+                 this host near {}. Use --urls with multiple endpoints or set \
+                 KALAMDB_ALLOW_SINGLE_WS_TARGET=1.",
                 ws_targets[0],
                 required_ws_connections,
                 subscriptions_per_connection,
@@ -161,7 +167,9 @@ fn check_subscriber_scale_target_capacity(config: &Config) -> CheckResult {
         return CheckResult::warn(
             "subscriber_scale target",
             format!(
-                "Forced via KALAMDB_ALLOW_SINGLE_WS_TARGET=1 on single target {} (estimated {} WebSocket connections at {} subscriptions/connection; ephemeral-port risk on this host near {}).",
+                "Forced via KALAMDB_ALLOW_SINGLE_WS_TARGET=1 on single target {} (estimated {} \
+                 WebSocket connections at {} subscriptions/connection; ephemeral-port risk on \
+                 this host near {}).",
                 ws_targets[0],
                 required_ws_connections,
                 subscriptions_per_connection,
@@ -173,7 +181,8 @@ fn check_subscriber_scale_target_capacity(config: &Config) -> CheckResult {
     CheckResult::pass(
         "subscriber_scale target",
         format!(
-            "{} WS target(s), client pools up to {} subscriptions per WS connection, requires about {} WS connection(s) total (~{} per target) for max_subscribers={}",
+            "{} WS target(s), client pools up to {} subscriptions per WS connection, requires \
+             about {} WS connection(s) total (~{} per target) for max_subscribers={}",
             ws_targets.len(),
             subscriptions_per_connection,
             required_ws_connections,
@@ -218,10 +227,11 @@ fn check_connection_scale_target_capacity(config: &Config) -> CheckResult {
         return CheckResult::fail(
             "connection_scale target",
             format!(
-                "Single WS target ({}) would require about {} WebSocket connections with one subscription/connection, which likely hits the local ephemeral-port ceiling on this host near {}. Use --urls with multiple endpoints or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1.",
-                ws_targets[0],
-                required_ws_connections,
-                single_target_ws_limit_label,
+                "Single WS target ({}) would require about {} WebSocket connections with one \
+                 subscription/connection, which likely hits the local ephemeral-port ceiling on \
+                 this host near {}. Use --urls with multiple endpoints or set \
+                 KALAMDB_ALLOW_SINGLE_WS_TARGET=1.",
+                ws_targets[0], required_ws_connections, single_target_ws_limit_label,
             ),
         );
     }
@@ -230,10 +240,10 @@ fn check_connection_scale_target_capacity(config: &Config) -> CheckResult {
         return CheckResult::warn(
             "connection_scale target",
             format!(
-                "Forced via KALAMDB_ALLOW_SINGLE_WS_TARGET=1 on single target {} (estimated {} WebSocket connections with one subscription/connection; ephemeral-port risk on this host near {}).",
-                ws_targets[0],
-                required_ws_connections,
-                single_target_ws_limit_label,
+                "Forced via KALAMDB_ALLOW_SINGLE_WS_TARGET=1 on single target {} (estimated {} \
+                 WebSocket connections with one subscription/connection; ephemeral-port risk on \
+                 this host near {}).",
+                ws_targets[0], required_ws_connections, single_target_ws_limit_label,
             ),
         );
     }
@@ -241,7 +251,8 @@ fn check_connection_scale_target_capacity(config: &Config) -> CheckResult {
     CheckResult::pass(
         "connection_scale target",
         format!(
-            "{} WS target(s), one subscription per connection, requires about {} WS connection(s) total (~{} per target) for max_subscribers={}",
+            "{} WS target(s), one subscription per connection, requires about {} WS connection(s) \
+             total (~{} per target) for max_subscribers={}",
             ws_targets.len(),
             required_ws_connections,
             required_per_target,
@@ -283,7 +294,19 @@ fn check_chat_realtime_target_capacity(config: &Config) -> CheckResult {
 
     let user_count = benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_USERS", 1_000);
     let realtime_conversations = benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_REALTIME_CONVS", 100);
-    let target_active_users = user_count.min(realtime_conversations.max(2));
+    let ai_conversations =
+        benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_AI_CONVS", realtime_conversations / 2);
+    let shared_conversations = benchmark_chat_env_usize(
+        "KALAMDB_BENCH_CHAT_SHARED_CONVS",
+        realtime_conversations.saturating_sub(ai_conversations),
+    );
+    let triple_conversations =
+        benchmark_chat_env_usize("KALAMDB_BENCH_CHAT_TRIPLE_CONVS", shared_conversations / 5);
+    let pair_conversations = shared_conversations.saturating_sub(triple_conversations);
+    let occupancy_slots = ai_conversations
+        .saturating_add(pair_conversations.saturating_mul(2))
+        .saturating_add(triple_conversations.saturating_mul(3));
+    let target_active_users = user_count.min(occupancy_slots.max(2));
     let estimated_client_sockets = target_active_users.saturating_mul(2);
     let socket_limit_label = human_count(single_target_socket_limit);
 
@@ -291,11 +314,12 @@ fn check_chat_realtime_target_capacity(config: &Config) -> CheckResult {
         return CheckResult::warn(
             "chat_realtime target",
             format!(
-                "Single target ({}) with target_active_chat_users={} implies about {} long-lived client sockets from this host (HTTP + WebSocket), which can hit the local ephemeral-port ceiling near {}. Resulting connect failures may be host-side rather than a backend bottleneck. Use multiple endpoints or loopback aliases for realistic same-host runs.",
-                ws_targets[0],
-                target_active_users,
-                estimated_client_sockets,
-                socket_limit_label,
+                "Single target ({}) with target_active_chat_users={} implies about {} long-lived \
+                 client sockets from this host (HTTP + WebSocket), which can hit the local \
+                 ephemeral-port ceiling near {}. Resulting connect failures may be host-side \
+                 rather than a backend bottleneck. Use multiple endpoints or loopback aliases for \
+                 realistic same-host runs.",
+                ws_targets[0], target_active_users, estimated_client_sockets, socket_limit_label,
             ),
         );
     }
@@ -303,11 +327,9 @@ fn check_chat_realtime_target_capacity(config: &Config) -> CheckResult {
     CheckResult::pass(
         "chat_realtime target",
         format!(
-            "Single target {}, estimated active users={} -> about {} long-lived client sockets (host ceiling near {})",
-            ws_targets[0],
-            target_active_users,
-            estimated_client_sockets,
-            socket_limit_label,
+            "Single target {}, estimated active users={} -> about {} long-lived client sockets \
+             (host ceiling near {})",
+            ws_targets[0], target_active_users, estimated_client_sockets, socket_limit_label,
         ),
     )
 }
@@ -403,10 +425,7 @@ fn read_sysctl_usize(name: &str) -> Option<usize> {
         return None;
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<usize>()
-        .ok()
+    String::from_utf8_lossy(&output.stdout).trim().parse::<usize>().ok()
 }
 
 fn human_count(value: usize) -> String {
@@ -536,7 +555,8 @@ fn check_macos_maxfiles_limits() -> CheckResult {
             CheckResult::warn(
                 "Kernel maxfiles",
                 format!(
-                    "{}; run: sudo sysctl -w kern.maxfiles={}; sudo sysctl -w kern.maxfilesperproc={}; sudo launchctl limit maxfiles {} {}",
+                    "{}; run: sudo sysctl -w kern.maxfiles={}; sudo sysctl -w \
+                     kern.maxfilesperproc={}; sudo launchctl limit maxfiles {} {}",
                     issues.join(", "),
                     TARGET_KERN_MAXFILES,
                     TARGET_KERN_MAXFILESPERPROC,
@@ -653,7 +673,8 @@ async fn check_clean_state(client: &KalamClient) -> CheckResult {
                 CheckResult::warn(
                     "Clean state",
                     format!(
-                        "Found {} stale bench_* namespace(s) — they won't interfere (unique run IDs)",
+                        "Found {} stale bench_* namespace(s) — they won't interfere (unique run \
+                         IDs)",
                         stale.len()
                     ),
                 )
@@ -697,7 +718,8 @@ async fn check_bcrypt_cost(client: &KalamClient) -> CheckResult {
                     CheckResult::warn(
                         "bcrypt cost",
                         format!(
-                            "User creation took {}ms — set auth.local.bcrypt_cost = 4 in server.toml for benchmarks",
+                            "User creation took {}ms — set auth.local.bcrypt_cost = 4 in \
+                             server.toml for benchmarks",
                             ms
                         ),
                     )
@@ -705,7 +727,8 @@ async fn check_bcrypt_cost(client: &KalamClient) -> CheckResult {
                     CheckResult::fail(
                         "bcrypt cost",
                         format!(
-                            "User creation took {}ms — auth.local.bcrypt_cost is too high, set to 4 in server.toml",
+                            "User creation took {}ms — auth.local.bcrypt_cost is too high, set to \
+                             4 in server.toml",
                             ms
                         ),
                     )

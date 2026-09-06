@@ -16,13 +16,13 @@ const SINGLE_BURST_SIZE: usize = 1024;
 
 struct LegacySnowflakeGenerator {
     worker_bits: u64,
-    epoch: u64,
-    state: Mutex<LegacyGeneratorState>,
+    epoch:       u64,
+    state:       Mutex<LegacyGeneratorState>,
 }
 
 struct LegacyGeneratorState {
     last_timestamp: u64,
-    sequence: u16,
+    sequence:       u16,
 }
 
 impl LegacySnowflakeGenerator {
@@ -33,10 +33,10 @@ impl LegacySnowflakeGenerator {
     fn new(worker_id: u16) -> Self {
         Self {
             worker_bits: (worker_id as u64) << 12,
-            epoch: Self::DEFAULT_EPOCH,
-            state: Mutex::new(LegacyGeneratorState {
+            epoch:       Self::DEFAULT_EPOCH,
+            state:       Mutex::new(LegacyGeneratorState {
                 last_timestamp: 0,
-                sequence: 0,
+                sequence:       0,
             }),
         }
     }

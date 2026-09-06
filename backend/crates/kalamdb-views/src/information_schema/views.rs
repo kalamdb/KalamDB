@@ -76,7 +76,8 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
 
     let mask = arrow::array::BooleanArray::from_iter(
         (0..tables_batch.num_rows())
-            .map(|row| is_information_schema_view_type(table_type_array.value(row))));
+            .map(|row| is_information_schema_view_type(table_type_array.value(row))),
+    );
     let filtered = filter_record_batch(tables_batch, &mask)
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
 
@@ -109,7 +110,8 @@ fn tables_to_views_batch(tables_batch: &RecordBatch) -> DataFusionResult<RecordB
             Arc::new(constant_string_column(row_count, "NO")),
             Arc::new(constant_string_column(row_count, "NO")),
             Arc::new(constant_string_column(row_count, "NO")),
-        ])
+        ],
+    )
     .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
 
@@ -132,7 +134,8 @@ impl InformationSchemaViewsProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<RecordBatch> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<RecordBatch> {
         let tables_batch = collect_inner_batch(&self.inner_tables, state, filters, limit).await?;
         tables_to_views_batch(&tables_batch)
     }
@@ -169,7 +172,8 @@ impl DeferredBatchSource for ViewsScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name())
+            self.source_name(),
+        )
     }
 }
 
@@ -188,7 +192,8 @@ impl TableProvider for InformationSchemaViewsProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -227,7 +232,8 @@ impl TableProvider for InformationSchemaViewsProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner_tables.supports_filters_pushdown(filters)
     }
 }

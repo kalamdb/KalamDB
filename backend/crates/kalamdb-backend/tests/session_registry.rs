@@ -115,8 +115,8 @@ fn duplicate_session_with_conflicting_origin_is_rejected() {
     assert_eq!(
         error,
         BackendSessionError::DuplicateSession {
-            session_id: "shared-session".to_string(),
-            existing_origin: SessionOrigin::ExtensionBridge,
+            session_id:       "shared-session".to_string(),
+            existing_origin:  SessionOrigin::ExtensionBridge,
             requested_origin: SessionOrigin::WireProtocol,
         }
     );

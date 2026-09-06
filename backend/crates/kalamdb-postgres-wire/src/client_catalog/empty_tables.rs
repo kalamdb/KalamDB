@@ -59,11 +59,7 @@ fn float64(name: &str, nullable: bool) -> Field {
 }
 
 fn int64_list(name: &str) -> Field {
-    Field::new(
-        name,
-        DataType::List(Arc::new(Field::new("item", DataType::Int64, true))),
-        true,
-    )
+    Field::new(name, DataType::List(Arc::new(Field::new("item", DataType::Int64, true))), true)
 }
 
 /// Schema definitions for empty `pg_catalog` probe tables.

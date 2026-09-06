@@ -1,3 +1,4 @@
+mod create_policy;
 mod table;
 mod topic;
 
@@ -7,6 +8,7 @@ use crate::{
     diff::SchemaDiffError,
     model::Schema,
     parser::{
+        create_policy::{attach_policies, is_create_policy, parse_create_policy},
         table::{
             extract_kalam_table_kind, parse_create_namespace, remove_kalam_table_kind,
             table_from_create,
@@ -26,6 +28,7 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
     let dialect = PostgreSqlDialect {};
     let mut schema = Schema::default();
     let mut pending_topic_sources = Vec::new();
+    let mut pending_policies = Vec::new();
 
     for raw_stmt in split_sql_statements(sql) {
         let raw_stmt = raw_stmt.trim();
@@ -63,14 +66,19 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
             continue;
         }
 
+        if is_create_policy(custom_stmt) {
+            pending_policies.push(parse_create_policy(path, custom_stmt)?);
+            continue;
+        }
+
         if let Some(topic_key) = parse_drop_topic(path, custom_stmt)? {
             schema.topics.remove(&topic_key);
             continue;
         }
 
-        let kind_from_prefix = extract_kalam_table_kind(raw_stmt);
-        let with_options = extract_with_options(raw_stmt);
-        let parseable_stmt = strip_trailing_with_options(&remove_kalam_table_kind(raw_stmt));
+        let kind_from_prefix = extract_kalam_table_kind(custom_stmt);
+        let with_options = extract_with_options(custom_stmt);
+        let parseable_stmt = strip_trailing_with_options(&remove_kalam_table_kind(custom_stmt));
 
         let parsed = Parser::parse_sql(&dialect, &parseable_stmt).map_err(|source| {
             SchemaDiffError::Parse {
@@ -107,6 +115,75 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
     }
 
     attach_topic_sources(path, &mut schema, pending_topic_sources)?;
+    attach_policies(path, &mut schema, pending_policies)?;
 
     Ok(schema)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::TableKind;
+
+    #[test]
+    fn shared_table_kind_survives_leading_line_comment() {
+        let schema = parse_schema(
+            "schema.sql",
+            "-- Rooms everyone can create. SELECT is limited to rooms the user belongs to.\n\
+             CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (\n\
+               id TEXT PRIMARY KEY,\n\
+               title TEXT NOT NULL\n\
+             );",
+        )
+        .expect("parse shared table after comment");
+
+        let table = schema.tables.get("chat_demo.rooms").expect("rooms table");
+        assert_eq!(table.kind, Some(TableKind::Shared));
+        assert_eq!(table.columns.len(), 2);
+    }
+
+    #[test]
+    fn stream_table_ttl_survives_leading_line_comment() {
+        let schema = parse_schema(
+            "schema.sql",
+            "-- Live thinking / typing rows.\n\
+             CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (\n\
+               id BIGINT PRIMARY KEY,\n\
+               stage TEXT NOT NULL\n\
+             ) WITH (TTL_SECONDS = 10);",
+        )
+        .expect("parse stream table after comment");
+
+        let table = schema.tables.get("chat_demo.agent_events").expect("events table");
+        assert_eq!(table.kind, Some(TableKind::Stream));
+        assert_eq!(table.options.get("TTL_SECONDS").map(String::as_str), Some("10"));
+    }
+
+    #[test]
+    fn drop_table_after_leading_comment_does_not_fail_parse() {
+        let schema = parse_schema(
+            "schema.sql",
+            "-- This file is the source of truth for `kalam dev`.\n\
+             DROP TABLE IF EXISTS chat_demo.rooms;\n\
+             CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (\n\
+               id TEXT PRIMARY KEY\n\
+             );",
+        )
+        .expect("parse drop plus create after comments");
+
+        let table = schema.tables.get("chat_demo.rooms").expect("rooms table");
+        assert_eq!(table.kind, Some(TableKind::Shared));
+    }
+
+    #[test]
+    fn user_table_kind_survives_leading_block_comment() {
+        let schema = parse_schema(
+            "schema.sql",
+            "/* per-user inbox */\nCREATE USER TABLE chat_demo.inbox (id TEXT PRIMARY KEY);",
+        )
+        .expect("parse user table after block comment");
+
+        let table = schema.tables.get("chat_demo.inbox").expect("inbox table");
+        assert_eq!(table.kind, Some(TableKind::User));
+    }
 }

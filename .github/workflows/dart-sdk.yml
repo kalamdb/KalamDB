@@ -418,9 +418,17 @@ jobs:
           printf '%s' "$PUB_DEV_CREDENTIALS_JSON" > "$HOME/.pub-cache/credentials.json"
           chmod 600 "$HOME/.pub-cache/credentials.json"
 
-      - name: Publish Dart package
+      - name: Publish kalam_link
         shell: bash
         working-directory: link/sdks/dart/link
+        run: |
+          set -euo pipefail
+          chmod +x ./publish.sh
+          ./publish.sh
+
+      - name: Publish kalam_sync
+        shell: bash
+        working-directory: link/sdks/dart/sync
         run: |
           set -euo pipefail
           chmod +x ./publish.sh

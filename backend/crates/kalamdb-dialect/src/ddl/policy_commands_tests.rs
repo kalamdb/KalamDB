@@ -29,9 +29,8 @@ fn parses_create_policy_with_postgres_defaults() {
 #[test]
 fn parses_create_policy_roles_and_with_check() {
     let statement = CreatePolicyStatement::parse(
-        "CREATE POLICY member_write ON chat.messages AS PERMISSIVE FOR UPDATE \
-         TO user, service USING (owner_id = CURRENT_USER) \
-         WITH CHECK (owner_id = CURRENT_USER)",
+        "CREATE POLICY member_write ON chat.messages AS PERMISSIVE FOR UPDATE TO user, service \
+         USING (owner_id = CURRENT_USER) WITH CHECK (owner_id = CURRENT_USER)",
         &default_namespace(),
     )
     .expect("policy should parse");
@@ -40,7 +39,10 @@ fn parses_create_policy_roles_and_with_check() {
     assert_eq!(statement.command, PolicyCommand::Update);
     assert_eq!(
         statement.targets,
-        vec![PolicyTarget::Role(Role::User), PolicyTarget::Role(Role::Service)]
+        vec![
+            PolicyTarget::Role(Role::User),
+            PolicyTarget::Role(Role::Service)
+        ]
     );
     assert_eq!(statement.using_sql.as_deref(), Some("owner_id = CURRENT_USER"));
     assert_eq!(statement.with_check_sql.as_deref(), Some("owner_id = CURRENT_USER"));
@@ -146,12 +148,9 @@ fn classifier_routes_policy_ddl_for_authorized_roles() {
         .expect("authorized role should classify ALTER POLICY");
         assert!(matches!(alter.kind(), SqlStatementKind::AlterPolicy(_)));
 
-        let drop = classify_statement(
-            "DROP POLICY owner_read ON documents",
-            &default_namespace(),
-            role,
-        )
-        .expect("authorized role should classify DROP POLICY");
+        let drop =
+            classify_statement("DROP POLICY owner_read ON documents", &default_namespace(), role)
+                .expect("authorized role should classify DROP POLICY");
         assert!(matches!(drop.kind(), SqlStatementKind::DropPolicy(_)));
     }
 }

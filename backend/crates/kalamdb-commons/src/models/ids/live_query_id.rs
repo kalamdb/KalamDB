@@ -19,12 +19,12 @@ use crate::{encode_prefix, StorageKey};
 /// This avoids the previous `Box::leak` pattern which caused memory leaks (~48MB/24h).
 #[derive(Debug, Clone)]
 pub struct LiveQueryId {
-    pub user_id: UserId,
-    pub connection_id: ConnectionId,
+    pub user_id:         UserId,
+    pub connection_id:   ConnectionId,
     pub subscription_id: String,
     /// Pre-computed string representation for zero-allocation AsRef<str>
     /// Computed once at construction time or after deserialization.
-    cached_string: String,
+    cached_string:       String,
 }
 
 impl Serialize for LiveQueryId {
@@ -47,8 +47,8 @@ impl<'de> Deserialize<'de> for LiveQueryId {
         enum LiveQueryIdRepr {
             String(String),
             Struct {
-                user_id: UserId,
-                connection_id: ConnectionId,
+                user_id:         UserId,
+                connection_id:   ConnectionId,
                 subscription_id: String,
             },
         }

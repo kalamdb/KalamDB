@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum StreamLogRecord {
     Put {
         row_id: StreamTableRowId,
-        row: StreamTableRow,
+        row:    StreamTableRow,
     },
     Delete {
         row_id: StreamTableRowId,

@@ -138,7 +138,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::new("test_storage"),
-            if_exists: false,
+            if_exists:  false,
         };
 
         // User role should be denied
@@ -161,17 +161,18 @@ mod tests {
         // Create a test storage
         let storage_id = format!("test_drop_{}", chrono::Utc::now().timestamp_millis());
         let storage = kalamdb_system::Storage {
-            storage_id: StorageId::from(storage_id.as_str()),
-            storage_name: "Test Drop".to_string(),
-            description: None,
-            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory: "/tmp/test".to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from(storage_id.as_str()),
+            storage_name:           "Test Drop".to_string(),
+            description:            None,
+            storage_type:
+                kalamdb_system::providers::storages::models::StorageType::Filesystem,
+            base_directory:         "/tmp/test".to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: String::new(),
-            user_tables_template: String::new(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
+            user_tables_template:   String::new(),
+            created_at:             chrono::Utc::now().timestamp_millis(),
+            updated_at:             chrono::Utc::now().timestamp_millis(),
         };
         storages_provider.insert_storage(storage).unwrap();
 
@@ -179,7 +180,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::from(storage_id.as_str()),
-            if_exists: false,
+            if_exists:  false,
         };
         let ctx = create_test_context(Role::System);
         let result = handler.execute(stmt, vec![], &ctx).await;
@@ -202,7 +203,7 @@ mod tests {
         let handler = DropStorageHandler::new(app_ctx);
         let stmt = DropStorageStatement {
             storage_id: StorageId::from("nonexistent_storage"),
-            if_exists: false,
+            if_exists:  false,
         };
         let ctx = create_test_context(Role::System);
 

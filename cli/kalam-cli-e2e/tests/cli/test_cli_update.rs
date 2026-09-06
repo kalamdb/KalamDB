@@ -132,8 +132,8 @@ fn build_tar_gz_archive(entry_path: &str, payload: &[u8]) -> Vec<u8> {
 
 struct MockReleaseServer {
     base_url: String,
-    stop: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<()>>,
+    stop:     Arc<AtomicBool>,
+    handle:   Option<thread::JoinHandle<()>>,
 }
 
 impl MockReleaseServer {

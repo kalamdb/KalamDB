@@ -16,6 +16,14 @@ export interface StudioColumn {
 export type StudioTableOptions = Record<string, unknown>;
 export type StudioTableTimestamp = string | number;
 
+export interface StudioTablePolicy {
+  name: string;
+  command: unknown;
+  targets: unknown;
+  usingSql?: string | null;
+  withCheckSql?: string | null;
+}
+
 export interface StudioTable {
   database: string;
   namespace: string;
@@ -23,13 +31,13 @@ export interface StudioTable {
   tableType: string;
   columns: StudioColumn[];
   storageId?: string | null;
-  accessLevel?: string | null;
   useUserStorage?: boolean | null;
   version?: number | null;
   options?: StudioTableOptions | null;
   comment?: string | null;
   updatedAt?: StudioTableTimestamp | null;
   createdAt?: StudioTableTimestamp | null;
+  policies?: StudioTablePolicy[];
 }
 
 export interface StudioNamespace {

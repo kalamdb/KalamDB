@@ -3,6 +3,14 @@ use std::path::Path;
 use kalam_client::KalamLinkClient;
 use kalamdb_commons::NamespaceId;
 
+use super::{
+    load_server_migration_state,
+    recovery_prompt::{
+        migration_recovery_abort_error, prompt_failed_migration_recovery,
+        prompt_stuck_applying_recovery, FailedMigrationDecision, StuckApplyingDecision,
+    },
+    save_server_migration_records, ApplyMigrationOptions,
+};
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
@@ -13,15 +21,6 @@ use crate::{
             MigrationStatus, DRAFT_MIGRATION_FILE,
         },
     },
-};
-
-use super::{
-    load_server_migration_state,
-    recovery_prompt::{
-        migration_recovery_abort_error, prompt_failed_migration_recovery,
-        prompt_stuck_applying_recovery, FailedMigrationDecision, StuckApplyingDecision,
-    },
-    save_server_migration_records, ApplyMigrationOptions,
 };
 
 pub(crate) fn validate_applied_checksums(
@@ -120,7 +119,8 @@ pub(crate) async fn handle_failed_records(
             output.progress_detail(
                 "schema",
                 format!(
-                    "ignoring stale failed migration {} because its local migration file is missing",
+                    "ignoring stale failed migration {} because its local migration file is \
+                     missing",
                     record.migration_id
                 ),
             );
@@ -187,7 +187,8 @@ async fn mark_migration_applied_on_server(
     *state = load_server_migration_state(client, namespace).await?;
     if state.has_failed_migration_id(migration_id) {
         return Err(CLIError::ConfigurationError(format!(
-            "migration {migration_id} is still failed on the server after skip; run `kalam migration repair {migration_id} --mark-applied` or inspect system.migrations"
+            "migration {migration_id} is still failed on the server after skip; run `kalam \
+             migration repair {migration_id} --mark-applied` or inspect system.migrations"
         )));
     }
     if !state.is_applied(migration_id) {
@@ -318,17 +319,17 @@ mod tests {
     fn failed_server_record_without_local_file_is_ignored_by_partition() {
         let temp = tempfile::TempDir::new().unwrap();
         let record = MigrationRecord {
-            migration_id: "0002_auto_missing.sql".into(),
-            namespace: kalamdb_commons::NamespaceId::new("test1"),
+            migration_id:  "0002_auto_missing.sql".into(),
+            namespace:     kalamdb_commons::NamespaceId::new("test1"),
             migration_key: None,
-            name: "auto_missing".into(),
-            checksum: "abc".into(),
-            status: MigrationStatus::Failed,
-            started_at: None,
-            finished_at: None,
+            name:          "auto_missing".into(),
+            checksum:      "abc".into(),
+            status:        MigrationStatus::Failed,
+            started_at:    None,
+            finished_at:   None,
             error_message: Some("table already exists".into()),
-            sql: None,
-            source: Some("0002_auto_missing.sql".into()),
+            sql:           None,
+            source:        Some("0002_auto_missing.sql".into()),
             kalam_version: None,
         };
 

@@ -83,7 +83,7 @@ pub(in crate::ws) fn spawn_upgrade_auth(
 ) -> PendingUpgradeAuth {
     let auth_request = auth.auth_request;
     PendingUpgradeAuth {
-        protocol: auth.protocol,
+        protocol:  auth.protocol,
         auth_task: tokio::spawn(async move {
             if !rate_limiter.check_auth_rate(&client_ip) {
                 return Err(PendingAuthError::RateLimited);

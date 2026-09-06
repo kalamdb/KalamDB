@@ -5,9 +5,9 @@ use kalamdb_commons::models::{Role, SessionOrigin, TransactionId, TransactionSta
 /// Live transaction state resolved from the coordinator for a connection session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSessionTransaction {
-    session_id: String,
-    transaction_id: TransactionId,
-    transaction_state: TransactionState,
+    session_id:             String,
+    transaction_id:         TransactionId,
+    transaction_state:      TransactionState,
     transaction_has_writes: bool,
 }
 
@@ -45,9 +45,9 @@ impl LiveSessionTransaction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendAuth {
-    pub user_id: UserId,
-    pub role: Role,
-    pub auth_mode: String,
+    pub user_id:             UserId,
+    pub role:                Role,
+    pub auth_mode:           String,
     pub lease_expires_at_ms: i64,
 }
 
@@ -98,17 +98,17 @@ impl BackendSessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendSession {
-    session_id: String,
-    origin: SessionOrigin,
-    auth: BackendAuth,
-    current_schema: Option<String>,
-    block_state: BackendSessionState,
-    pinned_transaction_id: Option<TransactionId>,
+    session_id:             String,
+    origin:                 SessionOrigin,
+    auth:                   BackendAuth,
+    current_schema:         Option<String>,
+    block_state:            BackendSessionState,
+    pinned_transaction_id:  Option<TransactionId>,
     transaction_has_writes: bool,
-    client_addr: Option<String>,
-    opened_at_ms: i64,
-    last_seen_at_ms: i64,
-    last_method: Option<String>,
+    client_addr:            Option<String>,
+    opened_at_ms:           i64,
+    last_seen_at_ms:        i64,
+    last_method:            Option<String>,
 }
 
 impl BackendSession {
@@ -204,39 +204,39 @@ impl BackendSession {
 
     pub fn snapshot(&self) -> BackendSessionSnapshot {
         BackendSessionSnapshot {
-            session_id: self.session_id.clone(),
-            origin: self.origin,
-            state: self.block_state.as_view_label().to_string(),
-            current_schema: self.current_schema.clone(),
-            transaction_id: self.pinned_transaction_id.clone(),
-            transaction_state: None,
+            session_id:             self.session_id.clone(),
+            origin:                 self.origin,
+            state:                  self.block_state.as_view_label().to_string(),
+            current_schema:         self.current_schema.clone(),
+            transaction_id:         self.pinned_transaction_id.clone(),
+            transaction_state:      None,
             transaction_has_writes: self.transaction_has_writes,
-            client_addr: self.client_addr.clone(),
-            opened_at_ms: self.opened_at_ms,
-            last_seen_at_ms: self.last_seen_at_ms,
-            last_method: self.last_method.clone(),
-            authenticated_user_id: Some(self.auth.user_id.clone()),
-            authenticated_role: self.auth.role,
+            client_addr:            self.client_addr.clone(),
+            opened_at_ms:           self.opened_at_ms,
+            last_seen_at_ms:        self.last_seen_at_ms,
+            last_method:            self.last_method.clone(),
+            authenticated_user_id:  Some(self.auth.user_id.clone()),
+            authenticated_role:     self.auth.role,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendSessionSnapshot {
-    pub session_id: String,
-    pub origin: SessionOrigin,
-    pub state: String,
-    pub current_schema: Option<String>,
-    pub transaction_id: Option<TransactionId>,
-    pub transaction_state: Option<TransactionState>,
+    pub session_id:             String,
+    pub origin:                 SessionOrigin,
+    pub state:                  String,
+    pub current_schema:         Option<String>,
+    pub transaction_id:         Option<TransactionId>,
+    pub transaction_state:      Option<TransactionState>,
     pub transaction_has_writes: bool,
-    pub client_addr: Option<String>,
-    pub opened_at_ms: i64,
-    pub last_seen_at_ms: i64,
-    pub last_method: Option<String>,
-    pub authenticated_user_id: Option<UserId>,
+    pub client_addr:            Option<String>,
+    pub opened_at_ms:           i64,
+    pub last_seen_at_ms:        i64,
+    pub last_method:            Option<String>,
+    pub authenticated_user_id:  Option<UserId>,
     /// Role established at `open_session` (System/DBA for privileged PG bridge logins).
-    pub authenticated_role: Role,
+    pub authenticated_role:     Role,
 }
 
 #[cfg(test)]

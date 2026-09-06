@@ -2,14 +2,11 @@
 
 use arrow::record_batch::RecordBatch;
 use kalamdb_commons::{
-    conversions::mask_sensitive_rows_for_role,
-    models::Role,
-    schemas::SchemaField,
+    conversions::mask_sensitive_rows_for_role, models::Role, schemas::SchemaField,
 };
 use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
 
-use super::super::models::QueryResult;
-use super::schema_response_cache::cached_sql_schema;
+use super::{super::models::QueryResult, schema_response_cache::cached_sql_schema};
 
 /// Convert Arrow RecordBatches to QueryResult
 pub fn record_batch_to_query_result(

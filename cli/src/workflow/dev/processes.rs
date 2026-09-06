@@ -19,9 +19,9 @@ use crate::{
 };
 
 pub struct ManagedProcess {
-    pub pid: u32,
-    pub kill_scope: SupervisedKillScope,
-    pub child: Child,
+    pub pid:         u32,
+    pub kill_scope:  SupervisedKillScope,
+    pub child:       Child,
     pub stdout_task: JoinHandle<()>,
     pub stderr_task: JoinHandle<()>,
 }
@@ -233,8 +233,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::WorkflowLoggingPolicy,
-        output::WorkflowOutput,
+        config::WorkflowLoggingPolicy, output::WorkflowOutput,
         workflow::project::resolve::load_project_dotenv,
     };
 

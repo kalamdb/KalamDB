@@ -10,33 +10,33 @@ use kalamdb_commons::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableStatement {
     /// Table name (without namespace prefix)
-    pub table_name: TableName,
+    pub table_name:              TableName,
     /// Namespace ID
-    pub namespace_id: NamespaceId,
+    pub namespace_id:            NamespaceId,
     /// Table type (User, Shared, or Stream)
-    pub table_type: TableType,
+    pub table_type:              TableType,
     /// Arrow schema for the table
-    pub schema: Arc<Schema>,
+    pub schema:                  Arc<Schema>,
     /// Column default values (column_name -> default_spec)
-    pub column_defaults: HashMap<String, ColumnDefault>,
+    pub column_defaults:         HashMap<String, ColumnDefault>,
     /// PRIMARY KEY column name (if detected)
-    pub primary_key_column: Option<String>,
+    pub primary_key_column:      Option<String>,
     /// Storage ID - References system.storages (defaults to 'local')
-    pub storage_id: Option<StorageId>,
+    pub storage_id:              Option<StorageId>,
     /// Use user-specific storage - Allow per-user storage override (USER tables only)
-    pub use_user_storage: bool,
+    pub use_user_storage:        bool,
     /// Flush policy
-    pub flush_policy: Option<FlushPolicy>,
+    pub flush_policy:            Option<FlushPolicy>,
     /// Deleted row retention in hours
     pub deleted_retention_hours: Option<u32>,
     /// TTL for stream tables in seconds (STREAM tables only)
-    pub ttl_seconds: Option<u64>,
+    pub ttl_seconds:             Option<u64>,
     /// Compression algorithm for Parquet cold-storage files.
-    pub compression: Option<TableCompression>,
+    pub compression:             Option<TableCompression>,
     /// Stream eviction strategy (time_based, size_based, hybrid)
-    pub eviction_strategy: Option<String>,
+    pub eviction_strategy:       Option<String>,
     /// Maximum stream size in bytes (0 = unlimited)
-    pub max_stream_size_bytes: Option<u64>,
+    pub max_stream_size_bytes:   Option<u64>,
     /// If true, don't error if table already exists
-    pub if_not_exists: bool,
+    pub if_not_exists:           bool,
 }

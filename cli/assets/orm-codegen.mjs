@@ -18,10 +18,10 @@ if (typeof client.initialize === 'function') {
   await client.initialize();
 }
 
-const schema = await generateSchema(
-  client,
-  namespace ? { namespaces: [namespace] } : {},
-);
+const schema = await generateSchema(client, {
+  ...(namespace ? { namespaces: [namespace] } : {}),
+  includeSystemColumns: true,
+});
 writeFileSync(out, schema);
 
 if (typeof client.disconnect === 'function') {

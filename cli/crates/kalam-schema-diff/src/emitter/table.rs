@@ -1,6 +1,15 @@
 use std::collections::BTreeSet;
 
-use crate::{model::Table, sql::same_option_value};
+use crate::{
+    emitter::{
+        add_column::emit_add_column,
+        drop_column::emit_drop_column,
+        flush_policy::emit_flush_policy_change,
+        modify_column::emit_modify_column,
+        set_tblproperties::{emit_removed_option_comments, emit_set_tblproperties},
+    },
+    model::Table,
+};
 
 pub(super) fn diff_existing_table(
     current: &Table,
@@ -8,47 +17,24 @@ pub(super) fn diff_existing_table(
     allow_drop: bool,
     out: &mut Vec<String>,
 ) {
-    let mut emitted_for_table = false;
+    let start_len = out.len();
 
     if current.kind != target.kind {
         out.push(format!(
             "-- manual review required: table {} changed kind from {:?} to {:?}",
             target.name_sql, current.kind, target.kind
         ));
-        emitted_for_table = true;
     }
 
-    let set_options = target
-        .options
-        .iter()
-        .filter_map(|(key, target_value)| match current.options.get(key) {
-            Some(current_value) if same_option_value(current_value, target_value) => None,
-            _ => Some(format!("{key} = {target_value}")),
-        })
-        .collect::<Vec<_>>();
-
-    if !set_options.is_empty() {
-        out.push(format!(
-            "ALTER TABLE {} SET TBLPROPERTIES ({});",
-            target.name_sql,
-            set_options.join(", ")
-        ));
-        emitted_for_table = true;
+    if let Some(statement) = emit_set_tblproperties(current, target) {
+        out.push(statement);
     }
 
-    for removed_option in current.options.keys() {
-        if !target.options.contains_key(removed_option) {
-            out.push(format!(
-                "-- manual review required: option {} was removed from table {}",
-                removed_option, target.name_sql
-            ));
-            out.push(format!(
-                "-- recommended grammar to add: ALTER TABLE {} RESET TBLPROPERTIES ({});",
-                target.name_sql, removed_option
-            ));
-            emitted_for_table = true;
-        }
+    if let Some(statement) = emit_flush_policy_change(current, target) {
+        out.push(statement);
     }
+
+    emit_removed_option_comments(current, target, out);
 
     let current_constraints = current.constraints.iter().cloned().collect::<BTreeSet<_>>();
     let target_constraints = target.constraints.iter().cloned().collect::<BTreeSet<_>>();
@@ -60,7 +46,6 @@ pub(super) fn diff_existing_table(
         ));
         out.push(format!("-- current constraints: {current_constraints:?}"));
         out.push(format!("-- target constraints: {target_constraints:?}"));
-        emitted_for_table = true;
     }
 
     for column_key in &target.column_order {
@@ -74,24 +59,14 @@ pub(super) fn diff_existing_table(
                             "-- manual review required: primary key changed for {}.{}",
                             target.name_sql, target_column.name_sql
                         ));
-                        emitted_for_table = true;
                         continue;
                     }
 
-                    out.push(format!(
-                        "ALTER TABLE {} MODIFY COLUMN {};",
-                        target.name_sql,
-                        target_column.modify_fragment()
-                    ));
-                    emitted_for_table = true;
+                    out.push(emit_modify_column(target, target_column));
                 }
             },
             None => {
-                out.push(format!(
-                    "ALTER TABLE {} ADD COLUMN {};",
-                    target.name_sql, target_column.create_sql
-                ));
-                emitted_for_table = true;
+                out.push(emit_add_column(target, target_column));
             },
         }
     }
@@ -99,59 +74,11 @@ pub(super) fn diff_existing_table(
     for column_key in &current.column_order {
         if !target.columns.contains_key(column_key) {
             let current_column = current.columns.get(column_key).expect("current column exists");
-
-            if allow_drop {
-                out.push(format!(
-                    "ALTER TABLE {} DROP COLUMN {};",
-                    target.name_sql, current_column.name_sql
-                ));
-            } else {
-                out.push(format!(
-                    "-- destructive change skipped: column {}.{} exists in current schema but not in target schema",
-                    target.name_sql, current_column.name_sql
-                ));
-                out.push(format!(
-                    "-- rerun with destructive changes enabled to emit: ALTER TABLE {} DROP COLUMN {};",
-                    target.name_sql, current_column.name_sql
-                ));
-            }
-
-            emitted_for_table = true;
+            emit_drop_column(target, current_column, allow_drop, out);
         }
     }
 
-    if emitted_for_table {
+    if out.len() > start_len {
         out.push(String::new());
     }
-}
-
-pub(super) fn emit_create_table(table: &Table) -> String {
-    let mut parts = Vec::new();
-
-    for column_key in &table.column_order {
-        let column = table.columns.get(column_key).expect("column exists");
-        parts.push(column.create_sql.clone());
-    }
-
-    for constraint in &table.constraints {
-        parts.push(constraint.clone());
-    }
-
-    let kind_prefix = table.kind.map(|kind| kind.as_create_prefix()).unwrap_or("");
-    let mut sql =
-        format!("CREATE {}TABLE {} (\n  {}\n)", kind_prefix, table.name_sql, parts.join(",\n  "));
-
-    if !table.options.is_empty() {
-        let options = table
-            .options
-            .iter()
-            .map(|(key, value)| format!("{key} = {value}"))
-            .collect::<Vec<_>>()
-            .join(",\n  ");
-
-        sql.push_str(&format!("\nWITH (\n  {options}\n)"));
-    }
-
-    sql.push(';');
-    sql
 }

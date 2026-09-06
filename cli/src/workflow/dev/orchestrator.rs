@@ -5,10 +5,12 @@ use std::{fs, time::SystemTime};
 use tokio::time::{self, Duration};
 
 use crate::{
+    agent_error::AgentError,
     error::{CLIError, Result},
     output::{WorkflowDisplayMode, WorkflowOutput},
     terminal_ui::ProgressTaskStatus,
     workflow::{
+        agent::destructive_schema_objects,
         dev::{
             draft_prompt::{
                 draft_migration_exists, draft_migration_path, prompt_for_draft_application,
@@ -18,6 +20,7 @@ use crate::{
             precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
             processes::ProcessSupervisor,
             server::{prepare_local_server_launch, wait_for_server_ready},
+            session::wait_for_dev_shutdown_signal,
             watch::{
                 run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
                 update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
@@ -48,8 +51,9 @@ pub enum SchemaPipelineState {
 }
 
 pub struct DevSessionOptions {
-    pub force: bool,
+    pub force:        bool,
     pub display_mode: WorkflowDisplayMode,
+    pub agent:        bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +64,7 @@ enum DevLoopAction {
 
 #[derive(Debug)]
 struct DevSchemaLoop {
-    force: bool,
+    force:        bool,
     schema_mtime: Option<SystemTime>,
 }
 
@@ -116,7 +120,7 @@ impl DevSchemaLoop {
         ctx: &WorkflowContext,
         output: &WorkflowOutput,
     ) -> Result<DevLoopAction> {
-        if self.force {
+        if self.force && !output.is_agent() {
             return Ok(DevLoopAction::Continue);
         }
 
@@ -124,6 +128,10 @@ impl DevSchemaLoop {
             let draft_path = draft_migration_path(ctx);
             if !draft_migration_exists(&draft_path) {
                 return Ok(DevLoopAction::Continue);
+            }
+
+            if output.is_agent() {
+                return self.apply_agent_draft(ctx, output, &draft_path).await;
             }
 
             match prompt_for_draft_application(output, &ctx.project_root, &draft_path)? {
@@ -135,6 +143,21 @@ impl DevSchemaLoop {
                 },
             }
         }
+    }
+
+    async fn apply_agent_draft(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+        draft_path: &std::path::Path,
+    ) -> Result<DevLoopAction> {
+        let sql = fs::read_to_string(draft_path).unwrap_or_default();
+        let objects = destructive_schema_objects(&sql);
+        if !objects.is_empty() && !self.force {
+            return Err(AgentError::destructive_schema_change(&objects.join(", ")).into());
+        }
+        self.apply_confirmed_draft(ctx, output).await?;
+        Ok(DevLoopAction::Continue)
     }
 
     async fn apply_confirmed_draft(
@@ -281,14 +304,14 @@ async fn run_dev_session_inner(
                 let message =
                     dev_local_kalamdb_server_start_failed(&launch.program, &error.to_string());
                 output.status(&message);
-                return Err(CLIError::ConfigurationError(message));
+                return Err(map_server_start_error(output, message));
             }
             *local_server_managed = true;
             wait_for_server_ready(&precheck.environment.url, &launch.program, output, supervisor)
                 .await
                 .map_err(|error| {
                     output.status(error.to_string());
-                    error
+                    map_server_start_error(output, error.to_string())
                 })?;
             ensure_local_dev_authentication_ready(
                 ctx,
@@ -321,7 +344,12 @@ async fn run_dev_session_inner(
                 &process_env,
             )
             .await?;
+        for (name, command) in &ctx.config.dev.processes {
+            output.agent_event("KALAM_APP_STARTED", &[("name", name), ("command", command)]);
+        }
     }
+
+    emit_agent_ready(ctx, output, &precheck.environment.url);
 
     let watch_enabled = precheck.watch_enabled;
     if watch_enabled {
@@ -333,16 +361,14 @@ async fn run_dev_session_inner(
     let mut watch_interval = time::interval(Duration::from_secs(SCHEMA_WATCH_INTERVAL_SECS));
     watch_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
-    let ctrl_c = tokio::signal::ctrl_c();
-    tokio::pin!(ctrl_c);
+    let shutdown = wait_for_dev_shutdown_signal();
+    tokio::pin!(shutdown);
 
     loop {
         tokio::select! {
-            result = &mut ctrl_c => {
-                result.map_err(|e| crate::error::CLIError::ConfigurationError(
-                    format!("ctrl-c handler failed: {e}")
-                ))?;
-                output.status("shutting down (Ctrl+C)");
+            result = &mut shutdown => {
+                result?;
+                output.status("shutting down");
                 break;
             }
             _ = watch_interval.tick(), if watch_enabled => {
@@ -356,16 +382,26 @@ async fn run_dev_session_inner(
                 for (name, code) in &finished {
                     output.status(format!("process {name} exited with code {code}"));
                 }
-                let managed_count = supervisor.count();
-                if managed_count == 0
-                    && (*local_server_managed || !ctx.config.dev.processes.is_empty())
-                {
-                    output.status("all dev processes exited");
-                    break;
-                }
-                if managed_count == 0 && !watch_enabled {
-                    output.status("dev session completed");
-                    break;
+                match next_dev_loop_action_after_process_reap(
+                    supervisor.count(),
+                    watch_enabled,
+                    *local_server_managed,
+                ) {
+                    DevLoopAction::Continue => {
+                        if !finished.is_empty() && watch_enabled {
+                            output.status(
+                                "schema watch still active; kalam dev will keep running",
+                            );
+                        }
+                    },
+                    DevLoopAction::Stop => {
+                        if *local_server_managed || !ctx.config.dev.processes.is_empty() {
+                            output.status("all dev processes exited");
+                        } else {
+                            output.status("dev session completed");
+                        }
+                        break;
+                    },
                 }
             }
         }
@@ -399,9 +435,14 @@ async fn run_initial_schema_pipeline(
     match run_schema_pipeline(ctx, output, force).await {
         Ok(()) => {
             finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
+            emit_schema_applied(ctx, output);
             Ok(SchemaPipelineState::Synced)
         },
         Err(error) => {
+            if output.is_agent() {
+                emit_schema_failure(output, &error);
+                return Err(map_schema_pipeline_error(error));
+            }
             if should_stop_dev_for_schema_pipeline_error(&error) {
                 emit_schema_failure(output, &error);
                 return Err(error);
@@ -446,9 +487,14 @@ async fn run_confirmed_schema_draft_pipeline(
     match apply_confirmed_schema_draft(ctx, output).await {
         Ok(()) => {
             finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
+            emit_schema_applied(ctx, output);
             Ok(SchemaPipelineState::Synced)
         },
         Err(error) => {
+            if output.is_agent() {
+                emit_schema_failure(output, &error);
+                return Err(map_schema_pipeline_error(error));
+            }
             if should_stop_dev_for_schema_pipeline_error(&error) {
                 emit_schema_failure(output, &error);
                 return Err(error);
@@ -504,8 +550,11 @@ fn restore_schema_baseline(ctx: &WorkflowContext, schema: &str) -> Result<()> {
 async fn reset_remote_namespace(ctx: &WorkflowContext, output: &WorkflowOutput) -> Result<()> {
     let environment = ctx.resolved_environment()?;
     let client = build_workflow_client(ctx, &environment)?;
-    output.status(format!("dropping namespace {} before reset", environment.namespace));
-    drop_namespace_if_exists(&client, &environment.namespace).await?;
+    {
+        let _spinner = output
+            .status_spinner(format!("dropping namespace {} before reset", environment.namespace));
+        drop_namespace_if_exists(&client, &environment.namespace).await?;
+    }
     output.status(format!("reset namespace {}", environment.namespace));
     Ok(())
 }
@@ -548,6 +597,56 @@ fn reset_local_schema_state(ctx: &WorkflowContext, output: &WorkflowOutput) -> R
     Ok(())
 }
 
+fn map_server_start_error(output: &WorkflowOutput, message: String) -> CLIError {
+    if output.is_agent() {
+        AgentError::server_start_failed(&message).into()
+    } else {
+        CLIError::ConfigurationError(message)
+    }
+}
+
+fn map_schema_pipeline_error(error: CLIError) -> CLIError {
+    if matches!(error, CLIError::Agent(_)) {
+        return error;
+    }
+    AgentError::schema_failed(&error.to_string()).into()
+}
+
+fn emit_schema_applied(ctx: &WorkflowContext, output: &WorkflowOutput) {
+    let generated = if ctx.config.schema.languages.is_empty() {
+        "none".to_string()
+    } else {
+        ctx.config.schema.languages.join(",")
+    };
+    output.agent_event("KALAM_SCHEMA_APPLIED", &[("generated", &generated)]);
+}
+
+fn emit_agent_ready(ctx: &WorkflowContext, output: &WorkflowOutput, url: &str) {
+    let namespace = ctx
+        .resolved_environment()
+        .map(|env| env.namespace.as_str().to_string())
+        .unwrap_or_else(|_| ctx.config.project.name.clone());
+    let schema = if ctx.config.dev.apply_schema {
+        "applied"
+    } else {
+        "skipped"
+    };
+    let types = if ctx.config.schema.languages.is_empty() {
+        "none".to_string()
+    } else {
+        ctx.config.schema.languages.join(",")
+    };
+    output.agent_event(
+        "KALAM_READY",
+        &[
+            ("url", url),
+            ("namespace", &namespace),
+            ("schema", schema),
+            ("types", &types),
+        ],
+    );
+}
+
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
     emit_task_failure(output, "schema", format!("Schema failed: {error}"), || {
         output.error(format!("schema pipeline failed: {error}"));
@@ -555,7 +654,8 @@ fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) 
             output.warn("schema pipeline aborted; stopping kalam dev");
         } else {
             output.warn(
-                "schema pipeline paused; managed processes continue (retry with `kalam dev --force`)",
+                "schema pipeline paused; managed processes continue (retry with `kalam dev \
+                 --force`)",
             );
         }
     });
@@ -563,6 +663,25 @@ fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) 
 
 fn should_stop_dev_for_schema_pipeline_error(error: &crate::error::CLIError) -> bool {
     matches!(error, crate::error::CLIError::MigrationRecoveryAborted(_))
+}
+
+/// Decide whether the `kalam dev` loop should keep running after reaping children.
+///
+/// When schema watch is enabled and this session is not supervising the local
+/// server, a crashed app process must not tear down the session. The reused
+/// server is still available for schema apply.
+fn next_dev_loop_action_after_process_reap(
+    managed_count: usize,
+    watch_enabled: bool,
+    local_server_managed: bool,
+) -> DevLoopAction {
+    if managed_count > 0 {
+        return DevLoopAction::Continue;
+    }
+    if watch_enabled && !local_server_managed {
+        return DevLoopAction::Continue;
+    }
+    DevLoopAction::Stop
 }
 
 fn project_ready_message(project_name: &str, project_root: &std::path::Path) -> String {
@@ -598,7 +717,31 @@ mod tests {
         );
         assert_eq!(
             message,
-            "Local server ready at http://localhost:2900 (full log: /tmp/demo/.kalam/logs/kalam.log)"
+            "Local server ready at http://localhost:2900 (full log: \
+             /tmp/demo/.kalam/logs/kalam.log)"
         );
+    }
+
+    #[test]
+    fn reused_server_keeps_watching_after_app_process_exits() {
+        assert_eq!(
+            next_dev_loop_action_after_process_reap(0, true, false),
+            DevLoopAction::Continue
+        );
+    }
+
+    #[test]
+    fn managed_server_session_stops_when_all_children_exit() {
+        assert_eq!(next_dev_loop_action_after_process_reap(0, true, true), DevLoopAction::Stop);
+    }
+
+    #[test]
+    fn session_without_watch_stops_when_no_children_remain() {
+        assert_eq!(next_dev_loop_action_after_process_reap(0, false, false), DevLoopAction::Stop);
+    }
+
+    #[test]
+    fn remaining_managed_process_keeps_the_session_running() {
+        assert_eq!(next_dev_loop_action_after_process_reap(1, true, true), DevLoopAction::Continue);
     }
 }

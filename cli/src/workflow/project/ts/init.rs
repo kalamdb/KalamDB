@@ -150,15 +150,19 @@ where
         return Ok(());
     };
 
-    output.status(manager.install_description());
-    match installer(root, manager) {
+    let result = {
+        let _spinner = output.status_spinner(manager.install_description());
+        installer(root, manager)
+    };
+    match result {
         Ok(()) => {
             output.status(manager.installed_success_message());
             Ok(())
         },
         Err(error) => {
             output.warn(
-                "dependency install failed, but project files are on disk — see the error details below",
+                "dependency install failed, but project files are on disk — see the error details \
+                 below",
             );
             Err(error)
         },
@@ -177,6 +181,7 @@ pub fn apply_scaffold(
         ("project_name", project_name),
         ("server_url", server_url),
         ("namespace", namespace),
+        ("kalam_sdk_version", crate::CLI_VERSION),
     ];
     for file in template.files {
         let destination_path = root.join(file.project_path);
@@ -205,6 +210,10 @@ pub fn apply_scaffold(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
+    use tempfile::TempDir;
+
     use super::*;
     use crate::{
         config::WorkflowLoggingPolicy,
@@ -216,8 +225,6 @@ mod tests {
             ts::package_manager::{detect_installed_package_managers, PackageManager},
         },
     };
-    use std::{fs, path::PathBuf};
-    use tempfile::TempDir;
 
     fn block_on_init<T>(future: impl std::future::Future<Output = T>) -> T {
         tokio::runtime::Runtime::new().expect("tokio runtime").block_on(future)
@@ -236,15 +243,15 @@ mod tests {
             let mut observed: Option<(PathBuf, PackageManager)> = None;
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name: Some("demo-ts".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: Some("simple-live".into()),
+                    name:            Some("demo-ts".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
                 |root, selected| {
@@ -278,15 +285,15 @@ mod tests {
             let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name: Some("demo-ts".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: Some("simple-live".into()),
+                    name:            Some("demo-ts".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
                 |_, _| Ok(()),
@@ -316,15 +323,15 @@ mod tests {
             let mut called = false;
             block_on_init(run_init_with_installer(
                 InitOptions {
-                    name: Some("demo-ts".into()),
-                    schema_mode: Some(SchemaMode::Sql),
-                    languages: Some(vec!["typescript".into()]),
-                    template: Some("simple-live".into()),
+                    name:            Some("demo-ts".into()),
+                    schema_mode:     Some(SchemaMode::Sql),
+                    languages:       Some(vec!["typescript".into()]),
+                    template:        Some("simple-live".into()),
                     package_manager: Some(manager),
-                    server_mode: Some(ServerMode::Local),
-                    server_url: None,
-                    yes: true,
-                    cwd: temp.path().to_path_buf(),
+                    server_mode:     Some(ServerMode::Local),
+                    server_url:      None,
+                    yes:             true,
+                    cwd:             temp.path().to_path_buf(),
                 },
                 &output,
                 |_, _| {
@@ -335,6 +342,29 @@ mod tests {
             .expect("init should succeed");
 
             assert!(!called, "install should be skipped when env var is set");
+        });
+    }
+
+    #[test]
+    fn install_dependencies_emits_running_and_success_status() {
+        crate::workflow::test_support::without_test_env_var(SKIP_PACKAGE_INSTALL_ENV, || {
+            let temp = TempDir::new().unwrap();
+            let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled())
+                .with_animations(false);
+            install_dependencies(temp.path(), Some(PackageManager::Npm), &output, &mut |_, _| {
+                Ok(())
+            })
+            .expect("install should succeed");
+
+            let lines = output.test_buffered_terminal_lines();
+            assert!(
+                lines.iter().any(|line| line == "[cli] installing npm dependencies"),
+                "expected running status, got {lines:?}"
+            );
+            assert!(
+                lines.iter().any(|line| line == "[cli] installed npm dependencies"),
+                "expected success status, got {lines:?}"
+            );
         });
     }
 
@@ -353,9 +383,11 @@ mod tests {
     fn project_sample_options_include_repository_examples() {
         let available = crate::workflow::project::ts::templates::available();
         let options = project_sample_options(&available);
+        let example = crate::workflow::project::repository_examples::find("chat-with-ai")
+            .expect("chat-with-ai example");
         assert!(
-            options.iter().any(|option| option.label == "chat-with-ai"
-                && option.description == Some("Topic-driven React chat with an agent worker")),
+            options.iter().any(|option| option.label == example.id
+                && option.description == Some(example.description)),
             "expected chat-with-ai repository example to be offered during init"
         );
     }
@@ -394,9 +426,19 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "package.json")
             .expect("package.json template");
-        let rendered_package =
-            render_template_pairs(package_json.content, &[("project_name", "demo-app")]).unwrap();
+        let rendered_package = render_template_pairs(
+            package_json.content,
+            &[
+                ("project_name", "demo-app"),
+                ("kalam_sdk_version", crate::CLI_VERSION),
+            ],
+        )
+        .unwrap();
         assert!(rendered_package.contains(r#""name": "demo-app""#));
+        assert!(
+            rendered_package.contains(&format!(r#""@kalamdb/client": "{}""#, crate::CLI_VERSION))
+        );
+        assert!(!rendered_package.contains("\"latest\""));
 
         let starter = template
             .files
@@ -416,6 +458,7 @@ mod tests {
         assert!(rendered_starter.contains("liveTable"));
         assert!(rendered_starter.contains("createClient"));
         assert!(rendered_starter.contains("dotenv/config"));
+        assert!(!rendered_starter.contains("30_000"));
         assert!(rendered_package.contains("\"dotenv\""));
     }
 

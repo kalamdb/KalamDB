@@ -47,15 +47,14 @@ api_version = "v1"
 # ui_path = "./ui/dist"
 
 [postgres_wire]
-# PostgreSQL wire protocol listener. Disabled by default while the
-# direct pgwire adapter is completed and validated.
+# PostgreSQL wire protocol listener. Disabled by default.
+# When enabled, pg_catalog / information_schema shims are registered automatically.
 enabled = false
 host = "127.0.0.1"
 port = 5432
 tls_enabled = false
 # tls_cert_path = "./certs/postgres-wire.crt"
 # tls_key_path = "./certs/postgres-wire.key"
-pg_catalog_enabled = false
 prepared_statement_limit = 1024
 portal_limit = 1024
 

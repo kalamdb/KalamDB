@@ -19,13 +19,13 @@ pub enum OnConflictUpdateValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OnConflictUpdateAssignment {
     pub column_name: String,
-    pub value: OnConflictUpdateValue,
+    pub value:       OnConflictUpdateValue,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsedOnConflictAction {
     DoUpdate {
-        assignments: Vec<OnConflictUpdateAssignment>,
+        assignments:  Vec<OnConflictUpdateAssignment>,
         where_clause: Option<Expr>,
     },
     DoNothing,
@@ -71,7 +71,7 @@ pub fn parse_on_conflict_action_with_params(
 ) -> DmlParseResult<ParsedOnConflictAction> {
     match &on_conflict.action {
         OnConflictAction::DoUpdate(do_update) => Ok(ParsedOnConflictAction::DoUpdate {
-            assignments: build_on_conflict_update_assignments_with_params(
+            assignments:  build_on_conflict_update_assignments_with_params(
                 &do_update.assignments,
                 params,
             )?,
@@ -210,8 +210,8 @@ mod tests {
     #[test]
     fn parse_on_conflict_action_parses_excluded_assignments() {
         let on_conflict = parse_on_conflict(
-            "INSERT INTO t (id, name) VALUES (1, 'a') \
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+            "INSERT INTO t (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET name = \
+             EXCLUDED.name",
         );
         let action = parse_on_conflict_action(&on_conflict).expect("action should parse");
         assert!(matches!(
@@ -231,8 +231,7 @@ mod tests {
     #[test]
     fn parse_on_conflict_action_resolves_assignment_placeholders() {
         let on_conflict = parse_on_conflict(
-            "INSERT INTO t (id, name) VALUES ($1, $2) \
-             ON CONFLICT (id) DO UPDATE SET name = $3",
+            "INSERT INTO t (id, name) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET name = $3",
         );
 
         let action = parse_on_conflict_action_with_params(

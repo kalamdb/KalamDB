@@ -43,7 +43,8 @@ pub(crate) fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSetting
     cf_opts.set_prefix_extractor(SliceTransform::create(
         "kalam-partition-prefix",
         physical_key_prefix_transform,
-        Some(physical_key_prefix_in_domain)));
+        Some(physical_key_prefix_in_domain),
+    ));
     cf_opts.set_memtable_prefix_bloom_ratio(MEMTABLE_PREFIX_BLOOM_RATIO);
     cf_opts.set_memtable_whole_key_filtering(true);
     if profile == ColumnFamilyProfile::HotData {
@@ -53,7 +54,8 @@ pub(crate) fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSetting
 
 fn profile_settings(
     settings: &RocksDbSettings,
-    profile: ColumnFamilyProfile) -> &RocksDbCfProfileSettings {
+    profile: ColumnFamilyProfile,
+) -> &RocksDbCfProfileSettings {
     match profile {
         ColumnFamilyProfile::SystemMeta => &settings.cf_profiles.system_meta,
         ColumnFamilyProfile::SystemIndex => &settings.cf_profiles.system_index,

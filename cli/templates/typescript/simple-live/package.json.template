@@ -7,8 +7,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@kalamdb/client": "latest",
-    "@kalamdb/orm": "latest",
+    "@kalamdb/client": "{{kalam_sdk_version}}",
+    "@kalamdb/orm": "{{kalam_sdk_version}}",
     "dotenv": "^16.6.1",
     "drizzle-orm": "^0.45.2"
   },

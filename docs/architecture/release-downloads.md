@@ -148,8 +148,8 @@ flowchart TD
     L --> M["Verify archive SHA-256"]
     M --> N["Extract archive to temp dir"]
     N --> O["Find exact expected binary name"]
-    O --> P["Copy to sibling temp file with executable bit"]
-    P --> Q["Rename over current executable"]
+    O --> P["Stage verified binary next to the install path"]
+    P --> Q["Replace the on-disk executable"]
 ```
 
 The same-version path uses `versions.json` build metadata instead of executing a downloaded binary
@@ -160,14 +160,15 @@ The update command verifies the archive before extraction and again before insta
 verification is intentionally cheap and keeps the install branch protected if future changes alter
 the pre-install flow.
 
-Replacement is local and atomic where the platform supports atomic rename:
+Replacement finishes before `kalam update` returns, so the next invocation uses the new binary
+without restarting the shell or rebooting:
 
-1. Copy the verified extracted binary to a staging path beside the install target (Unix) or in the update temp directory (Windows).
+1. Copy the verified extracted binary to a staging path beside the install target.
 2. Mark it executable on Unix.
 3. Replace the current executable:
-   - Unix: rename the staging file over the current executable.
-   - Windows: spawn a detached PowerShell helper that waits for the running PID to exit, then moves the staged binary over the install path with retries (the running `.exe` is locked).
-4. Remove temporary extraction files after installation completes (the Windows helper removes its temp directory after the move).
+   - Unix: rename the staging file over the current executable (allowed while the process is running).
+   - Windows: rename the running `.exe` aside (also allowed while it is running), then rename the staging file into the original path. Overwriting a running Windows executable is what fails; renaming it is the rustup / `self-replace` pattern. A detached `cmd.exe` helper deletes the aside file after this process exits. If that cleanup helper is killed with the npm job, the new binary is still already in place.
+4. Remove temporary extraction files after installation completes.
 
 ## `install.sh` flow
 

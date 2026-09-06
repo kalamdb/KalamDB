@@ -20,6 +20,7 @@
 //! 4. **Type-safe AST**: Strongly typed statement representations
 
 pub mod dml;
+pub mod explain;
 pub mod extensions;
 pub mod query_parser;
 pub mod system;
@@ -35,6 +36,9 @@ pub use dml::{
     values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
     OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
     ValuesInsertShapeOptions, ValuesInsertView,
+};
+pub use explain::{
+    rewrite_explain_for_datafusion, PostgresExplainFormat, RewrittenPostgresExplain,
 };
 pub use extensions::*;
 pub use query_parser::*;

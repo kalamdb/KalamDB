@@ -157,14 +157,6 @@ export class KalamClient {
      */
     isReconnecting(): boolean;
     /**
-     * Subscribe to a SQL query and receive materialized live rows.
-     *
-     * The callback receives JSON strings with one of these shapes:
-     * - `{ type: "rows", subscription_id, rows }`
-     * - `{ type: "error", subscription_id, code, message }`
-     */
-    live(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
-    /**
      * Subscribe to a SQL query and receive low-level live events.
      *
      * # Arguments
@@ -201,6 +193,14 @@ export class KalamClient {
      * Subscription ID for later unsubscribe
      */
     liveTable(table_name: string, options: string | null | undefined, callback: Function): Promise<string>;
+    /**
+     * Subscribe to a SQL query and receive materialized live rows.
+     *
+     * The callback receives JSON strings with one of these shapes:
+     * - `{ type: "rows", subscription_id, rows }`
+     * - `{ type: "error", subscription_id, code, message }`
+     */
+    live(sql: string, options: string | null | undefined, callback: Function): Promise<string>;
     /**
      * Login with current Basic Auth credentials and switch to JWT authentication
      *
@@ -299,22 +299,6 @@ export class KalamClient {
      */
     onSend(callback: Function): void;
     /**
-     * Execute a SQL query (T050, T063F)
-     *
-     * # Arguments
-     * * `sql` - SQL query string
-     *
-     * # Returns
-     * JSON string with query results
-     *
-     * # Example (JavaScript)
-     * ```js
-     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
-     * const data = JSON.parse(result);
-     * ```
-     */
-    query(sql: string): Promise<string>;
-    /**
      * Execute a SQL query with parameters
      *
      * # Arguments
@@ -334,6 +318,22 @@ export class KalamClient {
      * ```
      */
     queryWithParams(sql: string, params?: string | null): Promise<string>;
+    /**
+     * Execute a SQL query (T050, T063F)
+     *
+     * # Arguments
+     * * `sql` - SQL query string
+     *
+     * # Returns
+     * JSON string with query results
+     *
+     * # Example (JavaScript)
+     * ```js
+     * const result = await client.query("SELECT * FROM todos WHERE completed = false");
+     * const data = JSON.parse(result);
+     * ```
+     */
+    query(sql: string): Promise<string>;
     /**
      * Refresh the access token using a refresh token
      *
@@ -506,6 +506,16 @@ export class WasmTimestampFormatter {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Format a timestamp as relative time (e.g., "2 hours ago")
+     *
+     * # Arguments
+     * * `milliseconds` - Timestamp in milliseconds since Unix epoch
+     *
+     * # Returns
+     * Relative time string (e.g., "just now", "5 minutes ago", "2 days ago")
+     */
+    formatRelative(milliseconds: number): string;
+    /**
      * Format a timestamp (milliseconds since epoch) to a string
      *
      * # Arguments
@@ -521,16 +531,6 @@ export class WasmTimestampFormatter {
      * ```
      */
     format(milliseconds?: number | null): string;
-    /**
-     * Format a timestamp as relative time (e.g., "2 hours ago")
-     *
-     * # Arguments
-     * * `milliseconds` - Timestamp in milliseconds since Unix epoch
-     *
-     * # Returns
-     * Relative time string (e.g., "just now", "5 minutes ago", "2 days ago")
-     */
-    formatRelative(milliseconds: number): string;
     /**
      * Create a new timestamp formatter with ISO 8601 format
      */
@@ -636,17 +636,17 @@ export interface InitOutput {
     readonly kalamclient_unsubscribe: (a: number, b: number, c: number) => number;
     readonly kalamclient_withJwt: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly parseIso8601: (a: number, b: number, c: number) => void;
+    readonly timestampNow: () => number;
     readonly wasmtimestampformatter_format: (a: number, b: number, c: number, d: number) => void;
     readonly wasmtimestampformatter_formatRelative: (a: number, b: number, c: number) => void;
     readonly wasmtimestampformatter_new: () => number;
     readonly wasmtimestampformatter_withFormat: (a: number, b: number, c: number) => void;
-    readonly timestampNow: () => number;
-    readonly __wasm_bindgen_func_elem_3026: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_3031: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_1165: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1165_2: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1165_3: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_1164: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_2433: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_2435: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_787: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_787_51: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_787_52: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_786: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

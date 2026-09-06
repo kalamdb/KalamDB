@@ -265,8 +265,14 @@ mod tests {
 
     #[test]
     fn catalog_aliases_open_default_namespace() {
-        for name in [None, Some(""), Some("kalam"), Some("Kalam"), Some("postgres"), Some("template1")]
-        {
+        for name in [
+            None,
+            Some(""),
+            Some("kalam"),
+            Some("Kalam"),
+            Some("postgres"),
+            Some("template1"),
+        ] {
             assert_eq!(
                 resolve_wire_startup_schema(name).as_str(),
                 "default",

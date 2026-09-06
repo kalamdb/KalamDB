@@ -24,7 +24,7 @@ const PARQUET_INITIAL_BUFFER_BYTES: usize = 1024 * 1024;
 /// Parquet writer tuning for a single write.
 #[derive(Debug, Clone, Copy)]
 pub struct ParquetWriterOptions {
-    pub compression: TableCompression,
+    pub compression:              TableCompression,
     pub content_defined_chunking: bool,
 }
 
@@ -217,7 +217,7 @@ fn sort_record_batch_by_seq(batch: RecordBatch) -> Result<RecordBatch> {
     let indices = compute::sort_to_indices(
         seq_col.as_ref(),
         Some(SortOptions {
-            descending: false,
+            descending:  false,
             nulls_first: false,
         }),
         None,

@@ -48,13 +48,13 @@ struct OidcFixture {
 #[derive(Clone)]
 struct OidcUser {
     user_id: String,
-    jwt: String,
+    jwt:     String,
 }
 
 struct DocumentSeed {
-    id: String,
+    id:    String,
     title: String,
-    body: String,
+    body:  String,
 }
 
 #[derive(Deserialize)]
@@ -64,15 +64,15 @@ struct LoginOptionsResponse {
 
 #[derive(Deserialize)]
 struct LoginOptionsOidc {
-    issuer: String,
-    client_id: String,
+    issuer:         String,
+    client_id:      String,
     token_endpoint: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct DexTokenResponse {
-    id_token: Option<String>,
-    error: Option<String>,
+    id_token:          Option<String>,
+    error:             Option<String>,
     error_description: Option<String>,
 }
 
@@ -99,15 +99,16 @@ async fn e2e_scenario_mobilechat_oidc_pg_subscription_embeddings() {
 
     let pg_admin = env.pg_connect().await;
 
-    let document_columns = "id TEXT, title TEXT, author_id TEXT, body TEXT, embedding JSONB, \
-                            embedding_model TEXT";
+    let document_columns =
+        "id TEXT, title TEXT, author_id TEXT, body TEXT, embedding JSONB, embedding_model TEXT";
     let notification_columns = "id TEXT, doc_id TEXT, actor_user_id TEXT, message TEXT";
 
     create_shared_public_kalam_table_in_schema(&pg_admin, &schema, &documents, document_columns)
         .await;
     let grant_documents = env
         .kalamdb_sql(&format!(
-            "CREATE POLICY {documents}_select ON {schema}.{documents} FOR SELECT TO PUBLIC USING (true)"
+            "CREATE POLICY {documents}_select ON {schema}.{documents} FOR SELECT TO PUBLIC USING \
+             (true)"
         ))
         .await;
     assert_sql_success(&grant_documents, "grant SELECT on shared documents");
@@ -187,10 +188,10 @@ async fn prepare_oidc_users(http: &reqwest::Client, base_url: &str) -> Option<Ve
                 Ok(token) => token,
                 Err(error) => {
                     eprintln!(
-                    "skipping mobilechat OIDC PG subscription scenario: could not issue Dex token \
-                     for {}: {}",
-                    fixture.email, error
-                );
+                        "skipping mobilechat OIDC PG subscription scenario: could not issue Dex \
+                         token for {}: {}",
+                        fixture.email, error
+                    );
                     return None;
                 },
             };
@@ -199,8 +200,8 @@ async fn prepare_oidc_users(http: &reqwest::Client, base_url: &str) -> Option<Ve
             Ok(user_id) => user_id,
             Err(error) => {
                 eprintln!(
-                    "skipping mobilechat OIDC PG subscription scenario: KalamDB rejected Dex token \
-                     for {}: {}",
+                    "skipping mobilechat OIDC PG subscription scenario: KalamDB rejected Dex \
+                     token for {}: {}",
                     fixture.email, error
                 );
                 return None;
@@ -209,7 +210,7 @@ async fn prepare_oidc_users(http: &reqwest::Client, base_url: &str) -> Option<Ve
 
         users.push(OidcUser {
             user_id: authenticated_user_id,
-            jwt: token,
+            jwt:     token,
         });
     }
 
@@ -332,9 +333,9 @@ async fn wait_for_topic_routes(env: &TestEnv, topic: &str, min_routes: usize) {
 fn document_seeds() -> Vec<DocumentSeed> {
     (0..DOCUMENT_COUNT)
         .map(|index| DocumentSeed {
-            id: format!("doc-{index:02}"),
+            id:    format!("doc-{index:02}"),
             title: format!("Mobile chat knowledge packet {index:02}"),
-            body: long_document_body(index),
+            body:  long_document_body(index),
         })
         .collect()
 }
@@ -388,8 +389,8 @@ async fn insert_notifications_as_user(
         let message = format!("New mobile chat document available: {}", document.title);
         pg.execute(
             &format!(
-                "INSERT INTO {schema}.{notifications} (id, doc_id, actor_user_id, message) \
-                 VALUES ($1, $2, $3, $4)"
+                "INSERT INTO {schema}.{notifications} (id, doc_id, actor_user_id, message) VALUES \
+                 ($1, $2, $3, $4)"
             ),
             &[
                 &notification_id,
@@ -623,9 +624,8 @@ async fn assert_user_can_join_notifications_to_embeddings(
     let response = client
         .execute_query(
             &format!(
-                "SELECT n.doc_id, d.embedding, d.embedding_model \
-                 FROM {schema}.{notifications} AS n \
-                 JOIN {schema}.{documents} AS d ON d.id = n.doc_id"
+                "SELECT n.doc_id, d.embedding, d.embedding_model FROM {schema}.{notifications} AS \
+                 n JOIN {schema}.{documents} AS d ON d.id = n.doc_id"
             ),
             None,
             None,

@@ -1,9 +1,7 @@
 use std::fmt::Write as _;
 
-use super::{display_number, group_display_name, ClusterRenderData};
+use super::{super::CLISession, display_number, group_display_name, ClusterRenderData};
 use crate::Result;
-
-use super::super::CLISession;
 
 impl CLISession {
     pub(in crate::session) async fn show_cluster_list_groups(&mut self) -> Result<()> {
@@ -60,56 +58,56 @@ mod tests {
     #[test]
     fn renders_group_labels_for_all_group_types() {
         let data = ClusterRenderData {
-            cluster_id: "local-cluster".to_string(),
+            cluster_id:      "local-cluster".to_string(),
             is_cluster_mode: true,
-            nodes: vec![ClusterListNode {
-                cluster_id: "local-cluster".to_string(),
-                node_id: 1,
-                role: "leader".to_string(),
-                status: "active".to_string(),
-                rpc_addr: "127.0.0.1:2910".to_string(),
-                api_addr: "http://127.0.0.1:2900".to_string(),
-                is_self: true,
-                is_leader: true,
-                groups_leading: 2,
-                total_groups: 3,
-                current_term: None,
-                last_applied_log: None,
+            nodes:           vec![ClusterListNode {
+                cluster_id:            "local-cluster".to_string(),
+                node_id:               1,
+                role:                  "leader".to_string(),
+                status:                "active".to_string(),
+                rpc_addr:              "127.0.0.1:2910".to_string(),
+                api_addr:              "http://127.0.0.1:2900".to_string(),
+                is_self:               true,
+                is_leader:             true,
+                groups_leading:        2,
+                total_groups:          3,
+                current_term:          None,
+                last_applied_log:      None,
                 leader_last_log_index: None,
-                snapshot_index: None,
-                catchup_progress_pct: None,
-                replication_lag: None,
-                hostname: None,
-                memory_usage_mb: None,
-                cpu_usage_percent: None,
-                uptime_human: None,
+                snapshot_index:        None,
+                catchup_progress_pct:  None,
+                replication_lag:       None,
+                hostname:              None,
+                memory_usage_mb:       None,
+                cpu_usage_percent:     None,
+                uptime_human:          None,
             }],
-            groups: vec![
+            groups:          vec![
                 ClusterGroupDisplay {
-                    group_id: 10,
-                    group_type: "meta".to_string(),
-                    current_term: Some(3),
-                    last_applied: Some(40),
-                    snapshot: Some(20),
-                    state: Some("Leader".to_string()),
+                    group_id:       10,
+                    group_type:     "meta".to_string(),
+                    current_term:   Some(3),
+                    last_applied:   Some(40),
+                    snapshot:       Some(20),
+                    state:          Some("Leader".to_string()),
                     current_leader: Some(1),
                 },
                 ClusterGroupDisplay {
-                    group_id: 100,
-                    group_type: "user_data".to_string(),
-                    current_term: Some(3),
-                    last_applied: Some(39),
-                    snapshot: Some(20),
-                    state: Some("Follower".to_string()),
+                    group_id:       100,
+                    group_type:     "user_data".to_string(),
+                    current_term:   Some(3),
+                    last_applied:   Some(39),
+                    snapshot:       Some(20),
+                    state:          Some("Follower".to_string()),
                     current_leader: Some(1),
                 },
                 ClusterGroupDisplay {
-                    group_id: 200,
-                    group_type: "shared_data".to_string(),
-                    current_term: Some(3),
-                    last_applied: Some(38),
-                    snapshot: Some(20),
-                    state: Some("Follower".to_string()),
+                    group_id:       200,
+                    group_type:     "shared_data".to_string(),
+                    current_term:   Some(3),
+                    last_applied:   Some(38),
+                    snapshot:       Some(20),
+                    state:          Some("Follower".to_string()),
                     current_leader: Some(1),
                 },
             ],

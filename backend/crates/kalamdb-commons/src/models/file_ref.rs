@@ -9,20 +9,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileRef {
     /// Unique file identifier.
-    pub id: String,
+    pub id:     String,
     /// Subfolder name, for example `"f0001"`.
-    pub sub: String,
+    pub sub:    String,
     /// Original filename preserved for display and download.
-    pub name: String,
+    pub name:   String,
     /// File size in bytes.
-    pub size: u64,
+    pub size:   u64,
     /// MIME type.
-    pub mime: String,
+    pub mime:   String,
     /// SHA-256 hash of file content, hex encoded.
     pub sha256: String,
     /// Optional shard ID for shared tables.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shard: Option<u32>,
+    pub shard:  Option<u32>,
 }
 
 const SUBFOLDER_PREFIX: &str = "f";

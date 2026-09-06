@@ -167,7 +167,6 @@ describe("fetchSqlStudioSchemaTree", () => {
       name: "events",
       tableType: "stream",
       storageId: "archive",
-      accessLevel: "PUBLIC",
       useUserStorage: true,
       version: 7,
       comment: "Operational event stream",
@@ -180,6 +179,55 @@ describe("fetchSqlStudioSchemaTree", () => {
       compression: "zstd",
       max_stream_size_bytes: 1024,
     });
+  });
+
+  it("attaches shared table policies from system.table_policies", async () => {
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockResolvedValue([{ namespace_id: "chat" }]),
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue([
+          {
+            namespace_id: "chat",
+            table_name: "documents",
+            table_type: "shared",
+            columns: [
+              {
+                column_name: "id",
+                data_type: "BigInt",
+                is_nullable: false,
+                is_primary_key: true,
+                ordinal_position: 1,
+              },
+            ],
+          },
+        ]),
+      }),
+    });
+    mockDb.select.mockReturnValueOnce({
+      from: vi.fn().mockResolvedValue([
+        {
+          table_id: "chat.documents",
+          policy_name: "owner_read",
+          command: "select",
+          targets: [{ role: "user" }, { role: "service" }],
+          using_sql: "owner_id = CURRENT_USER()",
+          with_check_sql: null,
+        },
+      ]),
+    });
+
+    const schema = await fetchSqlStudioSchemaTree();
+    expect(schema[0]?.tables[0]?.policies).toEqual([
+      {
+        name: "owner_read",
+        command: "select",
+        targets: [{ role: "user" }, { role: "service" }],
+        usingSql: "owner_id = CURRENT_USER()",
+        withCheckSql: null,
+      },
+    ]);
   });
 });
 

@@ -38,7 +38,7 @@ use crate::{
 /// Row operation tracking (for metrics)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedOperation {
-    table_id: TableId,
+    table_id:  TableId,
     operation: OperationKind,
     row_count: u64,
 }
@@ -47,19 +47,19 @@ struct SharedOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SharedDataSnapshot {
     /// Total operations count
-    total_operations: u64,
+    total_operations:  u64,
     /// Recent operations for metrics
     recent_operations: Vec<SharedOperation>,
     /// Pending commands waiting for Meta to catch up (for crash recovery)
     #[serde(default)]
-    pending_commands: Vec<PendingCommand>,
+    pending_commands:  Vec<PendingCommand>,
 }
 
 enum SharedApplyCommand {
     Shared(SharedDataCommand),
     TransactionCommit {
         transaction_id: TransactionId,
-        mutations: Vec<StagedMutation>,
+        mutations:      Vec<StagedMutation>,
     },
 }
 
@@ -87,23 +87,23 @@ impl SharedApplyCommand {
 /// are drained once Meta is satisfied.
 pub struct SharedDataStateMachine {
     /// Shard number (always 0 for shared tables in Phase 1)
-    shard: u32,
+    shard:              u32,
     /// Last applied log index (for idempotency)
     last_applied_index: AtomicU64,
     /// Last applied log term
-    last_applied_term: AtomicU64,
+    last_applied_term:  AtomicU64,
     /// Notifies waiters when the applied index advances.
-    last_applied_tx: tokio::sync::watch::Sender<u64>,
+    last_applied_tx:    tokio::sync::watch::Sender<u64>,
     /// Approximate data size in bytes
-    approximate_size: AtomicU64,
+    approximate_size:   AtomicU64,
     /// Total operations processed
-    total_operations: AtomicU64,
+    total_operations:   AtomicU64,
     /// Recent operations for metrics
-    recent_operations: RwLock<Vec<SharedOperation>>,
+    recent_operations:  RwLock<Vec<SharedOperation>>,
     /// Optional applier for persisting data to providers
-    applier: RwLock<Option<Arc<dyn SharedDataApplier>>>,
+    applier:            RwLock<Option<Arc<dyn SharedDataApplier>>>,
     /// Buffer for commands waiting for Meta to catch up
-    pending_buffer: PendingBuffer,
+    pending_buffer:     PendingBuffer,
 }
 
 impl std::fmt::Debug for SharedDataStateMachine {
@@ -463,10 +463,10 @@ impl KalamStateMachine for SharedDataStateMachine {
                     current_meta
                 );
                 self.pending_buffer.add(PendingCommand {
-                    log_index: index,
-                    log_term: term,
+                    log_index:           index,
+                    log_term:            term,
                     required_meta_index: required_meta,
-                    command_bytes: command.to_vec(),
+                    command_bytes:       command.to_vec(),
                 });
 
                 // Mark as applied (buffered) to satisfy Raft log progress
@@ -705,11 +705,11 @@ mod tests {
         let sm = SharedDataStateMachine::default();
 
         let cmd = SharedDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::default(), "config".into()),
-            rows: vec![],
+            table_id:            TableId::new(NamespaceId::default(), "config".into()),
+            rows:                vec![],
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: None,
+            transaction_id:      None,
+            actor_user_id:       None,
         };
         let cmd_bytes = crate::codec::command_codec::encode_shared_data_command(&cmd).unwrap();
 
@@ -725,11 +725,11 @@ mod tests {
 
         // Insert
         let insert = SharedDataCommand::Insert {
-            table_id: TableId::new(NamespaceId::default(), "settings".into()),
-            rows: vec![],
+            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            rows:                vec![],
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: None,
+            transaction_id:      None,
+            actor_user_id:       None,
         };
         sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
             .await
@@ -737,12 +737,12 @@ mod tests {
 
         // Update
         let update = SharedDataCommand::Update {
-            table_id: TableId::new(NamespaceId::default(), "settings".into()),
-            updates: vec![],
-            filter: None,
+            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            updates:             vec![],
+            filter:              None,
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: None,
+            transaction_id:      None,
+            actor_user_id:       None,
         };
         sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
             .await
@@ -750,11 +750,11 @@ mod tests {
 
         // Delete
         let delete = SharedDataCommand::Delete {
-            table_id: TableId::new(NamespaceId::default(), "settings".into()),
-            pk_values: None,
+            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            pk_values:           None,
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: None,
+            transaction_id:      None,
+            actor_user_id:       None,
         };
         sm.apply(3, 1, &crate::codec::command_codec::encode_shared_data_command(&delete).unwrap())
             .await
@@ -787,23 +787,23 @@ mod tests {
         let delete_actor = UserId::from("delete_actor");
 
         let insert = SharedDataCommand::Insert {
-            table_id: table_id.clone(),
-            rows: vec![],
+            table_id:            table_id.clone(),
+            rows:                vec![],
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: Some(insert_actor.clone()),
+            transaction_id:      None,
+            actor_user_id:       Some(insert_actor.clone()),
         };
         sm.apply(1, 1, &crate::codec::command_codec::encode_shared_data_command(&insert).unwrap())
             .await
             .unwrap();
 
         let update = SharedDataCommand::Update {
-            table_id: table_id.clone(),
-            updates: vec![],
-            filter: Some("1".to_string()),
+            table_id:            table_id.clone(),
+            updates:             vec![],
+            filter:              Some("1".to_string()),
             required_meta_index: 0,
-            transaction_id: None,
-            actor_user_id: Some(update_actor.clone()),
+            transaction_id:      None,
+            actor_user_id:       Some(update_actor.clone()),
         };
         sm.apply(2, 1, &crate::codec::command_codec::encode_shared_data_command(&update).unwrap())
             .await
@@ -839,7 +839,7 @@ mod tests {
 
         let cmd = RaftCommand::TransactionCommit {
             transaction_id: transaction_id.clone(),
-            mutations: vec![StagedMutation::new(
+            mutations:      vec![StagedMutation::new(
                 transaction_id,
                 table_id,
                 TableType::Shared,

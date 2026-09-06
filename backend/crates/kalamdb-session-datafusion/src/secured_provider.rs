@@ -15,7 +15,7 @@ use tracing::Instrument;
 use crate::permissions::{check_system_table_access, session_error_to_datafusion};
 
 pub struct SecuredSystemTableProvider {
-    inner: Arc<dyn TableProvider>,
+    inner:    Arc<dyn TableProvider>,
     table_id: TableId,
 }
 

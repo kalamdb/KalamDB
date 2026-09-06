@@ -7,7 +7,7 @@ use datafusion::datasource::TableProvider;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     models::{schemas::TableDefinition, StorageId, TableId},
-    schemas::{TableType},
+    schemas::TableType,
 };
 use kalamdb_filestore::StorageCached;
 use parking_lot::RwLock;
@@ -19,16 +19,16 @@ const PROVIDER_INITIALIZED: u8 = 1;
 const PROVIDER_OVERRIDDEN: u8 = 2;
 
 struct ProviderSlot {
-    state: AtomicU8,
-    initial: OnceLock<Arc<dyn TableProvider + Send + Sync>>,
+    state:             AtomicU8,
+    initial:           OnceLock<Arc<dyn TableProvider + Send + Sync>>,
     override_provider: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 }
 
 impl ProviderSlot {
     fn new() -> Self {
         Self {
-            state: AtomicU8::new(PROVIDER_EMPTY),
-            initial: OnceLock::new(),
+            state:             AtomicU8::new(PROVIDER_EMPTY),
+            initial:           OnceLock::new(),
             override_provider: RwLock::new(None),
         }
     }
@@ -115,12 +115,12 @@ impl std::fmt::Debug for CachedTableData {
 impl Clone for CachedTableData {
     fn clone(&self) -> Self {
         Self {
-            table: Arc::clone(&self.table),
-            storage_id: self.storage_id.clone(),
-            schema_version: self.schema_version,
+            table:                Arc::clone(&self.table),
+            storage_id:           self.storage_id.clone(),
+            schema_version:       self.schema_version,
             bloom_filter_columns: self.bloom_filter_columns.clone(),
-            indexed_columns: self.indexed_columns.clone(),
-            provider: Arc::clone(&self.provider),
+            indexed_columns:      self.indexed_columns.clone(),
+            provider:             Arc::clone(&self.provider),
         }
     }
 }
@@ -148,7 +148,8 @@ impl CachedTableData {
     pub fn from_table_definition(
         _app_ctx: &AppContext,
         _table_id: &TableId,
-        table_def: Arc<TableDefinition>) -> Result<Self, KalamDbError> {
+        table_def: Arc<TableDefinition>,
+    ) -> Result<Self, KalamDbError> {
         Ok(Self::new(table_def))
     }
 
@@ -231,7 +232,8 @@ impl CachedTableData {
     /// Returns error if storage not found
     pub fn storage_cached(
         &self,
-        storage_registry: &Arc<kalamdb_filestore::StorageRegistry>) -> Result<Arc<StorageCached>, KalamDbError> {
+        storage_registry: &Arc<kalamdb_filestore::StorageRegistry>,
+    ) -> Result<Arc<StorageCached>, KalamDbError> {
         storage_registry
             .get_cached(&self.storage_id)
             .map_err(|e| KalamDbError::Other(format!("Filestore error: {}", e)))?
@@ -295,7 +297,8 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Utf8, false)]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
-            vec![Arc::new(StringArray::from(vec!["value"]))])
+            vec![Arc::new(StringArray::from(vec!["value"]))],
+        )
         .expect("test batch");
 
         Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("test provider"))
@@ -332,7 +335,8 @@ mod tests {
                 ColumnDefinition::simple(2, "name", 2, KalamDataType::Text),
             ],
             TableOptions::shared(),
-            None)
+            None,
+        )
         .expect("table definition");
 
         let cached = CachedTableData::new(Arc::new(table_def));

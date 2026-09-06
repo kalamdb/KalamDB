@@ -49,22 +49,26 @@ pub fn generate_schema_artifacts(
         };
 
         let output_path = ctx.project_root.join(&target.output);
-        match language {
-            LanguageTarget::TypeScript => {
-                if resolved_environment.is_none() {
-                    resolved_environment = Some(ctx.resolved_environment()?);
-                }
-                let environment =
-                    resolved_environment.as_ref().expect("resolved environment initialized");
-                generate_typescript_via_orm(ctx, environment, &output_path)?;
-            },
-            LanguageTarget::Dart => {
-                let snapshot = crate::workflow::schema::load::load_schema_snapshot(
-                    &ctx.project_root,
-                    &ctx.config,
-                )?;
-                crate::workflow::schema::dart::write_dart_schema(&output_path, &snapshot)?;
-            },
+        {
+            let _spinner =
+                output.status_spinner(format!("generating {} -> {}", key, target.output));
+            match language {
+                LanguageTarget::TypeScript => {
+                    if resolved_environment.is_none() {
+                        resolved_environment = Some(ctx.resolved_environment()?);
+                    }
+                    let environment =
+                        resolved_environment.as_ref().expect("resolved environment initialized");
+                    generate_typescript_via_orm(ctx, environment, &output_path)?;
+                },
+                LanguageTarget::Dart => {
+                    let snapshot = crate::workflow::schema::load::load_schema_snapshot(
+                        &ctx.project_root,
+                        &ctx.config,
+                    )?;
+                    crate::workflow::schema::dart::write_dart_schema(&output_path, &snapshot)?;
+                },
+            }
         }
         output.status(format!("generated {} -> {}", key, target.output));
     }

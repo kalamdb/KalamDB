@@ -1,3 +1,4 @@
+use super::{InitOptions, ServerMode};
 use crate::{
     error::{CLIError, Result},
     terminal_ui::SelectOption,
@@ -19,8 +20,6 @@ use crate::{
         },
     },
 };
-
-use super::{InitOptions, ServerMode};
 
 pub(super) fn ensure_interactive_or_yes(options: &InitOptions) -> Result<()> {
     if options.yes || interactive_available() {

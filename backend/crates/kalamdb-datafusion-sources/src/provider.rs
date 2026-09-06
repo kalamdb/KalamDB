@@ -67,10 +67,10 @@ pub fn mvcc_filter_capability(_filter: &Expr, _pk_name: &str) -> FilterCapabilit
 /// [`ExecutionPlan::execute`][datafusion::physical_plan::ExecutionPlan::execute].
 #[derive(Clone)]
 pub struct ScanDescriptor {
-    pub schema: SchemaRef,
+    pub schema:     SchemaRef,
     pub projection: Option<Arc<[usize]>>,
-    pub filters: Arc<[Expr]>,
-    pub limit: Option<usize>,
+    pub filters:    Arc<[Expr]>,
+    pub limit:      Option<usize>,
 }
 
 impl ScanDescriptor {

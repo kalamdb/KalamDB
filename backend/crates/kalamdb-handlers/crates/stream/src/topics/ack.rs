@@ -11,9 +11,8 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::AckStatement;
 
-use crate::result_rows;
-
 use super::name_resolution::{resolve_topic_id, resolve_topic_name};
+use crate::result_rows;
 
 pub struct AckHandler {
     app_context: Arc<AppContext>,

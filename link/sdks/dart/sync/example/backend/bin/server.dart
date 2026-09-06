@@ -10,7 +10,7 @@ Future<void> main(List<String> args) async {
   final username =
       Platform.environment['KALAMDB_USER'] ??
       Platform.environment['KALAM_USER'] ??
-      'admin';
+      'root';
   final password =
       Platform.environment['KALAMDB_PASSWORD'] ??
       Platform.environment['KALAM_PASS'] ??

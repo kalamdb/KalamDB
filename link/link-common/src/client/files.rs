@@ -69,7 +69,7 @@ impl KalamLinkClient {
             let message = response.text().await.unwrap_or_default();
             return Err(KalamLinkError::ServerError {
                 status_code: status.as_u16(),
-                message: if message.is_empty() {
+                message:     if message.is_empty() {
                     format!("file download failed with status {status}")
                 } else {
                     message

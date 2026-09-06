@@ -41,7 +41,7 @@ pub struct DisconnectReason {
     /// Human-readable description of why the connection closed.
     pub message: String,
     /// WebSocket close code, if available (e.g. 1000 = normal, 1006 = abnormal).
-    pub code: Option<u16>,
+    pub code:    Option<u16>,
 }
 
 impl DisconnectReason {
@@ -49,7 +49,7 @@ impl DisconnectReason {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            code: None,
+            code:    None,
         }
     }
 
@@ -57,7 +57,7 @@ impl DisconnectReason {
     pub fn with_code(message: impl Into<String>, code: u16) -> Self {
         Self {
             message: message.into(),
-            code: Some(code),
+            code:    Some(code),
         }
     }
 }
@@ -76,15 +76,15 @@ impl fmt::Display for DisconnectReason {
 #[derive(Debug, Clone)]
 pub struct ConnectionError {
     /// Human-readable error message.
-    pub message: String,
+    pub message:     String,
     /// Whether this error is recoverable (i.e. auto-reconnect may succeed).
     pub recoverable: bool,
     /// KalamDB base URL associated with the failed connection, when known.
-    pub url: Option<String>,
+    pub url:         Option<String>,
     /// Auth user associated with the failed connection, when known.
-    pub auth_user: Option<String>,
+    pub auth_user:   Option<String>,
     /// Actionable remediation hint for the caller, when known.
-    pub hint: Option<String>,
+    pub hint:        Option<String>,
 }
 
 impl ConnectionError {

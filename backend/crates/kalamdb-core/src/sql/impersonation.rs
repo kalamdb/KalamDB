@@ -103,7 +103,8 @@ impl SqlImpersonationService {
         .await;
 
         Err(KalamDbError::Unauthorized(format!(
-            "EXECUTE AS USER is not authorized: actor '{}' with role {:?} cannot target '{}' with role {:?}",
+            "EXECUTE AS USER is not authorized: actor '{}' with role {:?} cannot target '{}' with \
+             role {:?}",
             actor_user_id.as_str(),
             actor_role,
             target_user_id.as_str(),

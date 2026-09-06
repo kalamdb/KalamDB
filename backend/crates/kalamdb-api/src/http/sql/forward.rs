@@ -341,8 +341,8 @@ pub async fn forward_sql_if_follower(
         };
 
         let req = QueryRequest {
-            sql: sql.to_string(),
-            params: params_json.clone(),
+            sql:          sql.to_string(),
+            params:       params_json.clone(),
             namespace_id: namespace_id.clone(),
         };
 

@@ -29,7 +29,7 @@ impl From<kalamdb_commons::websocket_auth::WsAuthCredentials> for AuthRequest {
 #[derive(Debug, Clone)]
 pub struct AuthenticationResult {
     /// The authenticated user
-    pub user: AuthenticatedUser,
+    pub user:   AuthenticatedUser,
     /// The method used for authentication
     pub method: AuthMethod,
 }

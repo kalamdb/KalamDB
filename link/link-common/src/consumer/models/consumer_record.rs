@@ -4,36 +4,36 @@ use super::{PayloadMode, TopicOp};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsumerRecord {
-    pub topic_id: String,
-    pub topic_name: String,
+    pub topic_id:     String,
+    pub topic_name:   String,
     pub partition_id: u32,
-    pub offset: u64,
-    pub message_id: Option<String>,
+    pub offset:       u64,
+    pub message_id:   Option<String>,
     pub source_table: String,
-    pub op: TopicOp,
+    pub op:           TopicOp,
     pub timestamp_ms: u64,
     pub payload_mode: PayloadMode,
-    pub payload: Vec<u8>,
+    pub payload:      Vec<u8>,
 }
 
 #[cfg(feature = "tokio-runtime")]
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct ConsumerRecordWire {
-    pub topic_id: String,
+    pub topic_id:     String,
     pub partition_id: u32,
-    pub offset: u64,
+    pub offset:       u64,
     #[serde(default, alias = "key")]
-    pub message_id: Option<String>,
+    pub message_id:   Option<String>,
     #[serde(default)]
     pub source_table: Option<String>,
     #[serde(default)]
-    pub op: Option<TopicOp>,
+    pub op:           Option<TopicOp>,
     #[serde(default, rename = "timestamp_ms", alias = "ts")]
     pub timestamp_ms: u64,
     #[serde(default)]
     pub payload_mode: Option<PayloadMode>,
     #[serde(default, with = "base64_bytes")]
-    pub payload: Vec<u8>,
+    pub payload:      Vec<u8>,
 }
 
 #[cfg(feature = "tokio-runtime")]

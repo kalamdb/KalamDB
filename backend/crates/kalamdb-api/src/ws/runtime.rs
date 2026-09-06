@@ -51,7 +51,7 @@ pub(super) async fn run_websocket(
             {
                 let _ = session
                     .close(Some(CloseReason {
-                        code: CloseCode::Policy,
+                        code:        CloseCode::Policy,
                         description: Some("Authentication failed".into()),
                     }))
                     .await;

@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use crate::common::*;
 use kalam_cli::workflow::{
     dev::draft_prompt::DRAFT_PROMPT_MESSAGE,
     project::config::{KalamProjectConfig, KALAM_TOML},
@@ -16,27 +15,32 @@ use kalam_cli::workflow::{
 use tempfile::TempDir;
 use wait_timeout::ChildExt;
 
+use crate::common::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordedSqlRequest {
-    sql: String,
-    namespace_id: Option<String>,
+    pub(crate) sql:          String,
+    pub(crate) namespace_id: Option<String>,
 }
 
-fn add_dev_processes(project_dir: &std::path::Path, processes: HashMap<String, String>) {
+pub(crate) fn add_dev_processes(project_dir: &std::path::Path, processes: HashMap<String, String>) {
     let config_path = project_dir.join(KALAM_TOML);
     let mut config = KalamProjectConfig::load_from_path(&config_path).expect("load kalam.toml");
     config.dev.processes = processes;
     config.save_to_path(&config_path).expect("save kalam.toml");
 }
 
-fn update_dev_project(project_dir: &std::path::Path, mutate: impl FnOnce(&mut KalamProjectConfig)) {
+pub(crate) fn update_dev_project(
+    project_dir: &std::path::Path,
+    mutate: impl FnOnce(&mut KalamProjectConfig),
+) {
     let config_path = project_dir.join(KALAM_TOML);
     let mut config = KalamProjectConfig::load_from_path(&config_path).expect("load kalam.toml");
     mutate(&mut config);
     config.save_to_path(&config_path).expect("save kalam.toml");
 }
 
-fn store_test_dev_credentials(credentials_path: &std::path::Path) {
+pub(crate) fn store_test_dev_credentials(credentials_path: &std::path::Path) {
     let mut credential_store = FileCredentialStore::with_path(credentials_path.to_path_buf())
         .expect("create credential store");
     credential_store
@@ -92,7 +96,7 @@ fn scaffold_dev_project(
     project_dir
 }
 
-fn start_recording_sql_server(
+pub(crate) fn start_recording_sql_server(
 ) -> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind recording server");
     let addr = listener.local_addr().expect("recording server addr");
@@ -154,7 +158,7 @@ fn start_recording_sql_server(
                 let payload: serde_json::Value =
                     serde_json::from_slice(body).expect("parse sql request body");
                 requests_handle.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql: payload
+                    sql:          payload
                         .get("sql")
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
@@ -190,12 +194,12 @@ pub(crate) fn start_migration_tracking_server(
     #[derive(Clone, Default)]
     struct FakeMig {
         migration_key: String,
-        migration_id: String,
-        namespace: String,
-        name: String,
-        checksum: String,
-        status: String,
-        source: String,
+        migration_id:  String,
+        namespace:     String,
+        name:          String,
+        checksum:      String,
+        status:        String,
+        source:        String,
     }
 
     // Extract the nth single-quoted SQL string value.  Handles '' escapes.
@@ -261,7 +265,8 @@ pub(crate) fn start_migration_tracking_server(
 
     fn make_response(body: &str) -> Vec<u8> {
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \
+             {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
             body
         )
@@ -327,7 +332,7 @@ pub(crate) fn start_migration_tracking_server(
                 let ns =
                     payload.get("namespace_id").and_then(|v| v.as_str()).map(ToString::to_string);
                 requests_clone.lock().expect("lock requests").push(RecordedSqlRequest {
-                    sql: sql.clone(),
+                    sql:          sql.clone(),
                     namespace_id: ns,
                 });
                 let sql_up = sql.to_uppercase();
@@ -467,7 +472,7 @@ where
     false
 }
 
-fn wait_for_recorded_sql_contains(
+pub(crate) fn wait_for_recorded_sql_contains(
     requests: &Arc<Mutex<Vec<RecordedSqlRequest>>>,
     needle: &str,
     timeout: Duration,
@@ -506,7 +511,7 @@ fn wait_for_numbered_migration(
     None
 }
 
-fn create_isolated_cli_std_command(
+pub(crate) fn create_isolated_cli_std_command(
     home: &std::path::Path,
     credentials_path: &std::path::Path,
 ) -> std::process::Command {
@@ -637,7 +642,13 @@ fn test_project_workflow_dev_help_surface() {
         stdout
     );
     assert!(stdout.contains("--force"));
+    assert!(stdout.contains("--agent"));
+    assert!(stdout.contains("AI coding agents"));
     assert!(stdout.contains("--progress"));
+    assert!(stdout.contains("start"));
+    assert!(stdout.contains("status"));
+    assert!(stdout.contains("logs"));
+    assert!(stdout.contains("stop"));
 }
 
 #[test]
@@ -805,7 +816,8 @@ fn test_project_workflow_dev_injects_dotenv_into_app_process() {
         HashMap::from([(
             "app".into(),
             format!(
-                "printf 'captured-password=%s\\n' \"$KALAM_PASSWORD\"; while true; do sleep 0.5; done"
+                "printf 'captured-password=%s\\n' \"$KALAM_PASSWORD\"; while true; do sleep 0.5; \
+                 done"
             ),
         )]),
     );
@@ -951,7 +963,8 @@ fn test_project_workflow_dev_writes_schema_draft_without_applying_schema_sql() {
     );
     assert!(
         recorded.iter().all(|request| !request.sql.contains("CREATE TABLE users")),
-        "expected kalam dev to defer schema SQL until user applies the draft\nrequests: {recorded:?}"
+        "expected kalam dev to defer schema SQL until user applies the draft\nrequests: \
+         {recorded:?}"
     );
 }
 
@@ -1022,7 +1035,8 @@ fn test_project_workflow_dev_force_on_watch_refreshes_draft_until_user_applies()
 
     fs::write(
         &schema_path,
-        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  created_at TIMESTAMP\n);\n",
+        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY \
+         KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  created_at TIMESTAMP\n);\n",
     )
     .expect("update schema first time");
 
@@ -1043,7 +1057,8 @@ fn test_project_workflow_dev_force_on_watch_refreshes_draft_until_user_applies()
 
     fs::write(
         &schema_path,
-        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  fi\n  created_at TIMESTAMP\n);\n",
+        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY \
+         KEY,\n  email TEXT NOT NULL,\n  fi\n  created_at TIMESTAMP\n);\n",
     )
     .expect("write transient invalid schema");
 
@@ -1062,7 +1077,8 @@ fn test_project_workflow_dev_force_on_watch_refreshes_draft_until_user_applies()
 
     fs::write(
         &schema_path,
-        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  last_name TEXT,\n  created_at TIMESTAMP\n);\n",
+        "-- Example schema for dev-watch-force-app\nCREATE TABLE users (\n  id INTEGER PRIMARY \
+         KEY,\n  email TEXT NOT NULL,\n  last_name TEXT,\n  created_at TIMESTAMP\n);\n",
     )
     .expect("update schema second time");
 
@@ -1116,7 +1132,8 @@ fn test_project_workflow_dev_force_on_watch_refreshes_draft_until_user_applies()
     );
     assert!(
         draft_sql.contains("last_name TEXT") && !draft_sql.contains("first_name TEXT"),
-        "expected draft to be overwritten with the latest schema edit\nsql: {draft_sql}\nlog: {workflow_log}"
+        "expected draft to be overwritten with the latest schema edit\nsql: {draft_sql}\nlog: \
+         {workflow_log}"
     );
     assert!(
         workflow_log.contains("schema.sql") && workflow_log.contains(".schema-baseline.sql"),
@@ -1130,7 +1147,8 @@ fn test_project_workflow_dev_force_on_watch_refreshes_draft_until_user_applies()
     let recorded = requests.lock().expect("lock requests").clone();
     assert!(
         recorded.iter().all(|request| !request.sql.contains("last_name TEXT")),
-        "expected dev watch to defer draft SQL until user applies it\nrequests: {recorded:?}\nstderr: {stderr}"
+        "expected dev watch to defer draft SQL until user applies it\nrequests: \
+         {recorded:?}\nstderr: {stderr}"
     );
 }
 
@@ -1247,12 +1265,16 @@ fn test_project_workflow_dev_prompt_refreshes_and_applies_latest_schema_draft() 
         std::thread::sleep(Duration::from_millis(1_200));
         fs::write(
             &schema_path,
-            "-- Example schema for dev-prompt-refresh-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  created_at TIMESTAMP\n);\n",
+            "-- Example schema for dev-prompt-refresh-app\nCREATE TABLE users (\n  id INTEGER \
+             PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  created_at \
+             TIMESTAMP\n);\n",
         )
         .expect("write first schema edit");
         fs::write(
             &schema_path,
-            "-- Example schema for dev-prompt-refresh-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  last_name TEXT,\n  created_at TIMESTAMP\n);\n",
+            "-- Example schema for dev-prompt-refresh-app\nCREATE TABLE users (\n  id INTEGER \
+             PRIMARY KEY,\n  email TEXT NOT NULL,\n  first_name TEXT,\n  last_name TEXT,\n  \
+             created_at TIMESTAMP\n);\n",
         )
         .expect("write second schema edit");
         assert!(
@@ -1274,7 +1296,8 @@ fn test_project_workflow_dev_prompt_refreshes_and_applies_latest_schema_draft() 
             fs::read_to_string(&workflow_log_path)
                 .expect("read workflow log")
                 .contains("last_name TEXT"),
-            "expected refreshed prompt summary to show the latest schema column\nlog: {}\nstderr: {}",
+            "expected refreshed prompt summary to show the latest schema column\nlog: {}\nstderr: \
+             {}",
             fs::read_to_string(&workflow_log_path).expect("read workflow log"),
             captured_stderr.lock().expect("lock output")
         );
@@ -1282,14 +1305,16 @@ fn test_project_workflow_dev_prompt_refreshes_and_applies_latest_schema_draft() 
         child_stdin.write_all(b"y").expect("confirm apply");
         child_stdin.flush().expect("flush confirmation");
 
-        let sealed = wait_for_numbered_migration(&migrations_dir, "last_name TEXT", Duration::from_secs(8))
-            .unwrap_or_else(|| {
-                panic!(
-                    "expected latest draft to be sealed into a numbered migration\nstderr: {}\nrequests: {:?}",
-                    captured_stderr.lock().expect("lock output"),
-                    requests.lock().expect("lock requests").clone()
-                )
-            });
+        let sealed =
+            wait_for_numbered_migration(&migrations_dir, "last_name TEXT", Duration::from_secs(8))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "expected latest draft to be sealed into a numbered migration\nstderr: \
+                         {}\nrequests: {:?}",
+                        captured_stderr.lock().expect("lock output"),
+                        requests.lock().expect("lock requests").clone()
+                    )
+                });
         assert!(
             !draft_path.exists(),
             "expected _draft.sql to be removed after sealing into {}",
@@ -1299,7 +1324,8 @@ fn test_project_workflow_dev_prompt_refreshes_and_applies_latest_schema_draft() 
         let sealed_sql = fs::read_to_string(&sealed).expect("read sealed migration");
         assert!(
             sealed_sql.contains("first_name TEXT") && sealed_sql.contains("last_name TEXT"),
-            "expected sealed migration to contain the latest schema writes\nmigration: {sealed_sql}"
+            "expected sealed migration to contain the latest schema writes\nmigration: \
+             {sealed_sql}"
         );
 
         assert!(
@@ -1447,7 +1473,8 @@ fn test_project_workflow_dev_prompt_shows_again_after_apply_and_new_change() {
         std::thread::sleep(Duration::from_millis(1_200));
         fs::write(
             &schema_path,
-            "-- Example schema for dev-apply-cycle-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  username TEXT,\n  created_at TIMESTAMP\n);\n",
+            "-- Example schema for dev-apply-cycle-app\nCREATE TABLE users (\n  id INTEGER \
+             PRIMARY KEY,\n  email TEXT NOT NULL,\n  username TEXT,\n  created_at TIMESTAMP\n);\n",
         )
         .expect("write second schema change");
 
@@ -1506,7 +1533,9 @@ fn test_project_workflow_dev_prompt_shows_again_after_apply_and_new_change() {
         // ── Phase 5: third schema change must still generate and prompt ───────
         fs::write(
             &schema_path,
-            "-- Example schema for dev-apply-cycle-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  username TEXT,\n  display_name TEXT,\n  created_at TIMESTAMP\n);\n",
+            "-- Example schema for dev-apply-cycle-app\nCREATE TABLE users (\n  id INTEGER \
+             PRIMARY KEY,\n  email TEXT NOT NULL,\n  username TEXT,\n  display_name TEXT,\n  \
+             created_at TIMESTAMP\n);\n",
         )
         .expect("write third schema change");
 
@@ -1742,7 +1771,9 @@ fn test_project_workflow_dev_prompt_reset_restarts_schema_from_clean_namespace()
         std::thread::sleep(Duration::from_millis(1_200));
         fs::write(
             &schema_path,
-            "-- Example schema for dev-reset-draft-app\nCREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL,\n  reset_column TEXT,\n  created_at TIMESTAMP\n);\n",
+            "-- Example schema for dev-reset-draft-app\nCREATE TABLE users (\n  id INTEGER \
+             PRIMARY KEY,\n  email TEXT NOT NULL,\n  reset_column TEXT,\n  created_at \
+             TIMESTAMP\n);\n",
         )
         .expect("write schema change before reset");
         assert!(
@@ -1762,7 +1793,8 @@ fn test_project_workflow_dev_prompt_reset_restarts_schema_from_clean_namespace()
         )
         .unwrap_or_else(|| {
             panic!(
-                "expected reset to rebuild and apply schema from scratch\nstderr: {}\nlog: {}\nrequests: {:?}",
+                "expected reset to rebuild and apply schema from scratch\nstderr: {}\nlog: \
+                 {}\nrequests: {:?}",
                 captured_stderr.lock().expect("lock output"),
                 fs::read_to_string(&workflow_log_path).unwrap_or_default(),
                 requests.lock().expect("lock requests").clone()

@@ -53,9 +53,9 @@ pub fn register_all_handlers(
         registry,
         SqlStatementKind::Subscribe(SubscribeStatement {
             select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
-            namespace: NamespaceId::new("_placeholder"),
-            table_name: TableName::new("_placeholder"),
-            options: SubscriptionOptions::default(),
+            namespace:    NamespaceId::new("_placeholder"),
+            table_name:   TableName::new("_placeholder"),
+            options:      SubscriptionOptions::default(),
         }),
         subscription::SubscribeHandler::new(app_context.clone()),
         SqlStatementKind::Subscribe,

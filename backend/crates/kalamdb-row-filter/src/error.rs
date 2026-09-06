@@ -8,7 +8,10 @@ pub enum RowFilterError {
     #[error("Invalid WHERE clause syntax")]
     InvalidSyntax,
 
-    #[error("WHERE subqueries require a query execution context and are not supported by row-local filters")]
+    #[error(
+        "WHERE subqueries require a query execution context and are not supported by row-local \
+         filters"
+    )]
     UnsupportedSubquery,
 
     #[error("unsupported row filter expression: {0}")]

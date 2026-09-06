@@ -37,6 +37,12 @@ mod test_project_workflow_schema;
 #[path = "cli/test_project_workflow_dev.rs"]
 mod test_project_workflow_dev;
 
+#[path = "cli/test_project_workflow_agent.rs"]
+mod test_project_workflow_agent;
+
+#[path = "cli/test_project_workflow_dev_lifecycle.rs"]
+mod test_project_workflow_dev_lifecycle;
+
 #[path = "cli/test_project_workflow_dev_watch.rs"]
 mod test_project_workflow_dev_watch;
 
@@ -45,6 +51,9 @@ mod test_project_workflow_status;
 
 #[path = "cli/test_project_workflow_resolution.rs"]
 mod test_project_workflow_resolution;
+
+#[path = "cli/test_project_workflow_shared_namespace.rs"]
+mod test_project_workflow_shared_namespace;
 
 #[path = "cli/test_project_workflow_deploy.rs"]
 mod test_project_workflow_deploy;

@@ -27,8 +27,8 @@ pub(crate) struct TablePoliciesEpoch(pub(crate) Arc<TablePoliciesTableProvider>)
 
 impl PolicyCatalogEpoch for TablePoliciesEpoch {
     fn policy_generation(&self, table_id: &TableId) -> Result<u64, String> {
-        self.0
-            .policy_generation(table_id)
-            .map_err(|error| format!("failed to read RLS policy generation for {table_id}: {error}"))
+        self.0.policy_generation(table_id).map_err(|error| {
+            format!("failed to read RLS policy generation for {table_id}: {error}")
+        })
     }
 }

@@ -89,7 +89,7 @@ pub fn decompress_gzip_with_limit(
     if advertised_size > max_output_bytes {
         return Err(DecompressError::OutputTooLarge {
             advertised: advertised_size,
-            limit: max_output_bytes,
+            limit:      max_output_bytes,
         });
     }
 
@@ -129,7 +129,10 @@ pub enum DecompressError {
     /// Decompression failed
     DecompressFailed,
     /// Advertised decompressed payload exceeds configured limit
-    OutputTooLarge { advertised: usize, limit: usize },
+    OutputTooLarge {
+        advertised: usize,
+        limit:      usize,
+    },
 }
 
 impl std::fmt::Display for DecompressError {
@@ -200,7 +203,7 @@ mod tests {
             err,
             DecompressError::OutputTooLarge {
                 advertised: 1024,
-                limit: 16,
+                limit:      16,
             }
         ));
     }

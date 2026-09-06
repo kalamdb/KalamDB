@@ -26,10 +26,10 @@ use super::providers::{
     migrations::{models::Migration, MigrationsTableProvider},
     namespaces::models::Namespace,
     storages::models::Storage,
+    table_policies::{TablePoliciesTableProvider, TablePolicyRecord},
     tables::schemas_table_definition,
     topic_offsets::models::TopicOffset,
     topics::models::Topic,
-    table_policies::{TablePoliciesTableProvider, TablePolicyRecord},
     users::models::User,
     AuditLogEntry, AuditLogsTableProvider, JobNodesTableProvider, JobsTableProvider,
     ManifestTableProvider, NamespacesTableProvider, SchemasTableProvider, StoragesTableProvider,
@@ -47,28 +47,28 @@ use super::providers::{
 #[derive(Debug)]
 pub struct SystemTablesRegistry {
     // ===== system.* tables (EntityStore-based) =====
-    users: Arc<UsersTableProvider>,
-    jobs: Arc<JobsTableProvider>,
-    job_nodes: Arc<JobNodesTableProvider>,
-    namespaces: Arc<NamespacesTableProvider>,
-    storages: Arc<StoragesTableProvider>,
-    schemas: Arc<SchemasTableProvider>,
-    audit_logs: Arc<AuditLogsTableProvider>,
-    topics: Arc<TopicsTableProvider>,
-    topic_offsets: Arc<TopicOffsetsTableProvider>,
-    migrations: Arc<MigrationsTableProvider>,
+    users:          Arc<UsersTableProvider>,
+    jobs:           Arc<JobsTableProvider>,
+    job_nodes:      Arc<JobNodesTableProvider>,
+    namespaces:     Arc<NamespacesTableProvider>,
+    storages:       Arc<StoragesTableProvider>,
+    schemas:        Arc<SchemasTableProvider>,
+    audit_logs:     Arc<AuditLogsTableProvider>,
+    topics:         Arc<TopicsTableProvider>,
+    topic_offsets:  Arc<TopicOffsetsTableProvider>,
+    migrations:     Arc<MigrationsTableProvider>,
     table_policies: Arc<TablePoliciesTableProvider>,
     // ===== Manifest cache table =====
-    manifest: Arc<ManifestTableProvider>,
+    manifest:       Arc<ManifestTableProvider>,
 
     // ===== Virtual tables =====
-    stats: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    settings: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    server_logs: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    cluster: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    stats:          RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    settings:       RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    server_logs:    RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    cluster:        RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
     cluster_groups: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    tables: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    columns: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    tables:         RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
+    columns:        RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 
     // Expected in-code system table definitions used only for startup reconciliation.
     expected_system_definitions: OnceCell<Vec<Arc<TableDefinition>>>,
@@ -112,29 +112,29 @@ impl SystemTablesRegistry {
     pub fn new(storage_backend: Arc<dyn StorageBackend>) -> Self {
         Self {
             // EntityStore-based providers
-            users: Arc::new(UsersTableProvider::new(storage_backend.clone())),
-            jobs: Arc::new(JobsTableProvider::new(storage_backend.clone())),
-            job_nodes: Arc::new(JobNodesTableProvider::new(storage_backend.clone())),
-            namespaces: Arc::new(NamespacesTableProvider::new(storage_backend.clone())),
-            storages: Arc::new(StoragesTableProvider::new(storage_backend.clone())),
-            schemas: Arc::new(SchemasTableProvider::new(storage_backend.clone())),
-            audit_logs: Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
-            topics: Arc::new(TopicsTableProvider::new(storage_backend.clone())),
-            topic_offsets: Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
-            migrations: Arc::new(MigrationsTableProvider::new(storage_backend.clone())),
+            users:          Arc::new(UsersTableProvider::new(storage_backend.clone())),
+            jobs:           Arc::new(JobsTableProvider::new(storage_backend.clone())),
+            job_nodes:      Arc::new(JobNodesTableProvider::new(storage_backend.clone())),
+            namespaces:     Arc::new(NamespacesTableProvider::new(storage_backend.clone())),
+            storages:       Arc::new(StoragesTableProvider::new(storage_backend.clone())),
+            schemas:        Arc::new(SchemasTableProvider::new(storage_backend.clone())),
+            audit_logs:     Arc::new(AuditLogsTableProvider::new(storage_backend.clone())),
+            topics:         Arc::new(TopicsTableProvider::new(storage_backend.clone())),
+            topic_offsets:  Arc::new(TopicOffsetsTableProvider::new(storage_backend.clone())),
+            migrations:     Arc::new(MigrationsTableProvider::new(storage_backend.clone())),
             table_policies: Arc::new(TablePoliciesTableProvider::new(storage_backend.clone())),
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
 
             // Virtual tables
-            stats: RwLock::new(None),       // Will be wired by kalamdb-core
-            settings: RwLock::new(None),    // Will be wired by kalamdb-core
-            server_logs: RwLock::new(None), // Will be wired by kalamdb-core (dev only)
-            cluster: RwLock::new(None),     // Initialized via set_cluster_provider()
+            stats:          RwLock::new(None), // Will be wired by kalamdb-core
+            settings:       RwLock::new(None), // Will be wired by kalamdb-core
+            server_logs:    RwLock::new(None), // Will be wired by kalamdb-core (dev only)
+            cluster:        RwLock::new(None), // Initialized via set_cluster_provider()
             cluster_groups: RwLock::new(None), // Initialized via set_cluster_groups_provider()
-            tables: RwLock::new(None),      // Initialized via set_tables_view_provider()
-            columns: RwLock::new(None),     // Initialized via set_columns_view_provider()
+            tables:         RwLock::new(None), // Initialized via set_tables_view_provider()
+            columns:        RwLock::new(None), // Initialized via set_columns_view_provider()
 
             expected_system_definitions: OnceCell::new(),
         }
@@ -276,7 +276,8 @@ impl SystemTablesRegistry {
     /// This is the canonical provider lookup used by SchemaRegistry cache binding.
     pub fn persisted_table_provider(
         &self,
-        table: SystemTable) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        table: SystemTable,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
         if table.is_view() {
             return None;
         }

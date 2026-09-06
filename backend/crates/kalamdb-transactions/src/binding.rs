@@ -6,7 +6,7 @@ pub enum TransactionRaftBinding {
     LocalSingleNode,
     UnboundCluster,
     BoundCluster {
-        group_id: GroupId,
+        group_id:       GroupId,
         leader_node_id: NodeId,
     },
 }

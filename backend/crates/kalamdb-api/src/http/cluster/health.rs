@@ -60,19 +60,19 @@ pub async fn cluster_health_handler(
         .nodes
         .iter()
         .map(|n| NodeHealth {
-            node_id: n.node_id.as_u64(),
-            role: n.role.as_str().to_string(),
-            status: n.status.as_str().to_string(),
-            api_addr: n.api_addr.clone(),
-            is_self: n.is_self,
-            is_leader: n.is_leader,
-            replication_lag: n.replication_lag,
+            node_id:              n.node_id.as_u64(),
+            role:                 n.role.as_str().to_string(),
+            status:               n.status.as_str().to_string(),
+            api_addr:             n.api_addr.clone(),
+            is_self:              n.is_self,
+            is_leader:            n.is_leader,
+            replication_lag:      n.replication_lag,
             catchup_progress_pct: n.catchup_progress_pct,
-            hostname: n.hostname.clone(),
-            memory_usage_mb: n.memory_usage_mb,
-            cpu_usage_percent: n.cpu_usage_percent,
-            uptime_seconds: n.uptime_seconds,
-            uptime_human: n.uptime_human.clone(),
+            hostname:             n.hostname.clone(),
+            memory_usage_mb:      n.memory_usage_mb,
+            cpu_usage_percent:    n.cpu_usage_percent,
+            uptime_seconds:       n.uptime_seconds,
+            uptime_human:         n.uptime_human.clone(),
         })
         .collect();
 

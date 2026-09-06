@@ -14,7 +14,7 @@ use crate::{
 #[derive(Clone)]
 pub struct SharedTableRepository<M> {
     app_context: Arc<AppContext>,
-    _marker: PhantomData<M>,
+    _marker:     PhantomData<M>,
 }
 
 impl<M: RepositoryModel> SharedTableRepository<M> {

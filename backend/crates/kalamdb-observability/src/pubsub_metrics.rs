@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Mutex, OnceLock,
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 const RATE_WINDOW_SECS: u64 = 60;
@@ -23,14 +25,14 @@ static FIRST_PUBSUB_EPOCH_SECOND: AtomicU64 = AtomicU64::new(0);
 static CONSUMER_LEASE_TOUCHES: AtomicU64 = AtomicU64::new(0);
 
 struct RateBuckets {
-    epochs: [AtomicU64; RATE_BUCKET_COUNT],
+    epochs:  [AtomicU64; RATE_BUCKET_COUNT],
     amounts: [AtomicU64; RATE_BUCKET_COUNT],
 }
 
 impl RateBuckets {
     fn new() -> Self {
         Self {
-            epochs: std::array::from_fn(|_| AtomicU64::new(0)),
+            epochs:  std::array::from_fn(|_| AtomicU64::new(0)),
             amounts: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
@@ -266,22 +268,22 @@ pub fn record_subscription_delivery(change_count: u64, byte_count: u64) {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PubSubMetricsSnapshot {
-    pub pubsub_messages_published_total: u64,
-    pub pubsub_messages_published_per_second: f64,
+    pub pubsub_messages_published_total:           u64,
+    pub pubsub_messages_published_per_second:      f64,
     pub pubsub_messages_published_peak_per_second: u64,
-    pub pubsub_bytes_published_total: u64,
-    pub pubsub_kb_published_per_second: f64,
-    pub pubsub_messages_consumed_total: u64,
-    pub pubsub_messages_consumed_per_second: f64,
-    pub pubsub_messages_consumed_peak_per_second: u64,
-    pub pubsub_bytes_consumed_total: u64,
-    pub pubsub_kb_consumed_per_second: f64,
-    pub pubsub_active_consumers: u64,
-    pub pubsub_active_consumers_peak: u64,
-    pub subscription_changes_delivered_total: u64,
+    pub pubsub_bytes_published_total:              u64,
+    pub pubsub_kb_published_per_second:            f64,
+    pub pubsub_messages_consumed_total:            u64,
+    pub pubsub_messages_consumed_per_second:       f64,
+    pub pubsub_messages_consumed_peak_per_second:  u64,
+    pub pubsub_bytes_consumed_total:               u64,
+    pub pubsub_kb_consumed_per_second:             f64,
+    pub pubsub_active_consumers:                   u64,
+    pub pubsub_active_consumers_peak:              u64,
+    pub subscription_changes_delivered_total:      u64,
     pub subscription_changes_delivered_per_second: f64,
-    pub subscription_bytes_delivered_total: u64,
-    pub subscription_bytes_delivered_per_second: f64,
+    pub subscription_bytes_delivered_total:        u64,
+    pub subscription_bytes_delivered_per_second:   f64,
 }
 
 impl PubSubMetricsSnapshot {
@@ -361,46 +363,51 @@ pub fn pubsub_metrics_snapshot() -> PubSubMetricsSnapshot {
     update_peak(&PUBSUB_ACTIVE_CONSUMERS_PEAK, active_consumers);
 
     PubSubMetricsSnapshot {
-        pubsub_messages_published_total: PUBSUB_MESSAGES_PUBLISHED_TOTAL.load(Ordering::Relaxed),
-        pubsub_messages_published_per_second: snapshot_rate(
+        pubsub_messages_published_total:           PUBSUB_MESSAGES_PUBLISHED_TOTAL
+            .load(Ordering::Relaxed),
+        pubsub_messages_published_per_second:      snapshot_rate(
             publish_message_rate_buckets(),
             now_second,
             elapsed_window,
         ),
         pubsub_messages_published_peak_per_second: PUBSUB_MESSAGES_PUBLISHED_PEAK_PER_SECOND
             .load(Ordering::Relaxed),
-        pubsub_bytes_published_total: PUBSUB_BYTES_PUBLISHED_TOTAL.load(Ordering::Relaxed),
-        pubsub_kb_published_per_second: snapshot_rate(
+        pubsub_bytes_published_total:              PUBSUB_BYTES_PUBLISHED_TOTAL
+            .load(Ordering::Relaxed),
+        pubsub_kb_published_per_second:            snapshot_rate(
             publish_byte_rate_buckets(),
             now_second,
             elapsed_window,
         ) / 1024.0,
-        pubsub_messages_consumed_total: PUBSUB_MESSAGES_CONSUMED_TOTAL.load(Ordering::Relaxed),
-        pubsub_messages_consumed_per_second: snapshot_rate(
+        pubsub_messages_consumed_total:            PUBSUB_MESSAGES_CONSUMED_TOTAL
+            .load(Ordering::Relaxed),
+        pubsub_messages_consumed_per_second:       snapshot_rate(
             consume_message_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        pubsub_messages_consumed_peak_per_second: PUBSUB_MESSAGES_CONSUMED_PEAK_PER_SECOND
+        pubsub_messages_consumed_peak_per_second:  PUBSUB_MESSAGES_CONSUMED_PEAK_PER_SECOND
             .load(Ordering::Relaxed),
-        pubsub_bytes_consumed_total: PUBSUB_BYTES_CONSUMED_TOTAL.load(Ordering::Relaxed),
-        pubsub_kb_consumed_per_second: snapshot_rate(
+        pubsub_bytes_consumed_total:               PUBSUB_BYTES_CONSUMED_TOTAL
+            .load(Ordering::Relaxed),
+        pubsub_kb_consumed_per_second:             snapshot_rate(
             consume_byte_rate_buckets(),
             now_second,
             elapsed_window,
         ) / 1024.0,
-        pubsub_active_consumers: active_consumers,
-        pubsub_active_consumers_peak: PUBSUB_ACTIVE_CONSUMERS_PEAK.load(Ordering::Relaxed),
-        subscription_changes_delivered_total: SUBSCRIPTION_CHANGES_DELIVERED_TOTAL
+        pubsub_active_consumers:                   active_consumers,
+        pubsub_active_consumers_peak:              PUBSUB_ACTIVE_CONSUMERS_PEAK
+            .load(Ordering::Relaxed),
+        subscription_changes_delivered_total:      SUBSCRIPTION_CHANGES_DELIVERED_TOTAL
             .load(Ordering::Relaxed),
         subscription_changes_delivered_per_second: snapshot_rate(
             subscription_delivery_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        subscription_bytes_delivered_total: SUBSCRIPTION_BYTES_DELIVERED_TOTAL
+        subscription_bytes_delivered_total:        SUBSCRIPTION_BYTES_DELIVERED_TOTAL
             .load(Ordering::Relaxed),
-        subscription_bytes_delivered_per_second: snapshot_rate(
+        subscription_bytes_delivered_per_second:   snapshot_rate(
             subscription_delivery_byte_rate_buckets(),
             now_second,
             elapsed_window,

@@ -7,6 +7,13 @@ use std::{
 
 static SUBSCRIPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+use link_common::{
+    models::{
+        ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
+        SubscriptionOptions, SubscriptionRequest,
+    },
+    SeqId,
+};
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
@@ -29,19 +36,12 @@ use super::{
     wasm_auth::{resolve_auth_provider, WasmAuthProvider},
     wasm_debug_log,
 };
-use link_common::{
-    models::{
-        ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
-        SubscriptionOptions, SubscriptionRequest,
-    },
-    SeqId,
-};
 
 #[derive(Serialize)]
 struct BorrowedQueryRequest<'a> {
-    sql: &'a str,
+    sql:          &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    params: Option<&'a [serde_json::Value]>,
+    params:       Option<&'a [serde_json::Value]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     namespace_id: Option<&'a str>,
 }
@@ -100,12 +100,12 @@ struct BorrowedQueryRequest<'a> {
 /// ```
 #[wasm_bindgen]
 pub struct KalamClient {
-    url: String,
+    url:                String,
     /// Authentication provider (Basic, JWT, or None).
     /// Wrapped in Rc<RefCell<>> for interior mutability so that auto-refresh
     /// on TOKEN_EXPIRED can update credentials from `&self` methods.
-    auth: Rc<RefCell<WasmAuthProvider>>,
-    ws: Rc<RefCell<Option<WebSocket>>>,
+    auth:               Rc<RefCell<WasmAuthProvider>>,
+    ws:                 Rc<RefCell<Option<WebSocket>>>,
     /// Subscription state including callbacks and last seq_id for resumption
     subscription_state: Rc<RefCell<HashMap<String, SubscriptionState>>>,
     /// Connection options for auto-reconnect
@@ -113,24 +113,24 @@ pub struct KalamClient {
     /// Current reconnection attempt count
     reconnect_attempts: Rc<RefCell<u32>>,
     /// Flag indicating if we're currently reconnecting
-    is_reconnecting: Rc<RefCell<bool>>,
+    is_reconnecting:    Rc<RefCell<bool>>,
     /// Active keepalive ping interval ID (from `setInterval`), or -1 if none.
-    ping_interval_id: Rc<RefCell<i32>>,
+    ping_interval_id:   Rc<RefCell<i32>>,
     /// Connection lifecycle event handlers
-    on_connect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_disconnect_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_error_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
-    on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    on_connect_cb:      Rc<RefCell<Option<js_sys::Function>>>,
+    on_disconnect_cb:   Rc<RefCell<Option<js_sys::Function>>>,
+    on_error_cb:        Rc<RefCell<Option<js_sys::Function>>>,
+    on_receive_cb:      Rc<RefCell<Option<js_sys::Function>>>,
+    on_send_cb:         Rc<RefCell<Option<js_sys::Function>>>,
     /// Optional async auth provider callback.
     /// Called before each (re-)connection to obtain a fresh JWT token.
     /// The callback must return a Promise that resolves to an object of the
     /// shape `{ jwt: { token: string } }` or `{ none: null }`.
-    auth_provider_cb: Rc<RefCell<Option<js_sys::Function>>>,
+    auth_provider_cb:   Rc<RefCell<Option<js_sys::Function>>>,
     /// Default namespace applied to unqualified SQL requests and live queries.
-    default_namespace: Rc<RefCell<Option<String>>>,
+    default_namespace:  Rc<RefCell<Option<String>>>,
     /// Negotiated serialization format for this WebSocket connection.
-    negotiated_ser: Rc<Cell<SerializationType>>,
+    negotiated_ser:     Rc<Cell<SerializationType>>,
 }
 
 impl KalamClient {
@@ -169,8 +169,8 @@ impl KalamClient {
         if let Some(ws) = self.ws.borrow().as_ref() {
             let subscribe_msg = ClientMessage::Subscribe {
                 subscription: SubscriptionRequest {
-                    id: subscription_id.clone(),
-                    sql: sql.clone(),
+                    id:      subscription_id.clone(),
+                    sql:     sql.clone(),
                     options: Some(subscription_options),
                 },
             };
@@ -422,11 +422,11 @@ fn reject_pending_subscriptions(
 }
 
 struct SubscriptionDispatch {
-    callback: Option<js_sys::Function>,
-    payload: Option<String>,
+    callback:          Option<js_sys::Function>,
+    payload:           Option<String>,
     resolve_subscribe: Option<js_sys::Function>,
-    reject_subscribe: Option<(js_sys::Function, String)>,
-    next_batch: Option<(String, Option<SeqId>)>,
+    reject_subscribe:  Option<(js_sys::Function, String)>,
+    next_batch:        Option<(String, Option<SeqId>)>,
 }
 
 impl SubscriptionDispatch {
@@ -640,7 +640,8 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
         || normalized.contains("base url")
         || normalized.contains("url parse")
     {
-        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL that the client can reach.";
+        return "Check the configured KalamDB URL. Use an absolute http:// or https:// base URL \
+                that the client can reach.";
     }
     if normalized.contains("401")
         || normalized.contains("403")
@@ -650,13 +651,16 @@ fn connection_hint(detail: &str, recoverable: bool, auth_user: Option<&str>) -> 
         || normalized.contains("invalid credentials")
     {
         return if auth_user.is_some() {
-            "Verify the configured auth user and password or JWT token. Basic auth must login() successfully before opening realtime connections."
+            "Verify the configured auth user and password or JWT token. Basic auth must login() \
+             successfully before opening realtime connections."
         } else {
-            "Verify the configured JWT token or auth provider. Realtime connections require valid authentication before subscribing."
+            "Verify the configured JWT token or auth provider. Realtime connections require valid \
+             authentication before subscribing."
         };
     }
     if recoverable {
-        return "Verify KalamDB is running and reachable at the configured URL from this client, then retry.";
+        return "Verify KalamDB is running and reachable at the configured URL from this client, \
+                then retry.";
     }
     "Review the connection configuration and authentication settings for this client."
 }
@@ -2185,7 +2189,7 @@ impl KalamClient {
             parsed_options.subscription_options.unwrap_or_default(),
             callback,
             SubscriptionCallbackMode::live_rows(link_common::subscription::LiveRowsConfig {
-                limit: parsed_options.limit,
+                limit:       parsed_options.limit,
                 key_columns: parsed_options.key_columns,
             }),
         )

@@ -332,11 +332,11 @@ impl QueryResult {
     /// Create a result for a DDL statement (CREATE/ALTER/DROP)
     pub fn with_message(message: String) -> Self {
         Self {
-            schema: Vec::new(),
-            rows: None,
+            schema:    Vec::new(),
+            rows:      None,
             row_count: 0,
-            message: Some(message),
-            as_user: "unknown".to_string(),
+            message:   Some(message),
+            as_user:   "unknown".to_string(),
         }
     }
 

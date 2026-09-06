@@ -1,12 +1,10 @@
 use std::fmt::Write as _;
 
 use super::{
-    display_number, group_display_name, summarize_group_states, ClusterGroupDisplay,
-    ClusterRenderData,
+    super::CLISession, display_number, group_display_name, summarize_group_states,
+    ClusterGroupDisplay, ClusterRenderData,
 };
 use crate::Result;
-
-use super::super::CLISession;
 
 impl CLISession {
     pub(in crate::session) async fn show_cluster_list(&mut self) -> Result<()> {
@@ -154,47 +152,47 @@ mod tests {
     #[test]
     fn renders_cluster_list_sections_from_system_views() {
         let data = ClusterRenderData {
-            cluster_id: "local-cluster".to_string(),
+            cluster_id:      "local-cluster".to_string(),
             is_cluster_mode: true,
-            nodes: vec![ClusterListNode {
-                cluster_id: "local-cluster".to_string(),
-                node_id: 1,
-                role: "leader".to_string(),
-                status: "active".to_string(),
-                rpc_addr: "127.0.0.1:2910".to_string(),
-                api_addr: "http://127.0.0.1:2900".to_string(),
-                is_self: true,
-                is_leader: true,
-                groups_leading: 4,
-                total_groups: 6,
-                current_term: Some(7),
-                last_applied_log: Some(120),
+            nodes:           vec![ClusterListNode {
+                cluster_id:            "local-cluster".to_string(),
+                node_id:               1,
+                role:                  "leader".to_string(),
+                status:                "active".to_string(),
+                rpc_addr:              "127.0.0.1:2910".to_string(),
+                api_addr:              "http://127.0.0.1:2900".to_string(),
+                is_self:               true,
+                is_leader:             true,
+                groups_leading:        4,
+                total_groups:          6,
+                current_term:          Some(7),
+                last_applied_log:      Some(120),
                 leader_last_log_index: Some(125),
-                snapshot_index: Some(90),
-                catchup_progress_pct: None,
-                replication_lag: None,
-                hostname: Some("node-1".to_string()),
-                memory_usage_mb: Some(32),
-                cpu_usage_percent: Some(1.5),
-                uptime_human: Some("2m".to_string()),
+                snapshot_index:        Some(90),
+                catchup_progress_pct:  None,
+                replication_lag:       None,
+                hostname:              Some("node-1".to_string()),
+                memory_usage_mb:       Some(32),
+                cpu_usage_percent:     Some(1.5),
+                uptime_human:          Some("2m".to_string()),
             }],
-            groups: vec![
+            groups:          vec![
                 ClusterGroupDisplay {
-                    group_id: 10,
-                    group_type: "meta".to_string(),
-                    current_term: Some(7),
-                    last_applied: Some(120),
-                    snapshot: Some(90),
-                    state: Some("Leader".to_string()),
+                    group_id:       10,
+                    group_type:     "meta".to_string(),
+                    current_term:   Some(7),
+                    last_applied:   Some(120),
+                    snapshot:       Some(90),
+                    state:          Some("Leader".to_string()),
                     current_leader: Some(1),
                 },
                 ClusterGroupDisplay {
-                    group_id: 100,
-                    group_type: "user_data".to_string(),
-                    current_term: Some(7),
-                    last_applied: Some(111),
-                    snapshot: Some(90),
-                    state: Some("Follower".to_string()),
+                    group_id:       100,
+                    group_type:     "user_data".to_string(),
+                    current_term:   Some(7),
+                    last_applied:   Some(111),
+                    snapshot:       Some(90),
+                    state:          Some("Follower".to_string()),
                     current_leader: Some(2),
                 },
             ],

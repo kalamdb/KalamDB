@@ -277,9 +277,9 @@ mod tests {
     fn test_create_session_with_config() {
         let settings = DataFusionSettings {
             query_parallelism: 4,
-            max_partitions: 8,
-            batch_size: 4096,
-            memory_limit: 1073741824,
+            max_partitions:    8,
+            batch_size:        4096,
+            memory_limit:      1073741824,
         };
         let factory = DataFusionSessionFactory::with_config(&settings).unwrap();
         let session = factory.create_session();
@@ -294,9 +294,9 @@ mod tests {
     fn test_auto_detect_parallelism() {
         let settings = DataFusionSettings {
             query_parallelism: 0, // Auto-detect
-            max_partitions: 16,
-            batch_size: 8192,
-            memory_limit: 1073741824,
+            max_partitions:    16,
+            batch_size:        8192,
+            memory_limit:      1073741824,
         };
         let factory = DataFusionSessionFactory::with_config(&settings).unwrap();
         let session = factory.create_session();

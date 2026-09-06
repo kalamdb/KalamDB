@@ -27,7 +27,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Audit log entry identifier"
     )]
-    pub audit_id: AuditLogId,
+    pub audit_id:        AuditLogId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -37,7 +37,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Event timestamp"
     )]
-    pub timestamp: i64,
+    pub timestamp:       i64,
     #[column(
         id = 3,
         ordinal = 3,
@@ -47,7 +47,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "User ID who performed the action"
     )]
-    pub actor_user_id: UserId,
+    pub actor_user_id:   UserId,
     #[column(
         id = 4,
         ordinal = 4,
@@ -57,7 +57,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Action performed (CREATE, UPDATE, DELETE, LOGIN, etc.)"
     )]
-    pub action: String,
+    pub action:          String,
     #[column(
         id = 5,
         ordinal = 5,
@@ -67,7 +67,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Target of the action (table name, user ID, etc.)"
     )]
-    pub target: String,
+    pub target:          String,
     #[column(
         id = 6,
         ordinal = 6,
@@ -77,7 +77,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "Additional details about the action (JSON)"
     )]
-    pub details: Option<String>, // JSON blob for additional context
+    pub details:         Option<String>, // JSON blob for additional context
     #[column(
         id = 7,
         ordinal = 7,
@@ -87,7 +87,7 @@ pub struct AuditLogEntry {
         default = "None",
         comment = "IP address of the client"
     )]
-    pub ip_address: Option<String>, // Connection source (if available)
+    pub ip_address:      Option<String>, // Connection source (if available)
     #[column(
         id = 8,
         ordinal = 8,

@@ -18,34 +18,34 @@ const DEFAULT_EXAMPLES_REF: &str = "main";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepositoryExample {
-    pub id: &'static str,
+    pub id:          &'static str,
     pub description: &'static str,
     pub source_path: &'static str,
 }
 
 pub const REPOSITORY_EXAMPLES: &[RepositoryExample] = &[
     RepositoryExample {
-        id: "live-okf-context-sync",
+        id:          "live-okf-context-sync",
         description: "OKF folder sync with live FILE columns",
         source_path: "live-okf-context-sync",
     },
     RepositoryExample {
-        id: "realtime-ops-feed",
+        id:          "realtime-ops-feed",
         description: "Small browser app with live SQL subscriptions",
         source_path: "simple-typescript",
     },
     RepositoryExample {
-        id: "chat-with-ai",
-        description: "Topic-driven React chat with an agent worker",
+        id:          "chat-with-ai",
+        description: "Realtime multi-user React chat with SHARED rooms, RLS, and a topic agent",
         source_path: "chat-with-ai",
     },
     RepositoryExample {
-        id: "react-ai-chat",
-        description: "Full React chat with approvals and attachments",
+        id:          "react-ai-chat",
+        description: "Personal AI assistant chat with USER tables, STREAM tokens, and approvals",
         source_path: "react-ai-chat",
     },
     RepositoryExample {
-        id: "summarizer-agent",
+        id:          "summarizer-agent",
         description: "Worker-only topic consumer that enriches rows",
         source_path: "summarizer-agent",
     },
@@ -172,6 +172,91 @@ pub(crate) fn copy_example_from_zip_bytes(
         )));
     }
 
+    rewrite_published_sdk_dependencies(destination_root, crate::CLI_VERSION)?;
+    ensure_env_file(destination_root)?;
+    Ok(())
+}
+
+const LOCKFILE_NAMES: &[&str] = &[
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+];
+
+fn rewrite_published_sdk_dependencies(root: &Path, version: &str) -> Result<()> {
+    let package_json_path = root.join("package.json");
+    if !package_json_path.is_file() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(&package_json_path).map_err(|error| {
+        CLIError::FileError(format!("failed to read '{}': {error}", package_json_path.display()))
+    })?;
+    let mut value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        CLIError::FileError(format!("failed to parse '{}': {error}", package_json_path.display()))
+    })?;
+
+    let mut changed = false;
+    for key in [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ] {
+        let Some(deps) = value.get_mut(key).and_then(serde_json::Value::as_object_mut) else {
+            continue;
+        };
+        for (name, spec) in deps.iter_mut() {
+            if !name.starts_with("@kalamdb/") {
+                continue;
+            }
+            let Some(current) = spec.as_str() else {
+                continue;
+            };
+            if current.starts_with("file:") {
+                *spec = serde_json::Value::String(version.to_string());
+                changed = true;
+            }
+        }
+    }
+
+    if !changed {
+        return Ok(());
+    }
+
+    let rendered = serde_json::to_string_pretty(&value).map_err(|error| {
+        CLIError::FileError(format!("failed to serialize package.json: {error}"))
+    })?;
+    fs::write(&package_json_path, format!("{rendered}\n")).map_err(|error| {
+        CLIError::FileError(format!("failed to write '{}': {error}", package_json_path.display()))
+    })?;
+
+    for lockfile in LOCKFILE_NAMES {
+        let path = root.join(lockfile);
+        if path.is_file() {
+            fs::remove_file(&path).map_err(|error| {
+                CLIError::FileError(format!("failed to remove '{}': {error}", path.display()))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_env_file(root: &Path) -> Result<()> {
+    let env_path = root.join(".env");
+    let example_path = root.join(".env.example");
+    if env_path.exists() || !example_path.is_file() {
+        return Ok(());
+    }
+    fs::copy(&example_path, &env_path).map_err(|error| {
+        CLIError::FileError(format!(
+            "failed to copy '{}' to '{}': {error}",
+            example_path.display(),
+            env_path.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -199,9 +284,10 @@ fn component_as_str(component: Component<'_>) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
     use zip::{write::FileOptions, ZipWriter};
+
+    use super::*;
 
     #[test]
     fn repository_examples_include_chat_with_ai() {
@@ -234,5 +320,51 @@ mod tests {
 
         assert!(temp.path().join("kalam.toml").is_file());
         assert!(!temp.path().join("package.json").exists());
+    }
+
+    #[test]
+    fn copy_example_rewrites_file_sdk_deps_and_copies_env() {
+        let temp = TempDir::new().expect("tempdir");
+        let mut archive = ZipWriter::new(io::Cursor::new(Vec::new()));
+        let options: FileOptions<'_, ()> = FileOptions::default();
+        archive
+            .start_file("KalamDB-main/examples/chat-with-ai/package.json", options)
+            .expect("start package.json");
+        io::Write::write_all(
+            &mut archive,
+            br#"{
+  "name": "chat-with-ai",
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "react": "^19.0.0"
+  }
+}
+"#,
+        )
+        .expect("write package.json");
+        archive
+            .start_file("KalamDB-main/examples/chat-with-ai/package-lock.json", options)
+            .expect("start lockfile");
+        io::Write::write_all(&mut archive, b"{\"lockfileVersion\": 3}\n").expect("write lockfile");
+        archive
+            .start_file("KalamDB-main/examples/chat-with-ai/.env.example", options)
+            .expect("start env example");
+        io::Write::write_all(&mut archive, b"KALAMDB_URL=http://127.0.0.1:2900\n")
+            .expect("write env example");
+        let bytes = archive.finish().expect("finish zip").into_inner();
+
+        copy_example_from_zip_bytes(
+            temp.path(),
+            find("chat-with-ai").expect("chat-with-ai example"),
+            &bytes,
+        )
+        .expect("copy example");
+
+        let package_json =
+            fs::read_to_string(temp.path().join("package.json")).expect("read package.json");
+        assert!(package_json.contains(&format!("\"@kalamdb/client\": \"{}\"", crate::CLI_VERSION)));
+        assert!(!package_json.contains("file:"));
+        assert!(!temp.path().join("package-lock.json").exists());
+        assert!(temp.path().join(".env").is_file());
     }
 }

@@ -3,7 +3,11 @@ use std::{io::IsTerminal, net::IpAddr, time::Duration};
 use colored::Colorize;
 use indicatif::ProgressBar;
 use kalam_cli::{
-    terminal_ui, CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
+    terminal_ui,
+    workflow::project::{
+        identifiers::preferred_user_label, resolve::resolve_project_server_url_for_instance,
+    },
+    CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
 use kalam_client::{
     credentials::{CredentialStore, Credentials},
@@ -12,12 +16,10 @@ use kalam_client::{
 };
 use url::Url;
 
-use kalam_cli::workflow::project::{
-    identifiers::preferred_user_label, resolve::resolve_project_server_url_for_instance,
+use crate::{
+    args::Cli,
+    terminal_input::{prompt_line, prompt_password},
 };
-
-use crate::args::Cli;
-use crate::terminal_input::{prompt_line, prompt_password};
 
 const DEFAULT_LOCAL_SERVER_URL: &str = "http://localhost:2900";
 
@@ -55,7 +57,7 @@ impl ServerUrlSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedServerUrl {
-    value: String,
+    value:  String,
     source: ServerUrlSource,
 }
 
@@ -267,7 +269,8 @@ fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: boo
         let account_note = "Use an existing KalamDB account to sign in.";
         lines.push(terminal_ui::style_muted(account_note, use_color));
 
-        let cluster_note = "If this came from scripts/cluster.sh, sign in as 'root' with the configured root password (default: kalamdb123 unless changed).";
+        let cluster_note = "If this came from scripts/cluster.sh, sign in as 'root' with the \
+                            configured root password (default: kalamdb123 unless changed).";
         lines.push(terminal_ui::style_muted(cluster_note, use_color));
     }
 
@@ -1027,7 +1030,9 @@ pub async fn create_session(
             }
         } else {
             // Token is still valid
-            let stored_username = creds.display_label().map(str::to_string);
+            let stored_username = creds.user.as_ref().map(|user| {
+                preferred_user_label(user, creds.name.as_deref(), creds.email.as_deref())
+            });
             if cli.verbose {
                 if let Some(ref user) = stored_username {
                     eprintln!(
@@ -1312,11 +1317,11 @@ mod tests {
     };
 
     use clap::Parser;
+    use kalam_cli::FileCredentialStore;
+    use kalam_client::KalamLinkTimeouts;
 
     use super::*;
     use crate::args::Cli;
-    use kalam_cli::FileCredentialStore;
-    use kalam_client::KalamLinkTimeouts;
 
     #[test]
     fn test_is_localhost_url_accepts_loopback_hosts() {

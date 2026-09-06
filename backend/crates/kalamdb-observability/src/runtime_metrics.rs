@@ -348,13 +348,13 @@ fn bytes_to_mb(bytes: u64) -> u64 {
 
 #[derive(Debug, Default)]
 struct LinuxMemoryBreakdown {
-    rss_bytes: Option<u64>,
-    pss_bytes: Option<u64>,
-    anonymous_bytes: Option<u64>,
+    rss_bytes:           Option<u64>,
+    pss_bytes:           Option<u64>,
+    anonymous_bytes:     Option<u64>,
     private_clean_bytes: Option<u64>,
     private_dirty_bytes: Option<u64>,
-    shared_clean_bytes: Option<u64>,
-    shared_dirty_bytes: Option<u64>,
+    shared_clean_bytes:  Option<u64>,
+    shared_dirty_bytes:  Option<u64>,
 }
 
 #[cfg(target_os = "linux")]

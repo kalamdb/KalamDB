@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
-
 use kalam_cli::workflow::project::config::SchemaMode;
 
 #[derive(Args, Debug, Clone, Default)]
@@ -22,6 +21,10 @@ pub struct InitArgs {
     #[arg(long = "template")]
     pub template: Option<String>,
 
+    /// List embedded templates and repository examples, then exit
+    #[arg(long = "list-templates")]
+    pub list_templates: bool,
+
     /// JavaScript package manager for TypeScript projects (npm, pnpm, yarn, bun)
     #[arg(long = "package-manager", value_enum)]
     pub package_manager: Option<PackageManagerArg>,
@@ -30,7 +33,8 @@ pub struct InitArgs {
     #[arg(long = "yes")]
     pub yes: bool,
 
-    /// Local KalamDB server management during kalam dev (local starts server, remote uses existing URL)
+    /// Local KalamDB server management during kalam dev (local starts server, remote uses existing
+    /// URL)
     #[arg(long = "server-mode", value_enum)]
     pub server_mode: Option<ServerModeArg>,
 
@@ -113,6 +117,9 @@ pub struct LinkArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct DevArgs {
+    #[command(subcommand)]
+    pub command: Option<DevCommand>,
+
     /// Project directory containing kalam.toml
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
@@ -126,12 +133,40 @@ pub struct DevArgs {
     pub namespace: Option<String>,
 
     /// Retry a paused schema pipeline on startup
-    #[arg(long = "force")]
+    #[arg(long = "force", global = true)]
     pub force: bool,
+
+    /// Runs the local KalamDB development environment in deterministic, non-interactive mode
+    /// optimized for AI coding agents and automation
+    #[arg(long = "agent", global = true)]
+    pub agent: bool,
 
     /// Deprecated; kalam dev now streams append-only logs and uses modal prompts
     #[arg(long = "progress", conflicts_with = "verbose")]
     pub progress: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DevCommand {
+    /// Start the development environment in the background
+    Start,
+    /// Show whether a background `kalam dev` session is running
+    Status,
+    /// Print or follow logs from a background `kalam dev` session
+    Logs(DevLogsArgs),
+    /// Stop a background `kalam dev` session
+    Stop,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct DevLogsArgs {
+    /// Follow the log file until interrupted
+    #[arg(short = 'F', long = "follow")]
+    pub follow: bool,
+
+    /// Number of trailing lines to print (0 prints the full file)
+    #[arg(short = 'n', long = "lines", default_value_t = 200)]
+    pub lines: usize,
 }
 
 #[derive(Args, Debug, Clone, Default)]

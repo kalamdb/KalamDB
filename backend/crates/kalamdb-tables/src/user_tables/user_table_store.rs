@@ -33,7 +33,7 @@ use crate::common::{ensure_partition, new_indexed_store_with_pk, partition_name}
 /// without admin-only access control.
 #[derive(Clone)]
 pub struct UserTableStore {
-    backend: Arc<dyn StorageBackend>,
+    backend:   Arc<dyn StorageBackend>,
     partition: Partition,
 }
 
@@ -134,11 +134,11 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Alice".to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         UserTableRow {
-            user_id: user_id.clone(),
-            _seq: SeqId::new(seq),
+            user_id:     user_id.clone(),
+            _seq:        SeqId::new(seq),
             _commit_seq: 0,
-            fields: Row::new(values),
-            _deleted: false,
+            fields:      Row::new(values),
+            _deleted:    false,
         }
     }
 

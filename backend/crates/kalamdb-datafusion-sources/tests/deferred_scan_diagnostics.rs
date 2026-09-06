@@ -24,14 +24,14 @@ use kalamdb_session_datafusion::ScanDiagnosticsContext;
 
 #[derive(Debug)]
 struct DiagnosticSource {
-    schema: SchemaRef,
+    schema:           SchemaRef,
     diagnostic_calls: Arc<AtomicUsize>,
 }
 
 impl DiagnosticSource {
     fn new() -> Self {
         Self {
-            schema: Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)])),
+            schema:           Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)])),
             diagnostic_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -58,19 +58,20 @@ impl DeferredBatchSource for DiagnosticSource {
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
         let batch = RecordBatch::try_new(
             Arc::clone(&self.schema),
-            vec![Arc::new(Int64Array::from(vec![1, 2]))])?;
+            vec![Arc::new(Int64Array::from(vec![1, 2]))],
+        )?;
         Ok(batch)
     }
 
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
         self.diagnostic_calls.fetch_add(1, Ordering::Relaxed);
         let diagnostics = DeferredScanDiagnostics {
-            hot_rows_scanned: Some(3),
-            cold_rows_scanned: Some(4),
-            cold_files_total: Some(3),
+            hot_rows_scanned:   Some(3),
+            cold_rows_scanned:  Some(4),
+            cold_files_total:   Some(3),
             cold_files_skipped: Some(1),
             cold_files_scanned: Some(2),
-            cold_files: vec![
+            cold_files:         vec![
                 "batch-0001.parquet".to_string(),
                 "batch-0002.parquet".to_string(),
             ],
@@ -173,7 +174,8 @@ impl TableProvider for DiagnosticTableProvider {
 
     fn supports_filters_pushdown(
         &self,
-        _filters: &[&datafusion::logical_expr::Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        _filters: &[&datafusion::logical_expr::Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         Ok(vec![])
     }
 
@@ -182,7 +184,8 @@ impl TableProvider for DiagnosticTableProvider {
         _state: &dyn Session,
         _projection: Option<&Vec<usize>>,
         _filters: &[datafusion::logical_expr::Expr],
-        _limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        _limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(DeferredBatchExec::new_with_scan_diagnostics(
             self.source.clone() as Arc<dyn DeferredBatchSource>
         )))

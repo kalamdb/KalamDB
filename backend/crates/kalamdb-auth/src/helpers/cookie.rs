@@ -16,13 +16,13 @@ pub const REFRESH_COOKIE_NAME: &str = "kalamdb_refresh";
 #[derive(Debug, Clone)]
 pub struct CookieConfig {
     /// Whether to set the Secure flag (should be true in production/HTTPS)
-    pub secure: bool,
+    pub secure:    bool,
     /// Cookie path (default: "/")
-    pub path: String,
+    pub path:      String,
     /// SameSite policy
     pub same_site: SameSite,
     /// Domain (None = current domain)
-    pub domain: Option<String>,
+    pub domain:    Option<String>,
 }
 
 fn build_token_cookie<'a>(
@@ -80,10 +80,10 @@ impl Default for CookieConfig {
         Self {
             // SECURITY: Default to true for HTTPS-only cookie transmission.
             // Set to false only in development environments without TLS.
-            secure: true,
-            path: "/".to_string(),
+            secure:    true,
+            path:      "/".to_string(),
             same_site: SameSite::Strict,
-            domain: None,
+            domain:    None,
         }
     }
 }

@@ -36,6 +36,16 @@ const tableSchemaKeys = [
   "use_user_storage",
 ];
 
+const tablePolicyKeys = [
+  "policy_id",
+  "table_id",
+  "policy_name",
+  "command",
+  "targets",
+  "using_sql",
+  "with_check_sql",
+];
+
 const adminUser: AuthUser = {
   id: "admin-user",
   username: "admin@example.org",
@@ -125,6 +135,20 @@ function defaultSchemaRows(): SchemaRow[] {
   ];
 }
 
+function defaultPolicyRows(): SchemaRow[] {
+  return [
+    {
+      policy_id: "default.settings:owner_read",
+      table_id: "default.settings",
+      policy_name: "owner_read",
+      command: "select",
+      targets: [{ role: "user" }, { role: "service" }],
+      using_sql: "true",
+      with_check_sql: null,
+    },
+  ];
+}
+
 function extractSqlFromRequestBody(body: string): string {
   try {
     const parsed = JSON.parse(body) as { sql?: unknown; query?: unknown };
@@ -141,6 +165,7 @@ function extractSqlFromRequestBody(body: string): string {
 
 async function mockAdminApi(page: Page, executedSql: string[]) {
   let schemaRows = defaultSchemaRows();
+  let policyRows = defaultPolicyRows();
 
   await page.route("**/v1/api/**", async (route) => {
     const requestUrl = new URL(route.request().url());
@@ -191,6 +216,13 @@ async function mockAdminApi(page: Page, executedSql: string[]) {
         return;
       }
 
+      if (normalized.includes("system.table_policies")) {
+        await route.fulfill({
+          json: schemaResponse(policyRows, tablePolicyKeys),
+        });
+        return;
+      }
+
       if (normalized.includes("system.schemas")) {
         await route.fulfill({
           json: schemaResponse(schemaRows, tableSchemaKeys),
@@ -213,7 +245,10 @@ async function mockAdminApi(page: Page, executedSql: string[]) {
 
       if (
         normalized.includes("create table") ||
-        normalized.includes("alter table")
+        normalized.includes("alter table") ||
+        normalized.includes("create policy") ||
+        normalized.includes("alter policy") ||
+        normalized.includes("drop policy")
       ) {
         executedSql.push(sql);
         if (normalized.includes("create table")) {
@@ -327,4 +362,54 @@ test("admin edits shared table options", async ({ page }) => {
   expect(alterSql).not.toContain("ACCESS_LEVEL");
   expect(alterSql).toContain("FLUSH_POLICY = 'rows:2000,interval:120'");
   expect(alterSql).toContain("COMPRESSION = 'none'");
+});
+
+test("admin creates a shared table policy", async ({ page }) => {
+  const executedSql: string[] = [];
+  await mockAdminApi(page, executedSql);
+  await openTableEditor(page);
+
+  await page.getByRole("button", { name: /new table/i }).click();
+  await chooseSelect(page, "table-type-select", /shared/i);
+  await expect(page.getByText("Access level")).toHaveCount(0);
+  await page.getByPlaceholder("e.g. users").fill("documents");
+  await page.getByTestId("table-policy-add").click();
+  await page.getByTestId("table-policy-name").fill("owner_read");
+  await page.getByTestId("table-policy-using").fill("owner_id = CURRENT_USER()");
+
+  await page.getByRole("button", { name: /review & create/i }).click();
+  await page.getByRole("button", { name: /^commit$/i }).click();
+
+  await expect
+    .poll(() => executedSql.find((sql) => /create\s+policy/i.test(sql)) ?? "")
+    .toContain("CREATE POLICY owner_read");
+  const sql = executedSql.find((item) => /create\s+policy/i.test(item)) ?? "";
+  expect(sql).toContain("ON default.documents");
+  expect(sql).toContain("FOR SELECT");
+  expect(sql).toContain("TO user, service");
+  expect(sql).toContain("USING (owner_id = CURRENT_USER())");
+  expect(sql).not.toContain("ACCESS_LEVEL");
+});
+
+test("admin alters an existing shared table policy", async ({ page }) => {
+  const executedSql: string[] = [];
+  await mockAdminApi(page, executedSql);
+  await openTableEditor(page);
+
+  await page.getByText(/^settings$/i, { exact: true }).click();
+  await expect(page.getByTestId("table-policies-section")).toBeVisible();
+  await expect(page.getByTestId("table-policy-name")).toHaveValue("owner_read");
+  await page
+    .getByTestId("table-policy-using")
+    .fill("owner_id = CURRENT_USER()");
+
+  await page.getByRole("button", { name: /review & save/i }).click();
+  await page.getByRole("button", { name: /^commit$/i }).click();
+
+  await expect
+    .poll(() => executedSql.find((sql) => /alter\s+policy/i.test(sql)) ?? "")
+    .toContain("ALTER POLICY owner_read");
+  const sql = executedSql.find((item) => /alter\s+policy/i.test(item)) ?? "";
+  expect(sql).toContain("ON default.settings");
+  expect(sql).toContain("USING (owner_id = CURRENT_USER())");
 });

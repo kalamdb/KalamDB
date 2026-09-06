@@ -91,7 +91,10 @@ fn template_string_escape_for_path(project_path: &str) -> TemplateStringEscape {
     if project_path.ends_with(".json") {
         return TemplateStringEscape::DoubleQuoted;
     }
-    if project_path.ends_with(".ts") || project_path.ends_with(".tsx") || project_path.ends_with(".dart") {
+    if project_path.ends_with(".ts")
+        || project_path.ends_with(".tsx")
+        || project_path.ends_with(".dart")
+    {
         return TemplateStringEscape::JsSingleQuoted;
     }
     TemplateStringEscape::None
@@ -114,14 +117,14 @@ pub fn render_template_pairs_for_path(
 }
 
 pub struct KalamTomlScaffoldInput<'a> {
-    pub project_name: &'a str,
-    pub namespace: &'a str,
-    pub server_url: &'a str,
-    pub schema_mode: &'a str,
-    pub schema_path: &'a str,
-    pub languages: &'a [String],
-    pub auto_start_db: bool,
-    pub package_manager: Option<&'a str>,
+    pub project_name:        &'a str,
+    pub namespace:           &'a str,
+    pub server_url:          &'a str,
+    pub schema_mode:         &'a str,
+    pub schema_path:         &'a str,
+    pub languages:           &'a [String],
+    pub auto_start_db:       bool,
+    pub package_manager:     Option<&'a str>,
     pub dev_process_command: &'a str,
 }
 
@@ -374,6 +377,9 @@ mod tests {
         assert!(rendered.contains("logs_path = \"kalam/server/logs\""));
         assert!(rendered.contains("[rate_limit]"));
         assert!(rendered.contains("max_queries_per_sec = 100000"));
+        assert!(rendered.contains("[postgres_wire]"));
+        assert!(rendered.contains("enabled = false"));
+        assert!(!rendered.contains("pg_catalog_enabled"));
         assert!(!rendered.contains("&quot;"));
     }
 

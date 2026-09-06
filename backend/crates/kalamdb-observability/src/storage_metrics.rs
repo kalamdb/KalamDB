@@ -111,18 +111,18 @@ fn storage_elapsed_window(now_second: u64) -> u64 {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct StorageMetricsSnapshot {
-    pub manifest_cache_rocksdb_entries: u64,
-    pub manifest_cache_memory_entries: u64,
-    pub manifest_reads_total: u64,
-    pub manifest_reads_per_second: f64,
-    pub manifest_writes_total: u64,
-    pub manifest_writes_per_second: f64,
-    pub flush_operations_total: u64,
-    pub parquet_files_written_total: u64,
+    pub manifest_cache_rocksdb_entries:   u64,
+    pub manifest_cache_memory_entries:    u64,
+    pub manifest_reads_total:             u64,
+    pub manifest_reads_per_second:        f64,
+    pub manifest_writes_total:            u64,
+    pub manifest_writes_per_second:       f64,
+    pub flush_operations_total:           u64,
+    pub parquet_files_written_total:      u64,
     pub parquet_files_written_per_second: f64,
-    pub parquet_files_read_total: u64,
-    pub parquet_files_read_per_second: f64,
-    pub parquet_rows_flushed_total: u64,
+    pub parquet_files_read_total:         u64,
+    pub parquet_files_read_per_second:    f64,
+    pub parquet_rows_flushed_total:       u64,
 }
 
 impl StorageMetricsSnapshot {
@@ -245,34 +245,34 @@ pub fn storage_metrics_snapshot() -> StorageMetricsSnapshot {
     let elapsed_window = storage_elapsed_window(now_second);
 
     StorageMetricsSnapshot {
-        manifest_cache_rocksdb_entries: MANIFEST_CACHE_ROCKSDB_ENTRIES.load(Ordering::Relaxed),
-        manifest_cache_memory_entries: MANIFEST_CACHE_MEMORY_ENTRIES.load(Ordering::Relaxed),
-        manifest_reads_total: MANIFEST_READS_TOTAL.load(Ordering::Relaxed),
-        manifest_reads_per_second: snapshot_rate(
+        manifest_cache_rocksdb_entries:   MANIFEST_CACHE_ROCKSDB_ENTRIES.load(Ordering::Relaxed),
+        manifest_cache_memory_entries:    MANIFEST_CACHE_MEMORY_ENTRIES.load(Ordering::Relaxed),
+        manifest_reads_total:             MANIFEST_READS_TOTAL.load(Ordering::Relaxed),
+        manifest_reads_per_second:        snapshot_rate(
             manifest_read_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        manifest_writes_total: MANIFEST_WRITES_TOTAL.load(Ordering::Relaxed),
-        manifest_writes_per_second: snapshot_rate(
+        manifest_writes_total:            MANIFEST_WRITES_TOTAL.load(Ordering::Relaxed),
+        manifest_writes_per_second:       snapshot_rate(
             manifest_write_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        flush_operations_total: FLUSH_OPERATIONS_TOTAL.load(Ordering::Relaxed),
-        parquet_files_written_total: PARQUET_FILES_WRITTEN_TOTAL.load(Ordering::Relaxed),
+        flush_operations_total:           FLUSH_OPERATIONS_TOTAL.load(Ordering::Relaxed),
+        parquet_files_written_total:      PARQUET_FILES_WRITTEN_TOTAL.load(Ordering::Relaxed),
         parquet_files_written_per_second: snapshot_rate(
             parquet_write_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        parquet_files_read_total: PARQUET_FILES_READ_TOTAL.load(Ordering::Relaxed),
-        parquet_files_read_per_second: snapshot_rate(
+        parquet_files_read_total:         PARQUET_FILES_READ_TOTAL.load(Ordering::Relaxed),
+        parquet_files_read_per_second:    snapshot_rate(
             parquet_read_rate_buckets(),
             now_second,
             elapsed_window,
         ),
-        parquet_rows_flushed_total: PARQUET_ROWS_FLUSHED_TOTAL.load(Ordering::Relaxed),
+        parquet_rows_flushed_total:       PARQUET_ROWS_FLUSHED_TOTAL.load(Ordering::Relaxed),
     }
 }
 

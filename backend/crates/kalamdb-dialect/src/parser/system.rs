@@ -12,22 +12,22 @@ use crate::{dialect::KalamDbDialect, parser::utils::parse_sql_statements};
 #[derive(Debug, Clone)]
 pub enum SystemStatement {
     Select {
-        table: SystemTable,
-        columns: Vec<String>,
+        table:        SystemTable,
+        columns:      Vec<String>,
         where_clause: Option<String>,
     },
     Insert {
-        table: SystemTable,
+        table:   SystemTable,
         columns: Vec<String>,
-        values: Vec<serde_json::Value>,
+        values:  Vec<serde_json::Value>,
     },
     Update {
-        table: SystemTable,
-        updates: Vec<(String, serde_json::Value)>,
+        table:        SystemTable,
+        updates:      Vec<(String, serde_json::Value)>,
         where_clause: Option<String>,
     },
     Delete {
-        table: SystemTable,
+        table:        SystemTable,
         where_clause: Option<String>,
     },
 }

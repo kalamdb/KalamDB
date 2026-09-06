@@ -5,7 +5,11 @@ use crate::Role;
 
 /// Role class targeted by a policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "snake_case")
+)]
 pub enum PolicyTarget {
     Public,
     Role(Role),

@@ -234,6 +234,28 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
         .await
         .unwrap();
     assert_eq!(after.iter().map(|batch| batch.num_rows()).sum::<usize>(), 1);
+
+    let explain = session
+        .sql("EXPLAIN SELECT id FROM chat.documents_scan")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    let explain_text = format!("{explain:?}");
+    assert!(
+        explain_text.contains("RlsAuthorization strategy=RowLocal"),
+        "EXPLAIN must show the row-local RLS strategy, got {explain_text}"
+    );
+    assert!(
+        explain_text.contains("policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]"),
+        "EXPLAIN must list the bound policy and USING qual like PostgreSQL security quals, got \
+         {explain_text}"
+    );
+    assert!(
+        !explain_text.contains("alice") && !explain_text.contains("doc-a"),
+        "EXPLAIN must not list the bound principal or row keys, got {explain_text}"
+    );
 }
 
 #[tokio::test]
@@ -341,6 +363,14 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
          {explain_text}"
     );
     assert!(
+        explain_text.contains("policies=[member_read FOR SELECT USING"),
+        "EXPLAIN must name the bound policy, got {explain_text}"
+    );
+    assert!(
+        explain_text.contains("USING (group_id IN") && explain_text.contains("CURRENT_USER"),
+        "EXPLAIN must include the USING qual like PostgreSQL security quals, got {explain_text}"
+    );
+    assert!(
         !explain_text.contains("membership-1") && !explain_text.contains("alice"),
         "EXPLAIN must not list authorization keys or principals, got {explain_text}"
     );
@@ -356,6 +386,10 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
         broad_text.contains("strategy=CachedAuthorizationSet"),
         "EXPLAIN must show the cached authorization-set strategy for broad membership scans, got \
          {broad_text}"
+    );
+    assert!(
+        broad_text.contains("policies=[member_read FOR SELECT USING"),
+        "broad EXPLAIN must still list the bound policy, got {broad_text}"
     );
     assert!(
         !broad_text.contains("HashJoinExec"),

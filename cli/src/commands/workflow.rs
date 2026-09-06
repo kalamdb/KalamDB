@@ -5,12 +5,12 @@ use kalam_cli::{
         project::{init::InitOptions, link::LinkOptions},
         WorkflowContext,
     },
-    CLIConfiguration, Result,
+    CLIConfiguration, CLIError, Result, CLI_VERSION,
 };
 
 use crate::args::{
-    Cli, CliCommand, DbArgs, DbCommand, DeployArgs, DevArgs, InitArgs, LinkArgs, MigrationArgs,
-    MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
+    Cli, CliCommand, DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, InitArgs, LinkArgs,
+    MigrationArgs, MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
 };
 
 pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
@@ -56,6 +56,10 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
 }
 
 async fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
+    if args.list_templates {
+        return list_init_templates(cli.json);
+    }
+
     let cwd = args
         .project_dir
         .clone()
@@ -74,8 +78,41 @@ async fn handle_init(cli: &Cli, args: &InitArgs) -> Result<()> {
             cwd,
         },
         !cli.no_color,
+        !cli.no_spinner,
+        cli.json,
     )
     .await
+}
+
+fn list_init_templates(json: bool) -> Result<()> {
+    let templates = kalam_cli::workflow::project::init::list_init_templates();
+    let payload = serde_json::json!({
+        "ok": true,
+        "cli_version": CLI_VERSION,
+        "default_template": "simple-live",
+        "next": "kalam init --yes --template <id> --languages typescript --package-manager npm && kalam dev start --agent",
+        "templates": templates,
+    });
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload)
+                .map_err(|error| CLIError::FormatError(error.to_string()))?
+        );
+        return Ok(());
+    }
+
+    println!("id\tkind\tlanguage\tdescription");
+    for template in &templates {
+        println!(
+            "{}\t{}\t{}\t{}",
+            template.id, template.kind, template.language, template.description
+        );
+    }
+    println!();
+    println!("Next: kalam init --yes --template <id> --languages typescript --package-manager npm");
+    println!("Then: kalam dev start --agent");
+    Ok(())
 }
 
 fn workflow_context(
@@ -90,7 +127,7 @@ fn workflow_context(
         .unwrap_or_else(|| ".".into());
 
     let cli_config = CLIConfiguration::load(&cli.config)?;
-    WorkflowContext::discover(
+    let mut ctx = WorkflowContext::discover(
         &start,
         project_dir,
         &cli_config,
@@ -98,7 +135,19 @@ fn workflow_context(
         env.map(str::to_string),
         namespace.map(str::to_string),
         cli.url.clone(),
-    )
+    )?;
+    ctx.animations = !cli.no_spinner && !cli.json;
+    ctx.json = cli.json;
+    Ok(ctx)
+}
+
+fn apply_agent_mode(ctx: &mut WorkflowContext, agent: bool) {
+    if !agent {
+        return;
+    }
+    ctx.agent = true;
+    ctx.use_color = false;
+    ctx.animations = false;
 }
 
 fn handle_schema(cli: &Cli, args: &SchemaArgs) -> Result<()> {
@@ -160,26 +209,37 @@ fn handle_link(cli: &Cli, args: &LinkArgs) -> Result<()> {
     workflow::link_project(
         &ctx,
         LinkOptions {
-            env: args.env.clone(),
-            url: args.url.clone(),
+            env:       args.env.clone(),
+            url:       args.url.clone(),
             namespace: args.namespace.clone(),
         },
     )
 }
 
 async fn handle_dev(cli: &Cli, args: &DevArgs) -> Result<()> {
-    let ctx = workflow_context(
+    let mut ctx = workflow_context(
         cli,
         args.project_dir.as_deref(),
         args.env.as_deref(),
         args.namespace.as_deref(),
     )?;
-    let display_mode = if cli.verbose {
+    apply_agent_mode(&mut ctx, args.agent);
+    let display_mode = if ctx.agent {
+        WorkflowDisplayMode::Agent
+    } else if cli.verbose {
         WorkflowDisplayMode::Verbose
     } else {
         WorkflowDisplayMode::Normal
     };
-    workflow::run_dev(&ctx, args.force, display_mode).await
+    match &args.command {
+        None => workflow::run_dev(&ctx, args.force, display_mode).await,
+        Some(DevCommand::Start) => workflow::start_dev(&ctx, args.force).await,
+        Some(DevCommand::Status) => workflow::dev_session_status(&ctx).await,
+        Some(DevCommand::Logs(logs)) => {
+            workflow::dev_session_logs(&ctx, logs.follow, logs.lines).await
+        },
+        Some(DevCommand::Stop) => workflow::stop_dev(&ctx).await,
+    }
 }
 
 async fn handle_status(cli: &Cli, args: &StatusArgs) -> Result<()> {

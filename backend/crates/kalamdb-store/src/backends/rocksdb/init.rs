@@ -13,6 +13,7 @@ use sysinfo::{MemoryRefreshKind, System};
 use super::{
     cf_tuning::{apply_cf_settings, apply_db_settings},
     keyspace::fixed_column_families,
+    restore::apply_pending_rocksdb_restore,
 };
 
 /// RocksDB initializer for creating/opening a database with fixed physical CFs.
@@ -76,6 +77,7 @@ impl RocksDbInit {
 
     fn open_internal(&self, db_opts: &Options, cache: &Cache) -> Result<(Arc<DB>, Vec<String>)> {
         let path = Path::new(&self.db_path);
+        apply_pending_rocksdb_restore(path)?;
         let cf_names = self.collect_column_family_names(db_opts, path);
 
         let cf_descriptors: Vec<_> = cf_names

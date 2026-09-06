@@ -16,11 +16,13 @@ use kalamdb_filestore::StorageCached;
 use kalamdb_store::entity_store::EntityStore;
 use kalamdb_tables::{UserTableIndexedStore, UserTableRow};
 
-use super::base::{
-    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
-    FlushScopeHook, FlushTableMetadata, TableFlush,
+use super::{
+    base::{
+        config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
+        FlushScopeHook, FlushTableMetadata, TableFlush,
+    },
+    scope_writer::FlushScopeWriter,
 };
-use super::scope_writer::FlushScopeWriter;
 use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestService};
 
 /// User table flush job
@@ -29,14 +31,14 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// separate Parquet file for RLS isolation. Uses Bloom filters on primary key columns
 /// columns for efficient query pruning.
 pub struct UserTableFlushJob {
-    store: Arc<UserTableIndexedStore>,
-    table_id: Arc<TableId>,
-    schema: SchemaRef,
-    storage_cached: Arc<StorageCached>,
+    store:           Arc<UserTableIndexedStore>,
+    table_id:        Arc<TableId>,
+    schema:          SchemaRef,
+    storage_cached:  Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    metadata: FlushTableMetadata,
+    metadata:        FlushTableMetadata,
     scan_batch_size: usize,
-    scope_hook: Arc<dyn FlushScopeHook>,
+    scope_hook:      Arc<dyn FlushScopeHook>,
 }
 
 impl UserTableFlushJob {
@@ -279,10 +281,10 @@ impl TableFlush for UserTableFlushJob {
                 self.table_id
             );
             return Ok(FlushJobResult {
-                rows_flushed: 0,
+                rows_flushed:  0,
                 parquet_files: vec![],
-                scope_hints: vec![],
-                metadata: FlushMetadata::user_table(0, vec![]),
+                scope_hints:   vec![],
+                metadata:      FlushMetadata::user_table(0, vec![]),
             });
         }
 

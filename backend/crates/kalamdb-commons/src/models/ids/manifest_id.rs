@@ -22,7 +22,7 @@ use crate::{TableId, UserId};
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ManifestId {
     pub table_id: TableId,
-    pub user_id: Option<UserId>,
+    pub user_id:  Option<UserId>,
 }
 
 impl ManifestId {

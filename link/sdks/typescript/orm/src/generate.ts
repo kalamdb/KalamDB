@@ -399,6 +399,13 @@ export interface GenerateOptions {
   bigIntMode?: BigIntMode;
   /** Emit `$inferSelect` / `$inferInsert` aliases next to every table. */
   includeTypeAliases?: boolean;
+  /**
+   * Emit short names like `messages` / `"messages"` when a single `--namespace`
+   * is selected. Default is always namespaced (`chat_messages` /
+   * `"chat.messages"`) so generated files stay stable for agents and do not
+   * require `configureKalamOrm`.
+   */
+  unqualifiedNames?: boolean;
 }
 
 export async function generateSchema(
@@ -430,7 +437,7 @@ export async function generateSchema(
     if (!options.includeSystem && (table.namespaceId === 'system' || table.namespaceId === 'dba')) return false;
     return true;
   });
-  const emitUnqualifiedNames = namespaceAllowlist.size === 1;
+  const emitUnqualifiedNames = options.unqualifiedNames === true && namespaceAllowlist.size === 1;
   const names = tableVariableNames(filtered, emitUnqualifiedNames);
   const ctx: RenderContext = {
     ormImports: new Set(['kTable']),

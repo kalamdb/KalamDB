@@ -21,7 +21,7 @@ pub struct JobNode {
         default = "Function(NOW)",
         comment = "Row creation timestamp"
     )]
-    pub created_at: i64,
+    pub created_at:    i64,
     #[column(
         id = 8,
         ordinal = 8,
@@ -31,7 +31,7 @@ pub struct JobNode {
         default = "Function(NOW)",
         comment = "Row updated timestamp"
     )]
-    pub updated_at: i64,
+    pub updated_at:    i64,
     #[column(
         id = 6,
         ordinal = 6,
@@ -41,7 +41,7 @@ pub struct JobNode {
         default = "None",
         comment = "Node start timestamp"
     )]
-    pub started_at: Option<i64>,
+    pub started_at:    Option<i64>,
     #[column(
         id = 7,
         ordinal = 7,
@@ -51,7 +51,7 @@ pub struct JobNode {
         default = "None",
         comment = "Node finish timestamp"
     )]
-    pub finished_at: Option<i64>,
+    pub finished_at:   Option<i64>,
     #[column(
         id = 1,
         ordinal = 1,
@@ -61,7 +61,7 @@ pub struct JobNode {
         default = "None",
         comment = "Job identifier"
     )]
-    pub job_id: JobId,
+    pub job_id:        JobId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -71,7 +71,7 @@ pub struct JobNode {
         default = "None",
         comment = "Node identifier"
     )]
-    pub node_id: NodeId,
+    pub node_id:       NodeId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -81,7 +81,7 @@ pub struct JobNode {
         default = "None",
         comment = "Per-node job status"
     )]
-    pub status: JobStatus,
+    pub status:        JobStatus,
     #[column(
         id = 4,
         ordinal = 4,
@@ -108,13 +108,13 @@ mod tests {
     #[test]
     fn test_job_node_system_row_roundtrip_preserves_numeric_node_id() {
         let job_node = JobNode {
-            created_at: 1730000000000,
-            updated_at: 1730000003000,
-            started_at: Some(1730000000100),
-            finished_at: None,
-            job_id: JobId::new("job_node_mapper_roundtrip"),
-            node_id: NodeId::from(1u64),
-            status: JobStatus::Queued,
+            created_at:    1730000000000,
+            updated_at:    1730000003000,
+            started_at:    Some(1730000000100),
+            finished_at:   None,
+            job_id:        JobId::new("job_node_mapper_roundtrip"),
+            node_id:       NodeId::from(1u64),
+            status:        JobStatus::Queued,
             error_message: None,
         };
 

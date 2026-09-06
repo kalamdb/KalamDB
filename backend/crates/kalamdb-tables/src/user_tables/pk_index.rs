@@ -38,7 +38,7 @@ use kalamdb_store::IndexDefinition;
 #[derive(Clone)]
 pub struct UserTablePkIndex {
     /// Partition for the index
-    partition: Partition,
+    partition:     Partition,
     /// Name of the primary key field (e.g., "id", "user_id", etc.)
     pk_field_name: String,
 }
@@ -52,7 +52,7 @@ impl UserTablePkIndex {
     pub fn new(table_id: &kalamdb_commons::TableId, pk_field_name: &str) -> Self {
         let partition_name = format!("user_{}_pk_idx", table_id); // TableId Display: "namespace:table"
         Self {
-            partition: Partition::new(partition_name),
+            partition:     Partition::new(partition_name),
             pk_field_name: pk_field_name.to_string(),
         }
     }
@@ -153,11 +153,11 @@ mod tests {
 
         let key = UserTableRowId::new(user_id.clone(), SeqId::new(seq));
         let row = UserTableRow {
-            user_id: user_id.clone(),
-            _seq: SeqId::new(seq),
+            user_id:     user_id.clone(),
+            _seq:        SeqId::new(seq),
             _commit_seq: 0,
-            _deleted: false,
-            fields: Row::new(values),
+            _deleted:    false,
+            fields:      Row::new(values),
         };
         (key, row)
     }

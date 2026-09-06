@@ -140,10 +140,12 @@ fn validate_user_management(config: &ServerConfig) -> anyhow::Result<()> {
 fn validate_topics(config: &ServerConfig) -> anyhow::Result<()> {
     ensure_positive_i64(
         config.topics.default_retention_seconds,
-        "topics.default_retention_seconds")?;
+        "topics.default_retention_seconds",
+    )?;
     ensure_positive_i64(
         config.topics.default_retention_max_bytes,
-        "topics.default_retention_max_bytes")?;
+        "topics.default_retention_max_bytes",
+    )?;
     ensure_non_zero_usize(config.topics.retention_batch_size, "topics.retention_batch_size")?;
     Ok(())
 }
@@ -381,7 +383,8 @@ mod tests {
             broker_device_flow_enabled = true
             auto_provision = true
             default_role = "dba"
-            "#)
+            "#,
+        )
         .expect("auth settings should parse");
 
         assert!(!auth.local.enabled);
@@ -416,7 +419,9 @@ mod tests {
             "oauth".to_string(),
             toml::Value::Table(toml::map::Map::from_iter([(
                 "enabled".to_string(),
-                toml::Value::Boolean(true))])));
+                toml::Value::Boolean(true),
+            )])),
+        );
         let content = toml::to_string(&value).unwrap();
 
         let err = ServerConfig::from_toml_str(&content)

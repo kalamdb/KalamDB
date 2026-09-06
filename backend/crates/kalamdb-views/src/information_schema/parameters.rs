@@ -42,11 +42,13 @@ impl ExtendedInformationSchemaParametersProvider {
         &self,
         state: &SessionState,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
         let batch = collect_inner_batch(&self.inner, state, filters, limit).await?;
         if batch.num_rows() == 0 {
             return Ok(datafusion::arrow::record_batch::RecordBatch::new_empty(Arc::clone(
-                &self.schema)));
+                &self.schema,
+            )));
         }
         append_nullable_uint64_column(&batch, &self.schema, CHARACTER_MAXIMUM_LENGTH)
     }
@@ -73,7 +75,8 @@ impl DeferredBatchSource for ExtendedParametersScanSource {
     }
 
     async fn produce_batch(
-        &self) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
+        &self,
+    ) -> DataFusionResult<datafusion::arrow::record_batch::RecordBatch> {
         let batch = self
             .provider
             .collect_extended_batch(&self.session_state, &self.filters, self.limit)
@@ -84,7 +87,8 @@ impl DeferredBatchSource for ExtendedParametersScanSource {
             self.physical_filter.as_ref(),
             self.projection.as_deref(),
             self.limit,
-            self.source_name())
+            self.source_name(),
+        )
     }
 }
 
@@ -103,7 +107,8 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
         state: &dyn Session,
         projection: Option<&Vec<usize>>,
         filters: &[Expr],
-        limit: Option<usize>) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         let session_state = state
             .as_any()
             .downcast_ref::<SessionState>()
@@ -142,7 +147,8 @@ impl TableProvider for ExtendedInformationSchemaParametersProvider {
 
     fn supports_filters_pushdown(
         &self,
-        filters: &[&Expr]) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
         self.inner.supports_filters_pushdown(filters)
     }
 }

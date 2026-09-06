@@ -20,7 +20,7 @@ String get serverUrl =>
     envOrDefault(const ['KALAMDB_URL', 'KALAM_URL'], 'http://localhost:2900');
 
 String get adminUser =>
-    envOrDefault(const ['KALAMDB_USER', 'KALAM_USER'], 'admin');
+    envOrDefault(const ['KALAMDB_USER', 'KALAM_USER'], 'root');
 
 String get adminPass => envOrDefault(
       const ['KALAMDB_PASSWORD', 'KALAM_PASS'],

@@ -17,20 +17,20 @@ const TEN_KB_ROW_BYTES: usize = 10 * 1024;
 const BENCH_COLUMNS: &str = "id TEXT, payload TEXT, status TEXT, version INTEGER";
 
 struct BenchStats {
-    run_totals_ms: Vec<f64>,
+    run_totals_ms:   Vec<f64>,
     median_total_ms: f64,
-    median_avg_ms: f64,
-    min_total_ms: f64,
-    max_total_ms: f64,
+    median_avg_ms:   f64,
+    min_total_ms:    f64,
+    max_total_ms:    f64,
 }
 
 struct SelectBreakdownStats {
-    pg_id_only_query_median_ms: f64,
-    pg_full_row_query_median_ms: f64,
-    pg_decode_median_ms: f64,
-    api_id_only_http_median_ms: f64,
-    api_id_only_parse_median_ms: f64,
-    api_full_row_http_median_ms: f64,
+    pg_id_only_query_median_ms:   f64,
+    pg_full_row_query_median_ms:  f64,
+    pg_decode_median_ms:          f64,
+    api_id_only_http_median_ms:   f64,
+    api_id_only_parse_median_ms:  f64,
+    api_full_row_http_median_ms:  f64,
     api_full_row_parse_median_ms: f64,
 }
 
@@ -325,12 +325,12 @@ async fn measure_select_breakdown(
     }
 
     SelectBreakdownStats {
-        pg_id_only_query_median_ms: median_ms(&pg_id_only_query_ms),
-        pg_full_row_query_median_ms: median_ms(&pg_full_row_query_ms),
-        pg_decode_median_ms: median_ms(&pg_decode_ms),
-        api_id_only_http_median_ms: median_ms(&api_id_only_http_ms),
-        api_id_only_parse_median_ms: median_ms(&api_id_only_parse_ms),
-        api_full_row_http_median_ms: median_ms(&api_full_row_http_ms),
+        pg_id_only_query_median_ms:   median_ms(&pg_id_only_query_ms),
+        pg_full_row_query_median_ms:  median_ms(&pg_full_row_query_ms),
+        pg_decode_median_ms:          median_ms(&pg_decode_ms),
+        api_id_only_http_median_ms:   median_ms(&api_id_only_http_ms),
+        api_id_only_parse_median_ms:  median_ms(&api_id_only_parse_ms),
+        api_full_row_http_median_ms:  median_ms(&api_full_row_http_ms),
         api_full_row_parse_median_ms: median_ms(&api_full_row_parse_ms),
     }
 }

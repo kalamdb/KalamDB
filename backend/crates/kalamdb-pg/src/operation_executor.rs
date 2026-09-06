@@ -3,6 +3,7 @@ use std::str::FromStr;
 use arrow::record_batch::RecordBatch;
 use arrow_ipc::writer::StreamWriter;
 use async_trait::async_trait;
+use kalamdb_backend::session::LiveSessionTransaction;
 // Re-export domain types from kalamdb-commons (canonical location).
 pub use kalamdb_commons::models::pg_operations::{
     DeleteRequest, InsertRequest, MutationResult, ScanRequest, ScanResult, UpdateRequest,
@@ -21,7 +22,6 @@ use crate::{
     service::{ScanRpcRequest, ScanRpcResponse},
     DeleteRpcRequest, InsertRpcRequest, UpdateRpcRequest,
 };
-use kalamdb_backend::session::LiveSessionTransaction;
 
 /// Domain-typed query executor.
 ///
@@ -272,12 +272,12 @@ mod tests {
     #[test]
     fn update_request_from_rpc_accepts_row_arrays() {
         let request = UpdateRpcRequest {
-            namespace: "app".to_string(),
-            table_name: "messages".to_string(),
-            table_type: "shared".to_string(),
-            session_id: "session-1".to_string(),
-            user_id: None,
-            pk_value: "row-1".to_string(),
+            namespace:    "app".to_string(),
+            table_name:   "messages".to_string(),
+            table_type:   "shared".to_string(),
+            session_id:   "session-1".to_string(),
+            user_id:      None,
+            pk_value:     "row-1".to_string(),
             updates_json: r#"[{"name":{"Utf8":"updated"}}]"#.to_string(),
         };
 
@@ -293,12 +293,12 @@ mod tests {
     #[test]
     fn update_request_from_rpc_accepts_single_typed_row_object() {
         let request = UpdateRpcRequest {
-            namespace: "app".to_string(),
-            table_name: "messages".to_string(),
-            table_type: "shared".to_string(),
-            session_id: "session-1".to_string(),
-            user_id: None,
-            pk_value: "row-1".to_string(),
+            namespace:    "app".to_string(),
+            table_name:   "messages".to_string(),
+            table_type:   "shared".to_string(),
+            session_id:   "session-1".to_string(),
+            user_id:      None,
+            pk_value:     "row-1".to_string(),
             updates_json: r#"{"name":{"Utf8":"updated"},"value":{"Int32":110}}"#.to_string(),
         };
 

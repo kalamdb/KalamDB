@@ -23,7 +23,8 @@
 //! ```
 //!
 //! ## IMPORTANT
-//! Restore requires a server restart after completion to reload the restored data.
+//! Restore stages RocksDB into a sibling directory. A server restart promotes
+//! that staging directory onto the live path and deletes leftover copies.
 
 use std::{fs, path::Path};
 
@@ -138,12 +139,14 @@ impl JobExecutor for RestoreExecutor {
         match result {
             Ok(()) => {
                 ctx.log_info(&format!(
-                    "Restore staged from '{}'. RocksDB restore is pending server restart.",
+                    "Restore staged from '{}'. Restart the server to activate RocksDB data and \
+                     remove pending restore directories.",
                     params.backup_path
                 ));
                 Ok(JobDecision::Completed {
                     message: Some(format!(
-                        "Restore staged from '{}'. Restart server to activate restored data.",
+                        "Restore staged from '{}'. Restart server to activate restored RocksDB \
+                         data; leftover restore staging directories are removed on startup.",
                         params.backup_path
                     )),
                 })

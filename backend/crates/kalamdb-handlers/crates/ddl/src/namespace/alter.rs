@@ -119,7 +119,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = AlterNamespaceHandler::new(app_ctx);
         let stmt = AlterNamespaceStatement {
-            name: NamespaceId::new("test"),
+            name:    NamespaceId::new("test"),
             options: std::collections::HashMap::new(),
         };
 

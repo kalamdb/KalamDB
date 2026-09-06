@@ -9,7 +9,7 @@ pub enum AuthorizationScheme {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParsedAuthorizationHeader<'a> {
-    pub scheme: AuthorizationScheme,
+    pub scheme:      AuthorizationScheme,
     pub credentials: &'a str,
 }
 

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use actix_web::{error::ErrorInternalServerError, HttpResponse};
 use bytes::Bytes;
 use futures_util::stream;
@@ -7,21 +9,22 @@ use kalamdb_commons::{
     schemas::SchemaField,
 };
 use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
-use std::sync::Arc;
 
-use super::converter::{resolve_arrow_schema, success_response_suffix};
-use super::schema_response_cache::cached_sql_schema;
+use super::{
+    converter::{resolve_arrow_schema, success_response_suffix},
+    schema_response_cache::cached_sql_schema,
+};
 
 /// Point lookups and other tiny SELECT results fit in one HTTP body. Streaming
 /// those as three chunks pays extra framing for no benefit.
 const INLINE_SQL_ROWS_MAX: usize = 32;
 
 struct StreamingRowsState {
-    prefix: Option<Bytes>,
-    batches: std::vec::IntoIter<arrow::record_batch::RecordBatch>,
-    suffix: Option<Bytes>,
-    schema_fields: std::sync::Arc<Vec<SchemaField>>,
-    user_role: Option<Role>,
+    prefix:               Option<Bytes>,
+    batches:              std::vec::IntoIter<arrow::record_batch::RecordBatch>,
+    suffix:               Option<Bytes>,
+    schema_fields:        std::sync::Arc<Vec<SchemaField>>,
+    user_role:            Option<Role>,
     row_separator_needed: bool,
 }
 

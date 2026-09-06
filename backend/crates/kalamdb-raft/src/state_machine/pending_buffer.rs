@@ -15,13 +15,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PendingCommand {
     /// Raft log index of this command
-    pub log_index: u64,
+    pub log_index:           u64,
     /// Raft log term of this command
-    pub log_term: u64,
+    pub log_term:            u64,
     /// The Meta index required before this command can be applied
     pub required_meta_index: u64,
     /// Serialized command bytes
-    pub command_bytes: Vec<u8>,
+    pub command_bytes:       Vec<u8>,
 }
 
 /// Buffer for pending data commands
@@ -51,7 +51,7 @@ impl PendingBuffer {
     pub fn new() -> Self {
         Self {
             by_required_meta: RwLock::new(BTreeMap::new()),
-            pending_count: std::sync::atomic::AtomicU64::new(0),
+            pending_count:    std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -147,22 +147,22 @@ mod tests {
 
         // Add commands with different required_meta_index values
         buffer.add(PendingCommand {
-            log_index: 10,
-            log_term: 1,
+            log_index:           10,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![1, 2, 3],
+            command_bytes:       vec![1, 2, 3],
         });
         buffer.add(PendingCommand {
-            log_index: 11,
-            log_term: 1,
+            log_index:           11,
+            log_term:            1,
             required_meta_index: 10,
-            command_bytes: vec![4, 5, 6],
+            command_bytes:       vec![4, 5, 6],
         });
         buffer.add(PendingCommand {
-            log_index: 12,
-            log_term: 1,
+            log_index:           12,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![7, 8, 9],
+            command_bytes:       vec![7, 8, 9],
         });
 
         assert_eq!(buffer.len(), 3);
@@ -189,22 +189,22 @@ mod tests {
 
         // Add commands out of log order but same required_meta_index
         buffer.add(PendingCommand {
-            log_index: 15,
-            log_term: 1,
+            log_index:           15,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![],
+            command_bytes:       vec![],
         });
         buffer.add(PendingCommand {
-            log_index: 13,
-            log_term: 1,
+            log_index:           13,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![],
+            command_bytes:       vec![],
         });
         buffer.add(PendingCommand {
-            log_index: 14,
-            log_term: 1,
+            log_index:           14,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![],
+            command_bytes:       vec![],
         });
 
         let drained = buffer.drain_satisfied(5);
@@ -219,17 +219,17 @@ mod tests {
         let buffer = PendingBuffer::new();
 
         buffer.add(PendingCommand {
-            log_index: 1,
-            log_term: 1,
+            log_index:           1,
+            log_term:            1,
             required_meta_index: 100,
-            command_bytes: vec![1],
+            command_bytes:       vec![1],
         });
 
         buffer.load_from(vec![PendingCommand {
-            log_index: 2,
-            log_term: 1,
+            log_index:           2,
+            log_term:            1,
             required_meta_index: 5,
-            command_bytes: vec![2],
+            command_bytes:       vec![2],
         }]);
 
         assert_eq!(buffer.len(), 1);

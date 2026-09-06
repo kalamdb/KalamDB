@@ -18,15 +18,15 @@ const KIND_RAFT_RESPONSE: &str = "raft_response";
 
 #[derive(Debug, Serialize)]
 struct TypedEnvelopeEnc<'a, T> {
-    v: u16,
-    kind: &'a str,
+    v:       u16,
+    kind:    &'a str,
     payload: T,
 }
 
 #[derive(Debug, Deserialize)]
 struct TypedEnvelopeDec<T> {
-    v: u16,
-    kind: String,
+    v:       u16,
+    kind:    String,
     payload: T,
 }
 
@@ -162,14 +162,14 @@ mod tests {
     fn decode_rejects_unsupported_version() {
         #[derive(Serialize)]
         struct LegacyEnvelope {
-            v: u16,
-            kind: String,
+            v:       u16,
+            kind:    String,
             payload: MetaResponse,
         }
 
         let bytes = flexbuffers::to_vec(&LegacyEnvelope {
-            v: COMMAND_WIRE_VERSION + 1,
-            kind: KIND_META_RESPONSE.to_string(),
+            v:       COMMAND_WIRE_VERSION + 1,
+            kind:    KIND_META_RESPONSE.to_string(),
             payload: MetaResponse::Ok,
         })
         .expect("encode legacy envelope");
@@ -184,8 +184,8 @@ mod tests {
         enum RetiredUserDataCommand {
             CleanupNodeSubscriptions {
                 required_meta_index: u64,
-                user_id: UserId,
-                failed_node_id: NodeId,
+                user_id:             UserId,
+                failed_node_id:      NodeId,
             },
         }
 
@@ -193,8 +193,8 @@ mod tests {
             KIND_USER_DATA_COMMAND,
             &RetiredUserDataCommand::CleanupNodeSubscriptions {
                 required_meta_index: 17,
-                user_id: UserId::from("user_1"),
-                failed_node_id: NodeId::from(9),
+                user_id:             UserId::from("user_1"),
+                failed_node_id:      NodeId::from(9),
             },
         )
         .expect("encode retired user data command");
@@ -226,9 +226,9 @@ mod tests {
         enum LegacyUserDataCommand {
             Insert {
                 required_meta_index: u64,
-                table_id: TableId,
-                user_id: UserId,
-                rows: Vec<kalamdb_commons::models::rows::Row>,
+                table_id:            TableId,
+                user_id:             UserId,
+                rows:                Vec<kalamdb_commons::models::rows::Row>,
             },
         }
 
@@ -236,9 +236,12 @@ mod tests {
             KIND_USER_DATA_COMMAND,
             &LegacyUserDataCommand::Insert {
                 required_meta_index: 7,
-                table_id: TableId::new(NamespaceId::from("ns"), TableName::from("items")),
-                user_id: UserId::from("user_1"),
-                rows: vec![],
+                table_id:            TableId::new(
+                    NamespaceId::from("ns"),
+                    TableName::from("items"),
+                ),
+                user_id:             UserId::from("user_1"),
+                rows:                vec![],
             },
         )
         .expect("encode legacy user command");
@@ -253,8 +256,8 @@ mod tests {
         enum LegacySharedDataCommand {
             Insert {
                 required_meta_index: u64,
-                table_id: TableId,
-                rows: Vec<kalamdb_commons::models::rows::Row>,
+                table_id:            TableId,
+                rows:                Vec<kalamdb_commons::models::rows::Row>,
             },
         }
 
@@ -262,8 +265,11 @@ mod tests {
             KIND_SHARED_DATA_COMMAND,
             &LegacySharedDataCommand::Insert {
                 required_meta_index: 9,
-                table_id: TableId::new(NamespaceId::from("ns"), TableName::from("shared_items")),
-                rows: vec![],
+                table_id:            TableId::new(
+                    NamespaceId::from("ns"),
+                    TableName::from("shared_items"),
+                ),
+                rows:                vec![],
             },
         )
         .expect("encode legacy shared command");
@@ -280,7 +286,7 @@ mod tests {
             transaction_id: kalamdb_commons::models::TransactionId::new(
                 "01960f7b-3d15-7d6d-b26c-7e4db6f25f8d",
             ),
-            mutations: vec![StagedMutation::new(
+            mutations:      vec![StagedMutation::new(
                 kalamdb_commons::models::TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d"),
                 TableId::new(NamespaceId::from("ns"), TableName::from("items")),
                 TableType::Shared,

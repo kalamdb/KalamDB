@@ -18,21 +18,23 @@ mod tests {
         Arc,
     };
 
-    use datafusion::arrow::{
-        array::{BooleanArray, Int64Array, StringArray, UInt64Array},
-        datatypes::{DataType, Field, Schema},
+    use datafusion::{
+        arrow::{
+            array::{BooleanArray, Int64Array, StringArray, UInt64Array},
+            datatypes::{DataType, Field, Schema},
+        },
+        scalar::ScalarValue,
     };
-    use datafusion::scalar::ScalarValue;
     use kalamdb_commons::constants::SystemColumnNames;
 
     use super::*;
 
     #[derive(Debug, Clone)]
     struct TestVersionedRow {
-        seq: SeqId,
+        seq:     SeqId,
         deleted: bool,
-        pk: String,
-        value: String,
+        pk:      String,
+        value:   String,
     }
 
     impl VersionedRow for TestVersionedRow {
@@ -75,10 +77,10 @@ mod tests {
         let hot_rows = vec![(
             "hot-a".to_string(),
             TestVersionedRow {
-                seq: SeqId::from_i64(2),
+                seq:     SeqId::from_i64(2),
                 deleted: false,
-                pk: "a".to_string(),
-                value: "hot-a".to_string(),
+                pk:      "a".to_string(),
+                value:   "hot-a".to_string(),
             },
         )];
         let build_calls = AtomicUsize::new(0);
@@ -147,10 +149,10 @@ mod tests {
         let hot_rows = vec![(
             "hot-a".to_string(),
             TestVersionedRow {
-                seq: SeqId::from_i64(4),
+                seq:     SeqId::from_i64(4),
                 deleted: false,
-                pk: "a".to_string(),
-                value: "hot-visible".to_string(),
+                pk:      "a".to_string(),
+                value:   "hot-visible".to_string(),
             },
         )];
 
@@ -192,10 +194,10 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestIntPkRow {
-        seq: SeqId,
+        seq:     SeqId,
         deleted: bool,
-        pk: i64,
-        value: String,
+        pk:      i64,
+        value:   String,
     }
 
     impl VersionedRow for TestIntPkRow {
@@ -242,10 +244,10 @@ mod tests {
         let hot_rows = vec![(
             "hot-1".to_string(),
             TestIntPkRow {
-                seq: SeqId::from_i64(2),
+                seq:     SeqId::from_i64(2),
                 deleted: false,
-                pk: 1,
-                value: "hot-1".to_string(),
+                pk:      1,
+                value:   "hot-1".to_string(),
             },
         )];
 

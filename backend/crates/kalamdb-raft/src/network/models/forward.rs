@@ -110,5 +110,5 @@ pub struct ForwardSqlResponsePayload {
     /// HTTP status code to surface back to the original client.
     pub status_code: u16,
     /// JSON body bytes.
-    pub body: Vec<u8>,
+    pub body:        Vec<u8>,
 }

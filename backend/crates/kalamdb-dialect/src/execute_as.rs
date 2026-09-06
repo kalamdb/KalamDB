@@ -23,7 +23,7 @@ const EXECUTE_AS_PREFIXES: [&str; 2] = ["EXECUTE AS USER", "EXECUTE AS"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecuteAsEnvelope {
     /// The user identifier that follows `EXECUTE AS` or legacy `EXECUTE AS USER`.
-    pub username: String,
+    pub username:  String,
     /// The inner SQL statement (parentheses stripped).
     pub inner_sql: String,
 }

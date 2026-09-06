@@ -2,8 +2,7 @@
 //!
 //! POST /v1/api/topics/latest-offsets - Resolve topic partition head offsets
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;

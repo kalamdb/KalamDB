@@ -48,7 +48,7 @@ pub struct Namespace {
         default = "None",
         comment = "Namespace creation timestamp"
     )]
-    pub created_at: i64, // Unix timestamp in milliseconds
+    pub created_at:   i64, // Unix timestamp in milliseconds
     #[column(
         id = 1,
         ordinal = 1,
@@ -68,7 +68,7 @@ pub struct Namespace {
         default = "None",
         comment = "Namespace name"
     )]
-    pub name: String,
+    pub name:         String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -79,7 +79,7 @@ pub struct Namespace {
         comment = "Namespace configuration options (JSON)"
     )]
     #[serde(default)]
-    pub options: Option<Value>,
+    pub options:      Option<Value>,
     #[column(
         id = 5,
         ordinal = 5,
@@ -89,7 +89,7 @@ pub struct Namespace {
         default = "None",
         comment = "Number of tables in this namespace"
     )]
-    pub table_count: i32, // TODO: Remove this field and calculate on the fly
+    pub table_count:  i32, // TODO: Remove this field and calculate on the fly
 }
 
 impl Namespace {
@@ -110,10 +110,10 @@ impl Namespace {
         let name_str = name.into();
         Self {
             namespace_id: NamespaceId::new(&name_str),
-            name: name_str,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            options: Some(serde_json::json!({})),
-            table_count: 0,
+            name:         name_str,
+            created_at:   chrono::Utc::now().timestamp_millis(),
+            options:      Some(serde_json::json!({})),
+            table_count:  0,
         }
     }
 }
@@ -126,10 +126,10 @@ mod tests {
     fn test_namespace_serialization() {
         let namespace = Namespace {
             namespace_id: NamespaceId::default(),
-            name: "default".to_string(),
-            created_at: 1730000000000,
-            options: Some(serde_json::json!({})),
-            table_count: 0,
+            name:         "default".to_string(),
+            created_at:   1730000000000,
+            options:      Some(serde_json::json!({})),
+            table_count:  0,
         };
 
         let bytes = serde_json::to_vec(&namespace).unwrap();

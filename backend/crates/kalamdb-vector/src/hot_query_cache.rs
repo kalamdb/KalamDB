@@ -29,28 +29,28 @@ const HOT_RESERVE_STEP: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct HotCacheKey {
-    table_id: String,
+    table_id:    String,
     column_name: String,
-    table_type: TableType,
-    user_id: Option<String>,
+    table_type:  TableType,
+    user_id:     Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HotSearchResult {
-    pub candidates: Vec<(String, f32)>,
+    pub candidates:  Vec<(String, f32)>,
     pub touched_pks: HashSet<String>,
 }
 
 struct HotCacheState {
     base_last_applied_seq: i64,
-    last_scanned_seq: i64,
-    dimensions: u32,
-    metric: VectorMetric,
-    next_key: u64,
-    index: Index,
-    pk_to_key: HashMap<String, u64>,
-    key_to_pk: HashMap<u64, String>,
-    latest_seq_by_pk: HashMap<String, i64>,
+    last_scanned_seq:      i64,
+    dimensions:            u32,
+    metric:                VectorMetric,
+    next_key:              u64,
+    index:                 Index,
+    pk_to_key:             HashMap<String, u64>,
+    key_to_pk:             HashMap<u64, String>,
+    latest_seq_by_pk:      HashMap<String, i64>,
 }
 
 impl HotCacheState {

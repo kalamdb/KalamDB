@@ -8,7 +8,7 @@ pub struct TopicErrorResponse {
     /// Human-readable error message
     pub error: String,
     /// Error code
-    pub code: String,
+    pub code:  String,
 }
 
 impl TopicErrorResponse {
@@ -16,7 +16,7 @@ impl TopicErrorResponse {
     pub fn new(error: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             error: error.into(),
-            code: code.into(),
+            code:  code.into(),
         }
     }
 

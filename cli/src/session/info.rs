@@ -2,10 +2,11 @@ use std::fmt::Display;
 
 use colored::Colorize;
 use kalam_client::{AuthProvider, KalamLinkError};
+use kalamdb_commons::UserId;
 use serde::Deserialize;
 
 use super::CLISession;
-use crate::{history::CommandHistory, CLI_VERSION};
+use crate::{history::CommandHistory, workflow::project::preferred_user_label, CLI_VERSION};
 
 fn print_info_row(label: &str, value: impl Display) {
     println!("  {:<20} {}", format!("{label}:"), value);
@@ -18,7 +19,8 @@ struct SessionUserInfoResponse {
 
 #[derive(Debug, Deserialize)]
 struct SessionUserInfo {
-    id: String,
+    id:    String,
+    name:  Option<String>,
     email: Option<String>,
 }
 
@@ -44,6 +46,16 @@ impl CLISession {
             .await
             .ok()
             .map(|payload| payload.user)
+    }
+
+    pub(in crate::session) async fn apply_prompt_user_label(&mut self) {
+        let Some(info) = self.fetch_session_user_info().await else {
+            return;
+        };
+        let Ok(user_id) = UserId::try_new(&info.id) else {
+            return;
+        };
+        self.username = preferred_user_label(&user_id, info.name.as_deref(), info.email.as_deref());
     }
 }
 

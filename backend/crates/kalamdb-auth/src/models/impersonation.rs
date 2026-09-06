@@ -42,15 +42,15 @@ pub enum ImpersonationOrigin {
 #[derive(Debug, Clone)]
 pub struct ImpersonationContext {
     /// User ID of the actor making the impersonation request
-    pub actor_user_id: UserId,
+    pub actor_user_id:   UserId,
     /// Role of the actor (must be Service, Dba, or System)
-    pub actor_role: Role,
+    pub actor_role:      Role,
     /// User ID of the subject being impersonated
     pub subject_user_id: UserId,
     /// Session ID for audit trail
-    pub session_id: String,
+    pub session_id:      String,
     /// Origin of the impersonation request
-    pub origin: ImpersonationOrigin,
+    pub origin:          ImpersonationOrigin,
 }
 
 impl ImpersonationContext {

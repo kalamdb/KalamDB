@@ -3,9 +3,9 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::TableId;
 #[cfg(feature = "storage")]
 use crate::StorageKey;
+use crate::TableId;
 
 /// Stable identifier for one policy on one table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -52,9 +52,8 @@ impl StorageKey for PolicyId {
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
         let value = String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())?;
-        let (table_id, policy_name) = value
-            .rsplit_once(':')
-            .ok_or_else(|| "invalid policy storage key".to_string())?;
+        let (table_id, policy_name) =
+            value.rsplit_once(':').ok_or_else(|| "invalid policy storage key".to_string())?;
         Self::from_parts(table_id, policy_name)
     }
 }

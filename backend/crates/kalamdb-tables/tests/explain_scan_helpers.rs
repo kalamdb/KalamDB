@@ -1,5 +1,8 @@
 use datafusion::{
-    arrow::{array::Array, array::StringArray, record_batch::RecordBatch},
+    arrow::{
+        array::{Array, StringArray},
+        record_batch::RecordBatch,
+    },
     execution::context::SessionContext,
 };
 

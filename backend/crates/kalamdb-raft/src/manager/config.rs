@@ -185,9 +185,9 @@ pub struct PeerNode {
 impl From<kalamdb_configs::PeerConfig> for PeerNode {
     fn from(peer: kalamdb_configs::PeerConfig) -> Self {
         Self {
-            node_id: NodeId::new(peer.node_id),
-            rpc_addr: peer.rpc_addr,
-            api_addr: peer.api_addr,
+            node_id:         NodeId::new(peer.node_id),
+            rpc_addr:        peer.rpc_addr,
+            api_addr:        peer.api_addr,
             rpc_server_name: peer.rpc_server_name,
         }
     }
@@ -210,9 +210,9 @@ mod tests {
     #[test]
     fn test_peer_node_from() {
         let peer_config = kalamdb_configs::PeerConfig {
-            node_id: 2,
-            rpc_addr: "127.0.0.1:9101".to_string(),
-            api_addr: "127.0.0.1:2901".to_string(),
+            node_id:         2,
+            rpc_addr:        "127.0.0.1:9101".to_string(),
+            api_addr:        "127.0.0.1:2901".to_string(),
             rpc_server_name: Some("node2.cluster.local".to_string()),
         };
 

@@ -58,7 +58,9 @@ pub(crate) fn resolve_workflow_auth_provider(
                     .is_some_and(|stored| !server_urls_match(stored, &environment.url))
                 {
                     return Err(CLIError::ConfigurationError(format!(
-                        "profile '{profile}' was saved for {} but this project uses {}; run `kalam login --instance {profile}` from the project directory or pass `--url`",
+                        "profile '{profile}' was saved for {} but this project uses {}; run \
+                         `kalam login --instance {profile}` from the project directory or pass \
+                         `--url`",
                         credentials.server_url.as_deref().unwrap_or("another server"),
                         environment.url
                     )));
@@ -66,7 +68,8 @@ pub(crate) fn resolve_workflow_auth_provider(
             }
         }
         return Err(CLIError::ConfigurationError(format!(
-            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam login --instance {profile}`"
+            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam \
+             login --instance {profile}`"
         )));
     }
 

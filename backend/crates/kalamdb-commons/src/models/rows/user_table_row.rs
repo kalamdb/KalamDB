@@ -16,29 +16,29 @@ use crate::{ids::SeqId, models::UserId};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserTableRow {
     /// User who owns this row
-    pub user_id: UserId,
+    pub user_id:     UserId,
     /// Monotonically increasing sequence ID (Snowflake ID with embedded timestamp)
     /// Maps to SQL column `_seq`
-    pub _seq: SeqId,
+    pub _seq:        SeqId,
     /// Commit-order visibility marker assigned by the durable apply path.
     /// Maps to SQL column `_commit_seq`
     #[serde(default)]
     pub _commit_seq: u64,
     /// Soft delete tombstone marker
     /// Maps to SQL column `_deleted`
-    pub _deleted: bool,
+    pub _deleted:    bool,
     /// All user-defined columns including PK (serialized as JSON map)
-    pub fields: Row,
+    pub fields:      Row,
 }
 
 impl From<UserTableRow> for KTableRow {
     fn from(row: UserTableRow) -> Self {
         KTableRow {
-            user_id: row.user_id,
-            _seq: row._seq,
+            user_id:     row.user_id,
+            _seq:        row._seq,
             _commit_seq: row._commit_seq,
-            _deleted: row._deleted,
-            fields: row.fields,
+            _deleted:    row._deleted,
+            fields:      row.fields,
         }
     }
 }

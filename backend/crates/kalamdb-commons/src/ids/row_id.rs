@@ -40,7 +40,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserTableRowId {
     pub user_id: UserId,
-    pub seq: SeqId,
+    pub seq:     SeqId,
 }
 
 impl UserTableRowId {
@@ -108,7 +108,7 @@ pub type SharedTableRowId = SeqId;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StreamTableRowId {
     pub user_id: UserId,
-    pub seq: SeqId,
+    pub seq:     SeqId,
 }
 
 impl StreamTableRowId {

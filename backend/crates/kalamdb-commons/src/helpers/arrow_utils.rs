@@ -120,7 +120,7 @@ pub fn schema(fields: Vec<Field>) -> SchemaRef {
 /// let batch = builder.build()?;
 /// ```
 pub struct RecordBatchBuilder {
-    schema: SchemaRef,
+    schema:  SchemaRef,
     columns: Vec<ArrayRef>,
 }
 

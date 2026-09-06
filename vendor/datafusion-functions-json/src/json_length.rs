@@ -1,13 +1,21 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, UInt64Array, UInt64Builder};
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::{Result as DataFusionResult, ScalarValue};
-use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion::{
+    arrow::{
+        array::{ArrayRef, UInt64Array, UInt64Builder},
+        datatypes::DataType,
+    },
+    common::{Result as DataFusionResult, ScalarValue},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+};
 use jiter::Peek;
 
-use crate::common::{get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath};
-use crate::common_macros::make_udf_function;
+use crate::{
+    common::{
+        get_err, invoke, jiter_json_find, return_type_check, GetError, InvokeResult, JsonPath,
+    },
+    common_macros::make_udf_function,
+};
 
 make_udf_function!(
     JsonLength,
@@ -19,14 +27,14 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonLength {
     signature: Signature,
-    aliases: [String; 2],
+    aliases:   [String; 2],
 }
 
 impl Default for JsonLength {
     fn default() -> Self {
         Self {
             signature: Signature::variadic_any(Volatility::Immutable),
-            aliases: ["json_length".to_string(), "json_len".to_string()],
+            aliases:   ["json_length".to_string(), "json_len".to_string()],
         }
     }
 }
@@ -108,7 +116,7 @@ fn jiter_json_length(opt_json: Option<&str>, path: &[JsonPath]) -> Result<u64, G
                     peek_opt = jiter.array_step()?;
                 }
                 Ok(length)
-            }
+            },
             Peek::Object => {
                 let mut opt_key = jiter.known_object()?;
 
@@ -119,7 +127,7 @@ fn jiter_json_length(opt_json: Option<&str>, path: &[JsonPath]) -> Result<u64, G
                     opt_key = jiter.next_key()?;
                 }
                 Ok(length)
-            }
+            },
             _ => get_err!(),
         }
     } else {

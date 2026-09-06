@@ -6,7 +6,7 @@ KalamDB exposes a minimal `pg_catalog` schema so PostgreSQL wire clients (DBeave
 
 | Aspect | datafusion-postgres | KalamDB |
 |--------|---------------------|---------|
-| Integration | `setup_pg_catalog(session, catalog_name)` registers a full schema provider | `PgCatalogSchemaProvider` registered when `postgres_wire.pg_catalog_enabled` is true |
+| Integration | `setup_pg_catalog(session, catalog_name)` registers a full schema provider | `PgCatalogSchemaProvider` registered when `postgres_wire.enabled` is true |
 | Dynamic tables | `pg_class`, `pg_attribute`, `pg_namespace`, `pg_database` generated from DataFusion catalog | `pg_class`, `pg_attribute`, `pg_namespace`, `pg_type`, `pg_database`, `pg_stat_activity` projected from `system.*` and live sessions |
 | Static tables | ~50 tables/views from PostgreSQL 17.6 Arrow/feather exports (empty or snapshot data) | Not implemented — missing tables simply do not resolve |
 | SQL rewrites | Compatibility parser + AST hooks in `datafusion-postgres` | `rewrite_context_functions_for_datafusion` in `kalamdb-dialect` (regex + AST visitors before DataFusion planning) |
@@ -29,6 +29,7 @@ KalamDB exposes a minimal `pg_catalog` schema so PostgreSQL wire clients (DBeave
 | Concern | Home |
 |---------|------|
 | Wire `SET` / `search_path`, empty `pg_catalog` probe schemas | `kalamdb-postgres-wire::client_catalog` |
+| PostgreSQL `SHOW` GUCs (`SHOW TRANSACTION ISOLATION LEVEL`, `SHOW search_path`, …) | `kalamdb-core` `current_setting` + SQL executor meta-command path (JDBC/HikariCP) |
 | Populated `pg_catalog` / `information_schema` TableProviders | `kalamdb-views` (shared HTTP + wire) |
 | UDFs (`current_setting`, `format_type`, …) | `kalamdb-core` session registration |
 | TCP / auth / row encode | `kalamdb-postgres-wire` |
@@ -44,7 +45,8 @@ Registered in `kalamdb-views/src/pg_catalog/mod.rs` when pg_catalog is enabled:
 | `pg_namespace` | `system.namespaces` | Namespace list with stable OIDs |
 | `pg_class` | `information_schema.tables` | Relations visible to session role |
 | `pg_attribute` | `information_schema.columns` | Column metadata |
-| `pg_type` | Type mapping registry | Always `typrelid = 0` (no composite-type OIDs) |
+| `pg_type` | Type mapping registry | Canonical PostgreSQL type OIDs in `pg_catalog` (including `name`/`typlen` for JDBC); per-namespace listing rows use distinct OIDs so `atttypid` joins do not duplicate columns. Extra columns: `typtype`, `typnotnull`, `typtypmod`, `typbasetype`, `typlen`. Always `typrelid = 0` |
+| `pg_get_keywords` | Static PostgreSQL extra keywords | JDBC `getSQLKeywords()`; function-call form `pg_get_keywords()` is rewritten to this view |
 | `pg_database` | Static `"kalam"` database row | Single-database deployment |
 | `pg_stat_activity` | Backend session registry | Admin-only; projects wire/gRPC sessions |
 
@@ -57,6 +59,23 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHER
 ```
 
 Because KalamDB's `pg_type` shim always sets `typrelid = 0`, the OR branch is dead. `rewrite_dbeaver_typrelid_filter` (regex) and `DbeaverTyprelidRewriter` (AST visitor) in `kalamdb-dialect/src/parser/utils.rs` simplify this to `(t.typrelid = 0)` before planning. The rewrite runs twice: once before and once after AST operator rewrites (`!~` → `regexp_like`), because sqlparser round-trip may emit `FROM pg_catalog.pg_class AS c` aliases the pre-AST regex does not match.
+
+## JDBC `DatabaseMetaData` (PostgreSQL JDBC 42.7)
+
+The PostgreSQL JDBC driver issues catalog SQL that DataFusion cannot plan as-is. `rewrite_context_functions_for_datafusion` handles:
+
+| JDBC API | Client SQL | Rewrite / shim |
+|----------|------------|----------------|
+| `getTables` | `'pg_class'::regclass` join to `pg_description` | `::regclass` / `::oid` → integer (`DataType::Regclass` and OID-family custom types) |
+| `getSchemas` | `(current_schemas(true))[1]` | `KDB_CURRENT_SCHEMA()` |
+| `getCatalogs` | `pg_database WHERE datallowconn` | Existing `pg_database` shim |
+| `getColumns` | `pg_type.typtype` / unlabeled `current_database()` | Extra `pg_type` columns; alias `KDB_CURRENT_DATABASE() AS current_database` |
+| `getColumns` (non-core types, e.g. UUID) | TypeInfoCache `array_upper(current_schemas())` + `generate_series` | Drop search-path join; `typinput='array_in'::regproc` → `FALSE` |
+| `getSQLKeywords` | `pg_catalog.pg_get_keywords()` + `<> ALL ('{…}'::text[])` | `pg_get_keywords` view + `NOT IN` |
+| `getPrimaryKeys` | `information_schema._pg_expandarray(indkey)` | `information_schema.columns` where `kdb_primary_key` |
+| `getMaxColumnNameLength` | `pg_type.typname = 'name'` in `pg_catalog` | Seeded `name` type with `typlen = 64` |
+
+HikariCP also requires `SHOW TRANSACTION ISOLATION LEVEL` (executor GUC path, not DataFusion).
 
 ## Prioritized backlog (DBeaver / pgAdmin compatibility)
 
@@ -108,7 +127,6 @@ Empty-table shims (schema-correct, zero rows) unblock many client probes that on
 | `format_type(oid, typmod)` | Column type display in metadata queries |
 | `pg_get_expr(adbin, adrelid)` | Default expression text |
 | `has_*_privilege(...)` | ACL-aware object filtering |
-| `::regclass` / `::regtype` casts | OID-to-name resolution in client SQL |
 | `pg_table_is_visible(oid)` | Visibility filter used by psql `\d` |
 
 ## `information_schema.columns`
@@ -139,7 +157,7 @@ The CLI (`\dt`, `--watch-schema`), pgwire parity tests, and SDK smoke tests have
 - Prefer **typed view providers** projecting from `system.*` over string-matched SQL rewrites when semantics are stable.
 - Use **empty-table shims** with correct column names/types when clients only probe existence.
 - Keep rewrites in `kalamdb-dialect` for patterns DataFusion cannot plan (correlated subqueries, DuckDB lambda/`->` conflicts, PostgreSQL regex operators).
-- Regression gates: `kalamdb-dialect` rewrite unit tests, `pg_catalog_shims` integration tests, `pgwire_catalog/catalog_checks.rs`.
+- Regression gates: `kalamdb-dialect` rewrite unit tests, `pg_catalog_shims` integration tests (including JDBC `getTables`/`getColumns`/`getSchemas`/`getPrimaryKeys` SQL), `pgwire_catalog/catalog_checks.rs`, JDBC/HikariCP + `DatabaseMetaData` smoke (`pgwire_catalog/jdbc`).
 
 ## References
 

@@ -39,7 +39,7 @@ pub enum RaftCommand {
     /// Atomically replay an explicit transaction inside a single data group.
     TransactionCommit {
         transaction_id: TransactionId,
-        mutations: Vec<StagedMutation>,
+        mutations:      Vec<StagedMutation>,
     },
 }
 

@@ -10,8 +10,11 @@ use crate::{row_access::*, AuthorizationCacheKey, AuthorizationSet};
 #[derive(Debug, Clone)]
 pub struct BoundPolicy {
     pub policy_id:         PolicyId,
+    pub policy_name:       String,
+    pub command:           PolicyCommand,
     pub policy_generation: u64,
     pub program:           PolicyProgram,
+    explain_clause:        Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,8 +85,18 @@ impl BoundTablePolicies {
                 };
                 program.cloned().map(|program| BoundPolicy {
                     policy_id: policy.policy_id.clone(),
+                    policy_name: policy.policy_name.clone(),
+                    command: policy.command,
                     policy_generation: policy.policy_generation,
                     program,
+                    explain_clause: if check {
+                        policy
+                            .with_check_sql
+                            .as_deref()
+                            .map(|sql| format_policy_qual("WITH CHECK", sql))
+                    } else {
+                        policy.using_sql.as_deref().map(|sql| format_policy_qual("USING", sql))
+                    },
                 })
             })
             .collect();
@@ -100,6 +113,33 @@ impl BoundTablePolicies {
 
     pub fn is_default_deny(&self) -> bool {
         !self.bypass && self.policies.is_empty()
+    }
+
+    /// PostgreSQL-style policy listing for EXPLAIN: names plus USING / WITH CHECK.
+    ///
+    /// Admin bypass returns `None` (no security quals). Default-deny returns
+    /// `policies=[]`. Original policy SQL is used so the bound principal is never printed.
+    pub fn explain_policies(&self) -> Option<String> {
+        if self.bypass {
+            return None;
+        }
+        if self.policies.is_empty() {
+            return Some("policies=[]".to_string());
+        }
+        let items = self
+            .policies
+            .iter()
+            .map(|policy| {
+                let mut item = format!("{} FOR {}", policy.policy_name, policy.command.as_sql());
+                if let Some(clause) = &policy.explain_clause {
+                    item.push(' ');
+                    item.push_str(clause);
+                }
+                item
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(format!("policies=[{items}]"))
     }
 
     pub fn policies(&self) -> &[BoundPolicy] {
@@ -188,6 +228,15 @@ fn collect_row_local_column_ids(expression: &BoundExprShape, column_ids: &mut Ve
         },
         BoundExprShape::Not(expression) => collect_row_local_column_ids(expression, column_ids),
         BoundExprShape::Literal(_) => {},
+    }
+}
+
+fn format_policy_qual(label: &str, sql: &str) -> String {
+    let trimmed = sql.trim();
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        format!("{label} {trimmed}")
+    } else {
+        format!("{label} ({trimmed})")
     }
 }
 
@@ -452,5 +501,73 @@ mod tests {
         let null_owner = Row::from_vec(vec![("owner_id".to_string(), ScalarValue::Utf8(None))]);
 
         assert!(!bound.authorizes_row_with_sets(&table(), &null_owner, &empty_sets()));
+    }
+
+    #[test]
+    fn explain_policies_lists_using_sql_without_bound_principal() {
+        let owner = policy(
+            "owner_read",
+            PolicyTarget::Role(Role::User),
+            PolicyProgram::RowLocal {
+                expr: BoundExprShape::ColumnEqualsPrincipal {
+                    column_id: 2,
+                    principal: PrincipalExpr::CurrentUser,
+                },
+            },
+        );
+        let bound = BoundTablePolicies::bind(
+            &[owner],
+            UserId::new("alice"),
+            Role::User,
+            PolicyCommand::Select,
+        );
+
+        let explain = bound.explain_policies().expect("user policies appear in EXPLAIN");
+        assert_eq!(explain, "policies=[owner_read FOR SELECT USING (owner_id = CURRENT_USER)]");
+        assert!(!explain.contains("alice"));
+    }
+
+    #[test]
+    fn explain_policies_shows_with_check_for_insert_bind() {
+        let table_id = TableId::from_strings("app", "documents");
+        let insert = TablePolicy::new(
+            PolicyId::new(table_id.clone(), "owner_write").unwrap(),
+            table_id,
+            "owner_write",
+            PolicyCommand::Insert,
+            vec![PolicyTarget::Public],
+            None,
+            Some("owner_id = CURRENT_USER".to_string()),
+            None,
+            Some(PolicyProgram::RowLocal {
+                expr: BoundExprShape::ColumnEqualsPrincipal {
+                    column_id: 2,
+                    principal: PrincipalExpr::CurrentUser,
+                },
+            }),
+            1,
+            1,
+        );
+        let bound = BoundTablePolicies::bind_check(
+            &[insert],
+            UserId::new("alice"),
+            Role::User,
+            PolicyCommand::Insert,
+        );
+
+        assert_eq!(
+            bound.explain_policies().as_deref(),
+            Some("policies=[owner_write FOR INSERT WITH CHECK (owner_id = CURRENT_USER)]")
+        );
+    }
+
+    #[test]
+    fn explain_policies_omits_admin_bypass_and_lists_empty_default_deny() {
+        let deny =
+            BoundTablePolicies::bind(&[], UserId::new("alice"), Role::User, PolicyCommand::Select);
+        assert_eq!(deny.explain_policies().as_deref(), Some("policies=[]"));
+
+        let admin = BoundTablePolicies::admin_bypass(UserId::new("root"));
+        assert_eq!(admin.explain_policies(), None);
     }
 }

@@ -156,7 +156,8 @@ pub fn can_write_user_table(role: Role) -> bool {
 /// Check user table write access using table identity.
 pub fn check_user_table_write_access_level(
     role: Role,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     if can_write_user_table(role) {
         Ok(())
     } else {
@@ -178,7 +179,8 @@ pub fn can_write_stream_table(role: Role) -> bool {
 /// Check stream table write access using table identity.
 pub fn check_stream_table_write_access_level(
     role: Role,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     check_user_table_write_access_level(role, table_id)
 }
 
@@ -221,7 +223,8 @@ pub fn can_impersonate_target_user(
     actor_user_id: &UserId,
     actor_role: Role,
     target_user_id: &UserId,
-    target_role: Role) -> bool {
+    target_role: Role,
+) -> bool {
     actor_user_id == target_user_id || can_impersonate_role(actor_role, target_role)
 }
 
@@ -240,7 +243,8 @@ pub fn can_write_shared_table(role: Role) -> bool {
 /// Check shared table write access using table identity.
 pub fn check_shared_table_write_access_level(
     role: Role,
-    table_id: &TableId) -> Result<(), SessionError> {
+    table_id: &TableId,
+) -> Result<(), SessionError> {
     if can_write_shared_table(role) {
         Ok(())
     } else {
@@ -255,8 +259,9 @@ pub fn check_shared_table_write_access_level(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use kalamdb_commons::{NamespaceId, TableName};
+
+    use super::*;
 
     #[test]
     fn test_can_access_system_table() {
@@ -310,9 +315,9 @@ mod tests {
     fn test_session_error_display() {
         let err = SessionError::AccessDenied {
             namespace_id: NamespaceId::system(),
-            table_name: TableName::new("users"),
-            role: Role::User,
-            reason: "Test reason".to_string(),
+            table_name:   TableName::new("users"),
+            role:         Role::User,
+            reason:       "Test reason".to_string(),
         };
         let display = format!("{}", err);
         assert!(display.contains("Access denied"));

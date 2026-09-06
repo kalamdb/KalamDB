@@ -28,15 +28,15 @@ fn ensure_rustls_crypto_provider() {
 impl KalamLinkClientBuilder {
     pub(crate) fn new() -> Self {
         Self {
-            base_url: None,
-            timeout: Duration::from_secs(30),
-            resolved_auth: ResolvedAuth::default(),
-            max_retries: 3,
+            base_url:                    None,
+            timeout:                     Duration::from_secs(30),
+            resolved_auth:               ResolvedAuth::default(),
+            max_retries:                 3,
             http_pool_max_idle_per_host: 10,
-            timeouts: KalamLinkTimeouts::default(),
-            connection_options: ConnectionOptions::default(),
-            event_handlers: crate::event_handlers::EventHandlers::default(),
-            custom_auth_refresher: None,
+            timeouts:                    KalamLinkTimeouts::default(),
+            connection_options:          ConnectionOptions::default(),
+            event_handlers:              crate::event_handlers::EventHandlers::default(),
+            custom_auth_refresher:       None,
         }
     }
 

@@ -32,10 +32,10 @@ fn build_setup_response(user: &User, message: String) -> ServerSetupResponse {
 
     ServerSetupResponse {
         user: UserInfo {
-            id: user.user_id.clone(),
-            role: user.role,
-            name: user.name.clone(),
-            email: user.email.clone(),
+            id:         user.user_id.clone(),
+            role:       user.role,
+            name:       user.name.clone(),
+            email:      user.email.clone(),
             created_at: created_at_str,
             updated_at: updated_at_str,
         },

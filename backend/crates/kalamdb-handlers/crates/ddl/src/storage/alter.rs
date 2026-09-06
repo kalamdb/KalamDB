@@ -172,12 +172,12 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-            storage_id: StorageId::from("test_storage"),
-            storage_name: Some("Updated Storage".to_string()),
-            description: None,
+            storage_id:             StorageId::from("test_storage"),
+            storage_name:           Some("Updated Storage".to_string()),
+            description:            None,
             shared_tables_template: None,
-            user_tables_template: None,
-            config_json: None,
+            user_tables_template:   None,
+            config_json:            None,
         };
 
         // User role should be denied
@@ -199,29 +199,30 @@ mod tests {
         let storages_provider = app_ctx.system_tables().storages();
         let storage_id = format!("test_alter_{}", chrono::Utc::now().timestamp_millis());
         let storage = Storage {
-            storage_id: StorageId::from(storage_id.as_str()),
-            storage_name: "Original Name".to_string(),
-            description: None,
-            storage_type: kalamdb_system::providers::storages::models::StorageType::Filesystem,
-            base_directory: "/tmp/test".to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from(storage_id.as_str()),
+            storage_name:           "Original Name".to_string(),
+            description:            None,
+            storage_type:
+                kalamdb_system::providers::storages::models::StorageType::Filesystem,
+            base_directory:         "/tmp/test".to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: String::new(),
-            user_tables_template: String::new(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
+            user_tables_template:   String::new(),
+            created_at:             chrono::Utc::now().timestamp_millis(),
+            updated_at:             chrono::Utc::now().timestamp_millis(),
         };
         storages_provider.insert_storage(storage).unwrap();
 
         // Now alter it
         let handler = AlterStorageHandler::new(app_ctx);
         let stmt = AlterStorageStatement {
-            storage_id: StorageId::from(storage_id.as_str()),
-            storage_name: Some("Updated Name".to_string()),
-            description: Some("New description".to_string()),
+            storage_id:             StorageId::from(storage_id.as_str()),
+            storage_name:           Some("Updated Name".to_string()),
+            description:            Some("New description".to_string()),
             shared_tables_template: None,
-            user_tables_template: None,
-            config_json: None,
+            user_tables_template:   None,
+            config_json:            None,
         };
         let ctx = create_test_context(Role::System);
 

@@ -175,13 +175,13 @@ mod tests {
     #[test]
     fn file_param_serializes_as_json_string() {
         let file_ref = FileRef {
-            id: "1".into(),
-            sub: "f0001".into(),
-            name: "a.png".into(),
-            size: 10,
-            mime: "image/png".into(),
+            id:     "1".into(),
+            sub:    "f0001".into(),
+            name:   "a.png".into(),
+            size:   10,
+            mime:   "image/png".into(),
             sha256: "abc".into(),
-            shard: None,
+            shard:  None,
         };
         let json = QueryParam::from(file_ref).to_json();
         assert!(json.is_string());

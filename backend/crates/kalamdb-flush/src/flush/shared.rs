@@ -11,11 +11,13 @@ use kalamdb_filestore::StorageCached;
 use kalamdb_store::EntityStore;
 use kalamdb_tables::{SharedTableIndexedStore, SharedTableRow};
 
-use super::base::{
-    config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
-    FlushScopeHook, FlushTableMetadata, TableFlush,
+use super::{
+    base::{
+        config, helpers, FlushDedupStats, FlushJobResult, FlushMetadata, FlushScopeHint,
+        FlushScopeHook, FlushTableMetadata, TableFlush,
+    },
+    scope_writer::FlushScopeWriter,
 };
-use super::scope_writer::FlushScopeWriter;
 use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestService};
 
 /// Shared table flush job
@@ -23,14 +25,14 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// Flushes shared table data to Parquet files. All rows are written to a single
 /// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
-    store: Arc<SharedTableIndexedStore>,
-    table_id: Arc<TableId>,
-    schema: SchemaRef,
-    storage_cached: Arc<StorageCached>,
+    store:           Arc<SharedTableIndexedStore>,
+    table_id:        Arc<TableId>,
+    schema:          SchemaRef,
+    storage_cached:  Arc<StorageCached>,
     manifest_helper: FlushManifestHelper,
-    metadata: FlushTableMetadata,
+    metadata:        FlushTableMetadata,
     scan_batch_size: usize,
-    scope_hook: Arc<dyn FlushScopeHook>,
+    scope_hook:      Arc<dyn FlushScopeHook>,
 }
 
 impl SharedTableFlushJob {
@@ -183,10 +185,10 @@ impl TableFlush for SharedTableFlushJob {
                 self.table_id
             );
             return Ok(FlushJobResult {
-                rows_flushed: 0,
+                rows_flushed:  0,
                 parquet_files: vec![],
-                scope_hints: vec![],
-                metadata: FlushMetadata::shared_table(),
+                scope_hints:   vec![],
+                metadata:      FlushMetadata::shared_table(),
             });
         }
 
@@ -218,10 +220,10 @@ impl TableFlush for SharedTableFlushJob {
         // eliminates a redundant double-compaction.
 
         Ok(FlushJobResult {
-            rows_flushed: rows_count,
+            rows_flushed:  rows_count,
             parquet_files: vec![write_result.destination_path],
-            scope_hints: vec![FlushScopeHint::Shared],
-            metadata: FlushMetadata::shared_table(),
+            scope_hints:   vec![FlushScopeHint::Shared],
+            metadata:      FlushMetadata::shared_table(),
         })
     }
 

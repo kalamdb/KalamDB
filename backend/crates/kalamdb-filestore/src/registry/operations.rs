@@ -9,9 +9,9 @@ use bytes::Bytes;
 #[derive(Debug, Clone)]
 pub struct ListResult {
     /// Absolute paths of all files found
-    pub paths: Vec<String>,
+    pub paths:  Vec<String>,
     /// Number of files found
-    pub count: usize,
+    pub count:  usize,
     /// The prefix that was searched
     pub prefix: String,
 }
@@ -82,7 +82,7 @@ impl PutResult {
 #[derive(Debug, Clone)]
 pub struct DeleteResult {
     /// Path that was deleted
-    pub path: String,
+    pub path:    String,
     /// Whether the file existed before deletion
     pub existed: bool,
 }
@@ -98,7 +98,7 @@ impl DeleteResult {
 #[derive(Debug, Clone)]
 pub struct DeletePrefixResult {
     /// The prefix that was deleted
-    pub prefix: String,
+    pub prefix:        String,
     /// Number of files deleted
     pub files_deleted: usize,
     /// Paths of deleted files
@@ -126,9 +126,9 @@ impl DeletePrefixResult {
 #[derive(Debug, Clone)]
 pub struct PathResult {
     /// Fully resolved path (including base directory)
-    pub full_path: String,
+    pub full_path:      String,
     /// Relative path within storage (without base directory)
-    pub relative_path: String,
+    pub relative_path:  String,
     /// Base directory of the storage
     pub base_directory: String,
 }
@@ -148,11 +148,11 @@ impl PathResult {
 #[derive(Debug, Clone)]
 pub struct ExistsResult {
     /// Path that was checked
-    pub path: String,
+    pub path:   String,
     /// Whether the path exists
     pub exists: bool,
     /// Size if file exists, None otherwise
-    pub size: Option<usize>,
+    pub size:   Option<usize>,
 }
 
 impl ExistsResult {
@@ -166,9 +166,9 @@ impl ExistsResult {
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     /// Full path to the file
-    pub path: String,
+    pub path:             String,
     /// Size in bytes
-    pub size: usize,
+    pub size:             usize,
     /// Last modified timestamp (milliseconds since epoch)
     pub last_modified_ms: Option<i64>,
 }
@@ -188,9 +188,9 @@ impl FileInfo {
 #[derive(Debug, Clone)]
 pub struct RenameResult {
     /// Original path
-    pub from: String,
+    pub from:    String,
     /// New path
-    pub to: String,
+    pub to:      String,
     /// Whether the operation succeeded
     pub success: bool,
 }

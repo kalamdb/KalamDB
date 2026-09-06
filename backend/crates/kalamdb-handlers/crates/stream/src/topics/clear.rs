@@ -10,8 +10,7 @@ use kalamdb_core::{
 };
 use kalamdb_sql::ddl::ClearTopicStatement;
 
-use super::cleanup::clear_topic_data;
-use super::name_resolution::resolve_topic_id;
+use super::{cleanup::clear_topic_data, name_resolution::resolve_topic_id};
 
 pub struct ClearTopicHandler {
     app_context: Arc<AppContext>,

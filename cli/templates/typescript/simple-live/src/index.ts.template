@@ -21,38 +21,24 @@ async function main(): Promise<void> {
     authProvider: async () => Auth.basic(username, password),
   });
 
-  console.log('Subscribing to users table...');
-  
   const stop = await liveTable(client, users, (liveRows) => {
-    console.log(`\nReceived ${liveRows.length} row(s):`);
-    liveRows.forEach((row) => {
+    console.log(`users ${liveRows.length}`);
+    for (const row of liveRows) {
       console.log(row);
-    });
+    }
   }, { lastRows: 50 });
 
-  // Insert 3 random users after 1 second
-  setTimeout(async () => {
-    console.log('\n--- Inserting 3 random users ---');
-    for (let i = 0; i < 3; i++) {
-      const randomId = Math.floor(Math.random() * 1000000);
-      const email = `user${randomId}@example.com`;
-      
-      await client.insert(`users`, {
-        id: randomId,
-        email,
-        created_at: new Date(),
-      });
-      
-      console.log(`Inserted user: id=${randomId}, email=${email}`);
-    }
-  }, 1000);
+  await client.insert('users', {
+    id: 1,
+    email: 'demo@example.com',
+    created_at: new Date(),
+  });
 
-  // Keep listening for 30 seconds then stop
-  setTimeout(async () => {
-    console.log('\nStopping subscription...');
+  process.on('SIGINT', async () => {
     await stop();
     await client.disconnect();
-  }, 30_000);
+    process.exit(0);
+  });
 }
 
 main().catch((error) => {

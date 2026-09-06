@@ -81,14 +81,14 @@ pub struct ProtocolOptions {
     /// Serialization format for messages after auth.
     pub serialization: SerializationType,
     /// Compression policy.
-    pub compression: CompressionType,
+    pub compression:   CompressionType,
 }
 
 impl Default for ProtocolOptions {
     fn default() -> Self {
         Self {
             serialization: SerializationType::Json,
-            compression: CompressionType::Gzip,
+            compression:   CompressionType::Gzip,
         }
     }
 }
@@ -126,7 +126,7 @@ mod tests {
     fn test_protocol_options_roundtrip() {
         let opts = ProtocolOptions {
             serialization: SerializationType::MessagePack,
-            compression: CompressionType::None,
+            compression:   CompressionType::None,
         };
         let json = serde_json::to_string(&opts).unwrap();
         let parsed: ProtocolOptions = serde_json::from_str(&json).unwrap();

@@ -17,19 +17,19 @@ pub enum AuthMethod {
 /// Authenticated session with user identity and optional metadata
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AuthSession {
-    pub user_context: UserContext,
-    pub request_id: Option<Arc<str>>,
+    pub user_context:    UserContext,
+    pub request_id:      Option<Arc<str>>,
     pub connection_info: ConnectionInfo,
-    pub auth_method: AuthMethod,
+    pub auth_method:     AuthMethod,
 }
 
 impl AuthSession {
     pub fn new(user_id: UserId, role: Role) -> Self {
         Self {
-            user_context: UserContext::client(user_id, role),
-            request_id: None,
+            user_context:    UserContext::client(user_id, role),
+            request_id:      None,
             connection_info: ConnectionInfo::new(None),
-            auth_method: AuthMethod::Bearer,
+            auth_method:     AuthMethod::Bearer,
         }
     }
 
@@ -49,10 +49,10 @@ impl AuthSession {
 
     pub fn with_read_context(user_id: UserId, role: Role, read_context: ReadContext) -> Self {
         Self {
-            user_context: UserContext::new(user_id, role, read_context),
-            request_id: None,
+            user_context:    UserContext::new(user_id, role, read_context),
+            request_id:      None,
             connection_info: ConnectionInfo::new(None),
-            auth_method: AuthMethod::Bearer,
+            auth_method:     AuthMethod::Bearer,
         }
     }
 
@@ -62,10 +62,10 @@ impl AuthSession {
 
     pub fn anonymous() -> Self {
         Self {
-            user_context: UserContext::client(UserId::anonymous(), Role::Anonymous),
-            request_id: None,
+            user_context:    UserContext::client(UserId::anonymous(), Role::Anonymous),
+            request_id:      None,
             connection_info: ConnectionInfo::new(None),
-            auth_method: AuthMethod::Bearer,
+            auth_method:     AuthMethod::Bearer,
         }
     }
 

@@ -5,33 +5,33 @@ use crate::error::{KalamLinkError, Result};
 
 #[derive(Debug, Clone)]
 pub struct ConsumerConfig {
-    pub group_id: String,
-    pub client_id: Option<String>,
-    pub topic: String,
-    pub auto_offset_reset: AutoOffsetReset,
-    pub enable_auto_commit: bool,
+    pub group_id:             String,
+    pub client_id:            Option<String>,
+    pub topic:                String,
+    pub auto_offset_reset:    AutoOffsetReset,
+    pub enable_auto_commit:   bool,
     pub auto_commit_interval: Duration,
-    pub max_poll_records: u32,
-    pub poll_timeout: Duration,
-    pub partition_id: u32,
-    pub request_timeout: Duration,
-    pub retry_backoff: Duration,
+    pub max_poll_records:     u32,
+    pub poll_timeout:         Duration,
+    pub partition_id:         u32,
+    pub request_timeout:      Duration,
+    pub retry_backoff:        Duration,
 }
 
 impl ConsumerConfig {
     pub fn new(group_id: impl Into<String>, topic: impl Into<String>) -> Self {
         Self {
-            group_id: group_id.into(),
-            client_id: None,
-            topic: topic.into(),
-            auto_offset_reset: AutoOffsetReset::Latest,
-            enable_auto_commit: true,
+            group_id:             group_id.into(),
+            client_id:            None,
+            topic:                topic.into(),
+            auto_offset_reset:    AutoOffsetReset::Latest,
+            enable_auto_commit:   true,
             auto_commit_interval: Duration::from_secs(5),
-            max_poll_records: 100,
-            poll_timeout: Duration::from_secs(30),
-            partition_id: 0,
-            request_timeout: Duration::from_secs(30),
-            retry_backoff: Duration::from_millis(500),
+            max_poll_records:     100,
+            poll_timeout:         Duration::from_secs(30),
+            partition_id:         0,
+            request_timeout:      Duration::from_secs(30),
+            retry_backoff:        Duration::from_millis(500),
         }
     }
 

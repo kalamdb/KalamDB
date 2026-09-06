@@ -249,10 +249,10 @@ pub async fn parse_sql_payload(
 ) -> Result<ParsedSqlPayload, FileError> {
     match payload {
         Either::Left(req) => Ok(ParsedSqlPayload {
-            sql: req.sql.clone(),
-            params: req.params.clone(),
+            sql:          req.sql.clone(),
+            params:       req.params.clone(),
             namespace_id: req.namespace_id.clone(),
-            files: None,
+            files:        None,
             is_multipart: false,
         }),
         Either::Right(multipart) => {
@@ -288,9 +288,7 @@ pub async fn parse_sql_payload(
 /// Cheap guard before the full FILE("name") scan.
 #[inline]
 pub fn sql_may_contain_file_placeholder(sql: &str) -> bool {
-    sql.as_bytes()
-        .windows(5)
-        .any(|window| window.eq_ignore_ascii_case(b"file("))
+    sql.as_bytes().windows(5).any(|window| window.eq_ignore_ascii_case(b"file("))
 }
 
 /// Extract FILE("name") placeholders from SQL string.

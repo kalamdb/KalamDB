@@ -4,6 +4,7 @@ pub mod orchestrator;
 pub mod precheck;
 pub mod processes;
 pub mod server;
+pub mod session;
 pub mod watch;
 
 pub use logs::{ServiceColor, ServiceLogRegistry, ServiceLogSource};

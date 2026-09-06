@@ -99,7 +99,7 @@ pub struct Job {
         default = "None",
         comment = "Unix timestamp in milliseconds when job was created"
     )]
-    pub created_at: i64, // Unix timestamp in milliseconds
+    pub created_at:      i64, // Unix timestamp in milliseconds
     #[column(
         id = 16,
         ordinal = 16,
@@ -109,7 +109,7 @@ pub struct Job {
         default = "None",
         comment = "Unix timestamp in milliseconds when job was last updated"
     )]
-    pub updated_at: i64, // Unix timestamp in milliseconds
+    pub updated_at:      i64, // Unix timestamp in milliseconds
     #[column(
         id = 17,
         ordinal = 17,
@@ -119,7 +119,7 @@ pub struct Job {
         default = "None",
         comment = "Unix timestamp in milliseconds when job started"
     )]
-    pub started_at: Option<i64>, // Unix timestamp in milliseconds
+    pub started_at:      Option<i64>, // Unix timestamp in milliseconds
     #[column(
         id = 18,
         ordinal = 18,
@@ -129,7 +129,7 @@ pub struct Job {
         default = "None",
         comment = "Unix timestamp in milliseconds when job completed"
     )]
-    pub finished_at: Option<i64>, // Unix timestamp in milliseconds
+    pub finished_at:     Option<i64>, // Unix timestamp in milliseconds
     #[column(
         id = 13,
         ordinal = 13,
@@ -139,7 +139,7 @@ pub struct Job {
         default = "None",
         comment = "Memory usage in bytes"
     )]
-    pub memory_used: Option<i64>, // bytes
+    pub memory_used:     Option<i64>, // bytes
     #[column(
         id = 14,
         ordinal = 14,
@@ -149,7 +149,7 @@ pub struct Job {
         default = "None",
         comment = "CPU time in microseconds"
     )]
-    pub cpu_used: Option<i64>, // microseconds
+    pub cpu_used:        Option<i64>, // microseconds
     #[column(
         id = 1,
         ordinal = 1,
@@ -159,7 +159,7 @@ pub struct Job {
         default = "None",
         comment = "Unique job identifier"
     )]
-    pub job_id: JobId,
+    pub job_id:          JobId,
     #[column(
         id = 19,
         ordinal = 19,
@@ -169,7 +169,7 @@ pub struct Job {
         default = "None",
         comment = "Node/server that owns this job"
     )]
-    pub node_id: NodeId,
+    pub node_id:         NodeId,
     /// Node that performed leader actions (if any). Only set when leader_status is Some.
     #[column(
         id = 20,
@@ -180,7 +180,7 @@ pub struct Job {
         default = "None",
         comment = "Node that performed leader actions"
     )]
-    pub leader_node_id: Option<NodeId>,
+    pub leader_node_id:  Option<NodeId>,
     #[column(
         id = 5,
         ordinal = 5,
@@ -191,7 +191,7 @@ pub struct Job {
         comment = "JSON object containing job parameters"
     )]
     #[serde(default)]
-    pub parameters: Option<Value>,
+    pub parameters:      Option<Value>,
     #[column(
         id = 6,
         ordinal = 6,
@@ -201,7 +201,7 @@ pub struct Job {
         default = "None",
         comment = "Result or error message"
     )]
-    pub message: Option<String>, // Unified field replacing result/error_message
+    pub message:         Option<String>, // Unified field replacing result/error_message
     #[column(
         id = 7,
         ordinal = 7,
@@ -231,7 +231,7 @@ pub struct Job {
         default = "None",
         comment = "Queue name for job routing"
     )]
-    pub queue: Option<String>, // Queue name (future use)
+    pub queue:           Option<String>, // Queue name (future use)
     // 4-byte aligned fields (enums, i32)
     #[column(
         id = 10,
@@ -242,7 +242,7 @@ pub struct Job {
         default = "None",
         comment = "Priority value (higher = more priority)"
     )]
-    pub priority: Option<i32>, // Priority value (future use)
+    pub priority:        Option<i32>, // Priority value (future use)
     #[column(
         id = 2,
         ordinal = 2,
@@ -252,7 +252,7 @@ pub struct Job {
         default = "None",
         comment = "Type of job (Flush, Compact, Cleanup, Backup, Restore)"
     )]
-    pub job_type: JobType,
+    pub job_type:        JobType,
     /// Status of local work (runs on all nodes)
     #[column(
         id = 3,
@@ -263,7 +263,7 @@ pub struct Job {
         default = "None",
         comment = "Job status (New, Queued, Running, Completed, Failed, Cancelled, Retrying)"
     )]
-    pub status: JobStatus,
+    pub status:          JobStatus,
     /// Status of leader-only actions (only set on leader node for jobs with leader actions)
     #[column(
         id = 4,
@@ -274,7 +274,7 @@ pub struct Job {
         default = "None",
         comment = "Status of leader-only actions"
     )]
-    pub leader_status: Option<JobStatus>,
+    pub leader_status:   Option<JobStatus>,
     // 1-byte fields last
     #[column(
         id = 11,
@@ -285,7 +285,7 @@ pub struct Job {
         default = "None",
         comment = "Number of retries attempted"
     )]
-    pub retry_count: u8, // Number of retries attempted (default 0)
+    pub retry_count:     u8, // Number of retries attempted (default 0)
     #[column(
         id = 12,
         ordinal = 12,
@@ -295,7 +295,7 @@ pub struct Job {
         default = "None",
         comment = "Maximum retries allowed"
     )]
-    pub max_retries: u8, // Maximum retries allowed (default 3)
+    pub max_retries:     u8, // Maximum retries allowed (default 3)
 }
 
 impl KSerializable for Job {}
@@ -356,11 +356,11 @@ impl Job {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobOptions {
     /// Maximum number of retries (default: 3)
-    pub max_retries: Option<u8>,
+    pub max_retries:     Option<u8>,
     /// Queue name for job routing (future use)
-    pub queue: Option<String>,
+    pub queue:           Option<String>,
     /// Priority value (higher = more priority, future use)
-    pub priority: Option<i32>,
+    pub priority:        Option<i32>,
     /// Idempotency key to prevent duplicate job creation
     pub idempotency_key: Option<String>,
 }
@@ -368,9 +368,9 @@ pub struct JobOptions {
 impl Default for JobOptions {
     fn default() -> Self {
         Self {
-            max_retries: Some(3),
-            queue: None,
-            priority: None,
+            max_retries:     Some(3),
+            queue:           None,
+            priority:        None,
             idempotency_key: None,
         }
     }
@@ -395,37 +395,37 @@ pub enum JobSortField {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobFilter {
     /// Filter by job type
-    pub job_type: Option<JobType>,
+    pub job_type:        Option<JobType>,
     /// Filter by job status (single) - Deprecated, use statuses
-    pub status: Option<JobStatus>,
+    pub status:          Option<JobStatus>,
     /// Filter by multiple job statuses
-    pub statuses: Option<Vec<JobStatus>>,
+    pub statuses:        Option<Vec<JobStatus>>,
     /// Filter by idempotency key
     pub idempotency_key: Option<String>,
     /// Limit number of results
-    pub limit: Option<usize>,
+    pub limit:           Option<usize>,
     /// Start from created_at timestamp (inclusive)
-    pub created_after: Option<i64>,
+    pub created_after:   Option<i64>,
     /// End at created_at timestamp (exclusive)
-    pub created_before: Option<i64>,
+    pub created_before:  Option<i64>,
     /// Sort field
-    pub sort_by: Option<JobSortField>,
+    pub sort_by:         Option<JobSortField>,
     /// Sort order
-    pub sort_order: Option<SortOrder>,
+    pub sort_order:      Option<SortOrder>,
 }
 
 impl Default for JobFilter {
     fn default() -> Self {
         Self {
-            job_type: None,
-            status: None,
-            statuses: None,
+            job_type:        None,
+            status:          None,
+            statuses:        None,
             idempotency_key: None,
-            limit: Some(100),
-            created_after: None,
-            created_before: None,
-            sort_by: None,
-            sort_order: None,
+            limit:           Some(100),
+            created_after:   None,
+            created_before:  None,
+            sort_by:         None,
+            sort_order:      None,
         }
     }
 }
@@ -438,26 +438,28 @@ mod tests {
     #[allow(deprecated)]
     fn test_job_serialization() {
         let job = Job {
-            job_id: "job_123".into(),
-            job_type: JobType::Flush,
-            status: JobStatus::Completed,
-            leader_status: Some(JobStatus::Completed),
-            parameters: Some(serde_json::json!({"namespace_id":"default","table_name":"events"})),
-            message: Some("Job completed successfully".to_string()),
+            job_id:          "job_123".into(),
+            job_type:        JobType::Flush,
+            status:          JobStatus::Completed,
+            leader_status:   Some(JobStatus::Completed),
+            parameters:      Some(
+                serde_json::json!({"namespace_id":"default","table_name":"events"}),
+            ),
+            message:         Some("Job completed successfully".to_string()),
             exception_trace: None,
             idempotency_key: None,
-            retry_count: 0,
-            max_retries: 3,
-            memory_used: None,
-            cpu_used: None,
-            created_at: 1730000000000,
-            updated_at: 1730000300000,
-            started_at: Some(1730000000000),
-            finished_at: Some(1730000300000),
-            node_id: NodeId::from(1u64),
-            leader_node_id: Some(NodeId::from(1u64)),
-            queue: None,
-            priority: None,
+            retry_count:     0,
+            max_retries:     3,
+            memory_used:     None,
+            cpu_used:        None,
+            created_at:      1730000000000,
+            updated_at:      1730000300000,
+            started_at:      Some(1730000000000),
+            finished_at:     Some(1730000300000),
+            node_id:         NodeId::from(1u64),
+            leader_node_id:  Some(NodeId::from(1u64)),
+            queue:           None,
+            priority:        None,
         };
 
         let bytes = serde_json::to_vec(&job).unwrap();
@@ -468,26 +470,28 @@ mod tests {
     #[test]
     fn test_job_cancel() {
         let job = Job {
-            job_id: JobId::new("job_123"),
-            job_type: JobType::Flush,
-            status: JobStatus::Running,
-            leader_status: None,
-            parameters: Some(serde_json::json!({"namespace_id":"default","table_name":"events"})),
-            message: None,
+            job_id:          JobId::new("job_123"),
+            job_type:        JobType::Flush,
+            status:          JobStatus::Running,
+            leader_status:   None,
+            parameters:      Some(
+                serde_json::json!({"namespace_id":"default","table_name":"events"}),
+            ),
+            message:         None,
             exception_trace: None,
             idempotency_key: None,
-            retry_count: 0,
-            max_retries: 3,
-            memory_used: None,
-            cpu_used: None,
-            created_at: 1730000000000,
-            updated_at: 1730000000000,
-            started_at: Some(1730000000000),
-            finished_at: None,
-            node_id: NodeId::from(1u64),
-            leader_node_id: None,
-            queue: None,
-            priority: None,
+            retry_count:     0,
+            max_retries:     3,
+            memory_used:     None,
+            cpu_used:        None,
+            created_at:      1730000000000,
+            updated_at:      1730000000000,
+            started_at:      Some(1730000000000),
+            finished_at:     None,
+            node_id:         NodeId::from(1u64),
+            leader_node_id:  None,
+            queue:           None,
+            priority:        None,
         };
 
         let cancelled = job.cancel();

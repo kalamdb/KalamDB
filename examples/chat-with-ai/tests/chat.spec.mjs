@@ -13,10 +13,18 @@ const room = process.env.CHAT_TEST_ROOM ?? 'playwright-room-fallback';
 const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
 const rootPassword = process.env.KALAMDB_ROOT_PASSWORD ?? adminPassword;
-const chatSetupStatements = readFileSync(path.join(exampleRoot, 'kalam/schema.sql'), 'utf8')
-  .split(/;\s*(?:\r?\n|$)/)
-  .map((statement) => statement.trim())
-  .filter(Boolean);
+
+function sqlStatementsFromFile(sql) {
+  return sql
+    .replace(/^[ \t]*--[^\n]*\n?/gm, '')
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+}
+
+const chatSetupStatements = sqlStatementsFromFile(
+  readFileSync(path.join(exampleRoot, 'kalam/schema.sql'), 'utf8'),
+);
 
 let agentProcess;
 let agentStdout = '';
@@ -186,16 +194,29 @@ async function executeSql(token, sql, { allowFailure = false } = {}) {
   return result;
 }
 
-async function insertUserMessage(roomName, content, username = adminUsername) {
+async function ensureRoomAccess(userId, roomId) {
   const token = await login(adminUsername, adminPassword);
-  const statement = `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES (${sqlLiteral(roomName)}, 'user', ${sqlLiteral(username)}, ${sqlLiteral(username)}, ${sqlLiteral(content)})`;
+  await executeSql(
+    token,
+    `INSERT INTO chat_demo.rooms (id, title) VALUES (${sqlLiteral(roomId)}, ${sqlLiteral(roomId)})`,
+    { allowFailure: true },
+  );
+  await executeSql(
+    token,
+    `INSERT INTO chat_demo.room_members (id, user_id, room_id) VALUES (${sqlLiteral(`${userId}:${roomId}`)}, ${sqlLiteral(userId)}, ${sqlLiteral(roomId)})`,
+    { allowFailure: true },
+  );
+}
 
-  if (username === adminUsername) {
-    await executeSql(token, statement);
-    return;
-  }
-
-  await executeSql(token, `EXECUTE AS USER ${sqlLiteral(username)} (${statement})`);
+async function insertUserMessage(roomName, content, username = adminUsername) {
+  await ensureRoomAccess(username, roomName);
+  const token = await login(adminUsername, adminPassword);
+  // SHARED tables reject EXECUTE AS USER. Insert as DBA; row fields still
+  // attribute the message to `username` for RLS SELECT and the UI.
+  await executeSql(
+    token,
+    `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES (${sqlLiteral(roomName)}, 'user', ${sqlLiteral(username)}, ${sqlLiteral(username)}, ${sqlLiteral(content)})`,
+  );
 }
 
 function sqlLiteral(value) {
@@ -419,22 +440,19 @@ async function createUser(username) {
 }
 
 async function insertAssistantMessages(roomName, contents, username = adminUsername) {
+  await ensureRoomAccess(username, roomName);
   const values = contents.map((content) => (
     `(${sqlLiteral(roomName)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(username)}, ${sqlLiteral(content)})`
   )).join(', ');
-  const statement = `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ${values}`;
-
-  if (username === adminUsername) {
-    const token = await login(adminUsername, adminPassword);
-    await executeSql(token, statement);
-    return;
-  }
-
   const token = await login(adminUsername, adminPassword);
-  await executeSql(token, `EXECUTE AS USER ${sqlLiteral(username)} (${statement})`);
+  await executeSql(
+    token,
+    `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ${values}`,
+  );
 }
 
 async function seedChatHistory() {
+  await ensureRoomAccess(adminUsername, room);
   const token = await login('admin', 'kalamdb123');
   const values = Array.from({ length: 48 }, (_, index) => (
     `('${room}', 'assistant', 'KalamDB Copilot', 'admin', 'seed history ${index}-${Date.now()}')`
@@ -510,6 +528,9 @@ test.beforeAll(async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
+      KALAM_URL: process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
+      KALAM_USER: process.env.KALAM_USER ?? process.env.KALAMDB_USER ?? adminUsername,
+      KALAM_PASSWORD: process.env.KALAM_PASSWORD ?? process.env.KALAMDB_PASSWORD ?? adminPassword,
       KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
       KALAMDB_USER: process.env.KALAMDB_USER ?? adminUsername,
       KALAMDB_PASSWORD: process.env.KALAMDB_PASSWORD ?? adminPassword,
@@ -691,8 +712,9 @@ test('three open tabs stay in sync when one tab reloads mid-stream and then rece
   await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
 });
 
-test('initial live subscription can deliver three startup batches while staying scoped to the current user', async () => {
+test('initial live subscription can deliver three startup batches while staying scoped to rooms the user belongs to', async () => {
   const batchRoom = uniqueName('batch-room');
+  const foreignRoom = `${batchRoom}-foreign`;
   const subscriberUser = uniqueName('chat-subscriber');
   const foreignUser = uniqueName('chat-batch-user');
   const contents = Array.from({ length: 6 }, (_, index) => `${batchRoom}-seed-${index}`);
@@ -707,7 +729,7 @@ test('initial live subscription can deliver three startup batches while staying 
     await createUser(subscriberUser);
     await createUser(foreignUser);
     await insertAssistantMessages(batchRoom, contents, subscriberUser);
-    await insertAssistantMessages(batchRoom, [foreignContent], foreignUser);
+    await insertAssistantMessages(foreignRoom, [foreignContent], foreignUser);
 
     const subscriberToken = await login(subscriberUser, adminPassword);
 

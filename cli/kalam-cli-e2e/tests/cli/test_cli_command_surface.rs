@@ -10,7 +10,16 @@ use crate::common::*;
 #[test]
 fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
     let cases: Vec<(&[&str], &[&str])> = vec![
-        (&["--help"], &["Interactive SQL terminal", "--watch-schema"]),
+        (
+            &["--help"],
+            &[
+                "KalamDB CLI for projects",
+                "init",
+                "dev",
+                "status",
+                "--watch-schema",
+            ],
+        ),
         (&["version", "--help"], &["Print version information"]),
         (&["doctor", "--help"], &["Run local, server, and authentication diagnostics"]),
         (&["login", "--help"], &["Login and save credentials", "--oidc", "--no-browser"]),
@@ -30,7 +39,17 @@ fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
             &["token", "create", "--help"],
             &["Token/service account name", "--name", "--save"],
         ),
-        (&["update", "--help"], &["Update this kalam binary", "--version", "--dry-run"]),
+        (
+            &["dev", "--help"],
+            &[
+                "development environment",
+                "--agent",
+                "start",
+                "status",
+                "logs",
+                "stop",
+            ],
+        ),
     ];
 
     for (args, expected_snippets) in cases {

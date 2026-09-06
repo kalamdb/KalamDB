@@ -10,16 +10,16 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WirePasswordAuthRequest {
-    pub user: String,
-    pub password: String,
+    pub user:        String,
+    pub password:    String,
     pub client_addr: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WireAuthResult {
     pub user_id: kalamdb_commons::UserId,
-    pub role: kalamdb_commons::Role,
-    pub method: AuthMethod,
+    pub role:    kalamdb_commons::Role,
+    pub method:  AuthMethod,
 }
 
 pub async fn authenticate_wire_password(
@@ -29,7 +29,7 @@ pub async fn authenticate_wire_password(
     let connection_info = ConnectionInfo::new(request.client_addr);
     let result = authenticate(
         AuthRequest::Credentials {
-            user: request.user,
+            user:     request.user,
             password: request.password,
         },
         &connection_info,
@@ -40,8 +40,8 @@ pub async fn authenticate_wire_password(
 
     Ok(WireAuthResult {
         user_id: result.user.user_id,
-        role: result.user.role,
-        method: result.method,
+        role:    result.user.role,
+        method:  result.method,
     })
 }
 
@@ -142,8 +142,8 @@ mod tests {
 
         let result = authenticate_wire_password(
             WirePasswordAuthRequest {
-                user: "wire_user".to_string(),
-                password: "correct-password".to_string(),
+                user:        "wire_user".to_string(),
+                password:    "correct-password".to_string(),
                 client_addr: Some("127.0.0.1:5432".to_string()),
             },
             &repo,
@@ -169,8 +169,8 @@ mod tests {
         for user in ["missing_user", "deleted_user"] {
             let error = authenticate_wire_password(
                 WirePasswordAuthRequest {
-                    user: user.to_string(),
-                    password: "correct-password".to_string(),
+                    user:        user.to_string(),
+                    password:    "correct-password".to_string(),
                     client_addr: None,
                 },
                 &repo,

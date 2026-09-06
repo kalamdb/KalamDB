@@ -45,12 +45,12 @@ pub async fn oidc_device_start_handler(
 
     match start_oidc_device_flow(oidc, &request.scopes).await {
         Ok(result) => HttpResponse::Ok().json(OidcDeviceStartResponse {
-            device_session_id: result.device_session_id,
-            verification_uri: result.verification_uri,
+            device_session_id:         result.device_session_id,
+            verification_uri:          result.verification_uri,
             verification_uri_complete: result.verification_uri_complete,
-            user_code: result.user_code,
-            expires_in_seconds: result.expires_in_seconds,
-            interval_seconds: result.interval_seconds,
+            user_code:                 result.user_code,
+            expires_in_seconds:        result.expires_in_seconds,
+            interval_seconds:          result.interval_seconds,
         }),
         Err(error) => {
             log::warn!("OIDC device start failed: {}", error);
@@ -87,16 +87,16 @@ pub async fn oidc_device_poll_handler(
     match poll_result {
         OidcDevicePollResult::Pending { interval_seconds } => {
             HttpResponse::Ok().json(OidcDevicePollResponse {
-                status: OidcDevicePollStatus::Pending,
-                interval_seconds: Some(interval_seconds),
-                token_type: None,
-                access_token: None,
-                expires_at: None,
-                refresh_token: None,
+                status:             OidcDevicePollStatus::Pending,
+                interval_seconds:   Some(interval_seconds),
+                token_type:         None,
+                access_token:       None,
+                expires_at:         None,
+                refresh_token:      None,
                 refresh_expires_at: None,
-                user: None,
-                admin_ui_access: None,
-                message: None,
+                user:               None,
+                admin_ui_access:    None,
+                message:            None,
             })
         },
         OidcDevicePollResult::Authorized { id_token } => {
@@ -183,14 +183,14 @@ async fn complete_authorized_device_login(
         .cookie(auth_cookie)
         .cookie(refresh_cookie)
         .json(OidcDevicePollResponse {
-            status: OidcDevicePollStatus::Authorized,
-            interval_seconds: None,
-            token_type: Some("bearer".to_string()),
-            access_token: Some(issued_tokens.access_token),
-            expires_at: Some(issued_tokens.expires_at.to_rfc3339()),
-            refresh_token: Some(issued_tokens.refresh_token),
+            status:             OidcDevicePollStatus::Authorized,
+            interval_seconds:   None,
+            token_type:         Some("bearer".to_string()),
+            access_token:       Some(issued_tokens.access_token),
+            expires_at:         Some(issued_tokens.expires_at.to_rfc3339()),
+            refresh_token:      Some(issued_tokens.refresh_token),
             refresh_expires_at: Some(issued_tokens.refresh_expires_at.to_rfc3339()),
-            user: Some(UserInfo {
+            user:               Some(UserInfo {
                 id: user.user_id,
                 role: user.role,
                 name: user.name,
@@ -198,8 +198,8 @@ async fn complete_authorized_device_login(
                 created_at,
                 updated_at,
             }),
-            admin_ui_access: Some(admin_ui_access),
-            message: None,
+            admin_ui_access:    Some(admin_ui_access),
+            message:            None,
         })
 }
 

@@ -7,8 +7,8 @@ use crate::{
 /// Stateful reducer that materializes the current row set from change events.
 #[derive(Debug, Clone, Default)]
 pub struct LiveRowsMaterializer {
-    rows: Vec<RowData>,
-    limit: Option<usize>,
+    rows:        Vec<RowData>,
+    limit:       Option<usize>,
     key_columns: Vec<String>,
 }
 
@@ -224,28 +224,28 @@ mod tests {
 
         let _ = materializer.apply(ChangeEvent::Ack {
             subscription_id: "sub-1".to_string(),
-            total_rows: 2,
-            batch_control: batch_control(BatchStatus::Loading),
-            schema: vec![SchemaField {
-                name: "id".to_string(),
+            total_rows:      2,
+            batch_control:   batch_control(BatchStatus::Loading),
+            schema:          vec![SchemaField {
+                name:      "id".to_string(),
                 data_type: KalamDataType::Text,
-                index: 0,
-                flags: None,
+                index:     0,
+                flags:     None,
             }],
         });
 
         let first = materializer
             .apply(ChangeEvent::InitialDataBatch {
                 subscription_id: "sub-1".to_string(),
-                rows: vec![row("1", "one")],
-                batch_control: batch_control(BatchStatus::LoadingBatch),
+                rows:            vec![row("1", "one")],
+                batch_control:   batch_control(BatchStatus::LoadingBatch),
             })
             .expect("first batch should emit");
         let second = materializer
             .apply(ChangeEvent::InitialDataBatch {
                 subscription_id: "sub-1".to_string(),
-                rows: vec![row("2", "two")],
-                batch_control: batch_control(BatchStatus::Ready),
+                rows:            vec![row("2", "two")],
+                batch_control:   batch_control(BatchStatus::Ready),
             })
             .expect("second batch should emit");
 
@@ -266,36 +266,36 @@ mod tests {
     #[test]
     fn applies_update_delete_and_limit() {
         let mut materializer = LiveRowsMaterializer::new(LiveRowsConfig {
-            limit: Some(2),
+            limit:       Some(2),
             key_columns: None,
         });
 
         let _ = materializer.apply(ChangeEvent::InitialDataBatch {
             subscription_id: "sub-2".to_string(),
-            rows: vec![row("1", "one")],
-            batch_control: batch_control(BatchStatus::Ready),
+            rows:            vec![row("1", "one")],
+            batch_control:   batch_control(BatchStatus::Ready),
         });
         let _ = materializer.apply(ChangeEvent::Insert {
             subscription_id: "sub-2".to_string(),
-            rows: vec![row("2", "two")],
+            rows:            vec![row("2", "two")],
         });
         let updated = materializer
             .apply(ChangeEvent::Update {
                 subscription_id: "sub-2".to_string(),
-                rows: vec![row("2", "two-updated")],
-                old_rows: vec![row("2", "two")],
+                rows:            vec![row("2", "two-updated")],
+                old_rows:        vec![row("2", "two")],
             })
             .expect("update should emit");
         let limited = materializer
             .apply(ChangeEvent::Insert {
                 subscription_id: "sub-2".to_string(),
-                rows: vec![row("3", "three")],
+                rows:            vec![row("3", "three")],
             })
             .expect("insert should emit");
         let deleted = materializer
             .apply(ChangeEvent::Delete {
                 subscription_id: "sub-2".to_string(),
-                old_rows: vec![row("2", "two-updated")],
+                old_rows:        vec![row("2", "two-updated")],
             })
             .expect("delete should emit");
 
@@ -336,28 +336,28 @@ mod tests {
         }
 
         let mut materializer = LiveRowsMaterializer::new(LiveRowsConfig {
-            limit: None,
+            limit:       None,
             key_columns: Some(vec!["room_id".to_string(), "message_id".to_string()]),
         });
 
         let _ = materializer.apply(ChangeEvent::InitialDataBatch {
             subscription_id: "sub-3".to_string(),
-            rows: vec![keyed_row("room-1", "msg-1", "hello")],
-            batch_control: batch_control(BatchStatus::Ready),
+            rows:            vec![keyed_row("room-1", "msg-1", "hello")],
+            batch_control:   batch_control(BatchStatus::Ready),
         });
 
         let updated = materializer
             .apply(ChangeEvent::Update {
                 subscription_id: "sub-3".to_string(),
-                rows: vec![keyed_row("room-1", "msg-1", "updated")],
-                old_rows: vec![keyed_row("room-1", "msg-1", "hello")],
+                rows:            vec![keyed_row("room-1", "msg-1", "updated")],
+                old_rows:        vec![keyed_row("room-1", "msg-1", "hello")],
             })
             .expect("update should emit");
 
         let deleted = materializer
             .apply(ChangeEvent::Delete {
                 subscription_id: "sub-3".to_string(),
-                old_rows: vec![keyed_row("room-1", "msg-1", "updated")],
+                old_rows:        vec![keyed_row("room-1", "msg-1", "updated")],
             })
             .expect("delete should emit");
 
@@ -388,15 +388,15 @@ mod tests {
 
         let _ = materializer.apply(ChangeEvent::InitialDataBatch {
             subscription_id: "sub-4".to_string(),
-            rows: vec![row_with_key("ID", "1", "one")],
-            batch_control: batch_control(BatchStatus::Ready),
+            rows:            vec![row_with_key("ID", "1", "one")],
+            batch_control:   batch_control(BatchStatus::Ready),
         });
 
         let updated = materializer
             .apply(ChangeEvent::Update {
                 subscription_id: "sub-4".to_string(),
-                rows: vec![row_with_key("id", "1", "updated")],
-                old_rows: vec![row_with_key("ID", "1", "one")],
+                rows:            vec![row_with_key("id", "1", "updated")],
+                old_rows:        vec![row_with_key("ID", "1", "one")],
             })
             .expect("update should emit");
 
@@ -416,9 +416,9 @@ mod tests {
         let event = materializer
             .apply(ChangeEvent::Ack {
                 subscription_id: "sub-3".to_string(),
-                total_rows: 0,
-                batch_control: batch_control(BatchStatus::Ready),
-                schema: Vec::new(),
+                total_rows:      0,
+                batch_control:   batch_control(BatchStatus::Ready),
+                schema:          Vec::new(),
             })
             .expect("empty ack should emit snapshot");
 

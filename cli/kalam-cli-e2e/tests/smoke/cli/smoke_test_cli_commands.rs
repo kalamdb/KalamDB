@@ -387,6 +387,180 @@ fn smoke_cli_flush_command() {
     println!("✅ smoke_cli_flush_command passed!");
 }
 
+fn assert_cli_meta_flush_succeeded(output: &str) {
+    assert!(
+        output.contains("Storage flush completed successfully"),
+        "\\flush should complete successfully, got: {}",
+        output
+    );
+    assert!(
+        !output.contains("not found") && !output.contains("Storage flush failed"),
+        "\\flush should resolve the table without quoting artifacts, got: {}",
+        output
+    );
+}
+
+/// Smoke Test: `\flush table ns.table;` goes through the CLI parser (trailing semicolon,
+/// qualified identifier) rather than raw `STORAGE FLUSH TABLE` SQL.
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_cli_backslash_flush_qualified_table() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_cli_backslash_flush_qualified_table: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_cli_bslash_flush");
+    let table = generate_unique_table("users");
+    let full_table = format!("{}.{}", namespace, table);
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, data VARCHAR) WITH (TYPE='SHARED')",
+        full_table
+    ))
+    .expect("Failed to create table");
+    grant_public_shared_table_access(&full_table);
+
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {} (id, data) VALUES (1, 'test')",
+        full_table
+    ))
+    .expect("Failed to insert");
+
+    let flush_output = execute_sql_as_root_via_cli(&format!("\\flush table {};", full_table))
+        .expect("\\flush table ns.table; should succeed via CLI");
+    assert_cli_meta_flush_succeeded(&flush_output);
+    assert!(
+        flush_output.contains(&full_table) && !flush_output.contains(&format!("{};", full_table)),
+        "flush display should qualify the table without a trailing semicolon, got: {}",
+        flush_output
+    );
+
+    let job_id = parse_job_id_from_flush_output(&flush_output)
+        .expect("\\flush output should contain a job id");
+    verify_job_completed(&job_id, Duration::from_secs(30))
+        .expect("flush job should complete before verification");
+
+    let result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", full_table))
+        .expect("SELECT after \\flush should succeed");
+    assert!(result.contains("test"), "Data should persist after flush: {}", result);
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+
+    println!("✅ smoke_cli_backslash_flush_qualified_table passed!");
+}
+
+/// Smoke Test: `USE ns;` then `\flush table users` / `\flush` in one CLI session
+/// qualifies against the selected namespace.
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_cli_backslash_flush_uses_session_namespace() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_cli_backslash_flush_uses_session_namespace: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_cli_use_flush");
+    let table = generate_unique_table("users");
+    let full_table = format!("{}.{}", namespace, table);
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (id BIGINT PRIMARY KEY, data VARCHAR) WITH (TYPE='SHARED')",
+        full_table
+    ))
+    .expect("Failed to create table");
+    grant_public_shared_table_access(&full_table);
+
+    execute_sql_as_root_via_client(&format!(
+        "INSERT INTO {} (id, data) VALUES (1, 'test')",
+        full_table
+    ))
+    .expect("Failed to insert");
+
+    let temp_dir = TempDir::new().expect("temp dir for USE + \\flush script");
+    let script_path = temp_dir.path().join("flush.sql");
+    std::fs::write(
+        &script_path,
+        format!("USE {};\n\\flush table {};\n\\flush;\n", namespace, table),
+    )
+    .expect("write USE + \\flush script");
+
+    let flush_output = execute_sql_file_as_root_via_cli(&script_path)
+        .expect("USE + \\flush script should succeed via CLI --file");
+    assert_cli_meta_flush_succeeded(&flush_output);
+    assert!(
+        flush_output.contains(&format!("Storage flushing table '{}'", full_table)),
+        "unqualified \\flush table should qualify with USE namespace, got: {}",
+        flush_output
+    );
+    assert!(
+        flush_output.contains(&format!("Storage flushing all tables in namespace '{}'", namespace)),
+        "\\flush should target the USE namespace, got: {}",
+        flush_output
+    );
+    assert_eq!(
+        flush_output.matches("Storage flush completed successfully").count(),
+        2,
+        "both table and all flushes should succeed, got: {}",
+        flush_output
+    );
+
+    let result = execute_sql_as_root_via_client(&format!("SELECT * FROM {}", full_table))
+        .expect("SELECT after USE + \\flush should succeed");
+    assert!(result.contains("test"), "Data should persist after flush: {}", result);
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+
+    println!("✅ smoke_cli_backslash_flush_uses_session_namespace passed!");
+}
+
+/// Smoke Test: `\describe ns.table;` goes through the shared CLI identifier parser.
+#[ntest::timeout(120000)]
+#[test]
+fn smoke_cli_backslash_describe_qualified_table() {
+    if !is_server_running() {
+        eprintln!("Skipping smoke_cli_backslash_describe_qualified_table: server not running");
+        return;
+    }
+
+    let namespace = generate_unique_namespace("smoke_cli_bslash_desc");
+    let table = generate_unique_table("users");
+    let full_table = format!("{}.{}", namespace, table);
+
+    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .expect("Failed to create namespace");
+    execute_sql_as_root_via_client(&format!(
+        "CREATE TABLE {} (
+            id BIGINT PRIMARY KEY,
+            name VARCHAR NOT NULL
+        ) WITH (TYPE='SHARED')",
+        full_table
+    ))
+    .expect("Failed to create table");
+    grant_public_select_shared_table(&full_table);
+
+    let result = execute_sql_as_root_via_cli(&format!("\\describe {};", full_table))
+        .expect("\\describe ns.table; should succeed via CLI");
+    assert!(result.contains("id"), "Should show id column: {}", result);
+    assert!(result.contains("name"), "Should show name column: {}", result);
+    assert!(
+        !result.contains("not found"),
+        "\\describe should resolve the table, got: {}",
+        result
+    );
+
+    let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
+    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+
+    println!("✅ smoke_cli_backslash_describe_qualified_table passed!");
+}
+
 /// Smoke Test: User management commands
 #[ntest::timeout(60000)]
 #[test]

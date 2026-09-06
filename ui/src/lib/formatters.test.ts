@@ -8,6 +8,10 @@ describe("timestamp formatting", () => {
 
     expect(formatTimestamp(micros, "Timestamp(Microsecond, None)", "iso8601-datetime", "utc"))
       .toBe("2025-01-01T00:00:00Z");
+    expect(formatTimestamp(micros, "Timestamp", "iso8601-datetime", "utc"))
+      .toBe("2025-01-01T00:00:00Z");
+    expect(formatTimestamp(micros, "TIMESTAMP", "iso8601-datetime", "utc"))
+      .toBe("2025-01-01T00:00:00Z");
     expect(formatTimestamp(micros, "Timestamp(Millisecond, None)", "iso8601-datetime", "utc"))
       .toBe("2025-01-01T00:00:00Z");
     expect(formatTimestamp(micros, "Timestamp(Nanosecond, None)", "iso8601-datetime", "utc"))

@@ -106,9 +106,9 @@ fn has_unapplied_migration_covering_diff(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
 
+    use super::*;
     use crate::workflow::test_support::{prod_deploy_test_config, test_workflow_context};
 
     #[tokio::test]

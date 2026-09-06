@@ -2,7 +2,7 @@ use kalamdb_commons::models::{ConsumerGroupId, TopicId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct TopicPartitionKey {
-    pub topic_id: TopicId,
+    pub topic_id:     TopicId,
     pub partition_id: u32,
 }
 
@@ -18,8 +18,8 @@ impl TopicPartitionKey {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct GroupPartitionKey {
-    pub topic_id: TopicId,
-    pub group_id: ConsumerGroupId,
+    pub topic_id:     TopicId,
+    pub group_id:     ConsumerGroupId,
     pub partition_id: u32,
 }
 

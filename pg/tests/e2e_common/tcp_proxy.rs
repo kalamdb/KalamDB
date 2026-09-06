@@ -16,18 +16,18 @@ use tokio::{
 };
 
 pub struct TcpDisconnectProxy {
-    base_url: String,
-    paused: Arc<AtomicBool>,
-    impairments: Arc<ProxyImpairments>,
-    active_connections: Arc<TokioMutex<HashMap<u64, JoinHandle<()>>>>,
+    base_url:             String,
+    paused:               Arc<AtomicBool>,
+    impairments:          Arc<ProxyImpairments>,
+    active_connections:   Arc<TokioMutex<HashMap<u64, JoinHandle<()>>>>,
     backend_client_addrs: Arc<TokioMutex<HashMap<u64, String>>>,
-    accept_task: JoinHandle<()>,
+    accept_task:          JoinHandle<()>,
 }
 
 #[derive(Default)]
 struct ProxyImpairments {
     blackhole_traffic: AtomicBool,
-    chunk_delay_ms: AtomicU64,
+    chunk_delay_ms:    AtomicU64,
 }
 
 impl TcpDisconnectProxy {

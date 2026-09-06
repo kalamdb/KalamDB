@@ -1,24 +1,25 @@
+use std::sync::Arc;
+
 use datafusion::arrow::{datatypes::SchemaRef, record_batch::RecordBatch};
 use kalamdb_commons::{models::rows::Row, schemas::TableType, TableId, UserId};
 use kalamdb_filestore::StorageCached;
-use std::sync::Arc;
 
 use super::base::{helpers, FlushScopeHook, FlushTableMetadata};
 use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, Result};
 
 pub(crate) struct FlushScopeWriteResult {
-    pub rows_count: usize,
+    pub rows_count:       usize,
     pub destination_path: String,
 }
 
 pub(crate) struct FlushScopeWriter<'a> {
-    table_id: &'a TableId,
-    table_type: TableType,
-    schema: &'a SchemaRef,
-    storage_cached: &'a Arc<StorageCached>,
+    table_id:        &'a TableId,
+    table_type:      TableType,
+    schema:          &'a SchemaRef,
+    storage_cached:  &'a Arc<StorageCached>,
     manifest_helper: &'a FlushManifestHelper,
-    metadata: &'a FlushTableMetadata,
-    scope_hook: &'a dyn FlushScopeHook,
+    metadata:        &'a FlushTableMetadata,
+    scope_hook:      &'a dyn FlushScopeHook,
 }
 
 impl<'a> FlushScopeWriter<'a> {
@@ -102,8 +103,7 @@ impl<'a> FlushScopeWriter<'a> {
 
             if let Err(err) = self.manifest_helper.mark_syncing(self.table_id, user_id) {
                 log::warn!(
-                    "⚠️  Failed to mark manifest as syncing for {} (user_id={:?}): {} \
-                     (continuing)",
+                    "⚠️  Failed to mark manifest as syncing for {} (user_id={:?}): {} (continuing)",
                     self.table_id,
                     user_id.map(UserId::as_str),
                     err

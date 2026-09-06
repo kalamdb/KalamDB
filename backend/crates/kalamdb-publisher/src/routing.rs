@@ -14,10 +14,10 @@ use kalamdb_system::providers::topics::{Topic, TopicRoute};
 /// Cached route entry combining topic ID with route configuration.
 #[derive(Clone, Debug)]
 pub(crate) struct RouteEntry {
-    pub topic_id: TopicId,
+    pub topic_id:         TopicId,
     pub topic_partitions: u32,
-    pub route: TopicRoute,
-    pub compiled_filter: Option<Arc<RowFilter>>,
+    pub route:            TopicRoute,
+    pub compiled_filter:  Option<Arc<RowFilter>>,
 }
 
 /// Manages the in-memory route cache.
@@ -25,14 +25,14 @@ pub(crate) struct RouteCache {
     /// TableId → matching routes
     table_routes: DashMap<TableId, Vec<RouteEntry>>,
     /// TopicId → full topic metadata
-    topics: DashMap<TopicId, Topic>,
+    topics:       DashMap<TopicId, Topic>,
 }
 
 impl RouteCache {
     pub fn new() -> Self {
         Self {
             table_routes: DashMap::new(),
-            topics: DashMap::new(),
+            topics:       DashMap::new(),
         }
     }
 
@@ -173,7 +173,8 @@ fn build_route_entry(
             Ok(filter) => Some(Arc::new(filter)),
             Err(error) => {
                 log::warn!(
-                    "Skipping topic route {} -> {} ON {:?} because filter {:?} could not be parsed at cache load: {}",
+                    "Skipping topic route {} -> {} ON {:?} because filter {:?} could not be \
+                     parsed at cache load: {}",
                     topic_id.as_str(),
                     route.table_id,
                     route.op,

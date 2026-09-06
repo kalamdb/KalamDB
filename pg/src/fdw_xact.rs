@@ -45,7 +45,7 @@ static XACT_CALLBACK_REGISTERED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex:
 /// State for an active KalamDB transaction in this PostgreSQL backend.
 #[derive(Clone)]
 struct ActiveTransaction {
-    session_id: String,
+    session_id:     String,
     transaction_id: String,
 }
 
@@ -84,7 +84,7 @@ pub fn ensure_transaction(session_id: &str) -> Result<String, kalam_pg_common::K
     guard.insert(
         session_id.to_string(),
         ActiveTransaction {
-            session_id: session_id.to_string(),
+            session_id:     session_id.to_string(),
             transaction_id: transaction_id.clone(),
         },
     );

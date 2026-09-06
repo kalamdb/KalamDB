@@ -10,9 +10,7 @@ use kalamdb_commons::{
     Role,
 };
 use kalamdb_core::app_context::AppContext;
-use kalamdb_session::{
-    can_access_user_table, can_impersonate_target_user, AuthSession,
-};
+use kalamdb_session::{can_access_user_table, can_impersonate_target_user, AuthSession};
 use kalamdb_system::FileRef;
 
 use super::models::DownloadQuery;
@@ -28,7 +26,8 @@ pub async fn download_file(
     extractor: AuthSessionExtractor,
     path: web::Path<(String, String, String, String)>,
     query: web::Query<DownloadQuery>,
-    app_context: web::Data<Arc<AppContext>>) -> impl Responder {
+    app_context: web::Data<Arc<AppContext>>,
+) -> impl Responder {
     // Convert extractor to AuthSession
     let session: AuthSession = extractor.into();
 
@@ -55,7 +54,8 @@ pub async fn download_file(
                 return HttpResponse::Forbidden().json(SqlResponse::error(
                     ErrorCode::PermissionDenied,
                     "User table file downloads require user-table access",
-                    0.0));
+                    0.0,
+                ));
             }
 
             let effective_user_id = if let Some(requested_user_id) = query.user_id.as_ref() {
@@ -68,7 +68,8 @@ pub async fn download_file(
                     return HttpResponse::Forbidden().json(SqlResponse::error(
                         ErrorCode::PermissionDenied,
                         "Requested user is not allowed for file download",
-                        0.0));
+                        0.0,
+                    ));
                 }
 
                 requested_user_id.clone()
@@ -83,13 +84,15 @@ pub async fn download_file(
                 return HttpResponse::Forbidden().json(SqlResponse::error(
                     ErrorCode::PermissionDenied,
                     "Raw shared-table file downloads require DBA or System role",
-                    0.0));
+                    0.0,
+                ));
             }
             if query.user_id.is_some() {
                 return HttpResponse::BadRequest().json(SqlResponse::error(
                     ErrorCode::InvalidInput,
                     "user_id is only valid for user tables",
-                    0.0));
+                    0.0,
+                ));
             }
             None
         },
@@ -98,7 +101,8 @@ pub async fn download_file(
             return HttpResponse::BadRequest().json(SqlResponse::error(
                 ErrorCode::InvalidInput,
                 "File storage is not supported for stream or system tables",
-                0.0));
+                0.0,
+            ));
         },
     };
 
@@ -118,7 +122,8 @@ pub async fn download_file(
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
             "Invalid file path",
-            0.0));
+            0.0,
+        ));
     }
     let relative_path = format!("{}/{}", subfolder, stored_name);
 
@@ -143,7 +148,8 @@ pub async fn download_file(
                 .content_type(content_type)
                 .append_header((
                     "Content-Disposition",
-                    format!("inline; filename=\"{}\"", safe_stored_name)))
+                    format!("inline; filename=\"{}\"", safe_stored_name),
+                ))
                 .body(data)
         },
         Err(e) => {
@@ -167,7 +173,8 @@ fn guess_content_type(stored_name: &str) -> String {
 fn can_download_user_file_for_target(
     session: &AuthSession,
     requested_user_id: &UserId,
-    target_role: Role) -> bool {
+    target_role: Role,
+) -> bool {
     if requested_user_id == session.user_id() {
         return true;
     }
@@ -177,7 +184,8 @@ fn can_download_user_file_for_target(
             session.user_id(),
             session.role(),
             requested_user_id,
-            target_role)
+            target_role,
+        )
 }
 
 #[cfg(test)]

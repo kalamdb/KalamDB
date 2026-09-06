@@ -21,7 +21,7 @@ use crate::helpers::async_blocking::run_blocking;
 
 /// Handler for ALTER USER
 pub struct AlterUserHandler {
-    app_context: Arc<AppContext>,
+    app_context:        Arc<AppContext>,
     enforce_complexity: bool,
 }
 

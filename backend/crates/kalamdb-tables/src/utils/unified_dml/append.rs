@@ -77,11 +77,11 @@ pub fn append_version_sync_with_deps(
 
             // Create UserTableRow
             let entity = UserTableRow {
-                user_id: user_id.clone(),
-                _seq: seq_id,
+                user_id:     user_id.clone(),
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: deleted,
-                fields: json_to_row(&fields).ok_or_else(|| {
+                _deleted:    deleted,
+                fields:      json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )
@@ -111,10 +111,10 @@ pub fn append_version_sync_with_deps(
         TableType::Shared => {
             // Create SharedTableRow
             let entity = SharedTableRow {
-                _seq: seq_id,
+                _seq:        seq_id,
                 _commit_seq: 0,
-                _deleted: deleted,
-                fields: json_to_row(&fields).ok_or_else(|| {
+                _deleted:    deleted,
+                fields:      json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )

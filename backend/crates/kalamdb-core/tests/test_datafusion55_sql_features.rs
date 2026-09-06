@@ -77,23 +77,29 @@ async fn test_json_operators_through_rewrite_layer() {
     let session = exec_ctx().create_session_with_user();
     let queries = [
         (
-            "SELECT doc->'profile' AS profile FROM (SELECT '{\"profile\":{\"city\":\"london\"}}' AS doc) docs",
+            "SELECT doc->'profile' AS profile FROM (SELECT '{\"profile\":{\"city\":\"london\"}}' \
+             AS doc) docs",
             "london",
         ),
         (
-            "SELECT doc->'user'->'address'->>'zip' AS zip FROM (SELECT '{\"user\":{\"address\":{\"zip\":\"90210\"}}}' AS doc) docs",
+            "SELECT doc->'user'->'address'->>'zip' AS zip FROM (SELECT \
+             '{\"user\":{\"address\":{\"zip\":\"90210\"}}}' AS doc) docs",
             "90210",
         ),
         (
-            "SELECT doc->>'customer_id' AS customer_id FROM (SELECT '{\"customer_id\":\"cust_123\"}' AS doc) docs WHERE doc ? 'customer_id'",
+            "SELECT doc->>'customer_id' AS customer_id FROM (SELECT \
+             '{\"customer_id\":\"cust_123\"}' AS doc) docs WHERE doc ? 'customer_id'",
             "cust_123",
         ),
         (
-            "SELECT doc->>'priority' AS p FROM (SELECT '{\"status\":\"active\",\"priority\":\"1\"}' AS doc) docs WHERE doc->>'status' = 'active'",
+            "SELECT doc->>'priority' AS p FROM (SELECT \
+             '{\"status\":\"active\",\"priority\":\"1\"}' AS doc) docs WHERE doc->>'status' = \
+             'active'",
             "1",
         ),
         (
-            "SELECT doc->'items'->0 AS first_item FROM (SELECT '{\"items\":[{\"id\":1}]}' AS doc) docs",
+            "SELECT doc->'items'->0 AS first_item FROM (SELECT '{\"items\":[{\"id\":1}]}' AS doc) \
+             docs",
             "id",
         ),
     ];
@@ -172,8 +178,8 @@ async fn test_cosine_distance_json_query_vector_uses_kdb_path() {
 
     let distance = session
         .sql(
-            "SELECT cosine_distance(arrow_cast([1.0, 0.0], 'FixedSizeList(2, Float32)'), \
-             '[0.0, 1.0]') AS distance",
+            "SELECT cosine_distance(arrow_cast([1.0, 0.0], 'FixedSizeList(2, Float32)'), '[0.0, \
+             1.0]') AS distance",
         )
         .await
         .expect("json query vector should plan")
@@ -222,8 +228,8 @@ async fn test_array_filter_and_transform_lambda_compose() {
 
     let result = session
         .sql(
-            "SELECT array_transform(array_filter([1, 2, 3, 4, 5], x -> x > 2), x -> x * 10) \
-             AS filtered_scaled",
+            "SELECT array_transform(array_filter([1, 2, 3, 4, 5], x -> x > 2), x -> x * 10) AS \
+             filtered_scaled",
         )
         .await;
     assert!(result.is_ok(), "composed lambda array query failed: {:?}", result.err());
@@ -257,4 +263,64 @@ async fn test_array_any_match_lambda() {
         .expect("boolean result")
         .value(0);
     assert!(value);
+}
+
+#[tokio::test]
+async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
+    use kalamdb_sql::rewrite_explain_for_datafusion;
+
+    let session = exec_ctx().create_session_with_user();
+    let original = "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) SELECT 1";
+    let rewritten = rewrite_explain_for_datafusion(original)
+        .expect("postgres EXPLAIN should parse")
+        .expect("parenthesized EXPLAIN");
+    assert_eq!(rewritten.sql, "EXPLAIN (ANALYZE, FORMAT pgjson) SELECT 1");
+
+    let result = session.sql(&rewritten.sql).await;
+    assert!(
+        result.is_ok(),
+        "rewritten EXPLAIN should plan under DuckDB dialect: {:?}",
+        result.err()
+    );
+    let batches = result.unwrap().collect().await.expect("EXPLAIN ANALYZE should run");
+    assert!(!batches.is_empty(), "EXPLAIN ANALYZE should return a plan");
+}
+
+#[tokio::test]
+async fn datafusion_explain_metrics_option_runs_under_duckdb_dialect() {
+    use kalamdb_sql::rewrite_explain_for_datafusion;
+
+    let session = exec_ctx().create_session_with_user();
+    let native = "EXPLAIN (ANALYZE, FORMAT pgjson, METRICS 'rows', LEVEL summary) SELECT 1";
+    let native_result = session.sql(native).await;
+    assert!(
+        native_result.is_ok(),
+        "DataFusion-native EXPLAIN options should plan under DuckDB dialect: {:?}",
+        native_result.err()
+    );
+    let native_batches = native_result
+        .unwrap()
+        .collect()
+        .await
+        .expect("native EXPLAIN ANALYZE should run");
+    assert!(!native_batches.is_empty());
+
+    let rewritten = rewrite_explain_for_datafusion(
+        "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS, METRICS 'rows', LEVEL summary) SELECT 1",
+    )
+    .expect("postgres EXPLAIN should parse")
+    .expect("parenthesized EXPLAIN");
+    assert_eq!(
+        rewritten.sql,
+        "EXPLAIN (ANALYZE, FORMAT pgjson, LEVEL summary, METRICS 'rows') SELECT 1"
+    );
+
+    let adapted = session.sql(&rewritten.sql).await;
+    assert!(
+        adapted.is_ok(),
+        "adapted JDBC EXPLAIN with METRICS should plan: {:?}",
+        adapted.err()
+    );
+    let adapted_batches = adapted.unwrap().collect().await.expect("adapted EXPLAIN should run");
+    assert!(!adapted_batches.is_empty());
 }

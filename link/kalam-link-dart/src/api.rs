@@ -27,8 +27,7 @@ use std::{
 };
 
 use flutter_rust_bridge::frb;
-use kalam_client::query::models::query_param::params_from_json_values;
-use kalam_client::{FileRef, QueryParam};
+use kalam_client::{query::models::query_param::params_from_json_values, FileRef, QueryParam};
 use tokio::sync::{Mutex, Notify};
 
 use crate::models::{
@@ -106,19 +105,19 @@ pub fn dart_try_parse_file_ref(file_ref_json: String) -> Option<DartFileRef> {
 ///
 /// Create one via [`dart_create_client`] and pass it to query/subscribe helpers.
 pub struct DartKalamClient {
-    inner: kalam_client::KalamLinkClient,
+    inner:          kalam_client::KalamLinkClient,
     /// Queue of connection lifecycle events (populated when event handlers are
     /// enabled). Dart pulls from this via [`dart_next_connection_event`].
     ///
     /// Uses `std::sync::Mutex` (not tokio) because the event handler callbacks
     /// are synchronous closures; tokio Mutex requires `.await` or has borrow
     /// issues with `try_lock()` inside `#[frb(sync)]` functions.
-    event_queue: Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
+    event_queue:    Arc<std::sync::Mutex<VecDeque<DartConnectionEvent>>>,
     /// Notifier so the pull-side can await without busy-looping.
-    event_notify: Arc<Notify>,
+    event_notify:   Arc<Notify>,
     /// Set to `true` when [`dart_signal_dispose`] is called, causing
     /// [`dart_next_connection_event`] to return `None` immediately.
-    disposed: Arc<AtomicBool>,
+    disposed:       Arc<AtomicBool>,
     /// Whether connection event collection is enabled.
     events_enabled: bool,
 }
@@ -334,7 +333,7 @@ mod tests {
             &notify,
             DartConnectionEvent::Error {
                 error: crate::models::DartConnectionError {
-                    message: "latest".to_string(),
+                    message:     "latest".to_string(),
                     recoverable: true,
                 },
             },
@@ -404,7 +403,7 @@ fn build_event_handlers(
             let event = DartConnectionEvent::Disconnect {
                 reason: DartDisconnectReason {
                     message: reason.message,
-                    code: reason.code.map(|c| c as i32),
+                    code:    reason.code.map(|c| c as i32),
                 },
             };
             push_connection_event(&q, &n, event);
@@ -418,7 +417,7 @@ fn build_event_handlers(
         handlers = handlers.on_error(move |error| {
             let event = DartConnectionEvent::Error {
                 error: DartConnectionError {
-                    message: error.message,
+                    message:     error.message,
                     recoverable: error.recoverable,
                 },
             };
@@ -643,13 +642,13 @@ pub fn dart_connection_events_enabled(client: &DartKalamClient) -> bool {
 /// On the Dart side, call [`dart_live_events_next`] in a loop to pull events.
 /// The loop ends when `None` is returned (stream closed).
 pub struct DartLiveEventsSubscription {
-    inner: Arc<Mutex<kalam_client::SubscriptionManager>>,
+    inner:  Arc<Mutex<kalam_client::SubscriptionManager>>,
     sub_id: String,
 }
 
 /// Opaque handle to an active high-level live-row subscription.
 pub struct DartLiveRowsSubscription {
-    inner: Arc<Mutex<kalam_client::LiveRowsSubscription>>,
+    inner:  Arc<Mutex<kalam_client::LiveRowsSubscription>>,
     sub_id: String,
 }
 
@@ -689,8 +688,7 @@ pub async fn dart_is_connected(client: &DartKalamClient) -> anyhow::Result<bool>
 /// This sends an explicit unsubscribe command that:
 /// 1. Removes the subscription from the client-side map
 /// 2. Sends an unsubscribe message to the server
-/// 3. Drops the event channel, causing any blocking [`dart_live_events_next`] call to return
-///    `None`
+/// 3. Drops the event channel, causing any blocking [`dart_live_events_next`] call to return `None`
 ///
 /// Unlike [`dart_live_events_close`], this does **not** require the
 /// `DartLiveEventsSubscription` mutex, so it can be called safely even while
@@ -782,7 +780,7 @@ pub async fn dart_live_subscribe(
 ) -> anyhow::Result<DartLiveRowsSubscription> {
     let native_live_config = live_config
         .unwrap_or(DartLiveRowsConfig {
-            limit: None,
+            limit:       None,
             key_columns: None,
         })
         .into_native();

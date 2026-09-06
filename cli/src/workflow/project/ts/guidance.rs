@@ -15,8 +15,7 @@ pub fn format_detected_managers(installed: &[PackageManager]) -> String {
 
 pub fn init_no_templates() -> String {
     format!(
-        "no built-in TypeScript templates are available in this CLI build.\n\n\
-         How to fix:\n{}",
+        "no built-in TypeScript templates are available in this CLI build.\n\nHow to fix:\n{}",
         bullet_list(&[
             "Reinstall or upgrade the Kalam CLI package you are using",
             "Report the issue if you built kalam-cli from source without bundled templates",
@@ -27,13 +26,9 @@ pub fn init_no_templates() -> String {
 pub fn init_missing_package_managers(installed: &[PackageManager]) -> String {
     let detected = format_detected_managers(installed);
     format!(
-        "no JavaScript package manager was found on PATH.\n\n\
-         TypeScript projects need npm, pnpm, yarn, or bun to install SDK dependencies.\n\n\
-         Detected on PATH: {detected}\n\n\
-         How to fix:\n{}\n\n\
-         After installing one, verify it works:\n\
-         npm --version\n\
-         pnpm --version",
+        "no JavaScript package manager was found on PATH.\n\nTypeScript projects need npm, pnpm, \
+         yarn, or bun to install SDK dependencies.\n\nDetected on PATH: {detected}\n\nHow to \
+         fix:\n{}\n\nAfter installing one, verify it works:\nnpm --version\npnpm --version",
         bullet_list(&[
             "Install Node.js from https://nodejs.org (includes npm)",
             "Or install pnpm: https://pnpm.io/installation",
@@ -90,12 +85,9 @@ pub fn init_package_install_failed(
     }
 
     format!(
-        "{} {} failed with exit status {exit_status} in '{}'.\n\n\
-         Command output:\n\
-         stdout:\n{}\n\
-         stderr:\n{}\n\n\
-         How to fix:\n{}\n\n\
-         Project files were already created. Finish setup manually:\n{}",
+        "{} {} failed with exit status {exit_status} in '{}'.\n\nCommand \
+         output:\nstdout:\n{}\nstderr:\n{}\n\nHow to fix:\n{}\n\nProject files were already \
+         created. Finish setup manually:\n{}",
         manager.as_str(),
         manager.install_args().join(" "),
         project_dir.display(),
@@ -116,9 +108,8 @@ pub fn init_package_install_spawn_failed(
     error: &str,
 ) -> String {
     format!(
-        "could not run {} install in '{}' ({error}).\n\n\
-         How to fix:\n{}\n\n\
-         Project files were already created. Finish setup manually:\n{}",
+        "could not run {} install in '{}' ({error}).\n\nHow to fix:\n{}\n\nProject files were \
+         already created. Finish setup manually:\n{}",
         manager.as_str(),
         project_dir.display(),
         bullet_list(&[
@@ -146,7 +137,9 @@ fn diagnose_package_install_output(combined: &str) -> Vec<String> {
 
     if combined.contains("eacces") || combined.contains("permission denied") {
         hints.push(
-            "Permission error: rerun the terminal as Administrator (Windows) or fix directory ownership (macOS/Linux)".to_string(),
+            "Permission error: rerun the terminal as Administrator (Windows) or fix directory \
+             ownership (macOS/Linux)"
+                .to_string(),
         );
     }
     if combined.contains("enotfound")
@@ -155,10 +148,14 @@ fn diagnose_package_install_output(combined: &str) -> Vec<String> {
         || combined.contains("fetch failed")
     {
         hints.push(
-            "Network/registry error: check internet access, VPN, proxy, and corporate firewall rules for the npm registry".to_string(),
+            "Network/registry error: check internet access, VPN, proxy, and corporate firewall \
+             rules for the npm registry"
+                .to_string(),
         );
         hints.push(
-            "Retry manually with a clean cache: npm cache clean --force (or the equivalent for your package manager)".to_string(),
+            "Retry manually with a clean cache: npm cache clean --force (or the equivalent for \
+             your package manager)"
+                .to_string(),
         );
     }
     if combined.contains("ebadengine")
@@ -174,12 +171,16 @@ fn diagnose_package_install_output(combined: &str) -> Vec<String> {
         || combined.contains("notarget")
     {
         hints.push(
-            "Package resolution failed: verify package.json was created and your registry can reach the @kalamdb scope".to_string(),
+            "Package resolution failed: verify package.json was created and your registry can \
+             reach the @kalamdb scope"
+                .to_string(),
         );
     }
     if combined.contains("peer dep") || combined.contains("eresolve") {
         hints.push(
-            "Dependency resolution conflict: try `npm install --legacy-peer-deps` or use the package manager recorded in kalam.toml".to_string(),
+            "Dependency resolution conflict: try `npm install --legacy-peer-deps` or use the \
+             package manager recorded in kalam.toml"
+                .to_string(),
         );
     }
 

@@ -1,14 +1,22 @@
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, ArrayRef, StringViewBuilder, UnionArray};
-use datafusion::arrow::datatypes::{DataType, Field, FieldRef};
-use datafusion::common::{exec_datafusion_err, exec_err, plan_err, Result as DataFusionResult};
-use datafusion::logical_expr::{
-    ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+use datafusion::{
+    arrow::{
+        array::{Array, ArrayRef, StringViewBuilder, UnionArray},
+        datatypes::{DataType, Field, FieldRef},
+    },
+    common::{exec_datafusion_err, exec_err, plan_err, Result as DataFusionResult},
+    logical_expr::{
+        ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+    },
 };
 
-use crate::common_macros::make_udf_function;
-use crate::common_union::{is_json_union, json_field_metadata, JsonUnionEncoder, JsonUnionValue, JSON_UNION_DATA_TYPE};
+use crate::{
+    common_macros::make_udf_function,
+    common_union::{
+        is_json_union, json_field_metadata, JsonUnionEncoder, JsonUnionValue, JSON_UNION_DATA_TYPE,
+    },
+};
 
 make_udf_function!(
     JsonUnionToText,
@@ -28,7 +36,7 @@ make_udf_function!(
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(super) struct JsonUnionToText {
     signature: Signature,
-    aliases: [String; 1],
+    aliases:   [String; 1],
 }
 
 impl Default for JsonUnionToText {
@@ -36,7 +44,7 @@ impl Default for JsonUnionToText {
         Self {
             // Exactly the JSON union — any other argument type is a planning error.
             signature: Signature::exact(vec![JSON_UNION_DATA_TYPE.clone()], Volatility::Immutable),
-            aliases: ["json_union_to_text".to_string()],
+            aliases:   ["json_union_to_text".to_string()],
         }
     }
 }
@@ -53,12 +61,15 @@ impl ScalarUDFImpl for JsonUnionToText {
     fn return_type(&self, arg_types: &[DataType]) -> DataFusionResult<DataType> {
         match arg_types {
             [t] if is_json_union(t) => Ok(DataType::Utf8View),
-            _ => plan_err!("json_union_to_text expects a single JSON-union argument, got {arg_types:?}"),
+            _ => plan_err!(
+                "json_union_to_text expects a single JSON-union argument, got {arg_types:?}"
+            ),
         }
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> DataFusionResult<FieldRef> {
-        let arg_types: Vec<DataType> = args.arg_fields.iter().map(|f| f.data_type().clone()).collect();
+        let arg_types: Vec<DataType> =
+            args.arg_fields.iter().map(|f| f.data_type().clone()).collect();
         let return_type = self.return_type(&arg_types)?;
         Ok(Arc::new(
             Field::new(self.name(), return_type, true).with_metadata(json_field_metadata()),
@@ -98,7 +109,7 @@ fn json_union_to_text_array(array: &ArrayRef) -> DataFusionResult<ArrayRef> {
             JsonUnionValue::JsonNull => {
                 builder.append_null();
                 continue;
-            }
+            },
             JsonUnionValue::Bool(b) => serde_json::to_writer(&mut scratch, &b),
             JsonUnionValue::Int(i) => serde_json::to_writer(&mut scratch, &i),
             JsonUnionValue::Float(f) => serde_json::to_writer(&mut scratch, &f),
@@ -106,12 +117,15 @@ fn json_union_to_text_array(array: &ArrayRef) -> DataFusionResult<ArrayRef> {
             JsonUnionValue::Array(s) | JsonUnionValue::Object(s) => {
                 builder.append_value(s);
                 continue;
-            }
+            },
         };
-        write_result.map_err(|e| exec_datafusion_err!("json_union_to_text: failed to encode JSON value: {e}"))?;
+        write_result.map_err(|e| {
+            exec_datafusion_err!("json_union_to_text: failed to encode JSON value: {e}")
+        })?;
         // `serde_json` always emits valid UTF-8.
-        let text = std::str::from_utf8(&scratch)
-            .map_err(|e| exec_datafusion_err!("json_union_to_text: encoded value was not UTF-8: {e}"))?;
+        let text = std::str::from_utf8(&scratch).map_err(|e| {
+            exec_datafusion_err!("json_union_to_text: encoded value was not UTF-8: {e}")
+        })?;
         builder.append_value(text);
     }
     Ok(Arc::new(builder.finish()))
@@ -119,9 +133,10 @@ fn json_union_to_text_array(array: &ArrayRef) -> DataFusionResult<ArrayRef> {
 
 #[cfg(test)]
 mod tests {
+    use datafusion::arrow::array::StringViewArray;
+
     use super::*;
     use crate::common_union::{JsonUnion, JsonUnionField};
-    use datafusion::arrow::array::StringViewArray;
 
     #[test]
     fn flattens_each_arm_to_json_text() {
@@ -149,10 +164,11 @@ mod tests {
                 Some("true"),                     // Bool
                 Some("42"),                       // Int
                 Some("1.5"),                      // Float
-                Some("\"foo\\\"bar\\n\\u0001\""), // Str: JSON-quoted + escaped (quote, newline, control char)
-                Some("[1,2]"),                    // Array (passthrough)
-                Some(r#"{"a":1}"#),               // Object (passthrough)
-                None,                             // None
+                Some("\"foo\\\"bar\\n\\u0001\""), /* Str: JSON-quoted + escaped (quote, newline,
+                                                   * control char) */
+                Some("[1,2]"),      // Array (passthrough)
+                Some(r#"{"a":1}"#), // Object (passthrough)
+                None,               // None
             ]
         );
     }
@@ -163,7 +179,7 @@ mod tests {
         let arg = Arc::new(Field::new("j", JSON_UNION_DATA_TYPE.clone(), true));
         let field = udf
             .return_field_from_args(ReturnFieldArgs {
-                arg_fields: std::slice::from_ref(&arg),
+                arg_fields:       std::slice::from_ref(&arg),
                 scalar_arguments: &[],
             })
             .unwrap();

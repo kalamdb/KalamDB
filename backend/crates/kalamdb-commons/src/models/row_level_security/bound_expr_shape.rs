@@ -5,7 +5,11 @@ use super::{PolicyScalar, PrincipalExpr};
 
 /// User-independent row-local expression shape compiled from policy SQL.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "snake_case")
+)]
 pub enum BoundExprShape {
     Literal(bool),
     ColumnEqualsPrincipal {
@@ -14,7 +18,7 @@ pub enum BoundExprShape {
     },
     ColumnEqualsScalar {
         column_id: u64,
-        value: PolicyScalar,
+        value:     PolicyScalar,
     },
     And(Vec<BoundExprShape>),
     Or(Vec<BoundExprShape>),

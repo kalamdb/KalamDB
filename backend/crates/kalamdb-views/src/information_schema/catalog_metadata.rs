@@ -76,11 +76,13 @@ impl CatalogMetadataIndex {
         &self,
         table_schema: &str,
         table_name: &str,
-        column_name: &str) -> Option<&KdbColumnMetadata> {
+        column_name: &str,
+    ) -> Option<&KdbColumnMetadata> {
         self.columns.get(&(
             table_schema.to_string(),
             table_name.to_string(),
-            column_name.to_string()))
+            column_name.to_string(),
+        ))
     }
 
     fn insert_table(&mut self, table: &TableDefinition) {
@@ -93,7 +95,8 @@ impl CatalogMetadataIndex {
         for column in &table.columns {
             self.columns.insert(
                 (schema.clone(), name.clone(), column.column_name.clone()),
-                kdb_column_metadata_from_definition(table, column));
+                kdb_column_metadata_from_definition(table, column),
+            );
         }
     }
 }
@@ -119,7 +122,8 @@ pub(crate) fn kdb_table_metadata_from_definition(def: &TableDefinition) -> KdbTa
 
 pub(crate) fn kdb_column_metadata_from_definition(
     table: &TableDefinition,
-    column: &ColumnDefinition) -> KdbColumnMetadata {
+    column: &ColumnDefinition,
+) -> KdbColumnMetadata {
     KdbColumnMetadata {
         namespace_id:    table.namespace_id.as_str().to_string(),
         version:         table.schema_version as i64,

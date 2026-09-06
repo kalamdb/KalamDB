@@ -13,14 +13,14 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct FakeTransactionEngine {
     active_by_owner: DashMap<ExecutionOwnerKey, TransactionId>,
-    handles: DashMap<TransactionId, TransactionHandle>,
+    handles:         DashMap<TransactionId, TransactionHandle>,
 }
 
 impl FakeTransactionEngine {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             active_by_owner: DashMap::new(),
-            handles: DashMap::new(),
+            handles:         DashMap::new(),
         })
     }
 

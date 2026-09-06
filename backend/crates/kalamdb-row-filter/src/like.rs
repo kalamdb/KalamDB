@@ -9,11 +9,11 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct LikePredicate {
-    value: ValueExpr,
-    pattern: ValueExpr,
-    literal_regex: Option<Regex>,
-    negated: bool,
-    escape_char: Option<char>,
+    value:            ValueExpr,
+    pattern:          ValueExpr,
+    literal_regex:    Option<Regex>,
+    negated:          bool,
+    escape_char:      Option<char>,
     case_insensitive: bool,
 }
 

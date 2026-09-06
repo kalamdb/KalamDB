@@ -26,14 +26,14 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct TestData {
-        id: u64,
+        id:   u64,
         name: String,
     }
 
     #[test]
     fn test_encode_decode_roundtrip() {
         let data = TestData {
-            id: 42,
+            id:   42,
             name: "test".to_string(),
         };
         let bytes = encode(&data).unwrap();
@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn test_msgpack_compact() {
         let data = TestData {
-            id: 123456789,
+            id:   123456789,
             name: "a_reasonably_long_name_for_testing".to_string(),
         };
         let mp_bytes = encode(&data).unwrap();

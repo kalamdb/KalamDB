@@ -30,6 +30,8 @@ final class KalamActionRunner {
   final KalamActionClock _clock;
   final Future<KalamClient> Function()? _resolveClient;
   Future<int>? _activeFlush;
+  bool _disposed = false;
+  static const _maxConcurrentActions = 8;
 
   Future<KalamActionRecord> enqueue({
     required String actionKey,
@@ -40,6 +42,7 @@ final class KalamActionRunner {
     Future<void> Function()? applyOptimistic,
     KalamOptimisticMutation? optimistic,
   }) {
+    if (_disposed) throw StateError('KalamActionRunner is disposed.');
     if (optimistic != null &&
         (optimisticRow != null || applyOptimistic != null)) {
       throw ArgumentError(
@@ -63,7 +66,14 @@ final class KalamActionRunner {
 
   /// Flushes currently eligible work. Concurrent calls share the active flush.
   Future<int> flush() {
+    if (_disposed) return Future.value(0);
     return _activeFlush ??= _flush().whenComplete(() => _activeFlush = null);
+  }
+
+  /// Stop claiming work and drain started actions before closing their store.
+  Future<void> dispose() async {
+    _disposed = true;
+    await _activeFlush;
   }
 
   Future<int> _flush() async {
@@ -81,7 +91,11 @@ final class KalamActionRunner {
       return future;
     }
 
-    while (true) {
+    while (!_disposed) {
+      if (inFlight.length >= _maxConcurrentActions) {
+        await Future.any(inFlight.values);
+        continue;
+      }
       final action = await store.claimNextAction(
         _clock(),
         accountKey: accountKey,
@@ -94,6 +108,8 @@ final class KalamActionRunner {
       }
       launch(action);
     }
+    await Future.wait(inFlight.values);
+    return completed;
   }
 
   Future<void> _execute(KalamActionRecord action) async {

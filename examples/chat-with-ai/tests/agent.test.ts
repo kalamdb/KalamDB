@@ -161,6 +161,12 @@ test('buildReply uses default advice for generic messages', () => {
   assert.ok(reply.includes('runConsumer()'), 'should mention runConsumer in default advice');
 });
 
+test('buildReply does not claim EXECUTE AS USER for the shared reply insert', () => {
+  const reply = buildReply('hello world');
+  assert.doesNotMatch(reply, /EXECUTE AS USER/);
+  assert.match(reply, /agent principal/);
+});
+
 test('two agents in the same group avoid duplicates and fail over to the standby worker', { timeout: 30_000 }, async (t) => {
   if (!(await isServerAvailable())) {
     t.skip(`KalamDB server is not reachable at ${serverUrl}`);

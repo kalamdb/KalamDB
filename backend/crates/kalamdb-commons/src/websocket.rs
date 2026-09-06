@@ -92,18 +92,20 @@
 //! }
 //! ```
 
-pub use crate::websocket_auth::WsAuthCredentials;
-pub use crate::websocket_messages::{
-    BatchControl, BatchStatus, ChangeTypeRaw as ChangeType, ClientMessage, ServerMessage,
-    SubscriptionOptions, SubscriptionRequest,
-};
-pub use crate::websocket_protocol::{
-    jwt_from_websocket_subprotocol, jwt_websocket_subprotocol, CompressionType, ProtocolOptions,
-    SerializationType, WS_JWT_SUBPROTOCOL_PREFIX,
-};
 use crate::{
     models::{rows::Row, KalamCellValue, UserId},
     schemas::SchemaField,
+};
+pub use crate::{
+    websocket_auth::WsAuthCredentials,
+    websocket_messages::{
+        BatchControl, BatchStatus, ChangeTypeRaw as ChangeType, ClientMessage, ServerMessage,
+        SubscriptionOptions, SubscriptionRequest,
+    },
+    websocket_protocol::{
+        jwt_from_websocket_subprotocol, jwt_websocket_subprotocol, CompressionType,
+        ProtocolOptions, SerializationType, WS_JWT_SUBPROTOCOL_PREFIX,
+    },
 };
 
 // Simple Row type for WASM (JSON only)
@@ -136,9 +138,9 @@ pub enum WebSocketMessage {
     /// negotiated protocol takes effect for all *subsequent* frames.
     AuthSuccess {
         /// Authenticated canonical user identifier
-        user: UserId,
+        user:     UserId,
         /// User role
-        role: crate::models::Role,
+        role:     crate::models::Role,
         /// Negotiated protocol echoed back to the client.
         protocol: ProtocolOptions,
     },
@@ -159,12 +161,12 @@ pub enum WebSocketMessage {
         /// The subscription ID that was registered
         subscription_id: String,
         /// Total number of rows available for initial load
-        total_rows: u32,
+        total_rows:      u32,
         /// Batch control information for paginated loading
-        batch_control: BatchControl,
+        batch_control:   BatchControl,
         /// Schema describing the columns in the subscription result
         /// Contains column name, data type (KalamDataType), and index for each field
-        schema: Vec<SchemaField>,
+        schema:          Vec<SchemaField>,
     },
 
     /// Initial data batch sent after subscription or on client request
@@ -175,9 +177,9 @@ pub enum WebSocketMessage {
         /// The subscription ID this data is for
         subscription_id: String,
         /// The rows in this batch
-        rows: Vec<RowData>,
+        rows:            Vec<RowData>,
         /// Batch control information
-        batch_control: BatchControl,
+        batch_control:   BatchControl,
     },
 
     /// Change notification (delegates to Notification enum)
@@ -287,11 +289,11 @@ pub enum Notification {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeNotification {
     pub change_type: ChangeType,
-    pub table_id: crate::models::TableId,
-    pub row_data: Row,
-    pub old_data: Option<Row>,   // For UPDATE notifications
-    pub row_id: Option<String>,  // For DELETE notifications (hard delete)
-    pub pk_columns: Vec<String>, // Primary key column name(s) for UPDATE delta
+    pub table_id:    crate::models::TableId,
+    pub row_data:    Row,
+    pub old_data:    Option<Row>,    // For UPDATE notifications
+    pub row_id:      Option<String>, // For DELETE notifications (hard delete)
+    pub pk_columns:  Vec<String>,    // Primary key column name(s) for UPDATE delta
 }
 
 impl ChangeNotification {
@@ -442,16 +444,16 @@ impl Notification {
 pub struct SharedChangePayload {
     pub change_type: ChangeType,
     /// New row data (INSERT, UPDATE). `None` for DELETE.
-    pub rows: Option<Vec<RowData>>,
+    pub rows:        Option<Vec<RowData>>,
     /// Previous row data (UPDATE delta, DELETE). `None` for INSERT.
-    pub old_values: Option<Vec<RowData>>,
+    pub old_values:  Option<Vec<RowData>>,
     /// Cached msgpack bytes: `(rows_bytes, old_values_bytes)`.
     /// `None` inner means the field is absent; `Some(vec![])` is valid empty.
     #[cfg(feature = "msgpack")]
-    msgpack_cache: std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
+    msgpack_cache:   std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
     /// Cached JSON bytes: `(rows_bytes, old_values_bytes)`.
     #[cfg(feature = "serde")]
-    json_cache: std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
+    json_cache:      std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
 }
 
 impl SharedChangePayload {
@@ -507,7 +509,7 @@ impl SharedChangePayload {
 #[derive(Debug, Clone)]
 pub struct WireNotification {
     pub subscription_id: std::sync::Arc<str>,
-    pub payload: std::sync::Arc<SharedChangePayload>,
+    pub payload:         std::sync::Arc<SharedChangePayload>,
 }
 
 impl WireNotification {
@@ -664,7 +666,7 @@ mod tests {
         let payload = make_shared_payload();
         let first = WireNotification {
             subscription_id: std::sync::Arc::from("sub-a"),
-            payload: Arc::clone(&payload),
+            payload:         Arc::clone(&payload),
         };
         let second = WireNotification {
             subscription_id: std::sync::Arc::from("sub-b"),
@@ -698,7 +700,11 @@ mod tests {
         let subscription_id = std::sync::Arc::<str>::from("sub-shared");
         let notification = WireNotification {
             subscription_id: std::sync::Arc::clone(&subscription_id),
-            payload: Arc::new(SharedChangePayload::new(ChangeType::Insert, Some(vec![]), None)),
+            payload:         Arc::new(SharedChangePayload::new(
+                ChangeType::Insert,
+                Some(vec![]),
+                None,
+            )),
         };
 
         assert!(std::sync::Arc::ptr_eq(&subscription_id, &notification.subscription_id));
@@ -710,7 +716,7 @@ mod tests {
         let payload = make_shared_payload();
         let first = WireNotification {
             subscription_id: std::sync::Arc::from("sub-a"),
-            payload: Arc::clone(&payload),
+            payload:         Arc::clone(&payload),
         };
         let second = WireNotification {
             subscription_id: std::sync::Arc::from("sub-b"),
@@ -744,8 +750,8 @@ mod tests {
         use crate::websocket::{ClientMessage, SubscriptionOptions, SubscriptionRequest};
 
         let msg = ClientMessage::subscribe(SubscriptionRequest {
-            id: "sub-1".to_string(),
-            sql: "SELECT * FROM chat.messages".to_string(),
+            id:      "sub-1".to_string(),
+            sql:     "SELECT * FROM chat.messages".to_string(),
             options: Some(SubscriptionOptions::default()),
         });
 
@@ -871,7 +877,7 @@ mod tests {
     fn test_protocol_options_json_roundtrip() {
         let opts = ProtocolOptions {
             serialization: SerializationType::MessagePack,
-            compression: CompressionType::None,
+            compression:   CompressionType::None,
         };
         let json = serde_json::to_string(&opts).unwrap();
         assert!(json.contains("\"msgpack\""));
@@ -896,9 +902,9 @@ mod tests {
             credentials: crate::websocket::WsAuthCredentials::Jwt {
                 token: "test_token".to_string(),
             },
-            protocol: ProtocolOptions {
+            protocol:    ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: CompressionType::Gzip,
+                compression:   CompressionType::Gzip,
             },
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -919,7 +925,7 @@ mod tests {
             credentials: crate::websocket::WsAuthCredentials::Jwt {
                 token: "test_token".to_string(),
             },
-            protocol: ProtocolOptions::default(),
+            protocol:    ProtocolOptions::default(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"protocol\""));
@@ -936,11 +942,11 @@ mod tests {
     #[test]
     fn test_auth_success_with_protocol() {
         let msg = WebSocketMessage::AuthSuccess {
-            user: UserId::from("user-1"),
-            role: crate::models::Role::Dba,
+            user:     UserId::from("user-1"),
+            role:     crate::models::Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: CompressionType::Gzip,
+                compression:   CompressionType::Gzip,
             },
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -958,8 +964,8 @@ mod tests {
     #[test]
     fn test_client_message_msgpack_roundtrip() {
         let msg = ClientMessage::subscribe(SubscriptionRequest {
-            id: "sub-1".to_string(),
-            sql: "SELECT * FROM test".to_string(),
+            id:      "sub-1".to_string(),
+            sql:     "SELECT * FROM test".to_string(),
             options: Some(SubscriptionOptions::default()),
         });
         let bytes = rmp_serde::to_vec_named(&msg).unwrap();
@@ -977,11 +983,11 @@ mod tests {
     #[test]
     fn test_websocket_message_msgpack_roundtrip() {
         let msg = WebSocketMessage::AuthSuccess {
-            user: UserId::from("user-1"),
-            role: crate::models::Role::Dba,
+            user:     UserId::from("user-1"),
+            role:     crate::models::Role::Dba,
             protocol: ProtocolOptions {
                 serialization: SerializationType::MessagePack,
-                compression: CompressionType::None,
+                compression:   CompressionType::None,
             },
         };
         let bytes = rmp_serde::to_vec_named(&msg).unwrap();

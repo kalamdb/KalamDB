@@ -104,7 +104,7 @@ pub enum ExtensionStatement {
     ClusterTransferLeader { node_id: u64 },
     /// CLUSTER JOIN command
     ClusterJoin {
-        node_id: u64,
+        node_id:  u64,
         rpc_addr: String,
         api_addr: String,
     },
@@ -473,18 +473,18 @@ impl ExtensionStatement {
                     "STEPDOWN" | "STEP-DOWN" => return Ok(ExtensionStatement::ClusterStepdown),
                     "CLEAR" => return Ok(ExtensionStatement::ClusterClear),
                     "LIST" | "LS" | "STATUS" => {
-                        return Err(
-                            "CLUSTER LIST is a CLI-only command. Use \\cluster list in kalam, or query system.cluster and system.cluster_groups directly."
-                                .to_string(),
-                        );
+                        return Err("CLUSTER LIST is a CLI-only command. Use \\cluster list in \
+                                    kalam, or query system.cluster and system.cluster_groups \
+                                    directly."
+                            .to_string());
                     },
                     "LEAVE" => {
                         return Err("CLUSTER LEAVE is not supported yet".to_string());
                     },
                     _ => {
                         return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, \
-                                    TRIGGER ELECTION, TRANSFER-LEADER, JOIN, REBALANCE, STEPDOWN, \
-                                    CLEAR"
+                                    TRIGGER ELECTION, TRANSFER-LEADER, JOIN, REBALANCE, \
+                                    STEPDOWN, CLEAR"
                             .to_string())
                     },
                 }

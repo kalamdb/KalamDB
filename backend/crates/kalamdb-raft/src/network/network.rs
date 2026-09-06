@@ -49,22 +49,22 @@ impl std::error::Error for ConnectionError {}
 #[derive(Debug, Clone)]
 struct RpcAuthIdentity {
     cluster_id: String,
-    node_id: NodeId,
+    node_id:    NodeId,
 }
 
 #[derive(Debug, Clone)]
 struct RpcTlsMaterial {
-    ca_pem: Vec<u8>,
-    cert_pem: Vec<u8>,
-    key_pem: Vec<u8>,
+    ca_pem:            Vec<u8>,
+    cert_pem:          Vec<u8>,
+    key_pem:           Vec<u8>,
     peer_server_names: HashMap<NodeId, String>,
 }
 
 #[derive(Debug)]
 struct ConnectionState {
-    last_attempt: Instant,
-    last_log: Instant,
-    retry_count: u64,
+    last_attempt:   Instant,
+    last_log:       Instant,
+    retry_count:    u64,
     is_unreachable: bool,
 }
 
@@ -72,9 +72,9 @@ impl ConnectionState {
     fn new(now: Instant, retry_interval: Duration) -> Self {
         let initial = now.checked_sub(retry_interval).unwrap_or(now);
         Self {
-            last_attempt: initial,
-            last_log: initial,
-            retry_count: 0,
+            last_attempt:   initial,
+            last_log:       initial,
+            retry_count:    0,
             is_unreachable: false,
         }
     }
@@ -82,9 +82,9 @@ impl ConnectionState {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ConnectionTracker {
-    group_id: GroupId,
+    group_id:          GroupId,
     retry_interval_ms: Arc<AtomicU64>,
-    states: Arc<dashmap::DashMap<u64, ConnectionState>>,
+    states:            Arc<dashmap::DashMap<u64, ConnectionState>>,
 }
 
 impl ConnectionTracker {
@@ -175,15 +175,15 @@ impl ConnectionTracker {
 /// Network implementation for a single Raft group
 pub struct RaftNetwork {
     /// Target node ID
-    target: u64,
+    target:             u64,
     /// Group ID for this network
-    group_id: GroupId,
+    group_id:           GroupId,
     /// Connect channel
-    channel: Channel,
+    channel:            Channel,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
     /// Outgoing RPC auth identity (node + cluster)
-    auth_identity: RpcAuthIdentity,
+    auth_identity:      RpcAuthIdentity,
 }
 
 impl RaftNetwork {
@@ -357,17 +357,17 @@ impl OpenRaftNetwork<KalamTypeConfig> for RaftNetwork {
 #[derive(Clone)]
 pub struct RaftNetworkFactory {
     /// Group ID for this factory
-    group_id: GroupId,
+    group_id:           GroupId,
     /// Known nodes in the cluster
-    nodes: Arc<RwLock<HashMap<NodeId, KalamNode>>>,
+    nodes:              Arc<RwLock<HashMap<NodeId, KalamNode>>>,
     /// Cached gRPC channels (node_id -> channel)
-    channels: RaftChannelPool,
+    channels:           RaftChannelPool,
     /// Connection retry tracker
     connection_tracker: ConnectionTracker,
     /// Outgoing RPC auth identity (set during group start)
-    auth_identity: Arc<RwLock<Option<RpcAuthIdentity>>>,
+    auth_identity:      Arc<RwLock<Option<RpcAuthIdentity>>>,
     /// Optional TLS client material + peer server-name mappings
-    tls_material: Arc<RwLock<Option<RpcTlsMaterial>>>,
+    tls_material:       Arc<RwLock<Option<RpcTlsMaterial>>>,
 }
 
 impl RaftNetworkFactory {

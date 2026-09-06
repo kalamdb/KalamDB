@@ -24,11 +24,11 @@ use crate::{app_context::AppContext, error::KalamDbError};
 /// In-memory coordinator for active explicit transactions.
 #[derive(Debug)]
 pub struct TransactionCoordinator {
-    app_context: Arc<AppContext>,
+    app_context:             Arc<AppContext>,
     commit_sequence_tracker: Arc<CommitSequenceTracker>,
-    active_by_owner: DashMap<ExecutionOwnerKey, TransactionId>,
-    active_by_id: DashMap<TransactionId, TransactionHandle>,
-    write_sets: DashMap<TransactionId, TransactionWriteSet>,
+    active_by_owner:         DashMap<ExecutionOwnerKey, TransactionId>,
+    active_by_id:            DashMap<TransactionId, TransactionHandle>,
+    write_sets:              DashMap<TransactionId, TransactionWriteSet>,
 }
 
 impl TransactionCoordinator {
@@ -530,16 +530,17 @@ impl TransactionCoordinator {
                 }
 
                 Some(ActiveTransactionMetric {
-                    transaction_id: handle.transaction_id.clone(),
-                    owner_id: Arc::clone(&handle.owner_id),
-                    state: handle.state,
-                    age_ms: now.duration_since(handle.started_at).as_millis() as u64,
-                    idle_ms: now.duration_since(handle.last_activity_at).as_millis() as u64,
-                    write_count: handle.write_count,
-                    write_bytes: handle.write_bytes,
+                    transaction_id:       handle.transaction_id.clone(),
+                    owner_id:             Arc::clone(&handle.owner_id),
+                    state:                handle.state,
+                    age_ms:               now.duration_since(handle.started_at).as_millis() as u64,
+                    idle_ms:              now.duration_since(handle.last_activity_at).as_millis()
+                        as u64,
+                    write_count:          handle.write_count,
+                    write_bytes:          handle.write_bytes,
                     touched_tables_count: handle.touched_tables.len(),
-                    snapshot_commit_seq: handle.snapshot_commit_seq,
-                    origin: handle.origin,
+                    snapshot_commit_seq:  handle.snapshot_commit_seq,
+                    origin:               handle.origin,
                 })
             })
             .collect::<Vec<_>>();

@@ -60,15 +60,15 @@ impl AuthData {
     /// Create a minimal `AuthData` from issuer and subject.
     pub fn new(issuer: impl Into<String>, subject: impl Into<String>) -> Self {
         Self {
-            issuer: issuer.into(),
-            subject: subject.into(),
+            issuer:                issuer.into(),
+            subject:               subject.into(),
             provider_display_name: None,
-            avatar_url: None,
-            scopes: None,
-            groups: None,
-            tenant_id: None,
-            linked_at: None,
-            metadata: None,
+            avatar_url:            None,
+            scopes:                None,
+            groups:                None,
+            tenant_id:             None,
+            linked_at:             None,
+            metadata:              None,
         }
     }
 }
@@ -84,15 +84,15 @@ mod tests {
     #[test]
     fn test_auth_data_roundtrip() {
         let data = AuthData {
-            issuer: "https://kc.example.com/realms/test".to_string(),
-            subject: "user-uuid-123".to_string(),
+            issuer:                "https://kc.example.com/realms/test".to_string(),
+            subject:               "user-uuid-123".to_string(),
             provider_display_name: Some("Alice".to_string()),
-            avatar_url: None,
-            scopes: Some(vec!["openid".to_string(), "profile".to_string()]),
-            groups: None,
-            tenant_id: None,
-            linked_at: Some(1700000000000),
-            metadata: None,
+            avatar_url:            None,
+            scopes:                Some(vec!["openid".to_string(), "profile".to_string()]),
+            groups:                None,
+            tenant_id:             None,
+            linked_at:             Some(1700000000000),
+            metadata:              None,
         };
 
         let json = serde_json::to_string(&data).unwrap();

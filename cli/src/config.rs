@@ -61,17 +61,17 @@ pub struct CLIConfiguration {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowLoggingConfig {
     #[serde(default = "default_workflow_file_enabled")]
-    pub file: bool,
+    pub file:                   bool,
     #[serde(default = "default_workflow_log_path")]
-    pub path: String,
+    pub path:                   String,
     #[serde(default = "default_workflow_capture_process_output")]
     pub capture_process_output: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowLoggingPolicy {
-    pub file_enabled: bool,
-    pub path: PathBuf,
+    pub file_enabled:           bool,
+    pub path:                   PathBuf,
     pub capture_process_output: bool,
 }
 
@@ -90,8 +90,8 @@ fn default_workflow_capture_process_output() -> bool {
 impl WorkflowLoggingPolicy {
     pub fn from_project(log_path: PathBuf, logging: &LoggingSection) -> Self {
         Self {
-            file_enabled: logging.file,
-            path: log_path,
+            file_enabled:           logging.file,
+            path:                   log_path,
             capture_process_output: logging.capture_process_output,
         }
     }
@@ -113,8 +113,8 @@ impl WorkflowLoggingPolicy {
 
     pub fn disabled() -> Self {
         Self {
-            file_enabled: false,
-            path: PathBuf::from("kalam/cli/logs/kalam.log"),
+            file_enabled:           false,
+            path:                   PathBuf::from("kalam/cli/logs/kalam.log"),
             capture_process_output: false,
         }
     }
@@ -227,22 +227,22 @@ fn default_timestamp_format() -> String {
 impl Default for CLIConfiguration {
     fn default() -> Self {
         Self {
-            server: Some(ServerConfig {
-                timeout: default_timeout(),
-                max_retries: default_retries(),
+            server:           Some(ServerConfig {
+                timeout:      default_timeout(),
+                max_retries:  default_retries(),
                 http_version: default_http_version(),
             }),
-            connection: Some(ConnectionConfig {
-                auto_reconnect: default_auto_reconnect(),
-                reconnect_delay_ms: default_reconnect_delay_ms(),
+            connection:       Some(ConnectionConfig {
+                auto_reconnect:         default_auto_reconnect(),
+                reconnect_delay_ms:     default_reconnect_delay_ms(),
                 max_reconnect_delay_ms: default_max_reconnect_delay_ms(),
                 max_reconnect_attempts: default_max_reconnect_attempts(),
             }),
-            auth: None,
-            ui: Some(UIConfig {
-                format: default_format(),
-                color: default_color(),
-                history_size: default_history_size(),
+            auth:             None,
+            ui:               Some(UIConfig {
+                format:           default_format(),
+                color:            default_color(),
+                history_size:     default_history_size(),
                 timestamp_format: default_timestamp_format(),
             }),
             workflow_logging: None,
@@ -369,16 +369,16 @@ impl CLIConfiguration {
 
     pub fn resolved_server(&self) -> ServerConfig {
         self.server.clone().unwrap_or(ServerConfig {
-            timeout: default_timeout(),
-            max_retries: default_retries(),
+            timeout:      default_timeout(),
+            max_retries:  default_retries(),
             http_version: default_http_version(),
         })
     }
 
     pub fn resolved_connection(&self) -> ConnectionConfig {
         self.connection.clone().unwrap_or(ConnectionConfig {
-            auto_reconnect: default_auto_reconnect(),
-            reconnect_delay_ms: default_reconnect_delay_ms(),
+            auto_reconnect:         default_auto_reconnect(),
+            reconnect_delay_ms:     default_reconnect_delay_ms(),
             max_reconnect_delay_ms: default_max_reconnect_delay_ms(),
             max_reconnect_attempts: default_max_reconnect_attempts(),
         })
@@ -386,9 +386,9 @@ impl CLIConfiguration {
 
     pub fn resolved_ui(&self) -> UIConfig {
         self.ui.clone().unwrap_or(UIConfig {
-            format: default_format(),
-            color: default_color(),
-            history_size: default_history_size(),
+            format:           default_format(),
+            color:            default_color(),
+            history_size:     default_history_size(),
             timestamp_format: default_timestamp_format(),
         })
     }

@@ -7,6 +7,7 @@ use kalamdb_commons::models::UserId;
 use super::{CLISession, OutputFormat};
 use crate::{
     error::{CLIError, Result},
+    identifiers::{format_sql_ident, split_identifier_parts, trim_sql_target, TableTarget},
     parser::{render_meta_command_help, Command, FlushTarget},
 };
 
@@ -50,11 +51,16 @@ impl CLISession {
                         "Storage flushing all tables in namespace '{}'...",
                         self.effective_namespace()
                     ),
-                    FlushTarget::Table(table) => println!(
-                        "Storage flushing table '{}' in namespace context '{}'...",
-                        table,
-                        self.effective_namespace()
-                    ),
+                    FlushTarget::Table(table) => {
+                        let display = TableTarget::parse(table)
+                            .map(|parsed| parsed.qualify(self.effective_namespace()).to_sql())
+                            .unwrap_or_else(|_| table.clone());
+                        println!(
+                            "Storage flushing table '{}' in namespace context '{}'...",
+                            display,
+                            self.effective_namespace()
+                        );
+                    },
                 }
 
                 match self.execute(&flush_sql).await {
@@ -218,21 +224,21 @@ impl CLISession {
 
     fn build_describe_query(target: &str) -> Result<String> {
         let (namespace, table_name) = Self::parse_describe_target(target)?;
-        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS data_type, \
-                       is_nullable, column_default, ordinal_position AS position";
+        let columns = "table_schema AS namespace, table_name, column_name, kdb_data_type AS \
+                       data_type, is_nullable, column_default, ordinal_position AS position";
         let escaped_table = Self::escape_sql_literal(&table_name);
 
         if let Some(namespace) = namespace {
             Ok(format!(
-                "SELECT {columns} FROM information_schema.columns WHERE table_schema = '{namespace}' \
-                 AND table_name = '{table_name}' ORDER BY ordinal_position",
+                "SELECT {columns} FROM information_schema.columns WHERE table_schema = \
+                 '{namespace}' AND table_name = '{table_name}' ORDER BY ordinal_position",
                 namespace = Self::escape_sql_literal(&namespace),
                 table_name = escaped_table,
             ))
         } else {
             Ok(format!(
-                "SELECT {columns} FROM information_schema.columns WHERE table_name = '{table_name}' \
-                 ORDER BY table_schema, ordinal_position",
+                "SELECT {columns} FROM information_schema.columns WHERE table_name = \
+                 '{table_name}' ORDER BY table_schema, ordinal_position",
                 table_name = escaped_table,
             ))
         }
@@ -257,7 +263,9 @@ impl CLISession {
 
     fn build_flush_query(&self, target: &FlushTarget) -> Result<String> {
         match target {
-            FlushTarget::All => Ok("STORAGE FLUSH ALL".to_string()),
+            FlushTarget::All => {
+                Ok(format!("STORAGE FLUSH ALL IN {}", format_sql_ident(self.effective_namespace())))
+            },
             FlushTarget::Table(table) => {
                 Self::build_flush_table_query(table, Some(self.effective_namespace()))
             },
@@ -277,7 +285,7 @@ impl CLISession {
     }
 
     fn qualify_subscription_sql(sql: &str, default_namespace: &str) -> Result<String> {
-        let trimmed = sql.trim().trim_end_matches(';').trim();
+        let trimmed = trim_sql_target(sql);
         if trimmed.is_empty() {
             return Err(CLIError::ParseError("\\live requires a SELECT query".to_string()));
         }
@@ -296,7 +304,7 @@ impl CLISession {
         let relation_end = Self::find_subscription_relation_end(trimmed, relation_start);
         let relation = trimmed[relation_start..relation_end].trim();
 
-        let parts = Self::split_identifier_parts(relation).map_err(|_| {
+        let parts = split_identifier_parts(relation).map_err(|_| {
             CLIError::ParseError(
                 "\\live expects SELECT ... FROM <table> or <namespace.table>".to_string(),
             )
@@ -306,8 +314,12 @@ impl CLISession {
             return Ok(trimmed.to_string());
         }
 
-        let qualified_relation =
-            format!("{}.{}", Self::quote_identifier(default_namespace), relation);
+        let qualified_relation = TableTarget {
+            namespace:  None,
+            table_name: parts[0].clone(),
+        }
+        .qualify(default_namespace)
+        .to_sql();
 
         Ok(format!(
             "{}{}{}",
@@ -369,30 +381,11 @@ impl CLISession {
     }
 
     fn build_flush_table_query(target: &str, default_namespace: Option<&str>) -> Result<String> {
-        let trimmed = target.trim().trim_end_matches(';').trim();
-        if trimmed.is_empty() {
-            return Err(CLIError::ParseError("\\flush table requires a table name".to_string()));
-        }
-
-        let parts = Self::split_identifier_parts(trimmed)?;
-        match parts.as_slice() {
-            [table_name] => {
-                let namespace = default_namespace.unwrap_or("default");
-                Ok(format!(
-                    "STORAGE FLUSH TABLE {}.{}",
-                    Self::quote_identifier(namespace),
-                    Self::quote_identifier(table_name),
-                ))
-            },
-            [namespace, table_name] => Ok(format!(
-                "STORAGE FLUSH TABLE {}.{}",
-                Self::quote_identifier(namespace),
-                Self::quote_identifier(table_name),
-            )),
-            _ => Err(CLIError::ParseError(
-                "\\flush table expects <table> or <namespace.table>".to_string(),
-            )),
-        }
+        let parsed = TableTarget::parse(target).map_err(|_| {
+            CLIError::ParseError("\\flush table expects <table> or <namespace.table>".to_string())
+        })?;
+        let qualified = parsed.qualify(default_namespace.unwrap_or("default"));
+        Ok(format!("STORAGE FLUSH TABLE {}", qualified.to_sql()))
     }
 
     fn normalize_execute_as_user(user: &str) -> Result<String> {
@@ -422,74 +415,14 @@ impl CLISession {
     }
 
     pub(super) fn parse_describe_target(target: &str) -> Result<(Option<String>, String)> {
-        let trimmed = target.trim().trim_end_matches(';').trim();
-        if trimmed.is_empty() {
-            return Err(CLIError::ParseError("\\describe requires a table name".to_string()));
-        }
-
-        let parts = Self::split_identifier_parts(trimmed)?;
-        match parts.as_slice() {
-            [table_name] => Ok((None, table_name.clone())),
-            [namespace, table_name] => Ok((Some(namespace.clone()), table_name.clone())),
-            _ => Err(CLIError::ParseError(
-                "\\describe expects <table> or <namespace.table>".to_string(),
-            )),
-        }
-    }
-
-    fn split_identifier_parts(target: &str) -> Result<Vec<String>> {
-        let mut parts = Vec::new();
-        let mut current = String::new();
-        let mut chars = target.chars().peekable();
-        let mut in_quotes = false;
-
-        while let Some(ch) = chars.next() {
-            match ch {
-                '"' => {
-                    if in_quotes && chars.peek() == Some(&'"') {
-                        current.push('"');
-                        chars.next();
-                    } else {
-                        in_quotes = !in_quotes;
-                    }
-                },
-                '.' if !in_quotes => {
-                    let part = current.trim();
-                    if part.is_empty() {
-                        return Err(CLIError::ParseError(
-                            "\\describe received an invalid identifier".to_string(),
-                        ));
-                    }
-                    parts.push(part.to_string());
-                    current.clear();
-                },
-                _ => current.push(ch),
-            }
-        }
-
-        if in_quotes {
-            return Err(CLIError::ParseError(
-                "\\describe received an unterminated quoted identifier".to_string(),
-            ));
-        }
-
-        let tail = current.trim();
-        if tail.is_empty() {
-            return Err(CLIError::ParseError(
-                "\\describe received an invalid identifier".to_string(),
-            ));
-        }
-        parts.push(tail.to_string());
-
-        Ok(parts)
+        let parsed = TableTarget::parse(target).map_err(|_| {
+            CLIError::ParseError("\\describe expects <table> or <namespace.table>".to_string())
+        })?;
+        Ok((parsed.namespace, parsed.table_name))
     }
 
     fn escape_sql_literal(value: &str) -> String {
         value.replace('\'', "''")
-    }
-
-    fn quote_identifier(value: &str) -> String {
-        format!("\"{}\"", value.replace('"', "\"\""))
     }
 
     fn show_help(&self) {
@@ -748,13 +681,20 @@ mod tests {
     #[test]
     fn test_build_flush_table_query_uses_current_namespace_for_unqualified_table() {
         let query = CLISession::build_flush_table_query("messages", Some("chat")).unwrap();
-        assert_eq!(query, "STORAGE FLUSH TABLE \"chat\".\"messages\"");
+        assert_eq!(query, "STORAGE FLUSH TABLE chat.messages");
     }
 
     #[test]
     fn test_build_flush_table_query_preserves_explicit_namespace() {
         let query = CLISession::build_flush_table_query("billing.invoices", Some("chat")).unwrap();
-        assert_eq!(query, "STORAGE FLUSH TABLE \"billing\".\"invoices\"");
+        assert_eq!(query, "STORAGE FLUSH TABLE billing.invoices");
+    }
+
+    #[test]
+    fn test_build_flush_table_query_strips_semicolon_without_quoting_simple_names() {
+        let query =
+            CLISession::build_flush_table_query("test_kalam_60.users;", Some("default")).unwrap();
+        assert_eq!(query, "STORAGE FLUSH TABLE test_kalam_60.users");
     }
 
     #[test]
@@ -763,7 +703,7 @@ mod tests {
             CLISession::qualify_subscription_sql("SELECT * FROM messages WHERE id = 1", "chat")
                 .unwrap();
 
-        assert_eq!(query, "SELECT * FROM \"chat\".messages WHERE id = 1");
+        assert_eq!(query, "SELECT * FROM chat.messages WHERE id = 1");
     }
 
     #[test]

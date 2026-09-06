@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::DataType;
-use datafusion::common::config::ConfigOptions;
-use datafusion::common::tree_node::Transformed;
-use datafusion::common::Column;
-use datafusion::common::DFSchema;
-use datafusion::common::Result;
-use datafusion::logical_expr::expr::{Alias, Cast, Expr, ScalarFunction};
-use datafusion::logical_expr::expr_rewriter::FunctionRewrite;
-use datafusion::logical_expr::planner::{ExprPlanner, PlannerResult, RawBinaryExpr};
-use datafusion::logical_expr::sqlparser::ast::BinaryOperator;
-use datafusion::logical_expr::ScalarUDF;
-use datafusion::scalar::ScalarValue;
+use datafusion::{
+    arrow::datatypes::DataType,
+    common::{config::ConfigOptions, tree_node::Transformed, Column, DFSchema, Result},
+    logical_expr::{
+        expr::{Alias, Cast, Expr, ScalarFunction},
+        expr_rewriter::FunctionRewrite,
+        planner::{ExprPlanner, PlannerResult, RawBinaryExpr},
+        sqlparser::ast::BinaryOperator,
+        ScalarUDF,
+    },
+    scalar::ScalarValue,
+};
 
 #[derive(Debug)]
 pub(crate) struct JsonFunctionRewriter;
@@ -21,7 +21,12 @@ impl FunctionRewrite for JsonFunctionRewriter {
         "JsonFunctionRewriter"
     }
 
-    fn rewrite(&self, expr: Expr, _schema: &DFSchema, _config: &ConfigOptions) -> Result<Transformed<Expr>> {
+    fn rewrite(
+        &self,
+        expr: Expr,
+        _schema: &DFSchema,
+        _config: &ConfigOptions,
+    ) -> Result<Transformed<Expr>> {
         let transform = match &expr {
             Expr::Cast(cast) => optimise_json_get_cast(cast),
             Expr::ScalarFunction(func) => unnest_json_calls(func),
@@ -31,8 +36,9 @@ impl FunctionRewrite for JsonFunctionRewriter {
     }
 }
 
-/// This replaces `get_json(foo, bar)::int` with `json_get_int(foo, bar)` so the JSON function can take care of
-/// extracting the right value type from JSON without the need to materialize the JSON union.
+/// This replaces `get_json(foo, bar)::int` with `json_get_int(foo, bar)` so the JSON function can
+/// take care of extracting the right value type from JSON without the need to materialize the JSON
+/// union.
 fn optimise_json_get_cast(cast: &Cast) -> Option<Transformed<Expr>> {
     let scalar_func = extract_scalar_function(&cast.expr)?;
     if scalar_func.func.name() != "json_get" {
@@ -40,11 +46,14 @@ fn optimise_json_get_cast(cast: &Cast) -> Option<Transformed<Expr>> {
     }
     let func = match cast.field.data_type() {
         DataType::Boolean => crate::json_get_bool::json_get_bool_udf(),
-        DataType::Float64 | DataType::Float32 | DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => {
-            crate::json_get_float::json_get_float_udf()
-        }
+        DataType::Float64
+        | DataType::Float32
+        | DataType::Decimal128(_, _)
+        | DataType::Decimal256(_, _) => crate::json_get_float::json_get_float_udf(),
         DataType::Int64 | DataType::Int32 => crate::json_get_int::json_get_int_udf(),
-        DataType::Utf8 | DataType::Utf8View | DataType::LargeUtf8 => crate::json_get_str::json_get_str_udf(),
+        DataType::Utf8 | DataType::Utf8View | DataType::LargeUtf8 => {
+            crate::json_get_str::json_get_str_udf()
+        },
         _ => return None,
     };
     Some(Transformed::yes(Expr::ScalarFunction(ScalarFunction {
@@ -53,7 +62,8 @@ fn optimise_json_get_cast(cast: &Cast) -> Option<Transformed<Expr>> {
     })))
 }
 
-// Replace nested JSON functions e.g. `json_get(json_get(col, 'foo'), 'bar')` with `json_get(col, 'foo', 'bar')`
+// Replace nested JSON functions e.g. `json_get(json_get(col, 'foo'), 'bar')` with `json_get(col,
+// 'foo', 'bar')`
 fn unnest_json_calls(func: &ScalarFunction) -> Option<Transformed<Expr>> {
     if !matches!(
         func.func.name(),
@@ -148,9 +158,11 @@ fn expr_to_sql_repr(expr: &Expr) -> String {
         }) => name.clone(),
         Expr::Alias(alias) => alias.name.clone(),
         Expr::Literal(scalar, _) => match scalar {
-            ScalarValue::Utf8(Some(v)) | ScalarValue::Utf8View(Some(v)) | ScalarValue::LargeUtf8(Some(v)) => {
+            ScalarValue::Utf8(Some(v))
+            | ScalarValue::Utf8View(Some(v))
+            | ScalarValue::LargeUtf8(Some(v)) => {
                 format!("'{v}'")
-            }
+            },
             ScalarValue::UInt8(Some(v)) => v.to_string(),
             ScalarValue::UInt16(Some(v)) => v.to_string(),
             ScalarValue::UInt32(Some(v)) => v.to_string(),
@@ -171,7 +183,11 @@ fn expr_to_sql_repr(expr: &Expr) -> String {
 pub struct JsonExprPlanner;
 
 impl ExprPlanner for JsonExprPlanner {
-    fn plan_binary_op(&self, expr: RawBinaryExpr, _schema: &DFSchema) -> Result<PlannerResult<RawBinaryExpr>> {
+    fn plan_binary_op(
+        &self,
+        expr: RawBinaryExpr,
+        _schema: &DFSchema,
+    ) -> Result<PlannerResult<RawBinaryExpr>> {
         let Ok(op) = JsonOperator::try_from(&expr.op) else {
             return Ok(PlannerResult::Original(expr));
         };
@@ -181,7 +197,8 @@ impl ExprPlanner for JsonExprPlanner {
 
         let alias_name = format!("{left_repr} {op} {right_repr}");
 
-        // we put the alias in so that default column titles are `foo -> bar` instead of `json_get(foo, bar)`
+        // we put the alias in so that default column titles are `foo -> bar` instead of
+        // `json_get(foo, bar)`
         Ok(PlannerResult::Planned(Expr::Alias(Alias::new(
             Expr::ScalarFunction(ScalarFunction {
                 func: op.into(),

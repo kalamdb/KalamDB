@@ -128,7 +128,8 @@ fn treats_missing_column_as_null() {
 #[test]
 fn matches_complex_publisher_route_filter() {
     let filter = parse_where_clause(
-        "((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE 'deploy_%') AND archived IS NULL",
+        "((status IN ('blocked', 'cancelled') AND priority BETWEEN 5 AND 10) OR event_type ILIKE \
+         'deploy_%') AND archived IS NULL",
     )
     .expect("filter should parse");
 

@@ -94,19 +94,19 @@ pub async fn verify_password(password: &str, hash_str: &str) -> AuthResult<bool>
 /// Password validation policy configuration.
 #[derive(Debug, Clone)]
 pub struct PasswordPolicy {
-    pub min_length: usize,
-    pub max_length: usize,
+    pub min_length:         usize,
+    pub max_length:         usize,
     pub enforce_complexity: bool,
-    pub skip_common_check: bool,
+    pub skip_common_check:  bool,
 }
 
 impl Default for PasswordPolicy {
     fn default() -> Self {
         Self {
-            min_length: MIN_PASSWORD_LENGTH,
-            max_length: MAX_PASSWORD_LENGTH,
+            min_length:         MIN_PASSWORD_LENGTH,
+            max_length:         MAX_PASSWORD_LENGTH,
             enforce_complexity: false,
-            skip_common_check: false,
+            skip_common_check:  false,
         }
     }
 }
@@ -127,10 +127,10 @@ pub fn password_policy_from_auth_settings(
     settings: &kalamdb_configs::AuthSettings,
 ) -> PasswordPolicy {
     PasswordPolicy {
-        min_length: settings.local.min_password_length,
-        max_length: settings.local.max_password_length,
+        min_length:         settings.local.min_password_length,
+        max_length:         settings.local.max_password_length,
         enforce_complexity: settings.local.enforce_password_complexity,
-        skip_common_check: false,
+        skip_common_check:  false,
     }
 }
 

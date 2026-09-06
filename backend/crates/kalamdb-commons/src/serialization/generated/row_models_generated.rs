@@ -551,26 +551,26 @@ pub mod kalamdb {
                 }
             }
             pub struct ScalarValuePayloadArgs<'a> {
-                pub tag: ScalarTag,
-                pub is_null: bool,
-                pub bool_value: bool,
-                pub i8_value: i8,
-                pub i16_value: i16,
-                pub i32_value: i32,
-                pub i64_value: i64,
-                pub u8_value: u8,
-                pub u16_value: u16,
-                pub u32_value: u32,
-                pub u64_value: u64,
-                pub f32_value: f32,
-                pub f64_value: f64,
-                pub text_value: Option<::flatbuffers::WIPOffset<&'a str>>,
+                pub tag:               ScalarTag,
+                pub is_null:           bool,
+                pub bool_value:        bool,
+                pub i8_value:          i8,
+                pub i16_value:         i16,
+                pub i32_value:         i32,
+                pub i64_value:         i64,
+                pub u8_value:          u8,
+                pub u16_value:         u16,
+                pub u32_value:         u32,
+                pub u64_value:         u64,
+                pub f32_value:         f32,
+                pub f64_value:         f64,
+                pub text_value:        Option<::flatbuffers::WIPOffset<&'a str>>,
                 pub bytes_value: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
-                pub fixed_size: i32,
-                pub timezone: Option<::flatbuffers::WIPOffset<&'a str>>,
+                pub fixed_size:        i32,
+                pub timezone:          Option<::flatbuffers::WIPOffset<&'a str>>,
                 pub decimal_precision: u8,
-                pub decimal_scale: i8,
-                pub embedding_size: i32,
+                pub decimal_scale:     i8,
+                pub embedding_size:    i32,
                 pub embedding_values:
                     Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, f32>>>,
                 pub embedding_valid:
@@ -580,34 +580,34 @@ pub mod kalamdb {
                 #[inline]
                 fn default() -> Self {
                     ScalarValuePayloadArgs {
-                        tag: ScalarTag::Null,
-                        is_null: false,
-                        bool_value: false,
-                        i8_value: 0,
-                        i16_value: 0,
-                        i32_value: 0,
-                        i64_value: 0,
-                        u8_value: 0,
-                        u16_value: 0,
-                        u32_value: 0,
-                        u64_value: 0,
-                        f32_value: 0.0,
-                        f64_value: 0.0,
-                        text_value: None,
-                        bytes_value: None,
-                        fixed_size: 0,
-                        timezone: None,
+                        tag:               ScalarTag::Null,
+                        is_null:           false,
+                        bool_value:        false,
+                        i8_value:          0,
+                        i16_value:         0,
+                        i32_value:         0,
+                        i64_value:         0,
+                        u8_value:          0,
+                        u16_value:         0,
+                        u32_value:         0,
+                        u64_value:         0,
+                        f32_value:         0.0,
+                        f64_value:         0.0,
+                        text_value:        None,
+                        bytes_value:       None,
+                        fixed_size:        0,
+                        timezone:          None,
                         decimal_precision: 0,
-                        decimal_scale: 0,
-                        embedding_size: 0,
-                        embedding_values: None,
-                        embedding_valid: None,
+                        decimal_scale:     0,
+                        embedding_size:    0,
+                        embedding_values:  None,
+                        embedding_valid:   None,
                     }
                 }
             }
 
             pub struct ScalarValuePayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ScalarValuePayloadBuilder<'a, 'b, A> {
@@ -749,7 +749,7 @@ pub mod kalamdb {
                 ) -> ScalarValuePayloadBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     ScalarValuePayloadBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }
@@ -879,21 +879,21 @@ pub mod kalamdb {
                 }
             }
             pub struct ColumnValueArgs<'a> {
-                pub name: Option<::flatbuffers::WIPOffset<&'a str>>,
+                pub name:  Option<::flatbuffers::WIPOffset<&'a str>>,
                 pub value: Option<::flatbuffers::WIPOffset<ScalarValuePayload<'a>>>,
             }
             impl<'a> Default for ColumnValueArgs<'a> {
                 #[inline]
                 fn default() -> Self {
                     ColumnValueArgs {
-                        name: None,
+                        name:  None,
                         value: None,
                     }
                 }
             }
 
             pub struct ColumnValueBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ColumnValueBuilder<'a, 'b, A> {
@@ -920,7 +920,7 @@ pub mod kalamdb {
                 ) -> ColumnValueBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     ColumnValueBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }
@@ -1026,7 +1026,7 @@ pub mod kalamdb {
             }
 
             pub struct RowPayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> RowPayloadBuilder<'a, 'b, A> {
@@ -1048,7 +1048,7 @@ pub mod kalamdb {
                 ) -> RowPayloadBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     RowPayloadBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }
@@ -1193,27 +1193,27 @@ pub mod kalamdb {
                 }
             }
             pub struct UserTableRowPayloadArgs<'a> {
-                pub user_id: Option<::flatbuffers::WIPOffset<&'a str>>,
-                pub seq: i64,
+                pub user_id:    Option<::flatbuffers::WIPOffset<&'a str>>,
+                pub seq:        i64,
                 pub commit_seq: u64,
-                pub deleted: bool,
-                pub fields: Option<::flatbuffers::WIPOffset<RowPayload<'a>>>,
+                pub deleted:    bool,
+                pub fields:     Option<::flatbuffers::WIPOffset<RowPayload<'a>>>,
             }
             impl<'a> Default for UserTableRowPayloadArgs<'a> {
                 #[inline]
                 fn default() -> Self {
                     UserTableRowPayloadArgs {
-                        user_id: None,
-                        seq: 0,
+                        user_id:    None,
+                        seq:        0,
                         commit_seq: 0,
-                        deleted: false,
-                        fields: None,
+                        deleted:    false,
+                        fields:     None,
                     }
                 }
             }
 
             pub struct UserTableRowPayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> UserTableRowPayloadBuilder<'a, 'b, A> {
@@ -1249,7 +1249,7 @@ pub mod kalamdb {
                 ) -> UserTableRowPayloadBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     UserTableRowPayloadBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }
@@ -1379,25 +1379,25 @@ pub mod kalamdb {
                 }
             }
             pub struct SharedTableRowPayloadArgs<'a> {
-                pub seq: i64,
+                pub seq:        i64,
                 pub commit_seq: u64,
-                pub deleted: bool,
-                pub fields: Option<::flatbuffers::WIPOffset<RowPayload<'a>>>,
+                pub deleted:    bool,
+                pub fields:     Option<::flatbuffers::WIPOffset<RowPayload<'a>>>,
             }
             impl<'a> Default for SharedTableRowPayloadArgs<'a> {
                 #[inline]
                 fn default() -> Self {
                     SharedTableRowPayloadArgs {
-                        seq: 0,
+                        seq:        0,
                         commit_seq: 0,
-                        deleted: false,
-                        fields: None,
+                        deleted:    false,
+                        fields:     None,
                     }
                 }
             }
 
             pub struct SharedTableRowPayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SharedTableRowPayloadBuilder<'a, 'b, A> {
@@ -1426,7 +1426,7 @@ pub mod kalamdb {
                 ) -> SharedTableRowPayloadBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     SharedTableRowPayloadBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }
@@ -1529,7 +1529,7 @@ pub mod kalamdb {
             }
 
             pub struct SystemTableRowPayloadBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-                fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+                fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
                 start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
             }
             impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SystemTableRowPayloadBuilder<'a, 'b, A> {
@@ -1546,7 +1546,7 @@ pub mod kalamdb {
                 ) -> SystemTableRowPayloadBuilder<'a, 'b, A> {
                     let start = _fbb.start_table();
                     SystemTableRowPayloadBuilder {
-                        fbb_: _fbb,
+                        fbb_:   _fbb,
                         start_: start,
                     }
                 }

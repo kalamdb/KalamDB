@@ -1,10 +1,6 @@
 //! Shared test helpers for kalam-pg-client integration tests.
 
-use std::{
-    collections::HashMap,
-    sync::Mutex,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Mutex, time::Duration};
 
 use async_trait::async_trait;
 use kalam_pg_client::RemoteKalamClient;
@@ -71,10 +67,7 @@ impl OperationExecutor for LocalRegistryExecutor {
             }))
     }
 
-    async fn begin_transaction(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<TransactionId>, Status> {
+    async fn begin_transaction(&self, session_id: &str) -> Result<Option<TransactionId>, Status> {
         let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
         self.active
             .lock()
@@ -88,10 +81,7 @@ impl OperationExecutor for LocalRegistryExecutor {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<Option<TransactionId>, Status> {
-        let mut active = self
-            .active
-            .lock()
-            .expect("local registry executor commit active tx");
+        let mut active = self.active.lock().expect("local registry executor commit active tx");
         let Some(current) = active.get(session_id) else {
             return Err(Status::failed_precondition("no active transaction"));
         };
@@ -109,10 +99,7 @@ impl OperationExecutor for LocalRegistryExecutor {
         session_id: &str,
         transaction_id: &TransactionId,
     ) -> Result<Option<TransactionId>, Status> {
-        let mut active = self
-            .active
-            .lock()
-            .expect("local registry executor rollback active tx");
+        let mut active = self.active.lock().expect("local registry executor rollback active tx");
         let Some(current) = active.get(session_id) else {
             return Ok(Some(transaction_id.clone()));
         };
@@ -127,16 +114,15 @@ impl OperationExecutor for LocalRegistryExecutor {
 }
 
 pub async fn start_server_and_client() -> RemoteKalamClient {
-    let port = start_server_on_ephemeral_port(std::sync::Arc::new(LocalRegistryExecutor::default())).await;
+    let port =
+        start_server_on_ephemeral_port(std::sync::Arc::new(LocalRegistryExecutor::default())).await;
     connect_to("127.0.0.1", port).await
 }
 
 pub async fn start_server_on_ephemeral_port(
     executor: std::sync::Arc<dyn OperationExecutor>,
 ) -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ephemeral port");
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ephemeral port");
     let port = listener.local_addr().expect("local addr").port();
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
     let service = KalamPgService::new(false, None).with_operation_executor(executor);

@@ -4,27 +4,27 @@ use kalamdb_core::error::KalamDbError;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 pub struct UserDataExportZip {
-    pub bytes: Vec<u8>,
-    pub raw_bytes: usize,
+    pub bytes:      Vec<u8>,
+    pub raw_bytes:  usize,
     pub file_count: usize,
 }
 
 pub struct UserDataExportZipBuilder {
-    zip_writer: ZipWriter<Cursor<Vec<u8>>>,
+    zip_writer:  ZipWriter<Cursor<Vec<u8>>>,
     zip_options: SimpleFileOptions,
-    raw_bytes: usize,
-    file_count: usize,
+    raw_bytes:   usize,
+    file_count:  usize,
 }
 
 impl UserDataExportZipBuilder {
     pub fn new() -> Self {
         Self {
-            zip_writer: ZipWriter::new(Cursor::new(Vec::new())),
+            zip_writer:  ZipWriter::new(Cursor::new(Vec::new())),
             zip_options: SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated)
                 .compression_level(Some(6)),
-            raw_bytes: 0,
-            file_count: 0,
+            raw_bytes:   0,
+            file_count:  0,
         }
     }
 
@@ -61,8 +61,8 @@ impl UserDataExportZipBuilder {
         })?;
 
         Ok(UserDataExportZip {
-            bytes: finished.into_inner(),
-            raw_bytes: self.raw_bytes,
+            bytes:      finished.into_inner(),
+            raw_bytes:  self.raw_bytes,
             file_count: self.file_count,
         })
     }

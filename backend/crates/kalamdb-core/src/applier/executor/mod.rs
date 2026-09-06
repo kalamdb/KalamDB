@@ -69,11 +69,11 @@ use crate::app_context::AppContext;
 /// allows parallel execution across different shards.
 pub struct CommandExecutorImpl {
     app_context: Arc<AppContext>,
-    ddl: DdlExecutor,
-    dml: DmlExecutor,
-    namespace: NamespaceExecutor,
-    storage: StorageExecutor,
-    user: UserExecutor,
+    ddl:         DdlExecutor,
+    dml:         DmlExecutor,
+    namespace:   NamespaceExecutor,
+    storage:     StorageExecutor,
+    user:        UserExecutor,
 }
 
 impl CommandExecutorImpl {

@@ -10,14 +10,14 @@ use crate::{ids::SeqId, models::UserId};
 /// - Used by BaseTableProvider::snapshot_rows
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KTableRow {
-    pub user_id: UserId,
-    pub _seq: SeqId,
+    pub user_id:     UserId,
+    pub _seq:        SeqId,
     #[serde(default)]
     pub _commit_seq: u64,
     /// Soft delete flag (always false for stream tables)
-    pub _deleted: bool,
+    pub _deleted:    bool,
     /// Row data (JSON)
-    pub fields: Row,
+    pub fields:      Row,
 }
 
 impl KTableRow {

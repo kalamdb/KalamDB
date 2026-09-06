@@ -36,7 +36,7 @@ pub struct SqlStatement {
     /// Original SQL text
     pub(crate) sql_text: String,
     /// Parsed statement variant
-    pub(crate) kind: SqlStatementKind,
+    pub(crate) kind:     SqlStatementKind,
 }
 
 /// Statement type variants (internal to SqlStatement)
@@ -109,7 +109,7 @@ pub enum SqlStatementKind {
     ClusterTransferLeader(u64),
     /// CLUSTER JOIN - Add a node at runtime
     ClusterJoin {
-        node_id: u64,
+        node_id:  u64,
         rpc_addr: String,
         api_addr: String,
     },

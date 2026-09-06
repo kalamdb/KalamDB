@@ -71,7 +71,7 @@ pub async fn ack_handler(
     }
 
     HttpResponse::Ok().json(AckResponse {
-        success: true,
+        success:             true,
         acknowledged_offset: body.upto_offset,
     })
 }

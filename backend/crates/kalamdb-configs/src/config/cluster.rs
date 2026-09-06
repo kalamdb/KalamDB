@@ -240,11 +240,13 @@ impl ClusterConfig {
             validate_advertised_address(
                 &format!("cluster.peers(node_id={}).rpc_addr", peer.node_id),
                 &peer.rpc_addr,
-                true)?;
+                true,
+            )?;
             validate_advertised_address(
                 &format!("cluster.peers(node_id={}).api_addr", peer.node_id),
                 &peer.api_addr,
-                true)?;
+                true,
+            )?;
         }
 
         // Check election timeout > heartbeat
@@ -288,7 +290,8 @@ impl ClusterConfig {
 fn validate_advertised_address(
     field_name: &str,
     value: &str,
-    has_peers: bool) -> Result<(), String> {
+    has_peers: bool,
+) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!("{} cannot be empty", field_name));

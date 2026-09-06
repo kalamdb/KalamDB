@@ -19,21 +19,21 @@ pub const TABLE_EXPORT_METADATA_ENTRY: &str = "kalamdb-table-export.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableExportArchiveFile {
     pub source_path: String,
-    pub entry_path: String,
-    pub size_bytes: u64,
+    pub entry_path:  String,
+    pub size_bytes:  u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableExportArchiveMetadata {
-    pub format: String,
-    pub format_version: u32,
-    pub source_table_id: TableId,
+    pub format:            String,
+    pub format_version:    u32,
+    pub source_table_id:   TableId,
     pub source_table_type: TableType,
-    pub source_user_id: Option<UserId>,
-    pub exported_at: i64,
-    pub table_definition: TableDefinition,
-    pub manifest: Manifest,
-    pub files: Vec<TableExportArchiveFile>,
+    pub source_user_id:    Option<UserId>,
+    pub exported_at:       i64,
+    pub table_definition:  TableDefinition,
+    pub manifest:          Manifest,
+    pub files:             Vec<TableExportArchiveFile>,
 }
 
 impl TableExportArchiveMetadata {
@@ -60,12 +60,12 @@ impl TableExportArchiveMetadata {
 
 pub struct TableExportSegmentData {
     pub source_path: String,
-    pub data: Vec<u8>,
+    pub data:        Vec<u8>,
 }
 
 pub struct TableExportZip {
-    pub bytes: Vec<u8>,
-    pub raw_bytes: usize,
+    pub bytes:      Vec<u8>,
+    pub raw_bytes:  usize,
     pub file_count: usize,
 }
 

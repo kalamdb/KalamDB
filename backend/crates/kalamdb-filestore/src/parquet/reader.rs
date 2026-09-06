@@ -5,11 +5,11 @@
 //!
 //! # Performance Features
 //!
-//! - **Column Projection**: Pushes a Parquet projection mask so unneeded column chunks are not
-//!   read or decoded
-//! - **Streaming I/O**: All reads use an `AsyncFileReader` over ObjectStore — reads only the
-//!   footer eagerly and fetches column chunks on demand via range requests (remote) or file
-//!   seeks (local). No full-file downloads.
+//! - **Column Projection**: Pushes a Parquet projection mask so unneeded column chunks are not read
+//!   or decoded
+//! - **Streaming I/O**: All reads use an `AsyncFileReader` over ObjectStore — reads only the footer
+//!   eagerly and fetches column chunks on demand via range requests (remote) or file seeks (local).
+//!   No full-file downloads.
 //!
 //! # Usage Tiers
 //!
@@ -22,9 +22,7 @@ use std::{ops::Range, pin::Pin, sync::Arc};
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
 use futures_util::TryStreamExt;
-use object_store::{
-    path::Path as ObjectPath, GetOptions, GetRange, ObjectStore, ObjectStoreExt,
-};
+use object_store::{path::Path as ObjectPath, GetOptions, GetRange, ObjectStore, ObjectStoreExt};
 use parquet::{
     arrow::{
         arrow_reader::ArrowReaderOptions,
@@ -58,10 +56,10 @@ pub type RecordBatchFileStream =
 /// Optional pruning and projection controls for ObjectStore-backed Parquet reads.
 #[derive(Debug, Clone, Default)]
 pub struct ParquetReadOptions {
-    columns: Vec<String>,
+    columns:    Vec<String>,
     row_groups: Option<Vec<usize>>,
-    seq_range: Option<SeqRangePruning>,
-    pk_bloom: Option<PkBloomPruning>,
+    seq_range:  Option<SeqRangePruning>,
+    pk_bloom:   Option<PkBloomPruning>,
 }
 
 impl ParquetReadOptions {
@@ -108,8 +106,8 @@ impl ParquetReadOptions {
 #[derive(Debug, Clone)]
 struct SeqRangePruning {
     column: String,
-    min: i64,
-    max: i64,
+    min:    i64,
+    max:    i64,
 }
 
 #[derive(Debug, Clone)]
@@ -123,7 +121,7 @@ struct PkBloomPruning {
 #[derive(Clone, Debug)]
 struct ObjectStoreReader {
     store: Arc<dyn ObjectStore>,
-    path: ObjectPath,
+    path:  ObjectPath,
 }
 
 impl ObjectStoreReader {
@@ -138,24 +136,18 @@ fn to_parquet_err(error: object_store::Error) -> ParquetError {
 
 impl AsyncFileReader for ObjectStoreReader {
     fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
-        Box::pin(async move {
-            self.store
-                .get_range(&self.path, range)
-                .await
-                .map_err(to_parquet_err)
-        })
+        Box::pin(
+            async move { self.store.get_range(&self.path, range).await.map_err(to_parquet_err) },
+        )
     }
 
     fn get_byte_ranges(
         &mut self,
         ranges: Vec<Range<u64>>,
     ) -> BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
-        Box::pin(async move {
-            self.store
-                .get_ranges(&self.path, &ranges)
-                .await
-                .map_err(to_parquet_err)
-        })
+        Box::pin(
+            async move { self.store.get_ranges(&self.path, &ranges).await.map_err(to_parquet_err) },
+        )
     }
 
     fn get_metadata<'a>(
@@ -179,11 +171,8 @@ impl MetadataSuffixFetch for &mut ObjectStoreReader {
             ..Default::default()
         };
         Box::pin(async move {
-            let response = self
-                .store
-                .get_opts(&self.path, options)
-                .await
-                .map_err(to_parquet_err)?;
+            let response =
+                self.store.get_opts(&self.path, options).await.map_err(to_parquet_err)?;
             response.bytes().await.map_err(to_parquet_err)
         })
     }
@@ -424,17 +413,17 @@ mod tests {
     fn create_test_storage(temp_dir: &std::path::Path) -> Storage {
         let now = chrono::Utc::now().timestamp_millis();
         Storage {
-            storage_id: StorageId::from("test_parquet_read"),
-            storage_name: "test_parquet_read".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: temp_dir.to_string_lossy().to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from("test_parquet_read"),
+            storage_name:           "test_parquet_read".to_string(),
+            description:            None,
+            storage_type:           StorageType::Filesystem,
+            base_directory:         temp_dir.to_string_lossy().to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
-            created_at: now,
-            updated_at: now,
+            user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
+            created_at:             now,
+            updated_at:             now,
         }
     }
 

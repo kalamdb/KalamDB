@@ -17,6 +17,7 @@ use super::{
         logical_partition_registry_prefix, next_prefix_bound, partition_key_prefix,
         physical_cf_for_partition, physical_key, SYSTEM_META_CF,
     },
+    restore::{mark_restore_staging_ready, restore_staging_path},
 };
 use crate::storage_trait::{
     Operation, Partition, Result, StorageBackend, StorageError, StorageStats,
@@ -93,7 +94,8 @@ impl RocksDBBackend {
         sync_writes: bool,
         disable_wal: bool,
         settings: RocksDbSettings,
-        block_cache: Cache) -> Self {
+        block_cache: Cache,
+    ) -> Self {
         let mut write_opts = WriteOptions::default();
         write_opts.set_sync(sync_writes);
         write_opts.disable_wal(disable_wal);
@@ -121,7 +123,8 @@ impl RocksDBBackend {
         db: Arc<DB>,
         sync_writes: bool,
         disable_wal: bool,
-        settings: RocksDbSettings) -> Self {
+        settings: RocksDbSettings,
+    ) -> Self {
         let block_cache = new_block_cache(settings.block_cache_size);
         Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
@@ -132,7 +135,8 @@ impl RocksDBBackend {
         sync_writes: bool,
         disable_wal: bool,
         settings: RocksDbSettings,
-        block_cache: Cache) -> Self {
+        block_cache: Cache,
+    ) -> Self {
         Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
     }
 
@@ -204,7 +208,8 @@ impl RocksDBBackend {
             .iterator_cf_opt(
                 &cf,
                 readopts,
-                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward))
+                IteratorMode::From(prefix.as_slice(), rocksdb::Direction::Forward),
+            )
             .filter_map(|item| {
                 item.ok().and_then(|(key, _)| {
                     decode_logical_partition_registry_key(&key).map(str::to_string)
@@ -354,7 +359,8 @@ impl StorageBackend for RocksDBBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+        limit: Option<usize>,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan",
             partition = %partition.name(),
@@ -374,7 +380,8 @@ impl StorageBackend for RocksDBBackend {
                 let mut physical_prefix = partition_prefix.clone();
                 physical_prefix.extend_from_slice(prefix);
                 physical_prefix
-            });
+            },
+        );
         let physical_start = start_key.map(|start| {
             let mut physical_start = partition_prefix.clone();
             physical_start.extend_from_slice(start);
@@ -446,7 +453,8 @@ impl StorageBackend for RocksDBBackend {
         partition: &Partition,
         prefix: Option<&[u8]>,
         start_key: Option<&[u8]>,
-        limit: Option<usize>) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
+        limit: Option<usize>,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)> + Send + '_>> {
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.scan_reverse",
             partition = %partition.name(),
@@ -465,7 +473,8 @@ impl StorageBackend for RocksDBBackend {
                 let mut physical_prefix = partition_prefix.clone();
                 physical_prefix.extend_from_slice(prefix);
                 physical_prefix
-            });
+            },
+        );
         let physical_start = start_key.map(|start| {
             let mut physical_start = partition_prefix.clone();
             physical_start.extend_from_slice(start);
@@ -653,7 +662,8 @@ impl StorageBackend for RocksDBBackend {
     fn restore_from(
         &self,
         backup_dir: &std::path::Path,
-        restore_token: &str) -> crate::storage_trait::Result<()> {
+        restore_token: &str,
+    ) -> crate::storage_trait::Result<()> {
         use rocksdb::{
             backup::{BackupEngine, BackupEngineOptions, RestoreOptions},
             Env,
@@ -661,7 +671,8 @@ impl StorageBackend for RocksDBBackend {
 
         if restore_token.is_empty() {
             return Err(crate::storage_trait::StorageError::Other(
-                "restore_token cannot be empty".to_string()));
+                "restore_token cannot be empty".to_string(),
+            ));
         }
 
         let opts = BackupEngineOptions::new(backup_dir).map_err(|e| {
@@ -682,11 +693,7 @@ impl StorageBackend for RocksDBBackend {
         let restore_opts = RestoreOptions::default();
 
         let db_path = self.db.path();
-        let staging_path = {
-            let mut p = db_path.as_os_str().to_os_string();
-            p.push(format!("_restore_pending_{}", restore_token));
-            std::path::PathBuf::from(p)
-        };
+        let staging_path = restore_staging_path(db_path, restore_token);
 
         if staging_path.exists() {
             std::fs::remove_dir_all(&staging_path).map_err(|e| {
@@ -706,6 +713,12 @@ impl StorageBackend for RocksDBBackend {
                     e
                 ))
             })?;
+        mark_restore_staging_ready(&staging_path).map_err(|e| {
+            crate::storage_trait::StorageError::Other(format!(
+                "failed to mark restore staging dir ready: {}",
+                e
+            ))
+        })?;
         Ok(())
     }
 
@@ -714,37 +727,48 @@ impl StorageBackend for RocksDBBackend {
             ("storage_backend".to_string(), "rocksdb".to_string()),
             (
                 "storage_partition_count".to_string(),
-                self.tracked_partition_count().to_string()),
+                self.tracked_partition_count().to_string(),
+            ),
             (
                 "rocksdb_physical_cf_count".to_string(),
-                self.tracked_cf_names().len().to_string()),
+                self.tracked_cf_names().len().to_string(),
+            ),
             (
                 "rocksdb_estimate_num_keys".to_string(),
-                self.sum_cf_property(ESTIMATE_NUM_KEYS_PROPERTY).to_string()),
+                self.sum_cf_property(ESTIMATE_NUM_KEYS_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_estimate_live_data_size_bytes".to_string(),
-                self.sum_cf_property(ESTIMATE_LIVE_DATA_SIZE_PROPERTY).to_string()),
+                self.sum_cf_property(ESTIMATE_LIVE_DATA_SIZE_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_active_memtable_entries".to_string(),
-                self.sum_cf_property(ACTIVE_MEMTABLE_ENTRIES_PROPERTY).to_string()),
+                self.sum_cf_property(ACTIVE_MEMTABLE_ENTRIES_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_immutable_memtable_entries".to_string(),
-                self.sum_cf_property(IMM_MEMTABLE_ENTRIES_PROPERTY).to_string()),
+                self.sum_cf_property(IMM_MEMTABLE_ENTRIES_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_active_memtable_size_bytes".to_string(),
-                self.sum_cf_property(ACTIVE_MEMTABLE_SIZE_PROPERTY).to_string()),
+                self.sum_cf_property(ACTIVE_MEMTABLE_SIZE_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_live_sst_files_size_bytes".to_string(),
-                self.sum_cf_property(LIVE_SST_FILES_SIZE_PROPERTY).to_string()),
+                self.sum_cf_property(LIVE_SST_FILES_SIZE_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_total_sst_files_size_bytes".to_string(),
-                self.sum_cf_property(TOTAL_SST_FILES_SIZE_PROPERTY).to_string()),
+                self.sum_cf_property(TOTAL_SST_FILES_SIZE_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_memtables_size_bytes".to_string(),
-                self.sum_cf_property(ALL_MEMTABLES_SIZE_PROPERTY).to_string()),
+                self.sum_cf_property(ALL_MEMTABLES_SIZE_PROPERTY).to_string(),
+            ),
             (
                 "rocksdb_pending_compaction_bytes".to_string(),
-                self.sum_cf_property(PENDING_COMPACTION_BYTES_PROPERTY).to_string()),
+                self.sum_cf_property(PENDING_COMPACTION_BYTES_PROPERTY).to_string(),
+            ),
         ])
     }
 }
@@ -945,7 +969,8 @@ mod tests {
                 db,
                 false,
                 false,
-                RocksDbSettings::default());
+                RocksDbSettings::default(),
+            );
             backend.set_known_cf_names(cf_names);
 
             backend.create_partition(&partition).unwrap();
@@ -961,7 +986,8 @@ mod tests {
                 db,
                 false,
                 false,
-                RocksDbSettings::default());
+                RocksDbSettings::default(),
+            );
             backend.set_known_cf_names(cf_names);
 
             assert!(backend.partition_exists(&partition));
@@ -1006,5 +1032,50 @@ mod tests {
         assert!(stats.contains_key("rocksdb_total_sst_files_size_bytes"));
         assert!(stats.contains_key("rocksdb_memtables_size_bytes"));
         assert!(stats.contains_key("rocksdb_pending_compaction_bytes"));
+    }
+
+    #[test]
+    fn test_restore_from_is_applied_and_staging_removed_on_reopen() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let backup_dir = temp_dir.path().join("backup");
+        let partition = Partition::new("restore_cf");
+        let staging = super::super::restore::restore_staging_path(&db_path, "RS-test");
+
+        {
+            let init = RocksDbInit::with_defaults(db_path.to_string_lossy().into_owned());
+            let (db, cf_names) = init.open_with_cf_names().unwrap();
+            let backend = RocksDBBackend::with_options_and_settings(
+                db,
+                false,
+                false,
+                RocksDbSettings::default(),
+            );
+            backend.set_known_cf_names(cf_names);
+
+            backend.create_partition(&partition).unwrap();
+            backend.put(&partition, b"key1", b"original").unwrap();
+            backend.backup_to(&backup_dir).unwrap();
+            backend.put(&partition, b"key1", b"mutated").unwrap();
+            backend.restore_from(&backup_dir, "RS-test").unwrap();
+
+            assert_eq!(backend.get(&partition, b"key1").unwrap(), Some(b"mutated".to_vec()));
+            assert!(staging.exists());
+        }
+
+        {
+            let init = RocksDbInit::with_defaults(db_path.to_string_lossy().into_owned());
+            let (db, cf_names) = init.open_with_cf_names().unwrap();
+            let backend = RocksDBBackend::with_options_and_settings(
+                db,
+                false,
+                false,
+                RocksDbSettings::default(),
+            );
+            backend.set_known_cf_names(cf_names);
+
+            assert_eq!(backend.get(&partition, b"key1").unwrap(), Some(b"original".to_vec()));
+            assert!(!staging.exists());
+        }
     }
 }

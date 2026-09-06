@@ -664,8 +664,12 @@ RESTORE DATABASE FROM '<backup_path>';
 
 `<backup_path>` is a path on the server filesystem and may point to either a
 backup directory or a `.tar.gz` / `.tgz` archive created by `BACKUP DATABASE`.
-The restore job stages the files, and a server restart is required to activate
-the restored data. `RESTORE DATABASE` requires a DBA or System role.
+The restore job copies Parquet and stream files in place and stages RocksDB into
+a sibling `rocksdb_restore_pending_*` directory. A server restart promotes the
+newest complete staged copy onto the live RocksDB path and deletes leftover
+staging directories. Incomplete or older unmarked staging dirs are discarded
+without replacing the live database. `RESTORE DATABASE` requires a DBA or System
+role.
 
 ## Built-in Functions (Common)
 

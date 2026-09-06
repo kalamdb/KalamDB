@@ -37,24 +37,24 @@ pub(super) fn snapshot_subscriptions(
     let mut out: Vec<SubscriptionInfo> = subs
         .iter()
         .map(|(id, entry)| SubscriptionInfo {
-            id: id.clone(),
-            query: entry.sql.clone(),
-            last_seq_id: effective_entry_seq(entry),
+            id:                 id.clone(),
+            query:              entry.sql.clone(),
+            last_seq_id:        effective_entry_seq(entry),
             last_event_time_ms: entry.last_event_time_ms,
-            created_at_ms: entry.created_at_ms,
-            closed: false,
+            created_at_ms:      entry.created_at_ms,
+            closed:             false,
         })
         .collect();
 
     for (id, &seq) in seq_id_cache {
         if !subs.contains_key(id) {
             out.push(SubscriptionInfo {
-                id: id.clone(),
-                query: String::new(),
-                last_seq_id: Some(seq),
+                id:                 id.clone(),
+                query:              String::new(),
+                last_seq_id:        Some(seq),
                 last_event_time_ms: None,
-                created_at_ms: 0,
-                closed: true,
+                created_at_ms:      0,
+                closed:             true,
             });
         }
     }
@@ -73,8 +73,7 @@ pub(super) fn cache_entry_seq(
 ) {
     if let Some(seq) = effective_entry_seq(entry) {
         let id = id.into();
-        if !seq_id_cache.contains_key(&id)
-            && seq_id_cache.len() >= MAX_CACHED_SUBSCRIPTION_CURSORS
+        if !seq_id_cache.contains_key(&id) && seq_id_cache.len() >= MAX_CACHED_SUBSCRIPTION_CURSORS
         {
             if let Some(evicted_id) = seq_id_cache.keys().next().cloned() {
                 seq_id_cache.remove(&evicted_id);
@@ -271,21 +270,21 @@ pub(super) fn resolve_subscription_key(
 
 pub(super) enum ConnCmd {
     Subscribe {
-        id: String,
-        sql: String,
-        options: SubscriptionOptions,
+        id:                   String,
+        sql:                  String,
+        options:              SubscriptionOptions,
         request_initial_data: bool,
-        event_tx: mpsc::Sender<Result<ChangeEvent>>,
-        result_tx: SubscriptionReadySender,
+        event_tx:             mpsc::Sender<Result<ChangeEvent>>,
+        result_tx:            SubscriptionReadySender,
     },
     Unsubscribe {
-        id: String,
+        id:         String,
         generation: Option<u64>,
     },
     Progress {
-        id: String,
-        generation: u64,
-        seq_id: SeqId,
+        id:             String,
+        generation:     u64,
+        seq_id:         SeqId,
         advance_resume: bool,
     },
     ListSubscriptions {

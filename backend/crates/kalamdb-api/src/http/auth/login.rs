@@ -55,7 +55,7 @@ pub async fn login_handler(
 
     // Authenticate using unified auth flow (includes localhost/empty password rules)
     let auth_request = AuthRequest::Credentials {
-        user: body.user.clone(),
+        user:     body.user.clone(),
         password: body.password.clone(),
     };
 

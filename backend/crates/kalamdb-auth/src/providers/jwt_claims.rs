@@ -24,21 +24,21 @@ impl std::fmt::Display for TokenType {
 /// JWT claims shared across internal HS256 tokens and external OIDC tokens.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
-    pub sub: String,
-    pub iss: String,
-    pub exp: usize,
-    pub iat: usize,
+    pub sub:            String,
+    pub iss:            String,
+    pub exp:            usize,
+    pub iat:            usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name:           Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
+    pub email:          Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_verified: Option<bool>,
-    pub role: Option<Role>,
+    pub role:           Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_type: Option<AuthType>,
+    pub auth_type:      Option<AuthType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_type: Option<TokenType>,
+    pub token_type:     Option<TokenType>,
 }
 
 impl JwtClaims {
@@ -85,16 +85,16 @@ impl JwtClaims {
         let exp = now + chrono::Duration::hours(exp_hours);
 
         Self {
-            sub: user_id.to_string(),
-            iss: issuer.to_string(),
-            exp: exp.timestamp() as usize,
-            iat: now.timestamp() as usize,
-            name: None,
-            email: email.map(|value| value.to_string()),
+            sub:            user_id.to_string(),
+            iss:            issuer.to_string(),
+            exp:            exp.timestamp() as usize,
+            iat:            now.timestamp() as usize,
+            name:           None,
+            email:          email.map(|value| value.to_string()),
             email_verified: None,
-            role: Some(*role),
-            auth_type: Some(auth_type),
-            token_type: Some(token_type),
+            role:           Some(*role),
+            auth_type:      Some(auth_type),
+            token_type:     Some(token_type),
         }
     }
 }

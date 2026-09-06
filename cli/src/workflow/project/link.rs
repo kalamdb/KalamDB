@@ -15,8 +15,8 @@ use crate::{
 };
 
 pub struct LinkOptions {
-    pub env: Option<String>,
-    pub url: Option<String>,
+    pub env:       Option<String>,
+    pub url:       Option<String>,
     pub namespace: Option<String>,
 }
 
@@ -73,10 +73,11 @@ fn save_project_config(path: &Path, config: &KalamProjectConfig) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
     use tempfile::TempDir;
 
+    use super::*;
     use crate::{
         config::{CLIConfiguration, WorkflowLoggingPolicy},
         workflow::project::config::{
@@ -90,19 +91,19 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
         let config = KalamProjectConfig {
-            project: ProjectSection {
-                name: "demo".into(),
-                default_env: "dev".into(),
+            project:    ProjectSection {
+                name:            "demo".into(),
+                default_env:     "dev".into(),
                 package_manager: None,
-                kalam_dir: "kalam".into(),
+                kalam_dir:       "kalam".into(),
             },
             connection: HashMap::new(),
-            schema: SchemaSection {
-                mode: SchemaMode::Sql,
-                path: Some("schema.sql".into()),
-                watch: true,
+            schema:     SchemaSection {
+                mode:      SchemaMode::Sql,
+                path:      Some("schema.sql".into()),
+                watch:     true,
                 languages: vec!["typescript".into()],
-                targets: HashMap::from([(
+                targets:   HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
                         output: "src/generated/kalam.ts".into(),
@@ -110,8 +111,8 @@ mod tests {
                 )]),
             },
             migrations: MigrationsSection::default(),
-            dev: DevSection::default(),
-            logging: LoggingSection::default(),
+            dev:        DevSection::default(),
+            logging:    LoggingSection::default(),
         };
         config.save_to_path(&root.join(KALAM_TOML)).unwrap();
 
@@ -120,6 +121,9 @@ mod tests {
             config,
             cli_config: CLIConfiguration::default(),
             use_color: false,
+            animations: true,
+            agent: false,
+            json: false,
             project_dir: None,
             env_override: None,
             namespace_override: None,
@@ -130,8 +134,8 @@ mod tests {
         link_environment(
             &ctx,
             &LinkOptions {
-                env: Some("prod".into()),
-                url: Some("https://db.example.com".into()),
+                env:       Some("prod".into()),
+                url:       Some("https://db.example.com".into()),
                 namespace: Some("app".into()),
             },
             &output,

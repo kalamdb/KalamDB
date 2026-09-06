@@ -32,9 +32,9 @@ pub enum CleanupOperation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageCleanupDetails {
     /// Storage identifier
-    pub storage_id: StorageId,
+    pub storage_id:             StorageId,
     /// Base directory resolved for this storage
-    pub base_directory: String,
+    pub base_directory:         String,
     /// Relative path template with static placeholders substituted
     pub relative_path_template: String,
 }
@@ -266,8 +266,8 @@ mod tests {
         fs::write(stream_table_dir.join("orphan.log"), b"orphan").expect("create stream file");
 
         let storage = StorageCleanupDetails {
-            storage_id: StorageId::local(),
-            base_directory: ".".to_string(),
+            storage_id:             StorageId::local(),
+            base_directory:         ".".to_string(),
             relative_path_template: "{namespace}/{tableName}".to_string(),
         };
 
@@ -300,8 +300,8 @@ mod tests {
         let _ = fs::remove_dir_all(&stream_table_dir);
 
         let storage = StorageCleanupDetails {
-            storage_id: StorageId::local(),
-            base_directory: ".".to_string(),
+            storage_id:             StorageId::local(),
+            base_directory:         ".".to_string(),
             relative_path_template: "{namespace}/{tableName}".to_string(),
         };
 

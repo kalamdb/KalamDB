@@ -196,23 +196,23 @@ pub mod kalamdb {
             }
         }
         pub struct EntityEnvelopeArgs<'a> {
-            pub codec_kind: CodecKind,
+            pub codec_kind:     CodecKind,
             pub schema_version: u16,
-            pub payload: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
+            pub payload:        Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, u8>>>,
         }
         impl<'a> Default for EntityEnvelopeArgs<'a> {
             #[inline]
             fn default() -> Self {
                 EntityEnvelopeArgs {
-                    codec_kind: CodecKind::FlatBuffers,
+                    codec_kind:     CodecKind::FlatBuffers,
                     schema_version: 1,
-                    payload: None,
+                    payload:        None,
                 }
             }
         }
 
         pub struct EntityEnvelopeBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
-            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            fbb_:   &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
             start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
         }
         impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> EntityEnvelopeBuilder<'a, 'b, A> {
@@ -244,7 +244,7 @@ pub mod kalamdb {
             ) -> EntityEnvelopeBuilder<'a, 'b, A> {
                 let start = _fbb.start_table();
                 EntityEnvelopeBuilder {
-                    fbb_: _fbb,
+                    fbb_:   _fbb,
                     start_: start,
                 }
             }

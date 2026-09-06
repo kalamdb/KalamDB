@@ -36,10 +36,10 @@ use crate::{
 #[derive(Debug)]
 pub struct StorageCached {
     /// Storage configuration from `system.storages`.
-    pub storage: Arc<Storage>,
-    timeouts: kalamdb_configs::config::types::RemoteStorageTimeouts,
+    pub storage:   Arc<Storage>,
+    timeouts:      kalamdb_configs::config::types::RemoteStorageTimeouts,
     parquet_write: kalamdb_configs::config::types::ParquetWriteSettings,
-    object_store: Arc<RwLock<Option<Arc<dyn ObjectStore>>>>,
+    object_store:  Arc<RwLock<Option<Arc<dyn ObjectStore>>>>,
 }
 
 impl StorageCached {
@@ -724,17 +724,17 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_millis();
         Storage {
-            storage_id: StorageId::from("test_storage"),
-            storage_name: "test_storage".to_string(),
-            description: None,
-            storage_type: StorageType::Filesystem,
-            base_directory: temp_dir.to_string_lossy().to_string(),
-            credentials: None,
-            config_json: None,
+            storage_id:             StorageId::from("test_storage"),
+            storage_name:           "test_storage".to_string(),
+            description:            None,
+            storage_type:           StorageType::Filesystem,
+            base_directory:         temp_dir.to_string_lossy().to_string(),
+            credentials:            None,
+            config_json:            None,
             shared_tables_template: "{namespace}/{tableName}".to_string(),
-            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
-            created_at: now,
-            updated_at: now,
+            user_tables_template:   "{namespace}/{tableName}/{userId}".to_string(),
+            created_at:             now,
+            updated_at:             now,
         }
     }
 

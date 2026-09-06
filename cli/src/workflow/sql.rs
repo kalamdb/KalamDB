@@ -39,9 +39,11 @@ pub(crate) async fn ensure_namespace_exists(
     namespace: &NamespaceId,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    output.status(format!("ensuring namespace {}", namespace.as_str()));
     let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace.as_str());
-    execute_single_statement(client, &sql, None, "namespace bootstrap").await?;
+    {
+        let _spinner = output.status_spinner(format!("ensuring namespace {}", namespace.as_str()));
+        execute_single_statement(client, &sql, None, "namespace bootstrap").await?;
+    }
     output.status(format!("ensured namespace {}", namespace.as_str()));
     Ok(())
 }
@@ -124,6 +126,12 @@ fn summarize_sql(statement: &str) -> String {
 mod tests {
     use std::{collections::HashMap, fs};
 
+    use kalam_client::{
+        credentials::{CredentialStore, Credentials},
+        AuthProvider,
+    };
+    use tempfile::TempDir;
+
     use super::*;
     use crate::{
         config::CLIConfiguration,
@@ -136,11 +144,6 @@ mod tests {
         },
         FileCredentialStore,
     };
-    use kalam_client::{
-        credentials::{CredentialStore, Credentials},
-        AuthProvider,
-    };
-    use tempfile::TempDir;
 
     #[test]
     fn workflow_auth_prefers_project_profile_over_local_password() {
@@ -168,27 +171,27 @@ mod tests {
             .unwrap();
 
         let ctx = WorkflowContext {
-            project_root: project_root.clone(),
-            config: KalamProjectConfig {
-                project: ProjectSection {
-                    name: "demo".into(),
-                    default_env: "dev".into(),
+            project_root:       project_root.clone(),
+            config:             KalamProjectConfig {
+                project:    ProjectSection {
+                    name:            "demo".into(),
+                    default_env:     "dev".into(),
                     package_manager: None,
-                    kalam_dir: "kalam".into(),
+                    kalam_dir:       "kalam".into(),
                 },
                 connection: HashMap::from([(
                     "dev".into(),
                     ConnectionEnv {
-                        url: "http://localhost:2900".into(),
+                        url:       "http://localhost:2900".into(),
                         namespace: kalamdb_commons::NamespaceId::new("demo"),
                     },
                 )]),
-                schema: SchemaSection {
-                    mode: SchemaMode::Sql,
-                    path: Some("schema.sql".into()),
-                    watch: false,
+                schema:     SchemaSection {
+                    mode:      SchemaMode::Sql,
+                    path:      Some("schema.sql".into()),
+                    watch:     false,
                     languages: vec!["typescript".into()],
-                    targets: HashMap::from([(
+                    targets:   HashMap::from([(
                         "typescript".into(),
                         SchemaTarget {
                             output: "src/generated/kalam.ts".into(),
@@ -196,22 +199,25 @@ mod tests {
                     )]),
                 },
                 migrations: MigrationsSection::default(),
-                dev: DevSection::default(),
-                logging: LoggingSection::default(),
+                dev:        DevSection::default(),
+                logging:    LoggingSection::default(),
             },
-            cli_config: CLIConfiguration::default(),
-            use_color: false,
-            project_dir: None,
-            env_override: None,
+            cli_config:         CLIConfiguration::default(),
+            use_color:          false,
+            animations:         true,
+            agent:              false,
+            json:               false,
+            project_dir:        None,
+            env_override:       None,
             namespace_override: None,
-            url_override: None,
+            url_override:       None,
         };
         let environment = ResolvedEnvironment {
-            name: "dev".into(),
-            url: "http://localhost:2900".into(),
-            namespace: kalamdb_commons::NamespaceId::new("demo"),
-            env_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
-            url_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
+            name:             "dev".into(),
+            url:              "http://localhost:2900".into(),
+            namespace:        kalamdb_commons::NamespaceId::new("demo"),
+            env_source:       crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
+            url_source:       crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
             namespace_source: crate::workflow::project::resolve::ResolutionSource::ProjectConfig,
         };
 

@@ -38,18 +38,22 @@ pub struct KalamInformationSchemaProvider {
 impl KalamInformationSchemaProvider {
     pub fn new(
         catalog_list: Arc<dyn CatalogProviderList>,
-        system_tables: Arc<SystemTablesRegistry>) -> Self {
+        system_tables: Arc<SystemTablesRegistry>,
+    ) -> Self {
         let tables = Arc::new(ExtendedInformationSchemaTablesProvider::new(
             Arc::clone(&catalog_list),
-            Arc::clone(&system_tables)));
+            Arc::clone(&system_tables),
+        ));
         Self {
             inner:      InformationSchemaProvider::new(Arc::clone(&catalog_list)),
             columns:    Arc::new(ExtendedInformationSchemaColumnsProvider::new(
                 Arc::clone(&catalog_list),
-                system_tables)),
+                system_tables,
+            )),
             tables:     Arc::clone(&tables),
             parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(Arc::clone(
-                &catalog_list))),
+                &catalog_list,
+            ))),
             views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
             triggers:   triggers::empty_triggers_provider(),
         }

@@ -84,7 +84,9 @@ mod tests {
     #[test]
     fn split_batch_statements_preserves_comments_and_literals() {
         let statements = CLISession::split_batch_statements(
-            "-- leading comment; not a statement\nCREATE TABLE demo.t (id BIGINT PRIMARY KEY, msg TEXT);\n/* block ; comment */\nEXECUTE AS USER 'alice' (INSERT INTO demo.t (id, msg) VALUES (1, 'hello; -- still literal'));\nSELECT * FROM demo.t;",
+            "-- leading comment; not a statement\nCREATE TABLE demo.t (id BIGINT PRIMARY KEY, msg \
+             TEXT);\n/* block ; comment */\nEXECUTE AS USER 'alice' (INSERT INTO demo.t (id, msg) \
+             VALUES (1, 'hello; -- still literal'));\nSELECT * FROM demo.t;",
         );
 
         assert_eq!(statements.len(), 3);
@@ -97,7 +99,8 @@ mod tests {
     #[test]
     fn split_batch_statements_skips_comment_only_trailing_content() {
         let statements = CLISession::split_batch_statements(
-            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY);\n-- trailing comment only\n-- another comment\n",
+            "CREATE TABLE demo.t (id BIGINT PRIMARY KEY);\n-- trailing comment only\n-- another \
+             comment\n",
         );
 
         assert_eq!(statements.len(), 1);
@@ -108,7 +111,8 @@ mod tests {
     fn readiness_target_detects_create_table_forms() {
         assert_eq!(
             CLISession::batch_table_readiness_target(
-                "-- schema setup\nCREATE USER TABLE IF NOT EXISTS demo.activity_feed (id BIGINT PRIMARY KEY)",
+                "-- schema setup\nCREATE USER TABLE IF NOT EXISTS demo.activity_feed (id BIGINT \
+                 PRIMARY KEY)",
             ),
             Some("demo.activity_feed".to_string())
         );
@@ -157,7 +161,8 @@ mod tests {
 
     #[test]
     fn split_batch_keeps_export_and_create_separate() {
-        let sql = "-- Export table\nexport demo.t --output /tmp/demo.zip;\n\n-- Create target\nCREATE TABLE demo_copy (id BIGINT PRIMARY KEY);\n";
+        let sql = "-- Export table\nexport demo.t --output /tmp/demo.zip;\n\n-- Create \
+                   target\nCREATE TABLE demo_copy (id BIGINT PRIMARY KEY);\n";
         let statements = CLISession::split_batch_statements(sql);
         assert_eq!(statements.len(), 2);
         assert!(statements[0].contains("export demo.t --output /tmp/demo.zip"));

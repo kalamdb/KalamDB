@@ -24,7 +24,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
             None => {
                 return syn::Error::new_spanned(
                     &field.ident,
-                    "missing #[column(...)] attribute for field")
+                    "missing #[column(...)] attribute for field",
+                )
                 .to_compile_error()
                 .into();
             },
@@ -39,7 +40,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
             None => {
                 return syn::Error::new_spanned(
                     &field.ty,
-                    "tuple structs are not supported by #[table]")
+                    "tuple structs are not supported by #[table]",
+                )
                 .to_compile_error()
                 .into();
             },
@@ -48,7 +50,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         if !column_ids.insert(column_attr.column_id) {
             return syn::Error::new_spanned(
                 &field.ident,
-                format!("duplicate column id {}", column_attr.column_id))
+                format!("duplicate column id {}", column_attr.column_id),
+            )
             .to_compile_error()
             .into();
         }
@@ -56,14 +59,15 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         if !ordinals.insert(column_attr.ordinal_position) {
             return syn::Error::new_spanned(
                 &field.ident,
-                format!("duplicate column ordinal {}", column_attr.ordinal_position))
+                format!("duplicate column ordinal {}", column_attr.ordinal_position),
+            )
             .to_compile_error()
             .into();
         }
 
         columns.push(ColumnSpec {
             field_name: field_ident.clone(),
-            args: column_attr,
+            args:       column_attr,
         });
     }
 
@@ -106,7 +110,8 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
         return syn::Error::new(
             proc_macro2::Span::call_site(),
             "#[table(access_level = ...)] is not supported. Shared tables use FORCE row-level \
-             security; grant access with CREATE POLICY")
+             security; grant access with CREATE POLICY",
+        )
         .to_compile_error()
         .into();
     }
@@ -154,7 +159,7 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 struct ColumnSpec {
     field_name: Ident,
-    args: ColumnArgs,
+    args:       ColumnArgs,
 }
 
 fn extract_column_attr(attrs: &mut Vec<Attribute>) -> Option<ColumnArgs> {
@@ -180,11 +185,11 @@ fn extract_column_attr(attrs: &mut Vec<Attribute>) -> Option<ColumnArgs> {
 
 #[derive(Default)]
 struct TableArgs {
-    name: String,
-    namespace: Option<String>,
-    table_type: TableKind,
+    name:         String,
+    namespace:    Option<String>,
+    table_type:   TableKind,
     access_level: Option<TableAccessKind>,
-    comment: Option<String>,
+    comment:      Option<String>,
 }
 
 impl Parse for TableArgs {
@@ -255,7 +260,8 @@ impl TableKind {
             "system" => Ok(Self::System),
             _ => Err(syn::Error::new_spanned(
                 value,
-                "unsupported table_type; expected user|shared|stream|system")),
+                "unsupported table_type; expected user|shared|stream|system",
+            )),
         }
     }
 
@@ -286,7 +292,8 @@ impl TableAccessKind {
             "dba" => Ok(Self::Dba),
             _ => Err(syn::Error::new(
                 span,
-                "unsupported access_level; expected public|private|restricted|dba")),
+                "unsupported access_level; expected public|private|restricted|dba",
+            )),
         }
     }
 
@@ -330,15 +337,15 @@ fn parse_table_access_value(input: ParseStream<'_>) -> Result<TableAccessKind> {
 
 #[derive(Default)]
 struct ColumnArgs {
-    column_id: u64,
+    column_id:        u64,
     ordinal_position: u32,
-    data_type: Option<syn::Expr>,
-    is_nullable: bool,
-    is_primary_key: bool,
+    data_type:        Option<syn::Expr>,
+    is_nullable:      bool,
+    is_primary_key:   bool,
     is_partition_key: bool,
-    default_value: String,
-    comment: Option<String>,
-    parse_error: Option<syn::Error>,
+    default_value:    String,
+    comment:          Option<String>,
+    parse_error:      Option<syn::Error>,
 }
 
 impl ColumnArgs {
@@ -358,7 +365,8 @@ impl ColumnArgs {
             Some(expr) => quote!(#expr),
             None => syn::Error::new(
                 proc_macro2::Span::call_site(),
-                "#[column] requires data_type = KalamDataType::...")
+                "#[column] requires data_type = KalamDataType::...",
+            )
             .to_compile_error(),
         }
     }
@@ -381,7 +389,8 @@ impl ColumnArgs {
                 if inner.trim().is_empty() {
                     syn::Error::new(
                         proc_macro2::Span::call_site(),
-                        "Function() default requires a function name")
+                        "Function() default requires a function name",
+                    )
                     .to_compile_error()
                 } else {
                     quote!(kalamdb_commons::schemas::ColumnDefault::function(#inner, vec![]))
@@ -393,7 +402,8 @@ impl ColumnArgs {
                     "unsupported default '{}'; expected None, Literal(true|false), or \
                      Function(NAME)",
                     other
-                ))
+                ),
+            )
             .to_compile_error(),
         }
     }
@@ -443,7 +453,8 @@ impl Parse for ColumnArgs {
                     "data_type" => {
                         return Err(syn::Error::new_spanned(
                             key,
-                            "data_type must use list syntax: data_type(KalamDataType::...)"));
+                            "data_type must use list syntax: data_type(KalamDataType::...)",
+                        ));
                     },
                     "nullable" => {
                         let value: LitBool = input.parse()?;
@@ -483,7 +494,8 @@ impl Parse for ColumnArgs {
         if args.data_type.is_none() {
             return Err(syn::Error::new(
                 input.span(),
-                "#[column] requires data_type(KalamDataType::...)"));
+                "#[column] requires data_type(KalamDataType::...)",
+            ));
         }
 
         if args.default_value.is_empty() {
@@ -494,7 +506,8 @@ impl Parse for ColumnArgs {
             if !seen.contains(required) {
                 return Err(syn::Error::new(
                     input.span(),
-                    format!("#[column] requires {} = true|false", required)));
+                    format!("#[column] requires {} = true|false", required),
+                ));
             }
         }
 

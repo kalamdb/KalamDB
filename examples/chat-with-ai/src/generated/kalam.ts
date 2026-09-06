@@ -18,7 +18,7 @@ export const chat_demo_agent_eventsConfig = getKalamTableConfig(chat_demo_agent_
 export type ChatDemoAgentEvents = typeof chat_demo_agent_events.$inferSelect;
 export type NewChatDemoAgentEvents = typeof chat_demo_agent_events.$inferInsert;
 
-export const chat_demo_messages = kTable.user("chat_demo.messages", {
+export const chat_demo_messages = kTable.shared("chat_demo.messages", {
   ...kSystemColumns(["_seq","_deleted"] as const),
   id: text("id").default(sql``).primaryKey(),
   room: text("room").default(sql``).notNull(),
@@ -31,3 +31,23 @@ export const chat_demo_messages = kTable.user("chat_demo.messages", {
 export const chat_demo_messagesConfig = getKalamTableConfig(chat_demo_messages)!;
 export type ChatDemoMessages = typeof chat_demo_messages.$inferSelect;
 export type NewChatDemoMessages = typeof chat_demo_messages.$inferInsert;
+
+export const chat_demo_room_members = kTable.shared("chat_demo.room_members", {
+  ...kSystemColumns(["_seq","_deleted"] as const),
+  id: text("id").primaryKey(),
+  user_id: text("user_id").notNull(),
+  room_id: text("room_id").notNull(),
+}, { systemColumns: true });
+export const chat_demo_room_membersConfig = getKalamTableConfig(chat_demo_room_members)!;
+export type ChatDemoRoomMembers = typeof chat_demo_room_members.$inferSelect;
+export type NewChatDemoRoomMembers = typeof chat_demo_room_members.$inferInsert;
+
+export const chat_demo_rooms = kTable.shared("chat_demo.rooms", {
+  ...kSystemColumns(["_seq","_deleted"] as const),
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  created_at: timestamp("created_at", { mode: 'date' }).default(sql``).notNull(),
+}, { systemColumns: true });
+export const chat_demo_roomsConfig = getKalamTableConfig(chat_demo_rooms)!;
+export type ChatDemoRooms = typeof chat_demo_rooms.$inferSelect;
+export type NewChatDemoRooms = typeof chat_demo_rooms.$inferInsert;

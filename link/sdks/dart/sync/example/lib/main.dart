@@ -16,7 +16,7 @@ String _env(String key, String fallback) {
 
 final kalamUrl = _env('KALAMDB_URL', _env('KALAM_URL', 'http://localhost:2900'));
 final chatApiUrl = _env('KALAM_CHAT_URL', 'http://127.0.0.1:8787');
-final username = _env('KALAMDB_USER', _env('KALAM_USER', 'admin'));
+final username = _env('KALAMDB_USER', _env('KALAM_USER', 'root'));
 final password = _env(
   'KALAMDB_PASSWORD',
   _env('KALAM_PASS', 'kalamdb123'),

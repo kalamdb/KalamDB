@@ -6,7 +6,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct AuthErrorResponse {
     /// Error type identifier (e.g., "unauthorized", "forbidden")
-    pub error: String,
+    pub error:   String,
     /// Human-readable error message
     pub message: String,
 }
@@ -16,7 +16,7 @@ impl AuthErrorResponse {
     #[inline]
     pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            error: error.into(),
+            error:   error.into(),
             message: message.into(),
         }
     }
