@@ -103,13 +103,39 @@ impl CreateProcedureStatement {
                 continue;
             }
             if rest_upper.starts_with("AS") {
-                body = Some(parse_procedure_body(rest["AS".len()..].trim_start())?);
+                let after_as = rest["AS".len()..].trim_start();
+                if looks_like_source_file_mapping(after_as) {
+                    return Err(
+                        "CREATE PROCEDURE source-file mapping (AS 'path', 'export') is not \
+                         supported; implement the procedure in the functions project or use \
+                         LANGUAGE with an inline body"
+                            .to_string(),
+                    );
+                }
+                body = Some(parse_procedure_body(after_as)?);
                 break;
             }
             if rest.is_empty() {
                 break;
             }
             return Err(format!("Unexpected procedure clause starting at '{rest}'"));
+        }
+
+        match (&language, &body) {
+            (Some(_), None) => {
+                return Err(
+                    "LANGUAGE requires an AS $$ ... $$ (or string) body; omit LANGUAGE for \
+                     project-backed procedures"
+                        .to_string(),
+                );
+            },
+            (None, Some(_)) => {
+                return Err(
+                    "inline procedure body requires a LANGUAGE clause (JAVASCRIPT or TYPESCRIPT)"
+                        .to_string(),
+                );
+            },
+            (None, None) | (Some(_), Some(_)) => {},
         }
 
         Ok(Self {
@@ -132,6 +158,26 @@ fn strip_row_type_prefix(input: &str) -> &str {
     } else {
         input
     }
+}
+
+fn looks_like_source_file_mapping(input: &str) -> bool {
+    let input = input.trim();
+    if !input.starts_with('\'') {
+        return false;
+    }
+    let bytes = input.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                i += 2;
+                continue;
+            }
+            return input[i + 1..].trim_start().starts_with(',');
+        }
+        i += 1;
+    }
+    false
 }
 
 fn parse_procedure_body(input: &str) -> DdlResult<String> {
@@ -198,5 +244,74 @@ mod tests {
         assert_eq!(stmt.language.as_deref(), Some("SQL"));
         assert!(stmt.body.unwrap().contains("SELECT"));
         assert_eq!(stmt.return_type.unwrap().name, "users");
+    }
+
+    #[test]
+    fn parse_inline_javascript_dollar_quoted_body() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.language.as_deref(), Some("JAVASCRIPT"));
+        assert_eq!(stmt.body.as_deref(), Some(" return \"ok\"; "));
+    }
+
+    #[test]
+    fn parse_inline_typescript_dollar_quoted_body() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.greeting(name TEXT) RETURNS TEXT LANGUAGE TYPESCRIPT AS $$\n    return `Hello ${input.name}`;\n$$",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.language.as_deref(), Some("TYPESCRIPT"));
+        assert!(stmt.body.unwrap().contains("Hello"));
+    }
+
+    #[test]
+    fn parse_bodyless_project_backed_procedure() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.create_order(request api.create_order_request)
+             RETURNS api.create_order_result
+             SECURITY DEFINER",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.routine_id.as_str(), "api.create_order");
+        assert_eq!(stmt.security, RoutineSecurityMode::Definer);
+        assert!(stmt.language.is_none());
+        assert!(stmt.body.is_none());
+    }
+
+    #[test]
+    fn reject_source_file_mapping() {
+        let err = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.create_order(request api.create_order_request)
+             RETURNS api.create_order_result
+             AS 'src/api/orders.ts', 'createOrder'",
+            &NamespaceId::new("app"),
+        )
+        .unwrap_err();
+        assert!(err.contains("source-file mapping"), "{err}");
+    }
+
+    #[test]
+    fn language_requires_body() {
+        let err = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT",
+            &NamespaceId::new("app"),
+        )
+        .unwrap_err();
+        assert!(err.contains("LANGUAGE requires"), "{err}");
+    }
+
+    #[test]
+    fn body_requires_language() {
+        let err = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.health() RETURNS TEXT AS $$ return 'ok'; $$",
+            &NamespaceId::new("app"),
+        )
+        .unwrap_err();
+        assert!(err.contains("LANGUAGE"), "{err}");
     }
 }

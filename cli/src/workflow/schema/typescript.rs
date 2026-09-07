@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use kalamdb_functions_host::{emit_typed_functions_host, emit_typescript, TypedRoutine};
 use kalamdb_sql::contracts::{
     ContractField, ContractRoutine, ContractSnapshot, ContractTable, ContractTableKind,
     ContractTypeKind,
@@ -83,14 +84,35 @@ pub fn generate_contracts_source(
          string]: JsonValue };\n\n",
     );
     emit_shared_types(&mut out, snapshot, names, "export ");
-    out.push_str(
-        "export function defineProcedure<C extends { input: unknown; output: unknown }>(\n",
-    );
-    out.push_str(
-        "  handler: (ctx: unknown, input: C[\"input\"]) => Promise<C[\"output\"]> | \
-         C[\"output\"],\n",
-    );
-    out.push_str(") {\n  return handler;\n}\n");
+    out.push_str("export type { ProcedureContext } from \"./runtime\";\n");
+    out.push_str("export { defineProcedure } from \"./runtime\";\n");
+    out
+}
+
+pub fn generate_runtime_dts(snapshot: &ContractSnapshot, names: &AssignedNames) -> String {
+    let mut out = String::new();
+    out.push_str(GENERATED_HEADER);
+    out.push_str("\n\n");
+    out.push_str(&emit_typescript());
+    let typed: Vec<TypedRoutine<'_>> = snapshot
+        .routines
+        .values()
+        .map(|routine| TypedRoutine {
+            schema:      routine.schema.as_str(),
+            name:        routine.name.as_str(),
+            type_ident:  names.routine_ident(routine.routine_id.as_str()),
+            param_count: routine.parameters.len(),
+        })
+        .collect();
+    out.push_str(&emit_typed_functions_host(&typed));
+    out
+}
+
+pub fn generate_runtime_js() -> String {
+    let mut out = String::new();
+    out.push_str(GENERATED_HEADER);
+    out.push('\n');
+    out.push_str("export function defineProcedure(handler) {\n  return handler;\n}\n");
     out
 }
 
@@ -281,13 +303,16 @@ fn write_procedure_artifacts(
     let ts_routines: Vec<&ContractRoutine> = snapshot
         .routines
         .values()
-        .filter(|routine| is_typescript_routine(routine))
+        .filter(|routine| is_project_backed_routine(routine))
         .collect();
+
+    let generated_dir = project_root.join(FUNCTIONS_DIR).join(".kalam").join("generated");
+    write_text(&generated_dir.join("runtime.d.ts"), &generate_runtime_dts(snapshot, names))?;
+    write_text(&generated_dir.join("runtime.ts"), &generate_runtime_js())?;
     if ts_routines.is_empty() && snapshot.routines.is_empty() {
         return Ok(());
     }
 
-    let generated_dir = project_root.join(FUNCTIONS_DIR).join(".kalam").join("generated");
     write_text(
         &generated_dir.join("contracts.ts"),
         &generate_contracts_source(snapshot, hash, names),
@@ -297,7 +322,10 @@ fn write_procedure_artifacts(
         &generate_registry_source(snapshot, hash, &ts_routines, names)?,
     )?;
 
-    for routine in ts_routines {
+    for routine in snapshot.routines.values() {
+        write_inline_shim(&generated_dir, routine)?;
+    }
+    for routine in &ts_routines {
         scaffold_procedure(project_root, routine, names)?;
     }
     Ok(())
@@ -338,6 +366,19 @@ fn generate_registry_source(
     Ok(out)
 }
 
+fn write_inline_shim(generated_dir: &Path, routine: &ContractRoutine) -> Result<()> {
+    let Some(body) = routine.body.as_deref() else {
+        return Ok(());
+    };
+    let ident = format!("{}_{}", routine.schema, routine.name);
+    let source = format!(
+        "{GENERATED_HEADER}\nimport type {{ ProcedureContext }} from \"../runtime\";\n\nexport \
+         async function {ident}(ctx: ProcedureContext, input: unknown): Promise<unknown> \
+         {{\n{body}\n}}\n"
+    );
+    write_text(&generated_dir.join("inline").join(format!("{ident}.ts")), &source)
+}
+
 fn scaffold_procedure(
     project_root: &Path,
     routine: &ContractRoutine,
@@ -375,6 +416,10 @@ fn procedure_impl_path(project_root: &Path, routine: &ContractRoutine) -> PathBu
         .join(format!("{}.ts", routine.name))
 }
 
+fn is_project_backed_routine(routine: &ContractRoutine) -> bool {
+    routine.body.is_none() && is_typescript_routine(routine)
+}
+
 fn is_typescript_routine(routine: &ContractRoutine) -> bool {
     match routine.language.as_deref() {
         None => true,
@@ -386,11 +431,7 @@ fn is_typescript_routine(routine: &ContractRoutine) -> bool {
 }
 
 fn wire_table_name(table: &ContractTable) -> String {
-    if table.schema.eq_ignore_ascii_case("public") {
-        table.name.clone()
-    } else {
-        table.table_id.clone()
-    }
+    table.table_id.clone()
 }
 
 fn write_text(path: &Path, contents: &str) -> Result<()> {
@@ -465,7 +506,6 @@ CREATE TABLE chat.users (
   status chat.status NOT NULL
 ) ROW TYPE chat.user;
 CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL)
-RETURNS chat.user
-LANGUAGE TS;
+RETURNS chat.user;
 "#;
 }

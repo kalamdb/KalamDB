@@ -162,8 +162,23 @@ pub enum KalamDbError {
     #[error("Not implemented: {feature} - {message}")]
     NotImplemented { feature: String, message: String },
 
+    #[error("[{code}] {message}")]
+    Function {
+        code:    kalamdb_functions::FunctionErrorCode,
+        message: String,
+    },
+
     #[error("{0}")]
     Other(String),
+}
+
+impl From<kalamdb_functions::FunctionsError> for KalamDbError {
+    fn from(error: kalamdb_functions::FunctionsError) -> Self {
+        KalamDbError::Function {
+            code:    error.code(),
+            message: error.to_string(),
+        }
+    }
 }
 
 // Convert kalamdb_live::LiveError to KalamDbError
@@ -630,6 +645,7 @@ impl KalamDbError {
             | KalamDbError::IdempotentConflict(message)
             | KalamDbError::ExecutionError(message)
             | KalamDbError::Other(message) => Cow::Borrowed(message),
+            KalamDbError::Function { message, .. } => Cow::Borrowed(message),
             KalamDbError::IoMessage { message, .. }
             | KalamDbError::ParameterBindingError { message } => Cow::Borrowed(message),
             KalamDbError::SchemaVersionNotFound { table, version } => {
@@ -641,6 +657,13 @@ impl KalamDbError {
 
     pub fn statement_failure_message(&self, statement_index: usize) -> String {
         format!("Statement {statement_index} failed: {}", self.user_message())
+    }
+
+    pub fn function_error_code(&self) -> Option<kalamdb_functions::FunctionErrorCode> {
+        match self {
+            KalamDbError::Function { code, .. } => Some(*code),
+            _ => None,
+        }
     }
 
     /// Create a table not found error
@@ -838,5 +861,16 @@ mod tests {
             err.statement_failure_message(2),
             "Statement 2 failed: Subscription query supports only SELECT ... FROM ... [WHERE ...].",
         );
+    }
+
+    #[test]
+    fn function_not_implemented_carries_typed_code() {
+        let err: KalamDbError =
+            kalamdb_functions::FunctionsError::NotImplemented("api.create_order".into()).into();
+        assert_eq!(
+            err.function_error_code(),
+            Some(kalamdb_functions::FunctionErrorCode::ProcedureNotImplemented)
+        );
+        assert!(err.user_message().contains("api.create_order"));
     }
 }

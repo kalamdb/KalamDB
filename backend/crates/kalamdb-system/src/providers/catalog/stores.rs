@@ -275,6 +275,10 @@ impl CatalogStores {
         get_model(&self.function_modules, module_id)
     }
 
+    pub fn list_function_modules(&self) -> Result<Vec<CatalogFunctionModule>, SystemError> {
+        list_models(&self.function_modules)
+    }
+
     /// Stage artifact + revision rows, then CAS the module active pointer.
     ///
     /// Artifact/revision writes happen before the pointer swap so an interruption

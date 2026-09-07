@@ -69,7 +69,7 @@ pub struct CatalogFunctionRevision {
         nullable = false,
         primary_key = false,
         default = "None",
-        comment = "typescript | wasm"
+        comment = "typescript"
     )]
     pub runtime:       FunctionRuntime,
     #[column(

@@ -267,11 +267,15 @@ async fn handle_functions(cli: &Cli, args: &FunctionsArgs) -> Result<()> {
     match &args.command {
         FunctionsCommand::Build => workflow::functions::build_functions(&ctx).await,
         FunctionsCommand::Status => workflow::functions::show_function_status(&ctx).await,
+        FunctionsCommand::Revisions => workflow::functions::show_function_revisions(&ctx).await,
         FunctionsCommand::Rollback(rollback) => {
-            workflow::functions::rollback_function(&ctx, &rollback.revision)
+            workflow::functions::rollback_function(&ctx, &rollback.revision).await
         },
         FunctionsCommand::Logs(logs) => {
             workflow::functions::show_function_logs(&ctx, logs.procedure.as_deref()).await
+        },
+        FunctionsCommand::Override(override_args) => {
+            workflow::functions::override_function(&ctx, &override_args.procedure)
         },
     }
 }

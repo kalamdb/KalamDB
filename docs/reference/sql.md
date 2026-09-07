@@ -361,7 +361,7 @@ CREATE PROCEDURE app.get_user(user_id TEXT NOT NULL)
 RETURNS ROW TYPE app.users
 LANGUAGE JAVASCRIPT
 AS $$
-  return ctx.db.sql("SELECT * FROM app.users WHERE id = '" + input + "'");
+  return ctx.db.sql("SELECT * FROM app.users WHERE id = $1", [input]);
 $$;
 ```
 
@@ -450,11 +450,11 @@ CREATE [OR REPLACE] PROCEDURE [<schema>.]<name> (
   <arg> <type> [NOT NULL] [NONEMPTY] [, ...]
 )
 [RETURNS [ROW TYPE] <type>]
-LANGUAGE <JAVASCRIPT|JS|TYPESCRIPT|TS>
+[LANGUAGE <JAVASCRIPT|JS|TYPESCRIPT|TS>]
 [SECURITY INVOKER | SECURITY DEFINER]
-AS $$
+[AS $$
   <javascript_body>
-$$;
+$$];
 ```
 
 Rules:
@@ -466,11 +466,15 @@ Rules:
    `CURRENT_USER` use that principal.
 5. `SECURITY DEFINER` runs as the procedure owner for that frame. The original
    actor is preserved for audit. Table privileges and RLS use the owner.
-6. `LANGUAGE JAVASCRIPT`, `JS`, `TYPESCRIPT`, and `TS` all compile to the same
-   V8 runtime. Dollar-quoted (`$$ ... $$`) or string-literal bodies are accepted.
+6. `LANGUAGE` is required only when a body is present. Project-backed
+   procedures omit `LANGUAGE` and `AS`. `LANGUAGE JAVASCRIPT`, `JS`,
+   `TYPESCRIPT`, and `TS` all compile to the same V8 runtime. Dollar-quoted
+   (`$$ ... $$`) or string-literal bodies are accepted. Inline TypeScript is
+   stored and is not executed until compiled JavaScript exists.
 7. `LANGUAGE SQL` catalogs the routine but `CALL` is not supported.
 8. `CREATE OR REPLACE` replaces an existing procedure. Without `OR REPLACE`, a
    duplicate name fails.
+9. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
 
 The body is wrapped as `(ctx, input) => { ... }` unless it already defines
 `function kalamInvoke(name, args)`. With one argument, `input` is that value.
@@ -481,12 +485,11 @@ Host objects injected into `ctx`:
 | Host | Purpose |
 | --- | --- |
 | `ctx.source.kind` | Always `"call"` for SQL, REST, and PGWire invocation. Clients cannot supply this. |
-| `ctx.db.sql(sql)` | Run nested SQL on the same request transaction. |
+| `ctx.db.query(sql, params?)` / `ctx.db.execute(sql, params?)` | Nested SQL on the same request transaction. `query` returns rows; `execute` returns a result. `params` is an optional array bound as `$1`..`$n`. |
 | `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `schema.name` or unqualified. |
 | `ctx.topics.publish(topic, payload)` | Stage a typed topic publish. Commit flushes it; rollback drops it. |
-| `ctx.http.request.header(name)` | Read a request header. Only set on HTTP-root invocations; SQL `CALL` returns null. |
-| `ctx.http.status(code)` | Set the HTTP status. HTTP-root only; nested procedures cannot mutate `ctx.http`. |
-| `ctx.http.header(name, value)` | Set a response header. HTTP-root only. |
+| `ctx.http.request.method/path/headers.get/query.get` | HTTP-root only. `Authorization`, `Proxy-Authorization`, and `Cookie` are not readable. SQL/`CALL` and topic origins set `ctx.http` to null. |
+| `ctx.http.response.status/header/contentType` | HTTP-root only; nested procedures cannot mutate the response. `Connection`, `Transfer-Encoding`, `Content-Length`, and `Host` are rejected. |
 
 Examples:
 
@@ -513,7 +516,7 @@ CREATE OR REPLACE PROCEDURE app.place_order(p_id INT)
 LANGUAGE JAVASCRIPT
 SECURITY DEFINER
 AS $$
-  ctx.db.sql("INSERT INTO app.orders (id, status) VALUES (" + input + ", 'ok')");
+  ctx.db.execute("INSERT INTO app.orders (id, status) VALUES ($1, 'ok')", [input]);
   ctx.topics.publish('app.events', { id: input, status: 'ok' });
   return { id: input, status: 'ok' };
 $$;
@@ -533,8 +536,8 @@ whether a principal may enter the procedure. Nested `ctx.db.sql` still uses the
 effective principal's table privileges and RLS.
 
 ```sql
-GRANT EXECUTE ON PROCEDURE [<schema>.]<name> TO <PUBLIC|user|service|<role>>;
-REVOKE EXECUTE ON PROCEDURE [<schema>.]<name> FROM <PUBLIC|user|service|<role>>;
+GRANT EXECUTE ON PROCEDURE [<schema>.]<name> TO <PUBLIC|user|service|<role>|anonymous>;
+REVOKE EXECUTE ON PROCEDURE [<schema>.]<name> FROM <PUBLIC|user|service|<role>|anonymous>;
 ```
 
 Rules:
@@ -544,7 +547,11 @@ Rules:
    administer.
 3. `TO user` allows end-user sessions. `TO service` allows service accounts.
    `TO PUBLIC` allows every authenticated role except anonymous.
-4. Anonymous sessions cannot execute procedures.
+4. Anonymous sessions cannot execute procedures unless `GRANT EXECUTE ... TO anonymous`
+   is explicit. `PUBLIC` does not include anonymous. REST
+   `POST /v1/functions/{schema}/{procedure}` uses a named JSON object, a
+   positional JSON array, or empty; the success body is the procedure return
+   value (not `{status,result}`).
 5. A user can `CALL` a `SECURITY DEFINER` API without holding `INSERT` on the
    underlying table, as long as they have `EXECUTE` and the owner does.
 

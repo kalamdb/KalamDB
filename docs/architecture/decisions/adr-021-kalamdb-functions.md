@@ -28,16 +28,29 @@ Activation (implemented in Functions Task 6, recorded here so Wave 1 does not in
 1. Local generate compiles SQL to a `ContractSnapshot` without a running server.
 2. `kalam deploy` uploads hashed artifacts to filestore.
 3. Activation points `system.function_revisions` at an immutable artifact id.
-4. Runtime loads the active revision; nested in-process calls pass Arrow values, not bytes.
+4. Runtime loads the active revision. Nested in-process calls pass
+   `bytes::Bytes` FlatBuffer payloads (`ObjectKind::Function`) produced by
+   `kalamdb-serialization`, not durable `encode_object` and not JSON at the
+   isolate hop. HTTP JSON is encoded once at the REST edge.
+
+## Schema-first runtime (V1.1)
+
+- One project module (`backend` by default); `module_id` is not `routine_id`.
+- Production `ABI_VERSION = 2` (async `ctx.db.query` / `execute`). V8 is the
+  only function runtime; Wasmtime is not in the workspace.
+- In-flight roots pin `Arc<ActiveFunctionSet>`; nested calls stay on that pin.
+- Durable catalog rows still use Arrow/SQL codecs in `kalamdb-serialization`.
 
 `UNION` / `INTERFACE` stay reserved errors in V1. Schedules / extra runtimes are out of 0.7.
 
 ## Runtime spike (Task 5 / Checkpoint B)
 
-V1 executes **TypeScript bundled to JavaScript** in a sandboxed isolate. WASM is a reserved `FunctionRuntime` and is not loaded.
+V1 executes **TypeScript bundled to JavaScript** in a sandboxed isolate.
 
-- Crate: workspace-pinned [`v8`](https://crates.io/crates/v8) (denoland rusty_v8) **150.3.0**; Cargo.lock resolved **150.4.0**.
-- ABI: `ABI_VERSION = 1`. Host values cross as Arrow/`ScalarValue` (scalar, STRUCT, List, JSONB) without JSON stringify.
+- Crate: workspace-pinned [`v8`](https://crates.io/crates/v8) (denoland rusty_v8) **152.2.0**.
+- ABI: `ABI_VERSION = 2`. Host values cross as a FlatBuffer transfer buffer
+  (one encode, V8 `JSON.parse` of the decoded payload) with Arrow/`ScalarValue`
+  as the typed model.
 - Artifacts: `{storage}/functions/artifacts/{artifact_id}/module.js` (SHA-256 content address). Activation CAS-swaps `system.function_modules.active_revision_id` after writing artifact + revision rows. Interruption before the pointer swap leaves the previous revision active.
 - Spike timings (dev profile, `echo` fixture, 2026-09-05): **cold_start = 0.0012s**, **warm_invoke = 0.0053s**.
 - Limits: timeout watchdog, cancellation token, near-heap-limit callback mapped to `MemoryLimit`.

@@ -208,6 +208,20 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: None,
     },
     SystemTableMetadata {
+        table:              SystemTable::ActiveFunctionRuns,
+        sql_name:           "active_function_runs",
+        aliases:            &["active_function_runs", "system_active_function_runs"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table:              SystemTable::FunctionErrors,
+        sql_name:           "function_errors",
+        aliases:            &["function_errors", "system_function_errors"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
         table:              SystemTable::Transactions,
         sql_name:           "transactions",
         aliases:            &["transactions"],
@@ -360,6 +374,10 @@ pub enum SystemTable {
     Live,
     /// system.sessions - Active connection sessions (computed on-demand)
     Sessions,
+    /// system.active_function_runs - In-memory root function invocations
+    ActiveFunctionRuns,
+    /// system.function_errors - Recent structured function errors (in-memory)
+    FunctionErrors,
     /// system.transactions - Active explicit transactions across all origins (computed on-demand)
     Transactions,
     /// system.settings - Server configuration settings (computed on-demand)
@@ -465,6 +483,8 @@ impl SystemTable {
             SystemTable::Stats,
             SystemTable::Live,
             SystemTable::Sessions,
+            SystemTable::ActiveFunctionRuns,
+            SystemTable::FunctionErrors,
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
@@ -510,6 +530,8 @@ impl SystemTable {
             SystemTable::Stats,
             SystemTable::Live,
             SystemTable::Sessions,
+            SystemTable::ActiveFunctionRuns,
+            SystemTable::FunctionErrors,
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
@@ -596,6 +618,8 @@ impl SystemTable {
             SystemTable::Stats
             | SystemTable::Live
             | SystemTable::Sessions
+            | SystemTable::ActiveFunctionRuns
+            | SystemTable::FunctionErrors
             | SystemTable::Transactions
             | SystemTable::Settings
             | SystemTable::ServerLogs
@@ -838,6 +862,14 @@ mod tests {
         // Views
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
         assert_eq!(SystemTable::from_name("sessions").unwrap(), SystemTable::Sessions);
+        assert_eq!(
+            SystemTable::from_name("active_function_runs").unwrap(),
+            SystemTable::ActiveFunctionRuns
+        );
+        assert_eq!(
+            SystemTable::from_name("system.function_errors").unwrap(),
+            SystemTable::FunctionErrors
+        );
         assert_eq!(SystemTable::from_name("system.cluster").unwrap(), SystemTable::Cluster);
         assert_eq!(
             SystemTable::from_name("system.cluster_groups").unwrap(),
@@ -905,7 +937,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 36); // 23 tables + 13 views
+        assert_eq!(all.len(), 38); // 23 tables + 15 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -945,7 +977,7 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 13);
+        assert_eq!(views.len(), 15);
         assert!(views.iter().all(|v| v.is_view()));
         assert!(views.contains(&SystemTable::Datatypes));
     }

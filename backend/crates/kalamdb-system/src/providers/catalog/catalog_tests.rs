@@ -102,6 +102,8 @@ fn create_message_routine() -> CatalogRoutine {
         return_not_null:  true,
         comment:          None,
         return_data_type: None,
+        inline_source_hash: None,
+        inline_artifact_id: None,
     }
 }
 
@@ -237,6 +239,49 @@ fn routine_owner_security_and_grants_are_queryable() {
 }
 
 #[test]
+fn anonymous_grant_and_inline_artifact_fields_round_trip() {
+    let stores = stores();
+    stores.upsert_type(implicit_row_type()).unwrap();
+    let mut routine = create_message_routine();
+    routine.inline_source_hash = Some("abc123".to_string());
+    routine.inline_artifact_id = Some(ArtifactId::new("deadbeef"));
+    stores.upsert_routine(routine.clone()).unwrap();
+
+    let grant = CatalogRoutineGrant {
+        grant_id:   RoutineGrantId::new(&routine.routine_id, &RoutineGrantee::Anonymous),
+        routine_id: routine.routine_id.clone(),
+        grantee:    RoutineGrantee::Anonymous,
+    };
+    stores.upsert_grant(grant.clone()).unwrap();
+
+    let loaded = stores.get_routine(&routine.routine_id).unwrap().unwrap();
+    assert_eq!(loaded.inline_source_hash.as_deref(), Some("abc123"));
+    assert_eq!(loaded.inline_artifact_id, Some(ArtifactId::new("deadbeef")));
+    assert_eq!(stores.list_grants(&loaded.routine_id).unwrap(), vec![grant]);
+}
+
+#[test]
+fn inline_javascript_hash_and_artifact_persist() {
+    let stores = stores();
+    stores.upsert_type(implicit_row_type()).unwrap();
+    let mut routine = create_message_routine();
+    routine.language = Some("JAVASCRIPT".to_string());
+    routine.body = Some(" return \"ok\"; ".to_string());
+    routine.inline_source_hash =
+        Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string());
+    routine.inline_artifact_id = Some(ArtifactId::new("compiled-js"));
+    stores.upsert_routine(routine.clone()).unwrap();
+    let loaded = stores.get_routine(&routine.routine_id).unwrap().unwrap();
+    assert_eq!(loaded.language.as_deref(), Some("JAVASCRIPT"));
+    assert_eq!(loaded.body.as_deref(), Some(" return \"ok\"; "));
+    assert_eq!(
+        loaded.inline_source_hash.as_deref(),
+        Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    );
+    assert_eq!(loaded.inline_artifact_id, Some(ArtifactId::new("compiled-js")));
+}
+
+#[test]
 fn drop_type_is_blocked_by_alias_nested_field_and_routine() {
     let stores = stores();
     stores.upsert_type(address_type()).unwrap();
@@ -369,4 +414,27 @@ fn function_revision_cas_and_interruption_leave_old_active() {
     assert_eq!(outcome, ActivateFunctionOutcome::Activated);
     let loaded = stores.get_function_module(&module_v2.module_id).unwrap().unwrap();
     assert_eq!(loaded.active_revision_id, module_v2.active_revision_id);
+}
+
+#[test]
+fn activating_project_revision_does_not_insert_one_module_per_routine() {
+    let stores = stores();
+    stores.upsert_type(implicit_row_type()).unwrap();
+    stores.upsert_routine(create_message_routine()).unwrap();
+    let mut other = create_message_routine();
+    other.routine_id = RoutineId::from_parts(Some(&chat_ns()), "other");
+    other.name = "other".to_string();
+    stores.upsert_routine(other).unwrap();
+
+    let (module, revision, artifact) = function_rows("mod");
+    stores
+        .activate_function_revision(module, revision, artifact, None)
+        .unwrap();
+
+    assert_eq!(stores.list_routines().unwrap().len(), 2);
+    assert_eq!(stores.list_function_modules().unwrap().len(), 1);
+    assert_eq!(
+        stores.list_function_modules().unwrap()[0].module_id.as_str(),
+        "backend"
+    );
 }

@@ -19,6 +19,8 @@ pub enum ObjectKind {
     Protocol = 3,
     /// Stream log records.
     Stream = 4,
+    /// In-memory function JS-boundary values (not a durable catalog object).
+    Function = 5,
 }
 
 impl ObjectKind {
@@ -28,6 +30,7 @@ impl ObjectKind {
             2 => Ok(Self::Row),
             3 => Ok(Self::Protocol),
             4 => Ok(Self::Stream),
+            5 => Ok(Self::Function),
             other => Err(SerializationError::Decode(format!("unknown object kind {other}"))),
         }
     }
@@ -81,9 +84,21 @@ pub fn has_object_magic(bytes: &[u8]) -> bool {
     bytes.len() >= MAGIC.len() && bytes[..MAGIC.len()] == MAGIC
 }
 
+/// Row payloads include a per-column offset table after `field_count`.
+pub(crate) const FLAG_COLUMN_OFFSETS: u16 = 1 << 0;
+
 pub(crate) fn encode_envelope(
     object_kind: ObjectKind,
     schema_version: u16,
+    payload: &[u8],
+) -> Result<EncodedObject> {
+    encode_envelope_with_flags(object_kind, schema_version, 0, payload)
+}
+
+pub(crate) fn encode_envelope_with_flags(
+    object_kind: ObjectKind,
+    schema_version: u16,
+    flags: u16,
     payload: &[u8],
 ) -> Result<EncodedObject> {
     let payload_len = u32::try_from(payload.len())
@@ -93,7 +108,7 @@ pub(crate) fn encode_envelope(
     bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
     bytes.push(object_kind as u8);
     bytes.extend_from_slice(&schema_version.to_le_bytes());
-    bytes.extend_from_slice(&0u16.to_le_bytes());
+    bytes.extend_from_slice(&flags.to_le_bytes());
     bytes.extend_from_slice(&payload_len.to_le_bytes());
     bytes.extend_from_slice(payload);
     Ok(EncodedObject::from_bytes(bytes))

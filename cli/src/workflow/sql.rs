@@ -138,8 +138,8 @@ mod tests {
         workflow::{
             auth::resolve_workflow_auth_provider,
             project::config::{
-                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-                ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+                MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
             },
         },
         FileCredentialStore,
@@ -202,6 +202,7 @@ mod tests {
                 migrations: MigrationsSection::default(),
                 dev:        DevSection::default(),
                 logging:    LoggingSection::default(),
+                functions:  FunctionsSection::default(),
             },
             cli_config:         CLIConfiguration::default(),
             use_color:          false,

@@ -57,6 +57,9 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "datatypes",
         "tables",
         "columns",
+        "sessions",
+        "active_function_runs",
+        "function_errors",
     ];
 
     let mut tested_count = 0;

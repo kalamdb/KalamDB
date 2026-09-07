@@ -19,10 +19,12 @@ use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_views::{
+    active_function_runs::{ActiveFunctionRunsTableProvider, ActiveFunctionRunsView},
     cluster::create_cluster_provider,
     cluster_groups::create_cluster_groups_provider,
     datatypes::{DatatypesTableProvider, DatatypesView},
     describe::DescribeView,
+    function_errors::{FunctionErrorsTableProvider, FunctionErrorsView},
     live::{LiveTableProvider, LiveView},
     server_logs::create_server_logs_provider,
     sessions::{SessionsTableProvider, SessionsView},
@@ -41,19 +43,23 @@ use crate::schema_registry::SchemaRegistry;
 /// Configuration for view initialization
 pub struct ViewConfig {
     /// Server configuration (for settings view)
-    pub config:            Arc<ServerConfig>,
+    pub config:                    Arc<ServerConfig>,
     /// Logs path (for server_logs view)
-    pub logs_path:         PathBuf,
+    pub logs_path:                 PathBuf,
     /// Command executor (for cluster views, set after Raft init)
-    pub executor:          RwLock<Option<Arc<dyn CommandExecutor>>>,
+    pub executor:                  RwLock<Option<Arc<dyn CommandExecutor>>>,
     /// Pre-created StatsView for callback wiring
-    pub stats_view:        Arc<StatsView>,
+    pub stats_view:                Arc<StatsView>,
     /// Pre-created system.live view for callback wiring.
-    pub live_view:         Arc<LiveView>,
+    pub live_view:                 Arc<LiveView>,
     /// Pre-created system.sessions view for callback wiring.
-    pub sessions_view:     Arc<SessionsView>,
+    pub sessions_view:             Arc<SessionsView>,
     /// Pre-created system.transactions view for callback wiring.
-    pub transactions_view: Arc<TransactionsView>,
+    pub transactions_view:         Arc<TransactionsView>,
+    /// Pre-created system.active_function_runs view for callback wiring.
+    pub active_function_runs_view: Arc<ActiveFunctionRunsView>,
+    /// Pre-created system.function_errors view for callback wiring.
+    pub function_errors_view:      Arc<FunctionErrorsView>,
 }
 
 impl std::fmt::Debug for ViewConfig {
@@ -100,6 +106,8 @@ impl SystemSchemaProvider {
                 live_view: Arc::new(LiveView::new(SystemTable::Live)),
                 sessions_view: Arc::new(SessionsView::new()),
                 transactions_view: Arc::new(TransactionsView::new()),
+                active_function_runs_view: Arc::new(ActiveFunctionRunsView::new()),
+                function_errors_view: Arc::new(FunctionErrorsView::new()),
             }),
         }
     }
@@ -133,6 +141,14 @@ impl SystemSchemaProvider {
         Arc::clone(&self.view_config.transactions_view)
     }
 
+    pub fn active_function_runs_view(&self) -> Arc<ActiveFunctionRunsView> {
+        Arc::clone(&self.view_config.active_function_runs_view)
+    }
+
+    pub fn function_errors_view(&self) -> Arc<FunctionErrorsView> {
+        Arc::clone(&self.view_config.function_errors_view)
+    }
+
     /// Get or create a view provider, storing it in SchemaRegistry's CachedTableData
     fn get_or_create_view_provider(
         &self,
@@ -162,6 +178,18 @@ impl SystemSchemaProvider {
             SystemTable::Sessions => {
                 let provider = Arc::new(SessionsTableProvider::new(Arc::clone(
                     &self.view_config.sessions_view,
+                )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::ActiveFunctionRuns => {
+                let provider = Arc::new(ActiveFunctionRunsTableProvider::new(Arc::clone(
+                    &self.view_config.active_function_runs_view,
+                )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::FunctionErrors => {
+                let provider = Arc::new(FunctionErrorsTableProvider::new(Arc::clone(
+                    &self.view_config.function_errors_view,
                 )));
                 provider as Arc<dyn TableProvider>
             },

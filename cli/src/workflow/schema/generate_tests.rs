@@ -12,7 +12,7 @@ use crate::workflow::{
         gen::generate_languages,
         naming::{assign_names, NamingOptions},
         rust::generate_rust_source,
-        typescript::{generate_client_source, generate_contracts_source},
+        typescript::{generate_client_source, generate_contracts_source, generate_runtime_dts},
         LanguageTarget,
     },
     test_support::minimal_sql_project_config,
@@ -30,8 +30,7 @@ CREATE TABLE chat.users (
   status chat.status NOT NULL
 ) ROW TYPE chat.user;
 CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL)
-RETURNS chat.user
-LANGUAGE TS;
+RETURNS chat.user;
 "#;
 
 fn golden_snapshot() -> kalamdb_sql::contracts::ContractSnapshot {
@@ -59,6 +58,23 @@ fn all_targets_embed_the_same_contract_hash() {
     assert!(dart.contains(&marker));
     assert!(rust.contains(&marker));
     assert_eq!(hash.len(), 64);
+}
+
+#[test]
+fn runtime_dts_nested_typed_call() {
+    let snapshot = golden_snapshot();
+    let names = assign_names(
+        &snapshot,
+        NamingOptions {
+            unqualified_names: false,
+        },
+    )
+    .unwrap();
+    let dts = generate_runtime_dts(&snapshot, &names);
+    assert!(dts.contains("createMessage(input: ChatCreateMessage[\"input\"])"), "{dts}");
+    assert!(dts.contains("chat:"), "{dts}");
+    assert!(dts.contains("functions: FunctionsHost"), "{dts}");
+    assert!(dts.contains("import type { ChatCreateMessage } from \"./contracts\""), "{dts}");
 }
 
 #[test]
@@ -158,9 +174,55 @@ fn scaffold_writes_once_and_refuses_missing_export() {
     assert!(registry.contains("from \"../../src/chat/create_message\""));
     assert!(registry.contains("\"chat.create_message\""));
 
+    let runtime = fs::read_to_string(root.join("functions/.kalam/generated/runtime.d.ts")).unwrap();
+    assert!(runtime.contains("export interface ProcedureContext"));
+    assert!(runtime.contains("defineProcedure"));
+    assert!(runtime.contains("createMessage(input: ChatCreateMessage[\"input\"])"));
+    assert!(runtime.contains("chat:"));
+    let contracts =
+        fs::read_to_string(root.join("functions/.kalam/generated/contracts.ts")).unwrap();
+    assert!(contracts.contains("from \"./runtime\""));
+
     fs::write(&impl_path, "export const broken = 1;\n").unwrap();
     let err = generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap_err();
     assert!(err.to_string().contains("export default"), "{err}");
+}
+
+#[test]
+fn inline_routines_skip_src_scaffold_and_get_typecheck_shim() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::write(
+        root.join("schema.sql"),
+        r#"
+CREATE SCHEMA api;
+CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"; $$;
+"#,
+    )
+    .unwrap();
+    let mut config = minimal_sql_project_config();
+    config.schema = SchemaSection {
+        mode:      SchemaMode::Sql,
+        path:      Some("schema.sql".into()),
+        watch:     false,
+        languages: vec!["typescript".into()],
+        targets:   [(
+            "typescript".into(),
+            SchemaTarget {
+                output:            "src/generated/kalam.ts".into(),
+                unqualified_names: false,
+            },
+        )]
+        .into(),
+    };
+    generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap();
+    assert!(!root.join("functions/src/api/health.ts").exists());
+    let shim =
+        fs::read_to_string(root.join("functions/.kalam/generated/inline/api_health.ts")).unwrap();
+    assert!(shim.contains("ProcedureContext"));
+    assert!(shim.contains("return \"ok\""));
+    let registry = fs::read_to_string(root.join("functions/.kalam/generated/registry.ts")).unwrap();
+    assert!(!registry.contains("api.health"));
 }
 
 #[test]

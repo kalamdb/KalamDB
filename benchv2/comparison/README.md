@@ -47,9 +47,10 @@ We keep the comparison **honest**:
    - table created **without** `FLUSH_POLICY`
    - `setups/kalamdb/server.toml` sets `flush.check_interval_seconds = 0`
    - drivers never call `STORAGE FLUSH`
-6. KalamDB comparison `server.toml` is **performance-tuned** (larger RocksDB
-   block cache / memtables / DataFusion) — not the tiny low-memory `benchv2`
-   defaults — while still documenting the settings.
+6. KalamDB comparison `server.toml` uses `storage.rocksdb.memory_mode = "server"`
+   so cache/memtables scale from host RAM (cache ≈ RAM/8, hot memtable ≥ 64 MiB).
+   Product default remains `compact` (2 MiB cache / 128 KiB memtables). DataFusion
+   is still raised for the bake-off.
 7. Auth / ACL differences are documented, not hidden:
    - TrailBase create rule checks `room_members`
    - PocketBase create rule checks `room_members`
@@ -130,6 +131,7 @@ Outputs land in `results/*.txt`.
 | Variable | Default |
 |---|---|
 | `KALAMDB_URL` | `http://127.0.0.1:2900` |
+| `KALAMDB_SERVER_BIN` | `./bin/kalamdb-server` (must understand `memory_mode = "server"`) |
 | `TRAILBASE_URL` | `http://127.0.0.1:4000` |
 | `POCKETBASE_URL` | `http://127.0.0.1:8090` |
 | `SURREALDB_URL` | `http://127.0.0.1:8000` |
@@ -164,6 +166,11 @@ CREATE TABLE bench.message (
 ```
 
 The flush scheduler explicitly skips tables with no flush policy (“hot-only”).
+
+`setups/kalamdb/server.toml` sets `storage.rocksdb.memory_mode = "server"` so the
+block cache and hot memtables scale from host RAM. Product default remains
+`compact`. Point `KALAMDB_SERVER_BIN` at a server built from this tree; the
+downloaded `v0.5.5-rc.1` binary does not know the `server` profile.
 
 ## Driver code (what each request looks like)
 
@@ -204,11 +211,9 @@ POST /v1/functions/bench/get_message
 { "id": 1 }
 ```
 
-Procedures run JS on the server and issue nested `ctx.db.sql(...)`. Current CREATE
-PROCEDURE compiles to ABI v1, which has **no nested bind params**, so the host SQL
-interpolates literals (same pattern as the documented JS examples). That is **not**
-equivalent to the parameterized SQL HTTP column, and it is **not** a Surreal `/key`
-equivalent: each call still pays V8 + nested SQL + Raft.
+Procedures run JS on the server and issue nested `ctx.db.sql(sql, params)` with
+`$n` placeholders so the nested statements share the SQL HTTP plan cache. That is
+still **not** a Surreal `/key` equivalent: each call still pays V8 + nested SQL + Raft.
 
 KalamDB SQL and functions share port **2900** and the same `setups/kalamdb` data dir.
 Run them sequentially (as `run-all.sh` does), or set `KALAMDB_PORT` for one of them.

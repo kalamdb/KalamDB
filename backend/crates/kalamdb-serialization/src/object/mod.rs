@@ -4,7 +4,9 @@ mod envelope;
 mod generic;
 mod payload;
 
-pub(crate) use envelope::{decode_envelope, encode_envelope};
+pub(crate) use envelope::{
+    decode_envelope, encode_envelope, encode_envelope_with_flags, FLAG_COLUMN_OFFSETS,
+};
 pub use envelope::{has_object_magic, EncodedObject, ObjectKind};
 pub use generic::{
     decode_object, decode_string_list, encode_object, encode_object_versioned, encode_string_list,

@@ -111,6 +111,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                 .route(
                     "/functions/{schema}/{procedure}",
                     web::post().to(http::functions::invoke_function_v1),
+                )
+                .route(
+                    "/api/functions/modules/{module}/activate",
+                    web::post().to(http::functions_admin::activate_function_module_v1),
+                )
+                .route(
+                    "/api/functions/modules/{module}/rollback",
+                    web::post().to(http::functions_admin::rollback_function_module_v1),
                 ),
         );
 }

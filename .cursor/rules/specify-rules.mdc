@@ -4,11 +4,11 @@ alwaysApply: true
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read `specs/033-unified-backend-pgwire/plan.md`
+shell commands, and other important information, read `specs/034-schema-first-functions/plan.md`
 <!-- SPECKIT END -->
 
 ## Active Technologies
-- Rust 1.94 (workspace edition 2021) for backend crates; `kalamdb-backend` (connection session registry), `kalamdb-postgres-wire` (thin **`pgwire`** adapter — not `datafusion-postgres`), existing `kalamdb-pg` gRPC bridge, `kalamdb-core` `TransactionCoordinator`, `kalamdb-auth` unified login
+- Rust 1.94 (workspace edition 2021) for backend crates; Functions V1.1 in `kalamdb-functions` (V8 152.2, ABI v2 async, V8-only) + `kalamdb-core` orchestration (`ActiveFunctionSet`, `FunctionExecutionRoot`); JS-boundary FlatBuffers in `kalamdb-serialization`
 - Wire txs: **`BackendSessionManager` block API** (same as gRPC `BeginTransaction`/`Commit`); wire SQL data path: **`SqlExecutor`**; HTTP batch txs: **`RequestTransactionBatchGuard`** only
 - Existing stack — `tokio`, `tonic`, `dashmap`, `datafusion` 55.x, `kalamdb-transactions`, `kalamdb-api`, `kalamdb-views`; **`pgwire`** workspace-pinned in `kalamdb-postgres-wire` only
 - No `arrow-pg` in wire MVP — `row_encoder.rs` uses existing `ExecutionResult`/`RecordBatch`; optional encoder spike later
@@ -17,4 +17,5 @@ shell commands, and other important information, read `specs/033-unified-backend
 - Connection sessions expose `origin` in `system.sessions`: `extension_bridge` | `wire_protocol`
 
 ## Recent Changes
+- 034-schema-first-functions: Schema-first Functions V1.1 — one project module, `ActiveFunctionSet`, root runtime lease, shared `runtime.d.ts`, FlatBuffer JS-boundary transfer, V8-only runtime
 - 033-unified-backend-pgwire: Direct `pgwire`; gRPC-style tx control via `BackendSessionManager`; US9 client catalog shims project from `system.*`

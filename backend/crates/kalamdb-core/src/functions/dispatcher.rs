@@ -7,12 +7,12 @@ use kalamdb_commons::{
     models::{ConsumerGroupId, TriggerAttemptId, UserId},
     Role,
 };
-use kalamdb_functions::RoutineValue;
+use kalamdb_functions::{FunctionCallOrigin, RoutineValue};
 use kalamdb_system::CatalogTriggerAttempt;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::{call_types::FunctionCallOrigin, executor::FunctionService};
+use super::executor::FunctionService;
 use crate::{app_context::AppContext, error::KalamDbError, sql::context::ExecutionContext};
 
 const LEASE_MS: i64 = 30_000;

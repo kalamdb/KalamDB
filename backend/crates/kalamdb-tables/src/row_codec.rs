@@ -8,8 +8,8 @@ use kalamdb_commons::{
     schemas::TableDefinition,
 };
 use kalamdb_serialization::{
-    decode_shared_row, decode_user_row, encode_shared_row, encode_user_row,
-    storage_schema_from_table, StorageDataType, StorageField, StorageSchema,
+    decode_shared_row, decode_user_row, decode_user_row_selected, encode_shared_row,
+    encode_user_row, storage_schema_from_table, StorageDataType, StorageField, StorageSchema,
 };
 use kalamdb_store::{EntityCodec, StorageError};
 
@@ -49,6 +49,17 @@ pub struct UserRowCodec {
 impl UserRowCodec {
     pub fn new(schema: Arc<StorageSchema>) -> Self {
         Self { schema }
+    }
+
+    /// Decode only the requested schema ordinals.
+    pub fn decode_selected(
+        &self,
+        key: &UserTableRowId,
+        bytes: &[u8],
+        ordinals: &[usize],
+    ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
+        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.seq, ordinals)
+            .map_err(map_ser)
     }
 }
 

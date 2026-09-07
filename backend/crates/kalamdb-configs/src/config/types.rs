@@ -33,6 +33,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub postgres_wire: PostgresWireSettings,
     #[serde(default)]
+    pub functions: FunctionsSettings,
+    #[serde(default)]
     pub rate_limit: RateLimitSettings,
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
@@ -403,14 +405,23 @@ impl Default for RocksDbCfProfilesSettings {
 
 /// How RocksDB cache and memtables are sized.
 ///
-/// `compact` keeps a tiny resident budget for a few tables and low traffic.
-/// `auto` sizes those budgets from host RAM at database open, still clamped.
+/// `compact` (default) keeps a tiny resident budget for embedded and
+/// low-traffic hosts. The other modes derive cache and write buffers from
+/// host RAM at database open.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RocksDbMemoryMode {
+    /// Tiny cache (2 MB) and hot memtable (128 KB). Product default.
     #[default]
     Compact,
+    /// Modest RAM scaling, still clamped (cache ≤ 256 MB, hot memtable ≤ 64 MB).
     Auto,
+    /// Cache ≈ RAM/32, hot memtable ≈ RAM/256.
+    Balanced,
+    /// Cache ≈ RAM/8, hot memtable ≥ 64 MB. Dedicated servers and bake-offs.
+    Server,
+    /// Cache ≈ RAM/3, hot memtable ≥ 128 MB. Most aggressive.
+    Performance,
 }
 
 impl RocksDbMemoryMode {
@@ -418,6 +429,23 @@ impl RocksDbMemoryMode {
         match self {
             Self::Compact => "compact",
             Self::Auto => "auto",
+            Self::Balanced => "balanced",
+            Self::Server => "server",
+            Self::Performance => "performance",
+        }
+    }
+
+    /// True when cache and memtables are derived from host RAM at open.
+    pub fn scales_from_host_ram(self) -> bool {
+        !matches!(self, Self::Compact)
+    }
+
+    /// `(max_subcompactions, max_file_opening_threads)` for this profile.
+    pub fn rocksdb_io_parallelism(self) -> (u32, i32) {
+        match self {
+            Self::Compact => (1, 2),
+            Self::Auto | Self::Balanced => (2, 8),
+            Self::Server | Self::Performance => (4, 16),
         }
     }
 }
@@ -436,7 +464,8 @@ pub struct RocksDbSettings {
     pub cf_profiles: RocksDbCfProfilesSettings,
 
     /// `compact` (default) uses the configured tiny cache/memtables.
-    /// `auto` replaces cache and write-buffer sizes from host RAM at open.
+    /// `auto`, `balanced`, `server`, and `performance` replace cache and
+    /// write-buffer sizes from host RAM at open.
     #[serde(default)]
     pub memory_mode: RocksDbMemoryMode,
 
@@ -492,14 +521,13 @@ impl Default for RocksDbSettings {
 impl RocksDbSettings {
     /// Apply `memory_mode` using the host's total RAM.
     ///
-    /// `compact` keeps the configured sizes. `auto` derives cache and write
-    /// buffers from `total_memory_bytes`, clamped between the compact floor
-    /// and a modest ceiling.
+    /// `compact` keeps the configured sizes. Other modes derive cache and
+    /// write buffers from `total_memory_bytes`.
     pub fn resolved_for_host_memory(&self, total_memory_bytes: Option<u64>) -> Self {
-        match self.memory_mode {
-            RocksDbMemoryMode::Compact => self.clone(),
-            RocksDbMemoryMode::Auto => self.scaled_for_ram(total_memory_bytes.unwrap_or(0)),
+        if !self.memory_mode.scales_from_host_ram() {
+            return self.clone();
         }
+        self.scaled_for_ram(total_memory_bytes.unwrap_or(0))
     }
 
     fn scaled_for_ram(&self, total_memory_bytes: u64) -> Self {
@@ -511,18 +539,104 @@ impl RocksDbSettings {
         const KIB: usize = 1024;
         const MIB: usize = 1024 * 1024;
         let ram = usize::try_from(total_memory_bytes).unwrap_or(usize::MAX);
-        let hot_data = (ram / 512).clamp(128 * KIB, 64 * MIB);
 
-        settings.block_cache_size = (ram / 64).clamp(2 * MIB, 256 * MIB);
-        settings.cf_profiles.hot_data.write_buffer_size = hot_data;
-        settings.cf_profiles.hot_index.write_buffer_size = (hot_data / 2).clamp(64 * KIB, 32 * MIB);
-        settings.cf_profiles.raft.write_buffer_size = (hot_data / 2).clamp(256 * KIB, 32 * MIB);
-        settings.cf_profiles.system_meta.write_buffer_size =
-            (hot_data / 16).clamp(32 * KIB, 8 * MIB);
-        settings.cf_profiles.system_index.write_buffer_size =
-            (hot_data / 16).clamp(32 * KIB, 8 * MIB);
+        match self.memory_mode {
+            RocksDbMemoryMode::Compact => {},
+            RocksDbMemoryMode::Auto => {
+                let hot_data = (ram / 512).clamp(128 * KIB, 64 * MIB);
+                settings.block_cache_size = (ram / 64).clamp(2 * MIB, 256 * MIB);
+                apply_relative_cf_write_buffers(
+                    &mut settings,
+                    hot_data,
+                    64 * KIB,
+                    32 * MIB,
+                    256 * KIB,
+                    32 * MIB,
+                    32 * KIB,
+                    8 * MIB,
+                );
+            },
+            RocksDbMemoryMode::Balanced => {
+                let hot_data = ram / 256;
+                settings.block_cache_size = ram / 32;
+                apply_relative_cf_write_buffers(
+                    &mut settings,
+                    hot_data,
+                    64 * KIB,
+                    usize::MAX,
+                    256 * KIB,
+                    usize::MAX,
+                    32 * KIB,
+                    usize::MAX,
+                );
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_data, 3);
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_index, 3);
+            },
+            RocksDbMemoryMode::Server => {
+                let hot_data = (ram / 128).clamp(64 * MIB, 256 * MIB);
+                settings.block_cache_size = ram / 8;
+                apply_relative_cf_write_buffers(
+                    &mut settings,
+                    hot_data,
+                    32 * MIB,
+                    128 * MIB,
+                    32 * MIB,
+                    128 * MIB,
+                    4 * MIB,
+                    32 * MIB,
+                );
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_data, 4);
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_index, 4);
+                bump_write_buffer_count(&mut settings.cf_profiles.system_meta, 3);
+                bump_write_buffer_count(&mut settings.cf_profiles.system_index, 3);
+                bump_write_buffer_count(&mut settings.cf_profiles.raft, 3);
+            },
+            RocksDbMemoryMode::Performance => {
+                let hot_data = (ram / 64).clamp(128 * MIB, 512 * MIB);
+                settings.block_cache_size = ram / 3;
+                apply_relative_cf_write_buffers(
+                    &mut settings,
+                    hot_data,
+                    64 * MIB,
+                    256 * MIB,
+                    64 * MIB,
+                    256 * MIB,
+                    8 * MIB,
+                    64 * MIB,
+                );
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_data, 4);
+                bump_write_buffer_count(&mut settings.cf_profiles.hot_index, 4);
+                bump_write_buffer_count(&mut settings.cf_profiles.system_meta, 3);
+                bump_write_buffer_count(&mut settings.cf_profiles.system_index, 3);
+                bump_write_buffer_count(&mut settings.cf_profiles.raft, 3);
+            },
+        }
         settings
     }
+}
+
+fn apply_relative_cf_write_buffers(
+    settings: &mut RocksDbSettings,
+    hot_data: usize,
+    hot_index_min: usize,
+    hot_index_max: usize,
+    raft_min: usize,
+    raft_max: usize,
+    system_min: usize,
+    system_max: usize,
+) {
+    settings.cf_profiles.hot_data.write_buffer_size = hot_data;
+    settings.cf_profiles.hot_index.write_buffer_size =
+        (hot_data / 2).clamp(hot_index_min, hot_index_max);
+    settings.cf_profiles.raft.write_buffer_size = (hot_data / 2).clamp(raft_min, raft_max);
+    settings.cf_profiles.system_meta.write_buffer_size =
+        (hot_data / 16).clamp(system_min, system_max);
+    settings.cf_profiles.system_index.write_buffer_size =
+        (hot_data / 16).clamp(system_min, system_max);
+}
+
+fn bump_write_buffer_count(profile: &mut RocksDbCfProfileSettings, min: i32) {
+    profile.max_write_buffers = profile.max_write_buffers.max(min);
 }
 
 #[cfg(test)]
@@ -578,6 +692,70 @@ mod rocksdb_memory_mode_tests {
         let resolved = settings.resolved_for_host_memory(None);
         assert_eq!(resolved.block_cache_size, 2 * 1024 * 1024);
         assert_eq!(resolved.cf_profiles.hot_data.write_buffer_size, 128 * 1024);
+    }
+
+    #[test]
+    fn named_modes_parse_from_toml() {
+        for (raw, expected) in [
+            ("compact", RocksDbMemoryMode::Compact),
+            ("auto", RocksDbMemoryMode::Auto),
+            ("balanced", RocksDbMemoryMode::Balanced),
+            ("server", RocksDbMemoryMode::Server),
+            ("performance", RocksDbMemoryMode::Performance),
+        ] {
+            let parsed: RocksDbSettings =
+                toml::from_str(&format!("memory_mode = \"{raw}\"")).unwrap();
+            assert_eq!(parsed.memory_mode, expected);
+        }
+    }
+
+    #[test]
+    fn balanced_server_and_performance_scale_from_8_gib() {
+        const EIGHT_GIB: u64 = 8 * 1024 * 1024 * 1024;
+        const MIB: usize = 1024 * 1024;
+        let ram = usize::try_from(EIGHT_GIB).unwrap();
+
+        let balanced = RocksDbSettings {
+            memory_mode: RocksDbMemoryMode::Balanced,
+            ..RocksDbSettings::default()
+        }
+        .resolved_for_host_memory(Some(EIGHT_GIB));
+        assert_eq!(balanced.block_cache_size, ram / 32);
+        assert_eq!(balanced.cf_profiles.hot_data.write_buffer_size, ram / 256);
+        assert_eq!(balanced.cf_profiles.hot_data.max_write_buffers, 3);
+
+        let server = RocksDbSettings {
+            memory_mode: RocksDbMemoryMode::Server,
+            ..RocksDbSettings::default()
+        }
+        .resolved_for_host_memory(Some(EIGHT_GIB));
+        assert_eq!(server.block_cache_size, ram / 8);
+        assert_eq!(server.cf_profiles.hot_data.write_buffer_size, 64 * MIB);
+        assert_eq!(server.cf_profiles.hot_data.max_write_buffers, 4);
+        assert_eq!(server.cf_profiles.hot_index.max_write_buffers, 4);
+
+        let performance = RocksDbSettings {
+            memory_mode: RocksDbMemoryMode::Performance,
+            ..RocksDbSettings::default()
+        }
+        .resolved_for_host_memory(Some(EIGHT_GIB));
+        assert_eq!(performance.block_cache_size, ram / 3);
+        assert_eq!(performance.cf_profiles.hot_data.write_buffer_size, 128 * MIB);
+        assert_eq!(performance.cf_profiles.hot_data.max_write_buffers, 4);
+    }
+
+    #[test]
+    fn server_mode_on_24_gib_matches_bakeoff_intent() {
+        const TWENTY_FOUR_GIB: u64 = 24 * 1024 * 1024 * 1024;
+        const MIB: usize = 1024 * 1024;
+        let ram = usize::try_from(TWENTY_FOUR_GIB).unwrap();
+        let server = RocksDbSettings {
+            memory_mode: RocksDbMemoryMode::Server,
+            ..RocksDbSettings::default()
+        }
+        .resolved_for_host_memory(Some(TWENTY_FOUR_GIB));
+        assert_eq!(server.block_cache_size, ram / 8);
+        assert_eq!(server.cf_profiles.hot_data.write_buffer_size, 192 * MIB);
     }
 }
 
@@ -986,6 +1164,98 @@ impl Default for PostgresWireSettings {
             tls_key_path:             None,
             prepared_statement_limit: default_postgres_wire_prepared_statement_limit(),
             portal_limit:             default_postgres_wire_portal_limit(),
+        }
+    }
+}
+
+/// Top-level `[functions]` server settings. Runtime budgets live under `[functions.runtime]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionsSettings {
+    /// Project function module id (default `backend`). One module for all project-backed routines.
+    #[serde(default = "default_functions_module")]
+    pub module: String,
+    #[serde(default)]
+    pub runtime: FunctionsRuntimeSettings,
+}
+
+impl Default for FunctionsSettings {
+    fn default() -> Self {
+        Self {
+            module:  default_functions_module(),
+            runtime: FunctionsRuntimeSettings::default(),
+        }
+    }
+}
+
+/// Admission, heap, idle-pool, timeout, and host-op budgets for SQL procedures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionsRuntimeSettings {
+    /// Worker threads. `0` = auto (`available_parallelism / 2`, later `min(cpus, 4)`).
+    #[serde(default)]
+    pub workers: usize,
+    #[serde(default = "default_functions_max_active")]
+    pub max_active: usize,
+    #[serde(default = "default_functions_max_queued")]
+    pub max_queued: usize,
+    #[serde(default = "default_functions_max_memory_mb")]
+    pub max_memory_mb: usize,
+    #[serde(default = "default_functions_heap_soft_mb")]
+    pub heap_soft_mb: usize,
+    #[serde(default = "default_functions_heap_hard_mb")]
+    pub heap_hard_mb: usize,
+    #[serde(default = "default_functions_max_idle_per_lane")]
+    pub max_idle_per_lane: usize,
+    #[serde(default = "default_functions_idle_ttl_secs")]
+    pub idle_ttl_secs: u64,
+    #[serde(default = "default_functions_max_instance_age_secs")]
+    pub max_instance_age_secs: u64,
+    #[serde(default = "default_functions_max_invocations_per_instance")]
+    pub max_invocations_per_instance: u64,
+    #[serde(default = "default_functions_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_functions_max_depth")]
+    pub max_depth: usize,
+    #[serde(default = "default_functions_max_artifact_bytes")]
+    pub max_artifact_bytes: usize,
+    #[serde(default = "default_functions_max_value_bytes")]
+    pub max_value_bytes: usize,
+    #[serde(default = "default_functions_max_sql_text_bytes")]
+    pub max_sql_text_bytes: usize,
+    #[serde(default = "default_functions_max_result_rows")]
+    pub max_result_rows: usize,
+    #[serde(default = "default_functions_max_result_bytes")]
+    pub max_result_bytes: usize,
+    #[serde(default = "default_functions_max_topic_bytes")]
+    pub max_topic_bytes: usize,
+    #[serde(default = "default_functions_max_log_bytes")]
+    pub max_log_bytes: usize,
+    #[serde(default = "default_functions_max_header_bytes")]
+    pub max_header_bytes: usize,
+}
+
+impl Default for FunctionsRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            workers:                      0,
+            max_active:                   default_functions_max_active(),
+            max_queued:                   default_functions_max_queued(),
+            max_memory_mb:                default_functions_max_memory_mb(),
+            heap_soft_mb:                 default_functions_heap_soft_mb(),
+            heap_hard_mb:                 default_functions_heap_hard_mb(),
+            max_idle_per_lane:            default_functions_max_idle_per_lane(),
+            idle_ttl_secs:                default_functions_idle_ttl_secs(),
+            max_instance_age_secs:        default_functions_max_instance_age_secs(),
+            max_invocations_per_instance: default_functions_max_invocations_per_instance(),
+            timeout_ms:                   default_functions_timeout_ms(),
+            max_depth:                    default_functions_max_depth(),
+            max_artifact_bytes:           default_functions_max_artifact_bytes(),
+            max_value_bytes:              default_functions_max_value_bytes(),
+            max_sql_text_bytes:           default_functions_max_sql_text_bytes(),
+            max_result_rows:              default_functions_max_result_rows(),
+            max_result_bytes:             default_functions_max_result_bytes(),
+            max_topic_bytes:              default_functions_max_topic_bytes(),
+            max_log_bytes:                default_functions_max_log_bytes(),
+            max_header_bytes:             default_functions_max_header_bytes(),
         }
     }
 }
@@ -1447,6 +1717,7 @@ impl Default for ServerConfig {
             topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
             postgres_wire: PostgresWireSettings::default(),
+            functions: FunctionsSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
             user_management: UserManagementSettings::default(),

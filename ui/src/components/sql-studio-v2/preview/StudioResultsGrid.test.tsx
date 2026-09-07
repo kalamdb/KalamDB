@@ -188,4 +188,33 @@ describe("StudioResultsGrid", () => {
     expect(tableCell?.className).toContain("ring-2");
     expect(cellContent!.className).not.toContain("ring-2");
   });
+
+  it("wraps execution error messages instead of clipping them", () => {
+    render(
+      <StudioResultsGrid
+        result={{
+          status: "error",
+          rows: [],
+          schema: [],
+          tookMs: 12,
+          rowCount: 0,
+          logs: [],
+          errorMessage:
+            "SQL_EXECUTION_ERROR: procedure foo is not found and the rest of this diagnostic should remain fully readable",
+        }}
+        isRunning={false}
+        isLiveMode={false}
+        activeSql="select foo();"
+        selectedTable={null}
+        currentUsername="admin"
+        resultView="results"
+        onResultViewChange={vi.fn()}
+        onRefreshAfterCommit={vi.fn()}
+      />,
+    );
+
+    const description = screen.getByText(/procedure foo is not found/);
+    expect(description.className).toContain("whitespace-pre-wrap");
+    expect(description.className).toContain("break-all");
+  });
 });

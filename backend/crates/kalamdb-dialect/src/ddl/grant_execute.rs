@@ -10,6 +10,7 @@ pub enum ExecuteGrantee {
     Public,
     User,
     Service,
+    Anonymous,
     Role(String),
 }
 
@@ -27,6 +28,7 @@ impl ExecuteGrantee {
             "PUBLIC" => Self::Public,
             "USER" => Self::User,
             "SERVICE" => Self::Service,
+            "ANONYMOUS" => Self::Anonymous,
             _ => Self::Role(ident.to_ascii_lowercase()),
         }
     }
@@ -36,6 +38,7 @@ impl ExecuteGrantee {
             Self::Public => "PUBLIC".to_string(),
             Self::User => "user".to_string(),
             Self::Service => "service".to_string(),
+            Self::Anonymous => "anonymous".to_string(),
             Self::Role(name) => name.clone(),
         }
     }
@@ -119,5 +122,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(revoke.grantee, ExecuteGrantee::Public);
+
+        let anon = GrantExecuteStatement::parse(
+            "GRANT EXECUTE ON PROCEDURE api.health TO anonymous",
+            &ns,
+        )
+        .unwrap();
+        assert_eq!(anon.grantee, ExecuteGrantee::Anonymous);
     }
 }

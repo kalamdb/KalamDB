@@ -13,8 +13,8 @@ use crate::{
     output::WorkflowOutput,
     workflow::project::{
         config::{
-            ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-            ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
+            ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+            MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
         },
         dart::{
             self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND,
@@ -304,6 +304,7 @@ fn build_config(
             ..DevSection::default()
         },
         logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     })
 }
 

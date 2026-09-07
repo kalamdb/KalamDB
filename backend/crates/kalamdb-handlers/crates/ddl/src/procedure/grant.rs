@@ -111,6 +111,7 @@ fn map_grantee(grantee: &ExecuteGrantee) -> RoutineGrantee {
         ExecuteGrantee::Public => RoutineGrantee::Public,
         ExecuteGrantee::User => RoutineGrantee::User,
         ExecuteGrantee::Service => RoutineGrantee::Service,
+        ExecuteGrantee::Anonymous => RoutineGrantee::Anonymous,
         ExecuteGrantee::Role(name) => RoutineGrantee::Role(name.clone()),
     }
 }

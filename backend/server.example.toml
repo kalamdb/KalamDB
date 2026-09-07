@@ -58,6 +58,34 @@ tls_enabled = false
 prepared_statement_limit = 1024
 portal_limit = 1024
 
+[functions]
+# Project module id for compiled TypeScript (one module, not one per routine).
+module = "backend"
+
+[functions.runtime]
+# SQL procedure runtime. Admission enforces both max_active and max_memory_mb.
+# workers = 0 means auto (currently cpus/2; later min(cpus, 4)).
+workers = 0
+max_active = 16
+max_queued = 128
+max_memory_mb = 256
+heap_soft_mb = 16
+heap_hard_mb = 64
+max_idle_per_lane = 1
+idle_ttl_secs = 30
+max_instance_age_secs = 300
+max_invocations_per_instance = 10000
+timeout_ms = 5000
+max_depth = 16
+max_artifact_bytes = 16777216
+max_value_bytes = 8388608
+max_sql_text_bytes = 1048576
+max_result_rows = 10000
+max_result_bytes = 8388608
+max_topic_bytes = 1048576
+max_log_bytes = 65536
+max_header_bytes = 16384
+
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:
@@ -86,8 +114,10 @@ connect_timeout_secs = 10
 
 [storage.rocksdb]
 # compact (default): tiny cache and memtables for a few tables and low traffic.
-# auto: size cache and memtables from host RAM at open, still clamped
-# (cache 2MB–256MB, hot_data memtable 128KB–64MB).
+# auto: modest RAM scaling, still clamped (cache 2MB–256MB, hot memtable 128KB–64MB).
+# balanced: cache ≈ RAM/32, hot memtable ≈ RAM/256.
+# server: cache ≈ RAM/8, hot memtable ≥ 64MB. Dedicated servers and bake-offs.
+# performance: cache ≈ RAM/3, hot memtable ≥ 128MB.
 # memory_mode = "compact"
 
 # Block cache size for reads in bytes (default: 2MB)

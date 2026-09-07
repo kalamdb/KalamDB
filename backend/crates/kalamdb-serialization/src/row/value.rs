@@ -3,15 +3,14 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{
-        new_null_array, Array, ArrayRef, FixedSizeListArray, Float32Array, ListArray, StructArray,
-    },
+    array::{new_null_array, Array, ArrayRef, FixedSizeListArray, ListArray, StructArray},
     buffer::{NullBuffer, OffsetBuffer},
     datatypes::{DataType, Field, Fields},
 };
 use datafusion_common::ScalarValue;
 
 use super::{
+    array::{encode_embedding_at, encode_list_at, encode_struct_at},
     scalar::{
         TAG_BOOL, TAG_BYTES, TAG_DATE32, TAG_DECIMAL128, TAG_EMBEDDING, TAG_F32, TAG_F64, TAG_I16,
         TAG_I32, TAG_I64, TAG_I8, TAG_LIST, TAG_NULL, TAG_STRUCT, TAG_TIME64_US, TAG_TS_MS,
@@ -50,16 +49,28 @@ pub(crate) fn write_str(buf: &mut Vec<u8>, value: &str) -> Result<()> {
 }
 
 pub(crate) struct Reader<'a> {
-    rest: &'a [u8],
+    origin: &'a [u8],
+    rest:   &'a [u8],
 }
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { rest: bytes }
+        Self {
+            origin: bytes,
+            rest:   bytes,
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.rest.is_empty()
+    }
+
+    pub(crate) fn seek(&mut self, offset: usize) -> Result<()> {
+        if offset > self.origin.len() {
+            return Err(SerializationError::Truncated);
+        }
+        self.rest = &self.origin[offset..];
+        Ok(())
     }
 
     pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8]> {
@@ -220,102 +231,19 @@ pub(crate) fn encode_value(
             buf.extend_from_slice(&v.to_le_bytes());
         },
         (ScalarValue::FixedSizeList(array), StorageDataType::Embedding { dimension }) => {
-            encode_embedding(buf, array.as_ref(), *dimension)?;
+            encode_embedding_at(buf, array.as_ref(), 0, *dimension)?;
         },
         (ScalarValue::Struct(array), StorageDataType::Struct(fields)) => {
-            encode_struct(buf, array.as_ref(), fields)?;
+            encode_struct_at(buf, array.as_ref(), 0, fields)?;
         },
         (ScalarValue::List(array), StorageDataType::List(inner)) => {
-            encode_list(buf, array.as_ref(), inner)?;
+            encode_list_at(buf, array.as_ref(), 0, inner)?;
         },
         _ => {
             return Err(SerializationError::Encode(format!(
                 "unsupported or mismatched value {value:?} for storage type {expected:?}"
             )));
         },
-    }
-    Ok(())
-}
-
-fn encode_embedding(buf: &mut Vec<u8>, list: &FixedSizeListArray, dimension: i32) -> Result<()> {
-    if list.len() != 1 {
-        return Err(SerializationError::Encode(
-            "embedding scalar must contain one list".to_string(),
-        ));
-    }
-    if list.is_null(0) {
-        write_u8(buf, TAG_NULL);
-        return Ok(());
-    }
-    if list.value_length() != dimension {
-        return Err(SerializationError::Encode(format!(
-            "embedding dimension mismatch: expected {dimension}, got {}",
-            list.value_length()
-        )));
-    }
-    let values = list.value(0);
-    let floats = values.as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
-        SerializationError::Encode("embedding values must be float32".to_string())
-    })?;
-    if floats.len() != dimension as usize {
-        return Err(SerializationError::Encode(format!(
-            "embedding dimension mismatch: expected {dimension}, got {}",
-            floats.len()
-        )));
-    }
-    write_u8(buf, TAG_EMBEDDING);
-    buf.extend_from_slice(&dimension.to_le_bytes());
-    for i in 0..floats.len() {
-        buf.extend_from_slice(&floats.value(i).to_le_bytes());
-    }
-    Ok(())
-}
-
-fn encode_struct(
-    buf: &mut Vec<u8>,
-    struct_array: &StructArray,
-    fields: &[super::schema::StorageField],
-) -> Result<()> {
-    if struct_array.len() != 1 {
-        return Err(SerializationError::Encode("struct scalar must contain one row".to_string()));
-    }
-    if struct_array.is_null(0) {
-        write_u8(buf, TAG_NULL);
-        return Ok(());
-    }
-    write_u8(buf, TAG_STRUCT);
-    let count = u16::try_from(fields.len())
-        .map_err(|_| SerializationError::Encode("too many struct fields".to_string()))?;
-    write_u16(buf, count);
-    for field in fields {
-        let value = match struct_array.column_by_name(&field.name) {
-            Some(child) => ScalarValue::try_from_array(child, 0).map_err(|err| {
-                SerializationError::Encode(format!("struct field '{}': {err}", field.name))
-            })?,
-            None => datafusion_common::ScalarValue::Null,
-        };
-        encode_value(buf, &value, &field.data_type)?;
-    }
-    Ok(())
-}
-
-fn encode_list(buf: &mut Vec<u8>, list: &ListArray, inner: &StorageDataType) -> Result<()> {
-    if list.len() != 1 {
-        return Err(SerializationError::Encode("list scalar must contain one list".to_string()));
-    }
-    if list.is_null(0) {
-        write_u8(buf, TAG_NULL);
-        return Ok(());
-    }
-    let values = list.value(0);
-    write_u8(buf, TAG_LIST);
-    let len = u32::try_from(values.len())
-        .map_err(|_| SerializationError::Encode("list length exceeds u32".to_string()))?;
-    write_u32(buf, len);
-    for i in 0..values.len() {
-        let item = ScalarValue::try_from_array(&values, i)
-            .map_err(|err| SerializationError::Encode(format!("list element {i}: {err}")))?;
-        encode_value(buf, &item, inner)?;
     }
     Ok(())
 }

@@ -22,8 +22,9 @@ use crate::{
             server::{prepare_local_server_launch, wait_for_server_ready},
             session::wait_for_dev_shutdown_signal,
             watch::{
-                run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
-                update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
+                functions_watch_stamp, run_schema_pipeline, schema_file_changed, schema_file_mtime,
+                schema_watch_path, update_schema_baseline, wait_for_stable_schema_file,
+                SCHEMA_WATCH_INTERVAL_SECS,
             },
         },
         display::{emit_task_failure, emit_task_success},
@@ -64,8 +65,9 @@ enum DevLoopAction {
 
 #[derive(Debug)]
 struct DevSchemaLoop {
-    force:        bool,
-    schema_mtime: Option<SystemTime>,
+    force:           bool,
+    schema_mtime:    Option<SystemTime>,
+    functions_stamp: Option<SystemTime>,
 }
 
 impl DevSchemaLoop {
@@ -73,6 +75,7 @@ impl DevSchemaLoop {
         Self {
             force,
             schema_mtime: None,
+            functions_stamp: None,
         }
     }
 
@@ -96,10 +99,10 @@ impl DevSchemaLoop {
         output: &WorkflowOutput,
     ) -> Result<DevLoopAction> {
         let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) else {
-            return Ok(DevLoopAction::Continue);
+            return self.handle_functions_watch_tick(ctx, output).await;
         };
         if !schema_file_changed(&path, self.schema_mtime) {
-            return Ok(DevLoopAction::Continue);
+            return self.handle_functions_watch_tick(ctx, output).await;
         }
 
         let stable_mtime = wait_for_stable_schema_file(&path).await;
@@ -112,7 +115,28 @@ impl DevSchemaLoop {
         output.status(&message);
         let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await?;
         self.schema_mtime = schema_file_mtime(&path).or(stable_mtime);
+        let _ = crate::workflow::functions::build_functions(ctx).await;
+        let _ = crate::workflow::functions::activate_function_module(ctx).await;
+        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
         self.prompt_pending_draft(ctx, output).await
+    }
+
+    async fn handle_functions_watch_tick(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<DevLoopAction> {
+        let current = functions_watch_stamp(&ctx.project_root);
+        if current == self.functions_stamp {
+            return Ok(DevLoopAction::Continue);
+        }
+        output.status("functions source changed; rebuilding and activating without server restart");
+        crate::workflow::functions::build_functions(ctx).await?;
+        if let Err(error) = crate::workflow::functions::activate_function_module(ctx).await {
+            output.detail(format!("function activation deferred: {error}"));
+        }
+        self.functions_stamp = current;
+        Ok(DevLoopAction::Continue)
     }
 
     async fn prompt_pending_draft(
@@ -200,6 +224,7 @@ impl DevSchemaLoop {
         if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
             self.schema_mtime = schema_file_mtime(&path);
         }
+        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
     }
 
     async fn reset_and_apply_schema(

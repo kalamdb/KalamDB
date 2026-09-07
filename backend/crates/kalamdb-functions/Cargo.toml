@@ -11,14 +11,17 @@ keywords = ["kalamdb", "functions", "v8"]
 categories = ["database"]
 
 [features]
-default = ["catalog", "wasm-runtime"]
-catalog = ["dep:kalamdb-filestore", "dep:kalamdb-system", "dep:kalamdb-store"]
-wasm-runtime = ["dep:wasmtime"]
+default = ["catalog"]
+catalog = ["dep:kalamdb-filestore", "dep:kalamdb-system", "dep:kalamdb-store", "dep:kalamdb-views"]
 
 [dependencies]
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-filestore = { path = "../kalamdb-filestore", optional = true }
+kalamdb-functions-host = { path = "../kalamdb-functions-host" }
+kalamdb-serialization = { path = "../kalamdb-serialization" }
 kalamdb-system = { path = "../kalamdb-system", optional = true }
+kalamdb-views = { path = "../kalamdb-views", optional = true }
 arrow = { workspace = true }
 bytes = { workspace = true }
 datafusion-common = { workspace = true, default-features = false }
@@ -32,7 +35,11 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 v8 = { workspace = true }
-wasmtime = { workspace = true, optional = true }
+arc-swap = { workspace = true }
+dashmap = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+smallvec = { workspace = true }
 
 kalamdb-store = { path = "../kalamdb-store", optional = true }
 

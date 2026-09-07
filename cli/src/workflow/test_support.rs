@@ -9,8 +9,8 @@ use crate::{
     workflow::{
         project::{
             config::{
-                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-                ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+                MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
             },
             resolve::{ResolutionSource, ResolvedEnvironment},
         },
@@ -70,6 +70,7 @@ pub fn minimal_sql_project_config() -> KalamProjectConfig {
         migrations: MigrationsSection::default(),
         dev:        DevSection::default(),
         logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     }
 }
 

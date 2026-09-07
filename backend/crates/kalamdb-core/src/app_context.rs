@@ -327,6 +327,8 @@ impl AppContext {
             let live_view = system_schema.live_view();
             let sessions_view = system_schema.sessions_view();
             let transactions_view = system_schema.transactions_view();
+            let active_function_runs_view = system_schema.active_function_runs_view();
+            let function_errors_view = system_schema.function_errors_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -737,6 +739,15 @@ impl AppContext {
                         .collect()
                 });
             transactions_view.set_snapshot_callback(transactions_snapshot_callback);
+
+            let app_ctx_for_function_runs = Arc::clone(&app_ctx);
+            active_function_runs_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_function_runs.function_runtime().snapshot_runs()
+            }));
+            let app_ctx_for_function_errors = Arc::clone(&app_ctx);
+            function_errors_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_function_errors.function_runtime().snapshot_errors()
+            }));
 
             let live_query_manager = Arc::new(LiveQueryManager::new(
                 Arc::new(SchemaRegistryLookup::new(app_ctx.schema_registry())),
@@ -1407,9 +1418,11 @@ impl AppContext {
         if let Some(state) = self.function_runtime.get() {
             return Arc::clone(state);
         }
-        let _ = self
-            .function_runtime
-            .set(Arc::new(crate::functions::FunctionRuntimeState::default()));
+        let _ = self.function_runtime.set(Arc::new(
+            crate::functions::FunctionRuntimeState::from_runtime_settings(
+                &self.config.functions.runtime,
+            ),
+        ));
         Arc::clone(self.function_runtime.get().expect("function runtime initialized"))
     }
 

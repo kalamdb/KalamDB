@@ -28,7 +28,8 @@ pub use allocator_metrics::{
 };
 pub use cpu::{get_cpu_count, get_physical_cpu_count};
 pub use function_metrics::{
-    begin_function_run, finish_function_run, function_metrics_snapshot, FunctionMetricsSnapshot,
+    begin_function_run, finish_function_run, function_metrics_snapshot, record_function_oom,
+    record_function_queue_wait, record_function_timeout, FunctionMetricsSnapshot,
 };
 pub use health_monitor::{
     decrement_websocket_sessions, get_websocket_session_count, get_websocket_session_peak_count,

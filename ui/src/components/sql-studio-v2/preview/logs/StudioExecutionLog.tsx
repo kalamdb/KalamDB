@@ -5,8 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { CodeBlock } from "@/components/ui/code-block";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PanelHeader, chromeLabelClassName } from "@/components/layout/typography";
+import { getErrorMessage, toSerializableErrorPayload } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import type { QueryLogEntry } from "../../shared/types";
+
+const readableMessageClassName = "min-w-0 whitespace-pre-wrap break-all";
 
 interface StudioExecutionLogProps {
   logs: QueryLogEntry[];
@@ -40,14 +43,33 @@ interface DecoratedLogEntry {
   Icon: LucideIcon;
 }
 
+function isEmptyObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length === 0;
+}
+
 function unwrapPayload(response: unknown): unknown {
-  if (response && typeof response === "object" && !Array.isArray(response) && "raw" in response) {
-    const raw = (response as { raw?: unknown }).raw;
+  const serialized = toSerializableErrorPayload(response);
+  if (serialized && typeof serialized === "object" && !Array.isArray(serialized) && "raw" in serialized) {
+    const raw = (serialized as { raw?: unknown }).raw;
     if (raw !== undefined) {
-      return raw;
+      return toSerializableErrorPayload(raw);
     }
   }
-  return response;
+  return serialized;
+}
+
+function resolveDetailPayload(entry: QueryLogEntry): unknown {
+  const payload = unwrapPayload(entry.response);
+  if (payload !== undefined && !isEmptyObject(payload)) {
+    return payload;
+  }
+
+  const fromMessage = toSerializableErrorPayload(entry.message);
+  if (fromMessage !== undefined && fromMessage !== entry.message && !isEmptyObject(fromMessage)) {
+    return fromMessage;
+  }
+
+  return buildFallbackPayload(entry);
 }
 
 function serializePayload(value: unknown): string | null {
@@ -101,7 +123,7 @@ function previewPayload(value: unknown): string | null {
 
   const maxPreviewLength = 240;
   return condensed.length > maxPreviewLength
-    ? `...${condensed.slice(0, maxPreviewLength - 3)}`
+    ? `${condensed.slice(0, maxPreviewLength - 3)}...`
     : condensed;
 }
 
@@ -117,8 +139,7 @@ function buildFallbackPayload(entry: QueryLogEntry): Record<string, unknown> {
 }
 
 function decorateLogEntry(entry: QueryLogEntry, index: number): DecoratedLogEntry {
-  const payload = unwrapPayload(entry.response);
-  const detailPayload = payload === undefined ? buildFallbackPayload(entry) : payload;
+  const detailPayload = resolveDetailPayload(entry);
   const sendPrefix = "WS SEND · ";
   const receivePrefix = "WS RECEIVE · ";
 
@@ -156,7 +177,7 @@ function decorateLogEntry(entry: QueryLogEntry, index: number): DecoratedLogEntr
       index,
       kind: "error",
       label: "ERR",
-      title: entry.message,
+      title: getErrorMessage(entry.message, entry.message),
       preview: previewPayload(detailPayload),
       payload: detailPayload,
       sizeLabel: formatPayloadSize(detailPayload),
@@ -173,7 +194,7 @@ function decorateLogEntry(entry: QueryLogEntry, index: number): DecoratedLogEntr
     preview: previewPayload(detailPayload),
     payload: detailPayload,
     sizeLabel: formatPayloadSize(detailPayload),
-    Icon: payload === undefined ? CheckCircle2 : Info,
+    Icon: entry.response === undefined ? CheckCircle2 : Info,
   };
 }
 
@@ -312,7 +333,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                     type="button"
                     onClick={() => handleSelectLog(item.entry.id)}
                     className={cn(
-                      "w-full rounded-md border px-2.5 py-1.5 text-left transition-colors",
+                      "min-w-0 w-full rounded-md border px-2.5 py-1.5 text-left transition-colors",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                       isSelected
                         ? "border-sky-500/40 bg-sky-500/10 shadow-sm"
@@ -320,15 +341,12 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                       item.kind === "error" && !isSelected && "border-red-500/30 bg-red-500/5",
                     )}
                   >
-                    <div className="flex items-center gap-2">
-                      <item.Icon className={cn("h-3.5 w-3.5 shrink-0", getIconClassName(item.kind, status))} />
+                    <div className="flex items-start gap-2">
+                      <item.Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", getIconClassName(item.kind, status))} />
                       <Badge variant="outline" className={cn("px-1.5 py-0 text-[10px] font-semibold uppercase", getBadgeClassName(item.kind))}>
                         {item.label}
                       </Badge>
-                      <p
-                        className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground"
-                        title={item.title}
-                      >
+                      <p className={cn(readableMessageClassName, "flex-1 font-mono text-[11px] text-foreground")}>
                           {item.title}
                       </p>
                       {item.sizeLabel && (
@@ -339,7 +357,7 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
                     </div>
 
                     {item.preview && (
-                      <p className="mt-1 truncate font-mono text-[10px] leading-4 text-muted-foreground">
+                      <p className={cn(readableMessageClassName, "mt-1 font-mono text-[10px] leading-4 text-muted-foreground")}>
                         {item.preview}
                       </p>
                     )}
@@ -359,11 +377,11 @@ export function StudioExecutionLog({ logs, status }: StudioExecutionLogProps) {
 
       <section aria-label="Trace details" className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
           <div className="min-w-0 border-b border-border px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <Badge variant="outline" className={cn("shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase", getBadgeClassName(selectedEntry.kind))}>
+            <div className="flex min-w-0 items-start gap-2">
+              <Badge variant="outline" className={cn("mt-0.5 shrink-0 px-2 py-0.5 text-[10px] font-semibold uppercase", getBadgeClassName(selectedEntry.kind))}>
                 {selectedEntry.label}
               </Badge>
-              <h3 className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
+              <h3 className={cn(readableMessageClassName, "flex-1 font-mono text-sm text-foreground")}>
                 {selectedEntry.title}
               </h3>
             </div>

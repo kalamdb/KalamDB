@@ -336,14 +336,18 @@ pub struct FunctionsArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum FunctionsCommand {
-    /// Generate function contracts and SDK artifacts
+    /// Generate function contracts, validate packages, and write the build manifest
     Build,
-    /// Show catalogued procedures and revisions
+    /// Show the active function module and catalogued procedures
     Status,
-    /// Point the active revision at a previously activated hash
+    /// List immutable function module revisions
+    Revisions,
+    /// Point the active revision at a previously activated hash (CAS, no rebuild)
     Rollback(FunctionsRollbackArgs),
-    /// Print recent trigger delivery attempts
+    /// Print recent structured function errors
     Logs(FunctionsLogsArgs),
+    /// Scaffold a project implementation that overrides an inline procedure
+    Override(FunctionsOverrideArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -354,4 +358,10 @@ pub struct FunctionsRollbackArgs {
 #[derive(Args, Debug, Clone, Default)]
 pub struct FunctionsLogsArgs {
     pub procedure: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct FunctionsOverrideArgs {
+    /// Procedure to scaffold, as `schema.name`
+    pub procedure: String,
 }

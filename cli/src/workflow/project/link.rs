@@ -81,8 +81,8 @@ mod tests {
     use crate::{
         config::{CLIConfiguration, WorkflowLoggingPolicy},
         workflow::project::config::{
-            DevSection, LoggingSection, MigrationsSection, ProjectSection, SchemaMode,
-            SchemaSection, SchemaTarget,
+            DevSection, FunctionsSection, LoggingSection, MigrationsSection, ProjectSection,
+            SchemaMode, SchemaSection, SchemaTarget,
         },
     };
 
@@ -114,6 +114,7 @@ mod tests {
             migrations: MigrationsSection::default(),
             dev:        DevSection::default(),
             logging:    LoggingSection::default(),
+            functions:  FunctionsSection::default(),
         };
         config.save_to_path(&root.join(KALAM_TOML)).unwrap();
 

@@ -9,8 +9,14 @@
 //! `CREATE PROCEDURE`). Timed insert/read go through
 //! `POST /v1/functions/{schema}/{procedure}` only.
 //!
-//! Nested host SQL is ABI v1 `ctx.db.sql` (no bind params). Procedures
-//! interpolate literals, matching current CREATE PROCEDURE JS examples.
+//! Nested host SQL is ABI v1 `ctx.db.sql(sql, params)` with `$n` binds so
+//! the nested statements hit the same plan cache as SQL HTTP.
+
+use std::{
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use comparison_common::{
     message_data, print_latencies, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
@@ -20,9 +26,6 @@ use crossbeam_queue::SegQueue;
 use lazy_static::lazy_static;
 use reqwest::{Client, Version};
 use serde_json::json;
-use std::env;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 fn base_url() -> String {
@@ -54,11 +57,7 @@ async fn setup_and_login(http: &Client, base: &str, require_h2: bool) -> anyhow:
         .json()
         .await?;
 
-    if status
-        .get("needs_setup")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
+    if status.get("needs_setup").and_then(|v| v.as_bool()).unwrap_or(false) {
         let setup_resp = http
             .post(format!("{base}/v1/api/auth/setup"))
             .json(&json!({
@@ -158,10 +157,7 @@ async fn read_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow
     let status = resp.status();
     let body = resp.bytes().await?;
     if !status.is_success() {
-        anyhow::bail!(
-            "get_message failed status={status} body={}",
-            String::from_utf8_lossy(&body)
-        );
+        anyhow::bail!("get_message failed status={status} body={}", String::from_utf8_lossy(&body));
     }
     Ok(())
 }
@@ -177,9 +173,7 @@ async fn insert_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Res
         let token = token.to_string();
         let handle = THROTTLER.acquire().await?;
         tokio::spawn(async move {
-            create_message(&http, &base, &token, id)
-                .await
-                .expect("insert");
+            create_message(&http, &base, &token, id).await.expect("insert");
             drop(handle);
         });
     }
@@ -204,21 +198,14 @@ async fn latency_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Re
             let handle = THROTTLER.acquire().await?;
             tokio::spawn(async move {
                 let t0 = Instant::now();
-                create_message(&http, &base, &token, row_id)
-                    .await
-                    .expect("insert");
+                create_message(&http, &base, &token, row_id).await.expect("insert");
                 latencies.push(t0.elapsed());
                 drop(handle);
             });
         }
         let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
         println!("Inserted {LATENCY_INSERTS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(insert_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
+        print_latencies(Arc::into_inner(insert_latencies).unwrap().into_iter().collect());
     }
 
     {
@@ -243,12 +230,7 @@ async fn latency_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Re
         }
         let _ = THROTTLER.acquire_many(LIMIT as u32).await?;
         println!("Read {LATENCY_READS} rows in {:?}", start.elapsed());
-        print_latencies(
-            Arc::into_inner(read_latencies)
-                .unwrap()
-                .into_iter()
-                .collect(),
-        );
+        print_latencies(Arc::into_inner(read_latencies).unwrap().into_iter().collect());
     }
     Ok(())
 }
@@ -292,12 +274,8 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         base,
         token,
         &format!(
-            "CREATE TABLE {KALAMDB_NAMESPACE}.message (\
-                id INT PRIMARY KEY, \
-                owner TEXT, \
-                room TEXT, \
-                data TEXT\
-            )"
+            "CREATE TABLE {KALAMDB_NAMESPACE}.message (id INT PRIMARY KEY, owner TEXT, room TEXT, \
+             data TEXT)"
         ),
         None,
     )
@@ -308,12 +286,10 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         base,
         token,
         &format!(
-            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.insert_message(\
-                id INT, owner TEXT, room TEXT, data TEXT\
-            )\nLANGUAGE JAVASCRIPT\nAS $$\n\
-              ctx.db.sql(\"INSERT INTO {KALAMDB_NAMESPACE}.message (id, owner, room, data) VALUES (\" + input[0] + \", '\" + input[1] + \"', '\" + input[2] + \"', '\" + input[3] + \"')\");\n\
-              return 1;\n\
-            $$"
+            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.insert_message(id INT, owner TEXT, \
+             room TEXT, data TEXT)\nLANGUAGE JAVASCRIPT\nAS $$\nctx.db.sql(\"INSERT INTO \
+             {KALAMDB_NAMESPACE}.message (id, owner, room, data) VALUES ($1, $2, $3, $4)\", \
+             input);\nreturn 1;\n$$"
         ),
         None,
     )
@@ -324,10 +300,9 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         base,
         token,
         &format!(
-            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.get_message(id INT)\n\
-             LANGUAGE JAVASCRIPT\nAS $$\n\
-               return ctx.db.sql(\"SELECT id, owner, room, data FROM {KALAMDB_NAMESPACE}.message WHERE id = \" + input);\n\
-             $$"
+            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.get_message(id INT)\nLANGUAGE \
+             JAVASCRIPT\nAS $$\nreturn ctx.db.sql(\"SELECT id, owner, room, data FROM \
+             {KALAMDB_NAMESPACE}.message WHERE id = $1\", [input]);\n$$"
         ),
         None,
     )
@@ -341,9 +316,8 @@ async fn main() -> anyhow::Result<()> {
     let use_http2 = env::var("KALAMDB_HTTP2")
         .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false);
-    let mut http_builder = Client::builder()
-        .pool_max_idle_per_host(64)
-        .timeout(Duration::from_secs(60));
+    let mut http_builder =
+        Client::builder().pool_max_idle_per_host(64).timeout(Duration::from_secs(60));
     if use_http2 {
         http_builder = http_builder.http2_prior_knowledge();
     }
@@ -353,7 +327,7 @@ async fn main() -> anyhow::Result<()> {
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
     println!("timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}}");
-    println!("nested_sql=ABI v1 ctx.db.sql (interpolated literals; no nested params)");
+    println!("nested_sql=ABI v1 ctx.db.sql($n, params) (plan-cache binds)");
     println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
 
     create_schema(&http, &base, &token).await?;
@@ -402,7 +376,8 @@ mod tests {
             let body = br#"{"status":"error"}"#;
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \
+                 {}\r\nConnection: close\r\n\r\n",
                 body.len()
             )
             .expect("write test response headers");

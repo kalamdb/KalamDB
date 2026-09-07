@@ -179,3 +179,29 @@ fn kobj_functions_topic_trigger_delivers_and_acks() {
         "trigger attempt should be succeeded: {attempts:?}"
     );
 }
+
+#[ntest::timeout(120000)]
+#[test]
+fn kobj_functions_active_runs_and_structured_errors() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("fnobs");
+    create_js_procedure(&ns, "ok", "", "return 1;");
+    create_js_procedure(&ns, "boom", "", "throw new Error('boom');");
+    let _ = query_rows(&format!("CALL {ns}.ok()"));
+    let runs = query_rows("SELECT execution_id FROM system.active_function_runs");
+    assert!(
+        runs.is_empty(),
+        "finished roots must leave system.active_function_runs: {runs:?}"
+    );
+    let boom = exec_err(&format!("CALL {ns}.boom()"));
+    assert!(boom.to_ascii_lowercase().contains("boom"), "boom error: {boom}");
+    let errors = query_rows(&format!(
+        "SELECT code, routine_id FROM system.function_errors WHERE routine_id LIKE '%{ns}.boom%'"
+    ));
+    assert!(
+        !errors.is_empty(),
+        "structured function errors should appear in system.function_errors: {errors:?}"
+    );
+}

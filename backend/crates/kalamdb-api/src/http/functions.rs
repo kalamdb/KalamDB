@@ -1,6 +1,6 @@
 //! POST /v1/functions/{schema}/{procedure}
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
@@ -39,6 +39,7 @@ pub async fn invoke_function_v1(
     if let Some(key) = rejected_context_key(&body) {
         return HttpResponse::BadRequest().json(json!({
             "status": "error",
+            "code": "INVALID_ARGUMENTS",
             "message": format!("client-supplied context field '{key}' is not allowed"),
         }));
     }
@@ -49,6 +50,7 @@ pub async fn invoke_function_v1(
         Err(error) => {
             return HttpResponse::InternalServerError().json(json!({
                 "status": "error",
+                "code": "INTERNAL_RUNTIME_ERROR",
                 "message": error.to_string(),
             }));
         },
@@ -58,20 +60,35 @@ pub async fn invoke_function_v1(
         Err(message) => {
             return HttpResponse::BadRequest().json(json!({
                 "status": "error",
+                "code": "INVALID_ARGUMENTS",
                 "message": message,
             }));
         },
     };
 
-    let mut headers = HashMap::new();
+    let mut headers = Vec::new();
     for (name, value) in http_req.headers() {
         if let Ok(value) = value.to_str() {
-            headers.insert(name.as_str().to_string(), value.to_string());
+            headers.push((name.as_str().to_string(), value.to_string()));
         }
     }
+    let query: Vec<(String, String)> = http_req
+        .query_string()
+        .split('&')
+        .filter_map(|pair| {
+            if pair.is_empty() {
+                return None;
+            }
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect();
     let response = Arc::new(Mutex::new(HttpResponseOverrides::default()));
     let origin = FunctionCallOrigin::Http {
-        headers,
+        method:   http_req.method().as_str().to_string(),
+        path:     http_req.path().to_string(),
+        headers:  Arc::new(headers),
+        query:    Arc::new(query),
         response: Arc::clone(&response),
     };
 
@@ -95,6 +112,7 @@ pub async fn invoke_function_v1(
                 Err(error) => {
                     return HttpResponse::InternalServerError().json(json!({
                         "status": "error",
+                        "code": "INTERNAL_RUNTIME_ERROR",
                         "message": error.to_string(),
                     }));
                 },
@@ -107,26 +125,47 @@ pub async fn invoke_function_v1(
             for (name, value) in result.http_headers {
                 builder.insert_header((name, value));
             }
-            builder.json(json!({
-                "status": "success",
-                "result": payload,
-            }))
+            builder.json(payload)
         },
         Err(error) => {
-            let message = error.to_string();
-            let lower = message.to_ascii_lowercase();
-            let mut response = if lower.contains("not found") {
-                HttpResponse::NotFound()
-            } else if lower.contains("denied") || lower.contains("unauthorized") {
-                HttpResponse::Forbidden()
-            } else {
-                HttpResponse::BadRequest()
-            };
-            response.json(json!({
+            let (status, code) = function_http_status(&error);
+            HttpResponse::build(status).json(json!({
                 "status": "error",
-                "message": message,
+                "code": code,
+                "message": error.user_message(),
             }))
         },
+    }
+}
+
+fn function_http_status(
+    error: &kalamdb_core::error::KalamDbError,
+) -> (actix_web::http::StatusCode, &'static str) {
+    use actix_web::http::StatusCode;
+    use kalamdb_functions::FunctionErrorCode;
+    match error.function_error_code() {
+        Some(FunctionErrorCode::ProcedureNotFound)
+        | Some(FunctionErrorCode::ProcedureNotImplemented) => {
+            (StatusCode::NOT_FOUND, error.function_error_code().unwrap().as_str())
+        },
+        Some(FunctionErrorCode::ExecuteDenied) => (StatusCode::FORBIDDEN, "EXECUTE_DENIED"),
+        Some(FunctionErrorCode::AuthenticationRequired) => {
+            (StatusCode::UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+        },
+        Some(FunctionErrorCode::InvalidArguments) => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS"),
+        Some(FunctionErrorCode::ResourceLimit) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_LIMIT"),
+        Some(FunctionErrorCode::ProcedureTimeout) => {
+            (StatusCode::GATEWAY_TIMEOUT, "PROCEDURE_TIMEOUT")
+        },
+        Some(FunctionErrorCode::ContractMismatch)
+        | Some(FunctionErrorCode::AbiMismatch)
+        | Some(FunctionErrorCode::StaleRevision) => {
+            (StatusCode::CONFLICT, error.function_error_code().unwrap().as_str())
+        },
+        Some(FunctionErrorCode::InternalRuntimeError) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_RUNTIME_ERROR")
+        },
+        None => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS"),
     }
 }
 
@@ -169,8 +208,12 @@ fn bind_json_value(
     value: &Value,
     parameter: Option<&kalamdb_system::CatalogRoutineParameter>,
 ) -> Result<RoutineValue, String> {
-    json_to_routine_value(value, parameter_data_type(parameter).as_ref())
-        .map_err(|error| error.to_string())
+    let routine = json_to_routine_value(value, parameter_data_type(parameter).as_ref())
+        .map_err(|error| error.to_string())?;
+    let json = scalar_value_to_json(&routine.value).map_err(|error| error.to_string())?;
+    let bytes = kalamdb_serialization::encode_function_value("rest", &json.0)
+        .map_err(|error| error.to_string())?;
+    Ok(routine.with_transfer(bytes::Bytes::from(bytes), "rest"))
 }
 
 fn parameter_data_type(
@@ -181,4 +224,38 @@ fn parameter_data_type(
         return None;
     }
     parameter.builtin_data_type()
+}
+
+#[cfg(test)]
+mod tests {
+    use kalamdb_core::error::KalamDbError;
+    use kalamdb_functions::{FunctionErrorCode, FunctionsError};
+
+    use super::function_http_status;
+
+    #[test]
+    fn rest_maps_typed_codes_not_message_substrings() {
+        let denied: KalamDbError = FunctionsError::ExecuteDenied("api.x".into()).into();
+        let (status, code) = function_http_status(&denied);
+        assert_eq!(status, actix_web::http::StatusCode::FORBIDDEN);
+        assert_eq!(code, "EXECUTE_DENIED");
+        assert_eq!(denied.function_error_code(), Some(FunctionErrorCode::ExecuteDenied));
+
+        let missing: KalamDbError = FunctionsError::NotImplemented("api.x".into()).into();
+        let (status, code) = function_http_status(&missing);
+        assert_eq!(status, actix_web::http::StatusCode::NOT_FOUND);
+        assert_eq!(code, "PROCEDURE_NOT_IMPLEMENTED");
+    }
+
+    #[test]
+    fn rest_json_encodes_function_transfer_once() {
+        let value = serde_json::json!(7);
+        let routine = super::bind_json_value(&value, None).unwrap();
+        assert!(routine.transfer.is_some());
+        assert_eq!(routine.contract_hash.as_deref(), Some("rest"));
+        let decoded =
+            kalamdb_serialization::decode_function_value(routine.transfer.as_ref().unwrap(), "rest")
+                .unwrap();
+        assert_eq!(decoded, value);
+    }
 }

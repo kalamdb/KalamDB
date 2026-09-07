@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{RoutineParameterId, UserId},
-    FunctionModuleId, FunctionRuntime,
+    models::{ArtifactId, RoutineParameterId, UserId},
+    FunctionRuntime,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -40,7 +40,14 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
         require_admin(context, "create procedure")?;
         let app = Arc::clone(&self.app_context);
         let owner = context.user_id().clone();
-        let routine = catalog_routine(&statement, owner);
+        let mut routine = catalog_routine(&statement, owner);
+        if let Some(body) = statement.body.as_deref() {
+            routine.inline_source_hash =
+                Some(hash_artifact_bytes(body.as_bytes()).as_str().to_string());
+        }
+        if should_compile_javascript(statement.language.as_deref()) {
+            routine.inline_artifact_id = Some(compile_inline_javascript(&app, &statement).await?);
+        }
         let parameters = catalog_parameters(&statement)?;
         let existing = {
             let stores = app.system_tables().catalog_stores();
@@ -71,13 +78,24 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
         })
         .await?;
 
-        if should_activate_javascript(statement.language.as_deref()) {
-            activate_javascript(&app, &statement).await?;
-        }
+        let _ = kalamdb_core::functions::rebuild_active_function_set(&app).await;
 
         Ok(ExecutionResult::Success {
             message: format!("Procedure {} created", statement.routine_id),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bodyless_contract_does_not_compile_javascript() {
+        assert!(!should_compile_javascript(None));
+        assert!(!should_compile_javascript(Some("SQL")));
+        assert!(!should_compile_javascript(Some("TYPESCRIPT")));
+        assert!(should_compile_javascript(Some("JAVASCRIPT")));
     }
 }
 
@@ -102,6 +120,8 @@ fn catalog_routine(statement: &CreateProcedureStatement, owner: UserId) -> Catal
         return_not_null: statement.return_type.as_ref().is_some_and(|ty| ty.not_null),
         comment: None,
         return_data_type: statement.return_type.as_ref().and_then(|ty| ty.builtin_data_type()),
+        inline_source_hash: None,
+        inline_artifact_id: None,
     }
 }
 
@@ -128,17 +148,17 @@ fn catalog_parameters(
     Ok(parameters)
 }
 
-fn should_activate_javascript(language: Option<&str>) -> bool {
+fn should_compile_javascript(language: Option<&str>) -> bool {
     matches!(
         language.map(|value| value.to_ascii_uppercase()).as_deref(),
-        Some("JAVASCRIPT" | "JS" | "TYPESCRIPT" | "TS")
+        Some("JAVASCRIPT" | "JS")
     )
 }
 
-async fn activate_javascript(
+async fn compile_inline_javascript(
     app: &Arc<AppContext>,
     statement: &CreateProcedureStatement,
-) -> Result<(), KalamDbError> {
+) -> Result<ArtifactId, KalamDbError> {
     let body = statement.body.as_deref().ok_or_else(|| {
         KalamDbError::InvalidSql(format!(
             "javascript procedure {} requires an AS $$ ... $$ body",
@@ -153,26 +173,5 @@ async fn activate_javascript(
         .upload(storage.as_ref(), source.as_bytes(), FunctionRuntime::Typescript)
         .await
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    let contract_hash = hash_artifact_bytes(source.as_bytes()).as_str().to_string();
-    let (module, revision, artifact) = FunctionActivation::prepared_activation(
-        FunctionModuleId::new(statement.routine_id.as_str()),
-        artifact,
-        contract_hash,
-    );
-    let expected_revision_id = activation
-        .active_module(&module.module_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .and_then(|module| module.active_revision_id);
-    let cmd = kalamdb_raft::MetaCommand::ActivateFunctionRevision {
-        module,
-        revision,
-        artifact,
-        expected_revision_id,
-    };
-    app.executor().execute_meta(cmd).await.map(|_| ()).map_err(|error| {
-        KalamDbError::ExecutionError(format!(
-            "failed to activate procedure {}: {error}",
-            statement.routine_id
-        ))
-    })
+    Ok(artifact.artifact_id)
 }

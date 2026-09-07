@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{NamespaceId, RoutineId, RoutineSecurityMode, TypeId, UserId},
+    models::{ArtifactId, NamespaceId, RoutineId, RoutineSecurityMode, TypeId, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -145,6 +145,28 @@ pub struct CatalogRoutine {
     )]
     #[serde(default)]
     pub return_data_type: Option<KalamDataType>,
+    #[column(
+        id = 14,
+        ordinal = 14,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Hash of the inline SQL/JS/TS body used as a fallback implementation"
+    )]
+    #[serde(default)]
+    pub inline_source_hash: Option<String>,
+    #[column(
+        id = 15,
+        ordinal = 15,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Content-addressed compiled JS artifact for an inline JavaScript body"
+    )]
+    #[serde(default)]
+    pub inline_artifact_id: Option<ArtifactId>,
 }
 
 impl kalamdb_commons::KSerializable for CatalogRoutine {}

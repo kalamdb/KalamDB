@@ -1,5 +1,6 @@
 //! Ordinal nested row codec.
 
+mod array;
 mod decode;
 mod encode;
 mod from_table;
@@ -8,8 +9,14 @@ mod scalar;
 mod schema;
 mod value;
 
-pub use decode::{decode_row_fields, decode_shared_row, decode_stream_row, decode_user_row};
-pub use encode::{encode_row_fields, encode_shared_row, encode_stream_row, encode_user_row};
+pub use decode::{
+    decode_row_fields, decode_shared_row, decode_stream_row, decode_user_row,
+    decode_user_row_selected,
+};
+pub use encode::{
+    encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
+    encode_stream_row, encode_user_row, encode_user_row_from_columns,
+};
 pub use from_table::{
     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
 };
@@ -333,5 +340,83 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decoded.fields.values.get("quantity"), Some(&ScalarValue::Int64(Some(5))));
+    }
+
+    #[test]
+    fn new_rows_set_column_offset_flag() {
+        let encoded = encode_user_row(&sample_row(), &orders_schema()).unwrap();
+        let flags = u16::from_le_bytes([encoded.as_slice()[9], encoded.as_slice()[10]]);
+        assert_eq!(flags, crate::object::FLAG_COLUMN_OFFSETS);
+    }
+
+    #[test]
+    fn legacy_sequential_rows_still_decode() {
+        let schema = orders_schema();
+        let row = sample_row();
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&schema.version.to_le_bytes());
+        payload.extend_from_slice(&row._commit_seq.to_le_bytes());
+        payload.push(u8::from(row._deleted));
+        payload.extend_from_slice(&encode_row_fields(&row.fields, &schema).unwrap());
+        let encoded = crate::object::encode_envelope(
+            crate::object::ObjectKind::Row,
+            schema.version,
+            &payload,
+        )
+        .unwrap();
+        let flags = u16::from_le_bytes([encoded.as_slice()[9], encoded.as_slice()[10]]);
+        assert_eq!(flags, 0);
+        let decoded =
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._seq).unwrap();
+        assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
+        assert_eq!(decoded.fields.values.get("customer"), row.fields.values.get("customer"));
+        let selected = decode_user_row_selected(
+            encoded.as_slice(),
+            &schema,
+            row.user_id.clone(),
+            row._seq,
+            &[0],
+        )
+        .unwrap();
+        assert_eq!(selected.fields.values.get("id"), row.fields.values.get("id"));
+        assert!(!selected.fields.values.contains_key("customer"));
+    }
+
+    #[test]
+    fn selected_decode_skips_unread_nested_columns() {
+        let schema = orders_schema();
+        let row = sample_row();
+        let encoded = encode_user_row(&row, &schema).unwrap();
+        let decoded = decode_user_row_selected(
+            encoded.as_slice(),
+            &schema,
+            row.user_id.clone(),
+            row._seq,
+            &[0, 2],
+        )
+        .unwrap();
+        assert_eq!(decoded._commit_seq, row._commit_seq);
+        assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
+        assert_eq!(decoded.fields.values.get("tags"), row.fields.values.get("tags"));
+        assert!(!decoded.fields.values.contains_key("customer"));
+    }
+
+    #[test]
+    fn ordinal_column_encode_matches_named_row() {
+        let schema = orders_schema();
+        let row = sample_row();
+        let columns = vec![
+            row.fields.values.get("id").cloned().unwrap(),
+            row.fields.values.get("customer").cloned().unwrap(),
+            row.fields.values.get("tags").cloned().unwrap(),
+        ];
+        let from_map = encode_user_row(&row, &schema).unwrap();
+        let from_cols =
+            encode_user_row_from_columns(row._commit_seq, row._deleted, &columns, &schema).unwrap();
+        assert_eq!(from_map.as_slice(), from_cols.as_slice());
+        let envelope = kalamdb_commons::models::rows::RowEnvelope::new(columns);
+        let from_envelope =
+            encode_row_envelope(row._commit_seq, row._deleted, &envelope, &schema).unwrap();
+        assert_eq!(from_map.as_slice(), from_envelope.as_slice());
     }
 }

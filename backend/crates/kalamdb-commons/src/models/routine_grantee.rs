@@ -13,6 +13,7 @@ pub enum RoutineGrantee {
     Public,
     User,
     Service,
+    Anonymous,
     Role(String), // TODO: Use RoleId instead
 }
 
@@ -23,6 +24,7 @@ impl RoutineGrantee {
             Self::Public => "public".to_string(),
             Self::User => "user".to_string(),
             Self::Service => "service".to_string(),
+            Self::Anonymous => "anonymous".to_string(),
             Self::Role(name) => format!("role={name}"),
         }
     }
@@ -32,6 +34,7 @@ impl RoutineGrantee {
             "public" => Ok(Self::Public),
             "user" => Ok(Self::User),
             "service" => Ok(Self::Service),
+            "anonymous" => Ok(Self::Anonymous),
             other if let Some(name) = other.strip_prefix("role=") => {
                 if name.is_empty() {
                     return Err("routine grantee role name cannot be empty".to_string());
@@ -59,6 +62,7 @@ mod tests {
             RoutineGrantee::Public,
             RoutineGrantee::User,
             RoutineGrantee::Service,
+            RoutineGrantee::Anonymous,
             RoutineGrantee::Role("moderator".to_string()),
         ] {
             let key = grantee.catalog_key();

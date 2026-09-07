@@ -34,7 +34,18 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
     validate_deploy_readiness(&ctx.project_root, &ctx.config, &env.name, &output)?;
 
     if options.dry_run {
-        output.status("dry-run complete (no migrate, generate, rollout, or health mutations)");
+        output.status("dry-run: parse, schema generate, functions build, and plan only");
+        let has_schema = ctx
+            .config
+            .schema_source_path(&ctx.project_root)
+            .is_some_and(|path| path.is_file());
+        if has_schema && !ctx.config.schema.languages.is_empty() {
+            generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
+        }
+        if ctx.project_root.join(&ctx.config.functions.path).join("package.json").is_file() {
+            crate::workflow::functions::build_functions(&ctx).await?;
+        }
+        output.status("dry-run complete (no migrate, upload, catalog write, or activation)");
         output.detail(format!("would apply migrations and check {}", env.url));
         return Ok(());
     }
@@ -42,7 +53,9 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
     if !ctx.config.schema.languages.is_empty() {
         generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
     }
+    crate::workflow::functions::build_functions(&ctx).await?;
     apply_migrations_for_db_command(&ctx, &output).await?;
+    crate::workflow::functions::activate_function_module(&ctx).await?;
     run_rollout(&ctx.project_root, &ctx.config, &env.name, &output)?;
     check_deploy_health(&env.url, &output).await?;
     output.status("deploy complete");
@@ -125,6 +138,8 @@ fn has_unapplied_migration_covering_diff(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -134,8 +149,13 @@ mod tests {
     async fn deploy_dry_run_is_mutation_free() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
+        fs::write(root.join("schema.sql"), "CREATE TABLE items (id INTEGER PRIMARY KEY);\n")
+            .unwrap();
+        fs::create_dir_all(root.join("functions")).unwrap();
+        fs::write(root.join("functions/package.json"), r#"{"dependencies":{}}"#).unwrap();
         let mut ctx = test_workflow_context(root);
         ctx.config = prod_deploy_test_config();
+        ctx.config.migrations.auto_create = false;
 
         run_deploy(
             &ctx,
@@ -146,5 +166,17 @@ mod tests {
         )
         .await
         .expect("dry-run deploy should succeed without a server");
+        assert!(
+            root.join("functions/.kalam/build/module.js").is_file()
+                && root.join("functions/.kalam/build/manifest.json").is_file(),
+            "dry-run should write the function artifact and manifest"
+        );
+        assert!(
+            !root.join("kalam/migrations").exists()
+                || fs::read_dir(root.join("kalam/migrations"))
+                    .map(|entries| entries.count() == 0)
+                    .unwrap_or(true),
+            "dry-run must not write migrations"
+        );
     }
 }

@@ -5,6 +5,7 @@
 //! FlexBuffers, JSON, or MessagePack for RocksDB payloads.
 
 mod error;
+mod function_value;
 mod model;
 mod object;
 mod protocol;
@@ -13,6 +14,7 @@ mod stream_frame;
 mod version;
 
 pub use error::{Result, SerializationError};
+pub use function_value::{decode_function_value, encode_function_value, FunctionValueEncoder};
 pub use model::{
     model_ms_to_storage_micros, model_to_row, row_to_model, storage_micros_to_model_ms,
 };
@@ -23,9 +25,10 @@ pub use object::{
 pub use protocol::{decode_protocol, encode_protocol, ProtocolKind};
 pub use row::{
     decode_row_fields, decode_row_metadata, decode_shared_row, decode_stream_row, decode_user_row,
-    encode_row_fields, encode_shared_row, encode_stream_row, encode_user_row,
-    storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
-    RowMetadata, StorageDataType, StorageField, StorageSchema,
+    decode_user_row_selected, encode_row_envelope, encode_row_fields,
+    encode_row_fields_from_columns, encode_shared_row, encode_stream_row, encode_user_row,
+    encode_user_row_from_columns, storage_data_type_from_arrow, storage_data_type_from_kalam,
+    storage_schema_from_table, RowMetadata, StorageDataType, StorageField, StorageSchema,
 };
 pub use stream_frame::{
     decode_stream, decode_stream_frame_payload, encode_stream, encode_stream_frame,

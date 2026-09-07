@@ -258,4 +258,16 @@ mod tests {
 
         assert_eq!(result.value, ScalarValue::Int64(Some(42)));
     }
+
+    #[test]
+    fn nested_call_reuses_function_value_buffer() {
+        use kalamdb_serialization::FunctionValueEncoder;
+        use serde_json::json;
+
+        let mut encoder = FunctionValueEncoder::default();
+        let value = json!({"ok": true});
+        let first = encoder.encode("contract", &value).unwrap();
+        let second = encoder.encode("contract", &value).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
 }
