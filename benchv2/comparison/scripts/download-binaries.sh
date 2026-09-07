@@ -12,12 +12,14 @@ OS="$(uname -s)"
 kalam_asset=""
 trail_asset=""
 pb_asset=""
+surreal_asset=""
 
 case "$OS-$ARCH" in
   Darwin-arm64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-macos-aarch64.tar.gz"
     trail_asset="trailbase_v0.32.1_arm64_apple_darwin.zip"
     pb_asset="pocketbase_0.29.3_darwin_arm64.zip"
+    surreal_asset="surreal-v3.2.4.darwin-arm64.tgz"
     ;;
   Darwin-x86_64)
     echo "No KalamDB macos-x86_64 release asset in v0.5.5-rc.1; use arm64 or Linux." >&2
@@ -27,11 +29,13 @@ case "$OS-$ARCH" in
     kalam_asset="kalamdb-server-0.5.5-rc.1-linux-aarch64.tar.gz"
     trail_asset="trailbase_v0.32.1_arm64_linux.zip"
     pb_asset="pocketbase_0.29.3_linux_arm64.zip"
+    surreal_asset="surreal-v3.2.4.linux-arm64.tgz"
     ;;
   Linux-x86_64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-linux-x86_64.tar.gz"
     trail_asset="trailbase_v0.32.1_x86_64_linux.zip"
     pb_asset="pocketbase_0.29.3_linux_amd64.zip"
+    surreal_asset="surreal-v3.2.4.linux-amd64.tgz"
     ;;
   *)
     echo "Unsupported platform: $OS-$ARCH" >&2
@@ -80,5 +84,18 @@ if [[ ! -x "$BIN/pocketbase" ]]; then
   chmod +x "$BIN/pocketbase"
 fi
 
+# SurrealDB release (RocksDB-backed official binary)
+if [[ ! -x "$BIN/surreal" ]]; then
+  download "https://github.com/surrealdb/surrealdb/releases/download/v3.2.4/${surreal_asset}" "$BIN/${surreal_asset}"
+  mkdir -p "$BIN/surreal-extract"
+  tar -xzf "$BIN/${surreal_asset}" -C "$BIN/surreal-extract"
+  found="$(find "$BIN/surreal-extract" -type f -name 'surreal' | head -1)"
+  if [[ -z "$found" ]]; then
+    found="$(find "$BIN/surreal-extract" -type f ! -name '*.tgz' | head -1)"
+  fi
+  cp "$found" "$BIN/surreal"
+  chmod +x "$BIN/surreal"
+fi
+
 echo "Binaries ready in $BIN"
-ls -la "$BIN/kalamdb-server" "$BIN/trail" "$BIN/pocketbase"
+ls -la "$BIN/kalamdb-server" "$BIN/trail" "$BIN/pocketbase" "$BIN/surreal"

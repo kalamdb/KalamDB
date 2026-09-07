@@ -125,19 +125,23 @@ const INSERT_SQL: &str =
 const SELECT_SQL: &str = "SELECT id, owner, room, data FROM bench.message WHERE id = $1";
 
 async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyhow::Result<()> {
-    sql_ok(
-        http,
-        base,
-        token,
-        INSERT_SQL,
-        Some(vec![
-            json!(i),
-            json!("user1"),
-            json!("room0"),
-            json!(message_data(i)),
-        ]),
-    )
-    .await?;
+    let resp = http
+        .post(format!("{base}/v1/api/sql"))
+        .bearer_auth(token)
+        .json(&json!({
+            "sql": INSERT_SQL,
+            "params": [i, "user1", "room0", message_data(i)],
+        }))
+        .send()
+        .await?;
+    let status = resp.status();
+    let body = resp.bytes().await?;
+    if !status.is_success() {
+        anyhow::bail!(
+            "insert failed status={status} body={} sql={INSERT_SQL}",
+            String::from_utf8_lossy(&body)
+        );
+    }
     Ok(())
 }
 

@@ -302,6 +302,10 @@ fn rewrite_jdbc_get_primary_keys(sql: &str) -> std::borrow::Cow<'_, str> {
 pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'_, str> {
     use std::borrow::Cow;
 
+    if !sql_needs_datafusion_compat_rewrite(sql) {
+        return Cow::Borrowed(sql);
+    }
+
     // Perform all context-function regex rewrites on an owned String.
     // The chain of replacements is cheap (no allocation when nothing matches),
     // but we materialise to String once any regex matches to avoid lifetime
@@ -327,14 +331,16 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     let s11 = rewrite_dbeaver_typrelid_filter(&s10);
     let s12 = rewrite_pg_catalog_functions(&s11);
     let result: &str = &s12;
-    let after_ast = if needs_ast_operator_rewrite(result) {
-        rewrite_ast_operators_for_datafusion(result)
+    let rewritten_ast;
+    let after_ast: &str = if needs_ast_operator_rewrite(result) {
+        rewritten_ast = rewrite_ast_operators_for_datafusion(result);
+        &rewritten_ast
     } else {
-        result.to_string()
+        result
     };
     // AST round-trip (e.g. for `!~` → regexp_like) can reformat aliases as `AS c`, which the
     // pre-AST regex pass does not see. Run typrelid simplification again as the final pass.
-    let final_sql = rewrite_dbeaver_typrelid_filter(&after_ast);
+    let final_sql = rewrite_dbeaver_typrelid_filter(after_ast);
     if final_sql.as_ref() == sql {
         Cow::Borrowed(sql)
     } else {
@@ -347,6 +353,62 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
 fn needs_ast_operator_rewrite(sql: &str) -> bool {
     // Cheap scan; false positives only cause an unnecessary but correct re-parse.
     sql.contains("->") || sql.contains('?') || sql.contains('~') || sql.contains("::")
+}
+
+#[inline]
+fn starts_with_ignore_ascii_case(haystack: &[u8], offset: usize, needle: &[u8]) -> bool {
+    let end = offset + needle.len();
+    end <= haystack.len() && haystack[offset..end].eq_ignore_ascii_case(needle)
+}
+
+/// False negatives skip a required rewrite; false positives only take the slow path.
+fn sql_needs_datafusion_compat_rewrite(sql: &str) -> bool {
+    if needs_ast_operator_rewrite(sql) {
+        return true;
+    }
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'c' | b'C' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"current_")
+                    || starts_with_ignore_ascii_case(bytes, i, b"col_description")
+                {
+                    return true;
+                }
+            },
+            b'p' | b'P' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"pg_") {
+                    return true;
+                }
+            },
+            b't' | b'T' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"typrelid") {
+                    return true;
+                }
+            },
+            b'g' | b'G' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"get_primary") {
+                    return true;
+                }
+            },
+            b'f' | b'F' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"format_type") {
+                    return true;
+                }
+            },
+            b'r' | b'R' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"regclass")
+                    || starts_with_ignore_ascii_case(bytes, i, b"regproc")
+                {
+                    return true;
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    false
 }
 
 fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
@@ -1521,6 +1583,20 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
         let rewritten =
             rewrite_context_functions_for_datafusion("SELECT CURRENT_DATABASE() AS database");
         assert_eq!(rewritten, "SELECT KDB_CURRENT_DATABASE() AS database");
+    }
+
+    #[test]
+    #[test]
+    fn parameterized_dml_skips_datafusion_compat_rewrite() {
+        let insert =
+            "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)";
+        let select = "SELECT id, owner, room, data FROM bench.message WHERE id = $1";
+        let insert_out = rewrite_context_functions_for_datafusion(insert);
+        let select_out = rewrite_context_functions_for_datafusion(select);
+        assert!(matches!(insert_out, std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(select_out, std::borrow::Cow::Borrowed(_)));
+        assert!(std::ptr::eq(insert_out.as_ref(), insert));
+        assert!(std::ptr::eq(select_out.as_ref(), select));
     }
 
     #[test]
