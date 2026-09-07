@@ -45,6 +45,12 @@ pub const KALAMDB_USER: &str = "admin";
 pub const KALAMDB_PASSWORD: &str = "kalamdb123";
 pub const KALAMDB_NAMESPACE: &str = "bench";
 
+/// SurrealDB comparison login (root user for the local bake-off).
+pub const SURREALDB_USER: &str = "root";
+pub const SURREALDB_PASSWORD: &str = "root";
+pub const SURREALDB_NAMESPACE: &str = "bench";
+pub const SURREALDB_DATABASE: &str = "bench";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessagePayload {
     pub owner: String,

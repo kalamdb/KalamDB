@@ -545,6 +545,37 @@ mod tests {
     }
 
     #[test]
+    fn arrow_value_to_scalar_preserves_fixed_size_list_embeddings() {
+        let child = Arc::new(Field::new("item", DataType::Float32, true));
+        let values = Float32Array::from(vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+        let list = FixedSizeListArray::new(child, 3, Arc::new(values), None);
+
+        let first = arrow_value_to_scalar(&list, 0).unwrap();
+        let second = arrow_value_to_scalar(&list, 1).unwrap();
+
+        assert!(
+            matches!(&first, ScalarValue::FixedSizeList(_)),
+            "cold-row embeddings must stay FixedSizeList, got {first:?}"
+        );
+        assert!(
+            matches!(&second, ScalarValue::FixedSizeList(_)),
+            "later parquet rows must not stringify embeddings, got {second:?}"
+        );
+        assert!(
+            !matches!(first, ScalarValue::Utf8(_)) && !matches!(second, ScalarValue::Utf8(_)),
+            "Debug-formatting embeddings corrupts DELETE tombstones"
+        );
+
+        let first_vec = match &first {
+            ScalarValue::FixedSizeList(array) => {
+                fixed_size_list_scalar_to_vec(array.as_ref(), 3).expect("first embedding")
+            },
+            other => panic!("expected FixedSizeList, got {other:?}"),
+        };
+        assert_eq!(first_vec, vec![1.0, 0.0, 0.0]);
+    }
+
+    #[test]
     fn embedding_typed_null_uses_plain_null_scalar() {
         let field = Field::new(
             "embedding",
@@ -942,10 +973,15 @@ pub fn arrow_value_to_scalar(
             let arr = array.as_any().downcast_ref::<Decimal128Array>().unwrap();
             Ok(ScalarValue::Decimal128(Some(arr.value(row_idx)), *precision, *scale))
         },
-        _ => {
-            // Fallback: convert to string representation
-            Ok(ScalarValue::Utf8(Some(format!("{:?}", array.slice(row_idx, 1)))))
+        DataType::Binary => {
+            let arr = array.as_any().downcast_ref::<BinaryArray>().unwrap();
+            Ok(ScalarValue::Binary(Some(arr.value(row_idx).to_vec())))
         },
+        DataType::LargeBinary => {
+            let arr = array.as_any().downcast_ref::<LargeBinaryArray>().unwrap();
+            Ok(ScalarValue::LargeBinary(Some(arr.value(row_idx).to_vec())))
+        },
+        _ => ScalarValue::try_from_array(array, row_idx),
     }
 }
 

@@ -326,14 +326,23 @@ impl Row {
 }
 
 fn encode_embedding_from_list(array: Arc<FixedSizeListArray>) -> Option<StoredScalarValue> {
+    if array.is_empty() || array.is_null(0) {
+        return None;
+    }
     let size = array.value_length();
-    let values = array.values();
+    let values = array.value(0);
     let float_array = values.as_any().downcast_ref::<Float32Array>()?;
+    if float_array.len() != size as usize {
+        return None;
+    }
 
     let mut vector = Vec::with_capacity(size as usize);
-    for i in 0..size {
-        let value = float_array.value(i as usize);
-        vector.push(Some(value));
+    for i in 0..size as usize {
+        vector.push(if float_array.is_null(i) {
+            None
+        } else {
+            Some(float_array.value(i))
+        });
     }
 
     Some(StoredScalarValue::Embedding {

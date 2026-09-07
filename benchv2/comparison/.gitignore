@@ -10,6 +10,7 @@ setups/trailbase/traildepot/backups/
 setups/trailbase/traildepot/uploads/
 setups/trailbase/traildepot/wasm/
 setups/trailbase/traildepot/metadata.textproto
+setups/surrealdb/data/
 *.log
 *.tar.gz
 *.zip

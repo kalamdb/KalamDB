@@ -190,6 +190,37 @@ mod tests {
     }
 
     #[test]
+    fn embedding_from_sliced_parquet_row_roundtrips() {
+        let schema = StorageSchema::new(
+            1,
+            vec![StorageField::new(
+                "vec",
+                StorageDataType::Embedding { dimension: 3 },
+            )],
+        );
+        let child = Arc::new(Field::new("item", DataType::Float32, true));
+        let values = arrow::array::Float32Array::from(vec![9.0, 8.0, 7.0, 1.0, 0.0, 0.0]);
+        let list = arrow::array::FixedSizeListArray::new(child, 3, Arc::new(values), None);
+        let scalar = ScalarValue::try_from_array(&list, 1).unwrap();
+
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("vec".to_string(), scalar);
+        let row = UserTableRow {
+            user_id:     UserId::new("user-emb"),
+            _seq:        SeqId::from_i64(1),
+            _commit_seq: 1,
+            _deleted:    true,
+            fields:      Row { values: fields },
+        };
+
+        let encoded = encode_user_row(&row, &schema).unwrap();
+        let decoded =
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._seq).unwrap();
+        let decoded_vec = decoded.fields.values.get("vec").expect("vec");
+        assert!(matches!(decoded_vec, ScalarValue::FixedSizeList(_)));
+    }
+
+    #[test]
     fn unsupported_value_does_not_use_string_fallback() {
         let schema = StorageSchema::new(1, vec![StorageField::new("id", StorageDataType::Int64)]);
         let mut values = std::collections::BTreeMap::new();

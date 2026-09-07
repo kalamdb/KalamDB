@@ -1,18 +1,16 @@
-//! KalamDB comparison driver (hot storage only).
+//! KalamDB comparison driver (hot storage + functions REST).
 //!
-//! Protocol mirrors TrailBase's Rust harness:
+//! Protocol mirrors the SQL HTTP driver and TrailBase's Rust harness:
 //! - concurrency [`comparison_common::LIMIT`]
 //! - 100k insert wall time
 //! - 10k insert latency + 1M point-read latency
 //!
-//! Hot-only guarantees:
-//! 1. Table is created **without** `FLUSH_POLICY` (scheduler skips tables with no policy).
-//! 2. Server config sets `flush.check_interval_seconds = 0` (scheduler disabled).
-//! 3. Driver never issues `STORAGE FLUSH`.
+//! Setup still uses SQL HTTP (`CREATE NAMESPACE` / `CREATE TABLE` /
+//! `CREATE PROCEDURE`). Timed insert/read go through
+//! `POST /v1/functions/{schema}/{procedure}` only.
 //!
-//! Correct SQL usage for plan cache:
-//! - INSERT/SELECT use `$1` placeholders + `params` (stable SQL text).
-//! - Literal-interpolated SQL would miss the plan cache on every request.
+//! Nested host SQL is ABI v1 `ctx.db.sql` (no bind params). Procedures
+//! interpolate literals, matching current CREATE PROCEDURE JS examples.
 
 use comparison_common::{
     message_data, print_latencies, KALAMDB_NAMESPACE, KALAMDB_PASSWORD, KALAMDB_USER,
@@ -37,6 +35,14 @@ fn require_http2(version: Version) -> anyhow::Result<()> {
         "benchmark requires HTTP/2, negotiated {version:?}"
     );
     Ok(())
+}
+
+fn insert_url(base: &str) -> String {
+    format!("{base}/v1/functions/{KALAMDB_NAMESPACE}/insert_message")
+}
+
+fn get_url(base: &str) -> String {
+    format!("{base}/v1/functions/{KALAMDB_NAMESPACE}/get_message")
 }
 
 async fn setup_and_login(http: &Client, base: &str, require_h2: bool) -> anyhow::Result<String> {
@@ -119,18 +125,15 @@ async fn sql_ok(
     Ok(resp_body)
 }
 
-/// Stable SQL text so the server plan cache can hit across requests.
-const INSERT_SQL: &str =
-    "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)";
-const SELECT_SQL: &str = "SELECT id, owner, room, data FROM bench.message WHERE id = $1";
-
 async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyhow::Result<()> {
     let resp = http
-        .post(format!("{base}/v1/api/sql"))
+        .post(insert_url(base))
         .bearer_auth(token)
         .json(&json!({
-            "sql": INSERT_SQL,
-            "params": [i, "user1", "room0", message_data(i)],
+            "id": i,
+            "owner": "user1",
+            "room": "room0",
+            "data": message_data(i),
         }))
         .send()
         .await?;
@@ -138,7 +141,7 @@ async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyho
     let body = resp.bytes().await?;
     if !status.is_success() {
         anyhow::bail!(
-            "insert failed status={status} body={} sql={INSERT_SQL}",
+            "insert_message failed status={status} body={}",
             String::from_utf8_lossy(&body)
         );
     }
@@ -147,19 +150,16 @@ async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyho
 
 async fn read_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow::Result<()> {
     let resp = http
-        .post(format!("{base}/v1/api/sql"))
+        .post(get_url(base))
         .bearer_auth(token)
-        .json(&json!({
-            "sql": SELECT_SQL,
-            "params": [id],
-        }))
+        .json(&json!({ "id": id }))
         .send()
         .await?;
     let status = resp.status();
     let body = resp.bytes().await?;
     if !status.is_success() {
         anyhow::bail!(
-            "read failed status={status} body={} sql={SELECT_SQL}",
+            "get_message failed status={status} body={}",
             String::from_utf8_lossy(&body)
         );
     }
@@ -253,6 +253,88 @@ async fn latency_benchmark(http: &Client, base: &str, token: &str) -> anyhow::Re
     Ok(())
 }
 
+async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result<()> {
+    sql_ok(
+        http,
+        base,
+        token,
+        &format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
+        None,
+    )
+    .await?;
+    let _ = sql_ok(
+        http,
+        base,
+        token,
+        &format!("DROP TABLE IF EXISTS {KALAMDB_NAMESPACE}.message"),
+        None,
+    )
+    .await;
+    let _ = sql_ok(
+        http,
+        base,
+        token,
+        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
+        None,
+    )
+    .await;
+    let _ = sql_ok(
+        http,
+        base,
+        token,
+        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
+        None,
+    )
+    .await;
+
+    sql_ok(
+        http,
+        base,
+        token,
+        &format!(
+            "CREATE TABLE {KALAMDB_NAMESPACE}.message (\
+                id INT PRIMARY KEY, \
+                owner TEXT, \
+                room TEXT, \
+                data TEXT\
+            )"
+        ),
+        None,
+    )
+    .await?;
+
+    sql_ok(
+        http,
+        base,
+        token,
+        &format!(
+            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.insert_message(\
+                id INT, owner TEXT, room TEXT, data TEXT\
+            )\nLANGUAGE JAVASCRIPT\nAS $$\n\
+              ctx.db.sql(\"INSERT INTO {KALAMDB_NAMESPACE}.message (id, owner, room, data) VALUES (\" + input[0] + \", '\" + input[1] + \"', '\" + input[2] + \"', '\" + input[3] + \"')\");\n\
+              return 1;\n\
+            $$"
+        ),
+        None,
+    )
+    .await?;
+
+    sql_ok(
+        http,
+        base,
+        token,
+        &format!(
+            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.get_message(id INT)\n\
+             LANGUAGE JAVASCRIPT\nAS $$\n\
+               return ctx.db.sql(\"SELECT id, owner, room, data FROM {KALAMDB_NAMESPACE}.message WHERE id = \" + input);\n\
+             $$"
+        ),
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let base = base_url();
@@ -270,43 +352,11 @@ async fn main() -> anyhow::Result<()> {
     let token = setup_and_login(&http, &base, use_http2).await?;
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
-    println!("sql=parameterized ($1..) for plan-cache reuse");
+    println!("timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}}");
+    println!("nested_sql=ABI v1 ctx.db.sql (interpolated literals; no nested params)");
     println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
 
-    sql_ok(
-        &http,
-        &base,
-        &token,
-        &format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
-        None,
-    )
-    .await?;
-    let _ = sql_ok(
-        &http,
-        &base,
-        &token,
-        &format!("DROP TABLE IF EXISTS {KALAMDB_NAMESPACE}.message"),
-        None,
-    )
-    .await;
-
-    // Intentionally omit FLUSH_POLICY so the table stays RocksDB-hot only.
-    sql_ok(
-        &http,
-        &base,
-        &token,
-        &format!(
-            "CREATE TABLE {KALAMDB_NAMESPACE}.message (\
-                id INT PRIMARY KEY, \
-                owner TEXT, \
-                room TEXT, \
-                data TEXT\
-            )"
-        ),
-        None,
-    )
-    .await?;
-
+    create_schema(&http, &base, &token).await?;
     insert_benchmark(&http, &base, &token).await?;
     latency_benchmark(&http, &base, &token).await?;
     Ok(())
@@ -328,8 +378,20 @@ mod tests {
         assert!(require_http2(reqwest::Version::HTTP_11).is_err());
     }
 
+    #[test]
+    fn functions_urls_use_rest_path() {
+        assert_eq!(
+            insert_url("http://127.0.0.1:2900"),
+            "http://127.0.0.1:2900/v1/functions/bench/insert_message"
+        );
+        assert_eq!(
+            get_url("http://127.0.0.1:2900"),
+            "http://127.0.0.1:2900/v1/functions/bench/get_message"
+        );
+    }
+
     #[tokio::test]
-    async fn timed_read_validates_http_status_without_parsing_sql_envelope() {
+    async fn timed_read_validates_http_status_without_parsing_envelope() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
         let address = listener.local_addr().expect("read test server address");
         let server = thread::spawn(move || {

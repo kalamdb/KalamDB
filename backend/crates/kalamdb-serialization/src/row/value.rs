@@ -247,19 +247,26 @@ fn encode_embedding(buf: &mut Vec<u8>, list: &FixedSizeListArray, dimension: i32
         write_u8(buf, TAG_NULL);
         return Ok(());
     }
-    let values = list.values().as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
-        SerializationError::Encode("embedding values must be float32".to_string())
-    })?;
-    if values.len() != dimension as usize {
+    if list.value_length() != dimension {
         return Err(SerializationError::Encode(format!(
             "embedding dimension mismatch: expected {dimension}, got {}",
-            values.len()
+            list.value_length()
+        )));
+    }
+    let values = list.value(0);
+    let floats = values.as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
+        SerializationError::Encode("embedding values must be float32".to_string())
+    })?;
+    if floats.len() != dimension as usize {
+        return Err(SerializationError::Encode(format!(
+            "embedding dimension mismatch: expected {dimension}, got {}",
+            floats.len()
         )));
     }
     write_u8(buf, TAG_EMBEDDING);
     buf.extend_from_slice(&dimension.to_le_bytes());
-    for i in 0..values.len() {
-        buf.extend_from_slice(&values.value(i).to_le_bytes());
+    for i in 0..floats.len() {
+        buf.extend_from_slice(&floats.value(i).to_le_bytes());
     }
     Ok(())
 }

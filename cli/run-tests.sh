@@ -1256,6 +1256,9 @@ start_pgwire_test_server() {
     export KALAMDB_SERVER_URL="$PGWIRE_SERVER_URL"
     export KALAMDB_URL="$PGWIRE_SERVER_URL"
     setup_supplementary_auth_if_needed
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        return 0
+    fi
     if [ -n "$previous_server_url" ]; then
         export KALAMDB_SERVER_URL="$previous_server_url"
         export KALAMDB_URL="$previous_server_url"
