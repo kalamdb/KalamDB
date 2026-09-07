@@ -145,15 +145,15 @@ fn write_module_artifact(ctx: &WorkflowContext) -> Result<()> {
                 let Some(stem) = rel.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
-                let schema =
+                let namespace =
                     rel.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-                if schema.is_empty() {
+                if namespace.is_empty() {
                     continue;
                 }
                 let text = fs::read_to_string(&path).map_err(|error| {
                     CLIError::FileError(format!("failed to read '{}': {error}", path.display()))
                 })?;
-                procedures.push((format!("{schema}.{stem}"), text));
+                procedures.push((format!("{namespace}.{stem}"), text));
             }
         }
     }
@@ -332,17 +332,17 @@ fn validate_registry_exports(
             let Some(stem) = rel.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            let schema =
+            let namespace =
                 rel.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-            if schema.is_empty() {
+            if namespace.is_empty() {
                 continue;
             }
-            let qualified = format!("{schema}.{stem}");
+            let qualified = format!("{namespace}.{stem}");
             if !snapshot.routines.contains_key(&qualified)
                 && !snapshot
                     .routines
                     .values()
-                    .any(|routine| routine.schema == schema && routine.name == stem)
+                    .any(|routine| routine.schema == namespace && routine.name == stem)
             {
                 return Err(CLIError::ConfigurationError(format!(
                     "unknown export {qualified} has no SQL routine"
@@ -633,12 +633,12 @@ async fn workflow_bearer_token(
 }
 
 pub fn override_function(ctx: &WorkflowContext, procedure: &str) -> Result<()> {
-    let (schema, name) = procedure.split_once('.').ok_or_else(|| {
+    let (namespace, name) = procedure.split_once('.').ok_or_else(|| {
         CLIError::ConfigurationError(
-            "functions override requires schema.name (example: api.health)".into(),
+            "functions override requires namespace.name (example: api.health)".into(),
         )
     })?;
-    let dir = ctx.project_root.join("functions/src").join(schema);
+    let dir = ctx.project_root.join("functions/src").join(namespace);
     fs::create_dir_all(&dir).map_err(|error| {
         CLIError::FileError(format!("failed to create '{}': {error}", dir.display()))
     })?;
@@ -649,7 +649,7 @@ pub fn override_function(ctx: &WorkflowContext, procedure: &str) -> Result<()> {
             path.display()
         )));
     }
-    let body = seed_override_body(ctx, schema, name);
+    let body = seed_override_body(ctx, namespace, name);
     fs::write(&path, body).map_err(|error| {
         CLIError::FileError(format!("failed to write '{}': {error}", path.display()))
     })?;
@@ -657,27 +657,27 @@ pub fn override_function(ctx: &WorkflowContext, procedure: &str) -> Result<()> {
     Ok(())
 }
 
-fn seed_override_body(ctx: &WorkflowContext, schema: &str, name: &str) -> String {
+fn seed_override_body(ctx: &WorkflowContext, namespace: &str, name: &str) -> String {
     let Ok((snapshot, _)) =
         crate::workflow::schema::compile_project_contract(&ctx.project_root, &ctx.config)
     else {
-        return default_override_source(schema, name, None);
+        return default_override_source(namespace, name, None);
     };
-    let key = format!("{schema}.{name}");
+    let key = format!("{namespace}.{name}");
     let inline = snapshot.routines.get(&key).and_then(|routine| routine.body.clone());
-    default_override_source(schema, name, inline.as_deref())
+    default_override_source(namespace, name, inline.as_deref())
 }
 
-fn default_override_source(schema: &str, name: &str, inline: Option<&str>) -> String {
+fn default_override_source(namespace: &str, name: &str, inline: Option<&str>) -> String {
     match inline {
         Some(body) if !body.trim().is_empty() => {
             format!(
-                "/** Override for {schema}.{name}. Seeded from the inline SQL body. */\nexport \
+                "/** Override for {namespace}.{name}. Seeded from the inline SQL body. */\nexport \
                  default async (ctx: KalamCtx, input: unknown) => {{\n{body}\n}};\n"
             )
         },
         _ => format!(
-            "/** Override for {schema}.{name}. */\nexport default async (ctx: KalamCtx, input: \
+            "/** Override for {namespace}.{name}. */\nexport default async (ctx: KalamCtx, input: \
              unknown) => {{\n  return input;\n}};\n"
         ),
     }
@@ -767,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn override_scaffolds_schema_proc_file() {
+    fn override_scaffolds_namespace_proc_file() {
         let temp = TempDir::new().unwrap();
         let ctx = crate::workflow::test_support::test_workflow_context(temp.path());
         override_function(&ctx, "api.health").unwrap();

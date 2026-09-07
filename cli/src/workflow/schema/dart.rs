@@ -9,7 +9,7 @@ use kalamdb_sql::contracts::{
 use crate::{
     error::{CLIError, Result},
     workflow::schema::{
-        naming::{camel_case, contract_hash_line, value_ident, AssignedNames, DEFAULT_SCHEMA},
+        naming::{camel_case, contract_hash_line, value_ident, AssignedNames, DEFAULT_NAMESPACE},
         types::{render_field_type, TargetLang},
     },
 };
@@ -184,7 +184,7 @@ fn write_spec(out: &mut String, table: &ContractTable, class_name: &str, const_n
 }
 
 fn wire_table_id(table: &ContractTable) -> String {
-    if table.schema.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
+    if table.schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
         table.name.clone()
     } else {
         table.table_id.clone()

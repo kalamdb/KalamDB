@@ -300,6 +300,12 @@ threads-required = 15
 # # Queries global system.jobs count — must not race with concurrent tests creating jobs.
 # test-group = "stateful-heavy"
 
+# Functions e2e share one V8 heap budget on the running server. Overlap
+# previously tripped "function memory" RESOURCE_LIMIT under default 15 threads.
+[[profile.default.overrides]]
+filter = 'test(kobj_functions_)'
+test-group = "stateful-heavy"
+
 # [[profile.default.overrides]]
 # filter = 'package(kalamdb-server)'
 # threads-required = 15

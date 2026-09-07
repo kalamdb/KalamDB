@@ -45,6 +45,7 @@ kalamdb-store = { path = "../kalamdb-store", optional = true }
 
 [dev-dependencies]
 ntest = { workspace = true }
+kalamdb-serialization = { path = "../kalamdb-serialization" }
 
 [lib]
 name = "kalamdb_functions"

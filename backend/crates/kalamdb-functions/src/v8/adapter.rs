@@ -718,6 +718,41 @@ fn set_object_number(
     Ok(())
 }
 
+/// Parse `source` in a short-lived isolate. Does not run it.
+pub fn compile_javascript_source(source: &str) -> Result<()> {
+    ensure_v8();
+    let mut isolate = v8::Isolate::new(
+        v8::CreateParams::default()
+            .heap_limits(0, 8 * 1024 * 1024)
+            .set_max_old_generation_size_in_bytes(8 * 1024 * 1024),
+    );
+    v8::scope!(let scope, &mut isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let mut scope = v8::ContextScope::new(scope, context);
+    v8::tc_scope!(let try_catch, &mut scope);
+    let code = v8::String::new(try_catch, source)
+        .ok_or_else(|| FunctionsError::Invalid("javascript source too large".into()))?;
+    let origin_name = v8::String::new(try_catch, "inline.js")
+        .ok_or_else(|| FunctionsError::Invalid("javascript origin".into()))?;
+    let origin = ScriptOrigin::new(
+        try_catch,
+        origin_name.into(),
+        0,
+        0,
+        false,
+        0,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    if v8::Script::compile(try_catch, code, Some(&origin)).is_none() {
+        return Err(js_exception(try_catch));
+    }
+    Ok(())
+}
+
 fn compile_and_run(scope: &mut v8::PinScope, source: &str) -> Result<()> {
     v8::tc_scope!(let try_catch, scope);
     let code = v8::String::new(try_catch, source)

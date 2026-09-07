@@ -1173,6 +1173,33 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
     Ok(KalamCellValue(json))
 }
 
+/// JSON for the in-memory function JS boundary.
+///
+/// REST/SQL JSON keeps Int64/UInt64 as strings so JavaScript clients do not
+/// lose precision. V8 `input + 1` is arithmetic, so values within
+/// `Number.MAX_SAFE_INTEGER` must be JSON numbers or they concatenate.
+pub fn scalar_value_to_js_json(value: &ScalarValue) -> Result<KalamCellValue, CommonError> {
+    Ok(KalamCellValue(scalar_to_js_json_value(value)?))
+}
+
+const JS_MAX_SAFE_INTEGER: i64 = (1i64 << 53) - 1;
+
+fn scalar_to_js_json_value(value: &ScalarValue) -> Result<JsonValue, CommonError> {
+    match value {
+        ScalarValue::Int64(Some(n)) if *n >= -JS_MAX_SAFE_INTEGER && *n <= JS_MAX_SAFE_INTEGER => {
+            Ok(JsonValue::Number((*n).into()))
+        },
+        ScalarValue::UInt64(Some(n)) if *n <= JS_MAX_SAFE_INTEGER as u64 => {
+            Ok(JsonValue::Number((*n).into()))
+        },
+        ScalarValue::List(list) => list_scalar_value_to_js_json(list.as_ref()),
+        ScalarValue::LargeList(list) => large_list_scalar_value_to_js_json(list.as_ref()),
+        ScalarValue::FixedSizeList(list) => fixed_size_list_scalar_value_to_js_json(list.as_ref()),
+        ScalarValue::Struct(array) => struct_scalar_value_to_js_json(array.as_ref()),
+        _ => Ok(scalar_value_to_json(value)?.0),
+    }
+}
+
 #[inline]
 fn checked_unit_to_micros(value: i64, factor: i64, source_unit: &str) -> Result<i64, CommonError> {
     value.checked_mul(factor).ok_or_else(|| {
@@ -1184,20 +1211,45 @@ fn checked_unit_to_micros(value: i64, factor: i64, source_unit: &str) -> Result<
 }
 
 fn list_scalar_value_to_json(list: &ListArray) -> Result<JsonValue, CommonError> {
-    nested_array_to_json(list, |array| array.value(0))
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_json)
 }
 
 fn large_list_scalar_value_to_json(list: &LargeListArray) -> Result<JsonValue, CommonError> {
-    nested_array_to_json(list, |array| array.value(0))
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_json)
 }
 
 fn fixed_size_list_scalar_value_to_json(
     list: &FixedSizeListArray,
 ) -> Result<JsonValue, CommonError> {
-    nested_array_to_json(list, |array| array.value(0))
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_json)
+}
+
+fn list_scalar_value_to_js_json(list: &ListArray) -> Result<JsonValue, CommonError> {
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_js_json)
+}
+
+fn large_list_scalar_value_to_js_json(list: &LargeListArray) -> Result<JsonValue, CommonError> {
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_js_json)
+}
+
+fn fixed_size_list_scalar_value_to_js_json(
+    list: &FixedSizeListArray,
+) -> Result<JsonValue, CommonError> {
+    nested_array_to_json(list, |array| array.value(0), scalar_value_to_js_json)
 }
 
 fn struct_scalar_value_to_json(array: &StructArray) -> Result<JsonValue, CommonError> {
+    struct_scalar_value_to_json_converted(array, scalar_value_to_json)
+}
+
+fn struct_scalar_value_to_js_json(array: &StructArray) -> Result<JsonValue, CommonError> {
+    struct_scalar_value_to_json_converted(array, scalar_value_to_js_json)
+}
+
+fn struct_scalar_value_to_json_converted(
+    array: &StructArray,
+    convert: fn(&ScalarValue) -> Result<KalamCellValue, CommonError>,
+) -> Result<JsonValue, CommonError> {
     if array.is_empty() || array.is_null(0) {
         return Ok(JsonValue::Null);
     }
@@ -1210,12 +1262,16 @@ fn struct_scalar_value_to_json(array: &StructArray) -> Result<JsonValue, CommonE
                 error
             ))
         })?;
-        object.insert(field.name().clone(), scalar_value_to_json(&scalar)?.0);
+        object.insert(field.name().clone(), convert(&scalar)?.0);
     }
     Ok(JsonValue::Object(object))
 }
 
-fn nested_array_to_json<A, F>(array: &A, extract_values: F) -> Result<JsonValue, CommonError>
+fn nested_array_to_json<A, F>(
+    array: &A,
+    extract_values: F,
+    convert: fn(&ScalarValue) -> Result<KalamCellValue, CommonError>,
+) -> Result<JsonValue, CommonError>
 where
     A: Array,
     F: FnOnce(&A) -> ArrayRef,
@@ -1230,7 +1286,7 @@ where
         let scalar = ScalarValue::try_from_array(values.as_ref(), index).map_err(|error| {
             CommonError::invalid_input(format!("Failed to extract list element scalar: {}", error))
         })?;
-        json_values.push(scalar_value_to_json(&scalar)?.0);
+        json_values.push(convert(&scalar)?.0);
     }
 
     Ok(JsonValue::Array(json_values))
@@ -1400,6 +1456,17 @@ mod serialization_tests {
         let value = ScalarValue::Int64(Some(42));
         let json = scalar_value_to_json(&value).unwrap();
         assert_eq!(json, serde_json::json!("42").into());
+    }
+
+    #[test]
+    fn test_int64_js_boundary_is_number_when_safe() {
+        let json = scalar_value_to_js_json(&ScalarValue::Int64(Some(41))).unwrap();
+        assert_eq!(json, serde_json::json!(41).into());
+        let json = scalar_value_to_js_json(&ScalarValue::UInt64(Some(41))).unwrap();
+        assert_eq!(json, serde_json::json!(41).into());
+        let json =
+            scalar_value_to_js_json(&ScalarValue::Int64(Some(JS_MAX_SAFE_INTEGER + 1))).unwrap();
+        assert_eq!(json, serde_json::json!((JS_MAX_SAFE_INTEGER + 1).to_string()).into());
     }
 
     #[test]

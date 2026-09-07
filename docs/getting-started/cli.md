@@ -656,17 +656,42 @@ Reports project name, resolved environment (with precedence source), schema mode
 
 ### Deploy with migration guardrails
 
+`kalam deploy` generates schema artifacts, builds the project's server functions,
+applies migrations, activates the function module, runs configured rollout steps,
+and checks the target's health. Use a CLI and server build with functions support
+and configure the target environment and DBA or System credentials first.
+
 ```bash
-kalam db migrate          # apply locally first
+kalam deploy --env dev --dry-run  # validate locally without activating
+kalam deploy --env dev
 kalam deploy --env prod
 ```
 
-Deploy blocks when:
+The dry run generates schema artifacts and builds functions when
+`functions/package.json` is present. It does not apply migrations, upload functions,
+or activate a revision. To build functions independently, use `kalam functions build`.
+Production-like environments enforce migration history when automatic migrations
+are enabled: schema changes must be covered by a migration before deployment.
 
-- pending migrations exist (run `kalam db migrate` first)
-- production schema drift exists without a committed migration file
+### Server functions
 
-After rollout, deploy runs `GET {url}/ui` and accepts 2xx/3xx responses.
+Declare a bodyless `CREATE PROCEDURE` in your schema and run `kalam schema gen`.
+TypeScript generation creates a one-time implementation scaffold under
+`functions/src/<namespace>/<procedure>.ts` and preserves existing implementations.
+Edit the implementation, then use `kalam deploy` to build and activate the project
+module. See the [README example](../../README.md#deploy-a-function-to-your-backend)
+and [SQL procedure reference](../reference/sql.md#create-procedure).
+
+```bash
+kalam functions build
+kalam functions status --env dev
+kalam functions revisions --env dev
+kalam functions logs --env dev
+```
+
+To restore a previously activated revision, use
+`kalam functions rollback <revision> --env dev` with an identifier from
+`kalam functions revisions`. This changes the active revision without rebuilding.
 
 ---
 

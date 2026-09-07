@@ -1,6 +1,6 @@
 //! JS identifier helpers shared by CLI generation and the runtime routine map.
 
-pub const DEFAULT_SCHEMA: &str = "public";
+pub const DEFAULT_NAMESPACE: &str = "public";
 
 pub fn pascal_case(value: &str) -> String {
     let mut name = String::new();
@@ -39,8 +39,8 @@ pub fn method_ident(name: &str) -> String {
     camel_case(name)
 }
 
-pub fn schema_object_ident(schema: &str) -> String {
-    sanitize_js_ident(&camel_case(schema))
+pub fn namespace_object_ident(namespace: &str) -> String {
+    sanitize_js_ident(&camel_case(namespace))
 }
 
 pub fn sanitize_js_ident(value: &str) -> String {
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn method_ident_matches_cli_camel_case() {
         assert_eq!(method_ident("create_message"), "createMessage");
-        assert_eq!(schema_object_ident("chat"), "chat");
-        assert_eq!(schema_object_ident("billing_v2"), "billingV2");
+        assert_eq!(namespace_object_ident("chat"), "chat");
+        assert_eq!(namespace_object_ident("billing_v2"), "billingV2");
     }
 }

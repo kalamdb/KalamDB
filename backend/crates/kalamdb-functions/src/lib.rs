@@ -32,6 +32,7 @@ pub use host::{
     ProcedureFrameStack,
 };
 pub use invocation::{Invocation, InvocationScope};
+pub use v8::inline::{lint_inline_javascript, prepare_inline_javascript};
 pub(crate) use v8::{adapter as v8_adapter, async_ops as v8_async, wrap};
 pub use v8_adapter::{V8Session, FIXTURE_SOURCE};
 pub use value::RoutineValue;

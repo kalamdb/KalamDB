@@ -275,6 +275,9 @@ pub(crate) fn trim_leading_sql_comments(mut input: &str) -> &str {
     }
 }
 
+/// CREATE TYPE / CREATE PROCEDURE / GRANT EXECUTE are not structural emitters.
+/// They are compiled by `kalamdb_sql::compile_contract_sql` and diffed as a
+/// contract snapshot, so there is no `emitter/create_type.rs`.
 pub(crate) fn is_contract_ddl(sql: &str) -> bool {
     let sql = sql.trim_start();
     starts_ci(sql, "CREATE TYPE")

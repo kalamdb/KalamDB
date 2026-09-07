@@ -37,14 +37,14 @@ function __kalamMakeCtx() {
     typed = {};
   }
   const namespaces = {};
-  for (const schema of Object.keys(typed)) {
-    const methods = typed[schema] || {};
+  for (const namespace of Object.keys(typed)) {
+    const methods = typed[namespace] || {};
     const boxed = {};
     for (const jsName of Object.keys(methods)) {
       const routineId = methods[jsName];
       boxed[jsName] = (input) => call(routineId, input === undefined ? [] : [input]);
     }
-    namespaces[schema] = Object.freeze(boxed);
+    namespaces[namespace] = Object.freeze(boxed);
   }
   return Object.freeze({
     ...metadata,

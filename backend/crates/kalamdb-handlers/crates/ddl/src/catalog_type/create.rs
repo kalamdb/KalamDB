@@ -17,7 +17,10 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::{CreateTypeBody, CreateTypeStatement, TypeReference};
 use kalamdb_system::{CatalogStores, CatalogType, CatalogTypeField};
 
-use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
+use crate::helpers::{
+    async_blocking::run_blocking,
+    guards::{require_admin, require_existing_namespace},
+};
 
 pub struct CreateTypeHandler {
     app_context: Arc<AppContext>,
@@ -46,6 +49,7 @@ fn persist_create_type(
     app: &AppContext,
     statement: CreateTypeStatement,
 ) -> Result<ExecutionResult, KalamDbError> {
+    require_existing_namespace(app, &statement.namespace_id)?;
     let stores = app.system_tables().catalog_stores();
     if stores
         .get_type(&statement.type_id)

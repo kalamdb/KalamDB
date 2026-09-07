@@ -1,4 +1,4 @@
-//! POST /v1/functions/{schema}/{procedure}
+//! POST /v1/functions/{namespace}/{procedure}
 
 use std::sync::Arc;
 
@@ -32,8 +32,8 @@ pub async fn invoke_function_v1(
     app_context: web::Data<Arc<AppContext>>,
 ) -> impl Responder {
     let session: AuthSession = extractor.into();
-    let (schema, procedure) = path.into_inner();
-    let namespace_id = NamespaceId::new(schema);
+    let (namespace, procedure) = path.into_inner();
+    let namespace_id = NamespaceId::new(namespace);
     let routine_id = RoutineId::from_parts(Some(&namespace_id), &procedure);
 
     if let Some(key) = rejected_context_key(&body) {
@@ -253,9 +253,11 @@ mod tests {
         let routine = super::bind_json_value(&value, None).unwrap();
         assert!(routine.transfer.is_some());
         assert_eq!(routine.contract_hash.as_deref(), Some("rest"));
-        let decoded =
-            kalamdb_serialization::decode_function_value(routine.transfer.as_ref().unwrap(), "rest")
-                .unwrap();
+        let decoded = kalamdb_serialization::decode_function_value(
+            routine.transfer.as_ref().unwrap(),
+            "rest",
+        )
+        .unwrap();
         assert_eq!(decoded, value);
     }
 }

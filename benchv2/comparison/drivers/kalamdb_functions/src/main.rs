@@ -7,7 +7,7 @@
 //!
 //! Setup still uses SQL HTTP (`CREATE NAMESPACE` / `CREATE TABLE` /
 //! `CREATE PROCEDURE`). Timed insert/read go through
-//! `POST /v1/functions/{schema}/{procedure}` only.
+//! `POST /v1/functions/{namespace}/{procedure}` only.
 //!
 //! Nested host SQL is ABI v1 `ctx.db.sql(sql, params)` with `$n` binds so
 //! the nested statements hit the same plan cache as SQL HTTP.

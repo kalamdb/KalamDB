@@ -16,7 +16,7 @@ use crate::{
     error::{CLIError, Result},
     workflow::schema::{
         naming::{
-            contract_hash_line, method_ident, schema_object_ident, value_ident, AssignedNames,
+            contract_hash_line, method_ident, namespace_object_ident, value_ident, AssignedNames,
         },
         types::{render_field_type, TargetLang},
     },
@@ -98,7 +98,7 @@ pub fn generate_runtime_dts(snapshot: &ContractSnapshot, names: &AssignedNames) 
         .routines
         .values()
         .map(|routine| TypedRoutine {
-            schema:      routine.schema.as_str(),
+            namespace:   routine.schema.as_str(),
             name:        routine.name.as_str(),
             type_ident:  names.routine_ident(routine.routine_id.as_str()),
             param_count: routine.parameters.len(),
@@ -267,14 +267,14 @@ fn drizzle_column(field: &ContractField) -> String {
 }
 
 fn emit_frontend_client(out: &mut String, snapshot: &ContractSnapshot, names: &AssignedNames) {
-    let mut by_schema: BTreeMap<&str, Vec<&ContractRoutine>> = BTreeMap::new();
+    let mut by_namespace: BTreeMap<&str, Vec<&ContractRoutine>> = BTreeMap::new();
     for routine in snapshot.routines.values() {
-        by_schema.entry(routine.schema.as_str()).or_default().push(routine);
+        by_namespace.entry(routine.schema.as_str()).or_default().push(routine);
     }
     out.push_str("export const kalam = {\n");
-    for (schema, routines) in &by_schema {
+    for (namespace, routines) in &by_namespace {
         out.push_str("  ");
-        out.push_str(&schema_object_ident(schema));
+        out.push_str(&namespace_object_ident(namespace));
         out.push_str(": {\n");
         for routine in routines {
             let method = method_ident(&routine.name);

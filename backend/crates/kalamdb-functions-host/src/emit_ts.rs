@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::idents::{method_ident, schema_object_ident};
+use crate::idents::{method_ident, namespace_object_ident};
 
 pub struct TypedRoutine<'a> {
-    pub schema:      &'a str,
+    pub namespace:   &'a str,
     pub name:        &'a str,
     pub type_ident:  &'a str,
     pub param_count: usize,
@@ -75,9 +75,9 @@ pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
     if routines.is_empty() {
         return String::new();
     }
-    let mut by_schema: BTreeMap<&str, Vec<&TypedRoutine<'_>>> = BTreeMap::new();
+    let mut by_namespace: BTreeMap<&str, Vec<&TypedRoutine<'_>>> = BTreeMap::new();
     for routine in routines {
-        by_schema.entry(routine.schema).or_default().push(routine);
+        by_namespace.entry(routine.namespace).or_default().push(routine);
     }
     let mut out = String::from("\n");
     let mut imports: Vec<String> =
@@ -90,8 +90,8 @@ pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
         out.push_str(" } from \"./contracts\";\n\n");
     }
     out.push_str("export interface FunctionsHost {\n");
-    for (schema, methods) in by_schema {
-        let ident = schema_object_ident(schema);
+    for (namespace, methods) in by_namespace {
+        let ident = namespace_object_ident(namespace);
         out.push_str("  ");
         out.push_str(&ident);
         out.push_str(": {\n");
@@ -128,9 +128,9 @@ mod tests {
     }
 
     #[test]
-    fn typed_host_uses_schema_and_camel_method() {
+    fn typed_host_uses_namespace_and_camel_method() {
         let dts = emit_typed_functions_host(&[TypedRoutine {
-            schema:      "chat",
+            namespace:   "chat",
             name:        "create_message",
             type_ident:  "ChatCreateMessage",
             param_count: 2,
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn empty_arg_emits_no_input_param() {
         let dts = emit_typed_functions_host(&[TypedRoutine {
-            schema:      "api",
+            namespace:   "api",
             name:        "health",
             type_ident:  "ApiHealth",
             param_count: 0,

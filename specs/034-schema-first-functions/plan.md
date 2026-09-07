@@ -150,7 +150,7 @@ Follow spec Delivery Sequence. One stage, one gate. Preserve working foundations
 
 ### Must preserve
 
-ContractSnapshot, generated scaffolds/registry (extended with `runtime.d.ts`), content-addressed artifacts, CAS activation, immutable revisions, process-global V8 `Once`, hard timeout / terminate / near-heap-limit, `RoutineValue` type id, EXECUTE ACL, INVOKER/DEFINER, transaction coordinator, `kalamdb-serialization` ownership of durable bytes, REST `/v1/functions/{schema}/{procedure}`, topic-trigger tx semantics, lazy engine `OnceLock`.
+ContractSnapshot, generated scaffolds/registry (extended with `runtime.d.ts`), content-addressed artifacts, CAS activation, immutable revisions, process-global V8 `Once`, hard timeout / terminate / near-heap-limit, `RoutineValue` type id, EXECUTE ACL, INVOKER/DEFINER, transaction coordinator, `kalamdb-serialization` ownership of durable bytes, REST `/v1/functions/{namespace}/{procedure}`, topic-trigger tx semantics, lazy engine `OnceLock`.
 
 ## Phase 0: Outline & Research
 

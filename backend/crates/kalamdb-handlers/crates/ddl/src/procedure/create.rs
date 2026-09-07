@@ -14,11 +14,16 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_functions::{hash_artifact_bytes, wrap_procedure_source, FunctionActivation};
+use kalamdb_functions::{
+    hash_artifact_bytes, prepare_inline_javascript, FunctionActivation, ImplementationRef,
+};
 use kalamdb_sql::ddl::CreateProcedureStatement;
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
 
-use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
+use crate::helpers::{
+    async_blocking::run_blocking,
+    guards::{require_admin, require_existing_namespace},
+};
 
 pub struct CreateProcedureHandler {
     app_context: Arc<AppContext>,
@@ -38,6 +43,7 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "create procedure")?;
+        require_existing_namespace(&self.app_context, &statement.namespace_id)?;
         let app = Arc::clone(&self.app_context);
         let owner = context.user_id().clone();
         let mut routine = catalog_routine(&statement, owner);
@@ -61,6 +67,10 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
                 statement.routine_id
             )));
         }
+        let replaced = existing.is_some();
+        let source_unchanged = existing.as_ref().is_some_and(|previous| {
+            previous.body == routine.body && previous.language == routine.language
+        });
 
         let routine_id = statement.routine_id.clone();
         let app_for_catalog = Arc::clone(&app);
@@ -78,16 +88,22 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
         })
         .await?;
 
-        let _ = kalamdb_core::functions::rebuild_active_function_set(&app).await;
+        kalamdb_core::functions::rebuild_active_function_set(&app).await?;
 
         Ok(ExecutionResult::Success {
-            message: format!("Procedure {} created", statement.routine_id),
+            message: procedure_ddl_message(&app, &routine, replaced, source_unchanged),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::{
+        models::{NamespaceId, UserId},
+        Role,
+    };
+    use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
+
     use super::*;
 
     #[test]
@@ -96,6 +112,79 @@ mod tests {
         assert!(!should_compile_javascript(Some("SQL")));
         assert!(!should_compile_javascript(Some("TYPESCRIPT")));
         assert!(should_compile_javascript(Some("JAVASCRIPT")));
+    }
+
+    #[test]
+    fn ddl_message_distinguishes_create_and_replace() {
+        let created = format_procedure_ddl_message(
+            "api.health",
+            false,
+            false,
+            Some("JAVASCRIPT"),
+            Some("abc"),
+            Some("def"),
+            "inline javascript",
+            None,
+            1,
+        );
+        assert!(created.starts_with("Procedure api.health created\n"), "{created}");
+        assert!(created.contains("inline javascript"), "{created}");
+        assert!(!created.contains("module_revision"), "{created}");
+
+        let replaced = format_procedure_ddl_message(
+            "api.health",
+            true,
+            false,
+            Some("JAVASCRIPT"),
+            Some("abc"),
+            Some("def"),
+            "inline javascript",
+            Some("backend:rev1"),
+            4,
+        );
+        assert!(replaced.starts_with("Procedure api.health replaced\n"), "{replaced}");
+        assert!(replaced.contains("source: changed"), "{replaced}");
+        assert!(
+            replaced.contains("module_revision: backend:rev1 (not created by this statement)"),
+            "{replaced}"
+        );
+        assert!(replaced.contains("active_set_generation: 4"), "{replaced}");
+
+        let unchanged = format_procedure_ddl_message(
+            "api.health",
+            true,
+            true,
+            Some("JAVASCRIPT"),
+            Some("abc"),
+            Some("def"),
+            "inline javascript",
+            None,
+            2,
+        );
+        assert!(
+            unchanged.starts_with("Procedure api.health replaced (source unchanged)\n"),
+            "{unchanged}"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_namespace_returns_error() {
+        let app_ctx = test_app_context_simple();
+        let handler = CreateProcedureHandler::new(app_ctx);
+        let ctx = ExecutionContext::new(
+            UserId::new("test_user"),
+            Role::Dba,
+            create_test_session_simple(),
+        );
+        let statement = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE missing_ns.echo(msg TEXT) LANGUAGE JAVASCRIPT AS $$ return input; $$",
+            &NamespaceId::default(),
+        )
+        .expect("parse create procedure");
+        let error = handler.execute(statement, vec![], &ctx).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("does not exist"), "{message}");
+        assert!(message.contains("CREATE NAMESPACE missing_ns"), "{message}");
     }
 }
 
@@ -155,6 +244,86 @@ fn should_compile_javascript(language: Option<&str>) -> bool {
     )
 }
 
+fn procedure_ddl_message(
+    app: &AppContext,
+    routine: &CatalogRoutine,
+    replaced: bool,
+    source_unchanged: bool,
+) -> String {
+    let set = app.function_runtime().active_set();
+    let implementation = match set.lookup(&routine.routine_id) {
+        ImplementationRef::Inline { artifact } => {
+            format!("inline javascript artifact={}", artifact.artifact_id)
+        },
+        ImplementationRef::Module { revision, .. } => {
+            format!(
+                "module override revision={} (inline body stored, not executed)",
+                revision.revision_id
+            )
+        },
+        ImplementationRef::Missing => "not implemented".to_string(),
+    };
+    let module_revision =
+        set.module_revision.as_ref().map(|revision| revision.revision_id.to_string());
+    format_procedure_ddl_message(
+        routine.routine_id.as_str(),
+        replaced,
+        source_unchanged,
+        routine.language.as_deref(),
+        routine.inline_source_hash.as_deref(),
+        routine.inline_artifact_id.as_ref().map(|id| id.as_str()),
+        &implementation,
+        module_revision.as_deref(),
+        set.generation,
+    )
+}
+
+fn format_procedure_ddl_message(
+    routine_id: &str,
+    replaced: bool,
+    source_unchanged: bool,
+    language: Option<&str>,
+    source_hash: Option<&str>,
+    inline_artifact: Option<&str>,
+    implementation: &str,
+    module_revision: Option<&str>,
+    generation: u64,
+) -> String {
+    let mut lines = Vec::with_capacity(8);
+    if replaced && source_unchanged {
+        lines.push(format!("Procedure {routine_id} replaced (source unchanged)"));
+    } else if replaced {
+        lines.push(format!("Procedure {routine_id} replaced"));
+    } else {
+        lines.push(format!("Procedure {routine_id} created"));
+    }
+    if let Some(language) = language {
+        lines.push(format!("language: {language}"));
+    }
+    lines.push(format!("implementation: {implementation}"));
+    if let Some(source_hash) = source_hash {
+        lines.push(format!("source_hash: {source_hash}"));
+    }
+    if let Some(inline_artifact) = inline_artifact {
+        lines.push(format!("inline_artifact: {inline_artifact}"));
+    }
+    if replaced {
+        lines.push(format!(
+            "source: {}",
+            if source_unchanged {
+                "unchanged"
+            } else {
+                "changed"
+            }
+        ));
+    }
+    if let Some(module_revision) = module_revision {
+        lines.push(format!("module_revision: {module_revision} (not created by this statement)"));
+    }
+    lines.push(format!("active_set_generation: {generation}"));
+    lines.join("\n")
+}
+
 async fn compile_inline_javascript(
     app: &Arc<AppContext>,
     statement: &CreateProcedureStatement,
@@ -165,7 +334,14 @@ async fn compile_inline_javascript(
             statement.routine_id
         ))
     })?;
-    let source = wrap_procedure_source(body);
+    let source = {
+        let body = body.to_string();
+        run_blocking(move || {
+            prepare_inline_javascript(&body)
+                .map_err(|error| KalamDbError::InvalidSql(error.to_string()))
+        })
+        .await?
+    };
     let storage = kalamdb_core::functions::function_storage(app)?;
     let stores = app.system_tables().catalog_stores();
     let activation = FunctionActivation::new(stores);

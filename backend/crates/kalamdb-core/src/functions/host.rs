@@ -157,11 +157,22 @@ impl FunctionHost for CoreFunctionHost {
         args: Vec<RoutineValue>,
     ) -> kalamdb_functions::Result<Option<(kalamdb_functions::Invocation, Arc<dyn FunctionHost>)>>
     {
+        // Same-isolate nested CALL is only valid when the callee shares this
+        // isolate's artifact. Inline procedures each wrap one body in
+        // `kalamInvoke` and ignore the name argument, so a different revision
+        // must go through `call_async` (fresh isolate). Project modules keep
+        // one `kalamInvoke` that dispatches on routine id.
+        let Some(caller) = self.session.stack.last() else {
+            return Ok(None);
+        };
         let max_depth = self.app.function_runtime().engine()?.config().max_depth;
         let mut child = self.clone();
         child.scope = self.scope.child(max_depth)?;
         let id = resolve_routine_id(&procedure, &child.session.exec_ctx.default_namespace());
         let (invocation, host) = executor::prepare_call(&child, id, &args).map_err(map_core)?;
+        if invocation.revision.revision_id != caller.revision_id {
+            return Ok(None);
+        }
         Ok(Some((invocation, host)))
     }
 

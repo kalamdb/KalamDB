@@ -16,7 +16,7 @@ use crate::{
         },
         schema::{
             model::{ColumnDefinition, SchemaOrigin, SchemaSnapshot, TableDefinition, TableKind},
-            naming::DEFAULT_SCHEMA,
+            naming::DEFAULT_NAMESPACE,
         },
     },
 };
@@ -98,7 +98,7 @@ pub fn compile_project_contract(
             sql:  sql.as_str(),
         })
         .collect();
-    let snapshot = compile_contract(&sources, DEFAULT_SCHEMA).map_err(|err| {
+    let snapshot = compile_contract(&sources, DEFAULT_NAMESPACE).map_err(|err| {
         CLIError::ConfigurationError(format!("failed to compile schema contract: {}", err.message))
     })?;
     let hash = canonical_contract_hash(&snapshot);

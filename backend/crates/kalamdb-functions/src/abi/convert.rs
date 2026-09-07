@@ -382,4 +382,16 @@ mod tests {
         assert!(value.transfer.is_some());
         assert_eq!(value.contract_hash.as_deref(), Some("c1"));
     }
+
+    #[test]
+    fn js_boundary_json_keeps_safe_int64_as_number() {
+        let encoded = kalamdb_commons::conversions::arrow_json_conversion::scalar_value_to_js_json(
+            &ScalarValue::Int64(Some(41)),
+        )
+        .expect("js json");
+        assert_eq!(encoded.0, json!(41));
+        let bytes = encode_function_value("", &encoded.0).unwrap();
+        let decoded = kalamdb_serialization::decode_function_value(&bytes, "").unwrap();
+        assert_eq!(decoded, json!(41));
+    }
 }

@@ -94,9 +94,7 @@ fn activation_error(error: kalamdb_core::error::KalamDbError) -> HttpResponse {
         .map(|code| code.as_str())
         .unwrap_or("INTERNAL_RUNTIME_ERROR");
     let mut status = match code {
-        "ABI_MISMATCH" | "CONTRACT_MISMATCH" | "INVALID_ARGUMENTS" => {
-            HttpResponse::BadRequest()
-        },
+        "ABI_MISMATCH" | "CONTRACT_MISMATCH" | "INVALID_ARGUMENTS" => HttpResponse::BadRequest(),
         "STALE_REVISION" => HttpResponse::Conflict(),
         "PROCEDURE_NOT_FOUND" => HttpResponse::NotFound(),
         "EXECUTE_DENIED" => HttpResponse::Forbidden(),

@@ -1,4 +1,4 @@
-# REST: POST /v1/functions/{schema}/{procedure}
+# REST: POST /v1/functions/{namespace}/{procedure}
 
 Existing route. Behavior changes only.
 

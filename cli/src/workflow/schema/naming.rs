@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 pub use kalamdb_functions_host::{
-    camel_case, method_ident, pascal_case, sanitize_js_ident, schema_object_ident, DEFAULT_SCHEMA,
+    camel_case, method_ident, namespace_object_ident, pascal_case, sanitize_js_ident,
+    DEFAULT_NAMESPACE,
 };
 use kalamdb_sql::contracts::ContractSnapshot;
 
@@ -65,7 +66,7 @@ pub fn assign_names(snapshot: &ContractSnapshot, options: NamingOptions) -> Resu
 
 pub fn generated_type_ident(schema: &str, name: &str, unqualified_names: bool) -> String {
     let local = pascal_case(name);
-    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
+    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
         local
     } else {
         format!("{}{local}", pascal_case(schema))
@@ -74,7 +75,7 @@ pub fn generated_type_ident(schema: &str, name: &str, unqualified_names: bool) -
 
 pub fn value_ident(schema: &str, name: &str, unqualified_names: bool) -> String {
     let local = camel_case(name);
-    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
+    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
         local
     } else {
         format!("{}{}", camel_case(schema), pascal_case(name))
@@ -108,7 +109,7 @@ mod tests {
         .unwrap();
         assert_eq!(names.type_ident("chat.user"), "ChatUser");
         assert_eq!(names.routine_ident("chat.create_message"), "ChatCreateMessage");
-        assert_eq!(schema_object_ident("chat"), "chat");
+        assert_eq!(namespace_object_ident("chat"), "chat");
         assert_eq!(method_ident("create_message"), "createMessage");
     }
 

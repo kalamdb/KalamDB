@@ -8,7 +8,7 @@ use arrow::{
 };
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::scalar_value_to_json,
+    conversions::arrow_json_conversion::{scalar_value_to_js_json, scalar_value_to_json},
     models::{RoutineCall, RoutineId, TopicId, TransactionId},
     FunctionModuleId, FunctionRevisionId, FunctionRuntime, Role, UserId,
 };
@@ -670,7 +670,7 @@ fn attach_transfer(args: &[RoutineValue], contract_hash: &str) -> Vec<RoutineVal
             if arg.transfer.is_some() {
                 return arg.clone();
             }
-            let Ok(json) = scalar_value_to_json(&arg.value) else {
+            let Ok(json) = scalar_value_to_js_json(&arg.value) else {
                 return arg.clone();
             };
             match kalamdb_serialization::encode_function_value(contract_hash, &json.0) {

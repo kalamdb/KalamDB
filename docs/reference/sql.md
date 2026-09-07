@@ -446,7 +446,7 @@ holds `EXECUTE` on that procedure.
 ### CREATE PROCEDURE
 
 ```sql
-CREATE [OR REPLACE] PROCEDURE [<schema>.]<name> (
+CREATE [OR REPLACE] PROCEDURE [<namespace>.]<name> (
   <arg> <type> [NOT NULL] [NONEMPTY] [, ...]
 )
 [RETURNS [ROW TYPE] <type>]
@@ -459,22 +459,27 @@ $$];
 
 Rules:
 
-1. One procedure per `schema.name`. Overloads are rejected.
-2. Unqualified names use the current default namespace (`USE` / session schema).
-3. Parameters are `IN` only. They are nullable unless `NOT NULL` is present.
-4. `SECURITY INVOKER` is the default. The procedure runs as the caller; RLS and
+1. One procedure per `namespace.name`. Overloads are rejected.
+2. Unqualified names use the current default namespace (`USE` / session namespace).
+3. The namespace must already exist (`CREATE NAMESPACE`). Creating a procedure in
+   a missing namespace fails.
+4. Parameters are `IN` only. They are nullable unless `NOT NULL` is present.
+5. `SECURITY INVOKER` is the default. The procedure runs as the caller; RLS and
    `CURRENT_USER` use that principal.
-5. `SECURITY DEFINER` runs as the procedure owner for that frame. The original
+6. `SECURITY DEFINER` runs as the procedure owner for that frame. The original
    actor is preserved for audit. Table privileges and RLS use the owner.
-6. `LANGUAGE` is required only when a body is present. Project-backed
-   procedures omit `LANGUAGE` and `AS`. `LANGUAGE JAVASCRIPT`, `JS`,
-   `TYPESCRIPT`, and `TS` all compile to the same V8 runtime. Dollar-quoted
-   (`$$ ... $$`) or string-literal bodies are accepted. Inline TypeScript is
-   stored and is not executed until compiled JavaScript exists.
-7. `LANGUAGE SQL` catalogs the routine but `CALL` is not supported.
-8. `CREATE OR REPLACE` replaces an existing procedure. Without `OR REPLACE`, a
-   duplicate name fails.
-9. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
+7. `LANGUAGE` is required only when a body is present. Project-backed
+   procedures omit `LANGUAGE` and `AS`. `LANGUAGE JAVASCRIPT` and `JS` are
+   parsed in V8 at CREATE time (syntax + host-API lint) and stored as an inline
+   artifact. `LANGUAGE TYPESCRIPT` and `TS` are stored for introspection and are
+   not executed until a project deployment supplies compiled JavaScript.
+   Dollar-quoted (`$$ ... $$`) or string-literal bodies are accepted.
+8. `LANGUAGE SQL` catalogs the routine but `CALL` is not supported.
+9. `CREATE OR REPLACE` replaces an existing procedure. Without `OR REPLACE`, a
+   duplicate name fails. The success message says `created` or `replaced` and
+   includes the inline source hash / artifact id. This statement does **not**
+   create a function module revision; those come from `kalam deploy`.
+10. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
 
 The body is wrapped as `(ctx, input) => { ... }` unless it already defines
 `function kalamInvoke(name, args)`. With one argument, `input` is that value.
@@ -486,8 +491,9 @@ Host objects injected into `ctx`:
 | --- | --- |
 | `ctx.source.kind` | Always `"call"` for SQL, REST, and PGWire invocation. Clients cannot supply this. |
 | `ctx.db.query(sql, params?)` / `ctx.db.execute(sql, params?)` | Nested SQL on the same request transaction. `query` returns rows; `execute` returns a result. `params` is an optional array bound as `$1`..`$n`. |
-| `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `schema.name` or unqualified. |
+| `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `namespace.name` or unqualified. |
 | `ctx.topics.publish(topic, payload)` | Stage a typed topic publish. Commit flushes it; rollback drops it. |
+| `ctx.log.info/debug/warn/error(...)` | Structured process logs (`target: kalamdb::functions`). `ctx.log` is an object, not a function. `console` is not available. |
 | `ctx.http.request.method/path/headers.get/query.get` | HTTP-root only. `Authorization`, `Proxy-Authorization`, and `Cookie` are not readable. SQL/`CALL` and topic origins set `ctx.http` to null. |
 | `ctx.http.response.status/header/contentType` | HTTP-root only; nested procedures cannot mutate the response. `Connection`, `Transfer-Encoding`, `Content-Length`, and `Host` are rejected. |
 
@@ -497,6 +503,7 @@ Examples:
 CREATE OR REPLACE PROCEDURE app.echo(msg TEXT)
 LANGUAGE JAVASCRIPT
 AS $$
+  ctx.log.info('echo', { msg: input });
   return input;
 $$;
 
@@ -525,8 +532,8 @@ $$;
 ### DROP PROCEDURE
 
 ```sql
-DROP PROCEDURE [<schema>.]<name>;
-DROP PROCEDURE IF EXISTS [<schema>.]<name>;
+DROP PROCEDURE [<namespace>.]<name>;
+DROP PROCEDURE IF EXISTS [<namespace>.]<name>;
 ```
 
 ### GRANT / REVOKE EXECUTE
@@ -536,8 +543,8 @@ whether a principal may enter the procedure. Nested `ctx.db.sql` still uses the
 effective principal's table privileges and RLS.
 
 ```sql
-GRANT EXECUTE ON PROCEDURE [<schema>.]<name> TO <PUBLIC|user|service|<role>|anonymous>;
-REVOKE EXECUTE ON PROCEDURE [<schema>.]<name> FROM <PUBLIC|user|service|<role>|anonymous>;
+GRANT EXECUTE ON PROCEDURE [<namespace>.]<name> TO <PUBLIC|user|service|<role>|anonymous>;
+REVOKE EXECUTE ON PROCEDURE [<namespace>.]<name> FROM <PUBLIC|user|service|<role>|anonymous>;
 ```
 
 Rules:
@@ -549,7 +556,7 @@ Rules:
    `TO PUBLIC` allows every authenticated role except anonymous.
 4. Anonymous sessions cannot execute procedures unless `GRANT EXECUTE ... TO anonymous`
    is explicit. `PUBLIC` does not include anonymous. REST
-   `POST /v1/functions/{schema}/{procedure}` uses a named JSON object, a
+   `POST /v1/functions/{namespace}/{procedure}` uses a named JSON object, a
    positional JSON array, or empty; the success body is the procedure return
    value (not `{status,result}`).
 5. A user can `CALL` a `SECURITY DEFINER` API without holding `INSERT` on the
@@ -565,9 +572,9 @@ REVOKE EXECUTE ON PROCEDURE app.echo FROM user;
 ### CALL
 
 ```sql
-CALL [<schema>.]<name>();
-CALL [<schema>.]<name>(<arg> [, ...]);
-CALL [<schema>.]<name>($1, $2);
+CALL [<namespace>.]<name>();
+CALL [<namespace>.]<name>(<arg> [, ...]);
+CALL [<namespace>.]<name>($1, $2);
 ```
 
 SQL `CALL` arguments are positional literals or 1-based placeholders:
@@ -603,7 +610,7 @@ Every executable procedure is also available over HTTP. This is the same
 runtime as SQL `CALL`, not a second controller contract.
 
 ```http
-POST /v1/functions/{schema}/{procedure}
+POST /v1/functions/{namespace}/{procedure}
 Authorization: Bearer <token>
 Content-Type: application/json
 ```

@@ -30,6 +30,8 @@ $$;
 
 `LANGUAGE` is required because a body exists. Body uses the same `ctx` / `input` as project methods ([host-api.md](host-api.md)).
 
+CREATE parses the wrapped JavaScript in V8 and rejects host-API misuse (`ctx.log(...)` instead of `ctx.log.info(...)`, `console.log`, calling `ctx.db` as a function). It does not invoke the procedure, so it will not catch logic errors or missing arguments. Success reports `created` vs `replaced` plus the inline artifact id. It does not create a function module revision.
+
 ## Inline TypeScript (stored, not executed by server)
 
 ```sql
