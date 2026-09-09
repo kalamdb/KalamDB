@@ -3,6 +3,7 @@
 use std::{
     cell::RefCell,
     collections::VecDeque,
+    hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -69,11 +70,11 @@ impl Drop for MemoryCharge {
 /// One V8 isolate plus the lifecycle information needed to decide whether keeping it warm is still
 /// worthwhile. The memory reservation intentionally lives in this wrapper, not in an invocation.
 struct SessionInstance {
-    session:     V8Session,
-    created_at:  Instant,
+    session:      V8Session,
+    created_at:   Instant,
     last_used_at: Instant,
-    invocations: u64,
-    _memory:     MemoryCharge,
+    invocations:  u64,
+    _memory:      MemoryCharge,
 }
 
 impl SessionInstance {
@@ -87,10 +88,16 @@ impl SessionInstance {
         }
     }
 
-    fn expired(&self, now: Instant, config: &EngineConfig) -> bool {
-        now.saturating_duration_since(self.last_used_at) >= config.idle_ttl
-            || now.saturating_duration_since(self.created_at) >= config.max_instance_age
+    /// Limits tied to the isolate itself, independent of how long it has been idle.
+    fn lifecycle_expired(&self, now: Instant, config: &EngineConfig) -> bool {
+        now.saturating_duration_since(self.created_at) >= config.max_instance_age
             || self.invocations >= config.max_invocations_per_instance
+    }
+
+    fn idle_expired(&self, now: Instant, config: &EngineConfig) -> bool {
+        config.idle_ttl.is_zero()
+            || now.saturating_duration_since(self.last_used_at) >= config.idle_ttl
+            || self.lifecycle_expired(now, config)
     }
 }
 
@@ -121,10 +128,14 @@ impl IdlePool {
 
     fn recycle(&mut self, mut instance: SessionInstance, now: Instant, config: &EngineConfig) {
         self.prune(now, config);
-        if config.max_idle_per_lane == 0 || instance.expired(now, config) {
+        if config.max_idle_per_lane == 0
+            || config.idle_ttl.is_zero()
+            || instance.lifecycle_expired(now, config)
+        {
             return;
         }
 
+        // Idle time starts after execution completes, not when the invocation began.
         instance.last_used_at = now;
         instance.session.detach();
         while self.sessions.len() >= config.max_idle_per_lane {
@@ -134,7 +145,7 @@ impl IdlePool {
     }
 
     fn prune(&mut self, now: Instant, config: &EngineConfig) {
-        self.sessions.retain(|instance| !instance.expired(now, config));
+        self.sessions.retain(|instance| !instance.idle_expired(now, config));
     }
 
     fn evict_lru(&mut self) -> bool {
@@ -153,15 +164,24 @@ fn idle_sweep_interval(ttl: Duration) -> Duration {
     ttl.min(Duration::from_secs(1)).max(Duration::from_millis(10))
 }
 
+/// Prefer the same worker for a revision so sequential calls reuse one warm isolate instead of
+/// round-robin warming the same function on every worker. The sender falls back to other workers
+/// when this preferred lane is full, preserving parallelism for hot functions under load.
+fn preferred_worker(revision_id: &FunctionRevisionId, workers: usize) -> usize {
+    debug_assert!(workers > 0);
+    let mut hasher = DefaultHasher::new();
+    revision_id.hash(&mut hasher);
+    (hasher.finish() as usize) % workers
+}
+
 pub struct FunctionEngine {
-    config:      EngineConfig,
-    workers:     Vec<mpsc::Sender<Work>>,
-    next_worker: AtomicUsize,
-    active:      Arc<Semaphore>,
-    roots:       Arc<Semaphore>,
-    queued:      Arc<Semaphore>,
-    memory:      Arc<AtomicUsize>,
-    revisions:   Cache<FunctionRevisionId, Arc<ModuleRevision>>,
+    config:    EngineConfig,
+    workers:   Vec<mpsc::Sender<Work>>,
+    active:    Arc<Semaphore>,
+    roots:     Arc<Semaphore>,
+    queued:    Arc<Semaphore>,
+    memory:    Arc<AtomicUsize>,
+    revisions: Cache<FunctionRevisionId, Arc<ModuleRevision>>,
 }
 
 impl FunctionEngine {
@@ -183,7 +203,8 @@ impl FunctionEngine {
                     let local = tokio::task::LocalSet::new();
                     local.block_on(&runtime, async move {
                         let idle = Rc::new(RefCell::new(IdlePool::default()));
-                        let mut sweep = tokio::time::interval(idle_sweep_interval(worker_config.idle_ttl));
+                        let mut sweep =
+                            tokio::time::interval(idle_sweep_interval(worker_config.idle_ttl));
                         sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                         loop {
@@ -238,7 +259,6 @@ impl FunctionEngine {
                 .build(),
             config,
             workers,
-            next_worker: AtomicUsize::new(0),
         })
     }
 
@@ -319,20 +339,36 @@ impl FunctionEngine {
             return Err(FunctionsError::ResourceLimit("function memory".into()));
         }
 
+        let preferred = preferred_worker(&invocation.revision.revision_id, self.workers.len());
         let (reply, response) = oneshot::channel();
         let cancel = invocation.scope.cancel.clone();
         let deadline = invocation.scope.deadline;
         let cancellation = cancel.clone().drop_guard();
-        let index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.workers.len();
-        self.workers[index]
-            .try_send(Work {
-                invocation,
-                host,
-                reply,
-                _active: active,
-                _root: root,
-            })
-            .map_err(|_| FunctionsError::Capacity)?;
+        let mut work = Work {
+            invocation,
+            host,
+            reply,
+            _active: active,
+            _root: root,
+        };
+        let mut sent = false;
+        for offset in 0..self.workers.len() {
+            let index = (preferred + offset) % self.workers.len();
+            match self.workers[index].try_send(work) {
+                Ok(()) => {
+                    sent = true;
+                    break;
+                },
+                Err(mpsc::error::TrySendError::Full(returned))
+                | Err(mpsc::error::TrySendError::Closed(returned)) => {
+                    work = returned;
+                },
+            }
+        }
+        if !sent {
+            return Err(FunctionsError::Capacity);
+        }
+
         // The worker acknowledges cleanup before the caller can roll back.
         let result = tokio::select! {
             biased;
@@ -412,7 +448,7 @@ async fn run_v8(
     let recycle = result.is_ok()
         && !instance.session.heap_limit_hit()
         && instance.session.used_heap_bytes() <= config.heap_soft_bytes
-        && !instance.expired(completed_at, config);
+        && !instance.lifecycle_expired(completed_at, config);
     if recycle {
         idle.borrow_mut().recycle(instance, completed_at, config);
     }
@@ -665,6 +701,33 @@ mod tests {
 
     #[tokio::test]
     #[ntest::timeout(20000)]
+    async fn revision_affinity_avoids_warming_same_function_on_every_worker() {
+        let mut config = EngineConfig::default();
+        config.workers = 4;
+        config.max_active = 4;
+        config.max_idle_per_lane = 1;
+        config.idle_ttl = Duration::from_secs(30);
+        config.max_memory_bytes = config.max_heap_bytes * 2;
+        let rev = revision("sticky");
+        let expected = config.max_heap_bytes + rev.byte_len();
+        let engine = FunctionEngine::new(config).unwrap();
+
+        for value in 0..8 {
+            let result = engine
+                .invoke(invocation(Arc::clone(&rev), 0, value), Arc::new(NoopHost))
+                .await
+                .unwrap();
+            assert_eq!(result.value, ScalarValue::Int32(Some(value)));
+        }
+        assert_eq!(
+            engine.memory.load(Ordering::Acquire),
+            expected,
+            "sequential calls should stay on the preferred worker and reuse one warm isolate"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(20000)]
     async fn memory_pressure_evicts_local_warm_lru_before_rejecting_cold_function() {
         let mut config = EngineConfig::default();
         config.workers = 1;
@@ -719,6 +782,13 @@ mod tests {
             .await
             .unwrap();
         assert!(engine.memory.load(Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn worker_affinity_is_stable_for_same_revision() {
+        let id = FunctionRevisionId::new("backend:abc");
+        assert_eq!(preferred_worker(&id, 4), preferred_worker(&id, 4));
+        assert!(preferred_worker(&id, 4) < 4);
     }
 
     #[test]
