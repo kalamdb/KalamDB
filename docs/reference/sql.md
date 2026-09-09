@@ -307,7 +307,10 @@ They are the same type system used by table columns and procedure signatures.
 Creating a table also catalogs an implicit row type with the same
 schema-qualified name as the table (`app.users` is both the table and the row
 type). `CREATE TYPE ... FROM TABLE` adds an optional second name, usually
-singular, bound to that live row type.
+singular, bound to that live row type. Creating a topic catalogs an implicit
+payload type with the same schema-qualified name as the topic. That payload is
+a tagged union of the topic's `ADD SOURCE` tables, discriminated by `_table`
+(the wire form `namespace:table`).
 
 ### CREATE TYPE
 
@@ -346,12 +349,14 @@ Rules:
 2. Fields are nullable unless `NOT NULL` is present.
 3. `NONEMPTY` is allowed on `TEXT`, `BYTES`, and arrays, and requires `NOT NULL`.
 4. Arrays are one-dimensional (`T[]`).
-5. Fields may reference scalars, enums, named composites, table row types, or
-   `JSON`/`JSONB`.
+5. Fields may reference scalars, enums, named composites, table row types,
+   topic payload types, or `JSON`/`JSONB`.
 6. `FROM TABLE` aliases must live in the same schema as the table. A table may
    have at most one explicit row-type alias.
-7. A standalone type cannot reuse a table's implicit row-type name.
-8. `AS UNION` and `AS INTERFACE` are reserved and rejected.
+7. A standalone type cannot reuse a table's implicit row-type name or a topic's
+   implicit payload-type name.
+8. `AS UNION` and `AS INTERFACE` are reserved and rejected. Multi-source topics
+   still produce a tagged union of their source row types (see Topics).
 9. Catalog rows live in `system.types` and `system.type_fields`.
 
 Use named types in procedure signatures and as nested table columns:
@@ -363,6 +368,9 @@ LANGUAGE JAVASCRIPT
 AS $$
   return ctx.db.sql("SELECT * FROM app.users WHERE id = $1", [input]);
 $$;
+
+CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+SECURITY DEFINER;
 ```
 
 ### ALTER TYPE
@@ -388,7 +396,8 @@ DROP TYPE [<schema>.]<name> RESTRICT;
 ```
 
 `DROP TYPE` fails while another type, alias, or procedure still references it.
-Implicit table row types cannot be dropped; drop the table instead.
+Implicit table row types cannot be dropped; drop the table instead. Implicit
+topic payload types cannot be dropped; drop the topic instead.
 `DROP TYPE CASCADE` is not supported.
 
 ## Data Manipulation (DML)
@@ -482,18 +491,23 @@ Rules:
 10. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
 
 The body is wrapped as `(ctx, input) => { ... }` unless it already defines
-`function kalamInvoke(name, args)`. With one argument, `input` is that value.
-With several arguments, `input` is an array in declaration order.
+`function kalamInvoke(name, args)`. `input` is always a named object matching
+the procedure parameters (`{ x }` for `inc(x INT)`, `{ first, last }` for
+`greet(first TEXT, last TEXT)`). A one-argument SQL `CALL` is packed into that
+object. Nested `ctx.functions.<ns>.<method>(input)` already passes the object
+and is not wrapped again.
 
 Host objects injected into `ctx`:
 
 | Host | Purpose |
 | --- | --- |
 | `ctx.source.kind` | Always `"call"` for SQL, REST, and PGWire invocation. Clients cannot supply this. |
-| `ctx.db.query(sql, params?)` / `ctx.db.execute(sql, params?)` | Nested SQL on the same request transaction. `query` returns rows; `execute` returns a result. `params` is an optional array bound as `$1`..`$n`. |
+| `ctx.db.query(sql, params?)` / `ctx.db.execute(sql, params?)` | Nested SQL on the same request transaction. `query` returns rows; `execute` returns a result. `params` is an optional array bound as `$1`..`$n`. STREAM `INSERT`/`UPDATE`/`DELETE` autocommit outside that transaction so live progress rows are visible before the procedure commits. A client `BEGIN` still rejects STREAM DML. |
+| `ctx.sleep(ms)` | Pause up to 60s (also bounded by the procedure deadline). Honors cancellation. |
 | `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `namespace.name` or unqualified. |
 | `ctx.topics.publish(topic, payload)` | Stage a typed topic publish. Commit flushes it; rollback drops it. |
-| `ctx.log.info/debug/warn/error(...)` | Structured process logs (`target: kalamdb::functions`). `ctx.log` is an object, not a function. `console` is not available. |
+| `ctx.log.info/debug/warn/error(...)` | Structured process logs (`target: kalamdb::functions`, `channel=ctx.log`). `ctx.log` is an object, not a function. |
+| `console.log/info/debug/warn/error(...)` | Same process logger with `channel=console`. `console.log` maps to info. Prefer `ctx.log` for structured procedure logs. |
 | `ctx.http.request.method/path/headers.get/query.get` | HTTP-root only. `Authorization`, `Proxy-Authorization`, and `Cookie` are not readable. SQL/`CALL` and topic origins set `ctx.http` to null. |
 | `ctx.http.response.status/header/contentType` | HTTP-root only; nested procedures cannot mutate the response. `Connection`, `Transfer-Encoding`, `Content-Length`, and `Host` are rejected. |
 
@@ -503,14 +517,14 @@ Examples:
 CREATE OR REPLACE PROCEDURE app.echo(msg TEXT)
 LANGUAGE JAVASCRIPT
 AS $$
-  ctx.log.info('echo', { msg: input });
-  return input;
+  ctx.log.info('echo', { msg: input.msg });
+  return input.msg;
 $$;
 
 CREATE OR REPLACE PROCEDURE app.inc(x INT)
 LANGUAGE JAVASCRIPT
 AS $$
-  return input + 1;
+  return input.x + 1;
 $$;
 
 CREATE OR REPLACE PROCEDURE app.plus_one(x INT)
@@ -523,7 +537,7 @@ CREATE OR REPLACE PROCEDURE app.place_order(p_id INT)
 LANGUAGE JAVASCRIPT
 SECURITY DEFINER
 AS $$
-  ctx.db.execute("INSERT INTO app.orders (id, status) VALUES ($1, 'ok')", [input]);
+  ctx.db.execute("INSERT INTO app.orders (id, status) VALUES ($1, 'ok')", [input.p_id]);
   ctx.topics.publish('app.events', { id: input, status: 'ok' });
   return { id: input, status: 'ok' };
 $$;
@@ -869,7 +883,7 @@ CREATE TOPIC <topic_name> PARTITIONS <count>;
 ### DROP TOPIC
 
 ```sql
-DROP TOPIC <topic_name>;
+DROP TOPIC [IF EXISTS] <topic_name>;
 ```
 
 ### CLEAR TOPIC
@@ -890,6 +904,34 @@ ON <INSERT|UPDATE|DELETE>
 
 `WHERE` is evaluated against the row routed for the selected operation. That lets
 you publish only a subset of inserts or updates into a worker topic.
+
+Creating a topic catalogs an implicit payload type with the same name. Each
+`ADD SOURCE` table (default `payload = 'full'`) is one arm of that type. Full
+payloads include the source row plus `_table` (`namespace:table`) so a trigger
+procedure can narrow the union. Declare the procedure argument as the topic
+name instead of `JSON`:
+
+```sql
+CREATE TOPIC chat.ai_inbox;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
+
+CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL);
+CREATE TRIGGER chat.process_message
+  ON TOPIC chat.ai_inbox
+  EXECUTE PROCEDURE chat.on_message(PAYLOAD);
+```
+
+Generated TypeScript for that topic:
+
+```ts
+type ChatAiInbox =
+  | ({ _table: "chat:direct_messages" } & ChatDirectMessages)
+  | ({ _table: "chat:messages" } & ChatMessages);
+```
+
+A procedure may also `RETURNS` the topic payload type when it inserts into one
+of those source tables and returns the tagged row.
 
 Example: publish task-cancellation work only when a task is already cancelled on
 insert, or becomes cancelled on update.

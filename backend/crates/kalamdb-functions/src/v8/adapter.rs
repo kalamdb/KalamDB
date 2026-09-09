@@ -1244,6 +1244,7 @@ return 1;
         .await
         .unwrap();
         let record = host.last.lock().unwrap().clone().expect("log record");
+        assert_eq!(record.channel, crate::LogChannel::CtxLog);
         assert_eq!(record.level, "error");
         assert_eq!(record.message, "failed");
         assert!(
@@ -1259,6 +1260,33 @@ return 1;
         assert!(
             record.args_json.as_ref().is_none_or(|args| !args.contains("secret-payload")),
             "CALL payloads must not appear in ctx.log"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn console_log_forwards_to_host_with_console_channel() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        invoke_wrapped(
+            r#"
+console.log("this is a test");
+console.warn("heads up", { id: 7 });
+return 1;
+"#,
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .unwrap();
+        let record = host.last.lock().unwrap().clone().expect("log record");
+        assert_eq!(record.channel, crate::LogChannel::Console);
+        assert_eq!(record.level, "warn");
+        assert_eq!(record.message, "heads up");
+        assert!(
+            record.args_json.as_ref().is_some_and(|args| args.contains("\"id\":7")),
+            "{:?}",
+            record.args_json
         );
     }
 

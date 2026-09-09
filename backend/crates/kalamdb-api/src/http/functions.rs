@@ -2,24 +2,24 @@
 
 use std::sync::Arc;
 
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web::{HttpRequest, HttpResponse, Responder, web};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::scalar_value_to_json,
-    models::{NamespaceId, RoutineId},
     KalamDataType,
+    conversions::arrow_json_conversion::{scalar_value_to_js_json, scalar_value_to_json},
+    models::{NamespaceId, RoutineId},
 };
 use kalamdb_core::{
     app_context::AppContext,
     functions::{
-        json_to_routine_value, FunctionCallOrigin, FunctionService, HttpResponseOverrides,
-        RoutineValue,
+        FunctionCallOrigin, FunctionService, HttpResponseOverrides, RoutineValue,
+        json_to_routine_value,
     },
     sql::context::ExecutionContext,
 };
 use kalamdb_session::AuthSession;
 use parking_lot::Mutex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 const REJECTED_CONTEXT_KEYS: &[&str] = &["context", "ctx", "source", "actor", "tx"];
@@ -210,7 +210,7 @@ fn bind_json_value(
 ) -> Result<RoutineValue, String> {
     let routine = json_to_routine_value(value, parameter_data_type(parameter).as_ref())
         .map_err(|error| error.to_string())?;
-    let json = scalar_value_to_json(&routine.value).map_err(|error| error.to_string())?;
+    let json = scalar_value_to_js_json(&routine.value).map_err(|error| error.to_string())?;
     let bytes = kalamdb_serialization::encode_function_value("rest", &json.0)
         .map_err(|error| error.to_string())?;
     Ok(routine.with_transfer(bytes::Bytes::from(bytes), "rest"))

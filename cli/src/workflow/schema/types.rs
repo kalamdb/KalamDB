@@ -54,6 +54,7 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
         (TargetLang::TypeScript, "DECIMAL" | "NUMERIC") => "string",
         (TargetLang::TypeScript, "BYTES" | "BYTEA" | "BLOB" | "BINARY") => "Uint8Array",
         (TargetLang::TypeScript, "JSON" | "JSONB") => "JsonValue",
+        (TargetLang::TypeScript, "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME") => "Date",
         (TargetLang::TypeScript, _) => "string",
 
         (TargetLang::Dart, "BOOLEAN" | "BOOL") => "bool",
@@ -88,4 +89,17 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
 
 pub fn is_named_composite(field: &ContractField) -> bool {
     field.type_id.is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typescript_timestamps_match_drizzle_date_mode() {
+        assert_eq!(builtin("TIMESTAMP", TargetLang::TypeScript), "Date");
+        assert_eq!(builtin("TIMESTAMPTZ", TargetLang::TypeScript), "Date");
+        assert_eq!(builtin("DATETIME", TargetLang::TypeScript), "Date");
+        assert_eq!(builtin("TEXT", TargetLang::TypeScript), "string");
+    }
 }

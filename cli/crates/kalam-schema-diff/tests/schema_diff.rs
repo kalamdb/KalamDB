@@ -110,12 +110,20 @@ fn chat_with_ai_example_schema_emits_shared_stream_policy_and_topic() {
 
     assert_contains(&diff.up, "CREATE SHARED TABLE");
     assert_contains(&diff.up, "CREATE STREAM TABLE");
-    assert_contains(&diff.up, "CREATE POLICY rooms_member_select");
+    assert_contains(&diff.up, "CREATE USER TABLE");
+    assert_contains(&diff.up, "CREATE POLICY rooms_visible");
     assert_contains(&diff.up, "CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox");
     assert_contains(
         &diff.up,
         "ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT",
     );
+    assert_contains(
+        &diff.up,
+        "ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT",
+    );
+    assert_contains(&diff.up, "CREATE TYPE chat_demo.message_target AS ENUM");
+    assert_contains(&diff.up, "CREATE OR REPLACE PROCEDURE chat_demo.send_message");
+    assert_contains(&diff.up, "CREATE TRIGGER chat_demo.process_user_message");
 }
 
 #[test]

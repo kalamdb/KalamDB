@@ -47,6 +47,13 @@ fn canonical_bytes(snapshot: &ContractSnapshot) -> Vec<u8> {
                 out.push_str(&labels.join(","));
                 out.push('\n');
             },
+            ContractTypeKind::TopicPayload { topic_id, sources } => {
+                out.push_str("topic_payload\t");
+                out.push_str(topic_id);
+                out.push('\t');
+                out.push_str(&sources.join(","));
+                out.push('\n');
+            },
         }
     }
     for (id, table) in &snapshot.tables {
@@ -84,6 +91,25 @@ fn canonical_bytes(snapshot: &ContractSnapshot) -> Vec<u8> {
             out.push_str(&grant.as_sql());
             out.push('\n');
         }
+    }
+    for (id, trigger) in &snapshot.triggers {
+        out.push_str("trigger\t");
+        out.push_str(id);
+        out.push('\t');
+        out.push_str(&trigger.topic_id);
+        out.push('\t');
+        out.push_str(&trigger.routine_id);
+        out.push('\t');
+        out.push_str(&trigger.principal);
+        out.push('\t');
+        out.push_str(&trigger.start_from);
+        out.push('\t');
+        out.push_str(&trigger.retries.to_string());
+        out.push('\t');
+        out.push_str(&trigger.retry_backoff_ms.to_string());
+        out.push('\t');
+        out.push_str(&trigger.concurrency.to_string());
+        out.push('\n');
     }
     out.into_bytes()
 }

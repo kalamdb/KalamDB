@@ -12,7 +12,9 @@ pub struct TypedRoutine<'a> {
 }
 
 pub fn emit_typescript() -> String {
-    r#"export interface Actor {
+    r#"import type { ProcedureOrm } from "@kalamdb/orm";
+
+export interface Actor {
   readonly id: string;
   readonly role: string;
 }
@@ -23,10 +25,12 @@ export interface ProcedureContext {
   readonly source: { readonly kind: string };
   readonly parent: string | null;
   readonly db: DbHost;
+  readonly orm: ProcedureOrm;
   readonly functions: FunctionsHost;
   readonly topics: TopicsHost;
   readonly log: LogHost;
   readonly http: HttpHost | null;
+  sleep(ms: number): Promise<void>;
 }
 
 export interface DbHost {
@@ -64,9 +68,11 @@ export interface HttpHost {
   };
 }
 
-export function defineProcedure<C extends { input: unknown; output: unknown }>(
-  handler: (ctx: ProcedureContext, input: C["input"]) => Promise<C["output"]> | C["output"],
-): (ctx: ProcedureContext, input: C["input"]) => Promise<C["output"]> | C["output"];
+export function defineProcedure<TRequest = unknown, TResult = void>(
+  handler: (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult,
+): (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult;
+// Isolate `console.debug|log|info|warn|error` forwards to the process logger
+// with channel=console. Prefer ctx.log for structured procedure logs.
 "#
     .to_string()
 }
@@ -80,8 +86,13 @@ pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
         by_namespace.entry(routine.namespace).or_default().push(routine);
     }
     let mut out = String::from("\n");
-    let mut imports: Vec<String> =
-        routines.iter().map(|routine| routine.type_ident.to_string()).collect();
+    let mut imports: Vec<String> = Vec::new();
+    for routine in routines {
+        if routine.param_count > 0 {
+            imports.push(format!("{}Request", routine.type_ident));
+        }
+        imports.push(format!("{}Result", routine.type_ident));
+    }
     imports.sort();
     imports.dedup();
     if !imports.is_empty() {
@@ -104,10 +115,10 @@ pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
             } else {
                 out.push_str("(input: ");
                 out.push_str(routine.type_ident);
-                out.push_str("[\"input\"]): Promise<");
+                out.push_str("Request): Promise<");
             }
             out.push_str(routine.type_ident);
-            out.push_str("[\"output\"]>;\n");
+            out.push_str("Result>;\n");
         }
         out.push_str("  };\n");
     }
@@ -123,8 +134,15 @@ mod tests {
     fn typescript_lists_log_overloads_and_define_procedure() {
         let dts = emit_typescript();
         assert!(dts.contains("export interface ProcedureContext"));
+        assert!(dts.contains("import type { ProcedureOrm } from \"@kalamdb/orm\""));
+        assert!(dts.contains("readonly orm: ProcedureOrm"));
+        assert!(dts.contains("sleep(ms: number): Promise<void>"));
         assert!(dts.contains("error(error: unknown, message?: string, ...args: unknown[]): void"));
         assert!(dts.contains("defineProcedure"));
+        assert!(dts.contains("ctx: ProcedureContext"));
+        assert!(dts.contains("input: TRequest"));
+        assert!(dts.contains("TRequest = unknown, TResult = void"));
+        assert!(dts.contains("channel=console"));
     }
 
     #[test]
@@ -135,8 +153,12 @@ mod tests {
             type_ident:  "ChatCreateMessage",
             param_count: 2,
         }]);
-        assert!(dts.contains("import type { ChatCreateMessage } from \"./contracts\""));
-        assert!(dts.contains("createMessage(input: ChatCreateMessage[\"input\"])"));
+        assert!(dts.contains(
+            "import type { ChatCreateMessageRequest, ChatCreateMessageResult } from \
+             \"./contracts\""
+        ));
+        assert!(dts.contains("createMessage(input: ChatCreateMessageRequest)"));
+        assert!(dts.contains("Promise<ChatCreateMessageResult>"));
         assert!(dts.contains("chat:"));
     }
 
@@ -148,6 +170,6 @@ mod tests {
             type_ident:  "ApiHealth",
             param_count: 0,
         }]);
-        assert!(dts.contains("health(): Promise<ApiHealth[\"output\"]>"));
+        assert!(dts.contains("health(): Promise<ApiHealthResult>"));
     }
 }

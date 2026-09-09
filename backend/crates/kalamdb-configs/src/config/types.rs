@@ -1173,7 +1173,7 @@ impl Default for PostgresWireSettings {
 pub struct FunctionsSettings {
     /// Project function module id (default `backend`). One module for all project-backed routines.
     #[serde(default = "default_functions_module")]
-    pub module: String,
+    pub module:  String,
     #[serde(default)]
     pub runtime: FunctionsRuntimeSettings,
 }
@@ -1236,26 +1236,26 @@ pub struct FunctionsRuntimeSettings {
 impl Default for FunctionsRuntimeSettings {
     fn default() -> Self {
         Self {
-            workers:                      0,
-            max_active:                   default_functions_max_active(),
-            max_queued:                   default_functions_max_queued(),
-            max_memory_mb:                default_functions_max_memory_mb(),
-            heap_soft_mb:                 default_functions_heap_soft_mb(),
-            heap_hard_mb:                 default_functions_heap_hard_mb(),
-            max_idle_per_lane:            default_functions_max_idle_per_lane(),
-            idle_ttl_secs:                default_functions_idle_ttl_secs(),
-            max_instance_age_secs:        default_functions_max_instance_age_secs(),
+            workers: 0,
+            max_active: default_functions_max_active(),
+            max_queued: default_functions_max_queued(),
+            max_memory_mb: default_functions_max_memory_mb(),
+            heap_soft_mb: default_functions_heap_soft_mb(),
+            heap_hard_mb: default_functions_heap_hard_mb(),
+            max_idle_per_lane: default_functions_max_idle_per_lane(),
+            idle_ttl_secs: default_functions_idle_ttl_secs(),
+            max_instance_age_secs: default_functions_max_instance_age_secs(),
             max_invocations_per_instance: default_functions_max_invocations_per_instance(),
-            timeout_ms:                   default_functions_timeout_ms(),
-            max_depth:                    default_functions_max_depth(),
-            max_artifact_bytes:           default_functions_max_artifact_bytes(),
-            max_value_bytes:              default_functions_max_value_bytes(),
-            max_sql_text_bytes:           default_functions_max_sql_text_bytes(),
-            max_result_rows:              default_functions_max_result_rows(),
-            max_result_bytes:             default_functions_max_result_bytes(),
-            max_topic_bytes:              default_functions_max_topic_bytes(),
-            max_log_bytes:                default_functions_max_log_bytes(),
-            max_header_bytes:             default_functions_max_header_bytes(),
+            timeout_ms: default_functions_timeout_ms(),
+            max_depth: default_functions_max_depth(),
+            max_artifact_bytes: default_functions_max_artifact_bytes(),
+            max_value_bytes: default_functions_max_value_bytes(),
+            max_sql_text_bytes: default_functions_max_sql_text_bytes(),
+            max_result_rows: default_functions_max_result_rows(),
+            max_result_bytes: default_functions_max_result_bytes(),
+            max_topic_bytes: default_functions_max_topic_bytes(),
+            max_log_bytes: default_functions_max_log_bytes(),
+            max_header_bytes: default_functions_max_header_bytes(),
         }
     }
 }

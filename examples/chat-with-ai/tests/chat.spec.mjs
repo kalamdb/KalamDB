@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -25,19 +25,6 @@ function sqlStatementsFromFile(sql) {
 const chatSetupStatements = sqlStatementsFromFile(
   readFileSync(path.join(exampleRoot, 'kalam/schema.sql'), 'utf8'),
 );
-
-let agentProcess;
-let agentStdout = '';
-let agentStderr = '';
-const testGroup = `chat-demo-test-${Date.now()}`;
-
-function appendNodeOption(existing, flag) {
-  if (!existing) {
-    return flag;
-  }
-
-  return existing.split(/\s+/).includes(flag) ? existing : `${existing} ${flag}`;
-}
 
 async function requestJson(url, {
   method = 'GET',
@@ -210,12 +197,11 @@ async function ensureRoomAccess(userId, roomId) {
 
 async function insertUserMessage(roomName, content, username = adminUsername) {
   await ensureRoomAccess(username, roomName);
-  const token = await login(adminUsername, adminPassword);
-  // SHARED tables reject EXECUTE AS USER. Insert as DBA; row fields still
-  // attribute the message to `username` for RLS SELECT and the UI.
+  const token = await login(username, adminPassword);
+  await executeSql(token, `CALL chat_demo.join_room(${sqlLiteral(roomName)})`);
   await executeSql(
     token,
-    `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES (${sqlLiteral(roomName)}, 'user', ${sqlLiteral(username)}, ${sqlLiteral(username)}, ${sqlLiteral(content)})`,
+    `CALL chat_demo.send_message('room', ${sqlLiteral(roomName)}, ${sqlLiteral(content)})`,
   );
 }
 
@@ -473,45 +459,90 @@ async function seedChatHistory() {
   }
 }
 
-async function waitForOutput(process, expected) {
-  await waitFor(() => {
-    const combinedOutput = `${agentStdout}\n${agentStderr}`;
-    if (combinedOutput.includes(expected)) {
-      return true;
-    }
-    if (process.exitCode !== null) {
-      throw new Error(`Agent exited early with code ${process.exitCode}${combinedOutput.trim() ? `:\n${combinedOutput}` : ''}`);
-    }
-    return false;
-  }, {
-    timeoutMs: 20_000,
-    description: expected,
-  });
+function kalamBin() {
+  const fromEnv = process.env.KALAM_BIN;
+  if (fromEnv && existsSync(fromEnv)) {
+    return fromEnv;
+  }
+  const debugBin = path.resolve(exampleRoot, '../../target/debug/kalam');
+  if (existsSync(debugBin)) {
+    return debugBin;
+  }
+  return 'kalam';
 }
 
-async function waitForAgentReady() {
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
-    const probeRoom = uniqueName('agent-ready');
-    const probeMessage = `${probeRoom}-probe-${attempt}`;
+function queryCell(body, row = 0, column = 0) {
+  return body?.results?.[0]?.rows?.[row]?.[column];
+}
 
-    await insertUserMessage(probeRoom, probeMessage);
-
-    try {
-      await waitFor(
-        () => agentStdout.includes(`room=${probeRoom}`),
-        {
-          timeoutMs: 5_000,
-          description: `agent readiness probe ${probeRoom}`,
-        },
-      );
-      return;
-    } catch {
-      // Retry with a fresh probe room in case the consumer was not ready yet.
-    }
+async function activateChatFunctions(token) {
+  const modulePath = path.join(exampleRoot, 'functions/.kalam/build/module.js');
+  const manifestPath = path.join(exampleRoot, 'functions/.kalam/build/manifest.json');
+  const built = spawnSync(kalamBin(), ['functions', 'build'], {
+    cwd: exampleRoot,
+    encoding: 'utf8',
+  });
+  if (built.status !== 0) {
+    throw new Error(
+      `\`kalam functions build\` failed:\n${built.stdout}\n${built.stderr}`,
+    );
+  }
+  if (!existsSync(modulePath) || !existsSync(manifestPath)) {
+    throw new Error('functions/.kalam/build is missing after `kalam functions build`');
   }
 
-  const combinedOutput = `${agentStdout}\n${agentStderr}`.trim();
-  throw new Error(`Agent did not consume readiness probes before tests started${combinedOutput ? `:\n${combinedOutput}` : ''}`);
+  const artifact = readFileSync(modulePath, 'utf8');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const exports = Object.entries(manifest.procedures ?? {})
+    .filter(([, kind]) => kind === 'module')
+    .map(([name]) => name);
+  const result = await requestJson(
+    `${serverUrl}/v1/api/functions/modules/${manifest.module ?? 'backend'}/activate`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: {
+        artifact,
+        contractHash: manifest.contractHash,
+        abiVersion: manifest.abiVersion ?? 2,
+        exports,
+      },
+    },
+  );
+  if (!result.ok) {
+    throw new Error(`function activate failed: ${result.status} ${result.text}`);
+  }
+}
+
+async function waitForTriggerReady() {
+  const token = await login(adminUsername, adminPassword);
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    const probeRoom = uniqueName('trigger-ready');
+    const probeMessage = `${probeRoom}-probe-${attempt}`;
+    await insertUserMessage(probeRoom, probeMessage);
+    try {
+      await waitFor(async () => {
+        const result = await executeSql(
+          token,
+          `SELECT content FROM chat_demo.messages WHERE room = ${sqlLiteral(probeRoom)} AND role = 'assistant' LIMIT 1`,
+          { allowFailure: true },
+        );
+        const content = String(queryCell(result.json) ?? '');
+        return content.includes('AI reply:');
+      }, {
+        timeoutMs: 15_000,
+        description: `trigger readiness probe ${probeRoom}`,
+      });
+      return;
+    } catch (error) {
+      if (attempt === 6) {
+        throw error;
+      }
+    }
+  }
 }
 
 test.beforeAll(async () => {
@@ -520,41 +551,11 @@ test.beforeAll(async () => {
 
   await ensureAdminReady();
   await prepareChatDemoSchema();
+  const token = await login(adminUsername, adminPassword);
+  await activateChatFunctions(token);
 
+  await waitForTriggerReady();
   await seedChatHistory();
-
-  agentProcess = spawn(process.execPath, ['--import', 'tsx', 'src/agent.ts'], {
-    cwd: exampleRoot,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      KALAM_URL: process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
-      KALAM_USER: process.env.KALAM_USER ?? process.env.KALAMDB_USER ?? adminUsername,
-      KALAM_PASSWORD: process.env.KALAM_PASSWORD ?? process.env.KALAMDB_PASSWORD ?? adminPassword,
-      KALAMDB_URL: process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900',
-      KALAMDB_USER: process.env.KALAMDB_USER ?? adminUsername,
-      KALAMDB_PASSWORD: process.env.KALAMDB_PASSWORD ?? adminPassword,
-      KALAMDB_GROUP: testGroup,
-      KALAMDB_START: 'latest',
-      NODE_OPTIONS: appendNodeOption(process.env.NODE_OPTIONS, '--preserve-symlinks'),
-    },
-  });
-
-  agentStdout = '';
-  agentStderr = '';
-  agentProcess.stdout.on('data', (chunk) => {
-    agentStdout += chunk.toString();
-  });
-  agentProcess.stderr.on('data', (chunk) => {
-    agentStderr += chunk.toString();
-  });
-
-  await waitForOutput(agentProcess, '[chat-demo-agent] starting');
-  await waitForAgentReady();
-});
-
-test.afterAll(() => {
-  agentProcess?.kill('SIGTERM');
 });
 
 test('message insert streams a live draft and syncs the committed reply to both tabs', async ({ browser, baseURL }) => {
@@ -599,6 +600,25 @@ test('message insert streams a live draft and syncs the committed reply to both 
 
   expect(pageOneScroll.maxScrollTop - pageOneScroll.scrollTop).toBeLessThan(24);
   expect(pageTwoScroll.maxScrollTop - pageTwoScroll.scrollTop).toBeLessThan(24);
+});
+
+test('personal inbox sends through send_message and receives a trigger reply', async ({ browser, baseURL }) => {
+  const uniqueMessage = `personal latency ${Date.now()}`;
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  await page.goto(baseURL);
+  await expect(page.getByTestId('chat-status')).toContainText('Live');
+  await page.getByTestId('chat-scope-direct').click();
+  await expect(page.getByTestId('chat-status')).toContainText('Live');
+
+  await page.getByLabel('Message').fill(uniqueMessage);
+  await page.getByRole('button', { name: 'Send through KalamDB' }).click();
+
+  await expect(page.getByTestId('chat-thread')).toContainText(uniqueMessage, { timeout: 15000 });
+  await expect(page.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
+  await expect(page.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 30000 });
+  await expect(page.getByTestId('stream-preview')).toHaveCount(0, { timeout: 30000 });
 });
 
 test('a tab that joins mid-stream catches the active draft and final reply', async ({ browser, baseURL }) => {

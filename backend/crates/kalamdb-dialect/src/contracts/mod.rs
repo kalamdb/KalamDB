@@ -13,8 +13,8 @@ pub use compile::{compile_contract, compile_contract_sql, ContractSource};
 pub use diff::{diff_contracts, ContractDiff};
 pub use hash::canonical_contract_hash;
 pub use snapshot::{
-    ContractField, ContractRoutine, ContractSnapshot, ContractTable, ContractTableKind,
-    ContractType, ContractTypeKind,
+    table_payload_tag, ContractField, ContractRoutine, ContractSnapshot, ContractTable,
+    ContractTableKind, ContractTrigger, ContractType, ContractTypeKind,
 };
 
 /// Error produced while compiling or diffing a SQL contract.

@@ -71,6 +71,9 @@ fn persist_create_trigger(
     }
 
     let principal_user_id = resolve_principal(app, &statement.principal, session_user)?;
+    stores
+        .drop_trigger_attempts_for_trigger(&statement.trigger_id)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     seed_trigger_offsets(
         app,
         statement.trigger_id.as_str(),

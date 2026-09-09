@@ -7,9 +7,23 @@ The host surface is specified once in `kalamdb-functions-host` (`HOST_METHODS`, 
 
 CLI `kalam schema gen` concatenates the TS host types with per-procedure methods. Inline SQL and bundled TS share the same frozen `ctx` at runtime. Native dispatch lives in `kalamdb-functions` (V8 bind / `kalamAsyncOp`); `kalamdb-core` `CoreFunctionHost` only implements AppContext adapters.
 
-SQL input/output types stay in `contracts.ts`. `defineProcedure` lives in `runtime.d.ts` (contracts re-export it).
+SQL table/procedure types and Drizzle `kTable` objects are generated once to
+`src/generated/schema.ts` (sibling of `createKalam` in `src/generated/kalam.ts`).
+`functions/src/generated/contracts.ts` re-exports that module plus `defineProcedure`
+from `runtime.d.ts`. `runtime.js` wraps `defineProcedure` so project handlers
+receive `ctx.orm` (Drizzle over `ctx.db`, with `ctx.orm.as(user)` for
+`EXECUTE AS`). Never emit a sibling `runtime.ts`, which would shadow the
+declarations and type `ctx` / `input` as `any`. These files are written to
+`functions/src/generated/` so the editor can resolve them (a gitignored
+`.kalam/` folder is invisible to TypeScript).
+
+Do not import `@kalamdb/client` into a procedure; the HTTP driver is not valid
+inside V8. `ctx.orm` is attached by `defineProcedure`, not by the V8 host
+bootstrap — inline SQL bodies keep using `ctx.db`.
 
 ```ts
+import type { ProcedureOrm } from "@kalamdb/orm";
+
 export interface Actor {
   readonly id: string;
   readonly role: string;
@@ -21,10 +35,12 @@ export interface ProcedureContext {
   readonly source: { readonly kind: string };
   readonly parent: string | null;
   readonly db: DbHost;
+  readonly orm: ProcedureOrm;
   readonly functions: FunctionsHost;
   readonly topics: TopicsHost;
   readonly log: LogHost;
   readonly http: HttpHost | null;
+  sleep(ms: number): Promise<void>;
 }
 
 export interface DbHost {
@@ -64,17 +80,18 @@ export interface HttpHost {
   };
 }
 
-export function defineProcedure<C extends { input: unknown; output: unknown }>(
-  handler: (ctx: ProcedureContext, input: C["input"]) => Promise<C["output"]> | C["output"],
-): (ctx: ProcedureContext, input: C["input"]) => Promise<C["output"]> | C["output"];
+export function defineProcedure<TRequest = unknown, TResult = void>(
+  handler: (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult,
+): (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult;
 ```
 
 ## Rules
 
 - `actor` / `principal` are read-only; JS cannot assign them.
+- `ctx.sleep(ms)` pauses the isolate (capped at 60s and the remaining deadline).
 - `http` is `null` for non-HTTP roots. Nested procedures may read `request`; `response` mutation throws.
 - `functions.call` and typed `ctx.functions.<schema>.<method>` always go through host ACL/security — not a JS import of another `functions/src` file.
-- CALL / REST payloads are not logged. `ctx.log` records message, optional error, extra JSON args, and invocation metadata (`request_id`, `routine`, `actor`, `principal`, `namespace`) on the process logger (`target: kalamdb::functions`).
+- CALL / REST payloads are not logged. `ctx.log` and isolate `console` share the process logger (`target: kalamdb::functions`). Records include `channel=ctx.log` or `channel=console`, plus message, optional error, extra JSON args, and invocation metadata (`request_id`, `routine`, `actor`, `principal`, `namespace`). `console.log` maps to info. Prefer `ctx.log` for structured procedure logs.
 
 ## Core adapters (edit `CoreFunctionHost` only for these)
 
@@ -100,4 +117,4 @@ Example: `ctx.now()` later. **Do not** add `now` to `CoreFunctionHost`.
 
 ## Inline shim
 
-Dollar-quoted SQL cannot import. Build emits `.kalam/generated/inline/<schema>_<proc>.ts` wrapping the body with `ctx: ProcedureContext` for typecheck only.
+Dollar-quoted SQL cannot import. Build emits `functions/src/generated/inline/<schema>_<proc>.ts` wrapping the body with `ctx: ProcedureContext` for typecheck only.

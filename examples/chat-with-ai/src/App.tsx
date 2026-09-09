@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { type SubscriptionErrorEvent } from '@kalamdb/client';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { liveTable } from '@kalamdb/orm';
 import {
-  chat_demo_agent_events as agentEvents,
-  chat_demo_agent_eventsConfig as agentEventsConfig,
-  chat_demo_messages as chatMessages,
-  chat_demo_room_members as roomMembers,
-  chat_demo_rooms as rooms,
+  chatDemoAgentEvents as agentEvents,
+  chatDemoDirectMessages as directMessages,
+  chatDemoMessages as chatMessages,
   type ChatDemoAgentEvents as AgentEventRow,
+  type ChatDemoDirectMessages as DirectMessageRow,
   type ChatDemoMessages as ChatMessageRow,
+  type ChatDemoMessageTarget,
 } from './generated/kalam';
-import { CHAT_USERNAME, client, db, membershipId, ROOM } from './db';
+import { api, CHAT_USERNAME, client, ROOM } from './db';
 import './styles.css';
+
+type Inbox = ChatDemoMessageTarget;
+type ThreadRow = ChatMessageRow | DirectMessageRow;
 
 type LiveDraft = {
   stage: 'thinking' | 'typing' | 'saving';
@@ -22,27 +25,31 @@ type LiveDraft = {
 };
 
 const MAX_CHAT_MESSAGES = 80;
-const MAX_AGENT_EVENTS = agentEventsConfig.tableType === 'stream' ? 40 : 20;
-const canSortEventsBySeq = agentEventsConfig.systemColumns.includes('_seq');
+const MAX_AGENT_EVENTS = 40;
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
   second: '2-digit',
 });
 
-function formatCreatedAt(createdAt: Date): string {
-  return Number.isNaN(createdAt.getTime()) ? 'Invalid date' : timeFormatter.format(createdAt);
+function asDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
 }
 
-function eventTimelineKey(row: { id: string; _seq?: string | null; created_at: Date }): string {
-  return canSortEventsBySeq && row._seq ? row._seq : `${row.created_at.toISOString()}:${row.id}`;
+function formatCreatedAt(createdAt: Date | string): string {
+  const date = asDate(createdAt);
+  return Number.isNaN(date.getTime()) ? 'Invalid date' : timeFormatter.format(date);
+}
+
+function eventTimelineKey(row: { id: string | bigint | number; created_at: Date | string }): string {
+  return `${asDate(row.created_at).toISOString()}:${String(row.id)}`;
 }
 
 function sortEvents(rows: AgentEventRow[]): AgentEventRow[] {
   return [...rows].sort(
-    (left, right) => left.created_at.getTime() - right.created_at.getTime()
+    (left, right) => asDate(left.created_at).getTime() - asDate(right.created_at).getTime()
       || eventTimelineKey(left).localeCompare(eventTimelineKey(right))
-      || left.id.localeCompare(right.id),
+      || String(left.id).localeCompare(String(right.id)),
   );
 }
 
@@ -91,7 +98,7 @@ function deriveLiveDraft(events: AgentEventRow[]): LiveDraft | null {
   };
 }
 
-function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
+function deriveFallbackDraft(messages: ThreadRow[]): LiveDraft | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'assistant') {
@@ -102,7 +109,7 @@ function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
       return {
         stage: 'thinking',
         label: 'KalamDB Copilot is preparing the reply',
-        preview: 'AI reply: waiting for live agent events...',
+        preview: 'AI reply: waiting for the topic trigger…',
       };
     }
   }
@@ -110,36 +117,9 @@ function deriveFallbackDraft(messages: ChatMessageRow[]): LiveDraft | null {
   return null;
 }
 
-async function ensureRoomAccess(): Promise<void> {
-  const memberId = membershipId(CHAT_USERNAME, ROOM);
-  const existingMembership = await db
-    .select({ id: roomMembers.id })
-    .from(roomMembers)
-    .where(eq(roomMembers.id, memberId))
-    .limit(1);
-
-  // Schema seeds root/admin into `main`. Other users still join here.
-  if (existingMembership.length === 0) {
-    await db.insert(roomMembers).values({
-      id: memberId,
-      user_id: CHAT_USERNAME,
-      room_id: ROOM,
-    });
-  }
-
-  const existingRoom = await db
-    .select({ id: rooms.id })
-    .from(rooms)
-    .where(eq(rooms.id, ROOM))
-    .limit(1);
-
-  if (existingRoom.length === 0) {
-    await db.insert(rooms).values({ id: ROOM, title: ROOM });
-  }
-}
-
 export function App() {
-  const [messages, setMessages] = useState<ChatMessageRow[]>([]);
+  const [inbox, setInbox] = useState<Inbox>('room');
+  const [messages, setMessages] = useState<ThreadRow[]>([]);
   const [events, setEvents] = useState<AgentEventRow[]>([]);
   const [draft, setDraft] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -147,6 +127,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const liveDraft = deriveLiveDraft(events) ?? deriveFallbackDraft(messages);
+  const destination = inbox === 'room' ? ROOM : CHAT_USERNAME;
 
   useEffect(() => {
     let active = true;
@@ -154,34 +135,54 @@ export function App() {
 
     const start = async (): Promise<void> => {
       try {
-        // Membership is required before SELECT policies let this tab see the room.
-        await ensureRoomAccess();
+        if (inbox === 'room') {
+          await api.chatDemo.joinRoom({ room_id: ROOM });
+        }
 
-        // Durable transcript for this room.
-        const messagesUnsubscribe = await liveTable(
-          client,
-          chatMessages,
-          (nextMessages) => {
-            if (active) {
-              setMessages(nextMessages);
-            }
-          },
-          {
-            where: eq(chatMessages.room, ROOM),
-            limit: MAX_CHAT_MESSAGES,
-            lastRows: MAX_CHAT_MESSAGES,
-            onError: (event: SubscriptionErrorEvent) => {
-              if (!active) {
-                return;
-              }
-              setStatus('error');
-              setError(`Message subscription failed (${event.code}): ${event.message}`);
-            },
-          },
-        );
+        const messagesUnsubscribe = inbox === 'room'
+          ? await liveTable(
+              client,
+              chatMessages,
+              (nextMessages) => {
+                if (active) {
+                  setMessages(nextMessages);
+                }
+              },
+              {
+                where: eq(chatMessages.room, ROOM),
+                limit: MAX_CHAT_MESSAGES,
+                lastRows: MAX_CHAT_MESSAGES,
+                onError: (event: SubscriptionErrorEvent) => {
+                  if (!active) {
+                    return;
+                  }
+                  setStatus('error');
+                  setError(`Message subscription failed (${event.code}): ${event.message}`);
+                },
+              },
+            )
+          : await liveTable(
+              client,
+              directMessages,
+              (nextMessages) => {
+                if (active) {
+                  setMessages(nextMessages);
+                }
+              },
+              {
+                limit: MAX_CHAT_MESSAGES,
+                lastRows: MAX_CHAT_MESSAGES,
+                onError: (event: SubscriptionErrorEvent) => {
+                  if (!active) {
+                    return;
+                  }
+                  setStatus('error');
+                  setError(`Inbox subscription failed (${event.code}): ${event.message}`);
+                },
+              },
+            );
         unsubscribers.push(messagesUnsubscribe);
 
-        // STREAM rows for thinking / typing. TTL on the table keeps this short-lived.
         const eventsUnsubscribe = await liveTable(
           client,
           agentEvents,
@@ -195,7 +196,7 @@ export function App() {
             });
           },
           {
-            where: eq(agentEvents.room, ROOM),
+            where: and(eq(agentEvents.scope, inbox), eq(agentEvents.room, destination)),
             lastRows: MAX_AGENT_EVENTS,
             limit: MAX_AGENT_EVENTS,
             onError: (event: SubscriptionErrorEvent) => {
@@ -221,6 +222,9 @@ export function App() {
       }
     };
 
+    setStatus('connecting');
+    setMessages([]);
+    setEvents([]);
     void start();
 
     return () => {
@@ -230,7 +234,7 @@ export function App() {
       }
       void client.disconnect();
     };
-  }, []);
+  }, [destination, inbox]);
 
   useEffect(() => {
     const thread = threadRef.current;
@@ -251,12 +255,9 @@ export function App() {
     try {
       setIsSubmitting(true);
       setError(null);
-      // One insert. The topic + agent turn this into a streamed assistant reply.
-      await db.insert(chatMessages).values({
-        room: ROOM,
-        role: 'user',
-        author: CHAT_USERNAME,
-        sender_username: CHAT_USERNAME,
+      await api.chatDemo.sendMessage({
+        target: inbox,
+        target_id: destination,
         content,
       });
       setDraft('');
@@ -271,10 +272,12 @@ export function App() {
     <main className="chat-shell">
       <section className="chat-hero">
         <div>
-          <p className="eyebrow">SHARED rooms + RLS + STREAM events</p>
+          <p className="eyebrow">SHARED rooms + USER inbox + STREAM events</p>
           <h1>Chat With AI</h1>
           <p>
-            Members of the same room share one message stream. Policies keep other rooms private, a STREAM table shows the agent thinking, and a topic worker writes the assistant reply.
+            Room chat is a SHARED transcript with RLS. Personal chat writes to your USER table.
+            Both go through <code>send_message</code>. A topic trigger inside KalamDB writes STREAM
+            progress to your session, then commits the reply.
           </p>
         </div>
         <div className={`status status-${status}`} data-testid="chat-status">
@@ -284,11 +287,33 @@ export function App() {
       </section>
 
       <section className="chat-panel">
+        <div className="inbox-toggle" role="tablist" aria-label="Chat destination">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={inbox === 'room'}
+            className={inbox === 'room' ? 'is-active' : undefined}
+            data-testid="chat-scope-room"
+            onClick={() => setInbox('room')}
+          >
+            Room
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={inbox === 'direct'}
+            className={inbox === 'direct' ? 'is-active' : undefined}
+            data-testid="chat-scope-direct"
+            onClick={() => setInbox('direct')}
+          >
+            Personal
+          </button>
+        </div>
         <div className="chat-layout">
           <div className="chat-main">
             <div className="chat-thread" data-testid="chat-thread" ref={threadRef}>
               {messages.map((message) => (
-                <article className={`bubble bubble-${message.role}`} key={message.id}>
+                <article className={`bubble bubble-${message.role}`} key={String(message.id)}>
                   <header>
                     <strong>{message.author}</strong>
                     <span>{formatCreatedAt(message.created_at)}</span>
@@ -327,7 +352,7 @@ export function App() {
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Ask about latency, deploys, queues, or anything else you want the worker to stream back"
+                  placeholder="Ask about latency, deploys, queues, or anything else you want the procedure to stream back"
                 />
               </label>
               <div className="composer-actions">
@@ -346,12 +371,12 @@ export function App() {
 
           <aside className="event-rail">
             <header className="event-rail-header">
-              <strong>Live agent events</strong>
+              <strong>Live procedure events</strong>
               <span>{events.length} buffered</span>
             </header>
             <ul className="event-list" data-testid="agent-events">
               {events.slice(-8).reverse().map((event) => (
-                <li className="event-item" key={`${event.id}-${event.response_id}`}>
+                <li className="event-item" key={`${String(event.id)}-${event.response_id}`}>
                   <div>
                     <strong>{event.stage}</strong>
                     <p>{event.message}</p>

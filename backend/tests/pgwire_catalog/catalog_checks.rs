@@ -205,7 +205,8 @@ pub async fn assert_pg_attribute_matches_system_columns(client: &Client) -> Resu
     let pg_rows = simple_query_first_column(
         client,
         "SELECT a.attname FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON a.attrelid \
-         = c.oid WHERE c.relname = 'items' AND a.attnum > 0",
+         = c.oid JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid WHERE n.nspname = \
+         'catalog_e2e' AND c.relname = 'items' AND a.attnum > 0",
     )
     .await
     .map_err(|error| format!("pg_attribute parity query failed: {error}"))?;

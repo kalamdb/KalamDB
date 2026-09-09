@@ -16,34 +16,61 @@ test('chat-with-ai is a kalam CLI project with generated TypeScript in src/gener
   const packageJson = await readExample('package.json');
   const schemaSql = await readExample('kalam/schema.sql');
   const app = await readExample('src/App.tsx');
-  const agent = await readExample('src/agent.ts');
+  const sendMessage = await readExample('functions/src/chat_demo/send_message.ts');
   const generated = await readExample('src/generated/kalam.ts');
+  const schema = await readExample('src/generated/schema.ts');
 
   assert.match(kalamToml, /path = "kalam\/schema\.sql"/);
   assert.match(kalamToml, /output = "src\/generated\/kalam\.ts"/);
   assert.match(kalamToml, /generate_types = true/);
   assert.match(kalamToml, /app = "npm run dev"/);
-  assert.match(kalamToml, /agent = "npm run agent"/);
+  assert.match(kalamToml, /\[functions\]/);
+  assert.doesNotMatch(kalamToml, /agent = "npm run agent"/);
 
   assert.doesNotMatch(packageJson, /"setup"/);
-  assert.doesNotMatch(packageJson, /generate:schema/);
+  assert.doesNotMatch(packageJson, /"agent"/);
+  assert.doesNotMatch(packageJson, /@kalamdb\/consumer/);
+  assert.equal(existsSync(resolve(exampleRoot, 'src/agent.ts')), false);
+  assert.equal(existsSync(resolve(exampleRoot, 'functions/src/chat_demo/send_message.ts')), true);
+  assert.equal(existsSync(resolve(exampleRoot, 'functions/src/chat_demo/join_room.ts')), true);
+  assert.equal(existsSync(resolve(exampleRoot, 'functions/src/chat_demo/on_user_message.ts')), true);
   assert.equal(existsSync(resolve(exampleRoot, 'setup.mjs')), false);
   assert.equal(existsSync(resolve(exampleRoot, 'scripts/generate-schema.mjs')), false);
   assert.equal(existsSync(resolve(exampleRoot, 'src/schema.generated.ts')), false);
 
   assert.match(schemaSql, /CREATE SHARED TABLE IF NOT EXISTS chat_demo\.room_members/);
+  assert.match(schemaSql, /CREATE USER TABLE IF NOT EXISTS chat_demo\.direct_messages/);
   assert.match(schemaSql, /id TEXT PRIMARY KEY/);
   assert.doesNotMatch(schemaSql, /PRIMARY KEY \(user_id, room_id\)/);
+  assert.match(schemaSql, /CREATE POLICY rooms_visible/);
   assert.match(schemaSql, /CREATE POLICY messages_member_select/);
+  assert.doesNotMatch(schemaSql, /CREATE POLICY rooms_member_select/);
   assert.match(schemaSql, /CREATE STREAM TABLE IF NOT EXISTS chat_demo\.agent_events/);
+  assert.match(schemaSql, /CREATE PROCEDURE chat_demo\.send_message/);
+  assert.match(schemaSql, /RETURNS chat_demo\.ai_inbox/);
+  assert.match(schemaSql, /payload chat_demo\.ai_inbox NOT NULL/);
+  assert.match(schemaSql, /CREATE TRIGGER chat_demo\.process_user_message/);
   assert.match(schemaSql, /ALTER TOPIC chat_demo\.ai_inbox ADD SOURCE chat_demo\.messages ON INSERT/);
+  assert.match(schemaSql, /ALTER TOPIC chat_demo\.ai_inbox ADD SOURCE chat_demo\.direct_messages ON INSERT/);
 
   assert.match(app, /from '\.\/generated\/kalam'/);
   assert.match(app, /liveTable/);
-  assert.match(agent, /from '\.\/generated\/kalam\.js'/);
-  assert.match(agent, /runConsumer/);
-  assert.match(generated, /export const chat_demo_messages = kTable\.shared/);
-  assert.match(generated, /export const chat_demo_agent_events = kTable\.stream/);
+  assert.match(app, /api\.chatDemo\.sendMessage/);
+  assert.match(app, /api\.chatDemo\.joinRoom/);
+  assert.match(sendMessage, /insert\(chatDemoMessages\)/);
+  assert.match(sendMessage, /insert\(chatDemoDirectMessages\)/);
+  assert.match(sendMessage, /taggedRow\("chat_demo:direct_messages"/);
+  assert.match(sendMessage, /taggedRow\("chat_demo:messages"/);
+  assert.match(generated, /export \* from '\.\/schema'/);
+  assert.match(generated, /export function createKalam/);
+  assert.match(schema, /export const chatDemoMessages = kTable.shared/);
+  assert.match(schema, /export const chatDemoDirectMessages = kTable.user/);
+  assert.match(schema, /export const chatDemoAgentEvents = kTable.stream/);
+  assert.match(schema, /export type ChatDemoAiInbox =/);
+  assert.match(schema, /_table: "chat_demo:messages"/);
+  assert.match(schema, /_table: "chat_demo:direct_messages"/);
+  assert.match(schema, /payload: ChatDemoAiInbox;/);
+  assert.match(schema, /export type ChatDemoSendMessageResult = ChatDemoAiInbox \| null/);
 });
 
 function sliceBetween(source: string, start: string, end: string): string {
@@ -54,38 +81,13 @@ function sliceBetween(source: string, start: string, end: string): string {
   return source.slice(startIndex, endIndex);
 }
 
-test('agent inserts SHARED assistant replies without EXECUTE AS USER', async () => {
-  const agent = await readExample('src/agent.ts');
-  const insertBlock = sliceBetween(
-    agent,
-    'const insertAssistantMessage',
-    'console.log(`[chat-demo-agent] starting',
-  );
-
-  assert.match(insertBlock, /db\.insert\(chatMessages\)/);
-  assert.doesNotMatch(insertBlock, /executeAsUser/);
-});
-
-test('agent still uses EXECUTE AS USER for STREAM thinking events', async () => {
-  const agent = await readExample('src/agent.ts');
-  const emitBlock = sliceBetween(agent, 'const emitEvent', 'const insertAssistantMessage');
-
-  assert.match(emitBlock, /executeAsUser/);
-  assert.match(emitBlock, /db\.insert\(agentEvents\)/);
-});
-
-test('app looks up membership and the room before inserting seed rows', async () => {
+test('app joins through the procedure instead of inserting membership rows', async () => {
   const app = await readExample('src/App.tsx');
-  const joinBlock = sliceBetween(app, 'async function ensureRoomAccess', 'export function App');
-
-  assert.match(joinBlock, /\.from\(roomMembers\)/);
-  assert.match(joinBlock, /\.from\(rooms\)/);
-  assert.match(joinBlock, /existingMembership\.length === 0/);
-  assert.match(joinBlock, /existingRoom\.length === 0/);
-  assert.doesNotMatch(joinBlock, /try \{/);
+  assert.match(app, /api\.chatDemo\.joinRoom\(\{ room_id: ROOM \}\)/);
+  assert.doesNotMatch(app, /db\.insert\(roomMembers\)/);
 });
 
-test('playwright helpers insert SHARED messages as DBA instead of EXECUTE AS USER', async () => {
+test('playwright helpers send room messages with CALL send_message', async () => {
   const spec = await readExample('tests/chat.spec.mjs');
   const insertUser = sliceBetween(spec, 'async function insertUserMessage', 'function sqlLiteral');
   const insertAssistant = sliceBetween(
@@ -94,7 +96,7 @@ test('playwright helpers insert SHARED messages as DBA instead of EXECUTE AS USE
     'async function seedChatHistory',
   );
 
-  assert.match(insertUser, /INSERT INTO chat_demo\.messages/);
+  assert.match(insertUser, /CALL chat_demo\.send_message/);
   assert.match(insertAssistant, /INSERT INTO chat_demo\.messages/);
   assert.doesNotMatch(insertUser, /EXECUTE AS USER \$\{/);
   assert.doesNotMatch(insertAssistant, /EXECUTE AS USER \$\{/);
@@ -104,6 +106,6 @@ test('schema.sql keeps teaching comments immediately before CREATE SHARED TABLE'
   const schemaSql = await readExample('kalam/schema.sql');
   assert.match(
     schemaSql,
-    /-- Rooms everyone can create[^\n]*\nCREATE SHARED TABLE IF NOT EXISTS chat_demo\.rooms/,
+    /-- Rooms everyone can list and create[^\n]*\nCREATE SHARED TABLE IF NOT EXISTS chat_demo\.rooms/,
   );
 });

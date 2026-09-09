@@ -53,7 +53,9 @@ pub fn generate_rust_source(
             ContractTypeKind::Composite { fields } => {
                 emit_struct(&mut out, names.type_ident(id), fields, names);
             },
-            ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::RowAlias { .. } => {},
+            ContractTypeKind::ImplicitTableRow { .. }
+            | ContractTypeKind::RowAlias { .. }
+            | ContractTypeKind::TopicPayload { .. } => {},
         }
     }
 
@@ -74,6 +76,12 @@ pub fn generate_rust_source(
                 out.push_str(alias_ident);
                 out.push_str(";\n\n");
             }
+        }
+    }
+
+    for (id, ty) in &snapshot.types {
+        if let ContractTypeKind::TopicPayload { sources, .. } = &ty.kind {
+            emit_topic_payload_enum(&mut out, names.type_ident(id), sources, snapshot, names);
         }
     }
 
@@ -98,6 +106,41 @@ pub fn generate_rust_source(
     }
 
     out
+}
+
+fn emit_topic_payload_enum(
+    out: &mut String,
+    ident: &str,
+    sources: &[String],
+    snapshot: &ContractSnapshot,
+    names: &AssignedNames,
+) {
+    out.push_str("#[derive(Debug, Clone, PartialEq)]\n");
+    out.push_str("pub enum ");
+    out.push_str(ident);
+    out.push_str(" {\n");
+    for table_id in sources {
+        let variant = rust_table_variant(snapshot, names, table_id);
+        out.push_str("    ");
+        out.push_str(variant);
+        out.push_str("(");
+        out.push_str(variant);
+        out.push_str("),\n");
+    }
+    out.push_str("}\n\n");
+}
+
+fn rust_table_variant<'a>(
+    snapshot: &ContractSnapshot,
+    names: &'a AssignedNames,
+    table_id: &str,
+) -> &'a str {
+    let canonical = snapshot
+        .tables
+        .get(table_id)
+        .and_then(|table| table.row_alias_id.as_ref().map(|id| id.as_str()))
+        .unwrap_or(table_id);
+    names.type_ident(canonical)
 }
 
 fn emit_struct(out: &mut String, ident: &str, fields: &[ContractField], names: &AssignedNames) {
@@ -180,5 +223,35 @@ mod tests {
         assert!(source.contains("pub address: Option<ChatAddress>"));
         assert!(source.contains("pub nickname: Option<String>"));
         assert!(source.contains("pub id: i64"));
+    }
+
+    #[test]
+    fn topic_payload_emits_enum_after_table_structs() {
+        let snapshot = compile_contract_sql(
+            r#"
+CREATE SCHEMA chat;
+CREATE TABLE chat.messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TABLE chat.direct_messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TOPIC chat.ai_inbox;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
+"#,
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_rust_source(&snapshot, &hash, &names);
+        let messages = source.find("pub struct ChatMessages").expect(source.as_str());
+        let inbox = source.find("pub enum ChatAiInbox").expect(source.as_str());
+        assert!(inbox > messages, "{source}");
+        assert!(source.contains("ChatDirectMessages(ChatDirectMessages)"));
+        assert!(source.contains("ChatMessages(ChatMessages)"));
     }
 }

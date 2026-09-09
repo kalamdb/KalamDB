@@ -1,7 +1,8 @@
 //! Diff two contract snapshots into deterministic DDL.
 
 use super::snapshot::{
-    ContractField, ContractRoutine, ContractSnapshot, ContractType, ContractTypeKind,
+    ContractField, ContractRoutine, ContractSnapshot, ContractTrigger, ContractType,
+    ContractTypeKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -13,7 +14,10 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
     let mut statements = Vec::new();
 
     for (id, ty) in &target.types {
-        if matches!(ty.kind, ContractTypeKind::ImplicitTableRow { .. }) {
+        if matches!(
+            ty.kind,
+            ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::TopicPayload { .. }
+        ) {
             continue;
         }
         match current.types.get(id) {
@@ -23,7 +27,10 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
     }
 
     for (id, ty) in &current.types {
-        if matches!(ty.kind, ContractTypeKind::ImplicitTableRow { .. }) {
+        if matches!(
+            ty.kind,
+            ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::TopicPayload { .. }
+        ) {
             continue;
         }
         if !target.types.contains_key(id) {
@@ -50,6 +57,22 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
     for (id, routine) in &current.routines {
         if !target.routines.contains_key(id) {
             statements.push(format!("DROP PROCEDURE {};", routine.routine_id));
+        }
+    }
+
+    for (id, trigger) in &target.triggers {
+        match current.triggers.get(id) {
+            None => statements.push(emit_create_trigger(trigger)),
+            Some(prev) if prev != trigger => {
+                statements.push(format!("DROP TRIGGER IF EXISTS {};", trigger.trigger_id));
+                statements.push(emit_create_trigger(trigger));
+            },
+            Some(_) => {},
+        }
+    }
+    for (id, trigger) in &current.triggers {
+        if !target.triggers.contains_key(id) {
+            statements.push(format!("DROP TRIGGER IF EXISTS {};", trigger.trigger_id));
         }
     }
 
@@ -153,7 +176,9 @@ fn emit_create_type(ty: &ContractType) -> String {
         ContractTypeKind::RowAlias { source } => {
             format!("CREATE TYPE {} FROM TABLE {};", ty.type_id, source)
         },
-        ContractTypeKind::ImplicitTableRow { .. } => String::new(),
+        ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::TopicPayload { .. } => {
+            String::new()
+        },
     }
 }
 
@@ -176,6 +201,25 @@ fn emit_create_procedure(routine: &ContractRoutine) -> String {
         sql.push_str("$$");
     }
     sql.push(';');
+    sql
+}
+
+fn emit_create_trigger(trigger: &ContractTrigger) -> String {
+    let mut sql = format!(
+        "CREATE TRIGGER {} ON TOPIC {} EXECUTE PROCEDURE {}(PAYLOAD)",
+        trigger.trigger_id, trigger.topic_id, trigger.routine_id
+    );
+    let mut options = Vec::new();
+    if !trigger.principal.is_empty() {
+        options.push(format!("principal = '{}'", trigger.principal.replace('\'', "''")));
+    }
+    options.push(format!("start = '{}'", trigger.start_from));
+    options.push(format!("retries = {}", trigger.retries));
+    options.push(format!("retry_backoff = '{}ms'", trigger.retry_backoff_ms));
+    options.push(format!("concurrency = {}", trigger.concurrency));
+    sql.push_str(" WITH (");
+    sql.push_str(&options.join(", "));
+    sql.push_str(");");
     sql
 }
 

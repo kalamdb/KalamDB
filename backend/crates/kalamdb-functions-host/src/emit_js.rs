@@ -1,8 +1,38 @@
 //! V8 bootstrap that builds the frozen `ctx` object (ABI v2).
 
 /// ABI v2 operations always return Promises. Metadata comes only from the host.
+/// `console` and `ctx.log` share `kalamHostLog`; the third argument is the
+/// log channel (`console` or `ctx.log`).
 pub fn emit_js_bootstrap() -> String {
     r#"
+function __kalamSerializeLogArg(arg) {
+  if (arg instanceof Error) {
+    return { name: arg.name, message: arg.message, stack: arg.stack };
+  }
+  return arg;
+}
+function __kalamEmitLog(channel, level, args) {
+  kalamHostLog(level, JSON.stringify(Array.from(args).map(__kalamSerializeLogArg)), channel);
+}
+(function () {
+  const consoleObject = Object.freeze({
+    debug: (...args) => __kalamEmitLog("console", "debug", args),
+    log: (...args) => __kalamEmitLog("console", "info", args),
+    info: (...args) => __kalamEmitLog("console", "info", args),
+    warn: (...args) => __kalamEmitLog("console", "warn", args),
+    error: (...args) => __kalamEmitLog("console", "error", args),
+  });
+  try {
+    Object.defineProperty(globalThis, "console", {
+      value: consoleObject,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
+  } catch (e) {
+    globalThis.console = consoleObject;
+  }
+})();
 function __kalamMakeCtx() {
   const metadata = JSON.parse(kalamHostMetadata());
   const httpEnabled = typeof kalamHostHasHttp === "function" && kalamHostHasHttp();
@@ -23,12 +53,6 @@ function __kalamMakeCtx() {
       contentType: value => kalamHostHttpSetHeader("content-type", String(value)),
     }),
   }) : null;
-  const serializeLogArg = (arg) => {
-    if (arg instanceof Error) {
-      return { name: arg.name, message: arg.message, stack: arg.stack };
-    }
-    return arg;
-  };
   const call = (name, args = []) => kalamAsyncOp("call", name, Array.isArray(args) ? args : [args]);
   let typed = {};
   try {
@@ -50,6 +74,7 @@ function __kalamMakeCtx() {
     ...metadata,
     source: Object.freeze(kalamHostSource()),
     parent: kalamHostParent(),
+    sleep: (ms) => kalamAsyncOp("sleep", "", [ms]),
     db: Object.freeze({
       query: (sql, params = []) => kalamAsyncOp("query", sql, params),
       execute: (sql, params = []) => kalamAsyncOp("execute", sql, params),
@@ -57,10 +82,10 @@ function __kalamMakeCtx() {
     functions: Object.freeze(Object.assign({ call: call }, namespaces)),
     topics: Object.freeze({publish: (topic, payload) => kalamAsyncOp("publish", topic, [payload])}),
     log: Object.freeze({
-      debug: (...args) => kalamHostLog("debug", JSON.stringify(Array.from(args).map(serializeLogArg))),
-      info: (...args) => kalamHostLog("info", JSON.stringify(Array.from(args).map(serializeLogArg))),
-      warn: (...args) => kalamHostLog("warn", JSON.stringify(Array.from(args).map(serializeLogArg))),
-      error: (...args) => kalamHostLog("error", JSON.stringify(Array.from(args).map(serializeLogArg))),
+      debug: (...args) => __kalamEmitLog("ctx.log", "debug", args),
+      info: (...args) => __kalamEmitLog("ctx.log", "info", args),
+      warn: (...args) => __kalamEmitLog("ctx.log", "warn", args),
+      error: (...args) => __kalamEmitLog("ctx.log", "error", args),
     }),
     http,
   });
@@ -83,7 +108,8 @@ mod tests {
             assert!(js.contains(&format!("kalamAsyncOp(\"{kind}\"")), "{kind}");
         }
         assert!(js.contains("kalamHostRoutineMap"));
-        assert!(js.contains("serializeLogArg"));
+        assert!(js.contains("__kalamSerializeLogArg"));
+        assert!(js.contains("__kalamEmitLog"));
         assert!(!js.contains("db.sql"));
     }
 
@@ -93,5 +119,8 @@ mod tests {
         assert!(NATIVE_FNS.contains(&"kalamHostLog"));
         assert!(NATIVE_FNS.contains(&"kalamHostRoutineMap"));
         assert!(js.contains("kalamHostLog"));
+        assert!(js.contains("Object.defineProperty(globalThis, \"console\""));
+        assert!(js.contains("__kalamEmitLog(\"console\""));
+        assert!(js.contains("__kalamEmitLog(\"ctx.log\""));
     }
 }

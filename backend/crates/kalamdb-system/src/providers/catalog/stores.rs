@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kalamdb_commons::{
     models::{
         ArtifactId, FunctionModuleId, FunctionRevisionId, RoutineGrantId, RoutineId,
-        RoutineParameterId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
+        RoutineParameterId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
     },
     CatalogTypeKind, KSerializable, StorageKey, SystemTable,
 };
@@ -417,7 +417,35 @@ impl CatalogStores {
         if self.get_trigger(trigger_id)?.is_none() {
             return Err(SystemError::NotFound(format!("trigger not found: {trigger_id}")));
         }
+        self.drop_trigger_attempts_for_trigger(trigger_id)?;
         self.triggers.delete(trigger_id)?;
+        Ok(())
+    }
+
+    /// Drop delivery history so a recreated trigger/topic can reuse offsets.
+    pub fn drop_trigger_attempts_for_trigger(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<(), SystemError> {
+        let keys: Vec<TriggerAttemptId> = self
+            .list_trigger_attempts()?
+            .into_iter()
+            .filter(|attempt| attempt.trigger_id == *trigger_id)
+            .map(|attempt| attempt.attempt_id)
+            .collect();
+        self.trigger_attempts.delete_batch(&keys)?;
+        Ok(())
+    }
+
+    /// Drop delivery history for every trigger on a dropped topic.
+    pub fn drop_trigger_attempts_for_topic(&self, topic_id: &TopicId) -> Result<(), SystemError> {
+        let keys: Vec<TriggerAttemptId> = self
+            .list_trigger_attempts()?
+            .into_iter()
+            .filter(|attempt| attempt.topic_id == *topic_id)
+            .map(|attempt| attempt.attempt_id)
+            .collect();
+        self.trigger_attempts.delete_batch(&keys)?;
         Ok(())
     }
 

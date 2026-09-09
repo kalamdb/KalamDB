@@ -2,14 +2,14 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 use kalamdb_functions_host::{emit_typed_functions_host, emit_typescript, TypedRoutine};
 use kalamdb_sql::contracts::{
-    ContractField, ContractRoutine, ContractSnapshot, ContractTable, ContractTableKind,
-    ContractTypeKind,
+    table_payload_tag, ContractField, ContractRoutine, ContractSnapshot, ContractTable,
+    ContractTableKind, ContractTypeKind,
 };
 
 use crate::{
@@ -32,12 +32,14 @@ pub fn write_typescript(
     names: &AssignedNames,
     project_root: &Path,
 ) -> Result<()> {
+    let schema_path = output_path.with_file_name("schema.ts");
+    write_text(&schema_path, &generate_schema_source(snapshot, hash, names))?;
     write_text(output_path, &generate_client_source(snapshot, hash, names))?;
-    write_procedure_artifacts(project_root, snapshot, hash, names)?;
+    write_procedure_artifacts(project_root, &schema_path, snapshot, hash, names)?;
     Ok(())
 }
 
-pub fn generate_client_source(
+pub fn generate_schema_source(
     snapshot: &ContractSnapshot,
     hash: &str,
     names: &AssignedNames,
@@ -64,11 +66,10 @@ pub fn generate_client_source(
     );
     emit_shared_types(&mut out, snapshot, names, "export ");
     emit_ktables(&mut out, snapshot);
-    emit_frontend_client(&mut out, snapshot, names);
     out
 }
 
-pub fn generate_contracts_source(
+pub fn generate_client_source(
     snapshot: &ContractSnapshot,
     hash: &str,
     names: &AssignedNames,
@@ -79,11 +80,35 @@ pub fn generate_contracts_source(
     out.push_str("// ");
     out.push_str(&contract_hash_line(hash));
     out.push_str("\n\n");
-    out.push_str(
-        "export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: \
-         string]: JsonValue };\n\n",
-    );
-    emit_shared_types(&mut out, snapshot, names, "export ");
+    out.push_str("export * from './schema';\n");
+    let mut type_imports: Vec<String> = Vec::new();
+    for (id, routine) in &snapshot.routines {
+        let ident = names.routine_ident(id);
+        if !routine.parameters.is_empty() {
+            type_imports.push(procedure_request_ident(ident));
+        }
+        type_imports.push(procedure_result_ident(ident));
+    }
+    if !type_imports.is_empty() {
+        out.push_str("import type { ");
+        out.push_str(&type_imports.join(", "));
+        out.push_str(" } from './schema';\n");
+    }
+    out.push('\n');
+    emit_frontend_client(&mut out, snapshot, names);
+    out
+}
+
+pub fn generate_contracts_source(hash: &str, schema_import: &str) -> String {
+    let mut out = String::new();
+    out.push_str(GENERATED_HEADER);
+    out.push('\n');
+    out.push_str("// ");
+    out.push_str(&contract_hash_line(hash));
+    out.push_str("\n\n");
+    out.push_str("export * from \"");
+    out.push_str(schema_import);
+    out.push_str("\";\n");
     out.push_str("export type { ProcedureContext } from \"./runtime\";\n");
     out.push_str("export { defineProcedure } from \"./runtime\";\n");
     out
@@ -111,8 +136,25 @@ pub fn generate_runtime_dts(snapshot: &ContractSnapshot, names: &AssignedNames) 
 pub fn generate_runtime_js() -> String {
     let mut out = String::new();
     out.push_str(GENERATED_HEADER);
-    out.push('\n');
-    out.push_str("export function defineProcedure(handler) {\n  return handler;\n}\n");
+    out.push_str(
+        r#"
+import { bindFunctionOrm } from "@kalamdb/orm";
+
+export function defineProcedure(handler) {
+  return (ctx, input) => {
+    if (Object.prototype.hasOwnProperty.call(ctx, "orm")) {
+      return handler(ctx, input);
+    }
+    const next = Object.create(ctx);
+    Object.defineProperty(next, "orm", {
+      value: bindFunctionOrm(ctx.db),
+      enumerable: true,
+    });
+    return handler(Object.freeze(next), input);
+  };
+}
+"#,
+    );
     out
 }
 
@@ -136,7 +178,9 @@ fn emit_shared_types(
             ContractTypeKind::Composite { fields } => {
                 emit_object_type(out, export, names.type_ident(id), fields, names);
             },
-            ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::RowAlias { .. } => {},
+            ContractTypeKind::TopicPayload { .. }
+            | ContractTypeKind::ImplicitTableRow { .. }
+            | ContractTypeKind::RowAlias { .. } => {},
         }
     }
 
@@ -156,9 +200,60 @@ fn emit_shared_types(
         }
     }
 
+    for (id, ty) in &snapshot.types {
+        if let ContractTypeKind::TopicPayload { sources, .. } = &ty.kind {
+            emit_topic_payload_type(out, export, names.type_ident(id), sources, snapshot, names);
+        }
+    }
+
     for (id, routine) in &snapshot.routines {
         emit_procedure_type(out, export, names.routine_ident(id), routine, names);
     }
+}
+
+fn emit_topic_payload_type(
+    out: &mut String,
+    export: &str,
+    ident: &str,
+    sources: &[String],
+    snapshot: &ContractSnapshot,
+    names: &AssignedNames,
+) {
+    out.push_str(export);
+    out.push_str("type ");
+    out.push_str(ident);
+    if sources.is_empty() {
+        out.push_str(" = never;\n\n");
+        return;
+    }
+    out.push_str(" =\n");
+    for (index, table_id) in sources.iter().enumerate() {
+        let tag = table_payload_tag(table_id);
+        let row_ident = table_row_ident(snapshot, names, table_id);
+        out.push_str("  | ({ _table: \"");
+        out.push_str(&escape_ts_string(&tag));
+        out.push_str("\" } & ");
+        out.push_str(row_ident);
+        out.push(')');
+        if index + 1 == sources.len() {
+            out.push_str(";\n\n");
+        } else {
+            out.push('\n');
+        }
+    }
+}
+
+fn table_row_ident<'a>(
+    snapshot: &ContractSnapshot,
+    names: &'a AssignedNames,
+    table_id: &str,
+) -> &'a str {
+    let canonical = snapshot
+        .tables
+        .get(table_id)
+        .and_then(|table| table.row_alias_id.as_ref().map(|id| id.as_str()))
+        .unwrap_or(table_id);
+    names.type_ident(canonical)
 }
 
 fn emit_object_type(
@@ -190,24 +285,42 @@ fn emit_procedure_type(
     routine: &ContractRoutine,
     names: &AssignedNames,
 ) {
+    let request = procedure_request_ident(ident);
+    let result = procedure_result_ident(ident);
     out.push_str(export);
     out.push_str("type ");
-    out.push_str(ident);
-    out.push_str(" = {\n  input: {\n");
-    for field in &routine.parameters {
-        let ty = render_field_type(field, names, TargetLang::TypeScript);
-        out.push_str("    ");
-        out.push_str(&field.name);
-        out.push_str(": ");
-        out.push_str(&ty);
-        out.push_str(";\n");
+    out.push_str(&request);
+    if routine.parameters.is_empty() {
+        out.push_str(" = Record<string, never>;\n\n");
+    } else {
+        out.push_str(" = {\n");
+        for field in &routine.parameters {
+            let ty = render_field_type(field, names, TargetLang::TypeScript);
+            out.push_str("  ");
+            out.push_str(&field.name);
+            out.push_str(": ");
+            out.push_str(&ty);
+            out.push_str(";\n");
+        }
+        out.push_str("};\n\n");
     }
-    out.push_str("  };\n  output: ");
+    out.push_str(export);
+    out.push_str("type ");
+    out.push_str(&result);
+    out.push_str(" = ");
     match &routine.return_type {
         Some(ret) => out.push_str(&render_field_type(ret, names, TargetLang::TypeScript)),
         None => out.push_str("void"),
     }
-    out.push_str(";\n};\n\n");
+    out.push_str(";\n\n");
+}
+
+fn procedure_request_ident(ident: &str) -> String {
+    format!("{ident}Request")
+}
+
+fn procedure_result_ident(ident: &str) -> String {
+    format!("{ident}Result")
 }
 
 fn emit_ktables(out: &mut String, snapshot: &ContractSnapshot) {
@@ -267,35 +380,98 @@ fn drizzle_column(field: &ContractField) -> String {
 }
 
 fn emit_frontend_client(out: &mut String, snapshot: &ContractSnapshot, names: &AssignedNames) {
+    out.push_str(
+        "export type KalamQueryClient = {\n  query: (sql: string, params?: unknown[]) => \
+         Promise<{\n    status?: string;\n    error?: unknown;\n    results?: Array<{\n      \
+         rows?: unknown;\n      named_rows?: Array<Record<string, unknown>>;\n    }>;\n  \
+         }>;\n};\n\nfunction kalamCallResult(response: \
+         Awaited<ReturnType<KalamQueryClient[\"query\"]>>): unknown {\n  const result = \
+         response.results?.[0];\n  if (result?.named_rows?.[0] && \"result\" in \
+         result.named_rows[0]) {\n    return result.named_rows[0].result;\n  }\n  const rows = \
+         result?.rows;\n  if (!Array.isArray(rows) || rows.length === 0) {\n    return \
+         undefined;\n  }\n  const first = rows[0];\n  return Array.isArray(first) ? first[0] : \
+         first;\n}\n\nexport function createKalam(client: KalamQueryClient) {\n  return {\n",
+    );
     let mut by_namespace: BTreeMap<&str, Vec<&ContractRoutine>> = BTreeMap::new();
     for routine in snapshot.routines.values() {
         by_namespace.entry(routine.schema.as_str()).or_default().push(routine);
     }
-    out.push_str("export const kalam = {\n");
     for (namespace, routines) in &by_namespace {
-        out.push_str("  ");
+        out.push_str("    ");
         out.push_str(&namespace_object_ident(namespace));
         out.push_str(": {\n");
         for routine in routines {
             let method = method_ident(&routine.name);
             let ident = names.routine_ident(routine.routine_id.as_str());
-            out.push_str("    ");
+            let request = procedure_request_ident(ident);
+            let result = procedure_result_ident(ident);
+            out.push_str("      ");
             out.push_str(&method);
-            out.push_str(": async (input: ");
-            out.push_str(ident);
-            out.push_str("[\"input\"]): Promise<");
-            out.push_str(ident);
-            out.push_str("[\"output\"]> => {\n");
-            out.push_str("      throw new Error(\"procedure client has no local runtime\");\n");
-            out.push_str("    },\n");
+            if routine.parameters.is_empty() {
+                out.push_str(": async (): Promise<");
+                out.push_str(&result);
+                out.push_str("> => {\n");
+            } else {
+                out.push_str(": async (input: ");
+                out.push_str(&request);
+                out.push_str("): Promise<");
+                out.push_str(&result);
+                out.push_str("> => {\n");
+            }
+            emit_call_body(out, routine, &result);
+            out.push_str("      },\n");
         }
-        out.push_str("  },\n");
+        out.push_str("    },\n");
     }
-    out.push_str("};\n");
+    out.push_str("  };\n}\n");
+}
+
+fn emit_call_body(out: &mut String, routine: &ContractRoutine, result_ident: &str) {
+    let qualified = format!("{}.{}", routine.schema, routine.name);
+    let params = &routine.parameters;
+    match params.len() {
+        0 => {
+            out.push_str("        const response = await client.query(\"CALL ");
+            out.push_str(&qualified);
+            out.push_str("()\");\n");
+        },
+        1 => {
+            out.push_str("        const response = await client.query(\"CALL ");
+            out.push_str(&qualified);
+            out.push_str("($1)\", [input.");
+            out.push_str(&params[0].name);
+            out.push_str("]);\n");
+        },
+        _ => {
+            out.push_str("        const response = await client.query(\"CALL ");
+            out.push_str(&qualified);
+            out.push_str("(");
+            for index in 0..params.len() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push('$');
+                out.push_str(&(index + 1).to_string());
+            }
+            out.push_str(")\", [");
+            for (index, param) in params.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("input.");
+                out.push_str(&param.name);
+            }
+            out.push_str("]);\n");
+        },
+    }
+    out.push_str("        return kalamCallResult(response) as ");
+    out.push_str(result_ident);
+    out.push_str(";\n");
 }
 
 fn write_procedure_artifacts(
     project_root: &Path,
+    schema_path: &Path,
     snapshot: &ContractSnapshot,
     hash: &str,
     names: &AssignedNames,
@@ -306,16 +482,20 @@ fn write_procedure_artifacts(
         .filter(|routine| is_project_backed_routine(routine))
         .collect();
 
-    let generated_dir = project_root.join(FUNCTIONS_DIR).join(".kalam").join("generated");
+    let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
     write_text(&generated_dir.join("runtime.d.ts"), &generate_runtime_dts(snapshot, names))?;
-    write_text(&generated_dir.join("runtime.ts"), &generate_runtime_js())?;
+    // Identity helper must be `.js`. A sibling `runtime.ts` shadows `runtime.d.ts`
+    // and types `defineProcedure` as `(handler: any) => any`.
+    write_text(&generated_dir.join("runtime.js"), &generate_runtime_js())?;
+    remove_if_exists(&generated_dir.join("runtime.ts"))?;
+    remove_stale_dot_kalam_generated(project_root)?;
     if ts_routines.is_empty() && snapshot.routines.is_empty() {
         return Ok(());
     }
 
     write_text(
         &generated_dir.join("contracts.ts"),
-        &generate_contracts_source(snapshot, hash, names),
+        &generate_contracts_source(hash, &ts_relative_module(&generated_dir, schema_path)),
     )?;
     write_text(
         &generated_dir.join("registry.ts"),
@@ -346,7 +526,7 @@ fn generate_registry_source(
     out.push_str("\n\n");
     for routine in routines {
         let import_name = value_ident(&routine.schema, &routine.name, false);
-        let rel = format!("../../src/{}/{}", routine.schema, routine.name);
+        let rel = format!("../{}/{}", routine.schema, routine.name);
         out.push_str("import ");
         out.push_str(&import_name);
         out.push_str(" from \"");
@@ -400,10 +580,13 @@ fn scaffold_procedure(
     }
 
     let ident = names.routine_ident(routine.routine_id.as_str());
+    let request = procedure_request_ident(ident);
+    let result = procedure_result_ident(ident);
     let source = format!(
-        "import {{\n  defineProcedure,\n  type {ident},\n}} from \
-         \"../../.kalam/generated/contracts\";\n\nexport default defineProcedure<{ident}>(\n  \
-         async (ctx, input) => {{\n    throw new Error(\"not implemented\");\n  }},\n);\n"
+        "import {{\n  defineProcedure,\n  type ProcedureContext,\n  type {request},\n  type \
+         {result},\n}} from \"../generated/contracts\";\n\nexport default defineProcedure(\n  \
+         async (ctx: ProcedureContext, input: {request}): Promise<{result}> => {{\n    throw new \
+         Error(\"not implemented\");\n  }},\n);\n"
     );
     write_text(&path, &source)
 }
@@ -434,6 +617,26 @@ fn wire_table_name(table: &ContractTable) -> String {
     table.table_id.clone()
 }
 
+fn remove_stale_dot_kalam_generated(project_root: &Path) -> Result<()> {
+    let stale = project_root.join(FUNCTIONS_DIR).join(".kalam").join("generated");
+    if !stale.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&stale).map_err(|error| {
+        CLIError::FileError(format!("failed to remove '{}': {error}", stale.display()))
+    })
+}
+
+fn remove_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(CLIError::FileError(format!("failed to remove '{}': {error}", path.display())))
+        },
+    }
+}
+
 fn write_text(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -447,6 +650,32 @@ fn write_text(path: &Path, contents: &str) -> Result<()> {
 
 fn display_rel(project_root: &Path, path: &Path) -> String {
     path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+}
+
+fn ts_relative_module(from_dir: &Path, target_file: &Path) -> String {
+    let target_stem = target_file.with_extension("");
+    let mut from_comps: Vec<_> = from_dir.components().collect();
+    let mut to_comps: Vec<_> = target_stem.components().collect();
+    while !from_comps.is_empty() && !to_comps.is_empty() && from_comps[0] == to_comps[0] {
+        from_comps.remove(0);
+        to_comps.remove(0);
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for _ in &from_comps {
+        parts.push("..".to_string());
+    }
+    for component in &to_comps {
+        parts.push(component.as_os_str().to_string_lossy().into_owned());
+    }
+    if parts.is_empty() {
+        return "./schema".to_string();
+    }
+    let joined = parts.join("/");
+    if joined.starts_with('.') {
+        joined
+    } else {
+        format!("./{joined}")
+    }
 }
 
 fn escape_ts_string(value: &str) -> String {
@@ -463,6 +692,8 @@ fn writeln_str(out: &mut String, value: &str) -> std::fmt::Result {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use kalamdb_sql::compile_contract_sql;
 
     use super::*;
@@ -479,19 +710,81 @@ mod tests {
             },
         )
         .unwrap();
+        let schema = generate_schema_source(&snapshot, &hash, &names);
         let source = generate_client_source(&snapshot, &hash, &names);
         assert!(source.contains(&format!("contract_hash: {hash}")));
-        assert!(source.contains("export type ChatAddress"));
-        assert!(source.contains("address: ChatAddress | null"));
-        assert!(source.contains("nickname: string | null"));
-        assert!(source.contains("export type ChatUser"));
-        assert!(source.contains("export type ChatUsers = ChatUser"));
-        assert!(source.contains("export type ChatStatus = \"active\" | \"blocked\""));
-        assert!(source.contains("kalam = {"));
+        assert!(source.contains("export * from './schema'"));
+        assert!(schema.contains("export type ChatAddress"));
+        assert!(schema.contains("address: ChatAddress | null"));
+        assert!(schema.contains("nickname: string | null"));
+        assert!(schema.contains("export type ChatUser"));
+        assert!(schema.contains("export type ChatUsers = ChatUser"));
+        assert!(schema.contains("export type ChatStatus = \"active\" | \"blocked\""));
+        assert!(source.contains("createKalam"));
+        assert!(source.contains("CALL chat.create_message($1, $2)"));
+        assert!(!source.contains("procedure client has no local runtime"));
         assert!(source.contains("chat: {"));
         assert!(source.contains("createMessage:"));
-        assert!(source.contains("import { kTable } from '@kalamdb/orm'"));
+        assert!(schema.contains("export type ChatCreateMessageRequest"));
+        assert!(schema.contains("export type ChatCreateMessageResult"));
+        assert!(source.contains("createMessage: async (input: ChatCreateMessageRequest)"));
         assert!(!source.contains("kalam.chat.createMessage"));
+        assert!(source.contains("rows?: unknown;"));
+        assert!(source.contains("Array.isArray(first) ? first[0] : first"));
+    }
+
+    #[test]
+    fn topic_payload_emits_tagged_union() {
+        let snapshot = compile_contract_sql(
+            r#"
+CREATE SCHEMA chat;
+CREATE TABLE chat.messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TABLE chat.direct_messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TOPIC chat.ai_inbox;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
+CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+RETURNS chat.ai_inbox;
+"#,
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let schema = generate_schema_source(&snapshot, &hash, &names);
+        assert!(schema.contains("export type ChatAiInbox ="), "{schema}");
+        assert!(
+            schema.contains("({ _table: \"chat:direct_messages\" } & ChatDirectMessages)"),
+            "{schema}"
+        );
+        assert!(schema.contains("({ _table: \"chat:messages\" } & ChatMessages)"), "{schema}");
+        assert!(schema.contains("payload: ChatAiInbox;"), "{schema}");
+        assert!(
+            schema.contains("export type ChatOnMessageResult = ChatAiInbox | null;"),
+            "{schema}"
+        );
+    }
+
+    #[test]
+    fn runtime_js_binds_ctx_orm() {
+        let js = generate_runtime_js();
+        assert!(js.contains("export function defineProcedure(handler)"));
+        assert!(js.contains("import { bindFunctionOrm } from \"@kalamdb/orm\""));
+        assert!(js.contains("bindFunctionOrm(ctx.db)"));
+        assert!(js.contains("next, \"orm\""));
+    }
+
+    #[test]
+    fn contracts_import_schema_relatively() {
+        let from = PathBuf::from("/proj/functions/src/generated");
+        let target = PathBuf::from("/proj/src/generated/schema.ts");
+        assert_eq!(ts_relative_module(&from, &target), "../../../src/generated/schema");
     }
 
     const GOLDEN_SQL: &str = r#"

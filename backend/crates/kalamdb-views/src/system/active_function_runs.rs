@@ -34,7 +34,8 @@ pub struct ActiveFunctionRunSnapshot {
 }
 
 /// Active-run snapshot callback type.
-pub type ActiveFunctionRunsSnapshotCallback = Arc<dyn Fn() -> Vec<ActiveFunctionRunSnapshot> + Send + Sync>;
+pub type ActiveFunctionRunsSnapshotCallback =
+    Arc<dyn Fn() -> Vec<ActiveFunctionRunSnapshot> + Send + Sync>;
 
 /// Virtual view of in-memory root function runs.
 pub struct ActiveFunctionRunsView {

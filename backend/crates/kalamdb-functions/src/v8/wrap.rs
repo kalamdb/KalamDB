@@ -44,6 +44,7 @@ mod tests {
         assert!(!bootstrap.contains("db.sql"));
         assert!(bootstrap.contains("httpEnabled"));
         assert!(bootstrap.contains("kalamHostRoutineMap"));
-        assert!(bootstrap.contains("serializeLogArg"));
+        assert!(bootstrap.contains("__kalamSerializeLogArg"));
+        assert!(bootstrap.contains("Object.defineProperty(globalThis, \"console\""));
     }
 }

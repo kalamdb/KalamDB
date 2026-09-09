@@ -42,11 +42,6 @@ pub fn lint_inline_javascript(body: &str) -> Result<()> {
             "ctx.topics is not a function; use ctx.topics.publish(...)".into(),
         ));
     }
-    if has_console_access(body) {
-        return Err(FunctionsError::Invalid(
-            "console is not available in the functions isolate; use ctx.log.info(...)".into(),
-        ));
-    }
     Ok(())
 }
 
@@ -66,25 +61,6 @@ fn has_bare_call(body: &str, callee: &str) -> bool {
         } else {
             index += 1;
         }
-    }
-    false
-}
-
-fn has_console_access(body: &str) -> bool {
-    let bytes = body.as_bytes();
-    let mut index = 0;
-    while let Some(relative) = body[index..].find("console") {
-        let at = index + relative;
-        let ident_before = at > 0 && is_ident_continue(bytes[at - 1]);
-        let after_index = at + "console".len();
-        let ident_after = after_index < bytes.len() && is_ident_continue(bytes[after_index]);
-        if !ident_before && !ident_after {
-            let after = body[after_index..].trim_start();
-            if after.starts_with('.') || after.starts_with('[') || after.starts_with('(') {
-                return true;
-            }
-        }
-        index = at + 1;
     }
     false
 }
@@ -110,11 +86,8 @@ mod tests {
     }
 
     #[test]
-    fn lint_rejects_console() {
-        let error = lint_inline_javascript("console.log('this is a test'); return 'ok';")
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("console is not available"), "{error}");
+    fn lint_allows_console_log() {
+        lint_inline_javascript("console.log('this is a test'); return 'ok';").unwrap();
     }
 
     #[test]

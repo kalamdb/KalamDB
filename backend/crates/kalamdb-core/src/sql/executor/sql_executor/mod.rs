@@ -114,6 +114,31 @@ fn contains_internal_namespace_hint(sql: &str) -> bool {
     contains_ignore_ascii_case(sql, "system.") || contains_ignore_ascii_case(sql, "dba.")
 }
 
+fn extract_select_from_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+    let lowered = sql.to_ascii_lowercase();
+    let from_idx = lowered.find(" from ")?;
+    let rest = sql[from_idx + 6..].trim_start();
+    let ident: String = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '.')
+        .collect();
+    if ident.is_empty() {
+        return None;
+    }
+    let mut parts = ident.split('.');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(table), None, None) => Some(TableId::from_strings(default_namespace, table)),
+        (Some(namespace), Some(table), None) => Some(TableId::from_strings(namespace, table)),
+        _ => None,
+    }
+}
+
+fn extract_sql_target_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+    kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
+        .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
+        .or_else(|| extract_select_from_table_id(sql, default_namespace))
+}
+
 fn quote_sql_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -983,6 +1008,86 @@ impl SqlExecutor {
         }
     }
 
+    async fn should_autocommit_stream_dml(
+        &self,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<bool, KalamDbError> {
+        if !exec_ctx.allows_stream_autocommit() {
+            return Ok(false);
+        }
+        if matches!(self.resolve_prepared_table_type(metadata).await?, Some(TableType::Stream)) {
+            return Ok(true);
+        }
+        self.is_stream_target_sql(metadata.sql.as_str(), metadata.table_id.as_ref(), exec_ctx)
+            .await
+    }
+
+    async fn is_stream_target_sql(
+        &self,
+        sql: &str,
+        table_id: Option<&TableId>,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<bool, KalamDbError> {
+        if !exec_ctx.allows_stream_autocommit() {
+            return Ok(false);
+        }
+        let Some(table_id) = table_id
+            .cloned()
+            .or_else(|| extract_sql_target_table_id(sql, exec_ctx.default_namespace().as_str()))
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists_async(&table_id)
+            .await?
+            .is_some_and(|table| table.table_type == TableType::Stream))
+    }
+
+    fn isolated_stream_exec_ctx(exec_ctx: &ExecutionContext) -> ExecutionContext {
+        exec_ctx
+            .clone()
+            .without_transaction_id()
+            .with_request_id(format!("stream-{}", Uuid::now_v7()))
+    }
+
+    async fn execute_table_dml(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let isolated;
+        let dml_ctx = if self.should_autocommit_stream_dml(metadata, exec_ctx).await? {
+            isolated = Self::isolated_stream_exec_ctx(exec_ctx);
+            &isolated
+        } else {
+            exec_ctx
+        };
+
+        self.reject_unsupported_dml_in_active_request_transaction(metadata, dml_ctx)
+            .await?;
+
+        if matches!(dml_kind, DmlKind::Insert) {
+            match self
+                .try_execute_literal_insert_via_applier(sql, metadata, dml_ctx, &params)
+                .await
+            {
+                Ok(Some(result)) => Ok(result),
+                Ok(None) => {
+                    self.execute_dml_via_datafusion(sql, metadata, params, dml_ctx, dml_kind).await
+                },
+                Err(error) => Err(error),
+            }
+        } else {
+            self.execute_dml_via_datafusion(sql, metadata, params, dml_ctx, dml_kind).await
+        }
+    }
+
     /// Construct a new executor with a pre-built handler registry.
     pub fn new(
         app_context: std::sync::Arc<crate::app_context::AppContext>,
@@ -1489,68 +1594,34 @@ impl SqlExecutor {
 
                     // Native DataFusion DML path (provider insert/update/delete hooks)
                     SqlStatementKind::Insert(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            match self
-                                .try_execute_literal_insert_via_applier(
-                                    classified.as_str(),
-                                    metadata,
-                                    exec_ctx,
-                                    &params)
-                                .await
-                            {
-                                Ok(Some(result)) => Ok(result),
-                                Ok(None) => {
-                                    self.execute_dml_via_datafusion(
-                                        classified.as_str(),
-                                        metadata,
-                                        params,
-                                        exec_ctx,
-                                        DmlKind::Insert)
-                                    .await
-                                },
-                                Err(error) => Err(error),
-                            }
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Insert,
+                        )
+                        .await
                     },
                     SqlStatementKind::Update(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            self.execute_dml_via_datafusion(
-                                classified.as_str(),
-                                metadata,
-                                params,
-                                exec_ctx,
-                                DmlKind::Update)
-                            .await
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Update,
+                        )
+                        .await
                     },
                     SqlStatementKind::Delete(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            self.execute_dml_via_datafusion(
-                                classified.as_str(),
-                                metadata,
-                                params,
-                                exec_ctx,
-                                DmlKind::Delete)
-                            .await
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Delete,
+                        )
+                        .await
                     },
 
                     // DDL operations that modify table/view structure require plan cache invalidation
@@ -1883,6 +1954,13 @@ impl SqlExecutor {
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let isolated;
+        let exec_ctx = if self.is_stream_target_sql(sql, None, exec_ctx).await? {
+            isolated = Self::isolated_stream_exec_ctx(exec_ctx);
+            &isolated
+        } else {
+            exec_ctx
+        };
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
 

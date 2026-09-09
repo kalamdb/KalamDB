@@ -4,7 +4,8 @@ use kalamdb_commons::{
     models::{
         ArtifactId, CatalogTypeKind, FunctionModuleId, FunctionRevisionId, FunctionRuntime,
         NamespaceId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId,
-        RoutineSecurityMode, TableId, TypeFieldId, TypeId, UserId,
+        RoutineSecurityMode, TableId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
+        UserId,
     },
     StorageKey, SystemTable,
 };
@@ -14,7 +15,8 @@ use serde_json::Value;
 use super::{
     models::{
         CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-        CatalogRoutineGrant, CatalogRoutineParameter, CatalogType, CatalogTypeField,
+        CatalogRoutineGrant, CatalogRoutineParameter, CatalogTriggerAttempt, CatalogType,
+        CatalogTypeField,
     },
     ActivateFunctionOutcome, CatalogStores, TypesTableProvider,
 };
@@ -89,19 +91,19 @@ fn nested_location_field() -> CatalogTypeField {
 
 fn create_message_routine() -> CatalogRoutine {
     CatalogRoutine {
-        routine_id:       RoutineId::from_parts(Some(&chat_ns()), "create_message"),
-        namespace_id:     chat_ns(),
-        name:             "create_message".to_string(),
-        owner:            UserId::new("root"),
-        security:         RoutineSecurityMode::Definer,
-        language:         Some("typescript".to_string()),
-        body:             None,
-        return_type_id:   Some(TypeId::from_parts(Some(&chat_ns()), "message")),
-        return_type_name: Some("chat.message".to_string()),
-        return_is_array:  false,
-        return_not_null:  true,
-        comment:          None,
-        return_data_type: None,
+        routine_id:         RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+        namespace_id:       chat_ns(),
+        name:               "create_message".to_string(),
+        owner:              UserId::new("root"),
+        security:           RoutineSecurityMode::Definer,
+        language:           Some("typescript".to_string()),
+        body:               None,
+        return_type_id:     Some(TypeId::from_parts(Some(&chat_ns()), "message")),
+        return_type_name:   Some("chat.message".to_string()),
+        return_is_array:    false,
+        return_not_null:    true,
+        comment:            None,
+        return_data_type:   None,
         inline_source_hash: None,
         inline_artifact_id: None,
     }
@@ -427,14 +429,57 @@ fn activating_project_revision_does_not_insert_one_module_per_routine() {
     stores.upsert_routine(other).unwrap();
 
     let (module, revision, artifact) = function_rows("mod");
-    stores
-        .activate_function_revision(module, revision, artifact, None)
-        .unwrap();
+    stores.activate_function_revision(module, revision, artifact, None).unwrap();
 
     assert_eq!(stores.list_routines().unwrap().len(), 2);
     assert_eq!(stores.list_function_modules().unwrap().len(), 1);
-    assert_eq!(
-        stores.list_function_modules().unwrap()[0].module_id.as_str(),
-        "backend"
-    );
+    assert_eq!(stores.list_function_modules().unwrap()[0].module_id.as_str(), "backend");
+}
+
+#[test]
+fn dropping_a_trigger_clears_its_delivery_attempts() {
+    let stores = stores();
+    let trigger_id = TriggerId::from("chat.process");
+    let other_trigger_id = TriggerId::from("chat.other");
+    let topic_id = TopicId::new("chat.events");
+    let kept = CatalogTriggerAttempt {
+        attempt_id:       TriggerAttemptId::from("chat.other:0:1:1"),
+        trigger_id:       other_trigger_id,
+        topic_id:         topic_id.clone(),
+        partition_id:     0,
+        offset:           1,
+        event_id:         "chat.events:0:1".to_string(),
+        attempt:          1,
+        status:           "succeeded".to_string(),
+        lease_owner:      None,
+        lease_expires_at: None,
+        error:            None,
+        created_at:       1,
+        updated_at:       1,
+    };
+    let stale = CatalogTriggerAttempt {
+        attempt_id:       TriggerAttemptId::from("chat.process:0:0:1"),
+        trigger_id:       trigger_id.clone(),
+        topic_id:         topic_id.clone(),
+        partition_id:     0,
+        offset:           0,
+        event_id:         "chat.events:0:0".to_string(),
+        attempt:          1,
+        status:           "succeeded".to_string(),
+        lease_owner:      None,
+        lease_expires_at: None,
+        error:            None,
+        created_at:       1,
+        updated_at:       1,
+    };
+    stores.upsert_trigger_attempt(stale).unwrap();
+    stores.upsert_trigger_attempt(kept.clone()).unwrap();
+    stores.drop_trigger_attempts_for_trigger(&trigger_id).unwrap();
+
+    let remaining = stores.list_trigger_attempts().unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].attempt_id, kept.attempt_id);
+
+    stores.drop_trigger_attempts_for_topic(&topic_id).unwrap();
+    assert!(stores.list_trigger_attempts().unwrap().is_empty());
 }

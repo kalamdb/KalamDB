@@ -88,6 +88,20 @@ impl TopicPublisherService {
             }
         }
 
+        if stats.messages_deleted > 0 {
+            let log_start =
+                match self.message_store.earliest_offset(&topic.topic_id, partition_id).map_err(
+                    |e| CommonError::Internal(format!("Failed to fetch earliest offset: {}", e)),
+                )? {
+                    Some(offset) => offset,
+                    None => self
+                        .offset_allocator
+                        .peek_next_offset(&topic.topic_id, partition_id)
+                        .unwrap_or(0),
+                };
+            self.set_log_start_offset(&topic.topic_id, partition_id, log_start);
+        }
+
         Ok(stats)
     }
 

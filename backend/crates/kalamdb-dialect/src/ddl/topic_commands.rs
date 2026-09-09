@@ -42,11 +42,12 @@ pub struct CreateTopicStatement {
 ///
 /// Syntax:
 /// ```sql
-/// DROP TOPIC <topic_name>;
+/// DROP TOPIC [IF EXISTS] <topic_name>;
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropTopicStatement {
     pub topic_name: String,
+    pub if_exists:  bool,
 }
 
 /// CLEAR TOPIC statement
@@ -241,7 +242,7 @@ pub fn parse_create_topic(sql: &str) -> Result<CreateTopicStatement, String> {
 
 /// Parse DROP TOPIC statement
 ///
-/// Syntax: DROP TOPIC <name>
+/// Syntax: DROP TOPIC [IF EXISTS] <name>
 pub fn parse_drop_topic(sql: &str) -> Result<DropTopicStatement, String> {
     let normalized = normalize_sql(sql);
     let sql_upper = normalized.to_uppercase();
@@ -250,10 +251,27 @@ pub fn parse_drop_topic(sql: &str) -> Result<DropTopicStatement, String> {
         return Err("Expected DROP TOPIC".to_string());
     }
 
-    // Extract topic name (3rd token: DROP TOPIC <name>)
-    let topic_name = extract_identifier(&normalized, 2)?;
+    let rest = normalized["DROP TOPIC".len()..].trim_start();
+    let if_exists = rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("IF EXISTS");
+    let name_src = if if_exists {
+        rest["IF EXISTS".len()..].trim_start()
+    } else {
+        rest
+    };
+    let topic_name = name_src
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "Expected topic name".to_string())?
+        .trim_end_matches(';')
+        .to_string();
+    if topic_name.is_empty() {
+        return Err("Expected topic name".to_string());
+    }
 
-    Ok(DropTopicStatement { topic_name })
+    Ok(DropTopicStatement {
+        topic_name,
+        if_exists,
+    })
 }
 
 /// Parse CLEAR TOPIC statement
@@ -887,6 +905,14 @@ mod tests {
     fn test_parse_drop_topic() {
         let stmt = parse_drop_topic("DROP TOPIC app.old_topic").unwrap();
         assert_eq!(stmt.topic_name, "app.old_topic");
+        assert!(!stmt.if_exists);
+    }
+
+    #[test]
+    fn test_parse_drop_topic_if_exists() {
+        let stmt = parse_drop_topic("DROP TOPIC IF EXISTS chat_demo.ai_inbox").unwrap();
+        assert_eq!(stmt.topic_name, "chat_demo.ai_inbox");
+        assert!(stmt.if_exists);
     }
 
     #[test]

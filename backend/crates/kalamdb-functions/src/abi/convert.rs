@@ -131,6 +131,18 @@ fn scalar_to_v8<'s>(scope: &PinScope<'s, '_>, value: &ScalarValue) -> Result<Loc
         | ScalarValue::UInt64(None)
         | ScalarValue::Float32(None)
         | ScalarValue::Float64(None) => v8::null(scope).into(),
+        ScalarValue::TimestampSecond(Some(ts), _) => i64_to_v8(scope, ts.saturating_mul(1000)),
+        ScalarValue::TimestampMillisecond(Some(ts), _) => i64_to_v8(scope, *ts),
+        ScalarValue::TimestampMicrosecond(Some(us), _) => i64_to_v8(scope, us.div_euclid(1000)),
+        ScalarValue::TimestampNanosecond(Some(ns), _) => i64_to_v8(scope, ns.div_euclid(1_000_000)),
+        ScalarValue::Date32(Some(days)) => i64_to_v8(scope, i64::from(*days) * 86_400_000),
+        ScalarValue::Date64(Some(ms)) => i64_to_v8(scope, *ms),
+        ScalarValue::TimestampSecond(None, _)
+        | ScalarValue::TimestampMillisecond(None, _)
+        | ScalarValue::TimestampMicrosecond(None, _)
+        | ScalarValue::TimestampNanosecond(None, _)
+        | ScalarValue::Date32(None)
+        | ScalarValue::Date64(None) => v8::null(scope).into(),
         ScalarValue::Struct(array) => struct_to_v8(scope, array)?,
         ScalarValue::List(array) => list_to_v8(scope, array.as_ref())?,
         other => {

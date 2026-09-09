@@ -53,7 +53,8 @@ fn metadata(scope: &mut v8::PinScope, _: v8::FunctionCallbackArguments, mut rv: 
 fn log(scope: &mut v8::PinScope, args: v8::FunctionCallbackArguments, _: v8::ReturnValue) {
     let level = arg_string(scope, &args, 0);
     let payload = arg_string(scope, &args, 1);
-    let record = crate::host::parse_log_payload(&level, &payload);
+    let channel = arg_string(scope, &args, 2);
+    let record = crate::host::parse_log_payload(&level, &payload, &channel);
     let result = current_host(scope).and_then(|host| {
         let total = record.message.len()
             + record.error.as_ref().map(String::len).unwrap_or(0)
@@ -127,6 +128,18 @@ fn host_operation(
                     })?;
                     host.publish_async(name, payload).await?;
                     Ok(RoutineValue::new(ScalarValue::Null))
+                },
+                "sleep" => {
+                    let ms = match params.first().map(|value| &value.value) {
+                        Some(ScalarValue::Float64(Some(value))) => *value,
+                        Some(ScalarValue::Float32(Some(value))) => f64::from(*value),
+                        Some(ScalarValue::Int64(Some(value))) => *value as f64,
+                        Some(ScalarValue::Int32(Some(value))) => f64::from(*value),
+                        Some(ScalarValue::UInt64(Some(value))) => *value as f64,
+                        Some(ScalarValue::UInt32(Some(value))) => f64::from(*value),
+                        _ => 0.0,
+                    };
+                    host.sleep(ms).await
                 },
                 other => {
                     Err(FunctionsError::Invalid(format!("host operation '{other}' is not wired")))

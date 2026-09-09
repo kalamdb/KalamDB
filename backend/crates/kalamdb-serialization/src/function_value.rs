@@ -71,8 +71,9 @@ impl FunctionValueEncoder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn roundtrip_reuses_buffer_for_same_hash_and_value() {

@@ -71,9 +71,10 @@ fn run_kalam(project_dir: &std::path::Path, args: &[&str]) -> std::process::Outp
 
 fn procedure_source_uses_abi_v2_db(orders: &str, topic: &str) -> String {
     format!(
-        "return ctx.db.execute(\"INSERT INTO {orders} (id, status) VALUES (\" + input + \", \
-         'ok')\").then(function () {{\n  return ctx.topics.publish('{topic}', {{ id: input, \
-         status: 'ok' }});\n}}).then(function () {{\n  return {{ id: input, status: 'ok' }};\n}});"
+        "return ctx.db.execute(\"INSERT INTO {orders} (id, status) VALUES (\" + input.p_id + \", \
+         'ok')\").then(function () {{\n  return ctx.topics.publish('{topic}', {{ id: input.p_id, \
+         status: 'ok' }});\n}}).then(function () {{\n  return {{ id: input.p_id, status: \
+         'ok' }};\n}});"
     )
 }
 
@@ -93,8 +94,8 @@ fn kobj_functions_checkpoint_c_call_nested_db_and_topic() {
     let topic = format!("{ns}.fn_events");
     exec(&format!("CREATE TOPIC {topic}"));
 
-    create_js_procedure(&ns, "echo", "msg TEXT", "return input;");
-    create_js_procedure(&ns, "inc", "x INT", "return input + 1;");
+    create_js_procedure(&ns, "echo", "msg TEXT", "return input.msg;");
+    create_js_procedure(&ns, "inc", "x INT", "return input.x + 1;");
     create_js_procedure(
         &ns,
         "plus_one",
@@ -200,10 +201,11 @@ fn kobj_functions_topic_trigger_delivers_and_acks() {
         "on_trig",
         "payload TEXT",
         &format!(
-            "var payload = input;\nif (typeof payload === 'string') {{ try {{ payload = \
-             JSON.parse(payload); }} catch (e) {{}} }}\nvar id = (payload && payload.id != null) \
-             ? payload.id : payload;\nreturn ctx.db.execute(\"INSERT INTO {hits} (id, note) \
-             VALUES (\" + id + \", 'ok')\").then(function () {{ return payload; }});"
+            "var payload = input && input.payload != null ? input.payload : input;\nif (typeof \
+             payload === 'string') {{ try {{ payload = JSON.parse(payload); }} catch (e) {{}} \
+             }}\nvar id = (payload && payload.id != null) ? payload.id : payload;\nreturn \
+             ctx.db.execute(\"INSERT INTO {hits} (id, note) VALUES (\" + id + \", \
+             'ok')\").then(function () {{ return payload; }});"
         ),
     );
     create_js_procedure(
@@ -211,8 +213,8 @@ fn kobj_functions_topic_trigger_delivers_and_acks() {
         "publish_trig",
         "p_id INT",
         &format!(
-            "return ctx.topics.publish('{topic}', {{ id: input }}).then(function () {{ return \
-             input; }});"
+            "return ctx.topics.publish('{topic}', {{ id: input.p_id }}).then(function () {{ \
+             return input.p_id; }});"
         ),
     );
     exec(&format!(
@@ -291,9 +293,9 @@ fn kobj_functions_create_type_and_inline_procedure() {
         &ns,
         "echo_addr",
         &format!("addr {ns}.address"),
-        "ctx.log.info('echo_addr', { city: input && input.city });\nreturn input;",
+        "ctx.log.info('echo_addr', { city: input && input.addr && input.addr.city });\nreturn input.addr;",
     );
-    create_js_procedure(&ns, "echo_status", &format!("s {ns}.status"), "return String(input);");
+    create_js_procedure(&ns, "echo_status", &format!("s {ns}.status"), "return String(input.s);");
     create_js_procedure(
         &ns,
         "health",
@@ -337,7 +339,7 @@ fn kobj_functions_typed_nested_call_and_log() {
     }
     let ns = setup_namespace("kobj_typed");
     let ident = js_namespace_ident(&ns);
-    create_js_procedure(&ns, "inc", "x INT", "return input + 1;");
+    create_js_procedure(&ns, "inc", "x INT", "return input.x + 1;");
     create_js_procedure(
         &ns,
         "plus_one",
@@ -349,11 +351,12 @@ fn kobj_functions_typed_nested_call_and_log() {
         "logged",
         "x INT",
         r#"
-ctx.log.debug('debug', { n: input });
-ctx.log.info('hello', { n: input });
+ctx.log.debug('debug', { n: input.x });
+ctx.log.info('hello', { n: input.x });
 ctx.log.warn('warn');
-try { throw new Error('sample'); } catch (e) { ctx.log.error(e, 'failed', { id: input }); }
-return input;
+console.log('console', { n: input.x });
+try { throw new Error('sample'); } catch (e) { ctx.log.error(e, 'failed', { id: input.x }); }
+return input.x;
 "#,
     );
 
@@ -379,26 +382,17 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     }
     let ns = setup_namespace("kobj_fnlint");
     let log_as_fn = exec_err(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  ctx.log('ttt');\n  \
-         return 'ok';\n$$"
+        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+         ctx.log('ttt');\n  return 'ok';\n$$"
     ));
     assert!(
         log_as_fn.contains("ctx.log is not a function"),
         "CREATE must reject ctx.log(...): {log_as_fn}"
     );
 
-    let console = exec_err(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  console.log('x');\n  \
-         return 'ok';\n$$"
-    ));
-    assert!(
-        console.contains("console is not available"),
-        "CREATE must reject console.log: {console}"
-    );
-
     let created = exec(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  ctx.log.info('ok');\n  \
-         return 'ok';\n$$"
+        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+         console.log('ok');\n  ctx.log.info('ok');\n  return 'ok';\n$$"
     ));
     assert!(
         created.contains(&format!("Procedure {ns}.health created")),
@@ -412,15 +406,18 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
         !created.contains("module_revision:") || created.contains("not created by this statement"),
         "inline CREATE must not claim a new module revision: {created}"
     );
+    let health = query_rows(&format!("CALL {ns}.health()"));
+    let health_value = cell(&health[0], "result");
+    assert!(
+        health_value.as_str() == Some("ok") || health_value.to_string().contains("ok"),
+        "console.log plus ctx.log.info must not break CALL: {health:?}"
+    );
 
     let replaced = exec(&format!(
         "CREATE OR REPLACE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          ctx.log.info('ok2');\n  return 'ok2';\n$$"
     ));
-    assert!(
-        replaced.contains("replaced"),
-        "OR REPLACE should report replaced: {replaced}"
-    );
+    assert!(replaced.contains("replaced"), "OR REPLACE should report replaced: {replaced}");
     assert!(
         replaced.contains("source: changed"),
         "changed body should report source: changed: {replaced}"
@@ -496,7 +493,7 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     run_kalam(&project_dir, &["schema", "gen"]);
 
     let runtime_dts =
-        fs::read_to_string(project_dir.join("functions/.kalam/generated/runtime.d.ts"))
+        fs::read_to_string(project_dir.join("functions/src/generated/runtime.d.ts"))
             .expect("runtime.d.ts");
     assert!(
         runtime_dts.contains(&format!("{ident}:")),
@@ -515,7 +512,7 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
          'ok';\n};\n",
     )
     .expect("health.ts");
-    fs::write(src_dir.join("inc.ts"), "export default async (ctx, input) => input + 1;\n")
+    fs::write(src_dir.join("inc.ts"), "export default async (ctx, input) => input.x + 1;\n")
         .expect("inc.ts");
     fs::write(
         src_dir.join("plus_one.ts"),
@@ -568,5 +565,83 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     assert_eq!(
         nested_value, 42,
         "project-backed typed nested CALL should return 42: {nested:?}"
+    );
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn kobj_functions_stream_insert_is_visible_inside_procedure() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_fnstream");
+    let stream = format!("{ns}.fn_stream");
+    exec(&format!(
+        "CREATE STREAM TABLE {stream} (id INT PRIMARY KEY, note TEXT) WITH (TTL_SECONDS = 30)"
+    ));
+    ready(&stream);
+    create_js_procedure(
+        &ns,
+        "write_stream",
+        "p_id INT",
+        &format!(
+            "return ctx.db.execute(\"INSERT INTO {stream} (id, note) VALUES (\" + input.p_id + \
+             \", 'ok')\").then(function () {{\n  return ctx.db.query(\"SELECT note FROM {stream} \
+             WHERE id = \" + input.p_id);\n}});"
+        ),
+    );
+    let rows = query_rows(&format!("CALL {ns}.write_stream(9)"));
+    let value = cell(&rows[0], "result");
+    assert!(
+        value.to_string().contains("ok"),
+        "STREAM INSERT inside a procedure should be readable before return: {rows:?}"
+    );
+}
+
+#[ntest::timeout(120000)]
+#[test]
+fn kobj_functions_sleep_then_returns() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_fnsleep");
+    create_js_procedure(
+        &ns,
+        "nap",
+        "ms INT",
+        "return ctx.sleep(input.ms).then(function () { return 'awake'; });",
+    );
+    let started = std::time::Instant::now();
+    let rows = query_rows(&format!("CALL {ns}.nap(50)"));
+    let elapsed_ms = started.elapsed().as_millis();
+    let value = cell(&rows[0], "result");
+    assert!(
+        value.as_str() == Some("awake") || value.to_string().contains("awake"),
+        "ctx.sleep should resolve and return: {rows:?}"
+    );
+    assert!(
+        elapsed_ms >= 40,
+        "ctx.sleep(50) should pause the isolate: {elapsed_ms}ms"
+    );
+}
+
+#[ntest::timeout(120000)]
+#[test]
+fn kobj_functions_named_multi_arg_call_input() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_fngreet");
+    create_js_procedure(
+        &ns,
+        "greet",
+        "first TEXT, last TEXT",
+        "return input.first + ' ' + input.last;",
+    );
+    let rows = query_rows(&format!("CALL {ns}.greet('Ada', 'Lovelace')"));
+    let value = cell(&rows[0], "result");
+    assert!(
+        value.as_str() == Some("Ada Lovelace") || value.to_string().contains("Ada Lovelace"),
+        "two CALL args should pack into a named object: {rows:?}"
     );
 }

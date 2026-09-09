@@ -553,7 +553,14 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     .await?;
 
     let ai_inbox = ai_inbox_topic_name(namespace);
-    run_sql_with_retry(client, &format!("CREATE TOPIC {}", ai_inbox)).await?;
+    run_sql_with_retry(
+        client,
+        &format!(
+            "CREATE TOPIC {} WITH (retention_seconds = 60, retention_max_bytes = 1048576)",
+            ai_inbox
+        ),
+    )
+    .await?;
     run_sql_with_retry(
         client,
         &format!("ALTER TOPIC {} ADD SOURCE {}.messages_ai ON INSERT", ai_inbox, namespace),

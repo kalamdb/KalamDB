@@ -12,7 +12,10 @@ use crate::workflow::{
         gen::generate_languages,
         naming::{assign_names, NamingOptions},
         rust::generate_rust_source,
-        typescript::{generate_client_source, generate_contracts_source, generate_runtime_dts},
+        typescript::{
+            generate_client_source, generate_contracts_source, generate_runtime_dts,
+            generate_schema_source,
+        },
         LanguageTarget,
     },
     test_support::minimal_sql_project_config,
@@ -49,11 +52,13 @@ fn all_targets_embed_the_same_contract_hash() {
     )
     .unwrap();
     let ts = generate_client_source(&snapshot, &hash, &names);
-    let contracts = generate_contracts_source(&snapshot, &hash, &names);
+    let schema = generate_schema_source(&snapshot, &hash, &names);
+    let contracts = generate_contracts_source(&hash, "../../../src/generated/schema");
     let dart = generate_dart_source(&snapshot, &hash, &names);
     let rust = generate_rust_source(&snapshot, &hash, &names);
     let marker = format!("contract_hash: {hash}");
     assert!(ts.contains(&marker));
+    assert!(schema.contains(&marker));
     assert!(contracts.contains(&marker));
     assert!(dart.contains(&marker));
     assert!(rust.contains(&marker));
@@ -71,10 +76,17 @@ fn runtime_dts_nested_typed_call() {
     )
     .unwrap();
     let dts = generate_runtime_dts(&snapshot, &names);
-    assert!(dts.contains("createMessage(input: ChatCreateMessage[\"input\"])"), "{dts}");
+    assert!(dts.contains("createMessage(input: ChatCreateMessageRequest)"), "{dts}");
+    assert!(dts.contains("Promise<ChatCreateMessageResult>"), "{dts}");
     assert!(dts.contains("chat:"), "{dts}");
     assert!(dts.contains("functions: FunctionsHost"), "{dts}");
-    assert!(dts.contains("import type { ChatCreateMessage } from \"./contracts\""), "{dts}");
+    assert!(
+        dts.contains(
+            "import type { ChatCreateMessageRequest, ChatCreateMessageResult } from \
+             \"./contracts\""
+        ),
+        "{dts}"
+    );
 }
 
 #[test]
@@ -89,17 +101,19 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     )
     .unwrap();
     let ts = generate_client_source(&snapshot, &hash, &names);
+    let schema = generate_schema_source(&snapshot, &hash, &names);
     let dart = generate_dart_source(&snapshot, &hash, &names);
     let rust = generate_rust_source(&snapshot, &hash, &names);
 
-    assert!(ts.contains("export type ChatAddress"));
-    assert!(ts.contains("address: ChatAddress | null"));
-    assert!(ts.contains("nickname: string | null"));
-    assert!(ts.contains("email: string;"));
-    assert!(ts.contains("export type ChatUser"));
-    assert!(ts.contains("export type ChatUsers = ChatUser"));
+    assert!(schema.contains("export type ChatAddress"));
+    assert!(schema.contains("address: ChatAddress | null"));
+    assert!(schema.contains("nickname: string | null"));
+    assert!(schema.contains("email: string;"));
+    assert!(schema.contains("export type ChatUser"));
+    assert!(schema.contains("export type ChatUsers = ChatUser"));
     assert!(ts.contains("createMessage:"));
     assert!(ts.contains("chat: {"));
+    assert!(ts.contains("export * from './schema'"));
 
     assert!(dart.contains("final class ChatAddress {"));
     assert!(dart.contains("ChatAddress? address"));
@@ -125,11 +139,12 @@ fn unqualified_names_emit_short_idents() {
     )
     .unwrap();
     let ts = generate_client_source(&snapshot, &hash, &names);
-    assert!(ts.contains("export type Address"));
-    assert!(ts.contains("export type User"));
+    let schema = generate_schema_source(&snapshot, &hash, &names);
+    assert!(schema.contains("export type Address"));
+    assert!(schema.contains("export type User"));
     assert!(ts.contains("createMessage:"));
     assert!(ts.contains("chat: {"));
-    assert!(!ts.contains("export type ChatUser"));
+    assert!(!schema.contains("export type ChatUser"));
 }
 
 #[test]
@@ -157,31 +172,60 @@ fn scaffold_writes_once_and_refuses_missing_export() {
 
     let impl_path = root.join("functions/src/chat/create_message.ts");
     let original = fs::read_to_string(&impl_path).unwrap();
-    assert!(original.contains("export default defineProcedure<ChatCreateMessage>"));
-    assert!(original.contains("../../.kalam/generated/contracts"));
+    assert!(original.contains("export default defineProcedure("));
+    assert!(original.contains("type ProcedureContext"));
+    assert!(original.contains("type ChatCreateMessageRequest"));
+    assert!(original.contains("type ChatCreateMessageResult"));
+    assert!(original.contains(
+        "async (ctx: ProcedureContext, input: ChatCreateMessageRequest): \
+         Promise<ChatCreateMessageResult>"
+    ));
+    assert!(original.contains("../generated/contracts"));
     fs::write(
         &impl_path,
         original.replace("throw new Error(\"not implemented\")", "return input as never"),
     )
     .unwrap();
+    let generated = root.join("functions/src/generated");
+    fs::create_dir_all(&generated).unwrap();
+    fs::write(
+        generated.join("runtime.ts"),
+        "export function defineProcedure(handler) { return handler; }\n",
+    )
+    .unwrap();
+    let stale_dot_kalam = root.join("functions/.kalam/generated");
+    fs::create_dir_all(&stale_dot_kalam).unwrap();
+    fs::write(stale_dot_kalam.join("contracts.ts"), "// stale\n").unwrap();
 
     generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap();
     let after = fs::read_to_string(&impl_path).unwrap();
     assert!(after.contains("return input as never"));
     assert!(!after.contains("not implemented"));
 
-    let registry = fs::read_to_string(root.join("functions/.kalam/generated/registry.ts")).unwrap();
-    assert!(registry.contains("from \"../../src/chat/create_message\""));
+    let registry = fs::read_to_string(root.join("functions/src/generated/registry.ts")).unwrap();
+    assert!(registry.contains("from \"../chat/create_message\""));
     assert!(registry.contains("\"chat.create_message\""));
 
-    let runtime = fs::read_to_string(root.join("functions/.kalam/generated/runtime.d.ts")).unwrap();
+    let runtime = fs::read_to_string(root.join("functions/src/generated/runtime.d.ts")).unwrap();
     assert!(runtime.contains("export interface ProcedureContext"));
+    assert!(runtime.contains("readonly orm: ProcedureOrm"));
     assert!(runtime.contains("defineProcedure"));
-    assert!(runtime.contains("createMessage(input: ChatCreateMessage[\"input\"])"));
+    assert!(runtime.contains("ctx: ProcedureContext"));
+    assert!(runtime.contains("input: TRequest"));
+    assert!(runtime.contains("createMessage(input: ChatCreateMessageRequest)"));
     assert!(runtime.contains("chat:"));
-    let contracts =
-        fs::read_to_string(root.join("functions/.kalam/generated/contracts.ts")).unwrap();
+    assert!(root.join("functions/src/generated/runtime.js").is_file());
+    let runtime_js = fs::read_to_string(root.join("functions/src/generated/runtime.js")).unwrap();
+    assert!(runtime_js.contains("bindFunctionOrm"));
+    assert!(!root.join("functions/src/generated/runtime.ts").exists());
+    assert!(!stale_dot_kalam.exists());
+    let contracts = fs::read_to_string(root.join("functions/src/generated/contracts.ts")).unwrap();
     assert!(contracts.contains("from \"./runtime\""));
+    assert!(contracts.contains("from \"../../../src/generated/schema\""));
+    assert!(root.join("src/generated/schema.ts").is_file());
+    let schema = fs::read_to_string(root.join("src/generated/schema.ts")).unwrap();
+    assert!(schema.contains("export type ChatCreateMessageRequest"));
+    assert!(schema.contains("export type ChatCreateMessageResult"));
 
     fs::write(&impl_path, "export const broken = 1;\n").unwrap();
     let err = generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap_err();
@@ -218,10 +262,10 @@ CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"
     generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap();
     assert!(!root.join("functions/src/api/health.ts").exists());
     let shim =
-        fs::read_to_string(root.join("functions/.kalam/generated/inline/api_health.ts")).unwrap();
+        fs::read_to_string(root.join("functions/src/generated/inline/api_health.ts")).unwrap();
     assert!(shim.contains("ProcedureContext"));
     assert!(shim.contains("return \"ok\""));
-    let registry = fs::read_to_string(root.join("functions/.kalam/generated/registry.ts")).unwrap();
+    let registry = fs::read_to_string(root.join("functions/src/generated/registry.ts")).unwrap();
     assert!(!registry.contains("api.health"));
 }
 
@@ -288,6 +332,7 @@ fn generate_does_not_require_a_server_url() {
         .to_string();
     assert!(dart.contains(&hash_line[3..]) || dart.contains(hash_line.trim_start_matches("// ")));
     assert!(rust.contains(hash_line.trim_start_matches("// ")));
-    assert!(ts.contains("export const users"));
+    let schema = fs::read_to_string(root.join("src/generated/schema.ts")).unwrap();
+    assert!(schema.contains("export const users"));
     assert!(dart.contains("KalamTableSpec<Users>"));
 }

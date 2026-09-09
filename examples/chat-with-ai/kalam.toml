@@ -27,8 +27,12 @@ watch = true
 
 [dev.processes]
 app = "npm run dev"
-agent = "npm run agent"
 
 [logging]
 file = true
 capture_process_output = true
+
+[functions]
+path = "functions"
+runtime = "typescript"
+module = "backend"

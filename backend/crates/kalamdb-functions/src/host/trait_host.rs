@@ -1,6 +1,12 @@
 //! Host callbacks injected into a V8 isolate. Implemented by `kalamdb-core`.
 
-use std::{future::Future, pin::Pin};
+use std::{
+    future::Future,
+    pin::Pin,
+    time::Duration,
+};
+
+use datafusion_common::ScalarValue;
 
 use crate::{error::Result, value::RoutineValue, InvocationMetadata};
 
@@ -46,6 +52,15 @@ pub trait FunctionHost: Send + Sync {
     }
     fn publish_async(&self, topic: String, payload: RoutineValue) -> HostFuture<'_, ()> {
         Box::pin(async move { self.publish(&topic, &payload) })
+    }
+    fn sleep(&self, ms: f64) -> HostFuture<'_, RoutineValue> {
+        Box::pin(async move {
+            let millis = ms.max(0.0).min(60_000.0) as u64;
+            if millis > 0 {
+                tokio::time::sleep(Duration::from_millis(millis)).await;
+            }
+            Ok(RoutineValue::new(ScalarValue::Null))
+        })
     }
     fn metadata(&self) -> Option<InvocationMetadata> {
         None

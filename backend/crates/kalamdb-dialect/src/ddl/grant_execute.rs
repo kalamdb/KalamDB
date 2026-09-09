@@ -123,11 +123,9 @@ mod tests {
         .unwrap();
         assert_eq!(revoke.grantee, ExecuteGrantee::Public);
 
-        let anon = GrantExecuteStatement::parse(
-            "GRANT EXECUTE ON PROCEDURE api.health TO anonymous",
-            &ns,
-        )
-        .unwrap();
+        let anon =
+            GrantExecuteStatement::parse("GRANT EXECUTE ON PROCEDURE api.health TO anonymous", &ns)
+                .unwrap();
         assert_eq!(anon.grantee, ExecuteGrantee::Anonymous);
     }
 }

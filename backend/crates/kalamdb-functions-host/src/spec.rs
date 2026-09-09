@@ -20,7 +20,7 @@ pub struct HostMethod {
 }
 
 /// Async `kalamAsyncOp` kind names the V8 adapter must handle.
-pub const ASYNC_OPS: &[&str] = &["query", "execute", "call", "publish"];
+pub const ASYNC_OPS: &[&str] = &["query", "execute", "call", "publish", "sleep"];
 
 /// Native functions installed on the isolate (order is documentation only).
 pub const NATIVE_FNS: &[&str] = &[
@@ -65,6 +65,11 @@ pub const HOST_METHODS: &[HostMethod] = &[
         path:     "topics.publish",
         ts:       "publish(topic: string, payload: unknown): Promise<void>",
         dispatch: HostDispatch::AsyncOp("publish"),
+    },
+    HostMethod {
+        path:     "sleep",
+        ts:       "sleep(ms: number): Promise<void>",
+        dispatch: HostDispatch::AsyncOp("sleep"),
     },
     HostMethod {
         path:     "log.debug",

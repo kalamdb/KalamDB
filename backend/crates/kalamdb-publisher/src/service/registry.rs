@@ -47,6 +47,7 @@ impl TopicPublisherService {
         self.consumer_groups.clear();
         self.partition_write_locks.clear();
         self.retained_bytes.clear();
+        self.log_start_offsets.clear();
     }
 
     pub fn clear_topic_data(&self, topic_id: &TopicId) -> Result<(usize, usize)> {
@@ -105,5 +106,21 @@ impl TopicPublisherService {
         for key in retained_keys {
             self.retained_bytes.remove(&key);
         }
+
+        let log_start_keys: Vec<_> = self
+            .log_start_offsets
+            .iter()
+            .filter(|entry| entry.key().topic_id == *topic_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in log_start_keys {
+            self.log_start_offsets.remove(&key);
+        }
+
+        shrink_dashmap_if_sparse(&self.group_claim_state);
+        shrink_dashmap_if_sparse(&self.consumer_groups);
+        shrink_dashmap_if_sparse(&self.partition_write_locks);
+        shrink_dashmap_if_sparse(&self.retained_bytes);
+        shrink_dashmap_if_sparse(&self.log_start_offsets);
     }
 }

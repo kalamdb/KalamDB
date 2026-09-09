@@ -105,12 +105,10 @@ impl CreateProcedureStatement {
             if rest_upper.starts_with("AS") {
                 let after_as = rest["AS".len()..].trim_start();
                 if looks_like_source_file_mapping(after_as) {
-                    return Err(
-                        "CREATE PROCEDURE source-file mapping (AS 'path', 'export') is not \
-                         supported; implement the procedure in the functions project or use \
-                         LANGUAGE with an inline body"
-                            .to_string(),
-                    );
+                    return Err("CREATE PROCEDURE source-file mapping (AS 'path', 'export') is \
+                                not supported; implement the procedure in the functions project \
+                                or use LANGUAGE with an inline body"
+                        .to_string());
                 }
                 body = Some(parse_procedure_body(after_as)?);
                 break;
@@ -123,17 +121,14 @@ impl CreateProcedureStatement {
 
         match (&language, &body) {
             (Some(_), None) => {
-                return Err(
-                    "LANGUAGE requires an AS $$ ... $$ (or string) body; omit LANGUAGE for \
-                     project-backed procedures"
-                        .to_string(),
-                );
+                return Err("LANGUAGE requires an AS $$ ... $$ (or string) body; omit LANGUAGE \
+                            for project-backed procedures"
+                    .to_string());
             },
             (None, Some(_)) => {
-                return Err(
-                    "inline procedure body requires a LANGUAGE clause (JAVASCRIPT or TYPESCRIPT)"
-                        .to_string(),
-                );
+                return Err("inline procedure body requires a LANGUAGE clause (JAVASCRIPT or \
+                            TYPESCRIPT)"
+                    .to_string());
             },
             (None, None) | (Some(_), Some(_)) => {},
         }
@@ -249,7 +244,8 @@ mod tests {
     #[test]
     fn parse_inline_javascript_dollar_quoted_body() {
         let stmt = CreateProcedureStatement::parse(
-            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$",
+            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
+             $$",
             &NamespaceId::new("app"),
         )
         .unwrap();
@@ -260,7 +256,8 @@ mod tests {
     #[test]
     fn parse_inline_typescript_dollar_quoted_body() {
         let stmt = CreateProcedureStatement::parse(
-            "CREATE PROCEDURE api.greeting(name TEXT) RETURNS TEXT LANGUAGE TYPESCRIPT AS $$\n    return `Hello ${input.name}`;\n$$",
+            "CREATE PROCEDURE api.greeting(name TEXT) RETURNS TEXT LANGUAGE TYPESCRIPT AS $$\n    \
+             return `Hello ${input.name}`;\n$$",
             &NamespaceId::new("app"),
         )
         .unwrap();

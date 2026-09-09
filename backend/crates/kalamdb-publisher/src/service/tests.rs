@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
     sync::{
+        Condvar, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
-        mpsc, Condvar, Mutex as StdMutex,
+        mpsc,
     },
     thread,
     time::Duration as StdDuration,
@@ -10,8 +11,8 @@ use std::{
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    models::{NamespaceId, PayloadMode, TableName},
     StorageKey,
+    models::{NamespaceId, PayloadMode, TableName},
 };
 use kalamdb_store::{
     storage_trait::{KvIterator, Operation, Partition, StorageBackend},
@@ -549,15 +550,21 @@ fn test_publish_message_respects_complex_route_filter_on_insert() {
 
     let routes = service.route_cache.get_matching_routes(&table_id, &TopicOp::Insert);
     let compiled_filter = routes[0].compiled_filter.as_ref().expect("route should compile filter");
-    assert!(compiled_filter
-        .matches(&matching_status_row)
-        .expect("compiled route filter should evaluate"));
-    assert!(compiled_filter
-        .matches(&matching_event_type_row)
-        .expect("compiled route filter should evaluate"));
-    assert!(!compiled_filter
-        .matches(&archived_row)
-        .expect("compiled route filter should evaluate"));
+    assert!(
+        compiled_filter
+            .matches(&matching_status_row)
+            .expect("compiled route filter should evaluate")
+    );
+    assert!(
+        compiled_filter
+            .matches(&matching_event_type_row)
+            .expect("compiled route filter should evaluate")
+    );
+    assert!(
+        !compiled_filter
+            .matches(&archived_row)
+            .expect("compiled route filter should evaluate")
+    );
 
     assert_eq!(
         service
@@ -787,11 +794,21 @@ fn test_byte_retention_can_fully_cleanup_partition() {
     assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
     assert_eq!(service.retained_bytes_for_partition(&topic_id, 0).unwrap(), 0);
     assert!(service.fetch_messages(&topic_id, 0, 3, 10).unwrap().is_empty());
-    assert!(service
-        .message_store
-        .retention_entries_for_partition(&topic_id, 0, 10)
-        .unwrap()
-        .is_empty());
+    let group_id = ConsumerGroupId::new("byte_retention_full_cleanup_group");
+    assert!(
+        service
+            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
+            .unwrap()
+            .is_empty(),
+        "grouped consume should snap to log start after full retention instead of failing"
+    );
+    assert!(
+        service
+            .message_store
+            .retention_entries_for_partition(&topic_id, 0, 10)
+            .unwrap()
+            .is_empty()
+    );
 
     let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
     assert!(err.to_string().contains("OffsetOutOfRange"));
@@ -1013,12 +1030,15 @@ fn test_ack_clears_pending_claims() {
         assert_eq!(state.pending.len(), 1, "Should have one pending claim before ack");
     }
 
-    // Ack clears the pending claim
+    // Ack clears the pending claim and drops idle claim state so the group does
+    // not pin publisher memory after the consumer has caught up.
     service.ack_offset(&topic_id, &group_id, 0, last_offset).unwrap();
-    {
-        let state = service.group_claim_state.get(&cursor_key).unwrap();
-        assert_eq!(state.pending.len(), 0, "Pending claim should be removed after ack");
-    }
+    assert!(
+        service.group_claim_state.get(&cursor_key).is_none(),
+        "fully acked groups must release claim state"
+    );
+    assert_eq!(service.cache_stats().consumer_partition_count, 0);
+    assert_eq!(service.cache_stats().consumer_group_count, 0);
 }
 
 #[test]
@@ -1159,6 +1179,70 @@ fn test_empty_partition_returns_empty() {
 }
 
 #[test]
+fn empty_group_poll_does_not_retain_claim_state() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let topic_id = TopicId::new("empty_poll_no_claim_topic");
+    let group_id = ConsumerGroupId::new("empty_poll_no_claim_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let result = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(result.is_empty());
+    assert!(
+        service.group_claim_state.get(&cursor_key).is_none(),
+        "empty polls must not pin per-group claim state"
+    );
+    assert_eq!(service.cache_stats().consumer_partition_count, 0);
+    assert_eq!(service.cache_stats().consumer_group_count, 0);
+}
+
+#[test]
+fn latest_empty_poll_pins_cursor_so_backlog_is_not_replayed() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("latest_empty_poll_topic");
+    let group_id = ConsumerGroupId::new("latest_empty_poll_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..5 {
+        let row = create_test_row(idx, &format!("backlog_{}", idx));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let latest_next = service
+        .latest_offset(&topic_id, 0)
+        .unwrap()
+        .map(|offset| offset + 1)
+        .unwrap_or(0);
+    assert_eq!(latest_next, 5);
+    let empty = service
+        .fetch_messages_for_group(&topic_id, &group_id, 0, latest_next, 10)
+        .unwrap();
+    assert!(empty.is_empty());
+    assert_eq!(
+        service.group_claim_state.get(&cursor_key).map(|state| state.cursor),
+        Some(latest_next),
+        "FROM LATEST empty poll must pin the group at the high-water mark"
+    );
+
+    let live = create_test_row(5, "live_5");
+    service.publish_message(&table_id, TopicOp::Insert, &live, None).unwrap();
+
+    let tailed = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert_eq!(
+        tailed.iter().map(|message| message.offset).collect::<Vec<_>>(),
+        vec![5],
+        "pinned latest cursor must not replay backlog on the next grouped fetch"
+    );
+}
+
+#[test]
 fn test_group_fetch_then_ack_then_fetch_continues() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
@@ -1189,4 +1273,36 @@ fn test_group_fetch_then_ack_then_fetch_continues() {
     if !batch2.is_empty() {
         assert!(batch2[0].offset > last1, "Second batch should start after first acked offset");
     }
+}
+
+#[test]
+fn allocated_but_unwritten_offset_is_not_treated_as_retained() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let topic_id = TopicId::new("inflight_first_write_topic");
+    let group_id = ConsumerGroupId::new("inflight_group");
+
+    // Publish allocates offset 0 under the partition write lock, then writes the
+    // message. Readers do not take that lock, so they can observe peek_next=1
+    // while the store is still empty. That is not retention: offset 0 must remain
+    // fetchable as an empty result, not OffsetOutOfRange.
+    service.offset_allocator.seed(&topic_id, 0, 1);
+
+    assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 0);
+
+    let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+    assert!(
+        messages.is_empty(),
+        "in-flight first write should return an empty fetch, not an error"
+    );
+
+    let empty_group = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(empty_group.is_empty());
+
+    service.offset_allocator.seed(&topic_id, 0, 1);
+    let still_empty = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(
+        still_empty.is_empty(),
+        "a prior empty group poll must not error when the first offset is still in flight"
+    );
 }

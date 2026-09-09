@@ -36,7 +36,8 @@ pub const REPOSITORY_EXAMPLES: &[RepositoryExample] = &[
     },
     RepositoryExample {
         id:          "chat-with-ai",
-        description: "Realtime multi-user React chat with SHARED rooms, RLS, and a topic agent",
+        description: "Realtime React chat with SHARED rooms, a USER inbox, and a topic-trigger \
+                      procedure",
         source_path: "chat-with-ai",
     },
     RepositoryExample {

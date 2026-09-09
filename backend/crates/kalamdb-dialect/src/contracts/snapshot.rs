@@ -36,6 +36,11 @@ pub enum ContractTypeKind {
     Enum {
         labels: Vec<String>,
     },
+    /// Implicit payload type for a topic: a tagged union of its `ADD SOURCE` tables.
+    TopicPayload {
+        topic_id: String,
+        sources:  Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,10 +96,43 @@ pub struct ContractRoutine {
     pub grants:      BTreeSet<ExecuteGrantee>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractTrigger {
+    pub trigger_id:       String,
+    pub topic_id:         String,
+    pub routine_id:       String,
+    pub principal:        String,
+    pub start_from:       String,
+    pub retries:          i32,
+    pub retry_backoff_ms: i64,
+    pub concurrency:      i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContractSnapshot {
     pub schemas:  BTreeSet<String>,
     pub tables:   BTreeMap<String, ContractTable>,
     pub types:    BTreeMap<String, ContractType>,
     pub routines: BTreeMap<String, ContractRoutine>,
+    pub triggers: BTreeMap<String, ContractTrigger>,
+}
+
+/// Wire `_table` tag injected into full topic payloads (`namespace:table`).
+pub fn table_payload_tag(table_id: &str) -> String {
+    match table_id.rsplit_once('.') {
+        Some((schema, name)) => format!("{schema}:{name}"),
+        None => table_id.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::table_payload_tag;
+
+    #[test]
+    fn table_payload_tag_uses_colon_not_dot() {
+        assert_eq!(table_payload_tag("chat_demo.messages"), "chat_demo:messages");
+        assert_eq!(table_payload_tag("chat_demo.direct_messages"), "chat_demo:direct_messages");
+        assert_eq!(table_payload_tag("messages"), "messages");
+    }
 }

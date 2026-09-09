@@ -93,7 +93,8 @@ impl FunctionService {
             .request_id()
             .map(|id| id.to_string())
             .unwrap_or_else(|| Uuid::now_v7().to_string());
-        let exec_ctx = exec_ctx.clone().with_request_id(request_id.clone());
+        let exec_ctx =
+            exec_ctx.clone().with_request_id(request_id.clone()).with_stream_autocommit();
 
         let coordinator = AppContextRequestTransactionCoordinator::new(app.as_ref());
         let mut request_state = RequestTransactionState::from_request_id(Some(request_id.as_str()))
@@ -306,7 +307,8 @@ pub(super) fn prepare_call(
     );
 
     let revision = revision_for_routine(host, &routine)?;
-    let args = attach_transfer(args, &revision.contract_hash);
+    let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
+    let args = attach_transfer(&args, &revision.contract_hash);
     let frame = ProcedureFrame {
         routine_id: routine.routine_id.clone(),
         revision_id: revision.revision_id.clone(),
@@ -664,21 +666,79 @@ fn map_functions(error: FunctionsError) -> KalamDbError {
     error.into()
 }
 
+fn pack_named_call_input(
+    stores: &kalamdb_system::CatalogStores,
+    routine_id: &RoutineId,
+    args: &[RoutineValue],
+) -> Result<Vec<RoutineValue>, KalamDbError> {
+    if args.is_empty() {
+        return Ok(args.to_vec());
+    }
+    let params = stores.list_parameters(routine_id).map_err(|error| {
+        KalamDbError::CatalogError(format!(
+            "failed to load parameters for procedure {routine_id}: {error}"
+        ))
+    })?;
+    if params.len() != args.len() {
+        return Ok(args.to_vec());
+    }
+    if args.len() == 1 && json_object_has_key(&args[0], &params[0].name) {
+        return Ok(args.to_vec());
+    }
+    let mut object = serde_json::Map::with_capacity(params.len());
+    for (param, arg) in params.iter().zip(args.iter()) {
+        object
+            .insert(param.name.clone(), json_for_transfer(arg).unwrap_or(serde_json::Value::Null));
+    }
+    Ok(vec![RoutineValue::json(ScalarValue::Utf8(Some(
+        serde_json::Value::Object(object).to_string(),
+    )))])
+}
+
+fn json_object_has_key(arg: &RoutineValue, key: &str) -> bool {
+    let Ok(json) = scalar_value_to_js_json(&arg.value) else {
+        return false;
+    };
+    match json.0 {
+        serde_json::Value::Object(map) => map.contains_key(key),
+        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|parsed| parsed.as_object().map(|map| map.contains_key(key)))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 fn attach_transfer(args: &[RoutineValue], contract_hash: &str) -> Vec<RoutineValue> {
     args.iter()
         .map(|arg| {
             if arg.transfer.is_some() {
                 return arg.clone();
             }
-            let Ok(json) = scalar_value_to_js_json(&arg.value) else {
+            let Some(json) = json_for_transfer(arg) else {
                 return arg.clone();
             };
-            match kalamdb_serialization::encode_function_value(contract_hash, &json.0) {
+            match kalamdb_serialization::encode_function_value(contract_hash, &json) {
                 Ok(bytes) => arg.clone().with_transfer(bytes::Bytes::from(bytes), contract_hash),
                 Err(_) => arg.clone(),
             }
         })
         .collect()
+}
+
+fn json_for_transfer(arg: &RoutineValue) -> Option<serde_json::Value> {
+    if arg.json_sql {
+        return match &arg.value {
+            ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
+                serde_json::from_str(text).ok()
+            },
+            ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
+                Some(serde_json::Value::Null)
+            },
+            _ => None,
+        };
+    }
+    scalar_value_to_js_json(&arg.value).ok().map(|json| json.0)
 }
 
 #[cfg(test)]
@@ -728,5 +788,63 @@ mod tests {
         // active. Nested CALL/SQL share that request_id, so a nested error
         // returns Err from invoke_root and the owned txn is rolled back.
         assert!(matches!(FunctionCallOrigin::Sql, FunctionCallOrigin::Sql));
+    }
+
+    #[test]
+    fn json_object_has_key_detects_named_input() {
+        let named =
+            RoutineValue::json(ScalarValue::Utf8(Some(r#"{"room_id":"main"}"#.to_string())));
+        assert!(json_object_has_key(&named, "room_id"));
+        assert!(!json_object_has_key(&named, "payload"));
+        assert!(!json_object_has_key(
+            &RoutineValue::new(ScalarValue::Utf8(Some("main".into()))),
+            "room_id",
+        ));
+        let payload = RoutineValue::json(ScalarValue::Utf8(Some(
+            r#"{"role":"user","content":"hi"}"#.to_string(),
+        )));
+        assert!(!json_object_has_key(&payload, "payload"));
+    }
+
+    #[test]
+    fn attach_transfer_encodes_json_sql_as_object_not_string() {
+        let named = RoutineValue::json(ScalarValue::Utf8(Some(r#"{"msg":"hello"}"#.into())));
+        let packed = attach_transfer(&[named], "inline");
+        let bytes = packed[0].transfer.as_ref().expect("json_sql named input should transfer");
+        let decoded = kalamdb_serialization::decode_function_value(bytes, "inline")
+            .expect("decode named input transfer");
+        assert_eq!(decoded["msg"], "hello");
+        assert!(decoded.is_object(), "V8 must receive an object so input.msg works: {decoded}");
+    }
+
+    #[test]
+    fn named_pack_of_json_sql_keeps_nested_payload_object() {
+        let payload = RoutineValue::json(ScalarValue::Utf8(Some(
+            r#"{"role":"user","content":"hi","_table":"chat_demo:messages"}"#.into(),
+        )));
+        let scalar_json = scalar_value_to_js_json(&payload.value).expect("utf8 scalar json").0;
+        assert!(
+            scalar_json.is_string(),
+            "Utf8 json_sql must not be packed with scalar_value_to_js_json: {scalar_json}"
+        );
+
+        let mut object = serde_json::Map::new();
+        object.insert(
+            "payload".into(),
+            json_for_transfer(&payload).expect("json_sql payload should parse"),
+        );
+        let packed = RoutineValue::json(ScalarValue::Utf8(Some(
+            serde_json::Value::Object(object).to_string(),
+        )));
+        let transferred = attach_transfer(&[packed], "inline");
+        let bytes = transferred[0].transfer.as_ref().expect("named trigger input should transfer");
+        let decoded = kalamdb_serialization::decode_function_value(bytes, "inline")
+            .expect("decode named trigger transfer");
+        assert!(
+            decoded["payload"].is_object(),
+            "V8 must receive input.payload as an object so payload.role works: {decoded}"
+        );
+        assert_eq!(decoded["payload"]["role"], "user");
+        assert_eq!(decoded["payload"]["content"], "hi");
     }
 }

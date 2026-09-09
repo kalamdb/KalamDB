@@ -13,20 +13,23 @@ use once_cell::sync::OnceCell;
 #[derive(Clone)]
 pub struct ExecutionContext {
     /// Authenticated session with user identity and metadata
-    auth_session:          AuthSession,
+    auth_session:            AuthSession,
     /// Optional namespace for this query execution
-    namespace_id:          Option<NamespaceId>,
+    namespace_id:            Option<NamespaceId>,
     /// Optional existing transaction supplied by a connection-scoped caller.
-    transaction_id:        Option<TransactionId>,
+    transaction_id:          Option<TransactionId>,
+    /// When true, STREAM DML from this context autocommits instead of joining
+    /// the wrapping request transaction (procedure CALL / topic trigger).
+    allow_stream_autocommit: bool,
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
-    base_session_context:  Arc<SessionContext>,
+    base_session_context:    Arc<SessionContext>,
     /// Cached per-request SessionState with user context injected
     ///
     /// This avoids repeated allocations when a single request needs multiple
     /// SessionContext instances (retries, planning fallbacks) while keeping
     /// user isolation intact.
-    session_context_cache: Arc<OnceCell<SessionContext>>,
+    session_context_cache:   Arc<OnceCell<SessionContext>>,
 }
 
 impl ExecutionContext {
@@ -50,6 +53,7 @@ impl ExecutionContext {
             auth_session: AuthSession::new(user_id, user_role),
             namespace_id: None,
             transaction_id: None,
+            allow_stream_autocommit: false,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -64,6 +68,7 @@ impl ExecutionContext {
             auth_session,
             namespace_id: None,
             transaction_id: None,
+            allow_stream_autocommit: false,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -79,6 +84,7 @@ impl ExecutionContext {
             auth_session: AuthSession::new(user_id, user_role),
             namespace_id: Some(namespace_id),
             transaction_id: None,
+            allow_stream_autocommit: false,
             base_session_context,
             session_context_cache: Arc::new(OnceCell::new()),
         }
@@ -142,9 +148,25 @@ impl ExecutionContext {
         self
     }
 
+    pub fn without_transaction_id(mut self) -> Self {
+        self.transaction_id = None;
+        self.session_context_cache = Arc::new(OnceCell::new());
+        self
+    }
+
+    pub fn with_stream_autocommit(mut self) -> Self {
+        self.allow_stream_autocommit = true;
+        self
+    }
+
     #[inline]
     pub fn transaction_id(&self) -> Option<&TransactionId> {
         self.transaction_id.as_ref()
+    }
+
+    #[inline]
+    pub fn allows_stream_autocommit(&self) -> bool {
+        self.allow_stream_autocommit
     }
 
     /// Clone this context with an explicit effective identity while preserving
@@ -161,6 +183,7 @@ impl ExecutionContext {
             auth_session,
             namespace_id: self.namespace_id.clone(),
             transaction_id: self.transaction_id.clone(),
+            allow_stream_autocommit: self.allow_stream_autocommit,
             base_session_context: Arc::clone(&self.base_session_context),
             session_context_cache: Arc::new(OnceCell::new()),
         }

@@ -18,7 +18,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Schema-qualified routine identity"
     )]
-    pub routine_id:       RoutineId,
+    pub routine_id:         RoutineId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -28,7 +28,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:     NamespaceId,
+    pub namespace_id:       NamespaceId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -38,7 +38,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Unqualified routine name"
     )]
-    pub name:             String,
+    pub name:               String,
     #[column(
         id = 4,
         ordinal = 4,
@@ -48,7 +48,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Routine owner"
     )]
-    pub owner:            UserId,
+    pub owner:              UserId,
     #[column(
         id = 5,
         ordinal = 5,
@@ -58,7 +58,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "SECURITY INVOKER or DEFINER"
     )]
-    pub security:         RoutineSecurityMode,
+    pub security:           RoutineSecurityMode,
     #[column(
         id = 6,
         ordinal = 6,
@@ -69,7 +69,7 @@ pub struct CatalogRoutine {
         comment = "Implementation language"
     )]
     #[serde(default)]
-    pub language:         Option<String>,
+    pub language:           Option<String>,
     #[column(
         id = 7,
         ordinal = 7,
@@ -80,7 +80,7 @@ pub struct CatalogRoutine {
         comment = "Optional SQL/source body"
     )]
     #[serde(default)]
-    pub body:             Option<String>,
+    pub body:               Option<String>,
     #[column(
         id = 8,
         ordinal = 8,
@@ -91,7 +91,7 @@ pub struct CatalogRoutine {
         comment = "Named return type when not VOID"
     )]
     #[serde(default)]
-    pub return_type_id:   Option<TypeId>,
+    pub return_type_id:     Option<TypeId>,
     #[column(
         id = 9,
         ordinal = 9,
@@ -102,7 +102,7 @@ pub struct CatalogRoutine {
         comment = "Resolved return type name"
     )]
     #[serde(default)]
-    pub return_type_name: Option<String>,
+    pub return_type_name:   Option<String>,
     #[column(
         id = 10,
         ordinal = 10,
@@ -112,7 +112,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "True when the return is SETOF / array"
     )]
-    pub return_is_array:  bool,
+    pub return_is_array:    bool,
     #[column(
         id = 11,
         ordinal = 11,
@@ -122,7 +122,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Return NOT NULL"
     )]
-    pub return_not_null:  bool,
+    pub return_not_null:    bool,
     #[column(
         id = 12,
         ordinal = 12,
@@ -133,7 +133,7 @@ pub struct CatalogRoutine {
         comment = "Optional routine comment"
     )]
     #[serde(default)]
-    pub comment:          Option<String>,
+    pub comment:            Option<String>,
     #[column(
         id = 13,
         ordinal = 13,
@@ -144,7 +144,7 @@ pub struct CatalogRoutine {
         comment = "Builtin return KalamDataType when the return is not a named CREATE TYPE"
     )]
     #[serde(default)]
-    pub return_data_type: Option<KalamDataType>,
+    pub return_data_type:   Option<KalamDataType>,
     #[column(
         id = 14,
         ordinal = 14,

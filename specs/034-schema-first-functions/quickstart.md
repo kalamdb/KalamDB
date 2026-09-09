@@ -40,7 +40,7 @@ CALL api.create_order(...);
 
 After generate:
 
-- `functions/.kalam/generated/runtime.d.ts` exists
+- `functions/src/generated/runtime.d.ts` exists
 - `functions/src/api/create_order.ts` imports `defineProcedure` typed with `ProcedureContext`
 - Inline shim typechecks against the same `ctx.db.query` names
 - Regenerating does not overwrite `functions/src/**`

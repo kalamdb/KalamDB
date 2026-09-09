@@ -1588,8 +1588,7 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
     #[test]
     #[test]
     fn parameterized_dml_skips_datafusion_compat_rewrite() {
-        let insert =
-            "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)";
+        let insert = "INSERT INTO bench.message (id, owner, room, data) VALUES ($1, $2, $3, $4)";
         let select = "SELECT id, owner, room, data FROM bench.message WHERE id = $1";
         let insert_out = rewrite_context_functions_for_datafusion(insert);
         let select_out = rewrite_context_functions_for_datafusion(select);

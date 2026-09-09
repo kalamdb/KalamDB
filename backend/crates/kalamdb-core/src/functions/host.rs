@@ -1,7 +1,11 @@
 //! V8 host callbacks implemented by core (nested SQL, CALL, topics, HTTP).
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
+use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{models::RoutineId, NamespaceId, Role, RoutineSecurityMode, UserId};
 use kalamdb_functions::{
     FunctionCallOrigin, FunctionExecutionRoot, FunctionHost, FunctionsError, HostFuture,
@@ -13,7 +17,10 @@ use smallvec::SmallVec;
 use tokio::runtime::Handle;
 
 use super::executor;
-use crate::{app_context::AppContext, sql::context::ExecutionContext};
+use crate::{
+    app_context::AppContext,
+    sql::{context::ExecutionContext, SqlImpersonationService},
+};
 
 const MAX_PROCEDURE_DEPTH: usize = 16;
 
@@ -90,7 +97,23 @@ impl CoreFunctionHost {
         }
         let _gate = self.sql_gate.lock().await;
         self.scope.check()?;
-        let ctx = self.current_exec_ctx();
+        let (sql, impersonate) = match kalamdb_sql::execute_as::parse_execute_as(&sql) {
+            Ok(Some(envelope)) => (envelope.inner_sql, Some(envelope.username)),
+            Ok(None) => (sql, None),
+            Err(error) => return Err(FunctionsError::Invalid(error)),
+        };
+        // Procedure CALL owns a request transaction, but STREAM DML cannot join
+        // it. Re-assert the flag so principal/definer clones still autocommit.
+        let ctx = self.current_exec_ctx().with_stream_autocommit();
+        let ctx = if let Some(username) = impersonate {
+            let target = SqlImpersonationService::new(Arc::clone(&self.app))
+                .resolve_execute_as_user(ctx.user_id(), ctx.user_role(), &username)
+                .await
+                .map_err(map_core)?;
+            ctx.with_effective_identity(target, Role::User)
+        } else {
+            ctx
+        };
         let executor = self.app.sql_executor();
         let metadata = executor
             .prepare_statement_metadata(&sql, &ctx)
@@ -366,6 +389,23 @@ impl FunctionHost for CoreFunctionHost {
             return None;
         }
         session.stack.get(len - 2).map(ProcedureFrame::stack_label)
+    }
+
+    fn sleep(&self, ms: f64) -> HostFuture<'_, RoutineValue> {
+        let remaining = self.scope.deadline.saturating_duration_since(Instant::now());
+        let requested = Duration::from_millis(ms.max(0.0) as u64);
+        let sleep_for = requested.min(remaining);
+        let cancel = self.scope.cancel.clone();
+        Box::pin(async move {
+            if sleep_for.is_zero() {
+                return Ok(RoutineValue::new(ScalarValue::Null));
+            }
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(FunctionsError::Cancelled),
+                _ = tokio::time::sleep(sleep_for) => Ok(RoutineValue::new(ScalarValue::Null)),
+            }
+        })
     }
 }
 

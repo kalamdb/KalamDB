@@ -9,16 +9,18 @@ use super::{
     arrow::resolve_arrow_type,
     snapshot::{
         ContractField, ContractRoutine, ContractSnapshot, ContractTable, ContractTableKind,
-        ContractType, ContractTypeKind,
+        ContractTrigger, ContractType, ContractTypeKind,
     },
     ContractError,
 };
 use crate::{
     ddl::{
         create_type::{matching_paren, parse_type_reference, split_qualified_ident, take_ident},
+        topic_commands::{parse_alter_topic_add_source, parse_create_topic},
         AlterTypeOperation, AlterTypeStatement, CreateNamespaceStatement, CreateProcedureStatement,
-        CreateSchemaStatement, CreateTypeBody, CreateTypeStatement, GrantExecuteStatement,
-        RevokeExecuteStatement, SetSearchPathStatement, TypeReference, UseNamespaceStatement,
+        CreateSchemaStatement, CreateTriggerStatement, CreateTypeBody, CreateTypeStatement,
+        GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement, TypeReference,
+        UseNamespaceStatement,
     },
     split_statements,
 };
@@ -46,7 +48,9 @@ pub fn compile_contract(
 
     let mut tables: BTreeMap<String, RawTable> = BTreeMap::new();
     let mut types: BTreeMap<String, RawType> = BTreeMap::new();
+    let mut topics: BTreeMap<String, RawTopic> = BTreeMap::new();
     let mut routines: BTreeMap<String, ContractRoutine> = BTreeMap::new();
+    let mut triggers: BTreeMap<String, ContractTrigger> = BTreeMap::new();
     let mut table_alias: HashMap<String, TypeId> = HashMap::new();
     let mut alters = Vec::new();
     let mut pending_grants = Vec::new();
@@ -68,7 +72,9 @@ pub fn compile_contract(
                 &mut schemas,
                 &mut tables,
                 &mut types,
+                &mut topics,
                 &mut routines,
+                &mut triggers,
                 &mut table_alias,
                 &mut alters,
                 &mut pending_grants,
@@ -92,7 +98,7 @@ pub fn compile_contract(
         }
     }
 
-    resolve_snapshot(schemas, tables, types, routines, table_alias)
+    resolve_snapshot(schemas, tables, types, topics, routines, triggers, table_alias)
 }
 
 struct RawTable {
@@ -117,6 +123,10 @@ enum RawType {
     },
 }
 
+struct RawTopic {
+    sources: BTreeSet<String>,
+}
+
 fn apply_statement(
     path: &str,
     sql: &str,
@@ -125,7 +135,9 @@ fn apply_statement(
     schemas: &mut BTreeSet<String>,
     tables: &mut BTreeMap<String, RawTable>,
     types: &mut BTreeMap<String, RawType>,
+    topics: &mut BTreeMap<String, RawTopic>,
     routines: &mut BTreeMap<String, ContractRoutine>,
+    triggers: &mut BTreeMap<String, ContractTrigger>,
     table_alias: &mut HashMap<String, TypeId>,
     alters: &mut Vec<AlterTypeStatement>,
     pending_grants: &mut Vec<GrantExecuteStatement>,
@@ -168,6 +180,27 @@ fn apply_statement(
         ingest_procedure(stmt, &current, routines)?;
         return Ok(());
     }
+    if starts_ci(sql, "CREATE TRIGGER") {
+        let stmt = CreateTriggerStatement::parse(sql, &ns).map_err(err(path))?;
+        let key = stmt.trigger_id.as_str().to_string();
+        if triggers.contains_key(&key) {
+            return Err(ContractError::new(format!("duplicate trigger '{key}'")));
+        }
+        triggers.insert(
+            key,
+            ContractTrigger {
+                trigger_id:       stmt.trigger_id.as_str().to_string(),
+                topic_id:         stmt.topic_id.as_str().to_string(),
+                routine_id:       stmt.routine_id.as_str().to_string(),
+                principal:        stmt.principal,
+                start_from:       stmt.start_from,
+                retries:          stmt.retries,
+                retry_backoff_ms: stmt.retry_backoff_ms,
+                concurrency:      stmt.concurrency,
+            },
+        );
+        return Ok(());
+    }
     if starts_ci(sql, "GRANT EXECUTE") {
         pending_grants.push(GrantExecuteStatement::parse(sql, &ns).map_err(err(path))?);
         return Ok(());
@@ -178,6 +211,14 @@ fn apply_statement(
     }
     if looks_like_create_table(sql) {
         ingest_table(sql, &current, tables, types, table_alias)?;
+        return Ok(());
+    }
+    if starts_ci(sql, "CREATE TOPIC") {
+        ingest_create_topic(sql, &current, topics).map_err(err(path))?;
+        return Ok(());
+    }
+    if starts_ci(sql, "ALTER TOPIC") && sql.to_ascii_uppercase().contains(" ADD SOURCE ") {
+        ingest_topic_source(sql, &current, topics).map_err(err(path))?;
         return Ok(());
     }
     Ok(())
@@ -308,6 +349,67 @@ fn ingest_table(
         },
     );
     Ok(())
+}
+
+fn ingest_create_topic(
+    sql: &str,
+    current_schema: &str,
+    topics: &mut BTreeMap<String, RawTopic>,
+) -> Result<(), String> {
+    let stmt = parse_create_topic(sql)?;
+    let topic_id = qualify_topic_id(&stmt.topic_name, current_schema);
+    if topics.contains_key(&topic_id) {
+        if stmt.if_not_exists {
+            return Ok(());
+        }
+        return Err(format!("duplicate topic '{topic_id}'"));
+    }
+    topics.insert(
+        topic_id,
+        RawTopic {
+            sources: BTreeSet::new(),
+        },
+    );
+    Ok(())
+}
+
+fn ingest_topic_source(
+    sql: &str,
+    current_schema: &str,
+    topics: &mut BTreeMap<String, RawTopic>,
+) -> Result<(), String> {
+    let stmt = parse_alter_topic_add_source(sql)?;
+    let topic_id = qualify_topic_id(&stmt.topic_name, current_schema);
+    let table_id = qualify_source_table(&stmt, current_schema);
+    let topic = topics
+        .get_mut(&topic_id)
+        .ok_or_else(|| format!("ALTER TOPIC on unknown topic '{topic_id}'"))?;
+    topic.sources.insert(table_id);
+    Ok(())
+}
+
+fn qualify_topic_id(name: &str, current_schema: &str) -> String {
+    let name = fold_ident(name.trim_end_matches(';'));
+    if name.contains('.') {
+        name
+    } else {
+        format!("{current_schema}.{name}")
+    }
+}
+
+fn qualify_source_table(
+    stmt: &crate::ddl::AddTopicSourceStatement,
+    current_schema: &str,
+) -> String {
+    if stmt.table_name_qualified {
+        format!(
+            "{}.{}",
+            fold_ident(stmt.table_id.namespace_id().as_str()),
+            fold_ident(stmt.table_id.table_name().as_str())
+        )
+    } else {
+        format!("{}.{}", current_schema, fold_ident(stmt.table_id.table_name().as_str()))
+    }
 }
 
 fn parse_contract_table(
@@ -521,13 +623,27 @@ fn resolve_snapshot(
     schemas: BTreeSet<String>,
     tables: BTreeMap<String, RawTable>,
     types: BTreeMap<String, RawType>,
+    topics: BTreeMap<String, RawTopic>,
     routines: BTreeMap<String, ContractRoutine>,
+    triggers: BTreeMap<String, ContractTrigger>,
     table_alias: HashMap<String, TypeId>,
 ) -> Result<ContractSnapshot, ContractError> {
     for table_id in tables.keys() {
         if types.contains_key(table_id) {
             return Err(ContractError::new(format!(
                 "type '{table_id}' collides with implicit table row type"
+            )));
+        }
+        if topics.contains_key(table_id) {
+            return Err(ContractError::new(format!(
+                "topic '{table_id}' collides with implicit table row type"
+            )));
+        }
+    }
+    for type_id in types.keys() {
+        if topics.contains_key(type_id) {
+            return Err(ContractError::new(format!(
+                "type '{type_id}' collides with topic payload type"
             )));
         }
     }
@@ -583,6 +699,26 @@ fn resolve_snapshot(
         kind_map.insert(type_id.clone(), (kind, None));
     }
 
+    for (topic_id, topic) in &topics {
+        for source in &topic.sources {
+            if !snapshot_tables.contains_key(source) {
+                return Err(ContractError::new(format!(
+                    "topic '{topic_id}' source '{source}' is not a table"
+                )));
+            }
+        }
+        kind_map.insert(
+            topic_id.clone(),
+            (
+                ContractTypeKind::TopicPayload {
+                    topic_id: topic_id.clone(),
+                    sources:  topic.sources.iter().cloned().collect(),
+                },
+                None,
+            ),
+        );
+    }
+
     for type_id in kind_map.keys().cloned().collect::<Vec<_>>() {
         let mut visiting = Vec::new();
         let type_ref = TypeReference {
@@ -633,6 +769,7 @@ fn resolve_snapshot(
         tables: snapshot_tables,
         types: snapshot_types,
         routines,
+        triggers,
     })
 }
 
@@ -860,5 +997,106 @@ mod tests {
         assert!(joined.contains("SECURITY DEFINER"));
         assert!(joined.contains("REVOKE EXECUTE ON PROCEDURE chat.get_user FROM PUBLIC"));
         assert!(joined.contains("GRANT EXECUTE ON PROCEDURE chat.get_user TO user"));
+    }
+
+    #[test]
+    fn compile_ingests_create_trigger() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE PROCEDURE chat.on_message(payload JSON);
+             CREATE TRIGGER chat.process_message
+               ON TOPIC chat.ai_inbox
+               EXECUTE PROCEDURE chat.on_message(PAYLOAD)
+               WITH (principal = 'system', start = 'latest', retries = 5, retry_backoff = '1s', \
+             concurrency = 1);",
+            "public",
+        )
+        .unwrap();
+        let trigger = snapshot.triggers.get("chat.process_message").expect("trigger");
+        assert_eq!(trigger.topic_id, "chat.ai_inbox");
+        assert_eq!(trigger.routine_id, "chat.on_message");
+        assert_eq!(trigger.principal, "system");
+        assert_eq!(trigger.start_from, "latest");
+        assert_eq!(trigger.retries, 5);
+        assert_eq!(trigger.retry_backoff_ms, 1000);
+        assert_eq!(trigger.concurrency, 1);
+    }
+
+    #[test]
+    fn topic_sources_become_payload_type() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TABLE chat.messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TABLE chat.direct_messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
+             CREATE TOPIC chat.ai_inbox;
+             ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
+             ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
+             CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+             RETURNS chat.ai_inbox;",
+            "public",
+        )
+        .unwrap();
+        match &snapshot.types["chat.ai_inbox"].kind {
+            ContractTypeKind::TopicPayload { topic_id, sources } => {
+                assert_eq!(topic_id, "chat.ai_inbox");
+                assert_eq!(
+                    sources,
+                    &vec![
+                        "chat.direct_messages".to_string(),
+                        "chat.messages".to_string()
+                    ]
+                );
+            },
+            other => panic!("expected topic payload, got {other:?}"),
+        }
+        assert_eq!(
+            snapshot.routines["chat.on_message"].parameters[0]
+                .type_id
+                .as_ref()
+                .map(|id| id.as_str()),
+            Some("chat.ai_inbox")
+        );
+        assert_eq!(
+            snapshot.routines["chat.on_message"]
+                .return_type
+                .as_ref()
+                .and_then(|field| field.type_id.as_ref())
+                .map(|id| id.as_str()),
+            Some("chat.ai_inbox")
+        );
+        assert!(matches!(snapshot.types["chat.ai_inbox"].arrow, DataType::Utf8));
+    }
+
+    #[test]
+    fn topic_source_must_be_a_table() {
+        let err = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TOPIC chat.ai_inbox;
+             ALTER TOPIC chat.ai_inbox ADD SOURCE chat.missing ON INSERT;",
+            "public",
+        )
+        .unwrap_err();
+        assert!(err.message.contains("not a table"), "{err}");
+    }
+
+    #[test]
+    fn topic_name_cannot_collide_with_table_or_type() {
+        let table_collision = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TABLE chat.ai_inbox (id BIGINT PRIMARY KEY);
+             CREATE TOPIC chat.ai_inbox;",
+            "public",
+        )
+        .unwrap_err();
+        assert!(table_collision.message.contains("collides"), "{table_collision}");
+
+        let type_collision = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TYPE chat.ai_inbox AS ENUM ('a');
+             CREATE TOPIC chat.ai_inbox;",
+            "public",
+        )
+        .unwrap_err();
+        assert!(type_collision.message.contains("collides"), "{type_collision}");
     }
 }

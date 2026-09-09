@@ -61,7 +61,9 @@ pub fn generate_dart_source(
             ContractTypeKind::Composite { fields } => {
                 write_row_class(&mut out, names.type_ident(id), fields, names, snapshot);
             },
-            ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::RowAlias { .. } => {},
+            ContractTypeKind::ImplicitTableRow { .. }
+            | ContractTypeKind::RowAlias { .. }
+            | ContractTypeKind::TopicPayload { .. } => {},
         }
     }
 

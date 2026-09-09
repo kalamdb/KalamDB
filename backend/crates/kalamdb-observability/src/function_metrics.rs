@@ -35,10 +35,7 @@ impl FunctionMetricsSnapshot {
                 "avg_function_latency_ms".to_string(),
                 format!("{:.3}", self.avg_function_latency_ms),
             ),
-            (
-                "function_timeouts_total".to_string(),
-                self.function_timeouts_total.to_string(),
-            ),
+            ("function_timeouts_total".to_string(), self.function_timeouts_total.to_string()),
             ("function_oom_total".to_string(), self.function_oom_total.to_string()),
             (
                 "avg_function_queue_wait_ms".to_string(),

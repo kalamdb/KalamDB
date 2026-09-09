@@ -478,6 +478,10 @@ name = "demo"
 [schema]
 mode = "sql"
 path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
 
 [functions]
 path = "procs"

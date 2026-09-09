@@ -3,19 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Realtime multi-user React chat with SHARED rooms, RLS, and a topic agent",
+  "description": "Realtime multi-user React chat with SHARED rooms, RLS, and schema-first procedures",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
-    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts tests/project.test.ts && playwright test"
+    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/reply.test.ts tests/project.test.ts && playwright test"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
-    "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
-    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

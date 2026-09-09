@@ -73,7 +73,7 @@ fn resolve_named_or_builtin(
     }
     visiting.push(key.clone());
     let arrow = match kind {
-        ContractTypeKind::Enum { .. } => DataType::Utf8,
+        ContractTypeKind::Enum { .. } | ContractTypeKind::TopicPayload { .. } => DataType::Utf8,
         ContractTypeKind::RowAlias { source } => {
             resolve_named_or_builtin(source.as_str(), None, types, visiting)?
         },

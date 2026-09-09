@@ -5,7 +5,7 @@
 Offline. Must:
 
 1. Compile local SQL `ContractSnapshot`
-2. Generate `contracts.ts`, `runtime.d.ts`, `registry.ts`; scaffold missing **non-inline** procedures once
+2. Generate `src/generated/contracts.ts`, `runtime.d.ts`, `runtime.js`, `registry.ts`; scaffold missing **non-inline** procedures once. Do not emit `runtime.ts` (it shadows `runtime.d.ts` and types `ctx`/`input` as `any`).
 3. Typecheck project against generated `.d.ts`
 4. Typecheck inline TS/JS via generated shims (when project exists)
 5. Run configured build/bundle

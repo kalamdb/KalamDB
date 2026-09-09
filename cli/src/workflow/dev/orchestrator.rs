@@ -90,6 +90,7 @@ impl DevSchemaLoop {
 
         let _ = run_initial_schema_pipeline(ctx, output, self.force, None).await?;
         self.refresh_schema_mtime(ctx);
+        self.build_and_activate_functions(ctx, output).await;
         self.prompt_pending_draft(ctx, output).await
     }
 
@@ -115,9 +116,7 @@ impl DevSchemaLoop {
         output.status(&message);
         let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await?;
         self.schema_mtime = schema_file_mtime(&path).or(stable_mtime);
-        let _ = crate::workflow::functions::build_functions(ctx).await;
-        let _ = crate::workflow::functions::activate_function_module(ctx).await;
-        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
+        self.build_and_activate_functions(ctx, output).await;
         self.prompt_pending_draft(ctx, output).await
     }
 
@@ -131,12 +130,27 @@ impl DevSchemaLoop {
             return Ok(DevLoopAction::Continue);
         }
         output.status("functions source changed; rebuilding and activating without server restart");
-        crate::workflow::functions::build_functions(ctx).await?;
-        if let Err(error) = crate::workflow::functions::activate_function_module(ctx).await {
-            output.detail(format!("function activation deferred: {error}"));
-        }
-        self.functions_stamp = current;
+        self.build_and_activate_functions(ctx, output).await;
         Ok(DevLoopAction::Continue)
+    }
+
+    async fn build_and_activate_functions(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) {
+        match crate::workflow::functions::build_functions(ctx).await {
+            Ok(()) => {
+                if let Err(error) = crate::workflow::functions::activate_function_module(ctx).await
+                {
+                    output.detail(format!("function activation deferred: {error}"));
+                }
+            },
+            Err(error) => {
+                output.detail(format!("function build deferred: {error}"));
+            },
+        }
+        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
     }
 
     async fn prompt_pending_draft(

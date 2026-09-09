@@ -54,6 +54,10 @@ pub trait TopicPrimaryKeyLookup: Send + Sync {
 /// claimed range is released so another consumer can re-deliver it.
 const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Cap in-flight claim ranges per group-partition so a consumer that polls
+/// without acking cannot grow `pending` without bound.
+const MAX_PENDING_CLAIMS: usize = 32;
+
 /// Tracks per-(topic, group, partition) claim state for consumer groups.
 ///
 /// The cursor prevents multiple consumers from receiving the same offset range.
@@ -110,6 +114,8 @@ impl ClaimState {
                 self.cursor = reset_to;
             }
         }
+
+        self.shrink_pending();
     }
 
     /// Remove pending claims fully covered by the acknowledged offset.
@@ -129,11 +135,24 @@ impl ClaimState {
         if self.cursor < next {
             self.cursor = next;
         }
+        self.shrink_pending();
+    }
+
+    fn shrink_pending(&mut self) {
+        if self.pending.capacity() > 8
+            && self.pending.capacity() > self.pending.len().saturating_mul(2)
+        {
+            self.pending.shrink_to_fit();
+        }
     }
 
     /// Return the next server-owned cursor and maximum contiguous fetch size
     /// before a still-pending claim.
     fn next_available_window(&self, requested_limit: usize) -> (u64, usize) {
+        if self.pending.len() >= MAX_PENDING_CLAIMS {
+            return (self.cursor, 0);
+        }
+
         let mut next = self.cursor;
 
         loop {
@@ -192,6 +211,10 @@ pub struct TopicPublisherService {
     /// Approximate retained message bytes per topic partition, populated on
     /// demand and updated by publish/retention paths.
     retained_bytes:        DashMap<TopicPartitionKey, u64>,
+    /// Kafka-style log start offset. Advanced only by retention, never by the
+    /// allocator. An in-flight first publish can leave `peek_next=1` while the
+    /// store is still empty; that must not look like offset 0 was retained.
+    log_start_offsets:     DashMap<TopicPartitionKey, u64>,
     /// How long a consumer claim stays valid before re-delivery.
     visibility_timeout:    Duration,
 }
@@ -247,6 +270,7 @@ impl TopicPublisherService {
             consumer_groups: DashMap::new(),
             partition_write_locks: DashMap::new(),
             retained_bytes: DashMap::new(),
+            log_start_offsets: DashMap::new(),
             visibility_timeout,
         }
     }
@@ -306,6 +330,16 @@ impl TopicPublisherService {
             consumer_group_count:     self.consumer_groups.len(),
             consumer_partition_count: self.group_claim_state.len(),
         }
+    }
+}
+
+fn shrink_dashmap_if_sparse<K, V>(map: &DashMap<K, V>)
+where
+    K: Eq + std::hash::Hash,
+{
+    let len = map.len();
+    if map.capacity() > len.saturating_mul(4).max(16) {
+        map.shrink_to_fit();
     }
 }
 

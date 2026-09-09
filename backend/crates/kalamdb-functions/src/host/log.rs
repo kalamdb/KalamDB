@@ -1,4 +1,4 @@
-//! Structured `ctx.log` records emitted on the process logger.
+//! Structured procedure logs emitted on the process logger.
 
 use serde_json::Value;
 
@@ -6,20 +6,47 @@ use crate::{error::Result, host::trait_host::FunctionHost};
 
 const LOG_TARGET: &str = "kalamdb::functions";
 
+/// Which JS surface produced a log record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogChannel {
+    CtxLog,
+    Console,
+}
+
+impl LogChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CtxLog => "ctx.log",
+            Self::Console => "console",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        if value.eq_ignore_ascii_case("console") {
+            Self::Console
+        } else {
+            Self::CtxLog
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostLogRecord {
+    pub channel:   LogChannel,
     pub level:     String,
     pub message:   String,
     pub error:     Option<String>,
     pub args_json: Option<String>,
 }
 
-pub fn parse_log_payload(level: &str, payload: &str) -> HostLogRecord {
+pub fn parse_log_payload(level: &str, payload: &str, channel: &str) -> HostLogRecord {
+    let channel = LogChannel::parse(channel);
     let Ok(Value::Array(items)) = serde_json::from_str::<Value>(payload) else {
         return HostLogRecord {
-            level:     level.to_string(),
-            message:   payload.to_string(),
-            error:     None,
+            channel,
+            level: level.to_string(),
+            message: payload.to_string(),
+            error: None,
             args_json: None,
         };
     };
@@ -52,6 +79,7 @@ pub fn parse_log_payload(level: &str, payload: &str) -> HostLogRecord {
         serde_json::to_string(&rest_start).ok()
     };
     HostLogRecord {
+        channel,
         level: level.to_string(),
         message,
         error,
@@ -118,12 +146,13 @@ pub fn emit_function_log(host: &(impl FunctionHost + ?Sized), record: HostLogRec
     let principal = meta.as_ref().map(|m| m.principal.id.as_str()).unwrap_or("");
     let namespace = meta.as_ref().map(|m| m.namespace.as_str()).unwrap_or("");
     let routine = host.procedure_stack();
+    let channel = record.channel.as_str();
     let error = record.error.as_deref().unwrap_or("");
     let args = record.args_json.as_deref().unwrap_or("");
     log::log!(
         target: LOG_TARGET,
         level,
-        "request_id={request_id} routine={routine} actor={actor} principal={principal} namespace={namespace} error={error} args={args} {message}"
+        "channel={channel} request_id={request_id} routine={routine} actor={actor} principal={principal} namespace={namespace} error={error} args={args} {message}"
     );
     Ok(())
 }
@@ -135,7 +164,8 @@ mod tests {
     #[test]
     fn parses_error_object_then_message_and_args() {
         let payload = r#"[{"name":"Error","message":"boom","stack":"at x"},"failed",{"id":1}]"#;
-        let record = parse_log_payload("error", payload);
+        let record = parse_log_payload("error", payload, "ctx.log");
+        assert_eq!(record.channel, LogChannel::CtxLog);
         assert_eq!(record.message, "failed");
         assert!(record.error.as_ref().is_some_and(|e| e.contains("boom")));
         assert!(record.args_json.as_ref().is_some_and(|a| a.contains("\"id\":1")));
@@ -143,9 +173,16 @@ mod tests {
 
     #[test]
     fn parses_string_message() {
-        let record = parse_log_payload("info", r#"["hello"]"#);
+        let record = parse_log_payload("info", r#"["hello"]"#, "console");
+        assert_eq!(record.channel, LogChannel::Console);
         assert_eq!(record.message, "hello");
         assert!(record.error.is_none());
         assert!(record.args_json.is_none());
+    }
+
+    #[test]
+    fn unknown_channel_defaults_to_ctx_log() {
+        let record = parse_log_payload("info", r#"["hello"]"#, "");
+        assert_eq!(record.channel, LogChannel::CtxLog);
     }
 }

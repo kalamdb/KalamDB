@@ -222,7 +222,7 @@ The project template menu includes two starter sources:
 - `simple-live` (Dart / Flutter) - `kalam_sync` starter with `lib/main.dart` and generated table specs
 - `live-okf-context-sync` - OKF folder sync with live FILE columns
 - `realtime-ops-feed` - small browser app with live SQL subscriptions
-- `chat-with-ai` - realtime multi-user React chat with SHARED rooms, RLS, and a topic agent
+- `chat-with-ai` - realtime React chat with SHARED rooms, a USER inbox, and a topic-trigger procedure
 - `react-ai-chat` - personal AI assistant with USER tables, STREAM tokens, and approvals
 - `summarizer-agent` - worker-only topic consumer that enriches rows
 

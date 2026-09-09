@@ -10,7 +10,7 @@ KalamDB brings SQL tables, live subscriptions, durable topics, and deployable se
 
 ## Get started
 
-Start with a working React chat app: two browser tabs, live messages, and a worker that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated agent response, so no external AI key is required.
+Start with a working React chat app: two browser tabs, live messages, and a procedure that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated copilot response, so no external AI key is required.
 
 ```bash
 npm install -g @kalamdb/cli
@@ -22,7 +22,7 @@ kalam dev
 
 **Open the app URL printed in your terminal in two browser tabs.** Send a message such as `latency spike after deploy`. Watch it appear in both tabs, followed by live worker progress and a saved reply.
 
-`kalam init` creates the app, schema, migrations, and project configuration. `kalam dev` starts or reuses a local database, applies the schema, generates types, and runs the app and worker. Keep it running while you develop.
+`kalam init` creates the app, schema, migrations, and project configuration. `kalam dev` starts or reuses a local database, applies the schema, generates types, activates procedures, and runs the app. Keep it running while you develop.
 
 Prefer a minimal starter? Run `kalam init` in an empty folder and choose a template. See the [quick-start guide](docs/getting-started/quick-start.md) for setup details.
 
@@ -30,29 +30,29 @@ Prefer a minimal starter? Run `kalam init` in an empty folder and choose a templ
 
 ![A SQL write enters KalamDB, reaches connected clients through live queries, and feeds a worker through durable topics. The worker saves its result back to KalamDB.](docs/images/kalamdb-app-flow.png)
 
-In the chat starter, sending a message inserts a row. KalamDB sends the change to subscribed clients and routes it to a topic. Your worker consumes the change and saves a reply, which appears through the same live subscriptions.
+In the chat starter, sending a message calls `send_message`. KalamDB sends the change to subscribed clients and routes it to a topic. A trigger procedure drafts a reply and saves it, which appears through the same live subscriptions.
 
 After joining a room, the app's write looks like this:
 
 ```ts
-await db.insert(chatMessages).values({
-  room: ROOM,
-  role: 'user',
-  author: CHAT_USERNAME,
-  sender_username: CHAT_USERNAME,
+await api.chatDemo.sendMessage({
+  target: 'room',
+  target_id: ROOM,
   content: 'Hello, team!',
 });
 ```
 
-The starter uses generated TypeScript tables with the KalamDB ORM. Its SQL schema connects new messages to the worker's topic:
+The starter uses generated TypeScript tables and a procedure client from `kalam schema gen`. Its SQL schema connects new messages to a topic trigger:
 
 ```sql
 CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
-ALTER TOPIC chat_demo.ai_inbox
-  ADD SOURCE chat_demo.messages ON INSERT;
+ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
+CREATE TRIGGER chat_demo.process_user_message
+  ON TOPIC chat_demo.ai_inbox
+  EXECUTE PROCEDURE chat_demo.on_user_message(PAYLOAD);
 ```
 
-Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [worker](examples/chat-with-ai/src/agent.ts) to see how they fit together. Your worker runs your application or model logic; KalamDB handles data, subscriptions, and topic delivery.
+Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo) to see how they fit together. Your procedures run next to the data; KalamDB handles subscriptions, topics, and retries.
 
 ## What you can build on
 
@@ -176,7 +176,7 @@ The demo exposes nodes at `http://localhost:8081`, `http://localhost:8082`, and 
 
 ## Build something
 
-- [Collaborative chat with an agent](examples/chat-with-ai/README.md) — shared rooms, policies, live messages, and a topic worker.
+- [Collaborative chat with an in-database copilot](examples/chat-with-ai/README.md) — shared rooms, a personal inbox, live messages, and a topic-trigger procedure.
 - [Personal AI assistant](examples/react-ai-chat/README.md) — USER tables, streamed activity, tool calls, and approvals.
 - [Summarizer worker](examples/summarizer-agent/README.md) — consume a change and write an enriched result back.
 - SDKs: [TypeScript](link/sdks/typescript/client/) · [React](link/sdks/typescript/react/) · [ORM](link/sdks/typescript/orm/) · [Dart / Flutter](link/sdks/dart/link/) · [Rust](link/sdks/rust/).

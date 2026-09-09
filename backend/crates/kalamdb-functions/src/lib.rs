@@ -28,8 +28,8 @@ pub use error::{FunctionErrorCode, FunctionsError, Result};
 pub use hash::hash_artifact_bytes;
 pub use host::{
     ActorMeta, FunctionCallOrigin, FunctionCallResult, FunctionHost, HostFuture, HostLogRecord,
-    HttpResponseOverrides, InvocationMetadata, InvocationSource, PrincipalKey, ProcedureFrame,
-    ProcedureFrameStack,
+    HttpResponseOverrides, InvocationMetadata, InvocationSource, LogChannel, PrincipalKey,
+    ProcedureFrame, ProcedureFrameStack,
 };
 pub use invocation::{Invocation, InvocationScope};
 pub use v8::inline::{lint_inline_javascript, prepare_inline_javascript};

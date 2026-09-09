@@ -192,6 +192,9 @@ async fn process_partition(
     let owner = lease_owner();
     match delivery_action(previous.as_ref(), now, trigger.retry_backoff_ms, &owner) {
         DeliveryAction::Skip => return Ok(false),
+        // Same trigger_id+offset after DROP/CREATE TOPIC must not take this
+        // path: DROP TRIGGER/TOPIC clears attempts so reincarnated offsets
+        // deliver again instead of looking like a crash-after-commit ack.
         DeliveryAction::AckSucceeded | DeliveryAction::AckDlq => {
             publisher
                 .ack_offset(&trigger.topic_id, &group_id, partition_id, message.offset)
