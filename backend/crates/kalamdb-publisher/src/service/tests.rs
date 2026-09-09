@@ -932,6 +932,64 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
 }
 
 #[test]
+fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
+    let backend = Arc::new(PausingScanBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("ack_during_scan_topic");
+    let group_id = ConsumerGroupId::new("ack_during_scan_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..30 {
+        let row = create_test_row(idx, &format!("event_{}", idx));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    backend.pause_next_scan();
+
+    let delayed_service = service.clone();
+    let delayed_topic = topic_id.clone();
+    let delayed_group = group_id.clone();
+    let delayed_handle = thread::spawn(move || {
+        delayed_service
+            .fetch_messages_for_group(&delayed_topic, &delayed_group, 0, 0, 10)
+            .unwrap()
+    });
+
+    backend.wait_for_paused_scan();
+
+    let first_batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    let last_offset = first_batch.last().map(|message| message.offset).unwrap();
+    service.ack_offset(&topic_id, &group_id, 0, last_offset).unwrap();
+    assert!(
+        service
+            .group_claim_state
+            .get(&GroupPartitionKey::new(&topic_id, &group_id, 0))
+            .is_none(),
+        "full ack must drop idle claim state before the delayed fetch resumes"
+    );
+
+    backend.release_paused_scan();
+    let delayed_batch = delayed_handle.join().unwrap();
+
+    let first_offsets: HashSet<u64> = first_batch.iter().map(|message| message.offset).collect();
+    let delayed_offsets: HashSet<u64> =
+        delayed_batch.iter().map(|message| message.offset).collect();
+
+    assert_eq!(first_offsets.len(), 10);
+    assert!(
+        first_offsets.is_disjoint(&delayed_offsets),
+        "a fetch that resumes after another consumer acked must not reclaim that range"
+    );
+}
+
+#[test]
 fn test_out_of_order_ack_does_not_regress_offset() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);

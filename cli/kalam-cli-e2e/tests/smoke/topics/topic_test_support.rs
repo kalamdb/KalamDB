@@ -180,6 +180,9 @@ async fn commit_processed_batch(
             Ok(_) => return,
             Err(err) => {
                 let message = err.to_string();
+                if message.contains("No processed offsets to commit") {
+                    return;
+                }
                 if is_retryable_consumer_poll_error(&message) && Instant::now() < deadline {
                     tokio::time::sleep(idle_sleep).await;
                     continue;

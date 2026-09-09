@@ -57,18 +57,11 @@ impl TopicPublisherService {
                     let (start, window) = state.next_available_window(limit);
                     (start, window, true)
                 } else {
-                    let committed_start =
-                        match self.offset_store.get_offset(topic_id, group_id, partition_id) {
-                            Ok(Some(offset)) => offset.last_acked_offset.saturating_add(1),
-                            Ok(None) => start_offset,
-                            Err(e) => {
-                                return Err(CommonError::Internal(format!(
-                                    "Failed to read group offset: {}",
-                                    e
-                                )));
-                            },
-                        };
-                    (committed_start, limit, false)
+                    (
+                        self.group_committed_start(topic_id, group_id, partition_id, start_offset)?,
+                        limit,
+                        false,
+                    )
                 }
             };
 
@@ -122,9 +115,17 @@ impl TopicPublisherService {
                 .entry(cursor_key.clone())
                 .or_insert_with(|| ClaimState::new(fetch_start));
 
+            // Durable acks can drop idle claim state while this fetch was scanning.
+            // Re-read the committed cursor under the claim lock so we do not
+            // recreate a cursor at the stale fetch_start and double-deliver.
             state.expire_stale_claims(claimed_at, self.visibility_timeout);
-            let (current_start, _) = state.next_available_window(limit);
-            if current_start != fetch_start {
+            let committed_start =
+                self.group_committed_start(topic_id, group_id, partition_id, start_offset)?;
+            if committed_start > 0 {
+                state.ack_up_to(committed_start.saturating_sub(1));
+            }
+            let (current_start, available_limit) = state.next_available_window(limit);
+            if current_start != fetch_start || available_limit == 0 {
                 continue;
             }
 
@@ -212,6 +213,20 @@ impl TopicPublisherService {
         }
 
         Ok(())
+    }
+
+    fn group_committed_start(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+        start_offset: u64,
+    ) -> Result<u64> {
+        match self.offset_store.get_offset(topic_id, group_id, partition_id) {
+            Ok(Some(offset)) => Ok(offset.last_acked_offset.saturating_add(1)),
+            Ok(None) => Ok(start_offset),
+            Err(e) => Err(CommonError::Internal(format!("Failed to read group offset: {}", e))),
+        }
     }
 
     fn unregister_consumer_group_if_idle(&self, topic_id: &TopicId, group_id: &ConsumerGroupId) {
