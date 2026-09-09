@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -77,29 +76,23 @@ def is_allowed(path: str) -> bool:
     return False
 
 
-def rg(pattern: str, roots: list[str]) -> list[tuple[str, int, str]]:
-    cmd = [
-        "rg",
-        "--no-heading",
-        "--line-number",
-        "--glob",
-        "*.rs",
-        "--glob",
-        "!**/target/**",
-        pattern,
-        *roots,
-    ]
-    result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, check=False)
+def scan_rs(pattern: str, roots: list[str]) -> list[tuple[str, int, str]]:
+    """Scan `*.rs` files without requiring ripgrep (CI runners may not have `rg`)."""
     hits: list[tuple[str, int, str]] = []
-    for line in result.stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) != 3:
+    for root in roots:
+        root_path = Path(root)
+        if not root_path.exists():
             continue
-        path, line_no, text = parts
-        try:
-            hits.append((path, int(line_no), text.strip()))
-        except ValueError:
-            continue
+        for path in root_path.rglob("*.rs"):
+            if "target" in path.parts:
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for line_no, text in enumerate(lines, start=1):
+                if pattern in text:
+                    hits.append((str(path), line_no, text.strip()))
     return hits
 
 
@@ -117,14 +110,14 @@ def main() -> int:
     json_notes: list[str] = []
 
     for pattern, label in FORBIDDEN:
-        for path, line_no, text in rg(pattern, roots):
+        for path, line_no, text in scan_rs(pattern, roots):
             rel = os.path.relpath(path, ROOT)
             if is_allowed(rel):
                 continue
             forbidden.append(f"{rel}:{line_no}: {label}: {text}")
 
     for pattern, label in JSON_PATTERNS:
-        for path, line_no, text in rg(pattern, roots):
+        for path, line_no, text in scan_rs(pattern, roots):
             rel = os.path.relpath(path, ROOT)
             if is_allowed(rel):
                 continue
