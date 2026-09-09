@@ -15,6 +15,10 @@ env:
   RUST_VERSION: "1.94.0"
   CARGO_ENCODED_RUSTFLAGS: ""
   CARGO_INCREMENTAL: "0"
+  # Keep CI test binaries small. Full debuginfo has filled the runner disk
+  # (ENOSPC creating /tmp RocksDB fixtures near the end of the suite).
+  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+  CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -191,7 +195,9 @@ jobs:
         run: cargo build -p kalam-cli --bin kalam
 
       - name: Report disk space
-        run: df -h
+        run: |
+          df -h
+          du -sh target "${CARGO_HOME:-$HOME/.cargo}" 2>/dev/null || true
 
       - name: Serialization boundary
         run: python3 scripts/check-serialization-boundary.py --fail
@@ -206,6 +212,12 @@ jobs:
             --exclude kalam-pg-extension \
             --failure-output immediate-final
         continue-on-error: true
+
+      - name: Report disk space after tests
+        if: always()
+        run: |
+          df -h
+          du -sh target "${TMPDIR:-/tmp}" 2>/dev/null || true
 
       - name: Collect fresh server log
         if: always()

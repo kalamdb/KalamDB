@@ -98,11 +98,13 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use kalamdb_commons::{
         models::{NamespaceId, UserId},
         Role,
     };
-    use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
+    use kalamdb_core::test_helpers::{create_test_session_for, test_app_context_simple};
 
     use super::*;
 
@@ -170,11 +172,11 @@ mod tests {
     #[tokio::test]
     async fn missing_namespace_returns_error() {
         let app_ctx = test_app_context_simple();
-        let handler = CreateProcedureHandler::new(app_ctx);
+        let handler = CreateProcedureHandler::new(Arc::clone(&app_ctx));
         let ctx = ExecutionContext::new(
             UserId::new("test_user"),
             Role::Dba,
-            create_test_session_simple(),
+            create_test_session_for(&app_ctx),
         );
         let statement = CreateProcedureStatement::parse(
             "CREATE PROCEDURE missing_ns.echo(msg TEXT) LANGUAGE JAVASCRIPT AS $$ return input; $$",
