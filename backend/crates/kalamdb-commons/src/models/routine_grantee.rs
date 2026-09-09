@@ -35,13 +35,15 @@ impl RoutineGrantee {
             "user" => Ok(Self::User),
             "service" => Ok(Self::Service),
             "anonymous" => Ok(Self::Anonymous),
-            other if let Some(name) = other.strip_prefix("role=") => {
+            other => {
+                let Some(name) = other.strip_prefix("role=") else {
+                    return Err(format!("unknown routine grantee '{key}'"));
+                };
                 if name.is_empty() {
                     return Err("routine grantee role name cannot be empty".to_string());
                 }
                 Ok(Self::Role(name.to_string()))
             },
-            _ => Err(format!("unknown routine grantee '{key}'")),
         }
     }
 }
@@ -68,5 +70,8 @@ mod tests {
             let key = grantee.catalog_key();
             assert_eq!(RoutineGrantee::from_catalog_key(&key).unwrap(), grantee);
         }
+
+        assert!(RoutineGrantee::from_catalog_key("role=").is_err());
+        assert!(RoutineGrantee::from_catalog_key("unknown").is_err());
     }
 }
