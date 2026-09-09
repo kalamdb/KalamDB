@@ -44,6 +44,7 @@ smallvec = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store", optional = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 ntest = { workspace = true }
 kalamdb-serialization = { path = "../kalamdb-serialization" }
 
@@ -51,3 +52,7 @@ kalamdb-serialization = { path = "../kalamdb-serialization" }
 name = "kalamdb_functions"
 path = "src/lib.rs"
 doctest = false
+
+[[bench]]
+name = "v8_runtime"
+harness = false
