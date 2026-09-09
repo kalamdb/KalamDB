@@ -58,7 +58,7 @@ impl TopicPublisherService {
                     (start, window, true)
                 } else {
                     (
-                        self.group_committed_start(topic_id, group_id, partition_id, start_offset)?,
+                        self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?,
                         limit,
                         false,
                     )
@@ -116,13 +116,13 @@ impl TopicPublisherService {
                 .or_insert_with(|| ClaimState::new(fetch_start));
 
             // Durable acks can drop idle claim state while this fetch was scanning.
-            // Re-read the committed cursor under the claim lock so we do not
-            // recreate a cursor at the stale fetch_start and double-deliver.
+            // Re-read only the persisted group offset under the claim lock so we
+            // do not recreate a cursor at a stale fetch_start. The caller's
+            // start_offset is a poll position, not a commit, and must not
+            // suppress visibility-timeout redelivery.
             state.expire_stale_claims(claimed_at, self.visibility_timeout);
-            let committed_start =
-                self.group_committed_start(topic_id, group_id, partition_id, start_offset)?;
-            if committed_start > 0 {
-                state.ack_up_to(committed_start.saturating_sub(1));
+            if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)? {
+                state.ack_up_to(last_acked);
             }
             let (current_start, available_limit) = state.next_available_window(limit);
             if current_start != fetch_start || available_limit == 0 {
@@ -215,17 +215,29 @@ impl TopicPublisherService {
         Ok(())
     }
 
-    fn group_committed_start(
+    fn durable_last_acked(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+    ) -> Result<Option<u64>> {
+        match self.offset_store.get_offset(topic_id, group_id, partition_id) {
+            Ok(Some(offset)) => Ok(Some(offset.last_acked_offset)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(CommonError::Internal(format!("Failed to read group offset: {}", e))),
+        }
+    }
+
+    fn group_fetch_start(
         &self,
         topic_id: &TopicId,
         group_id: &ConsumerGroupId,
         partition_id: u32,
         start_offset: u64,
     ) -> Result<u64> {
-        match self.offset_store.get_offset(topic_id, group_id, partition_id) {
-            Ok(Some(offset)) => Ok(offset.last_acked_offset.saturating_add(1)),
-            Ok(None) => Ok(start_offset),
-            Err(e) => Err(CommonError::Internal(format!("Failed to read group offset: {}", e))),
+        match self.durable_last_acked(topic_id, group_id, partition_id)? {
+            Some(last_acked) => Ok(last_acked.saturating_add(1)),
+            None => Ok(start_offset),
         }
     }
 
