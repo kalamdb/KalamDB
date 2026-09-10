@@ -1,12 +1,15 @@
 //! TypeScript client, server contracts, and one-shot procedure scaffolds.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
 };
 
-use kalamdb_functions_host::{emit_typed_functions_host, emit_typescript, TypedRoutine};
+use kalamdb_functions_host::{
+    emit_procedure_builder_dts, emit_procedure_builder_js, emit_typed_functions_host,
+    emit_typescript, TypedRoutine,
+};
 use kalamdb_sql::contracts::{
     table_payload_tag, ContractField, ContractRoutine, ContractSnapshot, ContractTable,
     ContractTableKind, ContractTypeKind,
@@ -18,6 +21,7 @@ use crate::{
         naming::{
             contract_hash_line, method_ident, namespace_object_ident, value_ident, AssignedNames,
         },
+        procedure_bindings::{discover_procedure_bindings, ProcedureBinding},
         types::{render_field_type, TargetLang},
     },
 };
@@ -110,26 +114,20 @@ pub fn generate_contracts_source(hash: &str, schema_import: &str) -> String {
     out.push_str(schema_import);
     out.push_str("\";\n");
     out.push_str("export type { ProcedureContext } from \"./runtime\";\n");
-    out.push_str("export { defineProcedure } from \"./runtime\";\n");
+    out.push_str("export { procedure } from \"./procedure.js\";\n");
     out
 }
 
-pub fn generate_runtime_dts(snapshot: &ContractSnapshot, names: &AssignedNames) -> String {
+pub fn generate_runtime_dts(
+    snapshot: &ContractSnapshot,
+    names: &AssignedNames,
+    schema_import: &str,
+) -> String {
     let mut out = String::new();
     out.push_str(GENERATED_HEADER);
     out.push_str("\n\n");
     out.push_str(&emit_typescript());
-    let typed: Vec<TypedRoutine<'_>> = snapshot
-        .routines
-        .values()
-        .map(|routine| TypedRoutine {
-            namespace:   routine.schema.as_str(),
-            name:        routine.name.as_str(),
-            type_ident:  names.routine_ident(routine.routine_id.as_str()),
-            param_count: routine.parameters.len(),
-        })
-        .collect();
-    out.push_str(&emit_typed_functions_host(&typed));
+    out.push_str(&emit_typed_functions_host(&typed_routines(snapshot, names), schema_import));
     out
 }
 
@@ -140,7 +138,7 @@ pub fn generate_runtime_js() -> String {
         r#"
 import { bindFunctionOrm } from "@kalamdb/orm";
 
-export function defineProcedure(handler) {
+export function wrapProcedure(handler) {
   return (ctx, input) => {
     if (Object.prototype.hasOwnProperty.call(ctx, "orm")) {
       return handler(ctx, input);
@@ -158,6 +156,42 @@ export function defineProcedure(handler) {
     out
 }
 
+pub fn generate_procedure_dts(
+    snapshot: &ContractSnapshot,
+    names: &AssignedNames,
+    schema_import: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str(GENERATED_HEADER);
+    out.push_str("\n\n");
+    out.push_str(&emit_procedure_builder_dts(&typed_routines(snapshot, names), schema_import));
+    out
+}
+
+pub fn generate_procedure_js(snapshot: &ContractSnapshot, names: &AssignedNames) -> String {
+    let mut out = String::new();
+    out.push_str(GENERATED_HEADER);
+    out.push('\n');
+    out.push_str(&emit_procedure_builder_js(&typed_routines(snapshot, names)));
+    out
+}
+
+fn typed_routines<'a>(
+    snapshot: &'a ContractSnapshot,
+    names: &'a AssignedNames,
+) -> Vec<TypedRoutine<'a>> {
+    snapshot
+        .routines
+        .values()
+        .map(|routine| TypedRoutine {
+            namespace:   routine.schema.as_str(),
+            name:        routine.name.as_str(),
+            type_ident:  names.routine_ident(routine.routine_id.as_str()),
+            param_count: routine.parameters.len(),
+        })
+        .collect()
+}
+
 fn emit_shared_types(
     out: &mut String,
     snapshot: &ContractSnapshot,
@@ -173,10 +207,18 @@ fn emit_shared_types(
                     .map(|label| format!("\"{}\"", escape_ts_string(label)))
                     .collect::<Vec<_>>()
                     .join(" | ");
+                emit_jsdoc(out, ty.comment.as_deref(), "");
                 let _ = writeln_str(out, &format!("{export}type {ident} = {union};\n"));
             },
             ContractTypeKind::Composite { fields } => {
-                emit_object_type(out, export, names.type_ident(id), fields, names);
+                emit_object_type(
+                    out,
+                    export,
+                    names.type_ident(id),
+                    fields,
+                    names,
+                    ty.comment.as_deref(),
+                );
             },
             ContractTypeKind::TopicPayload { .. }
             | ContractTypeKind::ImplicitTableRow { .. }
@@ -190,7 +232,16 @@ fn emit_shared_types(
             .as_ref()
             .map(|id| id.as_str().to_string())
             .unwrap_or_else(|| table.row_type_id.as_str().to_string());
-        emit_object_type(out, export, names.type_ident(&canonical_id), &table.fields, names);
+        let comment = type_comment(snapshot, &canonical_id)
+            .or_else(|| type_comment(snapshot, table.row_type_id.as_str()));
+        emit_object_type(
+            out,
+            export,
+            names.type_ident(&canonical_id),
+            &table.fields,
+            names,
+            comment,
+        );
         if let Some(alias) = &table.row_alias_id {
             let alias_ident = names.type_ident(alias.as_str());
             let row_ident = names.type_ident(table.row_type_id.as_str());
@@ -202,7 +253,15 @@ fn emit_shared_types(
 
     for (id, ty) in &snapshot.types {
         if let ContractTypeKind::TopicPayload { sources, .. } = &ty.kind {
-            emit_topic_payload_type(out, export, names.type_ident(id), sources, snapshot, names);
+            emit_topic_payload_type(
+                out,
+                export,
+                names.type_ident(id),
+                sources,
+                snapshot,
+                names,
+                ty.comment.as_deref(),
+            );
         }
     }
 
@@ -218,7 +277,9 @@ fn emit_topic_payload_type(
     sources: &[String],
     snapshot: &ContractSnapshot,
     names: &AssignedNames,
+    comment: Option<&str>,
 ) {
+    emit_jsdoc(out, comment, "");
     out.push_str(export);
     out.push_str("type ");
     out.push_str(ident);
@@ -262,7 +323,9 @@ fn emit_object_type(
     ident: &str,
     fields: &[ContractField],
     names: &AssignedNames,
+    comment: Option<&str>,
 ) {
+    emit_jsdoc(out, comment, "");
     out.push_str(export);
     out.push_str("type ");
     out.push_str(ident);
@@ -287,6 +350,7 @@ fn emit_procedure_type(
 ) {
     let request = procedure_request_ident(ident);
     let result = procedure_result_ident(ident);
+    emit_jsdoc(out, routine.comment.as_deref(), "");
     out.push_str(export);
     out.push_str("type ");
     out.push_str(&request);
@@ -304,6 +368,7 @@ fn emit_procedure_type(
         }
         out.push_str("};\n\n");
     }
+    emit_jsdoc(out, routine.comment.as_deref(), "");
     out.push_str(export);
     out.push_str("type ");
     out.push_str(&result);
@@ -405,6 +470,7 @@ fn emit_frontend_client(out: &mut String, snapshot: &ContractSnapshot, names: &A
             let ident = names.routine_ident(routine.routine_id.as_str());
             let request = procedure_request_ident(ident);
             let result = procedure_result_ident(ident);
+            emit_jsdoc(out, routine.comment.as_deref(), "      ");
             out.push_str("      ");
             out.push_str(&method);
             if routine.parameters.is_empty() {
@@ -476,74 +542,88 @@ fn write_procedure_artifacts(
     hash: &str,
     names: &AssignedNames,
 ) -> Result<()> {
-    let ts_routines: Vec<&ContractRoutine> = snapshot
-        .routines
-        .values()
-        .filter(|routine| is_project_backed_routine(routine))
-        .collect();
-
     let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
-    write_text(&generated_dir.join("runtime.d.ts"), &generate_runtime_dts(snapshot, names))?;
+    let schema_import = ts_relative_module(&generated_dir, schema_path);
+    write_text(
+        &generated_dir.join("runtime.d.ts"),
+        &generate_runtime_dts(snapshot, names, &schema_import),
+    )?;
     // Identity helper must be `.js`. A sibling `runtime.ts` shadows `runtime.d.ts`
-    // and types `defineProcedure` as `(handler: any) => any`.
+    // and types `wrapProcedure` as `(handler: any) => any`.
     write_text(&generated_dir.join("runtime.js"), &generate_runtime_js())?;
     remove_if_exists(&generated_dir.join("runtime.ts"))?;
     remove_stale_dot_kalam_generated(project_root)?;
-    if ts_routines.is_empty() && snapshot.routines.is_empty() {
+    if snapshot.routines.is_empty() {
         return Ok(());
     }
-
+    write_text(
+        &generated_dir.join("procedure.d.ts"),
+        &generate_procedure_dts(snapshot, names, &schema_import),
+    )?;
+    write_text(&generated_dir.join("procedure.js"), &generate_procedure_js(snapshot, names))?;
+    remove_if_exists(&generated_dir.join("procedure.ts"))?;
     write_text(
         &generated_dir.join("contracts.ts"),
-        &generate_contracts_source(hash, &ts_relative_module(&generated_dir, schema_path)),
-    )?;
-    write_text(
-        &generated_dir.join("registry.ts"),
-        &generate_registry_source(snapshot, hash, &ts_routines, names)?,
+        &generate_contracts_source(hash, &schema_import),
     )?;
 
+    let bindings = discover_procedure_bindings(project_root, snapshot)?;
+    let bound: HashSet<&str> = bindings.iter().map(|binding| binding.routine_id.as_str()).collect();
     for routine in snapshot.routines.values() {
+        if is_project_backed_routine(routine) && !bound.contains(routine.routine_id.as_str()) {
+            scaffold_procedure(project_root, routine, names)?;
+        }
         write_inline_shim(&generated_dir, routine)?;
     }
-    for routine in &ts_routines {
-        scaffold_procedure(project_root, routine, names)?;
-    }
+    let bindings = discover_procedure_bindings(project_root, snapshot)?;
+    write_text(
+        &generated_dir.join("registry.ts"),
+        &generate_registry_source(hash, &bindings, &generated_dir),
+    )?;
     Ok(())
 }
 
-fn generate_registry_source(
-    snapshot: &ContractSnapshot,
+pub fn generate_registry_source(
     hash: &str,
-    routines: &[&ContractRoutine],
-    names: &AssignedNames,
-) -> Result<String> {
-    let _ = (snapshot, names);
+    bindings: &[ProcedureBinding],
+    generated_dir: &Path,
+) -> String {
     let mut out = String::new();
     out.push_str(GENERATED_HEADER);
     out.push('\n');
     out.push_str("// ");
     out.push_str(&contract_hash_line(hash));
     out.push_str("\n\n");
-    for routine in routines {
-        let import_name = value_ident(&routine.schema, &routine.name, false);
-        let rel = format!("../{}/{}", routine.schema, routine.name);
-        out.push_str("import ");
-        out.push_str(&import_name);
-        out.push_str(" from \"");
-        out.push_str(&rel);
+    let implemented: Vec<&ProcedureBinding> =
+        bindings.iter().filter(|binding| binding.implemented).collect();
+    let mut by_file: BTreeMap<&Path, Vec<&ProcedureBinding>> = BTreeMap::new();
+    for binding in &implemented {
+        by_file.entry(binding.source_path.as_path()).or_default().push(*binding);
+    }
+    for (path, file_bindings) in &by_file {
+        out.push_str("import { ");
+        for (index, binding) in file_bindings.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&binding.export_name);
+            out.push_str(" as ");
+            out.push_str(&value_ident(&binding.schema, &binding.name, false));
+        }
+        out.push_str(" } from \"");
+        out.push_str(&ts_relative_module(generated_dir, path));
         out.push_str("\";\n");
     }
     out.push_str("\nexport const procedures = {\n");
-    for routine in routines {
-        let import_name = value_ident(&routine.schema, &routine.name, false);
+    for binding in implemented {
         out.push_str("  \"");
-        out.push_str(routine.routine_id.as_str());
+        out.push_str(&binding.routine_id);
         out.push_str("\": ");
-        out.push_str(&import_name);
+        out.push_str(&value_ident(&binding.schema, &binding.name, false));
         out.push_str(",\n");
     }
     out.push_str("};\n");
-    Ok(out)
+    out
 }
 
 fn write_inline_shim(generated_dir: &Path, routine: &ContractRoutine) -> Result<()> {
@@ -562,41 +642,43 @@ fn write_inline_shim(generated_dir: &Path, routine: &ContractRoutine) -> Result<
 fn scaffold_procedure(
     project_root: &Path,
     routine: &ContractRoutine,
-    names: &AssignedNames,
+    _names: &AssignedNames,
 ) -> Result<()> {
-    let path = procedure_impl_path(project_root, routine);
+    let path = procedure_impl_path(project_root, &routine.schema, &routine.name);
     if path.exists() {
-        let existing = fs::read_to_string(&path).map_err(|error| {
-            CLIError::FileError(format!("failed to read '{}': {error}", path.display()))
-        })?;
-        if !existing.contains("export default") {
-            return Err(CLIError::ConfigurationError(format!(
-                "procedure implementation '{}' is missing `export default`; add `export default \
-                 defineProcedure(...)` or delete the file to rescaffold",
-                display_rel(project_root, &path)
-            )));
-        }
         return Ok(());
     }
-
-    let ident = names.routine_ident(routine.routine_id.as_str());
-    let request = procedure_request_ident(ident);
-    let result = procedure_result_ident(ident);
-    let source = format!(
-        "import {{\n  defineProcedure,\n  type ProcedureContext,\n  type {request},\n  type \
-         {result},\n}} from \"../generated/contracts\";\n\nexport default defineProcedure(\n  \
-         async (ctx: ProcedureContext, input: {request}): Promise<{result}> => {{\n    throw new \
-         Error(\"not implemented\");\n  }},\n);\n"
-    );
-    write_text(&path, &source)
+    write_text(&path, &unimplemented_procedure_source(&routine.schema, &routine.name))
 }
 
-fn procedure_impl_path(project_root: &Path, routine: &ContractRoutine) -> PathBuf {
+pub fn unimplemented_procedure_source(schema: &str, name: &str) -> String {
+    let ns = namespace_object_ident(schema);
+    let method = method_ident(name);
+    format!(
+        "import {{ procedure }} from \"../generated/contracts\";\n\nexport const {method} = \
+         procedure.{ns}.{method}.unimplemented();\n"
+    )
+}
+
+pub fn implemented_procedure_source(schema: &str, name: &str, body: Option<&str>) -> String {
+    let ns = namespace_object_ident(schema);
+    let method = method_ident(name);
+    let handler = match body {
+        Some(body) if !body.trim().is_empty() => format!("async (ctx, input) => {{\n{body}\n}}"),
+        _ => "async (ctx, input) => {\n  return input;\n}".to_string(),
+    };
+    format!(
+        "import {{ procedure }} from \"../generated/contracts\";\n\nexport const {method} = \
+         procedure.{ns}.{method}({handler});\n"
+    )
+}
+
+pub fn procedure_impl_path(project_root: &Path, schema: &str, name: &str) -> PathBuf {
     project_root
         .join(FUNCTIONS_DIR)
         .join("src")
-        .join(&routine.schema)
-        .join(format!("{}.ts", routine.name))
+        .join(schema)
+        .join(format!("{name}.ts"))
 }
 
 fn is_project_backed_routine(routine: &ContractRoutine) -> bool {
@@ -648,10 +730,6 @@ fn write_text(path: &Path, contents: &str) -> Result<()> {
     })
 }
 
-fn display_rel(project_root: &Path, path: &Path) -> String {
-    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
-}
-
 fn ts_relative_module(from_dir: &Path, target_file: &Path) -> String {
     let target_stem = target_file.with_extension("");
     let mut from_comps: Vec<_> = from_dir.components().collect();
@@ -676,6 +754,34 @@ fn ts_relative_module(from_dir: &Path, target_file: &Path) -> String {
     } else {
         format!("./{joined}")
     }
+}
+
+fn type_comment<'a>(snapshot: &'a ContractSnapshot, type_id: &str) -> Option<&'a str> {
+    snapshot.types.get(type_id).and_then(|ty| ty.comment.as_deref())
+}
+
+fn emit_jsdoc(out: &mut String, comment: Option<&str>, indent: &str) {
+    let Some(text) = comment.map(str::trim).filter(|text| !text.is_empty()) else {
+        return;
+    };
+    let safe = text.replace("*/", "* /");
+    if !safe.contains('\n') {
+        out.push_str(indent);
+        out.push_str("/** ");
+        out.push_str(&safe);
+        out.push_str(" */\n");
+        return;
+    }
+    out.push_str(indent);
+    out.push_str("/**\n");
+    for line in safe.lines() {
+        out.push_str(indent);
+        out.push_str(" * ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(indent);
+    out.push_str(" */\n");
 }
 
 fn escape_ts_string(value: &str) -> String {
@@ -772,9 +878,35 @@ RETURNS chat.ai_inbox;
     }
 
     #[test]
+    fn comments_emit_jsdoc() {
+        let snapshot = compile_contract_sql(
+            r#"
+CREATE SCHEMA chat;
+CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';
+CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe';
+"#,
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let schema = generate_schema_source(&snapshot, &hash, &names);
+        let client = generate_client_source(&snapshot, &hash, &names);
+        assert!(schema.contains("/** Postal address */"), "{schema}");
+        assert!(schema.contains("/** Liveness probe */"), "{schema}");
+        assert!(client.contains("/** Liveness probe */"), "{client}");
+    }
+
+    #[test]
     fn runtime_js_binds_ctx_orm() {
         let js = generate_runtime_js();
-        assert!(js.contains("export function defineProcedure(handler)"));
+        assert!(js.contains("export function wrapProcedure(handler)"));
         assert!(js.contains("import { bindFunctionOrm } from \"@kalamdb/orm\""));
         assert!(js.contains("bindFunctionOrm(ctx.db)"));
         assert!(js.contains("next, \"orm\""));

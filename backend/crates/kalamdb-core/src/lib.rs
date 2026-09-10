@@ -47,6 +47,7 @@ pub mod live_adapters;
 pub mod manifest;
 pub mod metrics;
 pub mod operations;
+pub mod procedure_log_logger;
 pub mod providers;
 pub mod rls;
 pub mod schema_registry;

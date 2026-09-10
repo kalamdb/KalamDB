@@ -208,16 +208,44 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: None,
     },
     SystemTableMetadata {
-        table:              SystemTable::ActiveFunctionRuns,
-        sql_name:           "active_function_runs",
-        aliases:            &["active_function_runs", "system_active_function_runs"],
+        table:              SystemTable::ActiveProcedureRuns,
+        sql_name:           "active_procedure_runs",
+        aliases:            &["active_procedure_runs", "system_active_procedure_runs"],
         is_view:            true,
         column_family_name: None,
     },
     SystemTableMetadata {
-        table:              SystemTable::FunctionErrors,
-        sql_name:           "function_errors",
-        aliases:            &["function_errors", "system_function_errors"],
+        table:              SystemTable::ProcedureLogs,
+        sql_name:           "procedure_logs",
+        aliases:            &["procedure_logs", "system_procedure_logs"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table:              SystemTable::ModuleInstances,
+        sql_name:           "module_instances",
+        aliases:            &["module_instances", "system_module_instances"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table:              SystemTable::Procedures,
+        sql_name:           "procedures",
+        aliases:            &["procedures", "system_procedures"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table:              SystemTable::Modules,
+        sql_name:           "modules",
+        aliases:            &["modules", "system_modules"],
+        is_view:            true,
+        column_family_name: None,
+    },
+    SystemTableMetadata {
+        table:              SystemTable::ModuleRevisions,
+        sql_name:           "module_revisions",
+        aliases:            &["module_revisions", "system_module_revisions"],
         is_view:            true,
         column_family_name: None,
     },
@@ -374,10 +402,18 @@ pub enum SystemTable {
     Live,
     /// system.sessions - Active connection sessions (computed on-demand)
     Sessions,
-    /// system.active_function_runs - In-memory root function invocations
-    ActiveFunctionRuns,
-    /// system.function_errors - Recent structured function errors (in-memory)
-    FunctionErrors,
+    /// system.active_procedure_runs - In-memory root procedure invocations
+    ActiveProcedureRuns,
+    /// system.procedure_logs - Disk-backed procedure invocation, V8 console, and error records
+    ProcedureLogs,
+    /// system.module_instances - Resident V8 isolates joined to module revisions (in-memory)
+    ModuleInstances,
+    /// system.procedures - Operator catalog of CALL-able procedures (join view)
+    Procedures,
+    /// system.modules - Operator catalog of function modules (join view)
+    Modules,
+    /// system.module_revisions - Operator catalog of immutable module revisions (join view)
+    ModuleRevisions,
     /// system.transactions - Active explicit transactions across all origins (computed on-demand)
     Transactions,
     /// system.settings - Server configuration settings (computed on-demand)
@@ -483,8 +519,12 @@ impl SystemTable {
             SystemTable::Stats,
             SystemTable::Live,
             SystemTable::Sessions,
-            SystemTable::ActiveFunctionRuns,
-            SystemTable::FunctionErrors,
+            SystemTable::ActiveProcedureRuns,
+            SystemTable::ProcedureLogs,
+            SystemTable::ModuleInstances,
+            SystemTable::Procedures,
+            SystemTable::Modules,
+            SystemTable::ModuleRevisions,
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
@@ -530,8 +570,12 @@ impl SystemTable {
             SystemTable::Stats,
             SystemTable::Live,
             SystemTable::Sessions,
-            SystemTable::ActiveFunctionRuns,
-            SystemTable::FunctionErrors,
+            SystemTable::ActiveProcedureRuns,
+            SystemTable::ProcedureLogs,
+            SystemTable::ModuleInstances,
+            SystemTable::Procedures,
+            SystemTable::Modules,
+            SystemTable::ModuleRevisions,
             SystemTable::Transactions,
             SystemTable::Settings,
             SystemTable::ServerLogs,
@@ -618,8 +662,12 @@ impl SystemTable {
             SystemTable::Stats
             | SystemTable::Live
             | SystemTable::Sessions
-            | SystemTable::ActiveFunctionRuns
-            | SystemTable::FunctionErrors
+            | SystemTable::ActiveProcedureRuns
+            | SystemTable::ProcedureLogs
+            | SystemTable::ModuleInstances
+            | SystemTable::Procedures
+            | SystemTable::Modules
+            | SystemTable::ModuleRevisions
             | SystemTable::Transactions
             | SystemTable::Settings
             | SystemTable::ServerLogs
@@ -863,12 +911,22 @@ mod tests {
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
         assert_eq!(SystemTable::from_name("sessions").unwrap(), SystemTable::Sessions);
         assert_eq!(
-            SystemTable::from_name("active_function_runs").unwrap(),
-            SystemTable::ActiveFunctionRuns
+            SystemTable::from_name("active_procedure_runs").unwrap(),
+            SystemTable::ActiveProcedureRuns
         );
         assert_eq!(
-            SystemTable::from_name("system.function_errors").unwrap(),
-            SystemTable::FunctionErrors
+            SystemTable::from_name("system.procedure_logs").unwrap(),
+            SystemTable::ProcedureLogs
+        );
+        assert_eq!(
+            SystemTable::from_name("module_instances").unwrap(),
+            SystemTable::ModuleInstances
+        );
+        assert_eq!(SystemTable::from_name("system.procedures").unwrap(), SystemTable::Procedures);
+        assert_eq!(SystemTable::from_name("modules").unwrap(), SystemTable::Modules);
+        assert_eq!(
+            SystemTable::from_name("module_revisions").unwrap(),
+            SystemTable::ModuleRevisions
         );
         assert_eq!(SystemTable::from_name("system.cluster").unwrap(), SystemTable::Cluster);
         assert_eq!(
@@ -937,7 +995,7 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 38); // 23 tables + 15 views
+        assert_eq!(all.len(), 42); // 23 tables + 19 views
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -977,7 +1035,13 @@ mod tests {
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 15);
+        assert_eq!(views.len(), 19);
+        assert!(views.contains(&SystemTable::Procedures));
+        assert!(views.contains(&SystemTable::Modules));
+        assert!(views.contains(&SystemTable::ModuleRevisions));
+        assert!(views.contains(&SystemTable::ActiveProcedureRuns));
+        assert!(views.contains(&SystemTable::ProcedureLogs));
+        assert!(views.contains(&SystemTable::ModuleInstances));
         assert!(views.iter().all(|v| v.is_view()));
         assert!(views.contains(&SystemTable::Datatypes));
     }

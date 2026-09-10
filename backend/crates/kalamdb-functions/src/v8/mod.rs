@@ -1,4 +1,9 @@
 pub(crate) mod adapter;
 pub(crate) mod async_ops;
+pub(crate) mod buffer_allocator;
+pub(crate) mod compiled_scripts;
+pub(crate) mod host_frame;
+pub(crate) mod host_frames;
 pub(crate) mod inline;
+pub(crate) mod rejections;
 pub(crate) mod wrap;

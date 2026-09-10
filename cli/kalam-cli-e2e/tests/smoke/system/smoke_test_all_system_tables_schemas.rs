@@ -43,7 +43,13 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "audit_log",
         "manifest",
         "topics",
-        "topic_offsets", // Previously had schema mismatch bug
+        "topic_offsets",
+        "routines",
+        "routine_parameters",
+        "routine_grants",
+        "function_modules",
+        "function_revisions",
+        "function_artifacts",
     ];
 
     // Virtual system views (9)
@@ -58,8 +64,12 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "tables",
         "columns",
         "sessions",
-        "active_function_runs",
-        "function_errors",
+        "active_procedure_runs",
+        "procedure_logs",
+        "module_instances",
+        "procedures",
+        "modules",
+        "module_revisions",
     ];
 
     let mut tested_count = 0;

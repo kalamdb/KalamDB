@@ -2,11 +2,11 @@
 //
 // Run these tests with:
 //   cargo test --test auth
+// Dex/testcontainers OIDC e2e:
+//   cargo test --test auth --features oidc
 //
 // Run individual test files:
 //   cargo test --test auth test_auth
-
-mod common;
 
 #[path = "auth/test_auth.rs"]
 mod test_auth;
@@ -20,6 +20,7 @@ mod test_oidc_browser_login;
 #[path = "auth/test_oidc_device_login.rs"]
 mod test_oidc_device_login;
 
+#[cfg(feature = "oidc")]
 #[path = "auth/test_oidc_dex_e2e.rs"]
 mod test_oidc_dex_e2e;
 

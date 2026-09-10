@@ -11,8 +11,6 @@
 //   cargo test --test subscription subscription_options
 //   cargo test --test subscription live_connection
 
-mod common;
-
 #[path = "subscription/test_subscribe.rs"]
 mod test_subscribe;
 

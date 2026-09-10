@@ -27,7 +27,7 @@ cargo nextest run -p kalamdb-functions
 Not re-executed in this pass for the same disk constraint. Unit coverage for the remaining product surfaces:
 
 - `kalamdb-functions` lib tests (ABI v2, activation CAS, pool)
-- `kalamdb-core` `FunctionRuntimeState` active-run / error ring tests
-- `kalamdb-views` `system.active_function_runs` / `system.function_errors` view tests
+- `kalamdb-core` `FunctionRuntimeState` active-run tests and `procedures.jsonl` logger tests
+- `kalamdb-views` `system.active_procedure_runs` / `system.procedure_logs` / `system.module_instances` view tests
 - CLI `functions` build/bundle tests
 - CLI e2e `kobj_functions_active_runs_and_structured_errors` (requires running server)

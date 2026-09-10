@@ -23,8 +23,9 @@ pub use system::tables::{create_tables_provider, TablesTableProvider, TablesView
 // Re-export `system` view modules at the crate root for backward compatibility.
 // `system::tables` is omitted because it collides with `pg_catalog::tables`.
 pub use system::{
-    active_function_runs, cluster, cluster_groups, columns, datatypes, describe, function_errors,
-    live, server_logs, sessions, settings, slow_queries, stats, transactions,
+    active_procedure_runs, cluster, cluster_groups, columns, datatypes, describe, live,
+    module_instances, module_revisions, modules, procedure_logs, procedures, server_logs, sessions,
+    settings, slow_queries, stats, transactions,
 };
 pub use system::{datatypes::create_datatypes_provider, system_view_table_definition};
 pub use view_base::*;

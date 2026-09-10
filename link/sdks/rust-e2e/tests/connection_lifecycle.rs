@@ -1,9 +1,9 @@
 //! Shared WebSocket connection lifecycle tests.
 
-mod common;
-
 use kalam_client::SubscriptionConfig;
 use tokio::time::{timeout, Duration};
+
+use super::common;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]

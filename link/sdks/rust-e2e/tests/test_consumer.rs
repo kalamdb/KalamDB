@@ -3,9 +3,7 @@
 //! These tests require a running KalamDB server with topic pub/sub support.
 //! Set KALAMDB_SERVER_URL and KALAMDB_ROOT_PASSWORD environment variables.
 //!
-//! Run with: cargo test --test test_consumer -- --nocapture
-
-mod common;
+//! Run with: cargo nextest run -p kalam-client-e2e --test e2e -- --nocapture
 
 use std::{
     collections::HashMap,
@@ -17,6 +15,8 @@ use kalam_client::{
     consumer::{AutoOffsetReset, TopicConsumer},
     KalamLinkClient,
 };
+
+use super::common;
 
 fn unique_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);

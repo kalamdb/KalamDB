@@ -74,12 +74,7 @@ impl ActiveFunctionSet {
         for (routine, inline) in routines {
             let routine_id = routine.routine_id.clone();
             let export = routine_id.as_str();
-            let module_backed = has_module
-                && if module_exports.is_empty() {
-                    routine.body.is_none()
-                } else {
-                    module_exports.contains(export)
-                };
+            let module_backed = has_module && module_exports.contains(export);
             let implementation = if module_backed {
                 ImplementationRef::Module {
                     revision:  Arc::clone(module_revision.as_ref().expect("module present")),
@@ -204,6 +199,34 @@ mod tests {
             vec![(order, None)],
         );
         assert!(matches!(set.lookup(&id), ImplementationRef::Missing));
+    }
+
+    #[test]
+    fn bodyless_with_empty_module_exports_is_missing() {
+        let order = routine("create_order", None);
+        let id = order.routine_id.clone();
+        let set = ActiveFunctionSet::resolve(
+            1,
+            "c1".into(),
+            Some(module()),
+            &HashSet::new(),
+            vec![(order, None)],
+        );
+        assert!(matches!(set.lookup(&id), ImplementationRef::Missing));
+    }
+
+    #[test]
+    fn empty_exports_keep_inline_artifact() {
+        let health = routine("health", Some("return 1;"));
+        let id = health.routine_id.clone();
+        let set = ActiveFunctionSet::resolve(
+            1,
+            "c1".into(),
+            Some(module()),
+            &HashSet::new(),
+            vec![(health, Some(inline("return 1;")))],
+        );
+        assert!(matches!(set.lookup(&id), ImplementationRef::Inline { .. }));
     }
 
     #[test]

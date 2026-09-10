@@ -2,24 +2,24 @@
 
 use std::sync::Arc;
 
-use actix_web::{HttpRequest, HttpResponse, Responder, web};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
-    KalamDataType,
     conversions::arrow_json_conversion::{scalar_value_to_js_json, scalar_value_to_json},
     models::{NamespaceId, RoutineId},
+    KalamDataType,
 };
 use kalamdb_core::{
     app_context::AppContext,
     functions::{
-        FunctionCallOrigin, FunctionService, HttpResponseOverrides, RoutineValue,
-        json_to_routine_value,
+        json_to_routine_value, FunctionCallOrigin, FunctionService, HttpResponseOverrides,
+        RoutineValue,
     },
     sql::context::ExecutionContext,
 };
 use kalamdb_session::AuthSession;
 use parking_lot::Mutex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 const REJECTED_CONTEXT_KEYS: &[&str] = &["context", "ctx", "source", "actor", "tx"];

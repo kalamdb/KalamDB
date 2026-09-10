@@ -338,14 +338,16 @@ pub struct FunctionsArgs {
 pub enum FunctionsCommand {
     /// Generate function contracts, validate packages, and write the build manifest
     Build,
-    /// Show the active function module and catalogued procedures
+    /// Show the active function module, procedures, and runtime health
     Status,
-    /// List immutable function module revisions
+    /// List function module revisions (active and ready)
     Revisions,
     /// Point the active revision at a previously activated hash (CAS, no rebuild)
     Rollback(FunctionsRollbackArgs),
     /// Print recent structured function errors
     Logs(FunctionsLogsArgs),
+    /// Show resident isolates, memory reservations, and in-flight calls
+    Runtime,
     /// Scaffold a project implementation that overrides an inline procedure
     Override(FunctionsOverrideArgs),
 }

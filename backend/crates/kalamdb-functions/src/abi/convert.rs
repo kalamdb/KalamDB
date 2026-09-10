@@ -10,6 +10,7 @@ use datafusion_common::ScalarValue;
 use v8::{self, Local, PinScope};
 
 use crate::{
+    abi::conversion_budget::ConversionBudget,
     error::{FunctionsError, Result},
     value::RoutineValue,
 };
@@ -56,7 +57,8 @@ pub fn v8_to_routine<'s>(
             contract_hash: None,
         });
     }
-    let scalar = v8_to_scalar(scope, value, &template.value.data_type())?;
+    let mut budget = ConversionBudget::new(scope);
+    let scalar = v8_to_scalar(scope, value, &template.value.data_type(), &mut budget, 0)?;
     Ok(RoutineValue {
         type_id:       template.type_id.clone(),
         value:         scalar,
@@ -96,6 +98,7 @@ fn v8_to_json_sql<'s>(
     }
     let text = v8::json::stringify(scope, value)
         .ok_or_else(|| FunctionsError::Invalid("failed to stringify json sql value".to_string()))?;
+    ConversionBudget::new(scope).string(text)?;
     Ok(ScalarValue::Utf8(Some(text.to_rust_string_lossy(scope))))
 }
 
@@ -152,7 +155,7 @@ fn scalar_to_v8<'s>(scope: &PinScope<'s, '_>, value: &ScalarValue) -> Result<Loc
 }
 
 fn i64_to_v8<'s>(scope: &PinScope<'s, '_>, value: i64) -> Local<'s, v8::Value> {
-    if value.abs() <= (1i64 << 53) {
+    if value.unsigned_abs() <= (1u64 << 53) {
         v8::Number::new(scope, value as f64).into()
     } else {
         v8::BigInt::new_from_i64(scope, value).into()
@@ -207,7 +210,10 @@ fn v8_to_scalar<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
     data_type: &DataType,
+    budget: &mut ConversionBudget,
+    depth: usize,
 ) -> Result<ScalarValue> {
+    budget.enter(scope, depth)?;
     if value.is_null_or_undefined() {
         return ScalarValue::try_from(data_type)
             .map_err(|error| FunctionsError::Invalid(error.to_string()));
@@ -237,16 +243,17 @@ fn v8_to_scalar<'s>(
         DataType::Utf8 => {
             let text = value
                 .to_string(scope)
-                .map(|s| s.to_rust_string_lossy(scope))
-                .unwrap_or_default();
+                .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
+            budget.string(text)?;
+            let text = text.to_rust_string_lossy(scope);
             Ok(ScalarValue::Utf8(Some(text)))
         },
-        DataType::Struct(fields) => v8_object_to_struct(scope, value, fields),
-        DataType::List(field) => v8_array_to_list(scope, value, field),
+        DataType::Struct(fields) => v8_object_to_struct(scope, value, fields, budget, depth),
+        DataType::List(field) => v8_array_to_list(scope, value, field, budget, depth),
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
             Ok(ScalarValue::TimestampMicrosecond(Some(js_to_i64(scope, value)), tz.clone()))
         },
-        DataType::Null => infer_v8_value(scope, value),
+        DataType::Null => infer_value(scope, value, budget, depth),
         other => Err(FunctionsError::Invalid(format!("unsupported function return type: {other}"))),
     }
 }
@@ -255,6 +262,16 @@ pub fn infer_v8_value<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
 ) -> Result<ScalarValue> {
+    infer_value(scope, value, &mut ConversionBudget::new(scope), 0)
+}
+
+pub(crate) fn infer_value<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+    budget: &mut ConversionBudget,
+    depth: usize,
+) -> Result<ScalarValue> {
+    budget.enter(scope, depth)?;
     if value.is_null_or_undefined() {
         return Ok(ScalarValue::Null);
     }
@@ -274,35 +291,56 @@ pub fn infer_v8_value<'s>(
     if value.is_string() {
         let text = value
             .to_string(scope)
-            .map(|s| s.to_rust_string_lossy(scope))
-            .unwrap_or_default();
+            .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
+        budget.string(text)?;
+        let text = text.to_rust_string_lossy(scope);
         return Ok(ScalarValue::Utf8(Some(text)));
     }
     if value.is_array() {
         let array = v8::Local::<v8::Array>::try_from(value)
             .map_err(|_| FunctionsError::Invalid("expected array".to_string()))?;
         let len = array.length();
+        budget.items(len as usize)?;
         let mut items = Vec::with_capacity(len as usize);
         for index in 0..len {
-            let element = array.get_index(scope, index).unwrap_or_else(|| v8::null(scope).into());
-            items.push(infer_v8_value(scope, element)?);
+            let element = array
+                .get_index(scope, index)
+                .ok_or_else(|| FunctionsError::Javascript("array accessor failed".into()))?;
+            items.push(infer_value(scope, element, budget, depth + 1)?);
         }
-        let item_type = items.first().map(|item| item.data_type()).unwrap_or(DataType::Utf8);
+        let item_type = items
+            .iter()
+            .find(|item| !item.is_null())
+            .map(|item| item.data_type())
+            .unwrap_or(DataType::Utf8);
+        for item in &mut items {
+            if item.is_null() {
+                *item = ScalarValue::try_from(&item_type)
+                    .map_err(|error| FunctionsError::Invalid(error.to_string()))?;
+            } else if item.data_type() != item_type {
+                return Err(FunctionsError::Invalid(
+                    "array elements must have a consistent type".into(),
+                ));
+            }
+        }
         return Ok(ScalarValue::List(ScalarValue::new_list(&items, &item_type, true)));
     }
     if value.is_object() {
-        return infer_v8_object(scope, value);
+        return infer_v8_object(scope, value, budget, depth);
     }
     let text = value
         .to_string(scope)
-        .map(|s| s.to_rust_string_lossy(scope))
-        .unwrap_or_default();
+        .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
+    budget.string(text)?;
+    let text = text.to_rust_string_lossy(scope);
     Ok(ScalarValue::Utf8(Some(text)))
 }
 
 fn infer_v8_object<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
+    budget: &mut ConversionBudget,
+    depth: usize,
 ) -> Result<ScalarValue> {
     let object = value
         .to_object(scope)
@@ -310,6 +348,7 @@ fn infer_v8_object<'s>(
     let names = object
         .get_own_property_names(scope, v8::GetPropertyNamesArgsBuilder::new().build())
         .ok_or_else(|| FunctionsError::Invalid("failed to list object keys".to_string()))?;
+    budget.items(names.length() as usize)?;
     let mut columns: Vec<(Arc<Field>, arrow::array::ArrayRef)> =
         Vec::with_capacity(names.length() as usize);
     for index in 0..names.length() {
@@ -318,10 +357,13 @@ fn infer_v8_object<'s>(
             .ok_or_else(|| FunctionsError::Invalid("missing object key".to_string()))?;
         let key = key_value
             .to_string(scope)
-            .map(|s| s.to_rust_string_lossy(scope))
-            .unwrap_or_default();
-        let property = object.get(scope, key_value).unwrap_or_else(|| v8::null(scope).into());
-        let scalar = infer_v8_value(scope, property)?;
+            .ok_or_else(|| FunctionsError::Invalid("object key conversion failed".into()))?;
+        budget.string(key)?;
+        let key = key.to_rust_string_lossy(scope);
+        let property = object
+            .get(scope, key_value)
+            .ok_or_else(|| FunctionsError::Javascript("object accessor failed".into()))?;
+        let scalar = infer_value(scope, property, budget, depth + 1)?;
         let field = Arc::new(Field::new(&key, scalar.data_type(), true));
         let array = scalar
             .to_array()
@@ -342,16 +384,21 @@ fn v8_object_to_struct<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
     fields: &arrow::datatypes::Fields,
+    budget: &mut ConversionBudget,
+    depth: usize,
 ) -> Result<ScalarValue> {
     let object = value
         .to_object(scope)
         .ok_or_else(|| FunctionsError::Invalid("expected object for struct".to_string()))?;
+    budget.items(fields.len())?;
     let mut columns: Vec<(Arc<Field>, arrow::array::ArrayRef)> = Vec::with_capacity(fields.len());
     for field in fields.iter() {
         let key = v8::String::new(scope, field.name())
             .ok_or_else(|| FunctionsError::Invalid("struct field name too large".to_string()))?;
-        let property = object.get(scope, key.into()).unwrap_or_else(|| v8::null(scope).into());
-        let scalar = v8_to_scalar(scope, property, field.data_type())?;
+        let property = object
+            .get(scope, key.into())
+            .ok_or_else(|| FunctionsError::Javascript("object accessor failed".into()))?;
+        let scalar = v8_to_scalar(scope, property, field.data_type(), budget, depth + 1)?;
         let array = scalar.to_array().map_err(|error| {
             FunctionsError::Invalid(format!("struct field '{}': {error}", field.name()))
         })?;
@@ -364,14 +411,19 @@ fn v8_array_to_list<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
     field: &Arc<Field>,
+    budget: &mut ConversionBudget,
+    depth: usize,
 ) -> Result<ScalarValue> {
     let array = v8::Local::<v8::Array>::try_from(value)
         .map_err(|_| FunctionsError::Invalid("expected array for list".to_string()))?;
     let len = array.length();
+    budget.items(len as usize)?;
     let mut items = Vec::with_capacity(len as usize);
     for index in 0..len {
-        let element = array.get_index(scope, index).unwrap_or_else(|| v8::null(scope).into());
-        items.push(v8_to_scalar(scope, element, field.data_type())?);
+        let element = array
+            .get_index(scope, index)
+            .ok_or_else(|| FunctionsError::Javascript("array accessor failed".into()))?;
+        items.push(v8_to_scalar(scope, element, field.data_type(), budget, depth + 1)?);
     }
     Ok(ScalarValue::List(ScalarValue::new_list(&items, field.data_type(), true)))
 }

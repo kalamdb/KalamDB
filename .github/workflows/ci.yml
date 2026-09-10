@@ -202,6 +202,9 @@ jobs:
       - name: Serialization boundary
         run: python3 scripts/check-serialization-boundary.py --fail
 
+      # Default features omit embedded-ui, AWS, Dex/testcontainers, and tokio-postgres.
+      # Enable kalam-cli-e2e/oidc + kalamdb-server/oidc locally (or via cli/run-tests.sh)
+      # when running Dex OIDC tests. MinIO: KALAMDB_SERVER_FEATURES=cloud-aws.
       - name: Run tests (nextest)
         id: nextest
         run: |
@@ -210,6 +213,11 @@ jobs:
             --profile ci \
             --workspace \
             --exclude kalam-pg-extension \
+            --exclude kalam-link-wasm \
+            --exclude kalam-consumer-wasm \
+            --exclude kalam-link-dart \
+            --exclude kalamdb-python \
+            --exclude quickstart \
             --failure-output immediate-final
         continue-on-error: true
 

@@ -17,10 +17,10 @@ use crate::{
     ddl::{
         create_type::{matching_paren, parse_type_reference, split_qualified_ident, take_ident},
         topic_commands::{parse_alter_topic_add_source, parse_create_topic},
-        AlterTypeOperation, AlterTypeStatement, CreateNamespaceStatement, CreateProcedureStatement,
-        CreateSchemaStatement, CreateTriggerStatement, CreateTypeBody, CreateTypeStatement,
-        GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement, TypeReference,
-        UseNamespaceStatement,
+        AlterTypeOperation, AlterTypeStatement, CommentOnStatement, CommentOnTarget,
+        CreateNamespaceStatement, CreateProcedureStatement, CreateSchemaStatement,
+        CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, GrantExecuteStatement,
+        RevokeExecuteStatement, SetSearchPathStatement, TypeReference, UseNamespaceStatement,
     },
     split_statements,
 };
@@ -55,6 +55,7 @@ pub fn compile_contract(
     let mut alters = Vec::new();
     let mut pending_grants = Vec::new();
     let mut pending_revokes = Vec::new();
+    let mut pending_comments = Vec::new();
 
     let mut ordered: Vec<ContractSource<'_>> = sources.to_vec();
     ordered.sort_by_key(|source| source.path);
@@ -79,6 +80,7 @@ pub fn compile_contract(
                 &mut alters,
                 &mut pending_grants,
                 &mut pending_revokes,
+                &mut pending_comments,
             )?;
         }
     }
@@ -98,7 +100,28 @@ pub fn compile_contract(
         }
     }
 
-    resolve_snapshot(schemas, tables, types, topics, routines, triggers, table_alias)
+    let mut extra_type_comments = HashMap::new();
+    for comment in pending_comments {
+        apply_comment_on(
+            &comment,
+            &mut types,
+            &tables,
+            &topics,
+            &mut routines,
+            &mut extra_type_comments,
+        )?;
+    }
+
+    resolve_snapshot(
+        schemas,
+        tables,
+        types,
+        topics,
+        routines,
+        triggers,
+        table_alias,
+        extra_type_comments,
+    )
 }
 
 struct RawTable {
@@ -110,16 +133,19 @@ struct RawTable {
 
 enum RawType {
     Composite {
-        schema: String,
-        fields: Vec<ContractField>,
+        schema:  String,
+        fields:  Vec<ContractField>,
+        comment: Option<String>,
     },
     Enum {
-        schema: String,
-        labels: Vec<String>,
+        schema:  String,
+        labels:  Vec<String>,
+        comment: Option<String>,
     },
     Alias {
         schema:   String,
         table_id: String,
+        comment:  Option<String>,
     },
 }
 
@@ -142,6 +168,7 @@ fn apply_statement(
     alters: &mut Vec<AlterTypeStatement>,
     pending_grants: &mut Vec<GrantExecuteStatement>,
     pending_revokes: &mut Vec<RevokeExecuteStatement>,
+    pending_comments: &mut Vec<CommentOnStatement>,
 ) -> Result<(), ContractError> {
     let current = search_path.first().cloned().unwrap_or_else(|| default_schema.to_string());
     let ns = NamespaceId::new(current.clone());
@@ -209,6 +236,10 @@ fn apply_statement(
         pending_revokes.push(RevokeExecuteStatement::parse(sql, &ns).map_err(err(path))?);
         return Ok(());
     }
+    if starts_ci(sql, "COMMENT ON") {
+        pending_comments.push(CommentOnStatement::parse(sql, &ns).map_err(err(path))?);
+        return Ok(());
+    }
     if looks_like_create_table(sql) {
         ingest_table(sql, &current, tables, types, table_alias)?;
         return Ok(());
@@ -236,6 +267,7 @@ fn ingest_create_type(
     if types.contains_key(&type_id) {
         return Err(ContractError::new(format!("duplicate type '{type_id}'")));
     }
+    let comment = stmt.comment;
     let raw = match stmt.body {
         CreateTypeBody::Composite { fields } => RawType::Composite {
             schema: schema.clone(),
@@ -243,10 +275,12 @@ fn ingest_create_type(
                 .into_iter()
                 .map(|field| field_from_ref(field.name, field.type_ref, &schema))
                 .collect(),
+            comment,
         },
         CreateTypeBody::Enum { labels } => RawType::Enum {
             schema: schema.clone(),
             labels,
+            comment,
         },
         CreateTypeBody::FromTable {
             table_namespace_id,
@@ -264,7 +298,11 @@ fn ingest_create_type(
                     existing
                 )));
             }
-            RawType::Alias { schema, table_id }
+            RawType::Alias {
+                schema,
+                table_id,
+                comment,
+            }
         },
     };
     types.insert(type_id, raw);
@@ -291,6 +329,9 @@ fn ingest_procedure(
     let return_type = stmt
         .return_type
         .map(|ty| field_from_ref("returns".to_string(), ty, current_schema));
+    let comment = stmt
+        .comment
+        .or_else(|| routines.get(&key).and_then(|prev| prev.comment.clone()));
     routines.insert(
         key,
         ContractRoutine {
@@ -303,6 +344,7 @@ fn ingest_procedure(
             security: stmt.security,
             body: stmt.body,
             grants: BTreeSet::new(),
+            comment,
         },
     );
     Ok(())
@@ -336,6 +378,7 @@ fn ingest_table(
             RawType::Alias {
                 schema:   schema.clone(),
                 table_id: table_id.clone(),
+                comment:  None,
             },
         );
     }
@@ -534,6 +577,61 @@ fn using_kalamdb_kind(sql: &str) -> Option<ContractTableKind> {
     }
 }
 
+fn apply_comment_on(
+    stmt: &CommentOnStatement,
+    types: &mut BTreeMap<String, RawType>,
+    tables: &BTreeMap<String, RawTable>,
+    topics: &BTreeMap<String, RawTopic>,
+    routines: &mut BTreeMap<String, ContractRoutine>,
+    extra_type_comments: &mut HashMap<String, Option<String>>,
+) -> Result<(), ContractError> {
+    match &stmt.target {
+        CommentOnTarget::Type(type_id) => {
+            let key = fold_ident(type_id.as_str());
+            if let Some(raw) = types.get_mut(&key) {
+                set_raw_type_comment(raw, stmt.comment.clone());
+                return Ok(());
+            }
+            if tables.contains_key(&key) || topics.contains_key(&key) {
+                extra_type_comments.insert(key, stmt.comment.clone());
+                return Ok(());
+            }
+            Err(ContractError::new(format!("COMMENT ON TYPE unknown type '{type_id}'")))
+        },
+        CommentOnTarget::Procedure(routine_id) => {
+            let folded = fold_ident(routine_id.as_str());
+            let key = if routines.contains_key(&folded) {
+                folded
+            } else {
+                routine_id.as_str().to_string()
+            };
+            let routine = routines.get_mut(&key).ok_or_else(|| {
+                ContractError::new(format!("COMMENT ON PROCEDURE unknown procedure '{routine_id}'"))
+            })?;
+            routine.comment = stmt.comment.clone();
+            Ok(())
+        },
+    }
+}
+
+fn set_raw_type_comment(raw: &mut RawType, comment: Option<String>) {
+    match raw {
+        RawType::Composite { comment: slot, .. }
+        | RawType::Enum { comment: slot, .. }
+        | RawType::Alias { comment: slot, .. } => {
+            *slot = comment;
+        },
+    }
+}
+
+fn raw_type_comment(raw: &RawType) -> Option<String> {
+    match raw {
+        RawType::Composite { comment, .. }
+        | RawType::Enum { comment, .. }
+        | RawType::Alias { comment, .. } => comment.clone(),
+    }
+}
+
 fn apply_alter(
     stmt: &AlterTypeStatement,
     types: &mut BTreeMap<String, RawType>,
@@ -627,6 +725,7 @@ fn resolve_snapshot(
     routines: BTreeMap<String, ContractRoutine>,
     triggers: BTreeMap<String, ContractTrigger>,
     table_alias: HashMap<String, TypeId>,
+    extra_type_comments: HashMap<String, Option<String>>,
 ) -> Result<ContractSnapshot, ContractError> {
     for table_id in tables.keys() {
         if types.contains_key(table_id) {
@@ -651,6 +750,7 @@ fn resolve_snapshot(
     let mut kind_map: HashMap<String, (ContractTypeKind, Option<DataType>)> = HashMap::new();
     let mut snapshot_types = BTreeMap::new();
     let mut snapshot_tables = BTreeMap::new();
+    let mut type_comments: HashMap<String, Option<String>> = HashMap::new();
 
     for (table_id, table) in &tables {
         snapshot_tables.insert(
@@ -675,6 +775,8 @@ fn resolve_snapshot(
                 None,
             ),
         );
+        type_comments
+            .insert(table_id.clone(), extra_type_comments.get(table_id).cloned().flatten());
     }
 
     for (type_id, raw) in &types {
@@ -697,6 +799,7 @@ fn resolve_snapshot(
             },
         };
         kind_map.insert(type_id.clone(), (kind, None));
+        type_comments.insert(type_id.clone(), raw_type_comment(raw));
     }
 
     for (topic_id, topic) in &topics {
@@ -717,6 +820,8 @@ fn resolve_snapshot(
                 None,
             ),
         );
+        type_comments
+            .insert(topic_id.clone(), extra_type_comments.get(topic_id).cloned().flatten());
     }
 
     for type_id in kind_map.keys().cloned().collect::<Vec<_>>() {
@@ -747,6 +852,7 @@ fn resolve_snapshot(
                 arrow: arrow.clone().ok_or_else(|| {
                     ContractError::new(format!("failed to resolve Arrow type for '{type_id}'"))
                 })?,
+                comment: type_comments.get(type_id).cloned().flatten(),
             },
         );
     }
@@ -1098,5 +1204,69 @@ mod tests {
         )
         .unwrap_err();
         assert!(type_collision.message.contains("collides"), "{type_collision}");
+    }
+
+    #[test]
+    fn create_comments_are_kept_but_do_not_change_hash() {
+        let without = compile_contract_sql(
+            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT NOT NULL);",
+            "public",
+        )
+        .unwrap();
+        let with = compile_contract_sql(
+            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal \
+             address';",
+            "public",
+        )
+        .unwrap();
+        assert_eq!(canonical_contract_hash(&without), canonical_contract_hash(&with));
+        assert!(without.types["chat.address"].comment.is_none());
+        assert_eq!(with.types["chat.address"].comment.as_deref(), Some("Postal address"));
+    }
+
+    #[test]
+    fn comment_on_and_or_replace_preserve_docs() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA api;
+             CREATE TYPE api.point AS (x INT, y INT);
+             CREATE PROCEDURE api.health() RETURNS TEXT COMMENT 'Liveness probe';
+             CREATE OR REPLACE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ \
+             return \"ok\"; $$;
+             COMMENT ON TYPE api.point IS '2D point';
+             COMMENT ON PROCEDURE api.health IS 'HTTP liveness';",
+            "public",
+        )
+        .unwrap();
+        assert_eq!(snapshot.types["api.point"].comment.as_deref(), Some("2D point"));
+        assert_eq!(snapshot.routines["api.health"].comment.as_deref(), Some("HTTP liveness"));
+        assert_eq!(snapshot.routines["api.health"].language.as_deref(), Some("JAVASCRIPT"));
+    }
+
+    #[test]
+    fn comment_only_diff_emits_comment_on() {
+        let before = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TYPE chat.address AS (city TEXT);
+             CREATE PROCEDURE chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
+             $$;",
+            "public",
+        )
+        .unwrap();
+        let after = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TYPE chat.address AS (city TEXT) COMMENT 'Postal address';
+             CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe' LANGUAGE \
+             JAVASCRIPT AS $$ return \"ok\"; $$;",
+            "public",
+        )
+        .unwrap();
+        let joined = diff_contracts(&before, &after).statements.join("\n");
+        assert!(joined.contains("COMMENT ON TYPE chat.address IS 'Postal address'"), "{joined}");
+        assert!(
+            joined.contains("COMMENT ON PROCEDURE chat.ping IS 'Liveness probe'"),
+            "{joined}"
+        );
+        assert!(!joined.contains("CREATE TYPE"), "{joined}");
+        assert!(!joined.contains("CREATE OR REPLACE PROCEDURE"), "{joined}");
     }
 }

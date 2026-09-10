@@ -66,3 +66,99 @@ fn reusable_session_does_not_retain_user_globals() {
         assert_eq!(value.value, ScalarValue::Int32(Some(1)));
     }
 }
+
+#[test]
+fn native_conversion_rejects_sparse_arrays_before_allocating() {
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture("function kalamInvoke() { return new Array(1000000); }"),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    assert!(session
+        .invoke(&RoutineId::new("sparse"), &[], &CancellationToken::new())
+        .is_err());
+}
+
+#[test]
+fn native_conversion_rejects_deep_values() {
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture(
+            "function kalamInvoke() { let value = 1; for(let i=0;i<80;i++) value={child:value}; \
+             return value; }",
+        ),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    assert!(session.invoke(&RoutineId::new("deep"), &[], &CancellationToken::new()).is_err());
+}
+
+#[test]
+fn array_buffer_allocation_is_bounded() {
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture(
+            "function kalamInvoke() { return new ArrayBuffer(128 * 1024 * 1024).byteLength; }",
+        ),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    assert!(session
+        .invoke(&RoutineId::new("buffer"), &[], &CancellationToken::new())
+        .is_err());
+}
+
+#[test]
+fn native_conversion_rejects_cycles_and_mixed_arrays_without_panicking() {
+    for expression in [
+        "(() => { const v = {}; v.self = v; return v; })()",
+        "[1, 'mixed']",
+        "new WebAssembly.Memory({initial: 2048})",
+    ] {
+        let mut session = V8Session::load(
+            ModuleRevision::typescript_fixture(format!(
+                "function kalamInvoke() {{ return {expression}; }}"
+            )),
+            RuntimeLimits::default(),
+        )
+        .unwrap();
+        assert!(session
+            .invoke(&RoutineId::new("invalid"), &[], &CancellationToken::new())
+            .is_err());
+    }
+}
+
+#[test]
+fn resizable_backing_stores_cannot_bypass_memory_budget() {
+    for expression in [
+        "new ArrayBuffer(128 * 1024 * 1024, {maxByteLength: 256 * 1024 * 1024}).byteLength",
+        "new SharedArrayBuffer(128 * 1024 * 1024, {maxByteLength: 256 * 1024 * 1024}).byteLength",
+    ] {
+        let mut session = V8Session::load(
+            ModuleRevision::typescript_fixture(format!(
+                "function kalamInvoke() {{ return {expression}; }}"
+            )),
+            RuntimeLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            session
+                .invoke(&RoutineId::new("buffer"), &[], &CancellationToken::new())
+                .is_err(),
+            "{expression}"
+        );
+    }
+}
+
+#[test]
+fn throwing_result_accessors_fail_conversion() {
+    let mut session = V8Session::load(
+        ModuleRevision::typescript_fixture(
+            "function kalamInvoke() { return { get value() { throw new Error('accessor failure'); \
+             } }; }",
+        ),
+        RuntimeLimits::default(),
+    )
+    .unwrap();
+    assert!(session
+        .invoke(&RoutineId::new("getter"), &[], &CancellationToken::new())
+        .is_err());
+}

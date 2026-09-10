@@ -12,6 +12,10 @@ use kalamdb_commons::RoutineId;
 use tokio_util::sync::CancellationToken;
 use v8::{self, ScriptOrigin};
 
+use super::{
+    async_ops::Operations, buffer_allocator::BufferAllocator, compiled_scripts::CompiledScripts,
+    host_frame::HostFrame, host_frames::HostFrames,
+};
 use crate::{
     convert::{infer_v8_value, routine_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
@@ -40,7 +44,7 @@ pub struct V8Session {
     pub(crate) limits:   RuntimeLimits,
     heap_watch:          *mut HeapWatch,
     pub(crate) detached: bool,
-    compiled:            Option<v8::Global<v8::UnboundScript>>,
+    compiled:            CompiledScripts,
 }
 
 struct HeapWatch {
@@ -60,9 +64,15 @@ impl V8Session {
 
         let mut isolate = v8::Isolate::new(
             v8::CreateParams::default()
-                .heap_limits(0, limits.max_heap_bytes)
-                .set_max_old_generation_size_in_bytes(limits.max_heap_bytes),
+                .array_buffer_allocator(
+                    BufferAllocator::create(limits.max_heap_bytes / 2).make_shared(),
+                )
+                .heap_limits(0, limits.max_heap_bytes / 2)
+                .set_max_old_generation_size_in_bytes(limits.max_heap_bytes / 2),
         );
+        isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
+        isolate.set_allow_atomics_wait(false);
+        isolate.set_promise_reject_callback(super::rejections::rejected);
         let heap_watch = Box::into_raw(Box::new(HeapWatch {
             handle: isolate.thread_safe_handle(),
             hit:    AtomicBool::new(false),
@@ -80,16 +90,27 @@ impl V8Session {
             v8::scope!(let handle_scope, &mut isolate);
             let context = v8::Context::new(handle_scope, Default::default());
             let mut scope = v8::ContextScope::new(handle_scope, context);
+            let sandbox = compile_and_run_cached(&mut scope, include_str!("sandbox_bootstrap.js"))?;
+            let sandbox = v8::Global::new(&scope, sandbox);
             install_host_functions(&mut scope)?;
-            compile_and_run(&mut scope, crate::wrap::host_bootstrap())?;
+            let bootstrap = compile_and_run_cached(&mut scope, crate::wrap::host_bootstrap())?;
+            let bootstrap = v8::Global::new(&scope, bootstrap);
             crate::v8_async::install(&mut scope)?;
-            compile_and_run(&mut scope, &revision.source)?;
-            Ok(v8::Global::new(&scope, context))
+            let module = compile_and_run_cached(&mut scope, &revision.source)?;
+            let module = v8::Global::new(&scope, module);
+            Ok((
+                v8::Global::new(&scope, context),
+                CompiledScripts {
+                    sandbox,
+                    bootstrap,
+                    module,
+                },
+            ))
         })();
-        let context_result: Result<v8::Global<v8::Context>> = context_result;
+        let context_result: Result<(v8::Global<v8::Context>, CompiledScripts)> = context_result;
         let context_result = deadline.check().and(context_result);
         drop(deadline);
-        let context = match context_result {
+        let (context, compiled) = match context_result {
             Ok(context) => context,
             Err(error) => {
                 isolate.remove_near_heap_limit_callback(near_heap_limit, 0);
@@ -108,7 +129,7 @@ impl V8Session {
             limits,
             heap_watch,
             detached: false,
-            compiled: None,
+            compiled,
         })
     }
 
@@ -152,6 +173,7 @@ impl V8Session {
         if cancel.is_cancelled() {
             return Err(FunctionsError::Cancelled);
         }
+        self.isolate.remove_slot::<Operations>();
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = host;
         }
@@ -165,9 +187,12 @@ impl V8Session {
             self.reset_context()?;
             self.invoke_inner(procedure_id, args)
         })();
+        self.isolate.perform_microtask_checkpoint();
+        self.isolate.remove_slot::<Operations>();
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = None;
         }
+        self.isolate.remove_slot::<HostFrames>();
         guard.check()?;
         if self.heap_limit_hit() {
             return Err(FunctionsError::MemoryLimit);
@@ -179,26 +204,14 @@ impl V8Session {
         v8::scope!(let scope, &mut self.isolate);
         let context = v8::Context::new(scope, Default::default());
         let mut scope = v8::ContextScope::new(scope, context);
+        if let Some(host) = scope.get_slot::<ActiveHost>().and_then(|slot| slot.host.clone()) {
+            HostFrames::bind(&mut scope, host);
+        }
+        run_compiled(&mut scope, &self.compiled.sandbox)?;
         install_host_functions(&mut scope)?;
-        compile_and_run(&mut scope, crate::wrap::host_bootstrap())?;
+        run_compiled(&mut scope, &self.compiled.bootstrap)?;
         crate::v8_async::install(&mut scope)?;
-        let compiled = match &self.compiled {
-            Some(script) => v8::Local::new(&scope, script),
-            None => {
-                let code = v8::String::new(&scope, &self.revision.source)
-                    .ok_or_else(|| FunctionsError::ResourceLimit("module source".into()))?;
-                let script = v8::Script::compile(&scope, code, None).ok_or_else(|| {
-                    FunctionsError::Javascript("module compilation failed".into())
-                })?;
-                let compiled = script.get_unbound_script(&scope);
-                self.compiled = Some(v8::Global::new(&scope, compiled));
-                compiled
-            },
-        };
-        compiled
-            .bind_to_current_context(&scope)
-            .run(&scope)
-            .ok_or_else(|| FunctionsError::Javascript("module initialization failed".into()))?;
+        run_compiled(&mut scope, &self.compiled.module)?;
         self.context = v8::Global::new(&scope, context);
         Ok(())
     }
@@ -210,7 +223,8 @@ impl V8Session {
 
     pub(crate) fn used_heap_bytes(&mut self) -> usize {
         self.attach();
-        self.isolate.get_heap_statistics().used_heap_size()
+        let stats = self.isolate.get_heap_statistics();
+        stats.used_heap_size().saturating_add(stats.external_memory())
     }
 
     fn invoke_inner(
@@ -285,14 +299,15 @@ fn invoke_in_scope(
         match promise.state() {
             v8::PromiseState::Fulfilled => result = promise.result(try_catch),
             v8::PromiseState::Rejected => {
-                return Err(FunctionsError::Javascript(
-                    promise.result(try_catch).to_rust_string_lossy(try_catch),
-                ))
+                return Err(FunctionsError::Javascript(format_js_exception(
+                    try_catch,
+                    promise.result(try_catch),
+                )));
             },
             v8::PromiseState::Pending => {
                 return Err(FunctionsError::Invalid(
                     "pending host operations require ABI v2".into(),
-                ))
+                ));
             },
         }
     }
@@ -327,6 +342,20 @@ pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
 }
 
 fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
+    // V8 WebAssembly.Memory bypasses the ArrayBuffer allocator. WASM needs its own bounded
+    // runtime adapter; it must not provide an unaccounted memory path inside JavaScript.
+    let key = v8::String::new(scope, "WebAssembly").unwrap();
+    let undefined = v8::undefined(scope);
+    scope
+        .get_current_context()
+        .global(scope)
+        .define_own_property(
+            scope,
+            key.into(),
+            undefined.into(),
+            v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE,
+        )
+        .ok_or_else(|| FunctionsError::Invalid("failed to restrict WebAssembly".into()))?;
     for name in kalamdb_functions_host::NATIVE_FNS {
         match *name {
             "kalamHostSql" => bind_native(scope, name, host_sql)?,
@@ -371,6 +400,12 @@ pub(crate) fn bind_native(
 }
 
 pub(crate) fn current_host(scope: &v8::PinScope) -> Result<Arc<dyn crate::host::FunctionHost>> {
+    if let Some(host) = HostFrames::current(scope) {
+        return Ok(host);
+    }
+    if scope.get_current_context().get_slot::<HostFrame>().is_some() {
+        return Err(FunctionsError::Invalid("expired function host frame".into()));
+    }
     let slot = scope
         .get_slot::<ActiveHost>()
         .ok_or_else(|| FunctionsError::Invalid("function host slot missing".to_string()))?;
@@ -753,7 +788,10 @@ pub fn compile_javascript_source(source: &str) -> Result<()> {
     Ok(())
 }
 
-fn compile_and_run(scope: &mut v8::PinScope, source: &str) -> Result<()> {
+fn compile_and_run_cached<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    source: &str,
+) -> Result<v8::Local<'s, v8::UnboundScript>> {
     v8::tc_scope!(let try_catch, scope);
     let code = v8::String::new(try_catch, source)
         .ok_or_else(|| FunctionsError::Invalid("module source too large".to_string()))?;
@@ -777,6 +815,13 @@ fn compile_and_run(scope: &mut v8::PinScope, source: &str) -> Result<()> {
     if script.run(try_catch).is_none() {
         return Err(js_exception(try_catch));
     }
+    Ok(script.get_unbound_script(try_catch))
+}
+
+fn run_compiled(scope: &mut v8::PinScope, compiled: &v8::Global<v8::UnboundScript>) -> Result<()> {
+    v8::tc_scope!(let scope, scope);
+    let script = v8::Local::new(scope, compiled).bind_to_current_context(scope);
+    script.run(scope).ok_or_else(|| js_exception(scope))?;
     Ok(())
 }
 
@@ -784,16 +829,33 @@ pub(crate) fn js_exception(
     try_catch: &mut v8::PinnedRef<'_, v8::TryCatch<v8::HandleScope>>,
 ) -> FunctionsError {
     if let Some(exception) = try_catch.exception() {
-        let message = exception
-            .to_string(try_catch)
-            .map(|value| value.to_rust_string_lossy(try_catch))
-            .unwrap_or_else(|| "javascript exception".to_string());
+        let message = format_js_exception(try_catch, exception);
         if message.contains("heap") || message.contains("memory") {
             return FunctionsError::MemoryLimit;
         }
         return FunctionsError::Javascript(message);
     }
     FunctionsError::Javascript("terminated".to_string())
+}
+
+/// Prefer `Error.stack` so procedure logs carry the V8 output, not only `toString()`.
+pub(crate) fn format_js_exception(scope: &v8::PinScope, value: v8::Local<v8::Value>) -> String {
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
+        if let Some(key) = v8::String::new(scope, "stack") {
+            if let Some(stack) = object.get(scope, key.into()) {
+                if !stack.is_null_or_undefined() {
+                    let stack = stack.to_rust_string_lossy(scope);
+                    if !stack.is_empty() {
+                        return stack;
+                    }
+                }
+            }
+        }
+    }
+    value
+        .to_string(scope)
+        .map(|text| text.to_rust_string_lossy(scope))
+        .unwrap_or_else(|| value.to_rust_string_lossy(scope))
 }
 
 unsafe extern "C" fn near_heap_limit(
@@ -1287,6 +1349,64 @@ return 1;
             record.args_json.as_ref().is_some_and(|args| args.contains("\"id\":7")),
             "{:?}",
             record.args_json
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn thrown_error_includes_v8_stack() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "throw new Error('boom-stack');",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("thrown Error must fail the CALL");
+        let message = error.to_string();
+        assert!(message.contains("boom-stack"), "{message}");
+        assert!(
+            message.contains("at ") || message.contains("Error: boom-stack"),
+            "javascript exception should include V8 stack output: {message}"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn unhandled_rejection_includes_js_reason() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "Promise.reject(new Error('detached-boom')); return 1;",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("detached rejection must fail the CALL");
+        let message = error.to_string();
+        assert!(
+            message.contains("detached-boom"),
+            "unhandled rejection should carry the JS reason: {message}"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn returned_rejected_promise_includes_js_reason() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "return Promise.reject(new Error('returned-boom'));",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("rejected procedure Promise must fail the CALL");
+        let message = error.to_string();
+        assert!(
+            message.contains("returned-boom"),
+            "rejected Promise should carry the JS reason: {message}"
         );
     }
 

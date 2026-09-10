@@ -63,6 +63,7 @@ impl Default for EngineConfig {
 impl EngineConfig {
     pub fn validate(&self) -> Result<()> {
         if self.workers == 0
+            || self.max_active == 0
             || self.nested_reserve > 0 && self.max_active <= self.nested_reserve
             || self.max_depth == 0
             || self.max_heap_bytes == 0

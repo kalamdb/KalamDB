@@ -1,4 +1,6 @@
-//! Canonical contract hashing. Formatting and comments are stripped before compile.
+//! Canonical contract hashing. Formatting and SQL `--` comments are stripped
+//! before compile. Catalog `COMMENT` / `COMMENT ON` text is documentation-only
+//! and is not hashed.
 
 use sha2::{Digest, Sha256};
 

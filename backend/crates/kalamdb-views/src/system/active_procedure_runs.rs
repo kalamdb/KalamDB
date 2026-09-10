@@ -1,4 +1,4 @@
-//! system.active_function_runs virtual view (in-memory root invocations).
+//! system.active_procedure_runs virtual view (in-memory root invocations).
 
 use std::sync::Arc;
 
@@ -7,24 +7,23 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{
-    datatypes::KalamDataType,
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
-    SystemTable,
-};
+use kalamdb_commons::SystemTable;
 use parking_lot::RwLock;
 
-use super::common::{system_view_definition, SystemViewProvider};
+use super::common::{
+    int_col, nullable_text_col, system_view_definition, text_col, SystemViewProvider,
+};
 use crate::view_base::VirtualView;
 
-crate::memoized_view_schema!(active_function_runs_schema, ActiveFunctionRunsView);
+crate::memoized_view_schema!(active_procedure_runs_schema, ActiveProcedureRunsView);
 
-/// Snapshot of one in-flight root function invocation.
+/// Snapshot of one in-flight root procedure invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveFunctionRunSnapshot {
+pub struct ActiveProcedureRunSnapshot {
     pub execution_id: String,
     pub request_id:   String,
-    pub routine_id:   String,
+    pub procedure_id: String,
+    pub module_id:    Option<String>,
     pub revision_id:  Option<String>,
     pub actor:        String,
     pub principal:    String,
@@ -34,65 +33,66 @@ pub struct ActiveFunctionRunSnapshot {
 }
 
 /// Active-run snapshot callback type.
-pub type ActiveFunctionRunsSnapshotCallback =
-    Arc<dyn Fn() -> Vec<ActiveFunctionRunSnapshot> + Send + Sync>;
+pub type ActiveProcedureRunsSnapshotCallback =
+    Arc<dyn Fn() -> Vec<ActiveProcedureRunSnapshot> + Send + Sync>;
 
-/// Virtual view of in-memory root function runs.
-pub struct ActiveFunctionRunsView {
-    snapshot_callback: Arc<RwLock<Option<ActiveFunctionRunsSnapshotCallback>>>,
+/// Virtual view of in-memory root procedure runs.
+pub struct ActiveProcedureRunsView {
+    snapshot_callback: Arc<RwLock<Option<ActiveProcedureRunsSnapshotCallback>>>,
 }
 
-impl std::fmt::Debug for ActiveFunctionRunsView {
+impl std::fmt::Debug for ActiveProcedureRunsView {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ActiveFunctionRunsView")
+        f.debug_struct("ActiveProcedureRunsView")
             .field("has_callback", &self.snapshot_callback.read().is_some())
             .finish()
     }
 }
 
-impl ActiveFunctionRunsView {
+impl ActiveProcedureRunsView {
     pub fn new() -> Self {
         Self {
             snapshot_callback: Arc::new(RwLock::new(None)),
         }
     }
 
-    pub fn set_snapshot_callback(&self, callback: ActiveFunctionRunsSnapshotCallback) {
+    pub fn set_snapshot_callback(&self, callback: ActiveProcedureRunsSnapshotCallback) {
         *self.snapshot_callback.write() = Some(callback);
     }
 
-    pub fn definition() -> TableDefinition {
+    pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
         system_view_definition(
-            SystemTable::ActiveFunctionRuns,
+            SystemTable::ActiveProcedureRuns,
             vec![
                 text_col(1, "execution_id", "Root execution identifier"),
                 text_col(2, "request_id", "Request transaction id"),
-                text_col(3, "routine_id", "Schema-qualified procedure name"),
-                nullable_text_col(4, "revision_id", "Pinned module revision"),
-                text_col(5, "actor", "Calling user id"),
-                text_col(6, "principal", "Effective principal user id"),
-                text_col(7, "origin", "sql | http | topic"),
-                int_col(8, "started_at", "Unix time in milliseconds"),
-                int_col(9, "depth", "Current nested CALL depth"),
+                text_col(3, "procedure_id", "Schema-qualified procedure name"),
+                nullable_text_col(4, "module_id", "Pinned module when implementation is module"),
+                nullable_text_col(5, "revision_id", "Pinned module revision"),
+                text_col(6, "actor", "Calling user id"),
+                text_col(7, "principal", "Effective principal user id"),
+                text_col(8, "origin", "sql | http | topic"),
+                int_col(9, "started_at", "Unix time in milliseconds"),
+                int_col(10, "depth", "Current nested CALL depth"),
             ],
-            "In-memory root function invocations (no RocksDB row)",
+            "In-memory root procedure invocations (no RocksDB row)",
         )
     }
 }
 
-impl Default for ActiveFunctionRunsView {
+impl Default for ActiveProcedureRunsView {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VirtualView for ActiveFunctionRunsView {
+impl VirtualView for ActiveProcedureRunsView {
     fn system_table(&self) -> SystemTable {
-        SystemTable::ActiveFunctionRuns
+        SystemTable::ActiveProcedureRuns
     }
 
     fn schema(&self) -> SchemaRef {
-        active_function_runs_schema()
+        active_procedure_runs_schema()
     }
 
     fn compute_batch(&self) -> Result<RecordBatch, crate::error::RegistryError> {
@@ -105,7 +105,8 @@ impl VirtualView for ActiveFunctionRunsView {
 
         let mut execution_ids = StringBuilder::new();
         let mut request_ids = StringBuilder::new();
-        let mut routine_ids = StringBuilder::new();
+        let mut procedure_ids = StringBuilder::new();
+        let mut module_ids = StringBuilder::new();
         let mut revision_ids = StringBuilder::new();
         let mut actors = StringBuilder::new();
         let mut principals = StringBuilder::new();
@@ -116,7 +117,11 @@ impl VirtualView for ActiveFunctionRunsView {
         for run in snapshot {
             execution_ids.append_value(&run.execution_id);
             request_ids.append_value(&run.request_id);
-            routine_ids.append_value(&run.routine_id);
+            procedure_ids.append_value(&run.procedure_id);
+            match run.module_id {
+                Some(module_id) => module_ids.append_value(module_id),
+                None => module_ids.append_null(),
+            }
             match run.revision_id {
                 Some(revision_id) => revision_ids.append_value(revision_id),
                 None => revision_ids.append_null(),
@@ -133,7 +138,8 @@ impl VirtualView for ActiveFunctionRunsView {
             vec![
                 Arc::new(execution_ids.finish()) as ArrayRef,
                 Arc::new(request_ids.finish()) as ArrayRef,
-                Arc::new(routine_ids.finish()) as ArrayRef,
+                Arc::new(procedure_ids.finish()) as ArrayRef,
+                Arc::new(module_ids.finish()) as ArrayRef,
                 Arc::new(revision_ids.finish()) as ArrayRef,
                 Arc::new(actors.finish()) as ArrayRef,
                 Arc::new(principals.finish()) as ArrayRef,
@@ -144,68 +150,27 @@ impl VirtualView for ActiveFunctionRunsView {
         )
         .map_err(|error| {
             crate::error::RegistryError::Other(format!(
-                "failed to build active_function_runs batch: {error}"
+                "failed to build active_procedure_runs batch: {error}"
             ))
         })
     }
 }
 
-pub type ActiveFunctionRunsTableProvider = SystemViewProvider<ActiveFunctionRunsView>;
-
-fn text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    ColumnDefinition::new(
-        u64::from(ordinal),
-        name,
-        ordinal,
-        KalamDataType::Text,
-        false,
-        false,
-        false,
-        ColumnDefault::None,
-        Some(comment.to_string()),
-    )
-}
-
-fn nullable_text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    ColumnDefinition::new(
-        u64::from(ordinal),
-        name,
-        ordinal,
-        KalamDataType::Text,
-        true,
-        false,
-        false,
-        ColumnDefault::None,
-        Some(comment.to_string()),
-    )
-}
-
-fn int_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
-    ColumnDefinition::new(
-        u64::from(ordinal),
-        name,
-        ordinal,
-        KalamDataType::BigInt,
-        false,
-        false,
-        false,
-        ColumnDefault::None,
-        Some(comment.to_string()),
-    )
-}
+pub type ActiveProcedureRunsTableProvider = SystemViewProvider<ActiveProcedureRunsView>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn active_function_runs_view_emits_snapshot_rows() {
-        let view = ActiveFunctionRunsView::new();
+    fn active_procedure_runs_view_emits_snapshot_rows() {
+        let view = ActiveProcedureRunsView::new();
         view.set_snapshot_callback(Arc::new(|| {
-            vec![ActiveFunctionRunSnapshot {
+            vec![ActiveProcedureRunSnapshot {
                 execution_id: "exec-1".into(),
                 request_id:   "req-1".into(),
-                routine_id:   "api.health".into(),
+                procedure_id: "api.health".into(),
+                module_id:    Some("backend".into()),
                 revision_id:  Some("backend:abc".into()),
                 actor:        "alice".into(),
                 principal:    "alice".into(),
@@ -216,10 +181,10 @@ mod tests {
         }));
         let batch = view.compute_batch().expect("batch");
         assert_eq!(batch.num_rows(), 1);
-        assert_eq!(batch.num_columns(), 9);
+        assert_eq!(batch.num_columns(), 10);
         assert_eq!(
-            ActiveFunctionRunsView::definition().table_name.as_str(),
-            "active_function_runs"
+            ActiveProcedureRunsView::definition().table_name.as_str(),
+            "active_procedure_runs"
         );
     }
 }

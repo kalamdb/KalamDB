@@ -7,7 +7,7 @@
 //! Spec: `specs/033-unified-backend-pgwire/validation/us9-client-catalog.md`
 //!
 //! Run (when wire + shims are implemented):
-//!   cd backend && cargo test --test pgwire_catalog --features e2e-tests
+//!   cd backend && cargo nextest run -p kalamdb-server --features e2e-tests --test e2e
 
 mod catalog_checks;
 mod jdbc;

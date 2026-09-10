@@ -3,6 +3,7 @@ name = "kalamdb-server"
 version = { workspace = true }
 edition = { workspace = true }
 autobenches = false
+autotests = false
 authors = { workspace = true }
 license = { workspace = true }
 repository = { workspace = true }
@@ -12,6 +13,11 @@ build = "build.rs"
 [dependencies]
 # Memory optimization
 mimalloc = { version = "0.1", default-features = false, optional = true }
+
+# Optional test-only crates. Cargo forbids optional [dev-dependencies], so these
+# live here and are activated only by `e2e-tests` / `oidc`.
+testcontainers-modules = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
 
 # Core library
 kalamdb-core = { path = "crates/kalamdb-core" }
@@ -76,16 +82,19 @@ num_cpus = { workspace = true }
 libc = { workspace = true }
 
 [features]
-# Dev builds use `embedded-ui` only for faster compile (no mimalloc C build or traceability).
-# Production/release/docker builds pass explicit features — see docker/build and .github/workflows/release.yml.
-default = ["embedded-ui"]
+# Empty default keeps local/CI compiles off rust-embed, mimalloc, AWS, and OTEL.
+# Production/release/docker pass explicit features — see docker/build and .github/workflows/release.yml.
+# Admin UI: `cargo run -p kalamdb-server --features embedded-ui`
+default = []
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc", "kalamdb-observability/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
 traceability = ["kalamdb-core/traceability", "kalamdb-observability/traceability"]
 cloud-aws = ["kalamdb-core/cloud-aws"]
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
-# End-to-end tests that require a full test server instance
-e2e-tests = []
+# End-to-end tests that require a full test server instance (tokio-postgres for pgwire catalog)
+e2e-tests = ["dep:tokio-postgres"]
+# Dex/testcontainers OIDC tests in test_misc. Off by default so Docker crates stay out of CI.
+oidc = ["dep:testcontainers-modules"]
 
 [lib]
 name = "kalamdb_server"
@@ -96,39 +105,8 @@ name = "kalamdb-server"
 path = "src/main.rs"
 
 [[test]]
-name = "test_testserver"
-path = "tests/testserver/test_testserver.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "test_scenarios"
-path = "tests/scenarios/test_scenarios.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "test_scenarios_realtime"
-path = "tests/scenarios/test_scenarios_realtime.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "test_scenarios_lifecycle"
-path = "tests/scenarios/test_scenarios_lifecycle.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "test_scenarios_scale"
-path = "tests/scenarios/test_scenarios_scale.rs"
-required-features = ["e2e-tests"]
-
-[[test]]
-name = "endurance_test"
-path = "tests/endurance_test.rs"
-required-features = ["e2e-tests"]
-
-
-[[test]]
-name = "test_cluster"
-path = "tests/cluster/test_cluster.rs"
+name = "e2e"
+path = "tests/e2e.rs"
 required-features = ["e2e-tests"]
 
 [[test]]
@@ -138,11 +116,6 @@ path = "tests/misc/test_misc.rs"
 [[test]]
 name = "test_integration"
 path = "tests/integration_tests/test_integration.rs"
-
-[[test]]
-name = "pgwire_catalog"
-path = "tests/pgwire_catalog/test_client_catalog.rs"
-required-features = ["e2e-tests"]
 
 [build-dependencies]
 chrono = { workspace = true }
@@ -183,5 +156,3 @@ once_cell = { workspace = true }
 serial_test = { workspace = true }
 ntest = { workspace = true }
 sha2 = { workspace = true }
-testcontainers-modules = { workspace = true }
-tokio-postgres = { workspace = true }

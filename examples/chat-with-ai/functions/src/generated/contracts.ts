@@ -3,4 +3,4 @@
 
 export * from "../../../src/generated/schema";
 export type { ProcedureContext } from "./runtime";
-export { defineProcedure } from "./runtime";
+export { procedure } from "./procedure.js";

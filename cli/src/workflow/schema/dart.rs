@@ -51,6 +51,7 @@ pub fn generate_dart_source(
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
                 let ident = names.type_ident(id);
+                emit_dart_doc(&mut out, ty.comment.as_deref());
                 let _ = writeln!(out, "enum {ident} {{");
                 for (index, label) in labels.iter().enumerate() {
                     let comma = if index + 1 == labels.len() { ";" } else { "," };
@@ -59,7 +60,14 @@ pub fn generate_dart_source(
                 let _ = writeln!(out, "  const {ident}(this.wire);\n  final String wire;\n}}\n");
             },
             ContractTypeKind::Composite { fields } => {
-                write_row_class(&mut out, names.type_ident(id), fields, names, snapshot);
+                write_row_class(
+                    &mut out,
+                    names.type_ident(id),
+                    fields,
+                    names,
+                    snapshot,
+                    ty.comment.as_deref(),
+                );
             },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
@@ -73,7 +81,15 @@ pub fn generate_dart_source(
             .as_ref()
             .map(|id| id.as_str().to_string())
             .unwrap_or_else(|| table.row_type_id.as_str().to_string());
-        write_row_class(&mut out, names.type_ident(&canonical_id), &table.fields, names, snapshot);
+        write_row_class(
+            &mut out,
+            names.type_ident(&canonical_id),
+            &table.fields,
+            names,
+            snapshot,
+            dart_type_comment(snapshot, &canonical_id)
+                .or_else(|| dart_type_comment(snapshot, table.row_type_id.as_str())),
+        );
         if let Some(alias) = &table.row_alias_id {
             let alias_ident = names.type_ident(alias.as_str());
             let row_ident = names.type_ident(table.row_type_id.as_str());
@@ -117,7 +133,9 @@ fn write_row_class(
     fields: &[ContractField],
     names: &AssignedNames,
     snapshot: &ContractSnapshot,
+    comment: Option<&str>,
 ) {
+    emit_dart_doc(out, comment);
     let columns: Vec<DartColumn> = fields
         .iter()
         .map(|field| DartColumn::from_field(field, names, snapshot))
@@ -208,6 +226,21 @@ fn sync_mode(kind: ContractTableKind) -> &'static str {
         ContractTableKind::Unspecified | ContractTableKind::User | ContractTableKind::Shared => {
             "bidirectional"
         },
+    }
+}
+
+fn dart_type_comment<'a>(snapshot: &'a ContractSnapshot, type_id: &str) -> Option<&'a str> {
+    snapshot.types.get(type_id).and_then(|ty| ty.comment.as_deref())
+}
+
+fn emit_dart_doc(out: &mut String, comment: Option<&str>) {
+    let Some(text) = comment.map(str::trim).filter(|text| !text.is_empty()) else {
+        return;
+    };
+    for line in text.lines() {
+        out.push_str("/// ");
+        out.push_str(line);
+        out.push('\n');
     }
 }
 
@@ -586,5 +619,25 @@ CREATE TABLE chat.users (
         let source = std::fs::read_to_string(&output).unwrap();
         assert!(source.contains("KalamTableSpec<Todos>"));
         assert!(source.contains("bool done"));
+    }
+
+    #[test]
+    fn comments_emit_dart_docs() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';",
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_dart_source(&snapshot, &hash, &names);
+        assert!(source.contains("/// Postal address"), "{source}");
     }
 }

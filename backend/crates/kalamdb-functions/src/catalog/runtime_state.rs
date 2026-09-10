@@ -1,7 +1,6 @@
 //! Staged explicit topic publishes and the published function set.
 
 use std::{
-    collections::VecDeque,
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -9,13 +8,10 @@ use std::{
 use kalamdb_commons::models::{TopicId, TransactionId, UserId};
 use kalamdb_configs::FunctionsRuntimeSettings;
 use kalamdb_views::{
-    active_function_runs::ActiveFunctionRunSnapshot, function_errors::FunctionErrorSnapshot,
+    active_procedure_runs::ActiveProcedureRunSnapshot, module_instances::ModuleInstanceSnapshot,
 };
-use parking_lot::Mutex;
 
 use crate::{catalog::active_set::ActiveFunctionSet, EngineConfig, FunctionEngine, FunctionsError};
-
-const MAX_RECENT_FUNCTION_ERRORS: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct StagedTopicPublish {
@@ -29,8 +25,7 @@ pub struct FunctionRuntimeState {
     engine_config: EngineConfig,
     active:        Arc<arc_swap::ArcSwap<ActiveFunctionSet>>,
     staged:        dashmap::DashMap<TransactionId, Vec<StagedTopicPublish>>,
-    active_runs:   dashmap::DashMap<String, ActiveFunctionRunSnapshot>,
-    recent_errors: Mutex<VecDeque<FunctionErrorSnapshot>>,
+    active_runs:   dashmap::DashMap<String, ActiveProcedureRunSnapshot>,
 }
 
 impl Default for FunctionRuntimeState {
@@ -47,7 +42,6 @@ impl FunctionRuntimeState {
             active: Arc::new(arc_swap::ArcSwap::from_pointee(ActiveFunctionSet::empty())),
             staged: dashmap::DashMap::new(),
             active_runs: dashmap::DashMap::new(),
-            recent_errors: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -82,7 +76,7 @@ impl FunctionRuntimeState {
         self.staged.remove(transaction_id).map(|(_, rows)| rows).unwrap_or_default()
     }
 
-    pub fn begin_run(&self, run: ActiveFunctionRunSnapshot) {
+    pub fn begin_run(&self, run: ActiveProcedureRunSnapshot) {
         self.active_runs.insert(run.execution_id.clone(), run);
     }
 
@@ -90,20 +84,43 @@ impl FunctionRuntimeState {
         self.active_runs.remove(execution_id);
     }
 
-    pub fn snapshot_runs(&self) -> Vec<ActiveFunctionRunSnapshot> {
+    pub fn snapshot_runs(&self) -> Vec<ActiveProcedureRunSnapshot> {
         self.active_runs.iter().map(|entry| entry.value().clone()).collect()
     }
 
-    pub fn record_error(&self, error: FunctionErrorSnapshot) {
-        let mut errors = self.recent_errors.lock();
-        if errors.len() >= MAX_RECENT_FUNCTION_ERRORS {
-            errors.pop_front();
-        }
-        errors.push_back(error);
+    pub fn try_engine(&self) -> Option<Arc<FunctionEngine>> {
+        self.engine.get().and_then(|result| result.as_ref().ok()).cloned()
     }
 
-    pub fn snapshot_errors(&self) -> Vec<FunctionErrorSnapshot> {
-        self.recent_errors.lock().iter().cloned().collect()
+    pub fn memory_census(&self) -> crate::FunctionMemoryCensus {
+        self.try_engine().map(|engine| engine.memory_census()).unwrap_or(
+            crate::FunctionMemoryCensus {
+                reserved_bytes:   0,
+                limit_bytes:      self.engine_config.max_memory_bytes as u64,
+                idle_instances:   0,
+                active_instances: 0,
+            },
+        )
+    }
+
+    pub fn snapshot_instances(&self) -> Vec<ModuleInstanceSnapshot> {
+        let Some(engine) = self.try_engine() else {
+            return Vec::new();
+        };
+        engine
+            .instance_snapshot()
+            .into_iter()
+            .map(|row| ModuleInstanceSnapshot {
+                instance_id:     i64::try_from(row.instance_id).unwrap_or(i64::MAX),
+                worker:          i64::try_from(row.worker).unwrap_or(i64::MAX),
+                module_id:       row.module_id,
+                revision_id:     row.revision_id,
+                state:           row.state,
+                reserved_bytes:  i64::try_from(row.reserved_bytes).unwrap_or(i64::MAX),
+                used_heap_bytes: i64::try_from(row.used_heap_bytes).unwrap_or(i64::MAX),
+                invocations:     i64::try_from(row.invocations).unwrap_or(i64::MAX),
+            })
+            .collect()
     }
 }
 
@@ -157,10 +174,11 @@ mod tests {
     #[test]
     fn active_runs_appear_then_vanish() {
         let state = FunctionRuntimeState::default();
-        state.begin_run(ActiveFunctionRunSnapshot {
+        state.begin_run(ActiveProcedureRunSnapshot {
             execution_id: "exec-1".into(),
             request_id:   "req-1".into(),
-            routine_id:   "api.health".into(),
+            procedure_id: "api.health".into(),
+            module_id:    Some("backend".into()),
             revision_id:  Some("backend:abc".into()),
             actor:        "alice".into(),
             principal:    "alice".into(),
@@ -171,26 +189,5 @@ mod tests {
         assert_eq!(state.snapshot_runs().len(), 1);
         state.end_run("exec-1");
         assert!(state.snapshot_runs().is_empty());
-    }
-
-    #[test]
-    fn recent_errors_are_bounded_and_omit_nothing_extra() {
-        let state = FunctionRuntimeState::default();
-        for index in 0..(MAX_RECENT_FUNCTION_ERRORS + 3) {
-            state.record_error(FunctionErrorSnapshot {
-                execution_id: format!("exec-{index}"),
-                request_id:   format!("req-{index}"),
-                routine_id:   "api.health".into(),
-                actor:        "alice".into(),
-                origin:       "sql".into(),
-                code:         "PROCEDURE_TIMEOUT".into(),
-                message:      "deadline exceeded".into(),
-                recorded_at:  index as i64,
-            });
-        }
-        let errors = state.snapshot_errors();
-        assert_eq!(errors.len(), MAX_RECENT_FUNCTION_ERRORS);
-        assert_eq!(errors[0].execution_id, "exec-3");
-        assert!(!errors.iter().any(|error| error.message.contains("Authorization")));
     }
 }

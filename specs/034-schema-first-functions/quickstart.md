@@ -41,7 +41,8 @@ CALL api.create_order(...);
 After generate:
 
 - `functions/src/generated/runtime.d.ts` exists
-- `functions/src/api/create_order.ts` imports `defineProcedure` typed with `ProcedureContext`
+- `functions/src/api/create_order.ts` uses `procedure.api.createOrder.unimplemented()`
+- `functions/src/generated/procedure.d.ts` infers `ctx` and SQL input/output types
 - Inline shim typechecks against the same `ctx.db.query` names
 - Regenerating does not overwrite `functions/src/**`
 

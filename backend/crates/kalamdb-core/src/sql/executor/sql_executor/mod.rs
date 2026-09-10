@@ -757,6 +757,7 @@ impl SqlExecutor {
                 | SqlStatementKind::DropType(_)
                 | SqlStatementKind::CreateProcedure(_)
                 | SqlStatementKind::DropProcedure(_)
+                | SqlStatementKind::CommentOn(_)
                 | SqlStatementKind::CreateTrigger(_)
                 | SqlStatementKind::DropTrigger(_)
                 | SqlStatementKind::AlterTrigger(_)

@@ -92,7 +92,7 @@ All Technical Context unknowns from the spec are resolved below. No NEEDS CLARIF
 
 ## Shared host `.d.ts`
 
-**Decision**: Generate `.kalam/generated/runtime.d.ts` (host `ctx`, `defineProcedure`) and keep SQL types in `.kalam/generated/contracts.ts`. Project `tsconfig` references both. `defineProcedure` moves out of a duplicated stub in contracts toward runtime.d.ts (contracts may re-export). Inline bodies typecheck via a generated shim file under `.kalam/generated/inline/` that wraps `export async function kalamInline(ctx: ProcedureContext, input: ...)` — not by importing from dollar-quoted SQL. Runtime bootstrap in `wrap.rs` implements **one** ctx shape matching the `.d.ts` (today ABI v1 `ctx.db.sql` vs v2 `ctx.db.query` must converge).
+**Decision**: Generate `functions/src/generated/runtime.d.ts` (host `ctx`) plus `procedure.d.ts` / `procedure.js` builders. SQL types stay in generated `schema.ts`; `contracts.ts` re-exports schema, `ProcedureContext`, and `procedure`. Inline bodies typecheck via a generated shim file under `functions/src/generated/inline/` that wraps `export async function kalamInline(ctx: ProcedureContext, input: ...)` — not by importing from dollar-quoted SQL. Runtime bootstrap implements **one** ctx shape matching the `.d.ts`.
 
 **Rationale**: Spec US23. Adding a host method = `.d.ts` + native host once.
 

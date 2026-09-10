@@ -83,6 +83,8 @@ pub enum SqlStatementKind {
     CreateProcedure(CreateProcedureStatement),
     /// DROP PROCEDURE ...
     DropProcedure(DropProcedureStatement),
+    /// COMMENT ON TYPE|PROCEDURE ...
+    CommentOn(CommentOnStatement),
     /// GRANT EXECUTE ON PROCEDURE ...
     GrantExecute(GrantExecuteStatement),
     /// REVOKE EXECUTE ON PROCEDURE ...
@@ -321,6 +323,7 @@ impl SqlStatement {
             | SqlStatementKind::DropType(_)
             | SqlStatementKind::CreateProcedure(_)
             | SqlStatementKind::DropProcedure(_)
+            | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::GrantExecute(_)
             | SqlStatementKind::RevokeExecute(_)
             | SqlStatementKind::Call(_)
@@ -391,6 +394,7 @@ impl SqlStatement {
             SqlStatementKind::DropType(_) => "DROP TYPE",
             SqlStatementKind::CreateProcedure(_) => "CREATE PROCEDURE",
             SqlStatementKind::DropProcedure(_) => "DROP PROCEDURE",
+            SqlStatementKind::CommentOn(_) => "COMMENT ON",
             SqlStatementKind::GrantExecute(_) => "GRANT EXECUTE",
             SqlStatementKind::RevokeExecute(_) => "REVOKE EXECUTE",
             SqlStatementKind::Call(_) => "CALL",

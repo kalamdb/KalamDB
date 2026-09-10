@@ -111,6 +111,41 @@ fn error_text(value: &Value) -> String {
     }
 }
 
+/// Flatten a V8 `console.*` / `ctx.log.*` record into the text operators see.
+pub fn format_host_log_message(record: &HostLogRecord) -> String {
+    let error = record.error.as_deref().filter(|value| !value.is_empty());
+    let message = if error == Some(record.message.as_str()) {
+        ""
+    } else {
+        record.message.as_str()
+    };
+    let args = record.args_json.as_deref().filter(|value| !value.is_empty());
+    match (error, message, args) {
+        (None, "", None) => String::new(),
+        (None, message, None) => message.to_string(),
+        (Some(error), "", None) => error.to_string(),
+        (error, message, args) => {
+            let mut out = String::new();
+            if let Some(error) = error {
+                out.push_str(error);
+            }
+            if !message.is_empty() {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(message);
+            }
+            if let Some(args) = args {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(args);
+            }
+            out
+        },
+    }
+}
+
 pub fn emit_function_log(host: &(impl FunctionHost + ?Sized), record: HostLogRecord) -> Result<()> {
     let max = host.max_log_bytes();
     let mut message = record.message;
@@ -184,5 +219,36 @@ mod tests {
     fn unknown_channel_defaults_to_ctx_log() {
         let record = parse_log_payload("info", r#"["hello"]"#, "");
         assert_eq!(record.channel, LogChannel::CtxLog);
+    }
+
+    #[test]
+    fn format_host_log_message_joins_v8_console_output() {
+        let record = parse_log_payload("info", r#"["hello",{"n":1}]"#, "console");
+        assert_eq!(format_host_log_message(&record), r#"hello [{"n":1}]"#);
+    }
+
+    #[test]
+    fn format_host_log_message_prefers_error_stack_then_message() {
+        let record = parse_log_payload(
+            "error",
+            r#"[{"name":"Error","message":"boom","stack":"Error: boom\n    at x"},"failed"]"#,
+            "ctx.log",
+        );
+        let formatted = format_host_log_message(&record);
+        assert!(formatted.contains("Error: boom"));
+        assert!(formatted.contains("failed"));
+    }
+
+    #[test]
+    fn format_host_log_message_does_not_duplicate_error_only_payload() {
+        let record = parse_log_payload(
+            "error",
+            r#"[{"name":"Error","message":"boom","stack":"    at x"}]"#,
+            "ctx.log",
+        );
+        let formatted = format_host_log_message(&record);
+        assert_eq!(formatted, record.error.as_deref().unwrap());
+        assert_eq!(formatted.matches("Error: boom").count(), 1);
+        assert!(formatted.contains("at x"));
     }
 }

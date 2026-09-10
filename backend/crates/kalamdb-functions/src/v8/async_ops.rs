@@ -5,11 +5,14 @@ use std::sync::Arc;
 use datafusion_common::ScalarValue;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 
+use super::{host_frames::HostFrames, rejections::Rejections};
 use crate::{
-    convert::{infer_v8_value, routine_to_v8, v8_to_routine},
+    abi::{conversion_budget::ConversionBudget, conversion_limit::ConversionLimit},
+    convert::{infer_v8_value, infer_value, routine_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
     v8_adapter::{
-        arg_string, bind_ctx, bind_native, current_host, js_exception, throw_host_error, ActiveHost,
+        arg_string, bind_ctx, bind_native, current_host, format_js_exception, js_exception,
+        throw_host_error, ActiveHost,
     },
     FunctionHost, FunctionsError, HostFuture, Invocation, Result, RoutineValue, V8Session,
 };
@@ -24,14 +27,17 @@ struct NestedWork {
 }
 
 #[derive(Default)]
-struct Operations {
-    pending: Vec<Pending>,
-    nested:  Vec<NestedWork>,
-    count:   usize,
+pub(crate) struct Operations {
+    pending:        Vec<Pending>,
+    nested:         Vec<NestedWork>,
+    count:          usize,
+    argument_bytes: usize,
 }
 
 pub(crate) fn install(scope: &mut v8::PinScope) -> Result<()> {
-    scope.set_slot(Operations::default());
+    if scope.get_slot::<Operations>().is_none() {
+        scope.set_slot(Operations::default());
+    }
     bind_native(scope, "kalamAsyncOp", host_operation)?;
     bind_native(scope, "kalamHostMetadata", metadata)?;
     bind_native(scope, "kalamHostLog", log)?;
@@ -84,22 +90,31 @@ fn host_operation(
         if values.length() > 1024 {
             return Err(FunctionsError::ResourceLimit("host arguments".into()));
         }
+        let mut budget = ConversionBudget::new(scope);
         let mut params = Vec::with_capacity(values.length() as usize);
         for index in 0..values.length() {
             let value = values
                 .get_index(scope, index)
                 .ok_or_else(|| FunctionsError::Invalid("missing argument".into()))?;
-            params.push(RoutineValue::new(infer_v8_value(scope, value)?));
+            params.push(RoutineValue::new(infer_value(scope, value, &mut budget, 0)?));
         }
         let resolver = v8::PromiseResolver::new(scope)
             .ok_or_else(|| FunctionsError::ResourceLimit("promise".into()))?;
         let promise = resolver.get_promise(scope);
         let resolver = v8::Global::new(scope, resolver);
+        let limit = scope.get_slot::<ConversionLimit>().map_or(8 * 1024 * 1024, |limit| limit.0);
+        let bytes = params
+            .iter()
+            .fold(name.len(), |total, value| total.saturating_add(value.value.size()));
         let operations = scope
             .get_slot_mut::<Operations>()
             .ok_or_else(|| FunctionsError::Invalid("host operation state missing".into()))?;
         if operations.count >= 1024 {
             return Err(FunctionsError::ResourceLimit("host operations".into()));
+        }
+        operations.argument_bytes = operations.argument_bytes.saturating_add(bytes);
+        if operations.argument_bytes > limit {
+            return Err(FunctionsError::ResourceLimit("host argument bytes per invocation".into()));
         }
         operations.count += 1;
         if kind == "call" {
@@ -162,16 +177,30 @@ impl V8Session {
         host: Arc<dyn FunctionHost>,
     ) -> Result<RoutineValue> {
         self.attach();
+        self.isolate.remove_slot::<Operations>();
+        self.isolate.set_slot(Rejections::default());
         self.isolate.set_slot(ActiveHost { host: Some(host) });
+        self.isolate.remove_slot::<HostFrames>();
         let guard = DeadlineGuard::new(
             self.isolate.thread_safe_handle(),
             invocation.scope.deadline,
             invocation.scope.cancel.clone(),
         );
         let result = self.run_async(invocation).await;
+        let result = result.and_then(|value| {
+            v8::scope!(let scope, &mut self.isolate);
+            let context = v8::Local::new(scope, &self.context);
+            let scope = &mut v8::ContextScope::new(scope, context);
+            if let Some(rejections) = scope.get_slot::<Rejections>() {
+                rejections.check(scope)?;
+            }
+            Ok(value)
+        });
         self.attach();
         self.isolate.remove_slot::<Operations>();
+        self.isolate.remove_slot::<Rejections>();
         self.isolate.set_slot(ActiveHost { host: None });
+        self.isolate.remove_slot::<HostFrames>();
         guard.check()?;
         if self.heap_limit_hit() {
             return Err(FunctionsError::MemoryLimit);
@@ -196,7 +225,14 @@ impl V8Session {
             .isolate
             .get_slot_mut::<ActiveHost>()
             .and_then(|slot| slot.host.replace(host));
-        let result = self.drive(&invocation).await;
+        // A separate realm binds callbacks to the child's immutable permission frame. V8 may
+        // run parent microtasks at any checkpoint, so swapping one isolate slot is insufficient.
+        let previous_context = self.context.clone();
+        let result = match self.reset_context() {
+            Ok(()) => self.drive(&invocation).await,
+            Err(error) => Err(error),
+        };
+        self.context = previous_context;
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = previous;
         }
@@ -214,13 +250,27 @@ impl V8Session {
                 pending.extend(operations.pending.drain(..));
                 nested = std::mem::take(&mut operations.nested);
             }
-            let settled = self.poll_return(&returned, invocation)?;
             if pending.is_empty() && nested.is_empty() {
-                return settled.ok_or_else(|| {
+                let value = self.poll_return(&returned, invocation)?.ok_or_else(|| {
                     FunctionsError::Javascript(
                         "procedure Promise cannot settle: no pending host operations".into(),
                     )
-                });
+                })?;
+                // Getters can enqueue work during conversion. Never carry that work into a
+                // reused isolate or acknowledge success with unsettled database operations.
+                self.isolate.perform_microtask_checkpoint();
+                invocation.scope.check()?;
+                if self
+                    .isolate
+                    .get_slot::<Operations>()
+                    .is_some_and(|ops| !ops.pending.is_empty() || !ops.nested.is_empty())
+                {
+                    return Err(FunctionsError::Invalid(
+                        "result conversion scheduled host work; compute values before returning"
+                            .into(),
+                    ));
+                }
+                return Ok(value);
             }
             for call in nested {
                 let result = Box::pin(self.invoke_nested_local(call.invocation, call.host)).await;
@@ -267,6 +317,10 @@ impl V8Session {
         let value = function
             .call(scope, recv, &[name.into(), args.into()])
             .ok_or_else(|| js_exception(scope))?;
+        if let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) {
+            // The runtime observes this Promise, including rejection of nested handlers.
+            promise.mark_as_handled();
+        }
         Ok(v8::Global::new(scope, value))
     }
 
@@ -278,14 +332,16 @@ impl V8Session {
         v8::scope!(let scope, &mut self.isolate);
         let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
+        v8::tc_scope!(let scope, scope);
         let mut value = v8::Local::new(scope, returned);
         if let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) {
             match promise.state() {
                 v8::PromiseState::Pending => return Ok(None),
                 v8::PromiseState::Rejected => {
-                    return Err(FunctionsError::Javascript(
-                        promise.result(scope).to_rust_string_lossy(scope),
-                    ))
+                    return Err(FunctionsError::Javascript(format_js_exception(
+                        scope,
+                        promise.result(scope),
+                    )));
                 },
                 v8::PromiseState::Fulfilled => value = promise.result(scope),
             }

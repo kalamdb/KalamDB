@@ -155,7 +155,7 @@ Workspace paths under `backend/crates/`, `cli/src/`, `benchv2/`, `docs/`.
 
 ## Phase 8: User Story 23 - One Host Context API for Inline and Project (Priority: P1)
 
-**Goal**: Shared generated `runtime.d.ts` for `ctx` / `defineProcedure`; inline typecheck via shim; one bootstrap shape.
+**Goal**: Shared generated `runtime.d.ts` for `ctx` plus generated `procedure` builders; inline typecheck via shim; one bootstrap shape.
 
 **Independent Test**: Inline and project typecheck against the same `.d.ts`; regenerate does not overwrite `src/**`.
 
@@ -166,7 +166,7 @@ Workspace paths under `backend/crates/`, `cli/src/`, `benchv2/`, `docs/`.
 ### Implementation
 
 - [x] T035 [US23] Emit `functions/.kalam/generated/runtime.d.ts` from `cli/src/workflow/schema/typescript.rs` per `specs/034-schema-first-functions/contracts/host-api.md`
-- [x] T036 [US23] Move `defineProcedure` typing to runtime.d.ts (contracts may re-export) in `cli/src/workflow/schema/typescript.rs`
+- [x] T036 [US23] Emit generated `procedure` builders (contracts re-export `procedure`) in `cli/src/workflow/schema/typescript.rs`
 - [x] T037 [US23] Emit inline typecheck shims under `functions/.kalam/generated/inline/` in `cli/src/workflow/schema/typescript.rs`
 - [x] T038 [US23] Converge `HOST_BOOTSTRAP` / `ASYNC_HOST_BOOTSTRAP` to one ABI v2 `ctx` (`db.query`/`execute`, http request/response) in `backend/crates/kalamdb-functions/src/wrap.rs`
 

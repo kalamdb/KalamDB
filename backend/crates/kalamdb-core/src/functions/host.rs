@@ -8,9 +8,9 @@ use std::{
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{models::RoutineId, NamespaceId, Role, RoutineSecurityMode, UserId};
 use kalamdb_functions::{
-    FunctionCallOrigin, FunctionExecutionRoot, FunctionHost, FunctionsError, HostFuture,
-    InvocationMetadata, InvocationScope, PrincipalKey, ProcedureFrame, ProcedureFrameStack,
-    RoutineValue,
+    emit_function_log, format_host_log_message, FunctionCallOrigin, FunctionExecutionRoot,
+    FunctionHost, FunctionsError, HostFuture, HostLogRecord, InvocationMetadata, InvocationScope,
+    PrincipalKey, ProcedureFrame, ProcedureFrameStack, RoutineValue,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -19,6 +19,7 @@ use tokio::runtime::Handle;
 use super::executor;
 use crate::{
     app_context::AppContext,
+    procedure_log_logger::{sanitize_procedure_log_message, ProcedureLogRecord},
     sql::{context::ExecutionContext, SqlImpersonationService},
 };
 
@@ -84,6 +85,59 @@ impl CoreFunctionHost {
             .collect::<Vec<_>>()
             .join(" -> ")
     }
+
+    fn origin_kind(&self) -> &'static str {
+        match &self.origin {
+            FunctionCallOrigin::Sql => "sql",
+            FunctionCallOrigin::Http { .. } => "http",
+            FunctionCallOrigin::Topic { .. } => "topic",
+        }
+    }
+
+    fn append_v8_procedure_log(&self, record: &HostLogRecord) {
+        let frame = self.session.stack.last();
+        let procedure_id = frame
+            .map(|frame| frame.routine_id.to_string())
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| self.stack_label());
+        if procedure_id.is_empty() {
+            return;
+        }
+        let (module_id, revision_id) = match frame {
+            Some(frame) => {
+                let revision = frame.revision_id.as_str();
+                let module = revision.split_once(':').map(|(module, _)| module.to_string());
+                (module, Some(revision.to_string()))
+            },
+            None => (None, None),
+        };
+        let meta = self.metadata();
+        let request_id = meta.as_ref().map(|m| m.request_id.clone()).unwrap_or_default();
+        let actor = meta.as_ref().map(|m| m.actor.id.as_str().to_string()).unwrap_or_default();
+        let message = sanitize_procedure_log_message(&format_host_log_message(record));
+        self.app.procedure_log_logger().record(ProcedureLogRecord {
+            execution_id: request_id.clone(),
+            request_id,
+            procedure_id,
+            module_id,
+            revision_id,
+            actor,
+            origin: self.origin_kind().to_string(),
+            outcome: "log".into(),
+            channel: record.channel.as_str().to_string(),
+            level: record.level.clone(),
+            error_code: None,
+            message: if message.is_empty() {
+                None
+            } else {
+                Some(message)
+            },
+            duration_ms: 0,
+            timestamp: kalamdb_functions::now_ms(),
+            node_id: self.app.node_id().as_ref().to_string(),
+        });
+    }
+
     async fn run_sql(
         &self,
         sql: String,
@@ -225,6 +279,11 @@ impl FunctionHost for CoreFunctionHost {
 
     fn procedure_stack(&self) -> String {
         self.stack_label()
+    }
+
+    fn log(&self, record: HostLogRecord) -> kalamdb_functions::Result<()> {
+        self.append_v8_procedure_log(&record);
+        emit_function_log(self, record)
     }
 
     fn routine_js_map(&self) -> String {

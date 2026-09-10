@@ -21,9 +21,7 @@ use kalamdb_functions::{
 use kalamdb_sql::ddl::CallStatement;
 use kalamdb_system::{ActivateFunctionOutcome, CatalogRoutine};
 use kalamdb_transactions::RequestTransactionState;
-use kalamdb_views::{
-    active_function_runs::ActiveFunctionRunSnapshot, function_errors::FunctionErrorSnapshot,
-};
+use kalamdb_views::active_procedure_runs::ActiveProcedureRunSnapshot;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use tokio_util::sync::CancellationToken;
@@ -115,34 +113,64 @@ impl FunctionService {
         let started = std::time::Instant::now();
         let invoke_result =
             invoke_root(Arc::clone(&app), exec_ctx, origin, routine_id.clone(), args).await;
-        match &invoke_result {
-            Err(error) => {
-                if error.function_error_code()
-                    == Some(kalamdb_functions::FunctionErrorCode::ProcedureTimeout)
-                {
-                    kalamdb_observability::record_function_timeout();
-                }
-                log::error!(
-                    target: "kalamdb::functions",
-                    "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
-                    error.function_error_code()
-                );
-                app.function_runtime().record_error(FunctionErrorSnapshot {
-                    execution_id: request_id.clone(),
-                    request_id:   request_id.clone(),
-                    routine_id:   routine_id.to_string(),
-                    actor:        actor.to_string(),
-                    origin:       origin_kind.to_string(),
-                    code:         error
+        if let Err(error) = &invoke_result {
+            if error.function_error_code()
+                == Some(kalamdb_functions::FunctionErrorCode::ProcedureTimeout)
+            {
+                kalamdb_observability::record_function_timeout();
+            }
+            log::error!(
+                target: "kalamdb::functions",
+                "execution_id={request_id} request_id={request_id} routine={routine_id} actor={actor} principal={actor} source={origin_kind} code={:?} {error}",
+                error.function_error_code()
+            );
+        }
+        let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+        let (module_id, revision_id) = match app.function_runtime().active_set().lookup(&routine_id)
+        {
+            ImplementationRef::Module { revision, .. } => (
+                Some(revision.module_id.as_str().to_string()),
+                Some(revision.revision_id.as_str().to_string()),
+            ),
+            _ => (None, None),
+        };
+        let (outcome, error_code, message) = match &invoke_result {
+            Ok(_) => ("ok", None, None),
+            Err(error) => (
+                "error",
+                Some(
+                    error
                         .function_error_code()
                         .map(|code| code.as_str().to_string())
                         .unwrap_or_else(|| "INTERNAL_RUNTIME_ERROR".into()),
-                    message:      sanitize_function_error(&error.to_string()),
-                    recorded_at:  now_ms(),
-                });
-            },
-            Ok(_) => {},
-        }
+                ),
+                Some(crate::procedure_log_logger::sanitize_procedure_log_message(
+                    &error.to_string(),
+                )),
+            ),
+        };
+        app.procedure_log_logger()
+            .record(crate::procedure_log_logger::ProcedureLogRecord {
+                execution_id: request_id.clone(),
+                request_id: request_id.clone(),
+                procedure_id: routine_id.to_string(),
+                module_id,
+                revision_id,
+                actor: actor.to_string(),
+                origin: origin_kind.to_string(),
+                outcome: outcome.to_string(),
+                channel: "invocation".into(),
+                level: if outcome == "error" {
+                    "error".into()
+                } else {
+                    "info".into()
+                },
+                error_code,
+                message,
+                duration_ms,
+                timestamp: now_ms(),
+                node_id: app.node_id().as_ref().to_string(),
+            });
         kalamdb_observability::finish_function_run(started.elapsed(), invoke_result.is_err());
         log::debug!(
             target: "kalamdb::functions",
@@ -186,15 +214,19 @@ async fn invoke_root(
         .request_id()
         .map(|id| id.to_string())
         .unwrap_or_else(|| Uuid::now_v7().to_string());
-    let revision_id = deployment
-        .module_revision
-        .as_ref()
-        .map(|revision| revision.revision_id.to_string());
+    let (module_id, revision_id) = match deployment.lookup(&routine_id) {
+        ImplementationRef::Module { revision, .. } => (
+            Some(revision.module_id.as_str().to_string()),
+            Some(revision.revision_id.to_string()),
+        ),
+        _ => (None, None),
+    };
     let runtime = app.function_runtime();
-    runtime.begin_run(ActiveFunctionRunSnapshot {
+    runtime.begin_run(ActiveProcedureRunSnapshot {
         execution_id: execution_id.clone(),
         request_id: execution_id.clone(),
-        routine_id: routine_id.to_string(),
+        procedure_id: routine_id.to_string(),
+        module_id,
         revision_id,
         actor: exec_ctx.user_id().to_string(),
         principal: exec_ctx.user_id().to_string(),
@@ -420,6 +452,14 @@ pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDb
         rows.push((routine, inline));
     }
 
+    let module_exports: std::collections::HashSet<String> = match module_revision.as_ref() {
+        Some(revision) => stores
+            .get_function_revision(&revision.revision_id)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            .map(|stored| stored.exported_procedure_ids.into_iter().collect())
+            .unwrap_or_default(),
+        None => std::collections::HashSet::new(),
+    };
     let previous = app.function_runtime().active_set();
     let set = ActiveFunctionSet::resolve(
         previous.generation.saturating_add(1).max(1),
@@ -428,7 +468,7 @@ pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDb
             .map(|revision| revision.contract_hash.clone())
             .unwrap_or_default(),
         module_revision,
-        &std::collections::HashSet::new(),
+        &module_exports,
         rows,
     );
     app.function_runtime().publish_active_set(set);
@@ -454,7 +494,6 @@ pub async fn activate_module_artifact(
         .list_routines()
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
         .into_iter()
-        .filter(|routine| routine.body.is_none())
         .map(|routine| routine.routine_id.to_string())
         .collect();
     let requested: std::collections::HashSet<String> = exports.iter().cloned().collect();
@@ -467,6 +506,11 @@ pub async fn activate_module_artifact(
         exports_match,
     )
     .map_err(map_functions)?;
+    let persisted_exports = {
+        let mut ids: Vec<String> = requested.into_iter().collect();
+        ids.sort();
+        ids
+    };
     let storage = function_storage(app)?;
     let activation = FunctionActivation::new(stores);
     let expected = activation
@@ -478,7 +522,13 @@ pub async fn activate_module_artifact(
         .await
         .map_err(map_functions)?;
     let outcome = activation
-        .activate(module_id, artifact, contract_hash.to_string(), expected.as_ref())
+        .activate(
+            module_id,
+            artifact,
+            contract_hash.to_string(),
+            expected.as_ref(),
+            persisted_exports,
+        )
         .map_err(map_functions)?;
     rebuild_active_function_set(app).await?;
     Ok(outcome)
@@ -532,16 +582,6 @@ impl Drop for ActiveRunGuard {
     fn drop(&mut self) {
         self.runtime.end_run(&self.execution_id);
     }
-}
-
-fn sanitize_function_error(message: &str) -> String {
-    let mut sanitized = message.to_string();
-    for secret in ["Authorization", "Bearer ", "Cookie:", "cookie="] {
-        if sanitized.contains(secret) {
-            sanitized = sanitized.replace(secret, "[redacted]");
-        }
-    }
-    sanitized
 }
 
 fn is_uncompiled_inline_typescript(routine: &CatalogRoutine) -> bool {

@@ -33,6 +33,7 @@ Use `cargo run` when you want both compile and run in one step:
 ```bash
 cd backend
 cp server.example.toml server.toml
+# API-only (faster compile). Add `--features embedded-ui` to serve the admin UI.
 cargo run
 ```
 

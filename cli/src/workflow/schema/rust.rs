@@ -39,6 +39,7 @@ pub fn generate_rust_source(
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
                 let ident = names.type_ident(id);
+                emit_rust_doc(&mut out, ty.comment.as_deref());
                 out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
                 out.push_str("pub enum ");
                 out.push_str(ident);
@@ -51,7 +52,7 @@ pub fn generate_rust_source(
                 out.push_str("}\n\n");
             },
             ContractTypeKind::Composite { fields } => {
-                emit_struct(&mut out, names.type_ident(id), fields, names);
+                emit_struct(&mut out, names.type_ident(id), fields, names, ty.comment.as_deref());
             },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
@@ -65,7 +66,14 @@ pub fn generate_rust_source(
             .as_ref()
             .map(|id| id.as_str().to_string())
             .unwrap_or_else(|| table.row_type_id.as_str().to_string());
-        emit_struct(&mut out, names.type_ident(&canonical_id), &table.fields, names);
+        emit_struct(
+            &mut out,
+            names.type_ident(&canonical_id),
+            &table.fields,
+            names,
+            rust_type_comment(snapshot, &canonical_id)
+                .or_else(|| rust_type_comment(snapshot, table.row_type_id.as_str())),
+        );
         if let Some(alias) = &table.row_alias_id {
             let alias_ident = names.type_ident(alias.as_str());
             let row_ident = names.type_ident(table.row_type_id.as_str());
@@ -87,6 +95,7 @@ pub fn generate_rust_source(
 
     for (id, routine) in &snapshot.routines {
         let ident = names.routine_ident(id);
+        emit_rust_doc(&mut out, routine.comment.as_deref());
         out.push_str("#[derive(Debug, Clone, PartialEq)]\n");
         out.push_str("pub struct ");
         out.push_str(ident);
@@ -143,7 +152,14 @@ fn rust_table_variant<'a>(
     names.type_ident(canonical)
 }
 
-fn emit_struct(out: &mut String, ident: &str, fields: &[ContractField], names: &AssignedNames) {
+fn emit_struct(
+    out: &mut String,
+    ident: &str,
+    fields: &[ContractField],
+    names: &AssignedNames,
+    comment: Option<&str>,
+) {
+    emit_rust_doc(out, comment);
     out.push_str("#[derive(Debug, Clone, PartialEq)]\n");
     out.push_str("pub struct ");
     out.push_str(ident);
@@ -152,6 +168,21 @@ fn emit_struct(out: &mut String, ident: &str, fields: &[ContractField], names: &
         emit_struct_field(out, field, names);
     }
     out.push_str("}\n\n");
+}
+
+fn rust_type_comment<'a>(snapshot: &'a ContractSnapshot, type_id: &str) -> Option<&'a str> {
+    snapshot.types.get(type_id).and_then(|ty| ty.comment.as_deref())
+}
+
+fn emit_rust_doc(out: &mut String, comment: Option<&str>) {
+    let Some(text) = comment.map(str::trim).filter(|text| !text.is_empty()) else {
+        return;
+    };
+    for line in text.lines() {
+        out.push_str("/// ");
+        out.push_str(line);
+        out.push('\n');
+    }
 }
 
 fn emit_struct_field(out: &mut String, field: &ContractField, names: &AssignedNames) {
@@ -253,5 +284,27 @@ ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
         assert!(inbox > messages, "{source}");
         assert!(source.contains("ChatDirectMessages(ChatDirectMessages)"));
         assert!(source.contains("ChatMessages(ChatMessages)"));
+    }
+
+    #[test]
+    fn comments_emit_rust_docs() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA chat;
+             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';
+             CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe';",
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_rust_source(&snapshot, &hash, &names);
+        assert!(source.contains("/// Postal address"), "{source}");
+        assert!(source.contains("/// Liveness probe"), "{source}");
     }
 }

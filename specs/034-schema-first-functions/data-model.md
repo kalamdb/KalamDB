@@ -56,7 +56,7 @@ Unchanged content-addressed blob metadata. Bytes in filestore. Load **once** per
 
 ## BuildManifest (not catalog — artifact sidecar)
 
-See [contracts/build-manifest.md](contracts/build-manifest.md). Maps each routine to `module` | `inline`. Used to build `ActiveFunctionSet`.
+See [contracts/build-manifest.md](contracts/build-manifest.md). Maps each routine to `module` | `inline` | `missing`. Used to build `ActiveFunctionSet`. An empty module export set means no project-backed procedures, not “all bodyless routines”.
 
 ## ActiveFunctionSet (in-memory)
 
@@ -124,9 +124,29 @@ Keyed by `(lane_id, revision_id)`. States: `created` → `busy` → `idle` (if h
 
 In-memory FlatBuffer tagged with contract/signature hash. Shared via `bytes::Bytes`. Nested call clones the `Bytes` (refcounted), not the payload. Invalid hash → re-encode or error.
 
-## system.active_function_runs (virtual)
+## system.active_procedure_runs (virtual)
 
-In-memory map keyed by `execution_id`. Columns: execution_id, request_id, routine_id, revision_id, actor, principal, origin, started_at, depth. Insert on root start, delete on finish. **No** RocksDB write.
+In-memory map keyed by `execution_id`. Columns: execution_id, request_id, procedure_id, module_id, revision_id, actor, principal, origin, started_at, depth. Insert on root start, delete on finish. **No** RocksDB write.
+
+## system.module_instances (virtual)
+
+In-memory census of resident V8 isolates, including idle cache entries. Columns: instance_id, worker, module_id, revision_id, state (`idle` | `active`), reserved_bytes, used_heap_bytes, invocations. One isolate serves many procedures from the same module revision. **No** RocksDB write. Process totals also appear on `system.stats` as `function_memory_*` and `function_instances_*`.
+
+## system.modules (virtual)
+
+Operator catalog of deployed function modules. Columns: module_id, runtime, current_revision_id, contract_hash, abi_version. Storage remains 3NF in `system.function_modules`.
+
+## system.module_revisions (virtual)
+
+Operator catalog of immutable module revisions. Columns: module_id, revision_id, artifact_id, artifact_bytes, contract_hash, created_at, is_current, exports. `is_current` is derived by joining `modules.current_revision_id`; revision rows remain immutable. Storage remains 3NF in `system.function_revisions` and `system.function_artifacts`. Each revision persists its exported procedure IDs.
+
+## system.procedures (virtual)
+
+Operator catalog of CALL-able procedures. One row per `system.routines` entry with a compact `signature`, `implementation` (`inline` | `module` | `missing`), nullable `module_id`/`revision_id` from the current revision export set, plus `security`, `owner`, and `grants`. Storage remains 3NF in `system.routines`, `system.routine_parameters`, and `system.routine_grants`.
+
+## system.procedure_logs (virtual)
+
+Bounded tail of the node-local rotating `procedures.jsonl` file. Columns: timestamp, node_id, execution_id, request_id, procedure_id, module_id, revision_id, actor, origin, outcome (`ok` \| `error` \| `log`), channel (`invocation` \| `console` \| `ctx.log`), level, error_code, message, duration_ms. V8 `console.*` and `ctx.log.*` lines use `outcome=log` and carry the formatted isolate output. Uncaught exceptions and unhandled Promise rejections use `outcome=error` with the JavaScript message/stack. Never includes request bodies, arguments, results, tokens, or source.
 
 ## Relationships
 

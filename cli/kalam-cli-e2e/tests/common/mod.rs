@@ -1512,7 +1512,7 @@ pub fn kalamdb_server_bin() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if !path.exists() {
         return Err(format!(
             "kalamdb-server binary not found at {}. Build it with `cargo build -p kalamdb-server \
-             --bin kalamdb-server --features cloud-aws`.",
+             --bin kalamdb-server`.",
             path.display()
         )
         .into());
@@ -1541,17 +1541,25 @@ pub fn workspace_root() -> PathBuf {
 }
 
 fn build_kalamdb_server_binary(repo_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let status = Command::new("cargo")
+    let mut command = Command::new("cargo");
+    command
         .arg("build")
         .arg("-p")
         .arg("kalamdb-server")
         .arg("--bin")
         .arg("kalamdb-server")
-        .arg("--features")
-        .arg("cloud-aws")
-        .current_dir(repo_root)
-        .status()?;
+        .current_dir(repo_root);
 
+    // Opt in with KALAMDB_SERVER_FEATURES=cloud-aws. Default fresh-server
+    // builds must not pull the AWS SDK into the workspace compile graph.
+    if let Ok(features) = std::env::var("KALAMDB_SERVER_FEATURES") {
+        let features = features.trim();
+        if !features.is_empty() {
+            command.arg("--features").arg(features);
+        }
+    }
+
+    let status = command.status()?;
     if status.success() {
         Ok(())
     } else {

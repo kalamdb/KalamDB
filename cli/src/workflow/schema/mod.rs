@@ -4,6 +4,7 @@ pub mod gen;
 pub mod load;
 pub mod model;
 pub mod naming;
+pub mod procedure_bindings;
 pub mod rust;
 pub mod types;
 pub mod typescript;

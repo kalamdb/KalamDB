@@ -1,4 +1,5 @@
 pub mod catalog_type;
+pub mod comment;
 pub mod helpers;
 pub mod namespace;
 pub mod policy;
@@ -21,12 +22,13 @@ use kalamdb_sql::{
     classifier::SqlStatementKind,
     ddl::{
         AlterPolicyOperation, AlterPolicyStatement, AlterTableStatement, AlterTriggerStatement,
-        AlterTypeOperation, AlterTypeStatement, CreatePolicyStatement, CreateProcedureStatement,
-        CreateTableStatement, CreateTriggerStatement, CreateTypeBody, CreateTypeStatement,
-        CreateViewStatement, DescribeTableStatement, DropPolicyStatement, DropProcedureStatement,
-        DropTableStatement, DropTriggerStatement, DropTypeStatement, ExecuteGrantee,
-        GrantExecuteStatement, PolicyCommand, PolicyTarget, RevokeExecuteStatement,
-        ShowTableStatsStatement, ShowTablesStatement, TypeReference,
+        AlterTypeOperation, AlterTypeStatement, CommentOnStatement, CommentOnTarget,
+        CreatePolicyStatement, CreateProcedureStatement, CreateTableStatement,
+        CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, CreateViewStatement,
+        DescribeTableStatement, DropPolicyStatement, DropProcedureStatement, DropTableStatement,
+        DropTriggerStatement, DropTypeStatement, ExecuteGrantee, GrantExecuteStatement,
+        PolicyCommand, PolicyTarget, RevokeExecuteStatement, ShowTableStatsStatement,
+        ShowTablesStatement, TypeReference,
     },
 };
 
@@ -249,6 +251,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             name:          String::new(),
             if_not_exists: false,
             body:          CreateTypeBody::Composite { fields: Vec::new() },
+            comment:       None,
         }),
         catalog_type::CreateTypeHandler::new(app_context.clone()),
         SqlStatementKind::CreateType
@@ -297,6 +300,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             language:     None,
             security:     RoutineSecurityMode::Invoker,
             body:         None,
+            comment:      None,
         }),
         procedure::CreateProcedureHandler::new(app_context.clone()),
         SqlStatementKind::CreateProcedure
@@ -310,6 +314,17 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         }),
         procedure::DropProcedureHandler::new(app_context.clone()),
         SqlStatementKind::DropProcedure
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::CommentOn(CommentOnStatement {
+            target:    CommentOnTarget::Type(TypeId::new("_placeholder.t")),
+            comment:   None,
+            if_exists: false,
+        }),
+        comment::CommentOnHandler::new(app_context.clone()),
+        SqlStatementKind::CommentOn
     );
 
     register_typed_handler!(

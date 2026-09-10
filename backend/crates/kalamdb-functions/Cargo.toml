@@ -44,6 +44,7 @@ smallvec = { workspace = true }
 kalamdb-store = { path = "../kalamdb-store", optional = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 criterion = { workspace = true }
 ntest = { workspace = true }
 kalamdb-serialization = { path = "../kalamdb-serialization" }

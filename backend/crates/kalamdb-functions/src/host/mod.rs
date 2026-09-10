@@ -3,8 +3,8 @@ mod metadata;
 mod origin;
 mod trait_host;
 
-pub(crate) use log::{emit_function_log, parse_log_payload};
-pub use log::{HostLogRecord, LogChannel};
+pub(crate) use log::parse_log_payload;
+pub use log::{emit_function_log, format_host_log_message, HostLogRecord, LogChannel};
 pub use metadata::{ActorMeta, InvocationMetadata};
 pub use origin::{
     FunctionCallOrigin, FunctionCallResult, HttpResponseOverrides, PrincipalKey, ProcedureFrame,

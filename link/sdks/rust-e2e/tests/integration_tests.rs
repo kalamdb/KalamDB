@@ -11,7 +11,7 @@
 //! cd backend && cargo run --bin kalamdb-server
 //!
 //! # Terminal 2: Run tests
-//! cd link && cargo test --test integration_tests
+//! cd link && cargo nextest run -p kalam-client-e2e --test e2e
 //! ```
 
 use std::{
@@ -31,7 +31,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-mod common;
+use super::common;
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static TEST_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();

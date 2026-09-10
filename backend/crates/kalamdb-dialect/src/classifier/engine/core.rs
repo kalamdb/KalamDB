@@ -178,6 +178,9 @@ impl SqlStatement {
                 DropProcedureStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::DropProcedure)
             }),
+            ["COMMENT", "ON", ..] => Self::wrap(sql, || {
+                CommentOnStatement::parse(sql, default_namespace).map(SqlStatementKind::CommentOn)
+            }),
             ["GRANT", "EXECUTE", ..] => Self::wrap(sql, || {
                 GrantExecuteStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::GrantExecute)
@@ -951,6 +954,7 @@ impl SqlStatement {
             | SqlStatementKind::DropType(_)
             | SqlStatementKind::CreateProcedure(_)
             | SqlStatementKind::DropProcedure(_)
+            | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::CreateTrigger(_)
             | SqlStatementKind::DropTrigger(_)
             | SqlStatementKind::AlterTrigger(_)

@@ -1,10 +1,8 @@
 //! Basic cluster operations test: Create table, insert, update, delete with consistency checks.
 
-#[path = "../common/testserver/mod.rs"]
-#[allow(dead_code)]
-mod test_support;
-
 use kalam_client::models::ResponseStatus;
+
+use crate::test_support;
 
 #[tokio::test]
 async fn test_cluster_basic_crud_operations() {

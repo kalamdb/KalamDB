@@ -18,15 +18,19 @@ macro_rules! memoized_view_schema {
     };
 }
 
-pub mod active_function_runs;
+pub mod active_procedure_runs;
 pub mod cluster;
 pub mod cluster_groups;
 pub mod columns;
 pub mod common;
 pub mod datatypes;
 pub mod describe;
-pub mod function_errors;
 pub mod live;
+pub mod module_instances;
+pub mod module_revisions;
+pub mod modules;
+pub mod procedure_logs;
+pub mod procedures;
 pub mod server_logs;
 pub mod sessions;
 pub mod settings;
@@ -35,17 +39,21 @@ pub mod stats;
 pub mod tables;
 pub mod transactions;
 
-pub use active_function_runs::*;
+pub use active_procedure_runs::*;
 pub use cluster::*;
 pub use cluster_groups::*;
 #[allow(deprecated)]
 pub use columns::*;
 pub use datatypes::*;
 pub use describe::*;
-pub use function_errors::*;
 use kalamdb_commons::schemas::TableDefinition;
 use kalamdb_system::SystemTable;
 pub use live::*;
+pub use module_instances::*;
+pub use module_revisions::*;
+pub use modules::*;
+pub use procedure_logs::*;
+pub use procedures::*;
 pub use server_logs::*;
 pub use sessions::*;
 pub use settings::*;
@@ -61,10 +69,14 @@ pub fn system_view_table_definition(system_table: SystemTable) -> TableDefinitio
         SystemTable::Stats => stats::StatsView::definition(),
         SystemTable::Live => live::LiveView::definition_for(SystemTable::Live),
         SystemTable::Sessions => sessions::SessionsView::definition(),
-        SystemTable::ActiveFunctionRuns => {
-            active_function_runs::ActiveFunctionRunsView::definition()
+        SystemTable::ActiveProcedureRuns => {
+            active_procedure_runs::ActiveProcedureRunsView::definition()
         },
-        SystemTable::FunctionErrors => function_errors::FunctionErrorsView::definition(),
+        SystemTable::ProcedureLogs => procedure_logs::ProcedureLogsView::definition(),
+        SystemTable::ModuleInstances => module_instances::ModuleInstancesView::definition(),
+        SystemTable::Procedures => procedures::ProceduresView::definition(),
+        SystemTable::Modules => modules::ModulesView::definition(),
+        SystemTable::ModuleRevisions => module_revisions::ModuleRevisionsView::definition(),
         SystemTable::Transactions => transactions::TransactionsView::definition(),
         SystemTable::Settings => settings::SettingsView::definition(),
         SystemTable::ServerLogs => server_logs::ServerLogsView::definition(),

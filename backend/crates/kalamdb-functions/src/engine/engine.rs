@@ -6,21 +6,60 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     thread,
     time::{Duration, Instant},
 };
 
+use dashmap::DashMap;
 use kalamdb_commons::FunctionRevisionId;
 use moka::future::Cache;
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 
+use super::lane_charge::LaneCharge;
 use crate::{
+    abi::{conversion_limit::ConversionLimit, invocation::InvocationScope},
     EngineConfig, FunctionHost, FunctionsError, Invocation, ModuleRevision, Result, RoutineValue,
     RuntimeLimits, V8Session,
 };
+
+/// One resident V8 isolate, idle or currently running a CALL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionInstanceSnapshot {
+    pub instance_id:     u64,
+    pub worker:          usize,
+    pub module_id:       String,
+    pub revision_id:     String,
+    pub state:           String,
+    pub reserved_bytes:  u64,
+    pub used_heap_bytes: u64,
+    pub invocations:     u64,
+}
+
+/// Process-wide function-runtime memory reservation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FunctionMemoryCensus {
+    pub reserved_bytes:   u64,
+    pub limit_bytes:      u64,
+    pub idle_instances:   u64,
+    pub active_instances: u64,
+}
+
+enum Control {
+    EvictIdle { reply: oneshot::Sender<bool> },
+}
+
+#[derive(Clone)]
+struct WorkerRuntime {
+    index:     usize,
+    config:    EngineConfig,
+    memory:    Arc<AtomicUsize>,
+    peers:     Arc<Vec<mpsc::UnboundedSender<Control>>>,
+    instances: Arc<DashMap<u64, FunctionInstanceSnapshot>>,
+    next_id:   Arc<AtomicU64>,
+}
 
 struct Work {
     invocation: Invocation,
@@ -28,6 +67,7 @@ struct Work {
     reply:      oneshot::Sender<Result<RoutineValue>>,
     _active:    Option<OwnedSemaphorePermit>,
     _root:      Option<OwnedSemaphorePermit>,
+    _lane:      Option<LaneCharge>,
 }
 
 /// A reservation for the lifetime of a V8 isolate, including while it is warm/idle.
@@ -70,21 +110,53 @@ impl Drop for MemoryCharge {
 /// One V8 isolate plus the lifecycle information needed to decide whether keeping it warm is still
 /// worthwhile. The memory reservation intentionally lives in this wrapper, not in an invocation.
 struct SessionInstance {
+    id:           u64,
     session:      V8Session,
     created_at:   Instant,
     last_used_at: Instant,
     invocations:  u64,
+    instances:    Arc<DashMap<u64, FunctionInstanceSnapshot>>,
     _memory:      MemoryCharge,
 }
 
 impl SessionInstance {
-    fn new(session: V8Session, memory: MemoryCharge, now: Instant) -> Self {
+    fn new(
+        mut session: V8Session,
+        memory: MemoryCharge,
+        now: Instant,
+        runtime: &WorkerRuntime,
+    ) -> Self {
+        let id = runtime.next_id.fetch_add(1, Ordering::Relaxed);
+        let used_heap_bytes = session.used_heap_bytes() as u64;
+        runtime.instances.insert(
+            id,
+            FunctionInstanceSnapshot {
+                instance_id: id,
+                worker: runtime.index,
+                module_id: session.revision.module_id.as_str().to_string(),
+                revision_id: session.revision.revision_id.as_str().to_string(),
+                state: "active".into(),
+                reserved_bytes: memory.amount as u64,
+                used_heap_bytes,
+                invocations: 0,
+            },
+        );
         Self {
+            id,
             session,
             created_at: now,
             last_used_at: now,
             invocations: 0,
+            instances: Arc::clone(&runtime.instances),
             _memory: memory,
+        }
+    }
+
+    fn publish(&self, state: &str, used_heap_bytes: usize) {
+        if let Some(mut row) = self.instances.get_mut(&self.id) {
+            row.state = state.to_string();
+            row.used_heap_bytes = used_heap_bytes as u64;
+            row.invocations = self.invocations;
         }
     }
 
@@ -98,6 +170,12 @@ impl SessionInstance {
         config.idle_ttl.is_zero()
             || now.saturating_duration_since(self.last_used_at) >= config.idle_ttl
             || self.lifecycle_expired(now, config)
+    }
+}
+
+impl Drop for SessionInstance {
+    fn drop(&mut self) {
+        self.instances.remove(&self.id);
     }
 }
 
@@ -123,7 +201,10 @@ impl IdlePool {
             .sessions
             .iter()
             .rposition(|instance| &instance.session.revision.revision_id == revision_id)?;
-        self.sessions.remove(index)
+        let mut instance = self.sessions.remove(index)?;
+        let used_heap = instance.session.used_heap_bytes();
+        instance.publish("active", used_heap);
+        Some(instance)
     }
 
     fn recycle(&mut self, mut instance: SessionInstance, now: Instant, config: &EngineConfig) {
@@ -137,6 +218,8 @@ impl IdlePool {
 
         // Idle time starts after execution completes, not when the invocation began.
         instance.last_used_at = now;
+        let used_heap = instance.session.used_heap_bytes();
+        instance.publish("idle", used_heap);
         instance.session.detach();
         while self.sessions.len() >= config.max_idle_per_lane {
             self.sessions.pop_front();
@@ -177,10 +260,12 @@ fn preferred_worker(revision_id: &FunctionRevisionId, workers: usize) -> usize {
 pub struct FunctionEngine {
     config:    EngineConfig,
     workers:   Vec<mpsc::Sender<Work>>,
+    lane_load: Vec<Arc<AtomicUsize>>,
     active:    Arc<Semaphore>,
     roots:     Arc<Semaphore>,
     queued:    Arc<Semaphore>,
     memory:    Arc<AtomicUsize>,
+    instances: Arc<DashMap<u64, FunctionInstanceSnapshot>>,
     revisions: Cache<FunctionRevisionId, Arc<ModuleRevision>>,
 }
 
@@ -188,38 +273,64 @@ impl FunctionEngine {
     pub fn new(config: EngineConfig) -> Result<Self> {
         config.validate()?;
         let memory = Arc::new(AtomicUsize::new(0));
+        let instances = Arc::new(DashMap::new());
+        let next_id = Arc::new(AtomicU64::new(1));
+        let mut control_txs = Vec::with_capacity(config.workers);
+        let mut control_rxs = Vec::with_capacity(config.workers);
+        for _ in 0..config.workers {
+            let (tx, rx) = mpsc::unbounded_channel();
+            control_txs.push(tx);
+            control_rxs.push(rx);
+        }
+        let peers = Arc::new(control_txs);
         let mut workers = Vec::with_capacity(config.workers);
-        for index in 0..config.workers {
+        for (index, mut control_rx) in control_rxs.into_iter().enumerate() {
             let (sender, mut receiver) = mpsc::channel::<Work>(config.max_active);
-            let worker_config = config.clone();
-            let worker_memory = Arc::clone(&memory);
+            let runtime = WorkerRuntime {
+                index,
+                config: config.clone(),
+                memory: Arc::clone(&memory),
+                peers: Arc::clone(&peers),
+                instances: Arc::clone(&instances),
+                next_id: Arc::clone(&next_id),
+            };
             thread::Builder::new()
                 .name(format!("functions-{index}"))
                 .spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
+                    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
                         .expect("function worker runtime");
                     let local = tokio::task::LocalSet::new();
-                    local.block_on(&runtime, async move {
+                    local.block_on(&tokio_runtime, async move {
                         let idle = Rc::new(RefCell::new(IdlePool::default()));
                         let mut sweep =
-                            tokio::time::interval(idle_sweep_interval(worker_config.idle_ttl));
+                            tokio::time::interval(idle_sweep_interval(runtime.config.idle_ttl));
                         sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                         loop {
                             tokio::select! {
+                                biased;
+                                maybe_ctrl = control_rx.recv() => {
+                                    match maybe_ctrl {
+                                        Some(Control::EvictIdle { reply }) => {
+                                            let evicted = idle.borrow_mut().evict_lru();
+                                            let _ = reply.send(evicted);
+                                        },
+                                        None => {},
+                                    }
+                                },
                                 maybe_work = receiver.recv() => {
                                     let Some(work) = maybe_work else {
                                         break;
                                     };
                                     let idle = Rc::clone(&idle);
-                                    let config = worker_config.clone();
-                                    let memory = Arc::clone(&worker_memory);
+                                    let runtime = runtime.clone();
                                     tokio::task::spawn_local(async move {
-                                        let result = run_v8(&work, &config, &idle, &memory).await;
+                                        let max_value_bytes = runtime.config.max_value_bytes;
+                                        let result = run_v8(&work, &runtime, &idle).await;
                                         let result = result.and_then(|value| {
-                                            if value.value.size() > config.max_value_bytes {
+                                            if value.value.size() > max_value_bytes {
                                                 Err(FunctionsError::ResourceLimit(
                                                     "procedure result bytes".into(),
                                                 ))
@@ -227,11 +338,13 @@ impl FunctionEngine {
                                                 Ok(value)
                                             }
                                         });
-                                        let _ = work.reply.send(result);
+                                        let Work { reply, invocation, host, _active, _root, _lane } = work;
+                                        drop((invocation, host, _active, _root, _lane));
+                                        let _ = reply.send(result);
                                     });
                                 },
                                 _ = sweep.tick() => {
-                                    idle.borrow_mut().prune(Instant::now(), &worker_config);
+                                    idle.borrow_mut().prune(Instant::now(), &runtime.config);
                                 },
                             }
                         }
@@ -239,7 +352,7 @@ impl FunctionEngine {
                         // Do not leave detached isolates resident after engine shutdown.
                         idle.borrow_mut().sessions.clear();
                     });
-                    runtime.block_on(local);
+                    tokio_runtime.block_on(local);
                 })
                 .map_err(|error| {
                     FunctionsError::Invalid(format!("start function worker: {error}"))
@@ -251,6 +364,7 @@ impl FunctionEngine {
             active: Arc::new(Semaphore::new(config.max_active)),
             queued: Arc::new(Semaphore::new(config.max_queued)),
             memory,
+            instances,
             revisions: Cache::builder()
                 .max_capacity(config.cache_bytes)
                 .weigher(|_: &FunctionRevisionId, revision: &Arc<ModuleRevision>| {
@@ -258,12 +372,35 @@ impl FunctionEngine {
                 })
                 .build(),
             config,
+            lane_load: (0..workers.len()).map(|_| Arc::new(AtomicUsize::new(0))).collect(),
             workers,
         })
     }
 
     pub fn config(&self) -> &EngineConfig {
         &self.config
+    }
+
+    pub fn memory_census(&self) -> FunctionMemoryCensus {
+        let mut idle_instances = 0;
+        let mut active_instances = 0;
+        for row in self.instances.iter() {
+            if row.state == "idle" {
+                idle_instances += 1;
+            } else {
+                active_instances += 1;
+            }
+        }
+        FunctionMemoryCensus {
+            reserved_bytes: self.memory.load(Ordering::Acquire) as u64,
+            limit_bytes: self.config.max_memory_bytes as u64,
+            idle_instances,
+            active_instances,
+        }
+    }
+
+    pub fn instance_snapshot(&self) -> Vec<FunctionInstanceSnapshot> {
+        self.instances.iter().map(|row| row.value().clone()).collect()
     }
 
     pub async fn load_revision<F>(
@@ -331,16 +468,19 @@ impl FunctionEngine {
 
         // A session owns its memory reservation. Reject an impossible artifact up front, but defer
         // the actual reservation to the worker because a matching warm isolate may already own it.
-        let session_charge = invocation
-            .revision
-            .byte_len()
-            .saturating_add(self.config.max_heap_bytes);
+        let session_charge =
+            invocation.revision.byte_len().saturating_add(self.config.max_heap_bytes);
         if session_charge > self.config.max_memory_bytes {
             return Err(FunctionsError::ResourceLimit("function memory".into()));
         }
 
         let preferred = preferred_worker(&invocation.revision.revision_id, self.workers.len());
-        let (reply, response) = oneshot::channel();
+        // Affinity wins ties; running work counts even after the receiver drains its channel.
+        let preferred = (0..self.workers.len())
+            .map(|offset| (preferred + offset) % self.workers.len())
+            .min_by_key(|index| self.lane_load[*index].load(Ordering::Acquire))
+            .expect("validated worker count");
+        let (reply, mut response) = oneshot::channel();
         let cancel = invocation.scope.cancel.clone();
         let deadline = invocation.scope.deadline;
         let cancellation = cancel.clone().drop_guard();
@@ -350,10 +490,13 @@ impl FunctionEngine {
             reply,
             _active: active,
             _root: root,
+            _lane: None,
         };
         let mut sent = false;
         for offset in 0..self.workers.len() {
             let index = (preferred + offset) % self.workers.len();
+            self.lane_load[index].fetch_add(1, Ordering::AcqRel);
+            work._lane = Some(LaneCharge(Arc::clone(&self.lane_load[index])));
             match self.workers[index].try_send(work) {
                 Ok(()) => {
                     sent = true;
@@ -362,6 +505,7 @@ impl FunctionEngine {
                 Err(mpsc::error::TrySendError::Full(returned))
                 | Err(mpsc::error::TrySendError::Closed(returned)) => {
                     work = returned;
+                    work._lane = None;
                 },
             }
         }
@@ -372,28 +516,43 @@ impl FunctionEngine {
         // The worker acknowledges cleanup before the caller can roll back.
         let result = tokio::select! {
             biased;
-            _ = cancel.cancelled() => Err(FunctionsError::Cancelled),
-            _ = tokio::time::sleep_until(deadline.into()) => Err(FunctionsError::Timeout),
-            result = response => result.map_err(|_| FunctionsError::Invalid("function worker stopped".into()))?,
+            _ = cancel.cancelled() => {
+                let _ = response.await;
+                Err(FunctionsError::Cancelled)
+            },
+            _ = tokio::time::sleep_until(deadline.into()) => {
+                cancel.cancel();
+                let _ = response.await;
+                Err(FunctionsError::Timeout)
+            },
+            result = &mut response => result.map_err(|_| FunctionsError::Invalid("function worker stopped".into()))?,
         };
         cancellation.disarm();
         result
     }
 }
 
-fn reserve_session_memory(
-    memory: &Arc<AtomicUsize>,
+async fn reserve_session_memory(
+    runtime: &WorkerRuntime,
     amount: usize,
-    config: &EngineConfig,
     idle: &Rc<RefCell<IdlePool>>,
+    scope: &InvocationScope,
 ) -> Result<MemoryCharge> {
     loop {
-        match MemoryCharge::try_new(Arc::clone(memory), amount, config.max_memory_bytes) {
+        scope.check()?;
+        match MemoryCharge::try_new(
+            Arc::clone(&runtime.memory),
+            amount,
+            runtime.config.max_memory_bytes,
+        ) {
             Ok(charge) => return Ok(charge),
             Err(error) => {
                 // Under pressure, a cold invocation is more valuable than an unrelated warm LRU.
-                // Evicting locally also keeps V8 destruction on the isolate's owning worker.
+                // Evict locally first so V8 destruction stays on this isolate's owning worker.
                 if idle.borrow_mut().evict_lru() {
+                    continue;
+                }
+                if evict_remote_idle(&runtime.peers, runtime.index).await {
                     continue;
                 }
                 return Err(error);
@@ -402,25 +561,34 @@ fn reserve_session_memory(
     }
 }
 
+async fn evict_remote_idle(peers: &[mpsc::UnboundedSender<Control>], self_index: usize) -> bool {
+    for offset in 1..peers.len() {
+        let index = (self_index + offset) % peers.len();
+        let (reply, response) = oneshot::channel();
+        if peers[index].send(Control::EvictIdle { reply }).is_err() {
+            continue;
+        }
+        if response.await.unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
 async fn run_v8(
     work: &Work,
-    config: &EngineConfig,
+    runtime: &WorkerRuntime,
     idle: &Rc<RefCell<IdlePool>>,
-    memory: &Arc<AtomicUsize>,
 ) -> Result<RoutineValue> {
     work.invocation.scope.check()?;
     let limits = RuntimeLimits {
-        timeout:        work
-            .invocation
-            .scope
-            .deadline
-            .saturating_duration_since(Instant::now()),
-        max_heap_bytes: config.max_heap_bytes,
+        timeout:        work.invocation.scope.deadline.saturating_duration_since(Instant::now()),
+        max_heap_bytes: runtime.config.max_heap_bytes,
         abi_version:    work.invocation.revision.abi_version,
     };
     let revision_id = work.invocation.revision.revision_id.clone();
     let now = Instant::now();
-    let cached = idle.borrow_mut().take(&revision_id, now, config);
+    let cached = idle.borrow_mut().take(&revision_id, now, &runtime.config);
     let mut instance = match cached {
         Some(mut instance) => {
             instance.session.limits = limits;
@@ -431,26 +599,30 @@ async fn run_v8(
                 .invocation
                 .revision
                 .byte_len()
-                .saturating_add(config.max_heap_bytes);
-            let memory_charge = reserve_session_memory(memory, amount, config, idle)?;
+                .saturating_add(runtime.config.max_heap_bytes);
+            let memory_charge =
+                reserve_session_memory(runtime, amount, idle, &work.invocation.scope).await?;
             let session = V8Session::load((*work.invocation.revision).clone(), limits)?;
-            SessionInstance::new(session, memory_charge, now)
+            SessionInstance::new(session, memory_charge, now, runtime)
         },
     };
 
-    let result = instance
+    instance
         .session
-        .invoke_async(&work.invocation, Arc::clone(&work.host))
-        .await;
+        .isolate
+        .set_slot(ConversionLimit(runtime.config.max_value_bytes));
+    let result = instance.session.invoke_async(&work.invocation, Arc::clone(&work.host)).await;
     instance.invocations = instance.invocations.saturating_add(1);
 
     let completed_at = Instant::now();
+    let used_heap = instance.session.used_heap_bytes();
+    instance.publish("active", used_heap);
     let recycle = result.is_ok()
         && !instance.session.heap_limit_hit()
-        && instance.session.used_heap_bytes() <= config.heap_soft_bytes
-        && !instance.lifecycle_expired(completed_at, config);
+        && used_heap <= runtime.config.heap_soft_bytes
+        && !instance.lifecycle_expired(completed_at, &runtime.config);
     if recycle {
-        idle.borrow_mut().recycle(instance, completed_at, config);
+        idle.borrow_mut().recycle(instance, completed_at, &runtime.config);
     }
     result
 }
@@ -518,6 +690,15 @@ mod tests {
         fn is_http_root(&self) -> bool {
             false
         }
+    }
+
+    #[test]
+    fn zero_active_capacity_is_invalid() {
+        let config = EngineConfig {
+            max_active: 0,
+            ..EngineConfig::default()
+        };
+        assert!(config.validate().is_err());
     }
 
     fn revision(label: &str) -> Arc<ModuleRevision> {
@@ -692,10 +873,7 @@ mod tests {
         assert_eq!(engine.memory.load(Ordering::Acquire), expected);
 
         // This used to evict `second` because recycling `first` retained only its own revision ID.
-        engine
-            .invoke(invocation(first, 0, 3), Arc::new(NoopHost))
-            .await
-            .unwrap();
+        engine.invoke(invocation(first, 0, 3), Arc::new(NoopHost)).await.unwrap();
         assert_eq!(engine.memory.load(Ordering::Acquire), expected);
     }
 
@@ -749,6 +927,75 @@ mod tests {
         assert!(engine.memory.load(Ordering::Acquire) <= limit);
     }
 
+    fn revision_for_worker(worker: usize, workers: usize) -> Arc<ModuleRevision> {
+        for seed in 0..100_000u32 {
+            let rev = revision(&format!("lane-{seed}"));
+            if preferred_worker(&rev.revision_id, workers) == worker {
+                return rev;
+            }
+        }
+        panic!("no revision hashed to worker {worker} of {workers}");
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(20000)]
+    async fn memory_pressure_evicts_remote_warm_lru_before_rejecting_cold_function() {
+        let mut config = EngineConfig::default();
+        config.workers = 2;
+        config.max_active = 2;
+        config.max_idle_per_lane = 1;
+        config.idle_ttl = Duration::from_secs(30);
+        // Enough for one isolate; the second CALL must steal the other worker's idle LRU.
+        config.max_memory_bytes = config.max_heap_bytes + 4096;
+        let limit = config.max_memory_bytes;
+        let first = revision_for_worker(0, 2);
+        let second = revision_for_worker(1, 2);
+        let engine = FunctionEngine::new(config).unwrap();
+
+        let first_value = engine
+            .invoke(invocation(Arc::clone(&first), 0, 1), Arc::new(NoopHost))
+            .await
+            .unwrap();
+        assert_eq!(first_value.value, ScalarValue::Int32(Some(1)));
+        assert!(engine.memory.load(Ordering::Acquire) > 0);
+
+        let second_value =
+            engine.invoke(invocation(second, 0, 2), Arc::new(NoopHost)).await.unwrap();
+        assert_eq!(second_value.value, ScalarValue::Int32(Some(2)));
+        assert!(
+            engine.memory.load(Ordering::Acquire) <= limit,
+            "remote idle eviction must free enough reservation for the cold isolate"
+        );
+        let census = engine.memory_census();
+        assert_eq!(census.idle_instances + census.active_instances, 1);
+        assert!(engine.instance_snapshot().iter().any(|row| row.state == "idle"));
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(20000)]
+    async fn instance_census_tracks_idle_isolate_after_success() {
+        let mut config = EngineConfig::default();
+        config.workers = 1;
+        config.max_active = 1;
+        config.max_idle_per_lane = 1;
+        config.idle_ttl = Duration::from_secs(30);
+        let engine = FunctionEngine::new(config).unwrap();
+        engine
+            .invoke(invocation(revision("census"), 0, 9), Arc::new(NoopHost))
+            .await
+            .unwrap();
+        let census = engine.memory_census();
+        assert_eq!(census.idle_instances, 1);
+        assert_eq!(census.active_instances, 0);
+        assert!(census.reserved_bytes > 0);
+        assert_eq!(census.limit_bytes, engine.config.max_memory_bytes as u64);
+        let snapshot = engine.instance_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].state, "idle");
+        assert_eq!(snapshot[0].worker, 0);
+        assert!(snapshot[0].reserved_bytes > 0);
+    }
+
     #[tokio::test]
     #[ntest::timeout(20000)]
     async fn invocation_limit_rotates_old_isolate_instead_of_retaining_it_forever() {
@@ -777,10 +1024,7 @@ mod tests {
             "the instance must be retired once its invocation budget is consumed"
         );
 
-        engine
-            .invoke(invocation(rev, 0, 3), Arc::new(NoopHost))
-            .await
-            .unwrap();
+        engine.invoke(invocation(rev, 0, 3), Arc::new(NoopHost)).await.unwrap();
         assert!(engine.memory.load(Ordering::Acquire) > 0);
     }
 

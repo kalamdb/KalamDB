@@ -1,10 +1,10 @@
 //! FILE datatype integration tests — upload via multipart SQL and download via SDK.
 
-mod common;
-
 use kalam_client::{
     AuthProvider, FileUpload, KalamLinkClient, KalamLinkError, QueryParam, TableId,
 };
+
+use super::common;
 
 fn create_client() -> Result<KalamLinkClient, KalamLinkError> {
     let token = common::root_access_token_blocking()

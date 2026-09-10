@@ -4,7 +4,7 @@
 //! filtered subscriptions, and collaborative user flows.
 
 pub(super) mod helpers {
-    pub use crate::helpers::*;
+    pub use super::super::helpers::*;
 }
 
 #[path = "../scenario_01_chat_app.rs"]

@@ -1,6 +1,4 @@
 import { Auth, createClient } from '@kalamdb/client';
-import { kalamDriver } from '@kalamdb/orm';
-import { drizzle } from 'drizzle-orm/pg-proxy';
 import { createKalam } from './generated/kalam';
 
 function viteEnv(name: string, fallback: string): string {
@@ -9,14 +7,13 @@ function viteEnv(name: string, fallback: string): string {
 }
 
 export const ROOM = viteEnv('VITE_CHAT_ROOM', 'main');
-export const CHAT_USERNAME = viteEnv('VITE_KALAM_USER', viteEnv('VITE_KALAMDB_USER', 'root'));
-export const CHAT_PASSWORD = viteEnv('VITE_KALAM_PASSWORD', viteEnv('VITE_KALAMDB_PASSWORD', 'kalamdb123'));
+export const CHAT_USERNAME = viteEnv('VITE_KALAM_USER', 'root');
+export const CHAT_PASSWORD = viteEnv('VITE_KALAM_PASSWORD', 'kalamdb123');
 
 export const client = createClient({
-  url: viteEnv('VITE_KALAM_URL', viteEnv('VITE_KALAMDB_URL', 'http://127.0.0.1:2900')),
+  url: viteEnv('VITE_KALAM_URL', 'http://127.0.0.1:2900'),
   authProvider: async () => Auth.basic(CHAT_USERNAME, CHAT_PASSWORD),
   disableCompression: true,
 });
 
-export const db = drizzle(kalamDriver(client));
 export const api = createKalam(client);

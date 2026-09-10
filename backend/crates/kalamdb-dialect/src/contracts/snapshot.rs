@@ -50,6 +50,8 @@ pub struct ContractType {
     pub name:    String,
     pub kind:    ContractTypeKind,
     pub arrow:   DataType,
+    /// Catalog documentation only; excluded from the canonical contract hash.
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -94,6 +96,8 @@ pub struct ContractRoutine {
     pub security:    RoutineSecurityMode,
     pub body:        Option<String>,
     pub grants:      BTreeSet<ExecuteGrantee>,
+    /// Catalog documentation only; excluded from the canonical contract hash.
+    pub comment:     Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

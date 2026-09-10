@@ -72,6 +72,10 @@ crossterm = { workspace = true }
 chrono = { workspace = true }
 rand.workspace = true
 sha2 = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
 hex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }

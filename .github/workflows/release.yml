@@ -1344,7 +1344,7 @@ jobs:
             exit 1
           fi
           "$KALAM_BIN" --version
-          if cargo nextest run -p kalam-cli-e2e --test smoke 2>&1 | tee smoke-test-output.txt; then
+          if cargo nextest run -p kalam-cli-e2e --test e2e smoke 2>&1 | tee smoke-test-output.txt; then
             echo "smoke_tests_passed=true" >> "$GITHUB_OUTPUT"
             echo "✅ All smoke tests passed!"
           else

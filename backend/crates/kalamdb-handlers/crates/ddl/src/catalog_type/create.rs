@@ -143,7 +143,7 @@ fn upsert_named_type(
             kind,
             table_id: None,
             source_type_id: None,
-            comment: None,
+            comment: statement.comment.clone(),
         })
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
@@ -194,7 +194,7 @@ fn persist_from_table(
             kind:           CatalogTypeKind::RowAlias,
             table_id:       None,
             source_type_id: Some(implicit_id),
-            comment:        None,
+            comment:        statement.comment.clone(),
         })
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }

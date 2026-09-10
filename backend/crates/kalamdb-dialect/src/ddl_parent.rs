@@ -51,6 +51,7 @@ impl DdlAst for AlterTriggerStatement {}
 impl DdlAst for GrantExecuteStatement {}
 impl DdlAst for RevokeExecuteStatement {}
 impl DdlAst for CallStatement {}
+impl DdlAst for CommentOnStatement {}
 impl DdlAst for CreateSchemaStatement {}
 impl DdlAst for SetSearchPathStatement {}
 impl DdlAst for ExportUserDataStatement {}

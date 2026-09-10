@@ -279,6 +279,22 @@ impl CatalogStores {
         list_models(&self.function_modules)
     }
 
+    pub fn list_function_revisions(&self) -> Result<Vec<CatalogFunctionRevision>, SystemError> {
+        list_models(&self.function_revisions)
+    }
+
+    pub fn list_function_artifacts(&self) -> Result<Vec<CatalogFunctionArtifact>, SystemError> {
+        list_models(&self.function_artifacts)
+    }
+
+    pub fn list_all_parameters(&self) -> Result<Vec<CatalogRoutineParameter>, SystemError> {
+        list_models(&self.routine_parameters)
+    }
+
+    pub fn list_all_grants(&self) -> Result<Vec<CatalogRoutineGrant>, SystemError> {
+        list_models(&self.routine_grants)
+    }
+
     /// Stage artifact + revision rows, then CAS the module active pointer.
     ///
     /// Artifact/revision writes happen before the pointer swap so an interruption

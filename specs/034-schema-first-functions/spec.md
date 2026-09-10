@@ -68,19 +68,20 @@ An application developer implements business logic in a full project: `package.j
 
 ### User Story 3 - Generate Bindings Once, Never Overwrite Implementations (Priority: P1)
 
-Code generation creates `functions/src/<schema>/<procedure>.ts` once, plus generated contracts, database helpers, and a registry that is the build entrypoint. Runtime lookup is contract identity → compiled registry → function. There is no filesystem lookup during invocation.
+Code generation creates a typed `procedure.<schema>.<method>` builder API plus a one-shot named-export scaffold at `functions/src/<schema>/<procedure>.ts` when that identity is not bound anywhere. Each schema procedure gets its own file. A generated registry maps qualified SQL names to implemented named exports and is the build entrypoint. Runtime lookup is contract identity → compiled registry → function. There is no filesystem lookup during invocation.
 
-**Why this priority**: Overwriting developer files destroys work. Per-call filesystem lookup is slow and incorrect under revision pinning.
+**Why this priority**: Overwriting developer files destroys work. Per-call filesystem lookup is slow and incorrect under revision pinning. One file per procedure keeps implementations independently editable.
 
-**Independent Test**: Generate a new procedure file, edit it, regenerate, and confirm the implementation file is unchanged while the generated registry updates.
+**Independent Test**: Generate a new procedure file, edit it, regenerate, and confirm the implementation file is unchanged while the generated registry updates. Add a second procedure and confirm it is scaffolded in its own file, not appended to the first.
 
 **Acceptance Scenarios**:
 
-1. **Given** `CREATE PROCEDURE api.create_order(...)`, **When** generation runs for the first time, **Then** `functions/src/api/create_order.ts` is created with a typed stub that imports generated contracts and is not implemented yet.
+1. **Given** `CREATE PROCEDURE api.create_order(...)`, **When** generation runs for the first time, **Then** `functions/src/api/create_order.ts` is created with `export const createOrder = procedure.api.createOrder.unimplemented()`.
 2. **Given** that file already exists with developer code, **When** generation runs again, **Then** the implementation file is not overwritten.
-3. **Given** several procedures, **When** generation runs, **Then** the generated registry maps qualified names such as `api.create_order` to their default exports and is the build entrypoint.
+3. **Given** several implemented named exports, **When** generation or build runs, **Then** the generated registry maps qualified names such as `api.create_order` to those named exports and is the build entrypoint.
 4. **Given** a running server, **When** a procedure is invoked, **Then** dispatch uses the compiled registry, not a live filesystem path.
-5. **Given** generation, **When** contracts and host API declarations are written, **Then** SQL input/output types and the shared `ctx` / `defineProcedure` `.d.ts` files are both generated, and developer-owned implementation files are still not overwritten.
+5. **Given** generation, **When** contracts and host API declarations are written, **Then** SQL input/output types, shared `ctx` `.d.ts`, and generated `procedure` builders are written, and developer-owned implementation files are still not overwritten.
+6. **Given** two bodyless procedures in the same schema, **When** generation runs for the first time, **Then** each identity is scaffolded at its own `src/<schema>/<procedure>.ts` path.
 
 ---
 
@@ -395,7 +396,7 @@ If a procedure has inline SQL source, generation does not automatically create a
 
 ### User Story 21 - Operators Can Observe Function Health Without Logging Secrets (Priority: P3)
 
-Operators see low-cardinality metrics for invocations, errors, timeouts, memory, queue wait, instance create/destroy, host DB time, and nested depth. Structured errors include execution identity, routine, revision, actor, principal, source, stack, and stable error code. Credentials, cookies, bodies, secrets, and inputs are not logged by default. Active runs are in-memory only and visible through a virtual `system.active_function_runs` view while the root is live.
+Operators see low-cardinality metrics for invocations, errors, timeouts, memory, queue wait, instance create/destroy, host DB time, and nested depth. Structured invocation records include execution identity, procedure, module, revision, actor, origin, outcome, duration, and stable error code. V8 `console.*` and `ctx.log.*` output is stored on the same log with `outcome=log`. Credentials, cookies, bodies, secrets, and inputs are not logged by default. Active runs are in-memory only and visible through a virtual `system.active_procedure_runs` view while the root is live. Invocation history is disk-backed in a rotating `procedures.jsonl` file and queried through `system.procedure_logs`. Resident V8 isolates appear in `system.module_instances`.
 
 **Why this priority**: Without this, memory bugs and leaks cannot be operated. Logging secrets is a security incident.
 
@@ -407,7 +408,8 @@ Operators see low-cardinality metrics for invocations, errors, timeouts, memory,
 2. **Given** those metrics, **When** labels are inspected, **Then** they do not include user id, request id, or arbitrary procedure input.
 3. **Given** a function error, **When** it is logged, **Then** it includes execution id, request id, routine, revision, actor, effective principal, invocation source, procedure stack, and stable error code.
 4. **Given** default configuration, **When** a request with `Authorization`, cookies, and a body fails, **Then** those values are not automatically logged.
-5. **Given** an in-flight root, **When** an operator queries `system.active_function_runs`, **Then** the run appears, and it disappears as soon as the root finishes. No durable row is written per invocation.
+5. **Given** an in-flight root, **When** an operator queries `system.active_procedure_runs`, **Then** the run appears, and it disappears as soon as the root finishes. No durable row is written per invocation.
+6. **Given** a completed CALL, **When** an operator queries `system.procedure_logs`, **Then** a structured row exists with procedure identity and outcome (`ok` or `error`), V8 `console.*`/`ctx.log.*` lines appear as `outcome=log` with channel and the isolate text, uncaught exceptions/unhandled rejections appear as `outcome=error` with the JavaScript message, and records do not contain request bodies, arguments, results, tokens, or source.
 
 ---
 
@@ -429,7 +431,7 @@ A developer can initialize a project, write types and procedures, run `kalam dev
 
 ### User Story 23 - One Host Context API for Inline and Project Code (Priority: P1)
 
-Inline SQL procedure bodies and project-deployed methods use the same host context: `ctx.actor`, `ctx.principal`, `ctx.db`, `ctx.functions`, `ctx.topics`, `ctx.http`, `ctx.log`, and `defineProcedure`. That surface is declared once in shared type-declaration files (`.d.ts`). Developers add a host method in one place; both inline and project code see it. SQL contract input/output types remain generated from the schema; they are not duplicated into the host API file.
+Inline SQL procedure bodies and project-deployed methods use the same host context: `ctx.actor`, `ctx.principal`, `ctx.db`, `ctx.functions`, `ctx.topics`, `ctx.http`, `ctx.log`, and generated `procedure.<schema>.<method>` builders. That surface is declared once in shared type-declaration files (`.d.ts`). Developers add a host method in one place; both inline and project code see it. SQL contract input/output types remain generated from the schema; they are not duplicated into the host API file.
 
 **Why this priority**: Two context shapes (today's inline wrapper vs project stubs) teach two products. A single declaration file is how we keep inline fallbacks and project overrides interchangeable.
 
@@ -437,8 +439,8 @@ Inline SQL procedure bodies and project-deployed methods use the same host conte
 
 **Acceptance Scenarios**:
 
-1. **Given** a functions project, **When** generation runs, **Then** a non-developer-owned host API declaration file is written (for example `.kalam/generated/runtime.d.ts`) describing context, `defineProcedure`, and host methods.
-2. **Given** that file, **When** a project procedure imports `defineProcedure` and uses `ctx`, **Then** the TypeScript project references those declarations — not a second handwritten context type.
+1. **Given** a functions project, **When** generation runs, **Then** a non-developer-owned host API declaration file is written (for example `functions/src/generated/runtime.d.ts`) describing context and host methods, plus `procedure.d.ts` builders.
+2. **Given** those files, **When** a project procedure uses `procedure.<schema>.<method>(handler)` and `ctx`, **Then** the TypeScript project infers `ctx` and SQL input/output types — not a second handwritten context type.
 3. **Given** an inline `LANGUAGE JAVASCRIPT` or `LANGUAGE TYPESCRIPT` body that uses `ctx`, **When** `kalam functions build` or `kalam dev` typechecks it, **Then** it is checked against the same host API declarations (via a generated shim if the SQL body cannot import files directly).
 4. **Given** a new host method added to the shared declarations and native host, **When** an inline body and a project file both call it, **Then** both compile against the same types and both execute the same runtime behavior.
 5. **Given** regeneration, **When** host API `.d.ts` files are rewritten, **Then** developer-owned `src/**` files are not overwritten; only generated declaration/contract files change.
@@ -508,11 +510,11 @@ Arguments and return values that enter or leave the JavaScript runtime use a Fla
 
 #### Generation and dispatch
 
-- **FR-007**: First-time generation MUST create `functions/src/<schema>/<procedure>.ts` using generated contract types and a not-implemented stub.
+- **FR-007**: First-time generation MUST create `functions/src/<schema>/<procedure>.ts` with a named `procedure.<schema>.<method>.unimplemented()` export only when that procedure identity is not already bound in any project file.
 - **FR-008**: Generation MUST NEVER overwrite an existing developer-owned implementation file.
-- **FR-009**: Generation MUST emit a registry mapping qualified procedure names to default exports; that registry MUST be the build entrypoint.
+- **FR-009**: Generation MUST emit a registry mapping qualified procedure names to implemented named exports discovered from `procedure.<schema>.<method>(handler)` bindings; that registry MUST be the build entrypoint. `.unimplemented()` bindings MUST be omitted from the registry.
 - **FR-010**: Invocation dispatch MUST use the compiled registry and MUST NOT perform filesystem lookup per call.
-- **FR-084**: Generation MUST emit shared host-context type-declaration files (`.d.ts`) as the single source of types for `ctx`, host methods, and `defineProcedure`.
+- **FR-084**: Generation MUST emit shared host-context type-declaration files (`.d.ts`) as the single source of types for `ctx`, host methods, and generated `procedure` builders.
 - **FR-085**: Project implementation files MUST typecheck against those shared host declarations plus generated SQL contract types; they MUST NOT define a parallel `ctx` API.
 - **FR-086**: Inline procedure bodies MUST use the same host method names and semantics as project methods, and MUST be typechecked against the same `.d.ts` files whenever a project/typecheck runs.
 - **FR-087**: Host API type-declaration files MUST be generated and non-developer-owned; adding a host capability MUST update that declaration once, the native host once, and then be available to both inline and project code.
@@ -614,7 +616,7 @@ Arguments and return values that enter or leave the JavaScript runtime use a Fla
 
 - **FR-076**: The system MUST expose the low-cardinality metrics listed in User Story 21.
 - **FR-077**: Structured function error logs MUST include the fields in User Story 21 and MUST NOT automatically log credentials, cookies, bodies, secrets, or function inputs.
-- **FR-078**: Active function runs MUST be tracked in memory only and exposed via `system.active_function_runs` while the root is live.
+- **FR-078**: Active procedure runs MUST be tracked in memory only and exposed via `system.active_procedure_runs` while the root is live. Invocation history MUST be written to a node-local rotating `procedures.jsonl` file and exposed via `system.procedure_logs`, including V8 `console.*`/`ctx.log.*` output per procedure and uncaught JavaScript exceptions/unhandled Promise rejections. Resident V8 isolates MUST be exposed via `system.module_instances` joined to module revisions, not per-procedure instance rows.
 - **FR-079**: The core database orchestration MUST NOT depend on a specific JavaScript engine type; a minimal internal runtime boundary MUST exist so a later runtime can be evaluated without rewriting function semantics.
 - **FR-080**: This feature MUST NOT ship additional JavaScript/WASM engines in the standard server binary. Unused experimental runtimes currently compiled into the default functions component MUST be removed from the default build and kept optional for experiments/tests only.
 - **FR-081**: Alternative runtimes MAY be benchmarked in experimental, non-default builds; production runtime choice for this feature remains the current JavaScript engine after memory/security refactor, unless measurements later justify a separate change.
@@ -635,7 +637,7 @@ Arguments and return values that enter or leave the JavaScript runtime use a Fla
 - **Runtime Instance**: Pooled or freshly created execution instance owned by a root lease for the request lifetime; revision-keyed; destroyed if unclean or over soft heap after cleanup.
 - **HTTP Invocation Context**: Compact, shared request metadata with on-demand header/query access, blocked credentials by default, and root-only response mutation.
 - **Build Manifest**: Machine-readable record used to validate exports, hashes, ABI, and inline vs module implementation before activation.
-- **Host API Declarations**: Generated `.d.ts` files that define `ctx` and `defineProcedure` once for inline bodies and project files. Distinct from SQL contract types.
+- **Host API Declarations**: Generated `.d.ts` files that define `ctx` and `procedure` builders once for inline bodies and project files. Distinct from SQL contract types.
 - **Runtime Value Buffer**: Single in-memory FlatBuffer (or zero-copy view) used to move a procedure request or response across the JavaScript boundary.
 
 ## Success Criteria *(mandatory)*

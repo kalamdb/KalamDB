@@ -22,7 +22,7 @@ if [[ -n "${KALAMDB_SERVER_URL:-}" || -n "${KALAMDB_URL:-}" ]]; then
 fi
 
 echo "==> integration Rust SDK tests (requires running server)"
-(cd "$REPO_ROOT" && cargo test -p kalam-client-e2e -- --include-ignored)
+(cd "$REPO_ROOT" && cargo test -p kalam-client-e2e --test e2e -- --include-ignored)
 
 if [[ -z "${KALAMDB_SERVER_URL:-}" && -z "${KALAMDB_URL:-}" ]]; then
   echo "Skipping quickstart example because no KALAMDB_SERVER_URL is set."

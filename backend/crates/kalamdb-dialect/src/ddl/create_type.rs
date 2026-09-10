@@ -80,6 +80,7 @@ pub struct CreateTypeStatement {
     pub name:          String,
     pub if_not_exists: bool,
     pub body:          CreateTypeBody,
+    pub comment:       Option<String>,
 }
 
 const UNION_RESERVED: &str = "UNION types are reserved and not supported in V1";
@@ -110,32 +111,35 @@ impl CreateTypeStatement {
             return Err(INTERFACE_RESERVED.to_string());
         }
 
-        let body = if rest_upper.starts_with("AS ENUM") {
+        let (body, after_body) = if rest_upper.starts_with("AS ENUM") {
             let after = rest["AS ENUM".len()..].trim_start();
-            CreateTypeBody::Enum {
-                labels: parse_enum_labels(after)?,
-            }
+            let (labels, leftover) = parse_enum_labels(after)?;
+            (CreateTypeBody::Enum { labels }, leftover)
         } else if rest_upper.starts_with("FROM TABLE") {
             let after = rest["FROM TABLE".len()..].trim_start();
             let (table, leftover) = split_qualified_ident(after)?;
-            if !leftover.trim().is_empty() {
-                return Err("Unexpected tokens after FROM TABLE".to_string());
-            }
-            CreateTypeBody::FromTable {
-                table_namespace_id: table.namespace_id,
-                table_name:         table.name,
-            }
+            (
+                CreateTypeBody::FromTable {
+                    table_namespace_id: table.namespace_id,
+                    table_name:         table.name,
+                },
+                leftover,
+            )
         } else if rest_upper.starts_with("AS") {
             let after = rest[2..].trim_start();
             if !after.starts_with('(') {
                 return Err("Expected AS ( ... ) composite definition".to_string());
             }
-            CreateTypeBody::Composite {
-                fields: parse_composite_fields(after)?,
-            }
+            let (fields, leftover) = parse_composite_fields(after)?;
+            (CreateTypeBody::Composite { fields }, leftover)
         } else {
             return Err("Expected AS (...), AS ENUM (...), or FROM TABLE".to_string());
         };
+
+        let (comment, leftover) = parse_optional_comment(after_body)?;
+        if !leftover.trim().is_empty() {
+            return Err(format!("Unexpected tokens after type definition '{}'", leftover.trim()));
+        }
 
         Ok(Self {
             type_id: TypeId::from_parts(Some(&namespace_id), &name),
@@ -143,6 +147,7 @@ impl CreateTypeStatement {
             name,
             if_not_exists,
             body,
+            comment,
         })
     }
 }
@@ -254,8 +259,8 @@ pub(crate) fn take_ident(input: &str) -> DdlResult<(String, &str)> {
     Ok((input[..end].to_string(), &input[end..]))
 }
 
-fn parse_enum_labels(input: &str) -> DdlResult<Vec<String>> {
-    let body = strip_parens(input)?;
+fn parse_enum_labels(input: &str) -> DdlResult<(Vec<String>, &str)> {
+    let (body, leftover) = split_parens(input)?;
     if body.trim().is_empty() {
         return Err("ENUM type requires at least one label".to_string());
     }
@@ -263,11 +268,11 @@ fn parse_enum_labels(input: &str) -> DdlResult<Vec<String>> {
     for part in split_top_level(body, ',') {
         labels.push(parse_sql_string(part.trim())?);
     }
-    Ok(labels)
+    Ok((labels, leftover))
 }
 
-fn parse_composite_fields(input: &str) -> DdlResult<Vec<CompositeTypeField>> {
-    let body = strip_parens(input)?;
+fn parse_composite_fields(input: &str) -> DdlResult<(Vec<CompositeTypeField>, &str)> {
+    let (body, leftover) = split_parens(input)?;
     if body.trim().is_empty() {
         return Err("composite type requires at least one field".to_string());
     }
@@ -275,7 +280,7 @@ fn parse_composite_fields(input: &str) -> DdlResult<Vec<CompositeTypeField>> {
     for part in split_top_level(body, ',') {
         fields.push(parse_field(part.trim())?);
     }
-    Ok(fields)
+    Ok((fields, leftover))
 }
 
 fn parse_field(input: &str) -> DdlResult<CompositeTypeField> {
@@ -356,16 +361,52 @@ fn parse_namespace_id(name: &str) -> DdlResult<NamespaceId> {
     NamespaceId::try_parse_reference(name).map_err(|error| error.to_string())
 }
 
-fn strip_parens(input: &str) -> DdlResult<&str> {
+fn split_parens(input: &str) -> DdlResult<(&str, &str)> {
     let input = input.trim();
     if !input.starts_with('(') {
         return Err("Expected '('".to_string());
     }
     let close = matching_paren(input).ok_or_else(|| "Unterminated '('".to_string())?;
-    if !input[close + 1..].trim().is_empty() {
-        return Err("Unexpected tokens after ')'".to_string());
+    Ok((&input[1..close], &input[close + 1..]))
+}
+
+/// Parse `COMMENT 'text'` or `COMMENT = 'text'` if present.
+pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, &str)> {
+    let rest = input.trim_start();
+    if rest.len() < 7 || !rest[..7].eq_ignore_ascii_case("COMMENT") {
+        return Ok((None, rest));
     }
-    Ok(&input[1..close])
+    let after_kw = &rest[7..];
+    if after_kw.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+        return Ok((None, rest));
+    }
+    let mut after = after_kw.trim_start();
+    if after.starts_with('=') {
+        after = after[1..].trim_start();
+    }
+    let (value, leftover) = parse_sql_string_prefix(after)?;
+    Ok((Some(value), leftover))
+}
+
+pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
+    let input = input.trim_start();
+    let mut chars = input.char_indices();
+    let Some((_, '\'')) = chars.next() else {
+        return Err(format!("Expected string literal, got '{input}'"));
+    };
+    let mut out = String::new();
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '\'' {
+            if chars.as_str().starts_with('\'') {
+                chars.next();
+                out.push('\'');
+                continue;
+            }
+            return Ok((out, &input[idx + 1..]));
+        }
+        out.push(ch);
+    }
+    Err("Unterminated string literal".to_string())
 }
 
 pub(crate) fn matching_paren(input: &str) -> Option<usize> {
@@ -539,6 +580,36 @@ mod tests {
             },
             _ => panic!("expected composite"),
         }
+    }
+
+    #[test]
+    fn parse_composite_type_comment() {
+        let stmt = CreateTypeStatement::parse(
+            "CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address'",
+            &ns(),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Postal address"));
+    }
+
+    #[test]
+    fn parse_enum_comment_with_equals() {
+        let stmt = CreateTypeStatement::parse(
+            "CREATE TYPE chat.status AS ENUM ('active', 'blocked') COMMENT = 'Lifecycle state'",
+            &ns(),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Lifecycle state"));
+    }
+
+    #[test]
+    fn parse_from_table_comment() {
+        let stmt = CreateTypeStatement::parse(
+            "CREATE TYPE chat.user FROM TABLE chat.users COMMENT 'Singular row alias'",
+            &ns(),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Singular row alias"));
     }
 
     #[test]

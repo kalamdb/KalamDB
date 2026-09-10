@@ -13,10 +13,8 @@
 //!   KALAMDB_ROOT_PASSWORD - Root password for authentication
 //!     Required for authenticated cluster access
 
-mod common;
-
 /// Cluster-specific common utilities
-mod cluster_common {
+pub(crate) mod cluster_common {
     use std::{
         collections::HashMap,
         sync::{

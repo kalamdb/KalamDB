@@ -148,6 +148,9 @@ pub struct AppContext {
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 
+    // ===== Procedure invocation JSONL =====
+    procedure_log_logger: Arc<crate::procedure_log_logger::ProcedureLogLogger>,
+
     // ===== Manifest Service (unified: memory cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
@@ -201,6 +204,7 @@ impl std::fmt::Debug for AppContext {
             .field("backend_session_manager", &"OnceCell<Arc<BackendSessionManager>>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
+            .field("procedure_log_logger", &"Arc<ProcedureLogLogger>")
             .field("manifest_service", &"Arc<ManifestService>")
             .field("topic_publisher", &"Arc<TopicPublisherService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
@@ -327,8 +331,8 @@ impl AppContext {
             let live_view = system_schema.live_view();
             let sessions_view = system_schema.sessions_view();
             let transactions_view = system_schema.transactions_view();
-            let active_function_runs_view = system_schema.active_function_runs_view();
-            let function_errors_view = system_schema.function_errors_view();
+            let active_procedure_runs_view = system_schema.active_procedure_runs_view();
+            let module_instances_view = system_schema.module_instances_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -418,6 +422,9 @@ impl AppContext {
             let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
                 slow_log_path,
                 config.logging.slow_query_threshold_ms,
+            );
+            let procedure_log_logger = crate::procedure_log_logger::ProcedureLogLogger::new(
+                format!("{}/procedures.jsonl", config.logging.logs_path),
             );
 
             // Create system columns service (Phase 12, US5, T027)
@@ -536,6 +543,7 @@ impl AppContext {
                 base_session_context,
                 system_columns_service,
                 slow_query_logger,
+                procedure_log_logger,
                 manifest_service,
                 file_storage_service,
                 topic_publisher: Arc::clone(&topic_publisher),
@@ -740,13 +748,13 @@ impl AppContext {
                 });
             transactions_view.set_snapshot_callback(transactions_snapshot_callback);
 
-            let app_ctx_for_function_runs = Arc::clone(&app_ctx);
-            active_function_runs_view.set_snapshot_callback(Arc::new(move || {
-                app_ctx_for_function_runs.function_runtime().snapshot_runs()
+            let app_ctx_for_procedure_runs = Arc::clone(&app_ctx);
+            active_procedure_runs_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_procedure_runs.function_runtime().snapshot_runs()
             }));
-            let app_ctx_for_function_errors = Arc::clone(&app_ctx);
-            function_errors_view.set_snapshot_callback(Arc::new(move || {
-                app_ctx_for_function_errors.function_runtime().snapshot_errors()
+            let app_ctx_for_module_instances = Arc::clone(&app_ctx);
+            module_instances_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_module_instances.function_runtime().snapshot_instances()
             }));
 
             let live_query_manager = Arc::new(LiveQueryManager::new(
@@ -931,6 +939,8 @@ impl AppContext {
 
         // Create minimal slow query logger for tests (no async task)
         let slow_query_logger = Arc::new(crate::slow_query_logger::SlowQueryLogger::new_test());
+        let procedure_log_logger =
+            Arc::new(crate::procedure_log_logger::ProcedureLogLogger::new_test());
 
         // Create system columns service with worker_id=0 for tests
         let system_columns_service = Arc::new(crate::schema_registry::SystemColumnsService::new(0));
@@ -1005,6 +1015,7 @@ impl AppContext {
             base_session_context,
             system_columns_service,
             slow_query_logger,
+            procedure_log_logger,
             manifest_service,
             file_storage_service,
             topic_publisher: Arc::clone(&topic_publisher),
@@ -1325,6 +1336,10 @@ impl AppContext {
     /// to a separate slow-query JSONL file for queries exceeding the configured threshold.
     pub fn slow_query_logger(&self) -> Arc<crate::slow_query_logger::SlowQueryLogger> {
         self.slow_query_logger.clone()
+    }
+
+    pub fn procedure_log_logger(&self) -> Arc<crate::procedure_log_logger::ProcedureLogLogger> {
+        self.procedure_log_logger.clone()
     }
 
     /// Get the manifest service (unified: memory cache + RocksDB + cold storage)

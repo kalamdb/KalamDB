@@ -2,9 +2,7 @@
 
 use anyhow::Result;
 
-#[path = "../common/testserver/mod.rs"]
-#[allow(dead_code)]
-mod test_support;
+use crate::test_support;
 
 #[tokio::test]
 async fn test_cluster_node_offline_and_recovery() -> Result<()> {

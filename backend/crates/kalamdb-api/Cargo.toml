@@ -77,7 +77,7 @@ moka = { workspace = true }
 parking_lot = { workspace = true }
 
 [features]
-default = ["embedded-ui"]
+default = []
 embedded-ui = ["rust-embed"]
 
 [build-dependencies]

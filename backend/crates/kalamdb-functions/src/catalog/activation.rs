@@ -87,16 +87,18 @@ impl FunctionActivation {
     /// Persist artifact + revision rows, then CAS the module pointer.
     ///
     /// Interruption after the row writes and before the pointer swap leaves the
-    /// previous revision active.
+    /// previous revision active. `exported_procedure_ids` is stored on the
+    /// immutable revision so `system.procedures` can join module identity.
     pub fn activate(
         &self,
         module_id: FunctionModuleId,
         artifact: CatalogFunctionArtifact,
         contract_hash: impl Into<String>,
         expected_revision_id: Option<&FunctionRevisionId>,
+        exported_procedure_ids: Vec<String>,
     ) -> Result<ActivateFunctionOutcome> {
         let (module, revision, artifact) =
-            Self::prepared_activation(module_id, artifact, contract_hash);
+            Self::prepared_activation(module_id, artifact, contract_hash, exported_procedure_ids);
         self.stores
             .activate_function_revision(module, revision, artifact, expected_revision_id)
             .map_err(map_system_error)
@@ -106,17 +108,19 @@ impl FunctionActivation {
         module_id: FunctionModuleId,
         artifact: CatalogFunctionArtifact,
         contract_hash: impl Into<String>,
+        exported_procedure_ids: Vec<String>,
     ) -> (CatalogFunctionModule, CatalogFunctionRevision, CatalogFunctionArtifact) {
         let revision_id =
             FunctionRevisionId::from_module_artifact(&module_id, &artifact.artifact_id);
         let revision = CatalogFunctionRevision {
-            revision_id:   revision_id.clone(),
-            module_id:     module_id.clone(),
-            artifact_id:   artifact.artifact_id.clone(),
-            contract_hash: contract_hash.into(),
-            abi_version:   ABI_VERSION as i32,
-            runtime:       artifact.runtime,
-            created_at:    now_ms(),
+            revision_id:            revision_id.clone(),
+            module_id:              module_id.clone(),
+            artifact_id:            artifact.artifact_id.clone(),
+            contract_hash:          contract_hash.into(),
+            abi_version:            ABI_VERSION as i32,
+            runtime:                artifact.runtime,
+            created_at:             now_ms(),
+            exported_procedure_ids: normalize_exported_procedure_ids(exported_procedure_ids),
         };
         let module = CatalogFunctionModule {
             module_id,
@@ -199,8 +203,28 @@ impl FunctionActivation {
                 FunctionsError::Invalid(format!("missing function artifact {previous_artifact}"))
             })?;
         let _ = runtime;
-        self.activate(module_id, artifact, contract_hash, expected_revision_id)
+        let revision_id = FunctionRevisionId::from_module_artifact(&module_id, &previous_artifact);
+        let exported_procedure_ids = self
+            .stores
+            .get_function_revision(&revision_id)
+            .map_err(map_system_error)?
+            .map(|revision| revision.exported_procedure_ids)
+            .unwrap_or_default();
+        self.activate(
+            module_id,
+            artifact,
+            contract_hash,
+            expected_revision_id,
+            exported_procedure_ids,
+        )
     }
+}
+
+fn normalize_exported_procedure_ids(ids: Vec<String>) -> Vec<String> {
+    let mut normalized = ids;
+    normalized.sort();
+    normalized.dedup();
+    normalized
 }
 
 fn now_ms() -> i64 {
@@ -291,7 +315,7 @@ mod tests {
             .await
             .unwrap();
         let outcome = activation
-            .activate(module_id.clone(), artifact_v1.clone(), "contract-v1", None)
+            .activate(module_id.clone(), artifact_v1.clone(), "contract-v1", None, Vec::new())
             .unwrap();
         assert_eq!(outcome, ActivateFunctionOutcome::Activated);
 
@@ -314,7 +338,13 @@ mod tests {
         let v1_revision =
             FunctionRevisionId::from_module_artifact(&module_id, &artifact_v1.artifact_id);
         let outcome = activation
-            .activate(module_id.clone(), artifact_v2.clone(), "contract-v2", Some(&v1_revision))
+            .activate(
+                module_id.clone(),
+                artifact_v2.clone(),
+                "contract-v2",
+                Some(&v1_revision),
+                Vec::new(),
+            )
             .unwrap();
         assert_eq!(outcome, ActivateFunctionOutcome::Activated);
 
@@ -323,6 +353,7 @@ mod tests {
             artifact_v1.clone(),
             "contract-v1",
             Some(&v1_revision),
+            Vec::new(),
         );
         assert!(matches!(stale, Err(FunctionsError::StaleRevision { .. })));
         let still_v2 = activation.active_module(&module_id).unwrap().unwrap();
@@ -370,9 +401,10 @@ mod tests {
             .await
             .unwrap();
         activation
-            .activate(module_id.clone(), artifact.clone(), "contract", None)
+            .activate(module_id.clone(), artifact.clone(), "contract", None, Vec::new())
             .unwrap();
-        let outcome = activation.activate(module_id, artifact, "contract", None).unwrap();
+        let outcome =
+            activation.activate(module_id, artifact, "contract", None, Vec::new()).unwrap();
         assert_eq!(outcome, ActivateFunctionOutcome::NoOp);
     }
 
@@ -406,7 +438,7 @@ mod tests {
             .await
             .unwrap();
         activation
-            .activate(module_id.clone(), artifact.clone(), "contract-v1", None)
+            .activate(module_id.clone(), artifact.clone(), "contract-v1", None, Vec::new())
             .unwrap();
         let missing = kalamdb_commons::ArtifactId::new("missing");
         let err = activation

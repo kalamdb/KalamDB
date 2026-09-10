@@ -1,10 +1,6 @@
 //! Test driver for cluster integration tests.
 //!
-//! Run with: cargo test --test test_cluster
-
-// Include the common test support
-#[path = "../common/testserver/mod.rs"]
-mod test_support;
+//! Run with: cargo nextest run -p kalamdb-server --features e2e-tests --test e2e
 
 // Include cluster test modules
 mod test_cluster_basic_operations;

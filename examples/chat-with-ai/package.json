@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Realtime multi-user React chat with SHARED rooms, RLS, and schema-first procedures",
+  "description": "Realtime React chat: SHARED rooms, a USER inbox, and a topic-trigger procedure",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -14,8 +14,8 @@
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
     "drizzle-orm": "^0.45.2",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

@@ -676,18 +676,29 @@ are enabled: schema changes must be covered by a migration before deployment.
 ### Server functions
 
 Declare a bodyless `CREATE PROCEDURE` in your schema and run `kalam schema gen`.
-TypeScript generation creates a one-time implementation scaffold under
-`functions/src/<namespace>/<procedure>.ts` and preserves existing implementations.
-Edit the implementation, then use `kalam deploy` to build and activate the project
-module. See the [README example](../../README.md#deploy-a-function-to-your-backend)
+TypeScript generation writes `procedure.<schema>.<method>` builders and a one-time
+named-export scaffold at `functions/src/<namespace>/<procedure>.ts` for each
+unbound procedure. Existing implementations are preserved. Edit the implementation, then use `kalam deploy`
+to build and activate the project module. See the
+[README example](../../README.md#deploy-a-function-to-your-backend)
 and [SQL procedure reference](../reference/sql.md#create-procedure).
 
 ```bash
 kalam functions build
 kalam functions status --env dev
 kalam functions revisions --env dev
+kalam functions runtime --env dev
 kalam functions logs --env dev
+kalam functions logs api.health --env dev
+kalam functions override api.health
+kalam functions rollback backend:<artifact> --env dev
 ```
+
+`status` prints the current module, every procedure (implementation and
+signature), and function memory/isolate stats. `revisions` lists module
+history with `is_current`. `runtime` lists resident V8 isolates and
+in-flight root calls. `logs` prints recent invocation, V8 console/`ctx.log`, and error records from
+`system.procedure_logs`.
 
 To restore a previously activated revision, use
 `kalam functions rollback <revision> --env dev` with an identifier from

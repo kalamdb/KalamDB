@@ -10,7 +10,10 @@ mod routine_map;
 mod spec;
 
 pub use emit_js::emit_js_bootstrap;
-pub use emit_ts::{emit_typed_functions_host, emit_typescript, TypedRoutine};
+pub use emit_ts::{
+    emit_procedure_builder_dts, emit_procedure_builder_js, emit_typed_functions_host,
+    emit_typescript, TypedRoutine,
+};
 pub use idents::{
     camel_case, method_ident, namespace_object_ident, pascal_case, sanitize_js_ident,
     DEFAULT_NAMESPACE,

@@ -3,7 +3,10 @@
 use kalamdb_commons::models::{NamespaceId, RoutineId, RoutineSecurityMode};
 
 use crate::ddl::{
-    create_type::{parse_type_reference, split_qualified_ident, take_ident, TypeReference},
+    create_type::{
+        parse_optional_comment, parse_sql_string_prefix, parse_type_reference,
+        split_qualified_ident, take_ident, TypeReference,
+    },
     DdlResult,
 };
 
@@ -24,6 +27,7 @@ pub struct CreateProcedureStatement {
     pub language:     Option<String>,
     pub security:     RoutineSecurityMode,
     pub body:         Option<String>,
+    pub comment:      Option<String>,
 }
 
 impl CreateProcedureStatement {
@@ -74,6 +78,7 @@ impl CreateProcedureStatement {
         let mut language = None;
         let mut security = RoutineSecurityMode::Invoker;
         let mut body = None;
+        let mut comment = None;
 
         loop {
             let rest_upper = rest.to_ascii_uppercase();
@@ -102,6 +107,14 @@ impl CreateProcedureStatement {
                 rest = rest["SECURITY DEFINER".len()..].trim_start();
                 continue;
             }
+            {
+                let (parsed, leftover) = parse_optional_comment(rest)?;
+                if parsed.is_some() {
+                    comment = parsed;
+                    rest = leftover.trim_start();
+                    continue;
+                }
+            }
             if rest_upper.starts_with("AS") {
                 let after_as = rest["AS".len()..].trim_start();
                 if looks_like_source_file_mapping(after_as) {
@@ -110,8 +123,10 @@ impl CreateProcedureStatement {
                                 or use LANGUAGE with an inline body"
                         .to_string());
                 }
-                body = Some(parse_procedure_body(after_as)?);
-                break;
+                let (parsed_body, leftover) = parse_procedure_body(after_as)?;
+                body = Some(parsed_body);
+                rest = leftover.trim_start();
+                continue;
             }
             if rest.is_empty() {
                 break;
@@ -143,6 +158,7 @@ impl CreateProcedureStatement {
             language,
             security,
             body,
+            comment,
         })
     }
 }
@@ -175,17 +191,17 @@ fn looks_like_source_file_mapping(input: &str) -> bool {
     false
 }
 
-fn parse_procedure_body(input: &str) -> DdlResult<String> {
+fn parse_procedure_body(input: &str) -> DdlResult<(String, &str)> {
     let input = input.trim();
     if input.starts_with("$$") {
         let rest = &input[2..];
         let end = rest
             .find("$$")
             .ok_or_else(|| "Unterminated dollar-quoted procedure body".to_string())?;
-        return Ok(rest[..end].to_string());
+        return Ok((rest[..end].to_string(), &rest[end + 2..]));
     }
     if input.starts_with('\'') {
-        return crate::ddl::create_type::parse_sql_string(input);
+        return parse_sql_string_prefix(input);
     }
     Err("Procedure body must be dollar-quoted ($$ ... $$) or a string literal".to_string())
 }
@@ -277,6 +293,43 @@ mod tests {
         assert_eq!(stmt.routine_id.as_str(), "api.create_order");
         assert_eq!(stmt.security, RoutineSecurityMode::Definer);
         assert!(stmt.language.is_none());
+        assert!(stmt.body.is_none());
+    }
+
+    #[test]
+    fn parse_procedure_comment_before_body() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.health() RETURNS TEXT COMMENT 'Liveness probe' LANGUAGE \
+             JAVASCRIPT AS $$ return \"ok\"; $$",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Liveness probe"));
+        assert_eq!(stmt.language.as_deref(), Some("JAVASCRIPT"));
+    }
+
+    #[test]
+    fn parse_procedure_comment_after_body() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
+             $$ COMMENT 'Liveness probe'",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Liveness probe"));
+    }
+
+    #[test]
+    fn parse_bodyless_procedure_comment() {
+        let stmt = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE api.create_order(request api.create_order_request)
+             RETURNS api.create_order_result
+             COMMENT 'Place an order'
+             SECURITY DEFINER",
+            &NamespaceId::new("app"),
+        )
+        .unwrap();
+        assert_eq!(stmt.comment.as_deref(), Some("Place an order"));
         assert!(stmt.body.is_none());
     }
 

@@ -1,11 +1,13 @@
 //! Shared workflow SQL execution helpers.
 
-use kalam_client::{HttpVersion, KalamLinkClient, QueryResponse};
+use kalam_client::{HttpVersion, KalamLinkClient, QueryResponse, TimestampFormatter};
 use kalamdb_commons::NamespaceId;
 
 use crate::{
     error::{CLIError, Result},
+    formatter::OutputFormatter,
     output::WorkflowOutput,
+    session::OutputFormat,
     sql_batch,
     workflow::{
         auth::resolve_workflow_auth_provider, project::resolve::ResolvedEnvironment,
@@ -92,9 +94,46 @@ pub(crate) async fn execute_single_statement(
     namespace: Option<&str>,
     failure_prefix: &str,
 ) -> Result<()> {
+    let _ = execute_query(client, sql, namespace, failure_prefix).await?;
+    Ok(())
+}
+
+pub(crate) async fn execute_and_print(
+    ctx: &WorkflowContext,
+    client: &KalamLinkClient,
+    sql: &str,
+    namespace: Option<&str>,
+    failure_prefix: &str,
+) -> Result<()> {
+    let response = execute_query(client, sql, namespace, failure_prefix).await?;
+    let format = if ctx.json {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Table
+    };
+    let formatter = OutputFormatter::new(
+        format,
+        ctx.use_color && !ctx.json,
+        TimestampFormatter::new(ctx.cli_config.to_connection_options().timestamp_format),
+    );
+    let rendered = formatter.format_response(&response)?;
+    if rendered.ends_with('\n') {
+        print!("{rendered}");
+    } else {
+        println!("{rendered}");
+    }
+    Ok(())
+}
+
+async fn execute_query(
+    client: &KalamLinkClient,
+    sql: &str,
+    namespace: Option<&str>,
+    failure_prefix: &str,
+) -> Result<QueryResponse> {
     let response = client.execute_query(sql, None, None, namespace).await?;
     if response.success() {
-        return Ok(());
+        return Ok(response);
     }
 
     Err(CLIError::ConfigurationError(format!(

@@ -15,6 +15,7 @@ pub mod alter_type;
 pub mod backup_namespace;
 pub mod call;
 pub mod column_default;
+pub mod comment;
 pub mod compact_commands;
 pub mod create_index;
 pub mod create_namespace;
@@ -69,6 +70,7 @@ pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates
 pub use alter_type::{AlterTypeOperation, AlterTypeStatement};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use call::CallStatement;
+pub use comment::{CommentOnStatement, CommentOnTarget};
 pub use compact_commands::{CompactAllTablesStatement, CompactTableStatement};
 pub use create_index::parse_create_index_on;
 pub use create_namespace::CreateNamespaceStatement;

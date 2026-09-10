@@ -1,10 +1,6 @@
 //! Host callbacks injected into a V8 isolate. Implemented by `kalamdb-core`.
 
-use std::{
-    future::Future,
-    pin::Pin,
-    time::Duration,
-};
+use std::{future::Future, pin::Pin, time::Duration};
 
 use datafusion_common::ScalarValue;
 

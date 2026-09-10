@@ -81,6 +81,7 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
 
 fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
     let mut out = Vec::new();
+    let mut recreated = false;
     match (&current.kind, &target.kind) {
         (
             ContractTypeKind::Composite { fields: before },
@@ -122,12 +123,17 @@ fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
         {
             out.push(format!("DROP TYPE {};", current.type_id));
             out.push(emit_create_type(target));
+            recreated = true;
         },
         (left, right) if left != right => {
             out.push(format!("DROP TYPE {};", current.type_id));
             out.push(emit_create_type(target));
+            recreated = true;
         },
         _ => {},
+    }
+    if !recreated && current.comment != target.comment {
+        out.push(emit_comment_on("TYPE", target.type_id.as_str(), target.comment.as_deref()));
     }
     out
 }
@@ -141,6 +147,12 @@ fn diff_routine(current: &ContractRoutine, target: &ContractRoutine) -> Vec<Stri
         || current.body.as_deref().map(str::trim) != target.body.as_deref().map(str::trim);
     if signature_changed {
         out.push(emit_create_procedure(target));
+    } else if current.comment != target.comment {
+        out.push(emit_comment_on(
+            "PROCEDURE",
+            target.routine_id.as_str(),
+            target.comment.as_deref(),
+        ));
     }
     for grant in target.grants.difference(&current.grants) {
         out.push(format!(
@@ -160,21 +172,22 @@ fn diff_routine(current: &ContractRoutine, target: &ContractRoutine) -> Vec<Stri
 }
 
 fn emit_create_type(ty: &ContractType) -> String {
+    let comment = emit_comment_clause(ty.comment.as_deref());
     match &ty.kind {
         ContractTypeKind::Composite { fields } => {
             let body = fields.iter().map(emit_field).collect::<Vec<_>>().join(",\n  ");
-            format!("CREATE TYPE {} AS (\n  {}\n);", ty.type_id, body)
+            format!("CREATE TYPE {} AS (\n  {}\n){};", ty.type_id, body, comment)
         },
         ContractTypeKind::Enum { labels } => {
             let labels = labels
                 .iter()
-                .map(|label| format!("'{}'", label.replace('\'', "''")))
+                .map(|label| format!("'{}'", escape_sql_string(label)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("CREATE TYPE {} AS ENUM ({});", ty.type_id, labels)
+            format!("CREATE TYPE {} AS ENUM ({}){};", ty.type_id, labels, comment)
         },
         ContractTypeKind::RowAlias { source } => {
-            format!("CREATE TYPE {} FROM TABLE {};", ty.type_id, source)
+            format!("CREATE TYPE {} FROM TABLE {}{};", ty.type_id, source, comment)
         },
         ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::TopicPayload { .. } => {
             String::new()
@@ -195,6 +208,11 @@ fn emit_create_procedure(routine: &ContractRoutine) -> String {
     }
     sql.push_str("\nSECURITY ");
     sql.push_str(routine.security.as_str());
+    if let Some(comment) = &routine.comment {
+        sql.push_str("\nCOMMENT '");
+        sql.push_str(&escape_sql_string(comment));
+        sql.push('\'');
+    }
     if let Some(body) = &routine.body {
         sql.push_str("\nAS $$");
         sql.push_str(body);
@@ -202,6 +220,24 @@ fn emit_create_procedure(routine: &ContractRoutine) -> String {
     }
     sql.push(';');
     sql
+}
+
+fn emit_comment_clause(comment: Option<&str>) -> String {
+    match comment {
+        Some(text) => format!(" COMMENT '{}'", escape_sql_string(text)),
+        None => String::new(),
+    }
+}
+
+fn emit_comment_on(kind: &str, id: &str, comment: Option<&str>) -> String {
+    match comment {
+        Some(text) => format!("COMMENT ON {kind} {id} IS '{}';", escape_sql_string(text)),
+        None => format!("COMMENT ON {kind} {id} IS NULL;"),
+    }
+}
+
+fn escape_sql_string(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn emit_create_trigger(trigger: &ContractTrigger) -> String {

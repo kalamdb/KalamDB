@@ -367,6 +367,7 @@ fn function_rows(
         abi_version: 1,
         runtime: FunctionRuntime::Typescript,
         created_at: 1,
+        exported_procedure_ids: vec!["chat.send_message".to_string()],
     };
     let module = CatalogFunctionModule {
         module_id,
@@ -382,10 +383,13 @@ fn function_rows(
 fn function_revision_cas_and_interruption_leave_old_active() {
     let stores = stores();
     let (module_v1, revision_v1, artifact_v1) = function_rows("aaa");
+    let v1_revision_id = revision_v1.revision_id.clone();
     let outcome = stores
         .activate_function_revision(module_v1.clone(), revision_v1, artifact_v1, None)
         .unwrap();
     assert_eq!(outcome, ActivateFunctionOutcome::Activated);
+    let stored_v1 = stores.get_function_revision(&v1_revision_id).unwrap().unwrap();
+    assert_eq!(stored_v1.exported_procedure_ids, vec!["chat.send_message".to_string()]);
 
     let (module_v2, revision_v2, artifact_v2) = function_rows("bbb");
     stores.upsert_function_artifact(artifact_v2.clone()).unwrap();

@@ -42,7 +42,7 @@ Technical approach: publish an immutable **`ActiveFunctionSet`** (atomic pointer
 | **II. Boundary Ownership** | V8/ABI/pool → `kalamdb-functions`. Host SQL/ACL/tx → `kalamdb-core`. Catalog → `kalamdb-system`. Artifacts → `kalamdb-filestore`. Transfer codec → `kalamdb-serialization` (not a functions-owned persistence fork). HTTP → `kalamdb-api`. Dialect → `kalamdb-dialect`. CLI generate/build/deploy → `cli`. Config → `kalamdb-configs`. Metrics → `kalamdb-observability`. | PASS |
 | **III. Minimal Dependency Expansion** | Two small crates (`arc-swap`, `smallvec`). Wasmtime is not a workspace dependency. No Deno/QuickJS/tsc-in-server. | PASS |
 | **IV. Validation Ships Together** | Each stage has an executable gate (see Migration Strategy). Security, pool-leak, revision-pin, inline-override, and CLI e2e are required before complete. Docs: `docs/reference/sql.md`, ADR-021 amendment, CLI help; user-facing SQL/CLI also update `../kalamdb-skills` when those paths are reachable. | PASS |
-| **V. Composable APIs** | One `runtime.d.ts` + `defineProcedure` shared by inline and project. `FunctionRuntime` trait is **minimal** so core does not know V8. Not a UI-framework concern. | PASS |
+| **V. Composable APIs** | One `runtime.d.ts` + generated `procedure` builders shared by inline and project. `FunctionRuntime` trait is **minimal** so core does not know V8. Not a UI-framework concern. | PASS |
 
 **Post-design re-check**: Data model keeps one module revision, catalog inline fields (not per-routine modules), in-memory active set, and serialization-crate ownership of FlatBuffer transfer. No second transaction coordinator. PASS.
 

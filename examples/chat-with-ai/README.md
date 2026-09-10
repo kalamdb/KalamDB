@@ -1,45 +1,39 @@
 # Chat With AI
 
-Realtime React chat on KalamDB. SHARED rooms with `CREATE POLICY`, a personal USER inbox, a STREAM of copilot progress, and a **topic trigger** that runs inside the database. There is no separate agent process.
-
-Start from an empty folder with:
+Realtime React chat on KalamDB. SHARED rooms with `CREATE POLICY`, a personal USER inbox, STREAM copilot progress, and a **topic trigger** that runs inside the database. There is no separate agent process.
 
 ```bash
-kalam init --list-templates --json
 kalam init --yes --template chat-with-ai --languages typescript --package-manager npm
 kalam dev
 ```
 
-Use `--template react-ai-chat` instead when you want a **personal** AI assistant with approvals (USER tables, no room membership).
+Use `--template react-ai-chat` when you want a personal assistant with approvals.
 
 ## Quick Start
 
-From this folder, with a current Kalam CLI (`kalam self-update`, or `../../target/debug/kalam` from the repo):
+From this folder, use the **0.7+ CLI from this repo**. A 0.6 `kalam` on PATH
+(`~/.kalam/bin/kalam`) overwrites `src/generated/kalam.ts` and the app fails with
+`does not provide an export named 'createKalam'`.
 
 ```bash
 npm install
-kalam dev
+../../target/debug/kalam schema gen
+../../target/debug/kalam dev
 ```
 
-`kalam dev` starts a local KalamDB server, applies `kalam/schema.sql`, keeps `kalam/migrations/` up to date, regenerates `src/generated/kalam.ts`, builds TypeScript procedures (via the project's `esbuild` from `npm install`) and activates them, and runs the Vite app:
+`kalam dev` starts a local server, applies `kalam/schema.sql`, generates `src/generated/kalam.ts`, builds the TypeScript procedures, and runs Vite:
 
 ```toml
 [dev.processes]
 app = "npm run dev"
 ```
 
-Open the Vite URL, usually `http://127.0.0.1:5174`.
-
-Default local credentials are `root` / `kalamdb123` at `http://127.0.0.1:2900`. Seed data adds `root` and `admin` to the `main` room. The Vite app signs in as `root` unless you set `KALAM_USER` / `VITE_KALAM_USER`.
-
-To wipe local database state and start over:
+Open the Vite URL, usually `http://127.0.0.1:5174`. Sign-in defaults are `root` / `kalamdb123` at `http://127.0.0.1:2900`. Set `VITE_KALAM_USER` to chat as someone else.
 
 ```bash
 kalam db reset
 kalam dev
 ```
-
-Production-shaped deploys use the same schema and procedures:
 
 ```bash
 kalam deploy
@@ -47,37 +41,19 @@ kalam deploy
 
 ## What It Does
 
-1. The browser calls `chat_demo.join_room` (SHARED rooms + membership).
-2. Sending a message calls `chat_demo.send_message` — `'room'` writes the SHARED transcript, `'direct'` writes your USER inbox.
-3. `CREATE POLICY` keeps each user inside rooms they belong to.
-4. Topic `chat_demo.ai_inbox` receives those INSERTs.
-5. Trigger `chat_demo.process_user_message` runs `chat_demo.on_user_message` inside KalamDB.
-6. The procedure writes STREAM rows to `chat_demo.agent_events` (visible in the chatting user's sessions), then one assistant reply.
-7. Every member tab sees the committed reply through live queries. The sender's tabs also see the STREAM typing preview.
+1. The browser calls `chat_demo.join_room`.
+2. Sending calls `chat_demo.send_message` (`room` → SHARED transcript, `direct` → USER inbox).
+3. Topic `chat_demo.ai_inbox` fans those INSERTs to `chat_demo.on_user_message`.
+4. The procedure writes STREAM rows, then one assistant reply.
+5. `liveTable` keeps every tab in sync.
 
-There is no external AI API call. The procedure returns a deterministic demo reply so the example is easy to run locally.
+The reply is deterministic so the example runs without an external AI API.
 
-## What To Try
-
-Type a short message such as:
-
-```text
-latency spike after deploy
-```
-
-You should see your user row, live copilot progress, and then a final `AI reply:` row in the same chat thread. Open a second browser tab to see the live updates arrive there too. Use **Personal** to talk to the copilot in your USER table instead of the shared room.
-
-## The Tiny Write Path
-
-Join the room, then send through the generated procedure client (`kalam schema gen`):
+## The Write Path
 
 ```ts
 await api.chatDemo.joinRoom({ room_id: ROOM });
-await api.chatDemo.sendMessage({
-  target: 'room',
-  target_id: ROOM,
-  content,
-});
+await api.chatDemo.sendMessage({ target: 'room', target_id: ROOM, content });
 ```
 
 Personal inbox:
@@ -92,18 +68,14 @@ await api.chatDemo.sendMessage({
 
 ## Files Worth Reading
 
-- `kalam.toml`: `kalam dev` project config. TypeScript output is `src/generated/kalam.ts`.
-- `kalam/schema.sql`: SHARED rooms, USER inbox, policies, STREAM events, procedures, trigger, and seed data.
-- `kalam/migrations/0001_init.sql`: initial bootstrap migration.
-- `functions/src/chat_demo/`: `join_room`, `send_message`, and the topic-trigger handler.
-- `src/App.tsx`: live queries and the send form.
-- `src/db.ts`: one authenticated client plus `createKalam(client)`.
-- `src/generated/kalam.ts`: generated by `kalam schema gen` (do not edit).
-- `tests/chat.spec.mjs`: browser end-to-end test.
+- `kalam/schema.sql` — tables, policies, procedures, trigger
+- `functions/src/chat_demo/` — `join_room`, `send_message`, `on_user_message`
+- `src/App.tsx` — `liveTable` + the send form
+- `src/db.ts` — `createClient` + `createKalam(client)`
 
 ## Tests
 
-With a KalamDB server available (and functions activated via `kalam dev` or `kalam functions build`):
+With a KalamDB server available (and functions activated via `kalam dev`):
 
 ```bash
 npm test

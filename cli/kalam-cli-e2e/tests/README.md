@@ -64,6 +64,7 @@ Data flushing from hot (RocksDB) to cold (Parquet) storage.
 Hot/cold storage transitions and storage management.
 - `test_hot_cold_storage.rs` - Storage transition tests
 - `test_storage_lifecycle.rs` - Complete storage lifecycle workflows
+- `minio/` - S3/MinIO tests (`cargo test -p kalam-cli-e2e --test storage --features cloud-aws`)
 
 **Run with**: `cargo test -p kalam-cli-e2e --test storage`
 
@@ -153,37 +154,37 @@ Opt-in performance regression tests that measure a running server without auto-s
 
 ### Run All Tests
 ```bash
-cargo test -p kalam-cli-e2e
+cargo nextest run -p kalam-cli-e2e --test e2e
 ```
 
 ### Run Specific Category
 ```bash
-cargo test -p kalam-cli-e2e --test usecases
-cargo test -p kalam-cli-e2e --test users
-cargo test -p kalam-cli-e2e --test auth
-cargo test -p kalam-cli-e2e --test cli
-cargo test -p kalam-cli-e2e --test subscription
-cargo test -p kalam-cli-e2e --test tables
-cargo test -p kalam-cli-e2e --test flushing
-cargo test -p kalam-cli-e2e --test storage
-cargo test -p kalam-cli-e2e --test smoke
-cargo nextest run -p kalam-cli-e2e --test performance --run-ignored ignored-only
+cargo nextest run -p kalam-cli-e2e --test e2e usecases
+cargo nextest run -p kalam-cli-e2e --test e2e users
+cargo nextest run -p kalam-cli-e2e --test e2e auth
+cargo nextest run -p kalam-cli-e2e --test e2e cli
+cargo nextest run -p kalam-cli-e2e --test e2e subscription
+cargo nextest run -p kalam-cli-e2e --test e2e tables
+cargo nextest run -p kalam-cli-e2e --test e2e flushing
+cargo nextest run -p kalam-cli-e2e --test e2e storage
+cargo nextest run -p kalam-cli-e2e --test e2e smoke
+cargo nextest run -p kalam-cli-e2e --test e2e performance --run-ignored ignored-only
 ```
 
 ### Run Specific Smoke Test Subcategory
 ```bash
-cargo test -p kalam-cli-e2e --test smoke usecases
-cargo test -p kalam-cli-e2e --test smoke auth
-cargo test -p kalam-cli-e2e --test smoke subscription
-cargo test -p kalam-cli-e2e --test smoke flushing
-cargo test -p kalam-cli-e2e --test smoke ddl
+cargo nextest run -p kalam-cli-e2e --test e2e usecases
+cargo nextest run -p kalam-cli-e2e --test e2e smoke
+cargo nextest run -p kalam-cli-e2e --test e2e subscription
+cargo nextest run -p kalam-cli-e2e --test e2e flushing
+cargo nextest run -p kalam-cli-e2e --test e2e ddl
 ```
 
 ### Run Individual Test
 ```bash
-cargo test -p kalam-cli-e2e --test cli test_cli_connection
-cargo test -p kalam-cli-e2e --test subscription test_cli_live_query_basic
-cargo test -p kalam-cli-e2e --test usecases test_chat_simulation
+cargo nextest run -p kalam-cli-e2e --test e2e test_cli_connection
+cargo nextest run -p kalam-cli-e2e --test e2e test_cli_live_query_basic
+cargo nextest run -p kalam-cli-e2e --test e2e test_chat_simulation
 ```
 
 ## Test Requirements
@@ -206,7 +207,7 @@ Smoke tests are critical for ensuring basic functionality. **Always ensure smoke
 Run smoke tests:
 ```bash
 cd cli
-cargo test -p kalam-cli-e2e --test smoke
+cargo nextest run -p kalam-cli-e2e --test e2e smoke
 ```
 
 ## Adding New Tests

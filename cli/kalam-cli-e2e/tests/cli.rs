@@ -8,8 +8,6 @@
 //   cargo test --test cli test_cli_auth
 //   cargo test --test cli test_cli_auth_admin
 
-mod common;
-
 #[path = "cli/test_cli.rs"]
 mod test_cli;
 
@@ -35,7 +33,7 @@ mod test_project_workflow_init;
 mod test_project_workflow_schema;
 
 #[path = "cli/test_project_workflow_dev.rs"]
-mod test_project_workflow_dev;
+pub(crate) mod test_project_workflow_dev;
 
 #[path = "cli/test_project_workflow_agent.rs"]
 mod test_project_workflow_agent;

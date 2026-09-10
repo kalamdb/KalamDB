@@ -14,7 +14,6 @@
 // category
 //
 // Unit tests (no server required):
-mod common;
 #[path = "connection/concurrent_ws_tests.rs"]
 mod concurrent_ws_tests;
 #[path = "connection/connection_options_tests.rs"]

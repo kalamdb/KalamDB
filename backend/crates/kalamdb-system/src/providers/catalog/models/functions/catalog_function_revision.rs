@@ -21,7 +21,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "module:artifact"
     )]
-    pub revision_id:   FunctionRevisionId,
+    pub revision_id:            FunctionRevisionId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -31,7 +31,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "Parent module"
     )]
-    pub module_id:     FunctionModuleId,
+    pub module_id:              FunctionModuleId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -41,7 +41,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "Content-addressed artifact"
     )]
-    pub artifact_id:   ArtifactId,
+    pub artifact_id:            ArtifactId,
     #[column(
         id = 4,
         ordinal = 4,
@@ -51,7 +51,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "Contract snapshot hash"
     )]
-    pub contract_hash: String,
+    pub contract_hash:          String,
     #[column(
         id = 5,
         ordinal = 5,
@@ -61,7 +61,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "Host ABI version"
     )]
-    pub abi_version:   i32,
+    pub abi_version:            i32,
     #[column(
         id = 6,
         ordinal = 6,
@@ -71,7 +71,7 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "typescript"
     )]
-    pub runtime:       FunctionRuntime,
+    pub runtime:                FunctionRuntime,
     #[column(
         id = 7,
         ordinal = 7,
@@ -81,7 +81,18 @@ pub struct CatalogFunctionRevision {
         default = "None",
         comment = "Revision create time (ms)"
     )]
-    pub created_at:    i64,
+    pub created_at:             i64,
+    #[column(
+        id = 8,
+        ordinal = 8,
+        data_type(KalamDataType::Json),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Procedure IDs exported by this revision"
+    )]
+    #[serde(default)]
+    pub exported_procedure_ids: Vec<String>,
 }
 
 impl kalamdb_commons::KSerializable for CatalogFunctionRevision {}

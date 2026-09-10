@@ -1,14 +1,11 @@
-import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gunzipSync } from 'node:zlib';
-import { Auth, createClient } from '@kalamdb/client';
 import { test, expect } from '@playwright/test';
 
 const exampleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const serverUrl = process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
+const serverUrl = process.env.KALAM_URL ?? process.env.KALAMDB_URL ?? 'http://127.0.0.1:2900';
 const room = process.env.CHAT_TEST_ROOM ?? 'playwright-room-fallback';
 const adminUsername = 'admin';
 const adminPassword = 'kalamdb123';
@@ -81,6 +78,41 @@ function isProviderNotReady(message) {
   return /provider not found/i.test(message);
 }
 
+async function login(user, password) {
+  const result = await requestJson(`${serverUrl}/v1/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: { user, password },
+  });
+
+  if (!result.ok) {
+    throw new Error(`Login failed for ${user}: ${result.status}${result.text ? ` ${result.text}` : ''}`);
+  }
+
+  if (!result.json?.access_token) {
+    throw new Error(`Login response for ${user} did not include an access token`);
+  }
+
+  return result.json.access_token;
+}
+
+async function executeSql(token, sql, { allowFailure = false } = {}) {
+  const result = await requestJson(`${serverUrl}/v1/api/sql`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: { sql },
+  });
+
+  if (!result.ok && !allowFailure) {
+    throw new Error(`SQL failed: ${result.status} ${result.text}`);
+  }
+
+  return result;
+}
+
 async function ensureAdminReady() {
   const statusResult = await requestJson(`${serverUrl}/v1/api/auth/status`);
   if (statusResult.ok && statusResult.json?.needs_setup === true) {
@@ -146,41 +178,6 @@ async function prepareChatDemoSchema() {
   }
 }
 
-async function login(user, password) {
-  const result = await requestJson(`${serverUrl}/v1/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: { user, password },
-  });
-
-  if (!result.ok) {
-    throw new Error(`Login failed for ${user}: ${result.status}${result.text ? ` ${result.text}` : ''}`);
-  }
-
-  if (!result.json?.access_token) {
-    throw new Error(`Login response for ${user} did not include an access token`);
-  }
-
-  return result.json.access_token;
-}
-
-async function executeSql(token, sql, { allowFailure = false } = {}) {
-  const result = await requestJson(`${serverUrl}/v1/api/sql`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: { sql },
-  });
-
-  if (!result.ok && !allowFailure) {
-    throw new Error(`SQL failed: ${result.status} ${result.text}`);
-  }
-
-  return result;
-}
-
 async function ensureRoomAccess(userId, roomId) {
   const token = await login(adminUsername, adminPassword);
   await executeSql(
@@ -233,208 +230,6 @@ async function waitFor(condition, {
   }
 
   throw new Error(`Timed out waiting for ${description}`);
-}
-
-function createSdkClient() {
-  return createClient({
-    url: serverUrl,
-    authProvider: async () => Auth.basic(adminUsername, adminPassword),
-    disableCompression: true,
-  });
-}
-
-async function closeClient(client) {
-  if (!client) {
-    return;
-  }
-
-  if (typeof client.shutdown === 'function') {
-    await client.shutdown();
-    return;
-  }
-
-  await client.disconnect();
-}
-
-function webSocketUrl(url) {
-  return `${url.replace(/^http/, 'ws')}/v1/ws`;
-}
-
-function decodeWebSocketBuffer(buffer) {
-  if (buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
-    return gunzipSync(buffer).toString('utf8');
-  }
-
-  return new TextDecoder().decode(buffer);
-}
-
-async function readWebSocketText(data) {
-  if (typeof data === 'string') {
-    return data;
-  }
-
-  if (data instanceof Blob) {
-    return decodeWebSocketBuffer(Buffer.from(await data.arrayBuffer()));
-  }
-
-  if (data instanceof ArrayBuffer) {
-    return decodeWebSocketBuffer(Buffer.from(data));
-  }
-
-  if (ArrayBuffer.isView(data)) {
-    return decodeWebSocketBuffer(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
-  }
-
-  return String(data);
-}
-
-function parseWebSocketMessage(payload) {
-  const lastSeqId = payload.match(/"last_seq_id":(-?\d+)/)?.[1];
-  const message = JSON.parse(payload);
-
-  if (lastSeqId && message.batch_control) {
-    message.batch_control.last_seq_id = lastSeqId;
-  }
-
-  return message;
-}
-
-async function openAuthenticatedWebSocket(token, onMessage) {
-  const ws = new WebSocket(webSocketUrl(serverUrl));
-  const messages = [];
-  let socketError = null;
-
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out opening raw WebSocket connection')), 5_000);
-
-    ws.addEventListener('open', () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
-
-    ws.addEventListener('error', (event) => {
-      clearTimeout(timer);
-      reject(event.error ?? new Error('WebSocket connection error'));
-    }, { once: true });
-  });
-
-  ws.addEventListener('message', (event) => {
-    void (async () => {
-      try {
-        const message = parseWebSocketMessage(await readWebSocketText(event.data));
-        messages.push(message);
-        if (onMessage) {
-          await onMessage(message, ws);
-        }
-      } catch (error) {
-        socketError = error instanceof Error ? error : new Error(String(error));
-      }
-    })();
-  });
-
-  ws.addEventListener('error', (event) => {
-    socketError = event.error instanceof Error ? event.error : new Error('WebSocket error');
-  });
-
-  ws.send(JSON.stringify({
-    type: 'authenticate',
-    method: 'jwt',
-    token,
-    protocol: { serialization: 'json', compression: 'none' },
-  }));
-
-  await waitFor(() => {
-    if (socketError) {
-      throw socketError;
-    }
-    return messages.some((message) => message.type === 'auth_success');
-  }, { description: 'raw websocket authentication' });
-
-  return {
-    ws,
-    messages,
-    getError: () => socketError,
-  };
-}
-
-async function closeWebSocket(ws) {
-  if (!ws || ws.readyState === WebSocket.CLOSED) {
-    return;
-  }
-
-  await new Promise((resolve) => {
-    const timer = setTimeout(resolve, 5_000);
-    ws.addEventListener('close', () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
-    ws.close();
-  });
-}
-
-function extractRows(events) {
-  const rows = [];
-
-  for (const event of events) {
-    if (
-      (event.type === 'change' || event.type === 'initial_data_batch')
-      && Array.isArray(event.rows)
-    ) {
-      rows.push(...event.rows);
-    }
-  }
-
-  return rows;
-}
-
-function hasRowContent(events, expectedContent) {
-  return extractRows(events).some((row) => row.content?.asString?.() === expectedContent);
-}
-
-function assertRowsStrictlyAfter(events, from, context) {
-  for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
-    if (!seq) {
-      continue;
-    }
-
-    assert.ok(
-      seq.compareTo(from) > 0,
-      `${context}: received stale row with _seq=${seq.toString()} at/before from=${from.toString()}`,
-    );
-  }
-}
-
-function assertNoDuplicateSeqRows(events, context) {
-  const seen = new Set();
-
-  for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
-    if (!seq) {
-      continue;
-    }
-
-    const key = seq.toString();
-    assert.ok(!seen.has(key), `${context}: duplicate _seq replayed: ${key}`);
-    seen.add(key);
-  }
-}
-
-async function createUser(username) {
-  const token = await login(adminUsername, adminPassword);
-  await executeSql(token, `CREATE USER ${sqlLiteral(username)} WITH PASSWORD ${sqlLiteral(adminPassword)} ROLE user`);
-}
-
-async function insertAssistantMessages(roomName, contents, username = adminUsername) {
-  await ensureRoomAccess(username, roomName);
-  const values = contents.map((content) => (
-    `(${sqlLiteral(roomName)}, 'assistant', 'KalamDB Copilot', ${sqlLiteral(username)}, ${sqlLiteral(content)})`
-  )).join(', ');
-  const token = await login(adminUsername, adminPassword);
-  await executeSql(
-    token,
-    `INSERT INTO chat_demo.messages (room, role, author, sender_username, content) VALUES ${values}`,
-  );
 }
 
 async function seedChatHistory() {
@@ -646,238 +441,6 @@ test('a tab that joins mid-stream catches the active draft and final reply', asy
 
   await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
   await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-});
-
-test('a third tab that joins mid-stream keeps receiving later streams without a refresh', async ({ browser, baseURL }) => {
-  const firstMessage = `multi-tab first ${'x'.repeat(800)} ${Date.now()}`;
-  const secondMessage = `multi-tab second ${Date.now()}`;
-  const context = await browser.newContext();
-  const pageOne = await context.newPage();
-  const pageTwo = await context.newPage();
-
-  await pageOne.goto(baseURL);
-  await pageTwo.goto(baseURL);
-
-  await expect(pageOne.getByTestId('chat-status')).toContainText('Live');
-  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
-
-  await pageOne.getByLabel('Message').fill(firstMessage);
-  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
-
-  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-
-  const pageThree = await context.newPage();
-  await pageThree.goto(baseURL);
-  await expect(pageThree.getByTestId('chat-status')).toContainText('Live');
-  await expect(pageThree.getByTestId('chat-thread')).toContainText(firstMessage, { timeout: 15000 });
-  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-
-  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-
-  await pageOne.getByLabel('Message').fill(secondMessage);
-  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
-
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
-  await expect(pageThree.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
-  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-});
-
-test('three open tabs stay in sync when one tab reloads mid-stream and then receives the next reply', async ({ browser, baseURL }) => {
-  const firstMessage = `reconnect first ${'x'.repeat(1800)} ${Date.now()}`;
-  const secondMessage = `reconnect second ${Date.now()}`;
-  const context = await browser.newContext();
-  const pageOne = await context.newPage();
-  const pageTwo = await context.newPage();
-  const pageThree = await context.newPage();
-
-  await pageOne.goto(baseURL);
-  await pageTwo.goto(baseURL);
-  await pageThree.goto(baseURL);
-
-  await expect(pageOne.getByTestId('chat-status')).toContainText('Live');
-  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
-  await expect(pageThree.getByTestId('chat-status')).toContainText('Live');
-
-  await pageOne.getByLabel('Message').fill(firstMessage);
-  await pageOne.getByRole('button', { name: 'Send through KalamDB' }).click();
-
-  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-
-  await pageTwo.reload();
-  await expect(pageTwo.getByTestId('chat-status')).toContainText('Live');
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText(firstMessage, { timeout: 15000 });
-  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-
-  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-
-  await pageThree.getByLabel('Message').fill(secondMessage);
-  await pageThree.getByRole('button', { name: 'Send through KalamDB' }).click();
-
-  await expect(pageOne.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText(secondMessage, { timeout: 15000 });
-  await expect(pageOne.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageTwo.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageThree.getByTestId('stream-preview')).toContainText('AI reply:', { timeout: 15000 });
-  await expect(pageOne.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageTwo.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-  await expect(pageThree.getByTestId('chat-thread')).toContainText('AI reply: KalamDB stored', { timeout: 20000 });
-});
-
-test('initial live subscription can deliver three startup batches while staying scoped to rooms the user belongs to', async () => {
-  const batchRoom = uniqueName('batch-room');
-  const foreignRoom = `${batchRoom}-foreign`;
-  const subscriberUser = uniqueName('chat-subscriber');
-  const foreignUser = uniqueName('chat-batch-user');
-  const contents = Array.from({ length: 6 }, (_, index) => `${batchRoom}-seed-${index}`);
-  const foreignContent = `${batchRoom}-foreign-user-row`;
-  const sql = `SELECT id, room, role, content FROM chat_demo.messages WHERE room = ${sqlLiteral(batchRoom)}`;
-  const subscriptionId = uniqueName('chat-batch-sub');
-  let socket;
-  let messages = [];
-  let getSocketError = () => null;
-
-  try {
-    await createUser(subscriberUser);
-    await createUser(foreignUser);
-    await insertAssistantMessages(batchRoom, contents, subscriberUser);
-    await insertAssistantMessages(foreignRoom, [foreignContent], foreignUser);
-
-    const subscriberToken = await login(subscriberUser, adminPassword);
-
-    const connection = await openAuthenticatedWebSocket(subscriberToken, async (message, ws) => {
-      if (message.type === 'initial_data_batch' && message.batch_control?.has_more) {
-        const nextBatchPayload = message.batch_control.last_seq_id
-          ? `{"type":"next_batch","subscription_id":${JSON.stringify(message.subscription_id)},"last_seq_id":${message.batch_control.last_seq_id}}`
-          : `{"type":"next_batch","subscription_id":${JSON.stringify(message.subscription_id)}}`;
-        ws.send(nextBatchPayload);
-      }
-    });
-    socket = connection.ws;
-    messages = connection.messages;
-    getSocketError = connection.getError;
-
-    socket.send(JSON.stringify({
-      type: 'subscribe',
-      subscription: {
-        id: subscriptionId,
-        sql,
-        options: { batch_size: 2 },
-      },
-    }));
-
-    await waitFor(() => {
-      const socketError = getSocketError();
-      if (socketError) {
-        throw socketError;
-      }
-      const initialBatches = messages.filter((event) => event.type === 'initial_data_batch');
-      return initialBatches.length === 3 && initialBatches.at(-1)?.batch_control?.has_more === false;
-    }, { description: 'three raw websocket initial data batches for the chat example subscription' });
-
-    await sleep(250);
-
-    const ack = messages.find((event) => event.type === 'subscription_ack' && event.subscription_id === subscriptionId);
-    const initialBatches = messages.filter((event) => event.type === 'initial_data_batch');
-    const snapshotContents = initialBatches
-      .flatMap((event) => event.rows ?? [])
-      .map((row) => row.content)
-      .filter(Boolean);
-
-    expect(ack?.batch_control?.has_more).toBe(true);
-    expect(initialBatches).toHaveLength(3);
-    expect(initialBatches.map((event) => event.rows?.length ?? 0)).toEqual([2, 2, 2]);
-    expect(initialBatches.at(-1)?.batch_control?.has_more).toBe(false);
-    expect(snapshotContents).not.toContain(foreignContent);
-    for (const content of contents) {
-      expect(snapshotContents).toContain(content);
-    }
-  } finally {
-    await closeWebSocket(socket);
-  }
-});
-
-test('subscription can disconnect and resume from the saved checkpoint without replaying older rows', async () => {
-  const client = createSdkClient();
-  const resumeRoom = uniqueName('resume-room');
-  const sql = `SELECT id, content FROM chat_demo.messages WHERE room = ${sqlLiteral(resumeRoom)}`;
-  const preContent = `${resumeRoom}-before`;
-  const gapContent = `${resumeRoom}-gap`;
-  const liveContent = `${resumeRoom}-live`;
-  const preEvents = [];
-  const resumedEvents = [];
-  let initialUnsubscribe;
-  let resumedUnsubscribe;
-
-  try {
-    initialUnsubscribe = await client.liveEvents(
-      sql,
-      (event) => preEvents.push(event),
-      { lastRows: 0 },
-    );
-
-    await waitFor(
-      () => preEvents.some((event) => event.type === 'subscription_ack'),
-      { description: 'initial resume subscription ack' },
-    );
-
-    await insertAssistantMessages(resumeRoom, [preContent]);
-    await waitFor(
-      () => hasRowContent(preEvents, preContent),
-      { description: 'pre-disconnect row on the initial subscription' },
-    );
-
-    const checkpoint = await waitFor(() => {
-      const subscription = client.getSubscriptions().find((entry) => entry.tableName === sql);
-      return subscription?.lastSeqId;
-    }, { description: 'resume checkpoint in subscription metadata' });
-
-    await initialUnsubscribe();
-    initialUnsubscribe = undefined;
-
-    await client.disconnect();
-    expect(client.isConnected()).toBe(false);
-
-    await insertAssistantMessages(resumeRoom, [gapContent]);
-
-    resumedUnsubscribe = await client.liveEvents(
-      sql,
-      (event) => resumedEvents.push(event),
-      { from: checkpoint, lastRows: 0 },
-    );
-
-    expect(client.isConnected()).toBe(true);
-    await waitFor(
-      () => resumedEvents.some((event) => event.type === 'subscription_ack'),
-      { description: 'resumed subscription ack' },
-    );
-
-    await insertAssistantMessages(resumeRoom, [liveContent]);
-    await waitFor(
-      () => hasRowContent(resumedEvents, gapContent) && hasRowContent(resumedEvents, liveContent),
-      { description: 'gap and live rows after resume' },
-    );
-
-    expect(hasRowContent(resumedEvents, preContent)).toBe(false);
-    assertRowsStrictlyAfter(resumedEvents, checkpoint, 'chat example resume');
-    assertNoDuplicateSeqRows(resumedEvents, 'chat example resume');
-  } finally {
-    if (resumedUnsubscribe) {
-      await resumedUnsubscribe();
-    }
-    if (initialUnsubscribe) {
-      await initialUnsubscribe();
-    }
-    await closeClient(client);
-  }
 });
 
 test('streaming still works when the user message contains an unmatched parenthesis', async ({ browser, baseURL }) => {

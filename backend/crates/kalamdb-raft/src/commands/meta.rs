@@ -375,6 +375,7 @@ mod tests {
                 abi_version: 1,
                 runtime: kalamdb_commons::FunctionRuntime::Typescript,
                 created_at: 0,
+                exported_procedure_ids: vec!["chat.send_message".to_string()],
             },
             artifact:             CatalogFunctionArtifact {
                 artifact_id,

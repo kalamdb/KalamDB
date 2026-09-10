@@ -89,7 +89,11 @@ kalam schema gen
 Replace `functions/src/chat_demo/greet.ts` with:
 
 ```ts
-export default async (_ctx, name) => 'Hello, ' + name + '!';
+import { procedure } from "../generated/contracts";
+
+export const greet = procedure.chatDemo.greet(async (_ctx, input) => {
+  return "Hello, " + input.name + "!";
+});
 ```
 
 With your development server running and DBA or System credentials configured, deploy the project:

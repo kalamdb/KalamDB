@@ -317,11 +317,13 @@ a tagged union of the topic's `ADD SOURCE` tables, discriminated by `_table`
 ```sql
 CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> AS (
   <field> <type> [NOT NULL] [NONEMPTY] [, ...]
-);
+) [COMMENT ['<text>' | = '<text>']];
 
-CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> AS ENUM ('<label>' [, ...]);
+CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> AS ENUM ('<label>' [, ...])
+  [COMMENT ['<text>' | = '<text>']];
 
-CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> FROM TABLE [<schema>.]<table>;
+CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> FROM TABLE [<schema>.]<table>
+  [COMMENT ['<text>' | = '<text>']];
 ```
 
 Examples:
@@ -330,7 +332,7 @@ Examples:
 CREATE TYPE app.address AS (
   city TEXT NOT NULL,
   country TEXT NOT NULL
-);
+) COMMENT 'Postal address';
 
 CREATE TYPE app.message_status AS ENUM ('sent', 'delivered', 'read');
 
@@ -357,7 +359,9 @@ Rules:
    implicit payload-type name.
 8. `AS UNION` and `AS INTERFACE` are reserved and rejected. Multi-source topics
    still produce a tagged union of their source row types (see Topics).
-9. Catalog rows live in `system.types` and `system.type_fields`.
+9. Catalog rows live in `system.types` and `system.type_fields`. Optional
+   `COMMENT` text is stored on `system.types.comment` and is documentation only
+   (it does not change the contract hash).
 
 Use named types in procedure signatures and as nested table columns:
 
@@ -372,6 +376,23 @@ $$;
 CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
 SECURITY DEFINER;
 ```
+
+### COMMENT ON
+
+PostgreSQL `COMMENT ON` updates catalog documentation after create. KalamDB
+accepts type and procedure targets. There are no procedure overloads, so the
+procedure name is enough.
+
+```sql
+COMMENT ON TYPE [<schema>.]<name> IS '<text>';
+COMMENT ON TYPE [<schema>.]<name> IS NULL;
+COMMENT ON PROCEDURE [<schema>.]<name> IS '<text>';
+COMMENT ON PROCEDURE [<schema>.]<name> IS NULL;
+```
+
+`COMMENT ON TABLE` and other object kinds are rejected. `IS NULL` clears the
+comment. Generated TypeScript includes the text as JSDoc so schema can be fed
+to an agent.
 
 ### ALTER TYPE
 
@@ -461,6 +482,7 @@ CREATE [OR REPLACE] PROCEDURE [<namespace>.]<name> (
 [RETURNS [ROW TYPE] <type>]
 [LANGUAGE <JAVASCRIPT|JS|TYPESCRIPT|TS>]
 [SECURITY INVOKER | SECURITY DEFINER]
+[COMMENT ['<text>' | = '<text>']]
 [AS $$
   <javascript_body>
 $$];
@@ -487,8 +509,16 @@ Rules:
 9. `CREATE OR REPLACE` replaces an existing procedure. Without `OR REPLACE`, a
    duplicate name fails. The success message says `created` or `replaced` and
    includes the inline source hash / artifact id. This statement does **not**
-   create a function module revision; those come from `kalam deploy`.
+   create a function module revision; those come from `kalam deploy`. Omitting
+   `COMMENT` on `CREATE OR REPLACE` keeps the previous comment.
 10. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
+    Project-backed procedures are bound by generated `procedure.<schema>.<method>`
+    builders and named exports, one scaffold file per procedure.
+11. `COMMENT` / `COMMENT =` is optional documentation stored on
+    `system.routines.comment` and exposed on `system.procedures.comment`. It
+    does not change the contract hash. `COMMENT ON PROCEDURE` can set or clear
+    it later. The clause may appear among `RETURNS` / `LANGUAGE` / `SECURITY` /
+    `AS`, including after the body.
 
 The body is wrapped as `(ctx, input) => { ... }` unless it already defines
 `function kalamInvoke(name, args)`. `input` is always a named object matching
@@ -506,8 +536,8 @@ Host objects injected into `ctx`:
 | `ctx.sleep(ms)` | Pause up to 60s (also bounded by the procedure deadline). Honors cancellation. |
 | `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `namespace.name` or unqualified. |
 | `ctx.topics.publish(topic, payload)` | Stage a typed topic publish. Commit flushes it; rollback drops it. |
-| `ctx.log.info/debug/warn/error(...)` | Structured process logs (`target: kalamdb::functions`, `channel=ctx.log`). `ctx.log` is an object, not a function. |
-| `console.log/info/debug/warn/error(...)` | Same process logger with `channel=console`. `console.log` maps to info. Prefer `ctx.log` for structured procedure logs. |
+| `ctx.log.info/debug/warn/error(...)` | Structured logs to `system.procedure_logs` (`outcome=log`, `channel=ctx.log`) and the process logger (`target: kalamdb::functions`). `ctx.log` is an object, not a function. |
+| `console.log/info/debug/warn/error(...)` | Same destinations with `channel=console`. `console.log` maps to info. Uncaught exceptions and unhandled Promise rejections are written as `outcome=error` with the V8 message/stack. |
 | `ctx.http.request.method/path/headers.get/query.get` | HTTP-root only. `Authorization`, `Proxy-Authorization`, and `Cookie` are not readable. SQL/`CALL` and topic origins set `ctx.http` to null. |
 | `ctx.http.response.status/header/contentType` | HTTP-root only; nested procedures cannot mutate the response. `Connection`, `Transfer-Encoding`, `Content-Length`, and `Host` are rejected. |
 
@@ -651,7 +681,23 @@ builds those from the authenticated session. HTTP-root procedures may set
 response.
 
 Catalog rows live in `system.routines`, `system.routine_parameters`, and
-`system.routine_grants`.
+`system.routine_grants`. Operators can read the joined catalog from
+`system.procedures` (signature, `inline`/`module`/`missing` implementation,
+current `module_id`/`revision_id`, and `comment`). Deployed modules are stored in
+`system.function_modules` / `system.function_revisions` /
+`system.function_artifacts`; the operator views are `system.modules` and
+`system.module_revisions` (`is_current` is derived from the module pointer).
+Live runtime is `system.module_instances`, `system.active_procedure_runs`,
+and `system.procedure_logs`.
+
+```sql
+SELECT * FROM system.procedures;
+SELECT * FROM system.module_revisions WHERE is_current;
+SELECT * FROM system.module_instances;
+SELECT * FROM system.procedure_logs
+WHERE procedure_id = 'chat.send_message'
+ORDER BY timestamp DESC;
+```
 
 ### Topic triggers
 

@@ -56,13 +56,10 @@ export interface HttpHost {
   };
 }
 
-export function defineProcedure<TRequest = unknown, TResult = void>(
-  handler: (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult,
-): (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult;
 // Isolate `console.debug|log|info|warn|error` forwards to the process logger
 // with channel=console. Prefer ctx.log for structured procedure logs.
 
-import type { ChatDemoJoinRoomRequest, ChatDemoJoinRoomResult, ChatDemoOnUserMessageRequest, ChatDemoOnUserMessageResult, ChatDemoSendMessageRequest, ChatDemoSendMessageResult } from "./contracts";
+import type { ChatDemoJoinRoomRequest, ChatDemoJoinRoomResult, ChatDemoOnUserMessageRequest, ChatDemoOnUserMessageResult, ChatDemoSendMessageRequest, ChatDemoSendMessageResult } from "../../../src/generated/schema";
 
 export interface FunctionsHost {
   chatDemo: {

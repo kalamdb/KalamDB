@@ -1,9 +1,8 @@
 use std::{
     collections::HashSet,
     sync::{
-        Condvar, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
-        mpsc,
+        mpsc, Condvar, Mutex as StdMutex,
     },
     thread,
     time::Duration as StdDuration,
@@ -11,8 +10,8 @@ use std::{
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    StorageKey,
     models::{NamespaceId, PayloadMode, TableName},
+    StorageKey,
 };
 use kalamdb_store::{
     storage_trait::{KvIterator, Operation, Partition, StorageBackend},
@@ -550,21 +549,15 @@ fn test_publish_message_respects_complex_route_filter_on_insert() {
 
     let routes = service.route_cache.get_matching_routes(&table_id, &TopicOp::Insert);
     let compiled_filter = routes[0].compiled_filter.as_ref().expect("route should compile filter");
-    assert!(
-        compiled_filter
-            .matches(&matching_status_row)
-            .expect("compiled route filter should evaluate")
-    );
-    assert!(
-        compiled_filter
-            .matches(&matching_event_type_row)
-            .expect("compiled route filter should evaluate")
-    );
-    assert!(
-        !compiled_filter
-            .matches(&archived_row)
-            .expect("compiled route filter should evaluate")
-    );
+    assert!(compiled_filter
+        .matches(&matching_status_row)
+        .expect("compiled route filter should evaluate"));
+    assert!(compiled_filter
+        .matches(&matching_event_type_row)
+        .expect("compiled route filter should evaluate"));
+    assert!(!compiled_filter
+        .matches(&archived_row)
+        .expect("compiled route filter should evaluate"));
 
     assert_eq!(
         service
@@ -802,13 +795,11 @@ fn test_byte_retention_can_fully_cleanup_partition() {
             .is_empty(),
         "grouped consume should snap to log start after full retention instead of failing"
     );
-    assert!(
-        service
-            .message_store
-            .retention_entries_for_partition(&topic_id, 0, 10)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(service
+        .message_store
+        .retention_entries_for_partition(&topic_id, 0, 10)
+        .unwrap()
+        .is_empty());
 
     let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
     assert!(err.to_string().contains("OffsetOutOfRange"));

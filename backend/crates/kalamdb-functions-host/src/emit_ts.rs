@@ -1,4 +1,4 @@
-//! TypeScript `.d.ts` for inline shims and project `defineProcedure` handlers.
+//! TypeScript `.d.ts` for inline shims and generated `procedure` builders.
 
 use std::collections::BTreeMap;
 
@@ -68,16 +68,112 @@ export interface HttpHost {
   };
 }
 
-export function defineProcedure<TRequest = unknown, TResult = void>(
-  handler: (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult,
-): (ctx: ProcedureContext, input: TRequest) => Promise<TResult> | TResult;
 // Isolate `console.debug|log|info|warn|error` forwards to the process logger
 // with channel=console. Prefer ctx.log for structured procedure logs.
 "#
     .to_string()
 }
 
-pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
+pub fn emit_procedure_builder_dts(routines: &[TypedRoutine<'_>], schema_import: &str) -> String {
+    let mut out = String::from(
+        r#"import type { ProcedureContext } from "./runtime";
+
+"#,
+    );
+    let mut imports: Vec<String> = Vec::new();
+    for routine in routines {
+        imports.push(format!("{}Request", routine.type_ident));
+        imports.push(format!("{}Result", routine.type_ident));
+    }
+    imports.sort();
+    imports.dedup();
+    if !imports.is_empty() {
+        out.push_str("import type { ");
+        out.push_str(&imports.join(", "));
+        out.push_str(" } from \"");
+        out.push_str(schema_import);
+        out.push_str("\";\n\n");
+    }
+    out.push_str(
+        r#"export type ProcedureHandler<TInput, TOutput> = (
+  ctx: ProcedureContext,
+  input: TInput,
+) => TOutput | Promise<TOutput>;
+
+export interface ProcedureBuilder<TInput, TOutput> {
+  (handler: ProcedureHandler<TInput, TOutput>): ProcedureHandler<TInput, TOutput>;
+  unimplemented(): ProcedureHandler<TInput, TOutput>;
+}
+
+"#,
+    );
+    if routines.is_empty() {
+        out.push_str("export declare const procedure: Record<string, never>;\n");
+        return out;
+    }
+    let mut by_namespace: BTreeMap<&str, Vec<&TypedRoutine<'_>>> = BTreeMap::new();
+    for routine in routines {
+        by_namespace.entry(routine.namespace).or_default().push(routine);
+    }
+    out.push_str("export declare const procedure: {\n");
+    for (namespace, methods) in by_namespace {
+        out.push_str("  ");
+        out.push_str(&namespace_object_ident(namespace));
+        out.push_str(": {\n");
+        for routine in methods {
+            out.push_str("    ");
+            out.push_str(&method_ident(routine.name));
+            out.push_str(": ProcedureBuilder<");
+            out.push_str(routine.type_ident);
+            out.push_str("Request, ");
+            out.push_str(routine.type_ident);
+            out.push_str("Result>;\n");
+        }
+        out.push_str("  };\n");
+    }
+    out.push_str("};\n");
+    out
+}
+
+pub fn emit_procedure_builder_js(routines: &[TypedRoutine<'_>]) -> String {
+    let mut out = String::from(
+        r#"import { wrapProcedure } from "./runtime.js";
+
+function procedureBuilder() {
+  const builder = (handler) => wrapProcedure(handler);
+  builder.unimplemented = () => wrapProcedure(() => {
+    throw new Error("not implemented");
+  });
+  return builder;
+}
+
+"#,
+    );
+    if routines.is_empty() {
+        out.push_str("export const procedure = {};\n");
+        return out;
+    }
+    let mut by_namespace: BTreeMap<&str, Vec<&TypedRoutine<'_>>> = BTreeMap::new();
+    for routine in routines {
+        by_namespace.entry(routine.namespace).or_default().push(routine);
+    }
+    out.push_str("export const procedure = {\n");
+    for (namespace, methods) in by_namespace {
+        out.push_str("  ");
+        out.push_str(&namespace_object_ident(namespace));
+        out.push_str(": {\n");
+        for routine in methods {
+            out.push_str("    ");
+            out.push_str(&method_ident(routine.name));
+            out.push_str(": procedureBuilder(),\n");
+        }
+        out.push_str("  },\n");
+    }
+    out.push_str("};\n");
+    out
+}
+
+pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>], schema_import: &str) -> String {
     if routines.is_empty() {
         return String::new();
     }
@@ -98,7 +194,9 @@ pub fn emit_typed_functions_host(routines: &[TypedRoutine<'_>]) -> String {
     if !imports.is_empty() {
         out.push_str("import type { ");
         out.push_str(&imports.join(", "));
-        out.push_str(" } from \"./contracts\";\n\n");
+        out.push_str(" } from \"");
+        out.push_str(schema_import);
+        out.push_str("\";\n\n");
     }
     out.push_str("export interface FunctionsHost {\n");
     for (namespace, methods) in by_namespace {
@@ -131,31 +229,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typescript_lists_log_overloads_and_define_procedure() {
+    fn typescript_lists_log_overloads() {
         let dts = emit_typescript();
         assert!(dts.contains("export interface ProcedureContext"));
         assert!(dts.contains("import type { ProcedureOrm } from \"@kalamdb/orm\""));
         assert!(dts.contains("readonly orm: ProcedureOrm"));
         assert!(dts.contains("sleep(ms: number): Promise<void>"));
         assert!(dts.contains("error(error: unknown, message?: string, ...args: unknown[]): void"));
-        assert!(dts.contains("defineProcedure"));
-        assert!(dts.contains("ctx: ProcedureContext"));
-        assert!(dts.contains("input: TRequest"));
-        assert!(dts.contains("TRequest = unknown, TResult = void"));
+        assert!(!dts.contains("defineProcedure"));
         assert!(dts.contains("channel=console"));
     }
 
     #[test]
-    fn typed_host_uses_namespace_and_camel_method() {
-        let dts = emit_typed_functions_host(&[TypedRoutine {
+    fn procedure_builders_use_schema_types() {
+        let dts = emit_procedure_builder_dts(
+            &[TypedRoutine {
+                namespace:   "chat",
+                name:        "create_message",
+                type_ident:  "ChatCreateMessage",
+                param_count: 2,
+            }],
+            "./schema",
+        );
+        assert!(dts.contains(
+            "import type { ChatCreateMessageRequest, ChatCreateMessageResult } from \"./schema\""
+        ));
+        assert!(dts.contains(
+            "createMessage: ProcedureBuilder<ChatCreateMessageRequest, ChatCreateMessageResult>"
+        ));
+        assert!(dts.contains("chat:"));
+        assert!(dts.contains("ctx: ProcedureContext"));
+        assert!(dts.contains("input: TInput"));
+        let js = emit_procedure_builder_js(&[TypedRoutine {
             namespace:   "chat",
             name:        "create_message",
             type_ident:  "ChatCreateMessage",
             param_count: 2,
         }]);
+        assert!(js.contains("import { wrapProcedure } from \"./runtime.js\""));
+        assert!(js.contains("createMessage: procedureBuilder()"));
+        assert!(js.contains("unimplemented"));
+    }
+
+    #[test]
+    fn typed_host_uses_namespace_and_camel_method() {
+        let dts = emit_typed_functions_host(
+            &[TypedRoutine {
+                namespace:   "chat",
+                name:        "create_message",
+                type_ident:  "ChatCreateMessage",
+                param_count: 2,
+            }],
+            "./schema",
+        );
         assert!(dts.contains(
-            "import type { ChatCreateMessageRequest, ChatCreateMessageResult } from \
-             \"./contracts\""
+            "import type { ChatCreateMessageRequest, ChatCreateMessageResult } from \"./schema\""
         ));
         assert!(dts.contains("createMessage(input: ChatCreateMessageRequest)"));
         assert!(dts.contains("Promise<ChatCreateMessageResult>"));
@@ -164,12 +292,15 @@ mod tests {
 
     #[test]
     fn empty_arg_emits_no_input_param() {
-        let dts = emit_typed_functions_host(&[TypedRoutine {
-            namespace:   "api",
-            name:        "health",
-            type_ident:  "ApiHealth",
-            param_count: 0,
-        }]);
+        let dts = emit_typed_functions_host(
+            &[TypedRoutine {
+                namespace:   "api",
+                name:        "health",
+                type_ident:  "ApiHealth",
+                param_count: 0,
+            }],
+            "./schema",
+        );
         assert!(dts.contains("health(): Promise<ApiHealthResult>"));
     }
 }

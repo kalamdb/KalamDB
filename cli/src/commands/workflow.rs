@@ -274,6 +274,7 @@ async fn handle_functions(cli: &Cli, args: &FunctionsArgs) -> Result<()> {
         FunctionsCommand::Logs(logs) => {
             workflow::functions::show_function_logs(&ctx, logs.procedure.as_deref()).await
         },
+        FunctionsCommand::Runtime => workflow::functions::show_function_runtime(&ctx).await,
         FunctionsCommand::Override(override_args) => {
             workflow::functions::override_function(&ctx, &override_args.procedure)
         },
