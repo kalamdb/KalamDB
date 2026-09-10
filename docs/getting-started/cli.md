@@ -698,7 +698,9 @@ kalam functions rollback backend:<artifact> --env dev
 signature), and function memory/isolate stats. `revisions` lists module
 history with `is_current`. `runtime` lists resident V8 isolates and
 in-flight root calls. `logs` prints recent invocation, V8 console/`ctx.log`, and error records from
-`system.procedure_logs`.
+`system.procedure_logs`. On disk those files are
+`{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`
+(default `./data/functions/runtime/...`).
 
 To restore a previously activated revision, use
 `kalam functions rollback <revision> --env dev` with an identifier from

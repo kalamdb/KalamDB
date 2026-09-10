@@ -688,7 +688,10 @@ current `module_id`/`revision_id`, and `comment`). Deployed modules are stored i
 `system.function_artifacts`; the operator views are `system.modules` and
 `system.module_revisions` (`is_current` is derived from the module pointer).
 Live runtime is `system.module_instances`, `system.active_procedure_runs`,
-and `system.procedure_logs`.
+and `system.procedure_logs`. Invocation and V8 `console.*`/`ctx.log.*` records
+are stored under `{data_path}/functions/runtime/<procedure_id>/logs/` (default
+`./data/functions/runtime/<procedure_id>/logs/procedures.jsonl`). Compiled module bytes live under
+`{data_path}/functions/artifacts/`.
 
 ```sql
 SELECT * FROM system.procedures;

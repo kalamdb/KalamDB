@@ -4,6 +4,9 @@
 //! V8 `console.*` / `ctx.log.*` line (`outcome=log`). Never includes request
 //! bodies, arguments, results, tokens, or source. Writes are synchronous so
 //! `system.procedure_logs` can be queried immediately after CALL.
+//!
+//! On-disk layout is always local:
+//! `{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`.
 
 use std::{
     fs::{self, OpenOptions},
@@ -15,6 +18,7 @@ use std::{
 use parking_lot::Mutex;
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_PROCEDURE_DIR_LEN: usize = 200;
 
 /// One procedure log line: a root CALL outcome or a V8 console/ctx.log record.
 #[derive(Debug, Clone)]
@@ -36,35 +40,40 @@ pub struct ProcedureLogRecord {
     pub node_id:      String,
 }
 
-/// JSONL writer for `procedures.jsonl`.
+/// JSONL writer for per-procedure `procedures.jsonl` files under the runtime root.
 pub struct ProcedureLogLogger {
-    path: Mutex<Option<PathBuf>>,
+    runtime_root: Mutex<Option<PathBuf>>,
 }
 
 impl ProcedureLogLogger {
-    pub fn new(log_path: String) -> Arc<Self> {
-        let path = PathBuf::from(log_path);
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
+    pub fn new(runtime_root: impl Into<PathBuf>) -> Arc<Self> {
+        let runtime_root = runtime_root.into();
+        let _ = fs::create_dir_all(&runtime_root);
         Arc::new(Self {
-            path: Mutex::new(Some(path)),
+            runtime_root: Mutex::new(Some(runtime_root)),
         })
     }
 
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn new_test() -> Self {
         Self {
-            path: Mutex::new(None),
+            runtime_root: Mutex::new(None),
         }
     }
 
     pub fn record(&self, entry: ProcedureLogRecord) {
-        let guard = self.path.lock();
-        let Some(path) = guard.as_ref() else {
-            return;
+        let root = {
+            let guard = self.runtime_root.lock();
+            match guard.as_ref() {
+                Some(root) => root.clone(),
+                None => return,
+            }
         };
-        write_record(path, &entry);
+        let path = procedure_log_path(&root, &entry.procedure_id);
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        write_record(&path, &entry);
     }
 }
 
@@ -77,6 +86,35 @@ pub fn sanitize_procedure_log_message(message: &str) -> String {
         }
     }
     sanitized
+}
+
+/// Safe directory name for `{runtime}/{procedure_id}/logs`.
+pub fn sanitize_procedure_dir_name(procedure_id: &str) -> String {
+    let mut out = String::with_capacity(procedure_id.len().max(1));
+    for ch in procedure_id.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.contains("..") {
+        out = out.replace("..", "_");
+    }
+    if out.is_empty() {
+        return "_unknown".to_string();
+    }
+    if out.len() > MAX_PROCEDURE_DIR_LEN {
+        out.truncate(MAX_PROCEDURE_DIR_LEN);
+    }
+    out
+}
+
+pub fn procedure_log_path(runtime_root: &Path, procedure_id: &str) -> PathBuf {
+    runtime_root
+        .join(sanitize_procedure_dir_name(procedure_id))
+        .join("logs")
+        .join("procedures.jsonl")
 }
 
 fn write_record(path: &Path, entry: &ProcedureLogRecord) {
@@ -124,6 +162,26 @@ fn rotate_if_needed(path: &Path, incoming: u64) {
 mod tests {
     use super::*;
 
+    fn sample_record(procedure_id: &str, message: &str) -> ProcedureLogRecord {
+        ProcedureLogRecord {
+            execution_id: "e1".into(),
+            request_id:   "r1".into(),
+            procedure_id: procedure_id.into(),
+            module_id:    Some("backend".into()),
+            revision_id:  Some("backend:abc".into()),
+            actor:        "alice".into(),
+            origin:       "sql".into(),
+            outcome:      "log".into(),
+            channel:      "console".into(),
+            level:        "info".into(),
+            error_code:   None,
+            message:      Some(message.into()),
+            duration_ms:  0,
+            timestamp:    1_700_000_000_000,
+            node_id:      "1".into(),
+        }
+    }
+
     #[test]
     fn rotate_renames_when_over_limit() {
         let dir = tempfile::tempdir().unwrap();
@@ -135,10 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn record_writes_jsonl_line() {
+    fn record_writes_jsonl_line_under_procedure_runtime_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("procedures.jsonl");
-        let logger = ProcedureLogLogger::new(path.to_string_lossy().into_owned());
+        let logger = ProcedureLogLogger::new(dir.path());
         logger.record(ProcedureLogRecord {
             execution_id: "e1".into(),
             request_id:   "r1".into(),
@@ -156,29 +213,40 @@ mod tests {
             timestamp:    1_700_000_000_000,
             node_id:      "1".into(),
         });
-        logger.record(ProcedureLogRecord {
-            execution_id: "e1".into(),
-            request_id:   "r1".into(),
-            procedure_id: "chat.send_message".into(),
-            module_id:    Some("backend".into()),
-            revision_id:  Some("backend:abc".into()),
-            actor:        "alice".into(),
-            origin:       "sql".into(),
-            outcome:      "log".into(),
-            channel:      "console".into(),
-            level:        "info".into(),
-            error_code:   None,
-            message:      Some("hello-from-v8".into()),
-            duration_ms:  0,
-            timestamp:    1_700_000_000_001,
-            node_id:      "1".into(),
-        });
+        logger.record(sample_record("chat.send_message", "hello-from-v8"));
+        let path = procedure_log_path(dir.path(), "chat.send_message");
+        assert_eq!(
+            path,
+            dir.path().join("chat.send_message").join("logs").join("procedures.jsonl")
+        );
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("chat.send_message"));
         assert!(contents.contains("PROCEDURE_TIMEOUT"));
         assert!(contents.contains("\"channel\":\"console\""));
         assert!(contents.contains("hello-from-v8"));
         assert!(!contents.contains("Authorization"));
+    }
+
+    #[test]
+    fn record_isolates_logs_per_procedure() {
+        let dir = tempfile::tempdir().unwrap();
+        let logger = ProcedureLogLogger::new(dir.path());
+        logger.record(sample_record("chat.send_message", "from-chat"));
+        logger.record(sample_record("billing.charge", "from-billing"));
+        let chat = fs::read_to_string(procedure_log_path(dir.path(), "chat.send_message")).unwrap();
+        let billing = fs::read_to_string(procedure_log_path(dir.path(), "billing.charge")).unwrap();
+        assert!(chat.contains("from-chat"));
+        assert!(!chat.contains("from-billing"));
+        assert!(billing.contains("from-billing"));
+        assert!(!billing.contains("from-chat"));
+    }
+
+    #[test]
+    fn sanitize_procedure_dir_name_blocks_path_traversal() {
+        assert_eq!(sanitize_procedure_dir_name("chat.send_message"), "chat.send_message");
+        assert_eq!(sanitize_procedure_dir_name("ns/name"), "ns_name");
+        assert_eq!(sanitize_procedure_dir_name("../etc"), "__etc");
+        assert_eq!(sanitize_procedure_dir_name(""), "_unknown");
     }
 
     #[test]

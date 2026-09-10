@@ -146,7 +146,7 @@ Operator catalog of CALL-able procedures. One row per `system.routines` entry wi
 
 ## system.procedure_logs (virtual)
 
-Bounded tail of the node-local rotating `procedures.jsonl` file. Columns: timestamp, node_id, execution_id, request_id, procedure_id, module_id, revision_id, actor, origin, outcome (`ok` \| `error` \| `log`), channel (`invocation` \| `console` \| `ctx.log`), level, error_code, message, duration_ms. V8 `console.*` and `ctx.log.*` lines use `outcome=log` and carry the formatted isolate output. Uncaught exceptions and unhandled Promise rejections use `outcome=error` with the JavaScript message/stack. Never includes request bodies, arguments, results, tokens, or source.
+Bounded tail of node-local rotating `{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl` files. Columns: timestamp, node_id, execution_id, request_id, procedure_id, module_id, revision_id, actor, origin, outcome (`ok` \| `error` \| `log`), channel (`invocation` \| `console` \| `ctx.log`), level, error_code, message, duration_ms. V8 `console.*` and `ctx.log.*` lines use `outcome=log` and carry the formatted isolate output. Uncaught exceptions and unhandled Promise rejections use `outcome=error` with the JavaScript message/stack. Never includes request bodies, arguments, results, tokens, or source.
 
 ## Relationships
 

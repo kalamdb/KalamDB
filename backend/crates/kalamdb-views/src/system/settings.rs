@@ -206,8 +206,8 @@ impl VirtualView for SettingsView {
                         (
                             "storage.data_path",
                             config.storage.data_path,
-                            "Base data directory (auto-creates rocksdb/, storage/, snapshots/ \
-                             subdirs)",
+                            "Base data directory (auto-creates rocksdb/, storage/, snapshots/, \
+                             functions/ subdirs)",
                             "storage"
                         ),
                         (
@@ -230,7 +230,8 @@ impl VirtualView for SettingsView {
                     (
                         "storage.data_path",
                         config.storage.data_path,
-                        "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)",
+                        "Base data directory (auto-creates rocksdb/, storage/, snapshots/, \
+                         functions/ subdirs)",
                         "storage"
                     ),
                     (

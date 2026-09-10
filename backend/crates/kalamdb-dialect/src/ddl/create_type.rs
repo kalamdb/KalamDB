@@ -5,7 +5,10 @@ use kalamdb_commons::{
     KalamDataType,
 };
 
-use crate::ddl::DdlResult;
+use crate::ddl::{
+    parsing::{parse_optional_comment, parse_sql_string, take_keyword_ci},
+    DdlResult,
+};
 
 /// SQL type reference used in composite fields and signatures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,53 +91,15 @@ const INTERFACE_RESERVED: &str = "INTERFACE types are reserved and not supported
 
 impl CreateTypeStatement {
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let trimmed = sql.trim().trim_end_matches(';');
-        let upper = trimmed.to_ascii_uppercase();
-        if !upper.starts_with("CREATE TYPE") {
+        let mut rest = sql.trim().trim_end_matches(';');
+        if !take_keyword_ci(&mut rest, "CREATE TYPE") {
             return Err("Expected CREATE TYPE statement".to_string());
         }
-        let mut rest = trimmed["CREATE TYPE".len()..].trim_start();
-        let if_not_exists = starts_with_ignore_case(rest, "IF NOT EXISTS");
-        if if_not_exists {
-            rest = rest["IF NOT EXISTS".len()..].trim_start();
-        }
+        let if_not_exists = take_keyword_ci(&mut rest, "IF NOT EXISTS");
 
         let (qual, after_name) = split_qualified_ident(rest)?;
         let (namespace_id, name) = (qual.namespace_or(default_namespace), qual.name);
-        let rest = after_name.trim_start();
-        let rest_upper = rest.to_ascii_uppercase();
-
-        if rest_upper.starts_with("AS UNION") {
-            return Err(UNION_RESERVED.to_string());
-        }
-        if rest_upper.starts_with("AS INTERFACE") {
-            return Err(INTERFACE_RESERVED.to_string());
-        }
-
-        let (body, after_body) = if rest_upper.starts_with("AS ENUM") {
-            let after = rest["AS ENUM".len()..].trim_start();
-            let (labels, leftover) = parse_enum_labels(after)?;
-            (CreateTypeBody::Enum { labels }, leftover)
-        } else if rest_upper.starts_with("FROM TABLE") {
-            let after = rest["FROM TABLE".len()..].trim_start();
-            let (table, leftover) = split_qualified_ident(after)?;
-            (
-                CreateTypeBody::FromTable {
-                    table_namespace_id: table.namespace_id,
-                    table_name:         table.name,
-                },
-                leftover,
-            )
-        } else if rest_upper.starts_with("AS") {
-            let after = rest[2..].trim_start();
-            if !after.starts_with('(') {
-                return Err("Expected AS ( ... ) composite definition".to_string());
-            }
-            let (fields, leftover) = parse_composite_fields(after)?;
-            (CreateTypeBody::Composite { fields }, leftover)
-        } else {
-            return Err("Expected AS (...), AS ENUM (...), or FROM TABLE".to_string());
-        };
+        let (body, after_body) = parse_type_body(after_name.trim_start())?;
 
         let (comment, leftover) = parse_optional_comment(after_body)?;
         if !leftover.trim().is_empty() {
@@ -162,21 +127,18 @@ pub struct DropTypeStatement {
 
 impl DropTypeStatement {
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let trimmed = sql.trim().trim_end_matches(';');
-        let upper = trimmed.to_ascii_uppercase();
-        if !upper.starts_with("DROP TYPE") {
+        let mut rest = sql.trim().trim_end_matches(';');
+        if !take_keyword_ci(&mut rest, "DROP TYPE") {
             return Err("Expected DROP TYPE statement".to_string());
         }
-        let mut rest = trimmed["DROP TYPE".len()..].trim_start();
-        let if_exists = starts_with_ignore_case(rest, "IF EXISTS");
-        if if_exists {
-            rest = rest["IF EXISTS".len()..].trim_start();
-        }
+        let if_exists = take_keyword_ci(&mut rest, "IF EXISTS");
         let (qual, after) = split_qualified_ident(rest)?;
-        let leftover = after.trim();
-        let leftover_upper = leftover.to_ascii_uppercase();
-        let cascade = leftover_upper == "CASCADE";
-        if !leftover.is_empty() && leftover_upper != "CASCADE" && leftover_upper != "RESTRICT" {
+        let mut leftover = after.trim_start();
+        let cascade = take_keyword_ci(&mut leftover, "CASCADE");
+        if !cascade {
+            take_keyword_ci(&mut leftover, "RESTRICT");
+        }
+        if !leftover.is_empty() {
             return Err(
                 "Expected CASCADE, RESTRICT, or end of statement after DROP TYPE".to_string()
             );
@@ -190,6 +152,37 @@ impl DropTypeStatement {
     }
 }
 
+fn parse_type_body(mut rest: &str) -> DdlResult<(CreateTypeBody, &str)> {
+    if take_keyword_ci(&mut rest, "AS UNION") {
+        return Err(UNION_RESERVED.to_string());
+    }
+    if take_keyword_ci(&mut rest, "AS INTERFACE") {
+        return Err(INTERFACE_RESERVED.to_string());
+    }
+    if take_keyword_ci(&mut rest, "AS ENUM") {
+        let (labels, leftover) = parse_enum_labels(rest)?;
+        return Ok((CreateTypeBody::Enum { labels }, leftover));
+    }
+    if take_keyword_ci(&mut rest, "FROM TABLE") {
+        let (table, leftover) = split_qualified_ident(rest)?;
+        return Ok((
+            CreateTypeBody::FromTable {
+                table_namespace_id: table.namespace_id,
+                table_name:         table.name,
+            },
+            leftover,
+        ));
+    }
+    if take_keyword_ci(&mut rest, "AS") {
+        if !rest.starts_with('(') {
+            return Err("Expected AS ( ... ) composite definition".to_string());
+        }
+        let (fields, leftover) = parse_composite_fields(rest)?;
+        return Ok((CreateTypeBody::Composite { fields }, leftover));
+    }
+    Err("Expected AS (...), AS ENUM (...), or FROM TABLE".to_string())
+}
+
 #[derive(Debug)]
 pub(crate) struct QualifiedIdent {
     pub namespace_id: Option<NamespaceId>,
@@ -200,10 +193,6 @@ impl QualifiedIdent {
     pub(crate) fn namespace_or(&self, default: &NamespaceId) -> NamespaceId {
         self.namespace_id.clone().unwrap_or_else(|| default.clone())
     }
-}
-
-fn starts_with_ignore_case(haystack: &str, prefix: &str) -> bool {
-    haystack.len() >= prefix.len() && haystack[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
 pub(crate) fn split_qualified_ident(input: &str) -> DdlResult<(QualifiedIdent, &str)> {
@@ -290,33 +279,34 @@ fn parse_field(input: &str) -> DdlResult<CompositeTypeField> {
         return Err(format!("Missing type for field '{name}'"));
     }
     let (mut type_ref, rest) = parse_type_reference(rest)?;
-    let mut leftover = rest.trim_start().to_ascii_uppercase();
-    leftover = leftover.replace("NOT  NULL", "NOT NULL");
-    let tokens: Vec<&str> = leftover.split_whitespace().collect();
-    let mut i = 0;
-    while i < tokens.len() {
-        match tokens[i] {
-            "NOT" if tokens.get(i + 1) == Some(&"NULL") => {
-                type_ref.not_null = true;
-                i += 2;
-            },
-            "NULL" => {
-                type_ref.not_null = false;
-                i += 1;
-            },
-            "NONEMPTY" => {
-                type_ref.nonempty = true;
-                i += 1;
-            },
-            other => {
-                return Err(format!("Unexpected field attribute '{other}'"));
-            },
-        }
+    let leftover = take_type_attributes(&mut type_ref, rest);
+    if !leftover.is_empty() {
+        let other = leftover.split_whitespace().next().unwrap_or(leftover);
+        return Err(format!("Unexpected field attribute '{other}'"));
     }
     if type_ref.nonempty && !type_ref.not_null {
         return Err("NONEMPTY requires NOT NULL".to_string());
     }
     Ok(CompositeTypeField { name, type_ref })
+}
+
+pub(crate) fn take_type_attributes<'a>(type_ref: &mut TypeReference, mut rest: &'a str) -> &'a str {
+    loop {
+        if take_keyword_ci(&mut rest, "NOT NULL") {
+            type_ref.not_null = true;
+            continue;
+        }
+        if take_keyword_ci(&mut rest, "NULL") {
+            type_ref.not_null = false;
+            continue;
+        }
+        if take_keyword_ci(&mut rest, "NONEMPTY") {
+            type_ref.nonempty = true;
+            continue;
+        }
+        break;
+    }
+    rest.trim_start()
 }
 
 pub(crate) fn parse_type_reference(input: &str) -> DdlResult<(TypeReference, &str)> {
@@ -368,45 +358,6 @@ fn split_parens(input: &str) -> DdlResult<(&str, &str)> {
     }
     let close = matching_paren(input).ok_or_else(|| "Unterminated '('".to_string())?;
     Ok((&input[1..close], &input[close + 1..]))
-}
-
-/// Parse `COMMENT 'text'` or `COMMENT = 'text'` if present.
-pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, &str)> {
-    let rest = input.trim_start();
-    if rest.len() < 7 || !rest[..7].eq_ignore_ascii_case("COMMENT") {
-        return Ok((None, rest));
-    }
-    let after_kw = &rest[7..];
-    if after_kw.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
-        return Ok((None, rest));
-    }
-    let mut after = after_kw.trim_start();
-    if after.starts_with('=') {
-        after = after[1..].trim_start();
-    }
-    let (value, leftover) = parse_sql_string_prefix(after)?;
-    Ok((Some(value), leftover))
-}
-
-pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
-    let input = input.trim_start();
-    let mut chars = input.char_indices();
-    let Some((_, '\'')) = chars.next() else {
-        return Err(format!("Expected string literal, got '{input}'"));
-    };
-    let mut out = String::new();
-    while let Some((idx, ch)) = chars.next() {
-        if ch == '\'' {
-            if chars.as_str().starts_with('\'') {
-                chars.next();
-                out.push('\'');
-                continue;
-            }
-            return Ok((out, &input[idx + 1..]));
-        }
-        out.push(ch);
-    }
-    Err("Unterminated string literal".to_string())
 }
 
 pub(crate) fn matching_paren(input: &str) -> Option<usize> {
@@ -469,14 +420,6 @@ pub(crate) fn split_top_level(input: &str, sep: char) -> Vec<&str> {
     }
     parts.push(&input[start..]);
     parts
-}
-
-pub(crate) fn parse_sql_string(input: &str) -> DdlResult<String> {
-    let input = input.trim();
-    if input.len() >= 2 && input.starts_with('\'') && input.ends_with('\'') {
-        return Ok(input[1..input.len() - 1].replace("''", "'"));
-    }
-    Err(format!("Expected string literal, got '{input}'"))
 }
 
 #[cfg(test)]

@@ -1,10 +1,14 @@
 //! Content-addressed function module artifacts.
 //!
-//! Bytes live at `{storage}/functions/artifacts/{artifact_id}/module.js`.
-//! RocksDB keys are unchanged; this path stores values only.
+//! Bytes live at `{data_path}/functions/artifacts/{artifact_id}/module.js`
+//! when the store is rooted at `{data_path}/functions`. RocksDB keys are
+//! unchanged; this path stores values only.
+
+use std::path::Path;
 
 use bytes::Bytes;
-use kalamdb_commons::ArtifactId;
+use kalamdb_commons::{models::ids::StorageId, ArtifactId};
+use kalamdb_system::{providers::storages::models::StorageType, Storage};
 use object_store::{path::Path as ObjectPath, ObjectStoreExt};
 use sha2::{Digest, Sha256};
 
@@ -14,7 +18,7 @@ use super::{
 };
 use crate::error::{FilestoreError, Result};
 
-const ARTIFACT_DIR: &str = "functions/artifacts";
+const ARTIFACT_DIR: &str = "artifacts";
 const MODULE_FILE: &str = "module.js";
 
 /// SHA-256 hex of artifact bytes. Identity of the blob, not a RocksDB key.
@@ -23,6 +27,25 @@ pub fn hash_function_artifact(bytes: &[u8]) -> ArtifactId {
 }
 
 impl StorageCached {
+    /// Local filesystem store rooted at `{data_path}/functions`.
+    pub fn for_functions_dir(functions_dir: impl AsRef<Path>) -> Self {
+        let base_directory = functions_dir.as_ref().to_string_lossy().into_owned();
+        let now = chrono::Utc::now().timestamp_millis();
+        Self::with_default_timeouts(Storage {
+            storage_id: StorageId::from("functions"),
+            storage_name: "functions".to_string(),
+            description: Some("Node-local function artifacts".to_string()),
+            storage_type: StorageType::Filesystem,
+            base_directory,
+            credentials: None,
+            config_json: None,
+            shared_tables_template: "{namespace}/{tableName}".to_string(),
+            user_tables_template: "{namespace}/{tableName}/{userId}".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
     /// Object-store path for a function artifact's `module.js`.
     pub fn function_artifact_object_path(artifact_id: &ArtifactId) -> Result<String> {
         validate_artifact_id(artifact_id.as_str())?;
@@ -113,7 +136,13 @@ mod tests {
         let expected = hash_function_artifact(&bytes);
         let (artifact_id, put) = cached.put_function_artifact(bytes.clone()).await.unwrap();
         assert_eq!(artifact_id, expected);
+        assert!(put.path.starts_with("artifacts/"));
         assert!(put.path.contains(artifact_id.as_str()));
+        let on_disk = std::path::Path::new(&cached.storage.base_directory)
+            .join("artifacts")
+            .join(artifact_id.as_str())
+            .join("module.js");
+        assert!(on_disk.exists());
         let loaded = cached.get_function_artifact(&artifact_id).await.unwrap();
         assert_eq!(loaded.data, bytes);
 

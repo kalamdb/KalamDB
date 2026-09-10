@@ -1,12 +1,14 @@
 //! system.procedure_logs virtual view
 //!
-//! Bounded tail of the node-local `procedures.jsonl` rotation. Records never
+//! Bounded tail of node-local rotating `procedures.jsonl` files. Current layout
+//! is `{data_path}/functions/runtime/<procedure>/logs/procedures.jsonl`. Legacy
+//! `{logs_path}/procedures.jsonl` is still read when present. Records never
 //! include request bodies, arguments, results, tokens, or source. V8
 //! `console.*` / `ctx.log.*` lines use `outcome=log`; root CALL completion
 //! uses `outcome=ok` or `outcome=error`.
 
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::Arc,
@@ -107,12 +109,16 @@ impl RawProcedureLogEntry {
 
 #[derive(Debug)]
 pub struct ProcedureLogsView {
-    logs_path: PathBuf,
+    runtime_path:     PathBuf,
+    legacy_logs_path: PathBuf,
 }
 
 impl ProcedureLogsView {
-    pub fn new(logs_path: PathBuf) -> Self {
-        Self { logs_path }
+    pub fn new(runtime_path: PathBuf, legacy_logs_path: PathBuf) -> Self {
+        Self {
+            runtime_path,
+            legacy_logs_path,
+        }
     }
 
     pub fn definition() -> kalamdb_commons::schemas::TableDefinition {
@@ -140,10 +146,18 @@ impl ProcedureLogsView {
         )
     }
 
-    fn log_paths(&self) -> [PathBuf; 2] {
-        let current = self.logs_path.join("procedures.jsonl");
-        let rotated = self.logs_path.join("procedures.jsonl.1");
-        [current, rotated]
+    fn log_paths(&self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        push_jsonl_pair(&mut files, &self.legacy_logs_path);
+        if let Ok(entries) = fs::read_dir(&self.runtime_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    push_jsonl_pair(&mut files, &path.join("logs"));
+                }
+            }
+        }
+        files
     }
 
     fn read_log_tail(path: &Path) -> Result<String, RegistryError> {
@@ -295,8 +309,22 @@ impl VirtualView for ProcedureLogsView {
 
 pub type ProcedureLogsTableProvider = SystemViewProvider<ProcedureLogsView>;
 
-pub fn create_procedure_logs_provider(logs_path: impl Into<PathBuf>) -> ProcedureLogsTableProvider {
-    view_provider_with(logs_path.into(), ProcedureLogsView::new)
+pub fn create_procedure_logs_provider(
+    runtime_path: impl Into<PathBuf>,
+    legacy_logs_path: impl Into<PathBuf>,
+) -> ProcedureLogsTableProvider {
+    view_provider_with(
+        (runtime_path.into(), legacy_logs_path.into()),
+        |(runtime_path, legacy_logs_path)| ProcedureLogsView::new(runtime_path, legacy_logs_path),
+    )
+}
+
+fn push_jsonl_pair(files: &mut Vec<PathBuf>, logs_dir: &Path) {
+    if logs_dir.as_os_str().is_empty() {
+        return;
+    }
+    files.push(logs_dir.join("procedures.jsonl"));
+    files.push(logs_dir.join("procedures.jsonl.1"));
 }
 
 #[cfg(test)]
@@ -308,22 +336,27 @@ mod tests {
 
     use super::*;
 
+    fn write_procedure_log(runtime: &Path, procedure_id: &str, lines: &[&str]) {
+        let logs_dir = runtime.join(procedure_id).join("logs");
+        std::fs::create_dir_all(&logs_dir).unwrap();
+        let mut file = std::fs::File::create(logs_dir.join("procedures.jsonl")).unwrap();
+        for line in lines {
+            writeln!(file, "{line}").unwrap();
+        }
+    }
+
     #[test]
     fn procedure_logs_view_reads_jsonl() {
         let dir = tempdir().unwrap();
-        let log_file = dir.path().join("procedures.jsonl");
-        let mut file = std::fs::File::create(&log_file).unwrap();
-        writeln!(
-            file,
-            r#"{{"timestamp":"2026-09-10T00:00:00.000Z","node_id":"1","execution_id":"e1","request_id":"r1","procedure_id":"chat.send_message","module_id":"backend","revision_id":"backend:abc","actor":"alice","origin":"sql","outcome":"error","error_code":"PROCEDURE_TIMEOUT","message":"deadline exceeded","duration_ms":12}}"#
-        )
-        .unwrap();
-        writeln!(
-            file,
-            r#"{{"timestamp":"2026-09-10T00:00:00.001Z","node_id":"1","execution_id":"e1","request_id":"r1","procedure_id":"chat.send_message","module_id":"backend","revision_id":"backend:abc","actor":"alice","origin":"sql","outcome":"log","channel":"console","level":"info","message":"hello-from-v8","duration_ms":0}}"#
-        )
-        .unwrap();
-        let view = ProcedureLogsView::new(dir.path().to_path_buf());
+        write_procedure_log(
+            dir.path(),
+            "chat.send_message",
+            &[
+                r#"{"timestamp":"2026-09-10T00:00:00.000Z","node_id":"1","execution_id":"e1","request_id":"r1","procedure_id":"chat.send_message","module_id":"backend","revision_id":"backend:abc","actor":"alice","origin":"sql","outcome":"error","error_code":"PROCEDURE_TIMEOUT","message":"deadline exceeded","duration_ms":12}"#,
+                r#"{"timestamp":"2026-09-10T00:00:00.001Z","node_id":"1","execution_id":"e1","request_id":"r1","procedure_id":"chat.send_message","module_id":"backend","revision_id":"backend:abc","actor":"alice","origin":"sql","outcome":"log","channel":"console","level":"info","message":"hello-from-v8","duration_ms":0}"#,
+            ],
+        );
+        let view = ProcedureLogsView::new(dir.path().to_path_buf(), PathBuf::new());
         let batch = view.compute_batch().expect("batch");
         assert_eq!(batch.num_rows(), 2);
         assert_eq!(batch.num_columns(), 15);
@@ -335,5 +368,44 @@ mod tests {
         assert_eq!(channels.value(0), "invocation");
         assert_eq!(channels.value(1), "console");
         assert_eq!(ProcedureLogsView::definition().table_name.as_str(), "procedure_logs");
+    }
+
+    #[test]
+    fn procedure_logs_view_merges_per_procedure_and_legacy_files() {
+        let runtime = tempdir().unwrap();
+        let legacy = tempdir().unwrap();
+        write_procedure_log(
+            runtime.path(),
+            "chat.send_message",
+            &[
+                r#"{"timestamp":"2026-09-10T00:00:00.002Z","node_id":"1","execution_id":"e2","request_id":"r2","procedure_id":"chat.send_message","actor":"alice","origin":"sql","outcome":"ok","channel":"invocation","level":"info","duration_ms":4}"#,
+            ],
+        );
+        write_procedure_log(
+            runtime.path(),
+            "billing.charge",
+            &[
+                r#"{"timestamp":"2026-09-10T00:00:00.003Z","node_id":"1","execution_id":"e3","request_id":"r3","procedure_id":"billing.charge","actor":"alice","origin":"sql","outcome":"ok","channel":"invocation","level":"info","duration_ms":8}"#,
+            ],
+        );
+        let mut legacy_file =
+            std::fs::File::create(legacy.path().join("procedures.jsonl")).unwrap();
+        writeln!(
+            legacy_file,
+            r#"{{"timestamp":"2026-09-10T00:00:00.001Z","node_id":"1","execution_id":"e0","request_id":"r0","procedure_id":"legacy.proc","actor":"alice","origin":"sql","outcome":"ok","channel":"invocation","level":"info","duration_ms":1}}"#
+        )
+        .unwrap();
+        let view =
+            ProcedureLogsView::new(runtime.path().to_path_buf(), legacy.path().to_path_buf());
+        let batch = view.compute_batch().expect("batch");
+        assert_eq!(batch.num_rows(), 3);
+        let procedure_ids = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("procedure_id column");
+        let mut ids: Vec<&str> = (0..batch.num_rows()).map(|i| procedure_ids.value(i)).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["billing.charge", "chat.send_message", "legacy.proc"]);
     }
 }

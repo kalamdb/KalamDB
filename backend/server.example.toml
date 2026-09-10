@@ -89,9 +89,10 @@ max_header_bytes = 16384
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:
-#   ./data/rocksdb  - RocksDB hot storage (write buffer)
-#   ./data/storage  - Parquet cold storage (flushed segments)
-#   ./data/snapshots - Raft snapshots (consensus state)
+#   ./data/rocksdb    - RocksDB hot storage (write buffer)
+#   ./data/storage    - Parquet cold storage (flushed segments)
+#   ./data/snapshots  - Raft snapshots (consensus state)
+#   ./data/functions  - Function artifacts and per-procedure runtime logs
 data_path = "./data"
 
 # Templates for table storage paths (used by 'local' storage)
@@ -259,8 +260,9 @@ default_query_limit = 50
 # Log level: error, warn, info, debug, trace (default: info)
 level = "info"
 
-# Directory for all log files (default: "./logs")
+# Directory for server and slow-query log files (default: "./logs")
 # Server will create server.log (or server.jsonl for JSON format), slow.jsonl, etc.
+# Procedure invocation/V8 logs live under {data_path}/functions/runtime/<procedure>/logs/
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)

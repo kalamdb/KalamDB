@@ -192,8 +192,10 @@ impl SystemSchemaProvider {
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::ProcedureLogs => {
-                let provider =
-                    Arc::new(create_procedure_logs_provider(&self.view_config.logs_path));
+                let provider = Arc::new(create_procedure_logs_provider(
+                    self.view_config.config.storage.functions_runtime_dir(),
+                    &self.view_config.logs_path,
+                ));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::ModuleInstances => {

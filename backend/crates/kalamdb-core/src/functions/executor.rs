@@ -591,23 +591,7 @@ fn is_uncompiled_inline_typescript(routine: &CatalogRoutine) -> bool {
 }
 
 pub fn function_storage(app: &AppContext) -> Result<Arc<StorageCached>, KalamDbError> {
-    let registry = app.storage_registry();
-    let storages = registry.list_storages().map_err(|error| {
-        KalamDbError::ExecutionError(format!("failed to list storages: {error}"))
-    })?;
-    let preferred = storages
-        .iter()
-        .find(|storage| storage.storage_id.as_str() == "local")
-        .or_else(|| storages.first())
-        .ok_or_else(|| {
-            KalamDbError::NotFound("no storage configured for function artifacts".to_string())
-        })?;
-    registry
-        .get_cached(&preferred.storage_id)
-        .map_err(|error| KalamDbError::ExecutionError(format!("failed to load storage: {error}")))?
-        .ok_or_else(|| {
-            KalamDbError::NotFound(format!("storage {} is not cached", preferred.storage_id))
-        })
+    Ok(app.functions_storage())
 }
 
 fn owner_role(app: &AppContext, owner: &UserId) -> Result<Role, KalamDbError> {

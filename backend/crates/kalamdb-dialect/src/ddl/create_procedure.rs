@@ -4,9 +4,10 @@ use kalamdb_commons::models::{NamespaceId, RoutineId, RoutineSecurityMode};
 
 use crate::ddl::{
     create_type::{
-        parse_optional_comment, parse_sql_string_prefix, parse_type_reference,
-        split_qualified_ident, take_ident, TypeReference,
+        matching_paren, parse_type_reference, split_qualified_ident, split_top_level, take_ident,
+        take_type_attributes, TypeReference,
     },
+    parsing::{parse_optional_comment, parse_sql_string_prefix, strip_keyword_ci, take_keyword_ci},
     DdlResult,
 };
 
@@ -32,17 +33,11 @@ pub struct CreateProcedureStatement {
 
 impl CreateProcedureStatement {
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let trimmed = sql.trim().trim_end_matches(';');
-        let upper = trimmed.to_ascii_uppercase();
-        let rest = if upper.starts_with("CREATE OR REPLACE PROCEDURE") {
-            &trimmed["CREATE OR REPLACE PROCEDURE".len()..]
-        } else if upper.starts_with("CREATE PROCEDURE") {
-            &trimmed["CREATE PROCEDURE".len()..]
-        } else {
+        let mut rest = sql.trim().trim_end_matches(';');
+        let or_replace = take_keyword_ci(&mut rest, "CREATE OR REPLACE PROCEDURE");
+        if !or_replace && !take_keyword_ci(&mut rest, "CREATE PROCEDURE") {
             return Err("Expected CREATE PROCEDURE statement".to_string());
-        };
-        let or_replace = upper.starts_with("CREATE OR REPLACE PROCEDURE");
-        let rest = rest.trim_start();
+        }
         let (qual, after) = split_qualified_ident(rest)?;
         let namespace_id = qual.namespace_or(default_namespace);
         let procedure_name = qual.name.to_ascii_lowercase();
@@ -50,25 +45,16 @@ impl CreateProcedureStatement {
         if !after.starts_with('(') {
             return Err("Expected parameter list after procedure name".to_string());
         }
-        let close = crate::ddl::create_type::matching_paren(after)
+        let close = matching_paren(after)
             .ok_or_else(|| "Unterminated procedure parameter list".to_string())?;
         let params_body = &after[1..close];
         let mut parameters = Vec::new();
         if !params_body.trim().is_empty() {
-            for part in crate::ddl::create_type::split_top_level(params_body, ',') {
+            for part in split_top_level(params_body, ',') {
                 let part = part.trim();
                 let (name, rest) = take_ident(part)?;
                 let (mut type_ref, leftover) = parse_type_reference(rest.trim_start())?;
-                let leftover_upper = leftover.trim().to_ascii_uppercase();
-                if leftover_upper.contains("NOT NULL") {
-                    type_ref.not_null = true;
-                }
-                if leftover_upper.contains("NONEMPTY") {
-                    type_ref.nonempty = true;
-                }
-                if leftover_upper.contains("ROW TYPE") {
-                    // Alias marker; type name is still the referenced table/type.
-                }
+                take_type_attributes(&mut type_ref, leftover);
                 parameters.push(ProcedureParameter { name, type_ref });
             }
         }
@@ -81,55 +67,47 @@ impl CreateProcedureStatement {
         let mut comment = None;
 
         loop {
-            let rest_upper = rest.to_ascii_uppercase();
-            if rest_upper.starts_with("RETURNS") {
-                let after_returns = rest["RETURNS".len()..].trim_start();
-                let after_returns = strip_row_type_prefix(after_returns);
+            if rest.is_empty() {
+                break;
+            }
+            if take_keyword_ci(&mut rest, "RETURNS") {
+                let after_returns = strip_keyword_ci(rest, "ROW TYPE").unwrap_or(rest);
                 let (ty, leftover) = parse_type_reference(after_returns)?;
                 return_type = Some(ty);
                 rest = leftover.trim_start();
                 continue;
             }
-            if rest_upper.starts_with("LANGUAGE") {
-                let after_lang = rest["LANGUAGE".len()..].trim_start();
-                let (lang, leftover) = take_ident(after_lang)?;
+            if take_keyword_ci(&mut rest, "LANGUAGE") {
+                let (lang, leftover) = take_ident(rest)?;
                 language = Some(lang.to_ascii_uppercase());
                 rest = leftover.trim_start();
                 continue;
             }
-            if rest_upper.starts_with("SECURITY INVOKER") {
+            if take_keyword_ci(&mut rest, "SECURITY INVOKER") {
                 security = RoutineSecurityMode::Invoker;
-                rest = rest["SECURITY INVOKER".len()..].trim_start();
                 continue;
             }
-            if rest_upper.starts_with("SECURITY DEFINER") {
+            if take_keyword_ci(&mut rest, "SECURITY DEFINER") {
                 security = RoutineSecurityMode::Definer;
-                rest = rest["SECURITY DEFINER".len()..].trim_start();
                 continue;
             }
-            {
-                let (parsed, leftover) = parse_optional_comment(rest)?;
-                if parsed.is_some() {
-                    comment = parsed;
-                    rest = leftover.trim_start();
-                    continue;
-                }
+            let (parsed, leftover) = parse_optional_comment(rest)?;
+            if parsed.is_some() {
+                comment = parsed;
+                rest = leftover.trim_start();
+                continue;
             }
-            if rest_upper.starts_with("AS") {
-                let after_as = rest["AS".len()..].trim_start();
-                if looks_like_source_file_mapping(after_as) {
+            if take_keyword_ci(&mut rest, "AS") {
+                if looks_like_source_file_mapping(rest) {
                     return Err("CREATE PROCEDURE source-file mapping (AS 'path', 'export') is \
                                 not supported; implement the procedure in the functions project \
                                 or use LANGUAGE with an inline body"
                         .to_string());
                 }
-                let (parsed_body, leftover) = parse_procedure_body(after_as)?;
+                let (parsed_body, leftover) = parse_procedure_body(rest)?;
                 body = Some(parsed_body);
                 rest = leftover.trim_start();
                 continue;
-            }
-            if rest.is_empty() {
-                break;
             }
             return Err(format!("Unexpected procedure clause starting at '{rest}'"));
         }
@@ -160,14 +138,6 @@ impl CreateProcedureStatement {
             body,
             comment,
         })
-    }
-}
-
-fn strip_row_type_prefix(input: &str) -> &str {
-    if input.len() >= 8 && input[..8].eq_ignore_ascii_case("ROW TYPE") {
-        input[8..].trim_start()
-    } else {
-        input
     }
 }
 
@@ -214,16 +184,11 @@ pub struct DropProcedureStatement {
 
 impl DropProcedureStatement {
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let trimmed = sql.trim().trim_end_matches(';');
-        let upper = trimmed.to_ascii_uppercase();
-        if !upper.starts_with("DROP PROCEDURE") {
+        let mut rest = sql.trim().trim_end_matches(';');
+        if !take_keyword_ci(&mut rest, "DROP PROCEDURE") {
             return Err("Expected DROP PROCEDURE statement".to_string());
         }
-        let mut rest = trimmed["DROP PROCEDURE".len()..].trim_start();
-        let if_exists = rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("IF EXISTS");
-        if if_exists {
-            rest = rest["IF EXISTS".len()..].trim_start();
-        }
+        let if_exists = take_keyword_ci(&mut rest, "IF EXISTS");
         let (qual, _) = split_qualified_ident(rest)?;
         let namespace_id = qual.namespace_or(default_namespace);
         Ok(Self {

@@ -284,6 +284,7 @@ pub struct StorageSettings {
     /// - {data_path}/rocksdb - RocksDB hot storage
     /// - {data_path}/storage - Parquet cold storage
     /// - {data_path}/snapshots - Raft snapshots
+    /// - {data_path}/functions - Function artifacts and per-procedure runtime logs
     #[serde(default = "default_data_path")]
     pub data_path:              String,
     /// Template for shared table paths (placeholders: {namespace}, {tableName})
@@ -350,6 +351,22 @@ impl StorageSettings {
     pub fn exports_dir(&self) -> std::path::PathBuf {
         let base = crate::file_helpers::normalize_dir_path(&self.data_path);
         crate::file_helpers::join_path(base, "exports")
+    }
+
+    /// Get functions root directory path (data_path/functions)
+    pub fn functions_dir(&self) -> std::path::PathBuf {
+        let base = crate::file_helpers::normalize_dir_path(&self.data_path);
+        crate::file_helpers::join_path(base, "functions")
+    }
+
+    /// Get function artifact directory path (data_path/functions/artifacts)
+    pub fn functions_artifacts_dir(&self) -> std::path::PathBuf {
+        crate::file_helpers::join_path(self.functions_dir(), "artifacts")
+    }
+
+    /// Get function runtime directory path (data_path/functions/runtime)
+    pub fn functions_runtime_dir(&self) -> std::path::PathBuf {
+        crate::file_helpers::join_path(self.functions_dir(), "runtime")
     }
 }
 

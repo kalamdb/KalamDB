@@ -19,7 +19,7 @@ use kalamdb_commons::{
     NodeId,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_filestore::StorageRegistry;
+use kalamdb_filestore::{StorageCached, StorageRegistry};
 use kalamdb_live::{
     ConnectionsManager, LiveQueryManager, NotificationService, TopicPrimaryKeyLookup,
     TopicPublisherService,
@@ -151,6 +151,9 @@ pub struct AppContext {
     // ===== Procedure invocation JSONL =====
     procedure_log_logger: Arc<crate::procedure_log_logger::ProcedureLogLogger>,
 
+    // ===== Node-local function artifacts (`{data_path}/functions`) =====
+    functions_storage: Arc<StorageCached>,
+
     // ===== Manifest Service (unified: memory cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
@@ -205,6 +208,7 @@ impl std::fmt::Debug for AppContext {
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
             .field("procedure_log_logger", &"Arc<ProcedureLogLogger>")
+            .field("functions_storage", &"Arc<StorageCached>")
             .field("manifest_service", &"Arc<ManifestService>")
             .field("topic_publisher", &"Arc<TopicPublisherService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
@@ -423,8 +427,13 @@ impl AppContext {
                 slow_log_path,
                 config.logging.slow_query_threshold_ms,
             );
+            let functions_dir = config.storage.functions_dir();
+            let _ = std::fs::create_dir_all(config.storage.functions_artifacts_dir());
+            let _ = std::fs::create_dir_all(config.storage.functions_runtime_dir());
+            let functions_storage =
+                Arc::new(kalamdb_filestore::StorageCached::for_functions_dir(&functions_dir));
             let procedure_log_logger = crate::procedure_log_logger::ProcedureLogLogger::new(
-                format!("{}/procedures.jsonl", config.logging.logs_path),
+                config.storage.functions_runtime_dir(),
             );
 
             // Create system columns service (Phase 12, US5, T027)
@@ -544,6 +553,7 @@ impl AppContext {
                 system_columns_service,
                 slow_query_logger,
                 procedure_log_logger,
+                functions_storage,
                 manifest_service,
                 file_storage_service,
                 topic_publisher: Arc::clone(&topic_publisher),
@@ -941,6 +951,8 @@ impl AppContext {
         let slow_query_logger = Arc::new(crate::slow_query_logger::SlowQueryLogger::new_test());
         let procedure_log_logger =
             Arc::new(crate::procedure_log_logger::ProcedureLogLogger::new_test());
+        let functions_storage =
+            Arc::new(StorageCached::for_functions_dir(config.storage.functions_dir()));
 
         // Create system columns service with worker_id=0 for tests
         let system_columns_service = Arc::new(crate::schema_registry::SystemColumnsService::new(0));
@@ -1016,6 +1028,7 @@ impl AppContext {
             system_columns_service,
             slow_query_logger,
             procedure_log_logger,
+            functions_storage,
             manifest_service,
             file_storage_service,
             topic_publisher: Arc::clone(&topic_publisher),
@@ -1340,6 +1353,11 @@ impl AppContext {
 
     pub fn procedure_log_logger(&self) -> Arc<crate::procedure_log_logger::ProcedureLogLogger> {
         self.procedure_log_logger.clone()
+    }
+
+    /// Node-local function artifact store rooted at `{data_path}/functions`.
+    pub fn functions_storage(&self) -> Arc<StorageCached> {
+        self.functions_storage.clone()
     }
 
     /// Get the manifest service (unified: memory cache + RocksDB + cold storage)

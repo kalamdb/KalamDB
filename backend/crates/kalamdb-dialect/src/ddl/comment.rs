@@ -37,38 +37,33 @@ impl CommentOnStatement {
         }
         match statements.remove(0) {
             Statement::Comment {
-                object_type: CommentObject::Type,
+                object_type,
                 object_name,
                 comment,
                 if_exists,
             } => {
                 let (namespace_id, name) = resolve_object_name(&object_name, default_namespace)?;
-                Ok(Self {
-                    target: CommentOnTarget::Type(TypeId::from_parts(Some(&namespace_id), &name)),
-                    comment,
-                    if_exists,
-                })
-            },
-            Statement::Comment {
-                object_type: CommentObject::Procedure,
-                object_name,
-                comment,
-                if_exists,
-            } => {
-                let (namespace_id, name) = resolve_object_name(&object_name, default_namespace)?;
-                Ok(Self {
-                    target: CommentOnTarget::Procedure(RoutineId::from_parts(
+                let target = match object_type {
+                    CommentObject::Type => {
+                        CommentOnTarget::Type(TypeId::from_parts(Some(&namespace_id), &name))
+                    },
+                    CommentObject::Procedure => CommentOnTarget::Procedure(RoutineId::from_parts(
                         Some(&namespace_id),
                         &name.to_ascii_lowercase(),
                     )),
+                    other => {
+                        return Err(format!(
+                            "COMMENT ON {other} is not supported; use COMMENT ON TYPE or COMMENT \
+                             ON PROCEDURE"
+                        ));
+                    },
+                };
+                Ok(Self {
+                    target,
                     comment,
                     if_exists,
                 })
             },
-            Statement::Comment { object_type, .. } => Err(format!(
-                "COMMENT ON {object_type} is not supported; use COMMENT ON TYPE or COMMENT ON \
-                 PROCEDURE"
-            )),
             other => Err(format!("Expected COMMENT ON statement, got {other}")),
         }
     }

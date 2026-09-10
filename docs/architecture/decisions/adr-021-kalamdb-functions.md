@@ -57,7 +57,7 @@ V1 executes **TypeScript bundled to JavaScript** in a sandboxed isolate.
 - ABI: `ABI_VERSION = 2`. Host values cross as a FlatBuffer transfer buffer
   (one encode, V8 `JSON.parse` of the decoded payload) with Arrow/`ScalarValue`
   as the typed model.
-- Artifacts: `{storage}/functions/artifacts/{artifact_id}/module.js` (SHA-256 content address). Activation CAS-swaps `system.function_modules.active_revision_id` after writing artifact + revision rows. Interruption before the pointer swap leaves the previous revision active.
+- Artifacts: `{data_path}/functions/artifacts/{artifact_id}/module.js` (SHA-256 content address, always local). Activation CAS-swaps `system.function_modules.active_revision_id` after writing artifact + revision rows. Interruption before the pointer swap leaves the previous revision active.
 - Spike timings (dev profile, `echo` fixture, 2026-09-05): **cold_start = 0.0012s**, **warm_invoke = 0.0053s**.
 - Limits: timeout watchdog, cancellation token, near-heap-limit callback mapped to `MemoryLimit`.
 
@@ -124,8 +124,9 @@ reserved/limit bytes and idle/active isolate counts; `system.module_instances`
 lists each resident isolate joined to its module revision. `system.modules`,
 `system.module_revisions`, and `system.procedures` join the 3NF catalog for
 operators. Invocation outcomes, V8 `console.*`/`ctx.log.*` lines, and
-uncaught JavaScript exceptions are written to a rotating
-`procedures.jsonl` file and queried through `system.procedure_logs`.
+uncaught JavaScript exceptions are written to rotating
+`{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl` files and
+queried through `system.procedure_logs`.
 Caller-future abandonment, downstream SQL
 cancellation, mixed read/write/nested load, and process-wide RSS still require
 sustained production acceptance testing.
