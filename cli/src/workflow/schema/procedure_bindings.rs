@@ -164,53 +164,53 @@ fn discover_file_bindings(
     for statement in &parsed.program.body {
         match statement {
             Statement::ImportDeclaration(decl) => collect_imports(decl, &mut imports),
-            Statement::ExportDeclaration(decl) => {
-                if let Declaration::VariableDeclaration(var) = &decl.declaration {
-                    if var.kind != VariableDeclarationKind::Const {
+            Statement::ExportNamedDeclaration(decl) => {
+                let Some(Declaration::VariableDeclaration(var)) = &decl.declaration else {
+                    continue;
+                };
+                if var.kind != VariableDeclarationKind::Const {
+                    continue;
+                }
+                for declarator in &var.declarations {
+                    let Some(export_name) = binding_ident_name(&declarator.id) else {
                         continue;
-                    }
-                    for declarator in &var.declarations {
-                        let Some(export_name) = binding_ident_name(&declarator.id) else {
-                            continue;
-                        };
-                        let Some(init) = &declarator.init else {
-                            continue;
-                        };
-                        match classify_procedure_init(init, &imports) {
-                            InitKind::Ignore => {},
-                            InitKind::Malformed => {
+                    };
+                    let Some(init) = &declarator.init else {
+                        continue;
+                    };
+                    match classify_procedure_init(init, &imports) {
+                        InitKind::Ignore => {},
+                        InitKind::Malformed => {
+                            return Err(CLIError::ConfigurationError(format!(
+                                "malformed procedure binding '{}' in '{}'; export a generated \
+                                 `procedure.<schema>.<method>(handler)` or `.unimplemented()` call",
+                                export_name,
+                                display_rel(project_root, path),
+                            )));
+                        },
+                        InitKind::Binding {
+                            namespace,
+                            method,
+                            implemented,
+                        } => {
+                            let Some((routine_id, schema, name)) =
+                                identities.get(&(namespace.clone(), method.clone()))
+                            else {
                                 return Err(CLIError::ConfigurationError(format!(
-                                    "malformed procedure binding '{}' in '{}'; export a generated \
-                                     `procedure.<schema>.<method>(handler)` or `.unimplemented()` \
-                                     call",
-                                    export_name,
+                                    "unknown procedure builder procedure.{namespace}.{method} \
+                                     (export '{export_name}' in '{}')",
                                     display_rel(project_root, path),
                                 )));
-                            },
-                            InitKind::Binding {
-                                namespace,
-                                method,
+                            };
+                            bindings.push(ProcedureBinding {
+                                routine_id: routine_id.clone(),
+                                schema: schema.clone(),
+                                name: name.clone(),
+                                export_name: export_name.to_string(),
+                                source_path: path.to_path_buf(),
                                 implemented,
-                            } => {
-                                let Some((routine_id, schema, name)) =
-                                    identities.get(&(namespace.clone(), method.clone()))
-                                else {
-                                    return Err(CLIError::ConfigurationError(format!(
-                                        "unknown procedure builder procedure.{namespace}.{method} \
-                                         (export '{export_name}' in '{}')",
-                                        display_rel(project_root, path),
-                                    )));
-                                };
-                                bindings.push(ProcedureBinding {
-                                    routine_id: routine_id.clone(),
-                                    schema: schema.clone(),
-                                    name: name.clone(),
-                                    export_name: export_name.to_string(),
-                                    source_path: path.to_path_buf(),
-                                    implemented,
-                                });
-                            },
-                        }
+                            });
+                        },
                     }
                 }
             },
