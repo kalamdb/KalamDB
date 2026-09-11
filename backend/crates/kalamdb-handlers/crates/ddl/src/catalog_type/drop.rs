@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use kalamdb_commons::models::CatalogTypeKind;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -55,13 +56,24 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
                     statement.type_id
                 )));
             }
-            if existing.as_ref().is_some_and(|catalog_type| {
-                catalog_type.kind == kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow
-            }) {
-                return Err(KalamDbError::InvalidSql(format!(
-                    "cannot drop implicit table row type {}; drop the table instead",
-                    statement.type_id
-                )));
+            if let Some(catalog_type) = existing.as_ref() {
+                match catalog_type.kind {
+                    CatalogTypeKind::ImplicitTableRow => {
+                        return Err(KalamDbError::InvalidSql(format!(
+                            "cannot drop implicit table row type {}; drop the table instead",
+                            statement.type_id
+                        )));
+                    },
+                    CatalogTypeKind::TopicPayload => {
+                        return Err(KalamDbError::InvalidSql(format!(
+                            "cannot drop implicit topic payload type {}; drop the topic instead",
+                            statement.type_id
+                        )));
+                    },
+                    CatalogTypeKind::RowAlias
+                    | CatalogTypeKind::Composite
+                    | CatalogTypeKind::Enum => {},
+                }
             }
             stores
                 .drop_type(&statement.type_id)
@@ -71,5 +83,49 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
             })
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kalamdb_commons::{
+        models::{NamespaceId, TopicId, UserId},
+        Role,
+    };
+    use kalamdb_core::{
+        sql::{context::ExecutionContext, executor::handlers::TypedStatementHandler},
+        test_helpers::{create_test_session_for, test_app_context_simple},
+    };
+    use kalamdb_sql::ddl::DropTypeStatement;
+
+    use super::*;
+
+    fn dba_ctx(app: &Arc<kalamdb_core::app_context::AppContext>) -> ExecutionContext {
+        ExecutionContext::new(UserId::new("root"), Role::Dba, create_test_session_for(app))
+    }
+
+    #[tokio::test]
+    async fn drop_type_rejects_implicit_topic_payload() {
+        let app = test_app_context_simple();
+        let namespace_id = NamespaceId::new("app");
+        if app.system_tables().namespaces().get_namespace(&namespace_id).unwrap().is_none() {
+            app.system_tables()
+                .namespaces()
+                .create_namespace(kalamdb_system::Namespace::new("app"))
+                .unwrap();
+        }
+        app.system_tables()
+            .catalog_stores()
+            .ensure_implicit_topic_payload_type(&TopicId::new("app.inbox"))
+            .unwrap();
+        let handler = DropTypeHandler::new(Arc::clone(&app));
+        let statement =
+            DropTypeStatement::parse("DROP TYPE app.inbox", &namespace_id).expect("parse");
+        let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("topic payload"), "{message}");
+        assert!(message.contains("drop the topic instead"), "{message}");
     }
 }

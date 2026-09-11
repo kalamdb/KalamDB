@@ -1,4 +1,4 @@
-//! Type-safe wrapper for named SQL types (`CREATE TYPE` / implicit table row types).
+//! Type-safe wrapper for named SQL types (`CREATE TYPE`, implicit table row types, topic payloads).
 
 use std::fmt;
 

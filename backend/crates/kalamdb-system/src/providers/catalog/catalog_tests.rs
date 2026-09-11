@@ -487,3 +487,37 @@ fn dropping_a_trigger_clears_its_delivery_attempts() {
     stores.drop_trigger_attempts_for_topic(&topic_id).unwrap();
     assert!(stores.list_trigger_attempts().unwrap().is_empty());
 }
+
+#[test]
+fn implicit_topic_payload_type_round_trips() {
+    let stores = stores();
+    let topic_id = TopicId::new("chat.ai_inbox");
+    let type_id = stores.ensure_implicit_topic_payload_type(&topic_id).unwrap();
+    assert_eq!(type_id.as_str(), "chat.ai_inbox");
+    let loaded = stores.get_type(&type_id).unwrap().unwrap();
+    assert_eq!(loaded.kind, CatalogTypeKind::TopicPayload);
+    assert_eq!(loaded.namespace_id, chat_ns());
+    assert_eq!(loaded.name, "ai_inbox");
+
+    stores.ensure_implicit_topic_payload_type(&topic_id).unwrap();
+    stores.drop_implicit_topic_payload_type(&topic_id).unwrap();
+    assert!(stores.get_type(&type_id).unwrap().is_none());
+}
+
+#[test]
+fn implicit_topic_payload_type_does_not_clobber_named_type() {
+    let stores = stores();
+    stores.upsert_type(address_type()).unwrap();
+    let err = stores
+        .ensure_implicit_topic_payload_type(&TopicId::new("chat.address"))
+        .unwrap_err();
+    assert!(err.to_string().contains("already exists"));
+    assert_eq!(
+        stores
+            .get_type(&TypeId::from_parts(Some(&chat_ns()), "address"))
+            .unwrap()
+            .unwrap()
+            .kind,
+        CatalogTypeKind::Composite
+    );
+}

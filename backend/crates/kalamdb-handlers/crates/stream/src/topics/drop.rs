@@ -51,6 +51,12 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
 
         let topic_name = topic.expect("checked is_some").name;
 
+        self.app_context
+            .system_tables()
+            .catalog_stores()
+            .drop_implicit_topic_payload_type(&topic_id)
+            .map_err(super::catalog_error)?;
+
         let (offsets_deleted, messages_deleted) = clear_topic_data(&self.app_context, &topic_id)
             .map_err(|e| {
                 KalamDbError::ExecutionError(format!(

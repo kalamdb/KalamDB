@@ -44,6 +44,10 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "create procedure")?;
         require_existing_namespace(&self.app_context, &statement.namespace_id)?;
+        {
+            let stores = self.app_context.system_tables().catalog_stores();
+            crate::catalog_type::require_procedure_types(&stores, &statement)?;
+        }
         let app = Arc::clone(&self.app_context);
         let owner = context.user_id().clone();
         let mut routine = catalog_routine(&statement, owner);
@@ -192,6 +196,59 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("does not exist"), "{message}");
         assert!(message.contains("CREATE NAMESPACE missing_ns"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn unknown_parameter_type_is_rejected() {
+        let app_ctx = test_app_context_simple();
+        let namespaces = app_ctx.system_tables().namespaces();
+        let ns = NamespaceId::new("app");
+        if namespaces.get_namespace(&ns).unwrap().is_none() {
+            namespaces.create_namespace(kalamdb_system::Namespace::new("app")).unwrap();
+        }
+        let handler = CreateProcedureHandler::new(Arc::clone(&app_ctx));
+        let ctx = ExecutionContext::new(
+            UserId::new("test_user"),
+            Role::Dba,
+            create_test_session_for(&app_ctx),
+        );
+        let statement = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE app.echo_status(s app.missing_status) LANGUAGE JAVASCRIPT AS $$ \
+             return input; $$",
+            &ns,
+        )
+        .expect("parse create procedure");
+        let error = handler.execute(statement, vec![], &ctx).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("app.missing_status"), "{message}");
+        assert!(message.contains("not found"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn topic_payload_type_can_be_used_as_return_type() {
+        let app_ctx = test_app_context_simple();
+        let namespaces = app_ctx.system_tables().namespaces();
+        let ns = NamespaceId::new("app");
+        if namespaces.get_namespace(&ns).unwrap().is_none() {
+            namespaces.create_namespace(kalamdb_system::Namespace::new("app")).unwrap();
+        }
+        app_ctx
+            .system_tables()
+            .catalog_stores()
+            .ensure_implicit_topic_payload_type(&kalamdb_commons::models::TopicId::new("app.inbox"))
+            .unwrap();
+        let handler = CreateProcedureHandler::new(Arc::clone(&app_ctx));
+        let ctx = ExecutionContext::new(
+            UserId::new("test_user"),
+            Role::Dba,
+            create_test_session_for(&app_ctx),
+        );
+        let statement = CreateProcedureStatement::parse(
+            "CREATE PROCEDURE app.send() RETURNS app.inbox SECURITY INVOKER",
+            &ns,
+        )
+        .expect("parse create procedure");
+        handler.execute(statement, vec![], &ctx).await.expect("create procedure");
     }
 }
 

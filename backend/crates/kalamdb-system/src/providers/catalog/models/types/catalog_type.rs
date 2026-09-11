@@ -46,7 +46,7 @@ pub struct CatalogType {
         nullable = false,
         primary_key = false,
         default = "None",
-        comment = "implicit_table_row | row_alias | composite | enum"
+        comment = "implicit_table_row | topic_payload | row_alias | composite | enum"
     )]
     pub kind:           CatalogTypeKind,
     #[column(

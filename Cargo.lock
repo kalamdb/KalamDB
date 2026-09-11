@@ -5160,6 +5160,7 @@ dependencies = [
  "kalamdb-system",
  "kalamdb-tables",
  "log",
+ "tokio",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{CatalogTypeKind, NamespaceId, TableId, TypeId},
+    models::{CatalogTypeKind, NamespaceId, TableId, TopicId, TypeId},
     schemas::{TableDefinition, TableName},
 };
 use kalamdb_core::{
@@ -66,9 +66,30 @@ fn persist_create_type(
             statement.type_id
         )));
     }
+    let topic_id = TopicId::new(statement.type_id.as_str());
+    if app
+        .system_tables()
+        .topics()
+        .get_topic_by_id(&topic_id)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .is_some()
+    {
+        return Err(KalamDbError::AlreadyExists(format!(
+            "type {} collides with topic payload type",
+            statement.type_id
+        )));
+    }
 
     match &statement.body {
         CreateTypeBody::Composite { fields } => {
+            for field in fields {
+                require_type_reference(
+                    &stores,
+                    &statement.namespace_id,
+                    &field.type_ref,
+                    Some(&statement.type_id),
+                )?;
+            }
             upsert_named_type(&stores, &statement, CatalogTypeKind::Composite)?;
             let catalog_fields = fields
                 .iter()
@@ -265,4 +286,122 @@ pub(super) fn catalog_field(
         type_ref.nonempty,
     )
     .map_err(KalamDbError::InvalidSql)
+}
+
+pub(crate) fn require_type_reference(
+    stores: &CatalogStores,
+    current_schema: &NamespaceId,
+    type_ref: &TypeReference,
+    self_type: Option<&TypeId>,
+) -> Result<(), KalamDbError> {
+    let Some(type_id) = type_ref.resolved_type_id(current_schema) else {
+        return Ok(());
+    };
+    if self_type.is_some_and(|self_id| self_id == &type_id) {
+        return Err(KalamDbError::InvalidSql(format!("type {type_id} cannot reference itself")));
+    }
+    let found = stores
+        .get_type(&type_id)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    if found.is_none() {
+        return Err(KalamDbError::NotFound(format!("type {type_id} not found")));
+    }
+    Ok(())
+}
+
+pub(crate) fn require_procedure_types(
+    stores: &CatalogStores,
+    statement: &kalamdb_sql::ddl::CreateProcedureStatement,
+) -> Result<(), KalamDbError> {
+    for parameter in &statement.parameters {
+        require_type_reference(stores, &statement.namespace_id, &parameter.type_ref, None)?;
+    }
+    if let Some(return_type) = &statement.return_type {
+        require_type_reference(stores, &statement.namespace_id, return_type, None)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kalamdb_commons::{models::NamespaceId, Role};
+    use kalamdb_core::{
+        sql::{context::ExecutionContext, executor::handlers::TypedStatementHandler},
+        test_helpers::{create_test_session_for, test_app_context_simple},
+    };
+    use kalamdb_sql::ddl::CreateTypeStatement;
+
+    use super::*;
+
+    fn dba_ctx(app: &Arc<AppContext>) -> ExecutionContext {
+        ExecutionContext::new(
+            kalamdb_commons::models::UserId::new("root"),
+            Role::Dba,
+            create_test_session_for(app),
+        )
+    }
+
+    fn ensure_namespace(app: &AppContext, name: &str) {
+        let namespaces = app.system_tables().namespaces();
+        let namespace_id = NamespaceId::new(name);
+        if namespaces.get_namespace(&namespace_id).unwrap().is_none() {
+            namespaces.create_namespace(kalamdb_system::Namespace::new(name)).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_nested_type_is_rejected() {
+        let app = test_app_context_simple();
+        ensure_namespace(&app, "app");
+        let handler = CreateTypeHandler::new(Arc::clone(&app));
+        let statement = CreateTypeStatement::parse(
+            "CREATE TYPE app.envelope AS (status app.missing_status)",
+            &NamespaceId::new("app"),
+        )
+        .expect("parse");
+        let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("app.missing_status"), "{message}");
+        assert!(message.contains("not found"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn self_referential_composite_is_rejected() {
+        let app = test_app_context_simple();
+        ensure_namespace(&app, "app");
+        let handler = CreateTypeHandler::new(Arc::clone(&app));
+        let statement = CreateTypeStatement::parse(
+            "CREATE TYPE app.node AS (child app.node)",
+            &NamespaceId::new("app"),
+        )
+        .expect("parse");
+        let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
+        assert!(error.to_string().contains("cannot reference itself"), "{}", error);
+    }
+
+    #[tokio::test]
+    async fn create_type_rejects_existing_topic_name() {
+        let app = test_app_context_simple();
+        ensure_namespace(&app, "app");
+        let topic_id = kalamdb_commons::models::TopicId::new("app.inbox");
+        app.system_tables()
+            .topics()
+            .create_topic(kalamdb_system::providers::topics::models::Topic::new(
+                topic_id,
+                "app.inbox".to_string(),
+            ))
+            .unwrap();
+        let handler = CreateTypeHandler::new(Arc::clone(&app));
+        let statement = CreateTypeStatement::parse(
+            "CREATE TYPE app.inbox AS ENUM ('a')",
+            &NamespaceId::new("app"),
+        )
+        .expect("parse");
+        let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("app.inbox"), "{message}");
+        assert!(message.contains("already exists") || message.contains("collides"), "{message}");
+    }
 }

@@ -5,7 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-/// Distinguishes implicit table row types, aliases, named composites, and enums.
+/// Distinguishes implicit table row types, topic payloads, aliases, named composites, and enums.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serde",
@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub enum CatalogTypeKind {
     /// Same-named row type generated for a table.
     ImplicitTableRow,
+    /// Same-named payload type generated for a topic.
+    TopicPayload,
     /// Alias that records a source type id instead of copying fields.
     RowAlias,
     /// Named `CREATE TYPE ... AS (...)`.
@@ -27,6 +29,7 @@ impl CatalogTypeKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ImplicitTableRow => "implicit_table_row",
+            Self::TopicPayload => "topic_payload",
             Self::RowAlias => "row_alias",
             Self::Composite => "composite",
             Self::Enum => "enum",
@@ -36,6 +39,7 @@ impl CatalogTypeKind {
     pub fn from_str_opt(value: &str) -> Option<Self> {
         match value {
             "implicit_table_row" => Some(Self::ImplicitTableRow),
+            "topic_payload" => Some(Self::TopicPayload),
             "row_alias" => Some(Self::RowAlias),
             "composite" => Some(Self::Composite),
             "enum" => Some(Self::Enum),
@@ -60,6 +64,11 @@ mod tests {
         assert_eq!(
             CatalogTypeKind::from_str_opt("implicit_table_row"),
             Some(CatalogTypeKind::ImplicitTableRow)
+        );
+        assert_eq!(CatalogTypeKind::TopicPayload.as_str(), "topic_payload");
+        assert_eq!(
+            CatalogTypeKind::from_str_opt("topic_payload"),
+            Some(CatalogTypeKind::TopicPayload)
         );
     }
 }

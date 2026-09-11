@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{
     models::{
-        ArtifactId, FunctionModuleId, FunctionRevisionId, RoutineGrantId, RoutineId,
+        ArtifactId, FunctionModuleId, FunctionRevisionId, NamespaceId, RoutineGrantId, RoutineId,
         RoutineParameterId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
     },
     CatalogTypeKind, KSerializable, StorageKey, SystemTable,
@@ -132,6 +132,52 @@ impl CatalogStores {
 
     pub fn get_type(&self, type_id: &TypeId) -> Result<Option<CatalogType>, SystemError> {
         get_model(&self.types, type_id)
+    }
+
+    /// Catalog the implicit payload type for `namespace.topic`, matching the topic id.
+    pub fn ensure_implicit_topic_payload_type(
+        &self,
+        topic_id: &TopicId,
+    ) -> Result<TypeId, SystemError> {
+        let type_id = TypeId::new(topic_id.as_str());
+        if let Some(existing) = self.get_type(&type_id)? {
+            if existing.kind != CatalogTypeKind::TopicPayload {
+                return Err(SystemError::AlreadyExists(format!("type {type_id} already exists")));
+            }
+            return Ok(type_id);
+        }
+        let (namespace, name) = topic_id.as_str().split_once('.').ok_or_else(|| {
+            SystemError::InvalidOperation(
+                "topic payload type requires a namespace-qualified topic".to_string(),
+            )
+        })?;
+        if namespace.is_empty() || name.is_empty() {
+            return Err(SystemError::InvalidOperation(
+                "topic payload type requires a namespace-qualified topic".to_string(),
+            ));
+        }
+        self.upsert_type(CatalogType {
+            type_id:        type_id.clone(),
+            namespace_id:   NamespaceId::new(namespace),
+            name:           name.to_string(),
+            kind:           CatalogTypeKind::TopicPayload,
+            table_id:       None,
+            source_type_id: None,
+            comment:        None,
+        })?;
+        Ok(type_id)
+    }
+
+    /// Drop the implicit payload type created for `topic_id`, if it is still a topic payload.
+    pub fn drop_implicit_topic_payload_type(&self, topic_id: &TopicId) -> Result<(), SystemError> {
+        let type_id = TypeId::new(topic_id.as_str());
+        let Some(existing) = self.get_type(&type_id)? else {
+            return Ok(());
+        };
+        if existing.kind != CatalogTypeKind::TopicPayload {
+            return Ok(());
+        }
+        self.drop_type(&type_id)
     }
 
     pub fn list_types(&self) -> Result<Vec<CatalogType>, SystemError> {
