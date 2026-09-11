@@ -103,13 +103,19 @@ fn link_function_build_deps(project_dir: &Path) {
 }
 
 fn install_function_build_deps(project_dir: &Path) {
+    // Install into an empty scratch package so npm does not resolve the project's
+    // unpublished `@kalamdb/client` pin from `kalam init`.
+    let scratch = project_dir.join(".kalam-e2e-esbuild");
+    fs::create_dir_all(&scratch).expect("esbuild scratch dir");
+    fs::write(scratch.join("package.json"), r#"{ "name": "e2e-esbuild", "private": true }"#)
+        .expect("scratch package.json");
     let output = Command::new("npm")
-        .current_dir(project_dir)
+        .current_dir(&scratch)
         .args([
             "install",
-            "--no-save",
             "--no-audit",
             "--no-fund",
+            "--package-lock=false",
             "esbuild@0.28.1",
         ])
         .output()
@@ -120,12 +126,22 @@ fn install_function_build_deps(project_dir: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    let dest = project_dir.join("node_modules");
+    link_dir(&scratch.join("node_modules/esbuild"), &dest.join("esbuild"));
+    let src_scope = scratch.join("node_modules/@esbuild");
+    if src_scope.is_dir() {
+        for entry in fs::read_dir(&src_scope).expect("esbuild platform packages") {
+            let entry = entry.expect("esbuild platform package");
+            link_dir(&entry.path(), &dest.join("@esbuild").join(entry.file_name()));
+        }
+    }
     assert!(
-        project_dir.join("node_modules/esbuild/bin/esbuild").is_file(),
+        dest.join("esbuild/bin/esbuild").is_file(),
         "npm install esbuild did not produce node_modules/esbuild/bin/esbuild"
     );
 
-    let orm_dir = project_dir.join("node_modules/@kalamdb/orm");
+    let orm_dir = dest.join("@kalamdb/orm");
     fs::create_dir_all(&orm_dir).expect("orm shim dir");
     fs::write(
         orm_dir.join("package.json"),
