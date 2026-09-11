@@ -1,6 +1,6 @@
 //! CALL + nested SQL/topic + EXECUTE ACL, plus schema-first type/procedure e2e.
 
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, process::Command};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -82,24 +82,58 @@ fn link_dir(src: &Path, dest: &Path) {
 fn link_function_build_deps(project_dir: &Path) {
     let example_modules = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/chat-with-ai/node_modules");
+    if example_modules.join("esbuild/bin/esbuild").is_file() {
+        let dest = project_dir.join("node_modules");
+        for name in ["esbuild", "drizzle-orm"] {
+            link_dir(&example_modules.join(name), &dest.join(name));
+        }
+        for scoped in ["@esbuild", "@kalamdb"] {
+            let src_scope = example_modules.join(scoped);
+            if !src_scope.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(&src_scope).expect("scoped packages") {
+                let entry = entry.expect("scoped package entry");
+                link_dir(&entry.path(), &dest.join(scoped).join(entry.file_name()));
+            }
+        }
+        return;
+    }
+    install_function_build_deps(project_dir);
+}
+
+fn install_function_build_deps(project_dir: &Path) {
+    let output = Command::new("npm")
+        .current_dir(project_dir)
+        .args([
+            "install",
+            "--no-save",
+            "--no-audit",
+            "--no-fund",
+            "esbuild@0.28.1",
+        ])
+        .output()
+        .unwrap_or_else(|err| panic!("npm install esbuild: {err}"));
     assert!(
-        example_modules.join("esbuild/bin/esbuild").is_file(),
-        "examples/chat-with-ai/node_modules/esbuild is required for functions build smoke"
+        output.status.success(),
+        "npm install esbuild failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    let dest = project_dir.join("node_modules");
-    for name in ["esbuild", "drizzle-orm"] {
-        link_dir(&example_modules.join(name), &dest.join(name));
-    }
-    for scoped in ["@esbuild", "@kalamdb"] {
-        let src_scope = example_modules.join(scoped);
-        if !src_scope.is_dir() {
-            continue;
-        }
-        for entry in fs::read_dir(&src_scope).expect("scoped packages") {
-            let entry = entry.expect("scoped package entry");
-            link_dir(&entry.path(), &dest.join(scoped).join(entry.file_name()));
-        }
-    }
+    assert!(
+        project_dir.join("node_modules/esbuild/bin/esbuild").is_file(),
+        "npm install esbuild did not produce node_modules/esbuild/bin/esbuild"
+    );
+
+    let orm_dir = project_dir.join("node_modules/@kalamdb/orm");
+    fs::create_dir_all(&orm_dir).expect("orm shim dir");
+    fs::write(
+        orm_dir.join("package.json"),
+        r#"{ "name": "@kalamdb/orm", "type": "module", "exports": { ".": "./index.js" } }"#,
+    )
+    .expect("orm shim package.json");
+    fs::write(orm_dir.join("index.js"), "export function bindFunctionOrm(db) { return db; }\n")
+        .expect("orm shim");
 }
 
 fn run_kalam(project_dir: &std::path::Path, args: &[&str]) -> std::process::Output {
