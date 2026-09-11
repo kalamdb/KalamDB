@@ -8,7 +8,7 @@ use arrow::{
 };
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::{scalar_value_to_js_json, scalar_value_to_json},
+    conversions::arrow_json_conversion::scalar_value_to_json,
     models::{RoutineCall, RoutineId, TopicId, TransactionId},
     FunctionModuleId, FunctionRevisionId, FunctionRuntime, Role, UserId,
 };
@@ -28,8 +28,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    acl,
-    convert::bind_call_arguments,
+    acl, bind,
+    convert::{bind_call_arguments, routine_value_as_json},
     host::{frame_principal, push_frame, CoreFunctionHost, HostSession},
 };
 use crate::{
@@ -302,9 +302,16 @@ async fn invoke_on_host(
     routine_id: RoutineId,
     args: &[RoutineValue],
 ) -> Result<RoutineValue, KalamDbError> {
-    let (invocation, child) = prepare_call(host, routine_id, args)?;
+    let (invocation, child) = prepare_call(host, routine_id.clone(), args)?;
     let engine = host.app.function_runtime().engine().map_err(map_functions)?;
-    engine.invoke(invocation, child).await.map_err(map_functions)
+    let value = engine.invoke(invocation, child).await.map_err(map_functions)?;
+    let stores = host.app.system_tables().catalog_stores();
+    if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
+        KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
+    })? {
+        bind::validate_call_return(&stores, &routine, &value)?;
+    }
+    Ok(value)
 }
 
 pub(super) fn prepare_call(
@@ -339,6 +346,7 @@ pub(super) fn prepare_call(
     );
 
     let revision = revision_for_routine(host, &routine)?;
+    bind::validate_call_arguments(&stores, &routine.routine_id, args)?;
     let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
     let args = attach_transfer(&args, &revision.contract_hash);
     let frame = ProcedureFrame {
@@ -695,16 +703,23 @@ fn pack_named_call_input(
     routine_id: &RoutineId,
     args: &[RoutineValue],
 ) -> Result<Vec<RoutineValue>, KalamDbError> {
-    if args.is_empty() {
-        return Ok(args.to_vec());
-    }
     let params = stores.list_parameters(routine_id).map_err(|error| {
         KalamDbError::CatalogError(format!(
             "failed to load parameters for procedure {routine_id}: {error}"
         ))
     })?;
-    if params.len() != args.len() {
+    if params.is_empty() {
+        return Ok(Vec::new());
+    }
+    if args.len() == 1 && params.iter().all(|param| json_object_has_key(&args[0], &param.name)) {
         return Ok(args.to_vec());
+    }
+    if params.len() != args.len() {
+        return Err(KalamDbError::from(FunctionsError::InvalidArguments(format!(
+            "procedure {routine_id} expected {} argument(s), got {}",
+            params.len(),
+            args.len()
+        ))));
     }
     if args.len() == 1 && json_object_has_key(&args[0], &params[0].name) {
         return Ok(args.to_vec());
@@ -720,12 +735,9 @@ fn pack_named_call_input(
 }
 
 fn json_object_has_key(arg: &RoutineValue, key: &str) -> bool {
-    let Ok(json) = scalar_value_to_js_json(&arg.value) else {
-        return false;
-    };
-    match json.0 {
-        serde_json::Value::Object(map) => map.contains_key(key),
-        serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(&text)
+    match json_for_transfer(arg) {
+        Some(serde_json::Value::Object(map)) => map.contains_key(key),
+        Some(serde_json::Value::String(text)) => serde_json::from_str::<serde_json::Value>(&text)
             .ok()
             .and_then(|parsed| parsed.as_object().map(|map| map.contains_key(key)))
             .unwrap_or(false),
@@ -751,23 +763,13 @@ fn attach_transfer(args: &[RoutineValue], contract_hash: &str) -> Vec<RoutineVal
 }
 
 fn json_for_transfer(arg: &RoutineValue) -> Option<serde_json::Value> {
-    if arg.json_sql {
-        return match &arg.value {
-            ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
-                serde_json::from_str(text).ok()
-            },
-            ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
-                Some(serde_json::Value::Null)
-            },
-            _ => None,
-        };
-    }
-    scalar_value_to_js_json(&arg.value).ok().map(|json| json.0)
+    routine_value_as_json(arg)
 }
 
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
+        conversions::arrow_json_conversion::scalar_value_to_js_json,
         models::{NamespaceId, RoutineId, RoutineSecurityMode, UserId},
         ArtifactId,
     };

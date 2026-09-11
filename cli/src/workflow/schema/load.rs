@@ -21,34 +21,6 @@ use crate::{
     },
 };
 
-pub fn load_schema_snapshot(
-    project_root: &Path,
-    config: &KalamProjectConfig,
-) -> Result<SchemaSnapshot> {
-    match config.schema.mode {
-        SchemaMode::Sql => load_from_sql_file(project_root, config),
-        SchemaMode::Remote => Err(CLIError::ConfigurationError(
-            "remote schema mode requires `kalam schema pull`; use sql mode for local files".into(),
-        )),
-    }
-}
-
-pub fn load_from_sql_file(
-    project_root: &Path,
-    config: &KalamProjectConfig,
-) -> Result<SchemaSnapshot> {
-    let path = config
-        .schema_source_path(project_root)
-        .ok_or_else(|| CLIError::ConfigurationError("schema.path is not configured".into()))?;
-
-    let sql = read_schema_file(&path)?;
-
-    parse_sql_schema(&sql).map(|mut snapshot| {
-        snapshot.origin = SchemaOrigin::File;
-        snapshot
-    })
-}
-
 pub fn compile_project_contract(
     project_root: &Path,
     config: &KalamProjectConfig,

@@ -47,6 +47,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
             r#"CREATE TABLE {}.carts (
                         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
                         name TEXT,
+                        status TEXT NOT NULL DEFAULT 'open',
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     ) WITH (TYPE = 'USER', STORAGE_ID = 'local')"#,
             ns
@@ -84,6 +85,19 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
         ))
         .await?;
     assert_success(&resp, "CREATE notifications table");
+
+    create_enum_type(server, &format!("{ns}.cart_status"), &["open", "checked_out"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.checkout"),
+        &format!("cart_id BIGINT NOT NULL, status {ns}.cart_status NOT NULL"),
+        &format!(
+            "return ctx.db.execute('UPDATE {ns}.carts SET status = $1 WHERE id = $2', \
+             [input.status, input.cart_id]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.checkout")).await?;
 
     // =========================================================
     // Step 2: Run 10 parallel user workflows
@@ -203,6 +217,22 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
                         "User {} expected 45 items, got {}",
                         user_idx,
                         count
+                    ));
+                }
+
+                let resp = client
+                    .execute_query(
+                        &format!("CALL {ns}.checkout({cart_id}, 'checked_out')"),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                if !resp.success() {
+                    return Err(anyhow::anyhow!(
+                        "User {} checkout failed: {:?}",
+                        user_idx,
+                        resp.error
                     ));
                 }
 

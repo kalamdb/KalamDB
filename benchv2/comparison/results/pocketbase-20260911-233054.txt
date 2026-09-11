@@ -1,0 +1,17 @@
+# PocketBase comparison (collections Record API)
+# started=2026-09-11T20:30:54Z
+logged in to http://127.0.0.1:8090 owner=abeaq9anjwwetit room=v8d3j1889otpj49
+Inserted 100000 rows in 16.354079167s
+Inserted 10000 rows in 1.496161708s
+Latencies: 
+	p50=1.925584ms 
+	p75=2.733ms 
+	p90=3.953459ms 
+	p95=5.496958ms
+Read 1000000 rows in 20.010530625s
+Latencies: 
+	p50=260.416µs 
+	p75=343.042µs 
+	p90=449.208µs 
+	p95=536.417µs
+# finished=2026-09-11T20:31:32Z

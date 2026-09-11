@@ -488,11 +488,28 @@ impl UserTableProvider {
         user_id: &UserId,
         pk_value: &ScalarValue,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
+        self.latest_hot_pk_entry_maybe_selected(user_id, pk_value, None).await
+    }
+
+    async fn latest_hot_pk_entry_maybe_selected(
+        &self,
+        user_id: &UserId,
+        pk_value: &ScalarValue,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
         let prefix = self.pk_index.build_prefix_for_pk(user_id, pk_value);
-        self.store
-            .get_latest_by_index_prefix_async(0, prefix)
-            .await
-            .into_kalamdb_error("PK index scan failed")
+        match storage_ordinals {
+            Some(ordinals) => self
+                .store
+                .get_latest_by_index_prefix_selected_async(0, prefix, ordinals.to_vec())
+                .await
+                .into_kalamdb_error("PK index scan failed"),
+            None => self
+                .store
+                .get_latest_by_index_prefix_async(0, prefix)
+                .await
+                .into_kalamdb_error("PK index scan failed"),
+        }
     }
 
     pub async fn find_by_pk(
@@ -810,8 +827,10 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
         &self,
         scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
+        storage_ordinals: Option<&[usize]>,
     ) -> Result<Option<(UserTableRowId, UserTableRow)>, KalamDbError> {
-        self.latest_hot_pk_entry(&scan_context.user_id, pk_value).await
+        self.latest_hot_pk_entry_maybe_selected(&scan_context.user_id, pk_value, storage_ordinals)
+            .await
     }
 
     async fn count_rows_with_context(

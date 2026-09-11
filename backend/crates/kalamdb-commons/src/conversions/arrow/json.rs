@@ -13,14 +13,16 @@
 //! ```text
 //! scalar_value_to_json()  ← SINGLE SOURCE OF TRUTH
 //!          ↓
-//!     ┌────┴────┐
-//!     ↓         ↓
+//!     ┌────┴────────────┐
+//!     ↓                 ↓
 //! row_to_json_map()   record_batch_to_json_arrays()
-//!     ↓                ↓
-//! WebSocket:           REST API:
-//! - notifications      - /v1/api/sql
+//!     ↓                 ↓
+//! WebSocket:            REST API (general SELECT):
+//! - notifications       - /v1/api/sql via RecordBatch
 //! - subscriptions
 //! - batch data
+//!
+//! rows_to_json_arrays()  ← REST cached PK point get (skip Arrow)
 //! ```
 //!
 //! # Serialization Format
@@ -1093,10 +1095,12 @@ pub fn scalar_value_to_json(value: &ScalarValue) -> Result<KalamCellValue, Commo
                 .ok_or_else(|| CommonError::invalid_input("Invalid float value"));
         },
         ScalarValue::Float64(None) => JsonValue::Null,
-        ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) => {
-            JsonValue::String(s.clone())
+        ScalarValue::Utf8(Some(s))
+        | ScalarValue::LargeUtf8(Some(s))
+        | ScalarValue::Utf8View(Some(s)) => JsonValue::String(s.clone()),
+        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Utf8View(None) => {
+            JsonValue::Null
         },
-        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) => JsonValue::Null,
         ScalarValue::Date32(Some(d)) => JsonValue::Number((*d).into()),
         ScalarValue::Date32(None) => JsonValue::Null,
         ScalarValue::Date64(Some(d)) => JsonValue::Number((*d).into()),
@@ -1376,6 +1380,31 @@ pub fn record_batch_to_json_arrays(
     Ok(rows)
 }
 
+/// Convert schema-aligned [`Row`] maps to JSON arrays without building Arrow.
+///
+/// Cached HTTP point gets use this instead of `json_rows_to_arrow_batch` +
+/// `record_batch_to_json_arrays`. Do not route that path through Arrow.
+pub fn rows_to_json_arrays(
+    schema: &SchemaRef,
+    rows: Vec<Row>,
+) -> Result<Vec<Vec<KalamCellValue>>, CommonError> {
+    let mut json_rows = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        let mut json_row = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            // Output field names (including aliases) must already match Row
+            // keys. Missing keys become JSON null — that is how
+            // `SELECT name AS title` regressed on skip-Arrow.
+            let scalar = row.values.remove(field.name()).unwrap_or(ScalarValue::Null);
+            let coerced =
+                coerce_scalar_to_field(scalar, field).map_err(CommonError::invalid_input)?;
+            json_row.push(scalar_value_to_json(&coerced)?);
+        }
+        json_rows.push(json_row);
+    }
+    Ok(json_rows)
+}
+
 /// Convert Row to HashMap<String, JsonValue>
 ///
 /// **Used by:** WebSocket subscriptions, change notifications, and batch data
@@ -1481,6 +1510,13 @@ mod serialization_tests {
         let value = ScalarValue::Utf8(Some("hello".to_string()));
         let json = scalar_value_to_json(&value).unwrap();
         assert_eq!(json, serde_json::json!("hello").into());
+    }
+
+    #[test]
+    fn test_utf8view_plain_string() {
+        let value = ScalarValue::Utf8View(Some("bigint".to_string()));
+        let json = scalar_value_to_json(&value).unwrap();
+        assert_eq!(json, serde_json::json!("bigint").into());
     }
 
     #[test]

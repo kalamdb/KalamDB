@@ -22,8 +22,9 @@ auto_create = true
 [dev]
 auto_start_db = true
 apply_schema = true
-# Needs Kalam CLI 0.7+ (this repo: ../../target/debug/kalam). 0.6 overwrites
-# src/generated/kalam.ts with ORM table stubs and drops createKalam.
+# Needs Kalam CLI 0.7+ (this repo: npm run kalam:dev). 0.6 applies
+# CREATE PROCEDURE without activating JS, so CALL fails, and it overwrites
+# src/generated/kalam.ts with ORM table stubs (drops createKalam).
 generate_types = true
 watch = true
 

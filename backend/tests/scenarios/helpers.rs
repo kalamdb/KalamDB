@@ -126,6 +126,46 @@ pub async fn grant_shared_telemetry_policies(
     Ok(())
 }
 
+/// Create a named enum used by scenario procedures.
+pub async fn create_enum_type(
+    server: &HttpTestServer,
+    qualified_name: &str,
+    labels: &[&str],
+) -> Result<()> {
+    let list = labels.iter().map(|label| format!("'{label}'")).collect::<Vec<_>>().join(", ");
+    let resp = server
+        .execute_sql(&format!("CREATE TYPE {qualified_name} AS ENUM ({list})"))
+        .await?;
+    assert_success(&resp, &format!("CREATE TYPE {qualified_name}"));
+    Ok(())
+}
+
+/// Create or replace an inline JavaScript procedure.
+pub async fn create_js_procedure(
+    server: &HttpTestServer,
+    qualified_name: &str,
+    params: &str,
+    body: &str,
+) -> Result<()> {
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE OR REPLACE PROCEDURE {qualified_name}({params}) LANGUAGE JAVASCRIPT AS \
+             $$\n{body}\n$$"
+        ))
+        .await?;
+    assert_success(&resp, &format!("CREATE PROCEDURE {qualified_name}"));
+    Ok(())
+}
+
+/// Allow the User role to CALL a procedure created by the test DBA.
+pub async fn grant_execute_to_user(server: &HttpTestServer, qualified_name: &str) -> Result<()> {
+    let resp = server
+        .execute_sql(&format!("GRANT EXECUTE ON PROCEDURE {qualified_name} TO user"))
+        .await?;
+    assert_success(&resp, &format!("GRANT EXECUTE {qualified_name}"));
+    Ok(())
+}
+
 /// Subjects without WITH CHECK must not mutate a catalog shared table.
 pub async fn assert_shared_write_denied(
     client: &kalam_client::KalamLinkClient,

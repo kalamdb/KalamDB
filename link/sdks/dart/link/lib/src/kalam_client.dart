@@ -509,6 +509,28 @@ class KalamClient {
     return loginResponse;
   }
 
+  /// Exchange an OIDC ID token (Keycloak, Dex, or any configured issuer)
+  /// for KalamDB access and refresh tokens.
+  ///
+  /// The Flutter app obtains the ID token from the IdP (for example
+  /// `flutter_appauth`). This method does not open a browser.
+  ///
+  /// ```dart
+  /// final session = await client.exchangeOidcToken(idToken);
+  /// // subsequent query() calls use the KalamDB JWT
+  /// ```
+  Future<LoginResponse> exchangeOidcToken(String idToken) async {
+    final resp = await bridge.dartExchangeOidcToken(
+      client: _handle,
+      token: idToken,
+    );
+    final loginResponse = _fromBridgeLoginResponse(resp);
+    final jwt = Auth.jwt(loginResponse.accessToken);
+    _auth = jwt;
+    await bridge.dartUpdateAuth(client: _handle, auth: _toBridgeAuth(jwt));
+    return loginResponse;
+  }
+
   // ---------------------------------------------------------------------------
   // Subscriptions
   // ---------------------------------------------------------------------------

@@ -8,8 +8,9 @@ use kalamdb_commons::{
     schemas::TableDefinition,
 };
 use kalamdb_serialization::{
-    decode_shared_row, decode_user_row, decode_user_row_selected, encode_shared_row,
-    encode_user_row, storage_schema_from_table, StorageDataType, StorageField, StorageSchema,
+    decode_shared_row, decode_shared_row_selected, decode_user_row, decode_user_row_selected,
+    encode_shared_row, encode_user_row, storage_schema_from_table, StorageDataType, StorageField,
+    StorageSchema,
 };
 use kalamdb_store::{EntityCodec, StorageError};
 
@@ -81,6 +82,16 @@ impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
         decode_user_row(bytes, &self.schema, key.user_id.clone(), key.seq).map_err(map_ser)
     }
+
+    fn decode_selected(
+        &self,
+        key: &UserTableRowId,
+        bytes: &[u8],
+        ordinals: &[usize],
+    ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
+        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.seq, ordinals)
+            .map_err(map_ser)
+    }
 }
 
 /// Ordinal SHARED row codec. Identity is reconstructed from [`SharedTableRowId`].
@@ -113,6 +124,22 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
         let (seq, commit_seq, deleted, fields) =
             decode_shared_row(bytes, &self.schema, *key).map_err(map_ser)?;
+        Ok(SharedTableRow {
+            _seq: seq,
+            _commit_seq: commit_seq,
+            _deleted: deleted,
+            fields,
+        })
+    }
+
+    fn decode_selected(
+        &self,
+        key: &SharedTableRowId,
+        bytes: &[u8],
+        ordinals: &[usize],
+    ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
+        let (seq, commit_seq, deleted, fields) =
+            decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)?;
         Ok(SharedTableRow {
             _seq: seq,
             _commit_seq: commit_seq,

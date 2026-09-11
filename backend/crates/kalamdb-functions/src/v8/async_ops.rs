@@ -11,8 +11,8 @@ use crate::{
     convert::{infer_v8_value, infer_value, routine_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
     v8_adapter::{
-        arg_string, bind_ctx, bind_native, current_host, format_js_exception, js_exception,
-        throw_host_error, ActiveHost,
+        arg_string, bind_ctx, bind_native, current_host, functions_error_from_value,
+        host_error_value, js_exception, throw_host_error, ActiveHost,
     },
     FunctionHost, FunctionsError, HostFuture, Invocation, Result, RoutineValue, V8Session,
 };
@@ -338,10 +338,7 @@ impl V8Session {
             match promise.state() {
                 v8::PromiseState::Pending => return Ok(None),
                 v8::PromiseState::Rejected => {
-                    return Err(FunctionsError::Javascript(format_js_exception(
-                        scope,
-                        promise.result(scope),
-                    )));
+                    return Err(functions_error_from_value(scope, promise.result(scope)));
                 },
                 v8::PromiseState::Fulfilled => value = promise.result(scope),
             }
@@ -367,10 +364,8 @@ impl V8Session {
                 resolver.resolve(scope, value);
             },
             Err(error) => {
-                let message = v8::String::new(scope, &error.to_string())
-                    .ok_or_else(|| FunctionsError::ResourceLimit("host error".into()))?;
-                let error = v8::Exception::error(scope, message);
-                resolver.reject(scope, error);
+                let exception = host_error_value(scope, &error);
+                resolver.reject(scope, exception);
             },
         }
         Ok(())

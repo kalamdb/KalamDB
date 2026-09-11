@@ -24,13 +24,16 @@ use datafusion::{
     prelude::SessionConfig,
 };
 use kalamdb_configs::DataFusionSettings;
+use kalamdb_system::SystemTablesRegistry;
 
 use crate::sql::{
     functions::{
-        ColDescriptionFunction, CosineDistanceFunction, CurrentDatabaseFunction,
-        CurrentRoleFunction, CurrentSchemaFunction, CurrentSettingFunction, CurrentUserFunction,
-        FormatTypeFunction, PgBackendPidFunction, PgGetExprFunction, SnowflakeIdFunction,
-        UlidFunction, UuidV7Function, VersionFunction,
+        AlwaysTruePrivilegeFunction, ColDescriptionFunction, CosineDistanceFunction,
+        CurrentDatabaseFunction, CurrentRoleFunction, CurrentSchemaFunction,
+        CurrentSettingFunction, CurrentUserFunction, FormatTypeFunction, ObjDescriptionFunction,
+        PgBackendPidFunction, PgGetExprFunction, PgGetFunctionResultFunction,
+        PgGetFunctionTextFunction, PgGetIndexdefFunction, SnowflakeIdFunction, UlidFunction,
+        UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -194,6 +197,12 @@ impl DataFusionSessionFactory {
         ctx.register_udf(ScalarUDF::from(ColDescriptionFunction::new()));
         ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));
+        ctx.register_udf(ScalarUDF::from(PgGetIndexdefFunction::new()));
+        ctx.register_udf(ScalarUDF::from(PgGetFunctionResultFunction::new()));
+        ctx.register_udf(ScalarUDF::from(ObjDescriptionFunction::new()));
+        ctx.register_udf(ScalarUDF::from(AlwaysTruePrivilegeFunction::has_function_privilege()));
+        ctx.register_udf(ScalarUDF::from(AlwaysTruePrivilegeFunction::has_table_privilege()));
+        ctx.register_udf(ScalarUDF::from(AlwaysTruePrivilegeFunction::has_schema_privilege()));
 
         // Register COSINE_DISTANCE(vector, query_vector) for ORDER BY similarity search syntax.
         // The dispatcher routes JSON query literals internally and delegates array/array
@@ -202,6 +211,26 @@ impl DataFusionSessionFactory {
 
         // Register vector search table function (TABLE(vector_search(...))).
         ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::unavailable()));
+    }
+
+    /// Register catalog-backed `pg_get_functiondef` / argument helpers on a live session.
+    ///
+    /// The factory registers name-only stubs first so empty-node startup does not need
+    /// `system.routines`. AppContext overwrites those stubs once the catalog exists.
+    pub fn register_routine_catalog_functions(
+        ctx: &SessionContext,
+        system_tables: Arc<SystemTablesRegistry>,
+    ) {
+        ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::definition(Arc::clone(
+            &system_tables,
+        ))));
+        ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::identity_arguments(
+            Arc::clone(&system_tables),
+        )));
+        ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::arguments(Arc::clone(
+            &system_tables,
+        ))));
+        ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::result(system_tables)));
     }
 
     /// Register all existing namespaces as DataFusion schemas

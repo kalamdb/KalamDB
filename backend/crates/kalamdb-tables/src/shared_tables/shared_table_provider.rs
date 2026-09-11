@@ -472,11 +472,27 @@ impl SharedTableProvider {
         &self,
         pk_value: &ScalarValue,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        self.latest_hot_pk_entry_maybe_selected(pk_value, None).await
+    }
+
+    async fn latest_hot_pk_entry_maybe_selected(
+        &self,
+        pk_value: &ScalarValue,
+        storage_ordinals: Option<&[usize]>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         let prefix = self.pk_index.build_prefix_for_pk(pk_value);
-        self.store
-            .get_latest_by_index_prefix_async(0, prefix)
-            .await
-            .into_kalamdb_error("PK index scan failed")
+        match storage_ordinals {
+            Some(ordinals) => self
+                .store
+                .get_latest_by_index_prefix_selected_async(0, prefix, ordinals.to_vec())
+                .await
+                .into_kalamdb_error("PK index scan failed"),
+            None => self
+                .store
+                .get_latest_by_index_prefix_async(0, prefix)
+                .await
+                .into_kalamdb_error("PK index scan failed"),
+        }
     }
 
     pub async fn find_by_pk(
@@ -880,8 +896,9 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         &self,
         _scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
+        storage_ordinals: Option<&[usize]>,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-        self.latest_hot_pk_entry(pk_value).await
+        self.latest_hot_pk_entry_maybe_selected(pk_value, storage_ordinals).await
     }
 
     async fn count_rows_with_context(

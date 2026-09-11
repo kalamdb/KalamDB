@@ -12,6 +12,10 @@ This folder contains:
 - scripts to download binaries and run each system
 - measured results from a local Apple Silicon run
 
+For **KalamDB vs PostgreSQL** (pgwire plus a KalamDB HTTP SQL column, same
+SQL and phase sizes), see [`../kalam-vs-pg`](../kalam-vs-pg). The HTTP column
+there is KalamDB `/v1/api/sql` only — not this BaaS bake-off.
+
 ## What we measure
 
 Shared protocol (`common/src/lib.rs`):
@@ -125,6 +129,15 @@ COMPARISON_ORDER="pocketbase surrealdb kalamdb kalamdb-functions trailbase" ./sc
 ```
 
 Outputs land in `results/*.txt`.
+
+Current GitHub release pins (`scripts/download-binaries.sh`):
+
+- TrailBase **v0.33.14**
+- PocketBase **v0.40.3**
+- SurrealDB **v3.2.4**
+
+Re-run `./scripts/download-binaries.sh` after a pin bump; it refreshes `./bin`
+when the stamped version no longer matches.
 
 ### Environment overrides
 
@@ -281,7 +294,7 @@ Machine: **Apple M5 Pro**, 15 cores, 24 GB RAM.
 Versions:
 
 - KalamDB **v0.5.5-rc.1** (GitHub release binary)
-- TrailBase **v0.32.1** (GitHub release binary)
+- TrailBase **v0.32.1** (GitHub release binary; current pin is v0.33.14)
 
 | Metric | TrailBase | KalamDB (hot-only) |
 |---|---:|---:|

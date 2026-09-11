@@ -24,8 +24,9 @@ pub use object::{
 };
 pub use protocol::{decode_protocol, encode_protocol, ProtocolKind};
 pub use row::{
-    decode_row_fields, decode_row_metadata, decode_shared_row, decode_stream_row, decode_user_row,
-    decode_user_row_selected, encode_row_envelope, encode_row_fields,
+    decode_row_fields, decode_row_metadata, decode_shared_row, decode_shared_row_selected,
+    decode_stream_row, decode_user_row, decode_user_row_selected, encode_row_envelope,
+    encode_row_fields,
     encode_row_fields_from_columns, encode_shared_row, encode_stream_row, encode_user_row,
     encode_user_row_from_columns, storage_data_type_from_arrow, storage_data_type_from_kalam,
     storage_schema_from_table, RowMetadata, StorageDataType, StorageField, StorageSchema,

@@ -28,6 +28,11 @@ pub fn decode_entity<V: KSerializable>(bytes: &[u8]) -> Result<V> {
 pub trait EntityCodec<K, V>: Send + Sync {
     fn encode(&self, key: &K, entity: &V) -> Result<Vec<u8>>;
     fn decode(&self, key: &K, bytes: &[u8]) -> Result<V>;
+
+    /// Decode only the requested storage ordinals. Defaults to a full decode.
+    fn decode_selected(&self, key: &K, bytes: &[u8], _ordinals: &[usize]) -> Result<V> {
+        self.decode(key, bytes)
+    }
 }
 
 /// Default codec: generic object envelope.

@@ -438,7 +438,6 @@ pub enum TokenRole {
 }
 
 impl TokenRole {
-    #[allow(dead_code)]
     pub fn as_sql(self) -> &'static str {
         match self {
             Self::User => "user",
@@ -449,7 +448,6 @@ impl TokenRole {
     }
 }
 
-#[allow(dead_code)]
 pub fn version_report() -> &'static str {
     version_string!()
 }

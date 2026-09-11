@@ -311,7 +311,7 @@ impl FunctionHost for CoreFunctionHost {
         let routine_id = resolve_routine_id(procedure, &default_ns);
         match self.handle.block_on(executor::invoke_nested(self, routine_id, args)) {
             Ok(value) => Ok(value),
-            Err(error) => Err(annotate(self.stack_label(), error.to_string())),
+            Err(error) => Err(annotate(self.stack_label(), map_core(error))),
         }
     }
 
@@ -521,14 +521,30 @@ fn is_blocked_response_header(name: &str) -> bool {
 }
 
 fn map_core(error: crate::error::KalamDbError) -> FunctionsError {
-    FunctionsError::Invalid(error.to_string())
+    match error {
+        crate::error::KalamDbError::Function { code, message } => {
+            FunctionsError::from_code(code, message)
+        },
+        other => FunctionsError::Invalid(other.to_string()),
+    }
 }
 
-fn annotate(stack: String, message: String) -> FunctionsError {
+fn annotate(stack: String, error: FunctionsError) -> FunctionsError {
     if stack.is_empty() {
-        FunctionsError::Invalid(message)
-    } else {
-        FunctionsError::Invalid(format!("{stack}: {message}"))
+        return error;
+    }
+    match error {
+        FunctionsError::Invalid(message) => FunctionsError::Invalid(format!("{stack}: {message}")),
+        FunctionsError::InvalidArguments(message) => {
+            FunctionsError::InvalidArguments(format!("{stack}: {message}"))
+        },
+        FunctionsError::Javascript(message) => {
+            FunctionsError::Javascript(format!("{stack}: {message}"))
+        },
+        FunctionsError::ResourceLimit(message) => {
+            FunctionsError::ResourceLimit(format!("{stack}: {message}"))
+        },
+        other => other,
     }
 }
 

@@ -1,11 +1,21 @@
-//! ALTER TYPE composite operations.
+//! ALTER TYPE composite and enum operations.
 
 use kalamdb_commons::models::{NamespaceId, TypeId};
 
 use crate::ddl::{
-    create_type::{parse_type_reference, split_qualified_ident, take_ident, TypeReference},
+    create_type::{
+        parse_type_reference, split_qualified_ident, take_ident, validate_enum_label, TypeReference,
+    },
+    parsing::{parse_sql_string_prefix, take_keyword_ci},
     DdlResult,
 };
+
+/// Position of a newly added enum label relative to an existing label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnumValueNeighbor {
+    Before(String),
+    After(String),
+}
 
 /// ALTER TYPE operations supported in V1.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +35,11 @@ pub enum AlterTypeOperation {
     AlterAttributeType {
         field:    String,
         type_ref: TypeReference,
+    },
+    AddValue {
+        label:         String,
+        if_not_exists: bool,
+        neighbor:      Option<EnumValueNeighbor>,
     },
     SetSchema {
         schema: NamespaceId,
@@ -51,7 +66,9 @@ impl AlterTypeStatement {
         let after = after.trim_start();
         let after_upper = after.to_ascii_uppercase();
 
-        let operation = if after_upper.starts_with("ADD ATTRIBUTE") {
+        let operation = if after_upper.starts_with("ADD VALUE") {
+            parse_add_value(after)?
+        } else if after_upper.starts_with("ADD ATTRIBUTE") {
             let rest = after["ADD ATTRIBUTE".len()..].trim_start();
             let (field, rest) = take_ident(rest)?;
             let (type_ref, leftover) = parse_type_reference(rest.trim_start())?;
@@ -92,11 +109,40 @@ impl AlterTypeStatement {
                     .map_err(|error| error.to_string())?,
             }
         } else {
-            return Err("Expected ADD/DROP/RENAME/ALTER ATTRIBUTE or SET SCHEMA".to_string());
+            return Err(
+                "Expected ADD VALUE, ADD/DROP/RENAME/ALTER ATTRIBUTE, or SET SCHEMA".to_string()
+            );
         };
 
         Ok(Self { type_id, operation })
     }
+}
+
+fn parse_add_value(after: &str) -> DdlResult<AlterTypeOperation> {
+    let mut rest = after["ADD VALUE".len()..].trim_start();
+    let if_not_exists = take_keyword_ci(&mut rest, "IF NOT EXISTS");
+    let (label, leftover) = parse_sql_string_prefix(rest)?;
+    validate_enum_label(&label)?;
+    let mut leftover = leftover.trim_start();
+    let neighbor = if take_keyword_ci(&mut leftover, "BEFORE") {
+        let (neighbor, rest) = parse_sql_string_prefix(leftover)?;
+        leftover = rest.trim_start();
+        Some(EnumValueNeighbor::Before(neighbor))
+    } else if take_keyword_ci(&mut leftover, "AFTER") {
+        let (neighbor, rest) = parse_sql_string_prefix(leftover)?;
+        leftover = rest.trim_start();
+        Some(EnumValueNeighbor::After(neighbor))
+    } else {
+        None
+    };
+    if !leftover.is_empty() {
+        return Err(format!("Unexpected tokens after ADD VALUE '{}'", leftover.trim()));
+    }
+    Ok(AlterTypeOperation::AddValue {
+        label,
+        if_not_exists,
+        neighbor,
+    })
 }
 
 #[cfg(test)]
@@ -120,5 +166,69 @@ mod tests {
             },
             _ => panic!("expected add"),
         }
+    }
+
+    #[test]
+    fn parse_add_value_append() {
+        let stmt =
+            AlterTypeStatement::parse("ALTER TYPE app.status ADD VALUE 'archived'", &ns()).unwrap();
+        match stmt.operation {
+            AlterTypeOperation::AddValue {
+                label,
+                if_not_exists,
+                neighbor,
+            } => {
+                assert_eq!(label, "archived");
+                assert!(!if_not_exists);
+                assert!(neighbor.is_none());
+            },
+            _ => panic!("expected add value"),
+        }
+    }
+
+    #[test]
+    fn parse_add_value_if_not_exists_before() {
+        let stmt = AlterTypeStatement::parse(
+            "ALTER TYPE app.status ADD VALUE IF NOT EXISTS 'pending' BEFORE 'active'",
+            &ns(),
+        )
+        .unwrap();
+        match stmt.operation {
+            AlterTypeOperation::AddValue {
+                label,
+                if_not_exists,
+                neighbor,
+            } => {
+                assert_eq!(label, "pending");
+                assert!(if_not_exists);
+                assert_eq!(neighbor, Some(EnumValueNeighbor::Before("active".into())));
+            },
+            _ => panic!("expected add value"),
+        }
+    }
+
+    #[test]
+    fn parse_add_value_after_preserves_label_case() {
+        let stmt = AlterTypeStatement::parse(
+            "ALTER TYPE app.status ADD VALUE 'Beta' AFTER 'Alpha'",
+            &ns(),
+        )
+        .unwrap();
+        match stmt.operation {
+            AlterTypeOperation::AddValue {
+                label, neighbor, ..
+            } => {
+                assert_eq!(label, "Beta");
+                assert_eq!(neighbor, Some(EnumValueNeighbor::After("Alpha".into())));
+            },
+            _ => panic!("expected add value"),
+        }
+    }
+
+    #[test]
+    fn reject_empty_add_value_label() {
+        let err =
+            AlterTypeStatement::parse("ALTER TYPE app.status ADD VALUE ''", &ns()).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
     }
 }

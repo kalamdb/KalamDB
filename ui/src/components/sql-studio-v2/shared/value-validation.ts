@@ -29,10 +29,10 @@ export function classifyFieldKind(dataType: string): FieldKind {
   if (t === "BIGINT") return "bigint";
   if (t === "FLOAT" || t === "DOUBLE" || t === "REAL") return "float";
   if (t.startsWith("DECIMAL") || t.startsWith("NUMERIC")) return "decimal";
-  if (t === "TIMESTAMP" || t === "DATETIME") return "datetime";
+  if (t === "TIMESTAMP" || t === "TIMESTAMPTZ" || t === "DATETIME") return "datetime";
   if (t === "DATE") return "date";
   if (t === "TIME") return "time";
-  if (t === "JSON") return "json";
+  if (t === "JSON" || t === "JSONB") return "json";
   if (t === "UUID") return "uuid";
   if (t.startsWith("EMBEDDING")) return "embedding";
   if (t === "BYTES") return "bytes";

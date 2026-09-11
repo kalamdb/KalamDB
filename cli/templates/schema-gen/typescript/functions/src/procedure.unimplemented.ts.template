@@ -1,0 +1,3 @@
+import { procedure } from "../generated/contracts";
+
+export const {{method}} = procedure.{{ns}}.{{method}}.unimplemented();

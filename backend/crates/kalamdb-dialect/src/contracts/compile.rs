@@ -19,8 +19,9 @@ use crate::{
         topic_commands::{parse_alter_topic_add_source, parse_create_topic},
         AlterTypeOperation, AlterTypeStatement, CommentOnStatement, CommentOnTarget,
         CreateNamespaceStatement, CreateProcedureStatement, CreateSchemaStatement,
-        CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, GrantExecuteStatement,
-        RevokeExecuteStatement, SetSearchPathStatement, TypeReference, UseNamespaceStatement,
+        CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, EnumValueNeighbor,
+        GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement, TypeReference,
+        UseNamespaceStatement,
     },
     split_statements,
 };
@@ -686,11 +687,48 @@ fn apply_alter(
             }
             Ok(())
         },
+        (
+            RawType::Enum { labels, .. },
+            AlterTypeOperation::AddValue {
+                label,
+                if_not_exists,
+                neighbor,
+            },
+        ) => apply_add_value(labels, label, *if_not_exists, neighbor.as_ref()),
         _ => Err(ContractError::new(format!(
             "ALTER TYPE '{}' is not valid for this type kind",
             stmt.type_id
         ))),
     }
+}
+
+fn apply_add_value(
+    labels: &mut Vec<String>,
+    label: &str,
+    if_not_exists: bool,
+    neighbor: Option<&EnumValueNeighbor>,
+) -> Result<(), ContractError> {
+    if labels.iter().any(|existing| existing == label) {
+        if if_not_exists {
+            return Ok(());
+        }
+        return Err(ContractError::new(format!("duplicate ENUM label '{label}'")));
+    }
+    let insert_at =
+        match neighbor {
+            None => labels.len(),
+            Some(EnumValueNeighbor::Before(existing)) => labels
+                .iter()
+                .position(|item| item == existing)
+                .ok_or_else(|| ContractError::new(format!("ENUM label '{existing}' not found")))?,
+            Some(EnumValueNeighbor::After(existing)) => {
+                labels.iter().position(|item| item == existing).ok_or_else(|| {
+                    ContractError::new(format!("ENUM label '{existing}' not found"))
+                })? + 1
+            },
+        };
+    labels.insert(insert_at, label.to_string());
+    Ok(())
 }
 
 fn field_from_ref(name: String, type_ref: TypeReference, current_schema: &str) -> ContractField {
@@ -1268,5 +1306,56 @@ mod tests {
         );
         assert!(!joined.contains("CREATE TYPE"), "{joined}");
         assert!(!joined.contains("CREATE OR REPLACE PROCEDURE"), "{joined}");
+    }
+
+    #[test]
+    fn alter_type_add_value_compiles_into_enum_labels() {
+        let snapshot = compile_contract_sql(
+            "CREATE SCHEMA app;
+             CREATE TYPE app.status AS ENUM ('active', 'blocked');
+             ALTER TYPE app.status ADD VALUE 'archived';
+             ALTER TYPE app.status ADD VALUE 'pending' BEFORE 'active';",
+            "public",
+        )
+        .unwrap();
+        match &snapshot.types["app.status"].kind {
+            ContractTypeKind::Enum { labels } => {
+                assert_eq!(
+                    labels,
+                    &vec![
+                        "pending".to_string(),
+                        "active".into(),
+                        "blocked".into(),
+                        "archived".into()
+                    ]
+                );
+            },
+            other => panic!("expected enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enum_label_growth_diffs_to_add_value() {
+        let before = compile_contract_sql(
+            "CREATE SCHEMA app; CREATE TYPE app.status AS ENUM ('active', 'blocked');",
+            "public",
+        )
+        .unwrap();
+        let after = compile_contract_sql(
+            "CREATE SCHEMA app; CREATE TYPE app.status AS ENUM ('pending', 'active', 'blocked', \
+             'archived');",
+            "public",
+        )
+        .unwrap();
+        let joined = diff_contracts(&before, &after).statements.join("\n");
+        assert!(
+            joined.contains("ALTER TYPE app.status ADD VALUE 'pending' BEFORE 'active'"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("ALTER TYPE app.status ADD VALUE 'archived' AFTER 'blocked'"),
+            "{joined}"
+        );
+        assert!(!joined.contains("DROP TYPE"), "{joined}");
     }
 }

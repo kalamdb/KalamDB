@@ -32,6 +32,13 @@ pub fn execution_result_to_responses_with_format(
     result: ExecutionResult,
     column_format: Option<&Format>,
 ) -> PgWireResult<Vec<Response>> {
+    let result = result.into_arrow_rows().map_err(|error| {
+        PgWireError::UserError(Box::new(ErrorInfo::new(
+            "ERROR".to_string(),
+            "XX000".to_string(),
+            error,
+        )))
+    })?;
     match result {
         ExecutionResult::Success { message } => Ok(vec![Response::Execution(Tag::new(&message))]),
         ExecutionResult::Inserted { rows_affected } => Ok(vec![Response::Execution(
@@ -61,6 +68,7 @@ pub fn execution_result_to_responses_with_format(
             schema,
             column_format,
         )?)]),
+        ExecutionResult::ScalarRows { .. } => unreachable!("converted by into_arrow_rows"),
     }
 }
 

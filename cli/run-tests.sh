@@ -118,6 +118,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --server-type <TYPE>     Server mode: fresh | running (default) | cluster"
     echo "                           fresh: auto-starts wire-enabled server for pgwire e2e"
     echo "                           running: reuse server; enable [postgres_wire] or use fresh"
+    echo "                           Full runs execute live pgwire catalog + JDBC e2e against that listener"
     echo "  -j, --jobs <N>           Override nextest process concurrency"
         echo "                           Cluster mode defaults to KALAMDB_CLUSTER_TEST_JOBS or 4"
     echo "  -P, --package <CRATE>    Limit the run to one package (repeatable)"
@@ -135,6 +136,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  Dex OIDC tests compile only with kalam-cli-e2e/oidc;"
     echo "  this script enables that when Dex is started. Server Dex tests need kalamdb-server/oidc."
     echo "  KALAMDB_SKIP_PG_EXTENSION_E2E=true Skip native pg_kalam e2e (needs pgrx)"
+    echo "  KALAMDB_SKIP_JDBC_E2E=true         Skip JDBC/Hikari catalog e2e (needs JDK)"
     echo "  KALAMDB_DOCKER_PROBE_TIMEOUT_SECS=5"
     echo "  KALAMDB_DOCKER_UP_TIMEOUT_SECS=45"
     echo ""
@@ -555,7 +557,7 @@ if [ -n "$TEST_JOBS" ]; then
 fi
     echo "Mode:            $FEATURE_MODE"
     echo "Supplementary:   $SUPPLEMENTARY_MODE"
-    echo "PgWire E2E:      included in full runs (smoke, transactions, client catalog)"
+    echo "PgWire E2E:      live catalog + JDBC included in full runs (requires [postgres_wire] + JDK)"
     echo "PG Extension:    native e2e included in full runs (release-parity ddl/dml/scenarios)"
     echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
     if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
@@ -1152,7 +1154,7 @@ pgwire_e2e_should_run() {
 
     if [ -n "$TEST_TARGET" ]; then
         case "$TEST_TARGET" in
-            wire_*|pgwire_*|pgwire_catalog)
+            wire_*|pgwire_*|pgwire_catalog|e2e|test_testserver|test_scenarios)
                 return 0
                 ;;
         esac
@@ -1184,8 +1186,19 @@ pgwire_catalog_tests_should_run() {
         esac
     fi
 
-    if [ -n "$TEST_TARGET" ] && [ "$TEST_TARGET" != "pgwire_catalog" ]; then
-        return 1
+    # `--test-target pgwire_catalog` already runs these in the main nextest invocation.
+    if [ -n "$TEST_TARGET" ]; then
+        case "$TEST_TARGET" in
+            pgwire_catalog)
+                return 1
+                ;;
+            e2e|test_testserver|test_scenarios)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
     fi
 
     if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && package_filters_include "kalamdb-postgres-wire"; then
@@ -1193,6 +1206,29 @@ pgwire_catalog_tests_should_run() {
     fi
 
     return 0
+}
+
+pgwire_live_catalog_filter_expr() {
+    local expr='test(/pgwire_catalog::/) and not test(wire_client_catalog_disabled)'
+    if [ "${KALAMDB_SKIP_JDBC_E2E:-false}" = "true" ]; then
+        expr="$expr and not test(jdbc_hikari)"
+    fi
+    printf '%s\n' "$expr"
+}
+
+prepare_pgwire_jdbc_e2e() {
+    if [ "${KALAMDB_SKIP_JDBC_E2E:-false}" = "true" ]; then
+        echo "Skipping JDBC/Hikari catalog e2e (KALAMDB_SKIP_JDBC_E2E=true)."
+        return 0
+    fi
+
+    if ! command -v java >/dev/null 2>&1; then
+        echo "Error: JDBC catalog e2e requires a JDK (\`java\` on PATH)." >&2
+        echo "Install a JDK, or set KALAMDB_SKIP_JDBC_E2E=true to skip only the Java smoke." >&2
+        exit 1
+    fi
+
+    export KALAMDB_PGWIRE_REQUIRE_JDBC=1
 }
 
 resolve_pgwire_host() {
@@ -1314,15 +1350,18 @@ run_pgwire_catalog_companion_tests_if_needed() {
     fi
 
     ensure_pgwire_e2e_env
+    prepare_pgwire_jdbc_e2e
+
+    local filter_expr
+    filter_expr="$(pgwire_live_catalog_filter_expr)"
 
     step "Running PostgreSQL wire client catalog e2e tests"
     cargo nextest run \
         -p kalamdb-server \
         --features e2e-tests \
         --test e2e \
-        --run-ignored all \
-        wire_client_catalog_returns_data \
-        jdbc_hikari_pool_connects_and_queries
+        --run-ignored ignored-only \
+        --filter-expr "$filter_expr"
 }
 
 infer_kalamdb_grpc_target() {
@@ -1918,9 +1957,10 @@ build_test_cmd() {
                 ;;
         esac
         if [ "$TEST_TARGET" = "pgwire_catalog" ]; then
-            TEST_CMD+=(--run-ignored all)
+            prepare_pgwire_jdbc_e2e
+            TEST_CMD+=(--run-ignored ignored-only)
             if [ -z "$test_filter" ]; then
-                TEST_CMD+=(wire_client_catalog_returns_data jdbc_hikari_pool_connects_and_queries)
+                TEST_CMD+=(--filter-expr "$(pgwire_live_catalog_filter_expr)")
             fi
         fi
     fi

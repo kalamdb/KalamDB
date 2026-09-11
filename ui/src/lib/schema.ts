@@ -241,3 +241,91 @@ export const system_stats = kTable('system.stats', {
   metric_name: text('metric_name').notNull(),
   metric_value: text('metric_value').notNull(),
 });
+
+export const system_procedures = kTable('system.procedures', {
+  procedure_id: text('procedure_id').notNull(),
+  schema: text('schema').notNull(),
+  name: text('name').notNull(),
+  signature: text('signature').notNull(),
+  return_type: text('return_type').notNull(),
+  implementation: text('implementation').notNull(),
+  module_id: text('module_id'),
+  revision_id: text('revision_id'),
+  security: text('security').notNull(),
+  owner: text('owner').notNull(),
+  grants: text('grants').notNull(),
+  comment: text('comment'),
+});
+
+export const system_modules = kTable('system.modules', {
+  module_id: text('module_id').notNull(),
+  runtime: text('runtime').notNull(),
+  current_revision_id: text('current_revision_id'),
+  contract_hash: text('contract_hash'),
+  abi_version: integer('abi_version').notNull(),
+});
+
+export const system_module_revisions = kTable('system.module_revisions', {
+  module_id: text('module_id').notNull(),
+  revision_id: text('revision_id').notNull(),
+  artifact_id: text('artifact_id').notNull(),
+  artifact_bytes: integer('artifact_bytes').notNull(),
+  contract_hash: text('contract_hash').notNull(),
+  created_at: integer('created_at').notNull(),
+  is_current: boolean('is_current').notNull(),
+  exports: text('exports').notNull(),
+});
+
+export const system_procedure_logs = kTable('system.procedure_logs', {
+  timestamp: text('timestamp').notNull(),
+  node_id: text('node_id').notNull(),
+  execution_id: text('execution_id').notNull(),
+  request_id: text('request_id').notNull(),
+  procedure_id: text('procedure_id').notNull(),
+  module_id: text('module_id'),
+  revision_id: text('revision_id'),
+  actor: text('actor').notNull(),
+  origin: text('origin').notNull(),
+  outcome: text('outcome').notNull(),
+  channel: text('channel').notNull(),
+  level: text('level').notNull(),
+  error_code: text('error_code'),
+  message: text('message'),
+  duration_ms: integer('duration_ms').notNull(),
+});
+
+export const system_routine_parameters = kTable('system.routine_parameters', {
+  parameter_id: text('parameter_id').notNull(),
+  routine_id: text('routine_id').notNull(),
+  name: text('name').notNull(),
+  ordinal: integer('ordinal').notNull(),
+  type_id: text('type_id'),
+  type_name: text('type_name').notNull(),
+  is_array: boolean('is_array').notNull(),
+  not_null: boolean('not_null').notNull(),
+  nonempty: boolean('nonempty').notNull(),
+  data_type: jsonb('data_type'),
+});
+
+export const system_types = kTable('system.types', {
+  type_id: text('type_id').notNull(),
+  namespace_id: text('namespace_id').notNull(),
+  name: text('name').notNull(),
+  kind: text('kind').notNull(),
+  table_id: text('table_id'),
+  source_type_id: text('source_type_id'),
+  comment: text('comment'),
+});
+
+export const system_type_fields = kTable('system.type_fields', {
+  type_field_id: text('type_field_id').notNull(),
+  type_id: text('type_id').notNull(),
+  name: text('name').notNull(),
+  ordinal: integer('ordinal').notNull(),
+  field_type_id: text('field_type_id'),
+  type_name: text('type_name').notNull(),
+  is_array: boolean('is_array').notNull(),
+  not_null: boolean('not_null').notNull(),
+  nonempty: boolean('nonempty').notNull(),
+  data_type: jsonb('data_type'),
+});

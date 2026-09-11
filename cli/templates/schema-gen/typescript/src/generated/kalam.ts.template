@@ -1,0 +1,59 @@
+{{header}}
+// {{contract_hash_line}}
+
+export * from './schema';
+{{#if has_type_imports}}
+import type { {{type_imports}} } from './schema';
+{{/if}}
+
+export type KalamQueryClient = {
+  query: (sql: string, params?: unknown[]) => Promise<{
+    status?: string;
+    error?: unknown;
+    results?: Array<{
+      rows?: unknown;
+      named_rows?: Array<Record<string, unknown>>;
+    }>;
+  }>;
+};
+
+function kalamCallErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) {
+      return message;
+    }
+  }
+  return "CALL failed";
+}
+
+function kalamCallResult(response: Awaited<ReturnType<KalamQueryClient["query"]>>): unknown {
+  if (response.status === "error") {
+    throw new Error(kalamCallErrorMessage(response.error));
+  }
+  const result = response.results?.[0];
+  if (result?.named_rows?.[0] && "result" in result.named_rows[0]) {
+    return result.named_rows[0].result;
+  }
+  const rows = result?.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return undefined;
+  }
+  const first = rows[0];
+  return Array.isArray(first) ? first[0] : first;
+}
+
+export function createKalam(client: KalamQueryClient) {
+  return {
+{{#each namespaces}}
+    {{object_ident}}: {
+{{#each procedures}}
+{{{jsdoc}}}      {{method_ident}}: async ({{#if has_params}}input: {{request_ident}}{{/if}}): Promise<{{result_ident}}> => {
+        const response = await client.query("{{call_sql}}"{{#if has_params}}, [{{params_list}}]{{/if}});
+        return kalamCallResult(response) as {{result_ident}};
+      },
+{{/each}}
+    },
+{{/each}}
+  };
+}

@@ -9,7 +9,7 @@ use arrow::{
     datatypes::{Field, Schema, SchemaRef},
 };
 use datafusion::{
-    common::tree_node::{Transformed, TransformedResult, TreeNode},
+    common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion},
     dataframe::DataFrame,
     datasource::MemTable,
     logical_expr::{Expr as DataFusionExpr, LogicalPlan},
@@ -114,6 +114,10 @@ fn contains_internal_namespace_hint(sql: &str) -> bool {
     contains_ignore_ascii_case(sql, "system.") || contains_ignore_ascii_case(sql, "dba.")
 }
 
+fn table_ref_is_client_catalog(table: &datafusion::common::TableReference) -> bool {
+    matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
+}
+
 fn extract_select_from_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
     let lowered = sql.to_ascii_lowercase();
     let from_idx = lowered.find(" from ")?;
@@ -182,7 +186,7 @@ impl SqlExecutor {
             }
         }
 
-        let parsed_statement = match metadata.parsed_dml.as_ref() {
+        let parsed_statement = match metadata.parsed_dml.as_deref() {
             Some(statement) => statement,
             None => return Ok(None),
         };
@@ -654,6 +658,21 @@ impl SqlExecutor {
         }
     }
 
+    fn logical_plan_is_client_catalog_introspection(plan: &LogicalPlan) -> bool {
+        let mut saw_scan = false;
+        let mut only_catalog = true;
+        let walked = plan.apply(|node| {
+            if let LogicalPlan::TableScan(scan) = node {
+                saw_scan = true;
+                if !table_ref_is_client_catalog(&scan.table_name) {
+                    only_catalog = false;
+                }
+            }
+            Ok(TreeNodeRecursion::Continue)
+        });
+        walked.is_ok() && saw_scan && only_catalog
+    }
+
     fn apply_select_limits(
         &self,
         df: datafusion::dataframe::DataFrame,
@@ -664,22 +683,24 @@ impl SqlExecutor {
         let has_explicit_limit = Self::logical_plan_has_limit(df.logical_plan());
 
         if !has_explicit_limit && default_query_limit > 0 {
-            let effective_default_limit = if max_query_limit > 0 {
-                default_query_limit.min(max_query_limit)
-            } else {
-                default_query_limit
-            };
+            if !Self::logical_plan_is_client_catalog_introspection(df.logical_plan()) {
+                let effective_default_limit = if max_query_limit > 0 {
+                    default_query_limit.min(max_query_limit)
+                } else {
+                    default_query_limit
+                };
 
-            log::debug!(
-                target: "sql::exec",
-                "Applying default query limit {} to unbounded SELECT | sql='{}'",
-                effective_default_limit,
-                sql
-            );
+                log::debug!(
+                    target: "sql::exec",
+                    "Applying default query limit {} to unbounded SELECT | sql='{}'",
+                    effective_default_limit,
+                    sql
+                );
 
-            return df
-                .limit(0, Some(effective_default_limit))
-                .map_err(Self::datafusion_to_execution_error);
+                return df
+                    .limit(0, Some(effective_default_limit))
+                    .map_err(Self::datafusion_to_execution_error);
+            }
         }
 
         if max_query_limit > 0 {
@@ -1207,6 +1228,76 @@ impl SqlExecutor {
         batches.into_iter().map(|batch| batch.project(&indices).ok()).collect()
     }
 
+    /// Source column name for a cached point-get projection expr.
+    ///
+    /// Only column refs (plus Alias/Cast wrappers) can skip Arrow. Computed
+    /// projections fall back to DataFusion.
+    fn point_get_source_column_name(expr: &DataFusionExpr) -> Option<&str> {
+        match expr {
+            DataFusionExpr::Column(column) => Some(column.name.as_str()),
+            DataFusionExpr::Alias(alias) => Self::point_get_source_column_name(alias.expr.as_ref()),
+            DataFusionExpr::Cast(cast) => Self::point_get_source_column_name(cast.expr.as_ref()),
+            DataFusionExpr::TryCast(try_cast) => {
+                Self::point_get_source_column_name(try_cast.expr.as_ref())
+            },
+            _ => None,
+        }
+    }
+
+    fn project_point_get_scalar_rows(
+        mut rows: Vec<Row>,
+        source_schema: &SchemaRef,
+        target_schema: SchemaRef,
+        projection_exprs: Option<&[DataFusionExpr]>,
+    ) -> Option<Vec<Row>> {
+        let names_already_match = source_schema.fields().len() == target_schema.fields().len()
+            && source_schema
+                .fields()
+                .iter()
+                .zip(target_schema.fields())
+                .all(|(left, right)| left.name() == right.name());
+        if names_already_match && projection_exprs.is_none() {
+            return Some(rows);
+        }
+
+        // Scan rows keep catalog names (`name`). The logical Projection may
+        // alias them (`title`) and the scan may still carry extra columns
+        // because `id = $1` is Exact. Looking up `title` in the unmapped Row
+        // yields Null in JSON. Use projection exprs when present; otherwise
+        // positional remap only if field counts match. Missing mappings return
+        // None so we fall back to Arrow instead of inventing Nulls.
+        // Regression: `cached_point_get_projects_non_pk_columns_across_table_types`.
+        let source_names: Vec<&str> = if let Some(exprs) = projection_exprs {
+            if exprs.len() != target_schema.fields().len() {
+                return None;
+            }
+            exprs
+                .iter()
+                .map(Self::point_get_source_column_name)
+                .collect::<Option<Vec<_>>>()?
+        } else if source_schema.fields().len() == target_schema.fields().len() {
+            source_schema.fields().iter().map(|field| field.name().as_str()).collect()
+        } else {
+            target_schema.fields().iter().map(|field| field.name().as_str()).collect()
+        };
+
+        for row in &mut rows {
+            let mut projected = Row::new(std::collections::BTreeMap::new());
+            for (target_field, source_name) in target_schema.fields().iter().zip(&source_names) {
+                let value = row
+                    .values
+                    .remove(*source_name)
+                    .or_else(|| row.values.remove(target_field.name()));
+                let Some(value) = value else {
+                    return None;
+                };
+                projected.values.insert(target_field.name().clone(), value);
+            }
+            *row = projected;
+        }
+        Some(rows)
+    }
+
     /// Execute a cached, optimized single-PK table scan without rebuilding a
     /// DataFusion logical/physical plan. Provider `scan` still enforces access,
     /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
@@ -1219,18 +1310,24 @@ impl SqlExecutor {
         params: &[ScalarValue],
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
-        let (scan, requested_schema) = match Self::unwrap_default_order_wrappers(plan) {
-            LogicalPlan::TableScan(scan) => (scan, None),
-            LogicalPlan::Projection(projection) => {
-                let LogicalPlan::TableScan(scan) =
-                    Self::unwrap_default_order_wrappers(projection.input.as_ref())
-                else {
-                    return Ok(None);
-                };
-                (scan, Some(Arc::new(projection.schema.as_arrow().clone())))
-            },
-            _ => return Ok(None),
-        };
+        let (scan, requested_schema, projection_exprs) =
+            match Self::unwrap_default_order_wrappers(plan) {
+                LogicalPlan::TableScan(scan) => (scan, None, None),
+                LogicalPlan::Projection(projection) => {
+                    let LogicalPlan::TableScan(scan) =
+                        Self::unwrap_default_order_wrappers(projection.input.as_ref())
+                    else {
+                        return Ok(None);
+                    };
+                    (
+                        scan,
+                        Some(Arc::new(projection.schema.as_arrow().clone())),
+                        // Needed so `name AS title` remaps scan-row keys.
+                        Some(projection.expr.as_slice()),
+                    )
+                },
+                _ => return Ok(None),
+            };
 
         let namespace = scan
             .table_name
@@ -1276,6 +1373,39 @@ impl SqlExecutor {
             .scan(state.as_ref(), scan.projection.as_ref(), &filters, limit)
             .await
             .map_err(Self::datafusion_to_execution_error)?;
+        // HTTP `/v1/api/sql` serializes ScalarRows without Arrow. If this
+        // returns None for a simple `pk = $1` scan, the bake-off falls back
+        // to RecordBatch + JSON and regresses (~1.6s / ~25µs p50 on 1M reads).
+        // Keep this Some-path; do not scan again on success.
+        if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
+            if let Some((schema, rows)) = deferred
+                .produce_scalar_rows_direct()
+                .await
+                .map_err(Self::datafusion_to_execution_error)?
+            {
+                let (rows, schema) = if let Some(target_schema) = requested_schema {
+                    let Some(projected) = Self::project_point_get_scalar_rows(
+                        rows,
+                        &schema,
+                        Arc::clone(&target_schema),
+                        projection_exprs,
+                    ) else {
+                        return Ok(None);
+                    };
+                    (projected, target_schema)
+                } else {
+                    (rows, schema)
+                };
+                let row_count = rows.len();
+                #[cfg(test)]
+                self.point_get_fast_path_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(Some(ExecutionResult::ScalarRows {
+                    rows,
+                    row_count,
+                    schema,
+                }));
+            }
+        }
         let schema = physical_plan.schema();
         let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
             vec![deferred
@@ -1323,7 +1453,7 @@ impl SqlExecutor {
         transaction_id: &TransactionId,
     ) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
         let parsed_stmts: Option<Vec<&sqlparser::ast::Statement>> =
-            statements.iter().map(|statement| statement.parsed_dml.as_ref()).collect();
+            statements.iter().map(|statement| statement.parsed_dml.as_deref()).collect();
         let parsed_stmts = match parsed_stmts {
             Some(stmts) => stmts,
             None => return Ok(None),
@@ -1519,7 +1649,7 @@ impl SqlExecutor {
         kalamdb_observability::kdb_await_in_info_span!(
             async {
             let query_start = Instant::now();
-            let classified = match metadata.classified_statement.as_ref() {
+            let classified = match metadata.classified_statement.as_deref() {
                 Some(classified) => classified,
                 None => {
                     kalamdb_observability::observe_query(
@@ -1666,7 +1796,8 @@ impl SqlExecutor {
             #[cfg(feature = "traceability")]
             if let Ok(ref res) = result {
                 let rows = match res {
-                    ExecutionResult::Rows { row_count, .. } => *row_count,
+                    ExecutionResult::Rows { row_count, .. }
+                    | ExecutionResult::ScalarRows { row_count, .. } => *row_count,
                     ExecutionResult::Inserted { rows_affected } => *rows_affected,
                     ExecutionResult::Updated { rows_affected } => *rows_affected,
                     ExecutionResult::Deleted { rows_affected } => *rows_affected,
@@ -2418,7 +2549,8 @@ mod tests {
 
     fn result_row_count(result: ExecutionResult) -> usize {
         match result {
-            ExecutionResult::Rows { row_count, .. } => row_count,
+            ExecutionResult::Rows { row_count, .. }
+            | ExecutionResult::ScalarRows { row_count, .. } => row_count,
             other => panic!("expected rows, got {other:?}"),
         }
     }
@@ -2598,6 +2730,59 @@ mod tests {
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].num_rows(), 0);
         assert_eq!(projected[0].schema().field(0).name(), "file_ref");
+    }
+
+    #[test]
+    fn project_point_get_scalar_rows_remaps_alias_when_scan_keeps_pk() {
+        use arrow::datatypes::DataType;
+        use datafusion::logical_expr::col;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let target_schema = Arc::new(Schema::new(vec![Field::new("title", DataType::Utf8, true)]));
+        let rows = vec![Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Int64(Some(1))),
+            ("name".to_string(), ScalarValue::Utf8(Some("alpha".to_string()))),
+        ])];
+        let exprs = vec![col("name").alias("title")];
+
+        let projected = SqlExecutor::project_point_get_scalar_rows(
+            rows,
+            &source_schema,
+            target_schema,
+            Some(exprs.as_slice()),
+        )
+        .expect("aliased projection");
+
+        assert_eq!(
+            projected[0].values.get("title"),
+            Some(&ScalarValue::Utf8(Some("alpha".to_string())))
+        );
+        assert!(!projected[0].values.contains_key("name"));
+        assert!(!projected[0].values.contains_key("id"));
+    }
+
+    #[test]
+    fn project_point_get_scalar_rows_returns_none_for_unknown_alias_without_exprs() {
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let target_schema = Arc::new(Schema::new(vec![Field::new("title", DataType::Utf8, true)]));
+        let rows = vec![Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Int64(Some(1))),
+            ("name".to_string(), ScalarValue::Utf8(Some("alpha".to_string()))),
+        ])];
+
+        assert!(
+            SqlExecutor::project_point_get_scalar_rows(rows, &source_schema, target_schema, None)
+                .is_none(),
+            "unmapped aliases must fall back to Arrow instead of JSON null"
+        );
     }
 
     #[tokio::test]

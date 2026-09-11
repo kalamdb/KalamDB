@@ -403,7 +403,8 @@ impl QueryExecutor {
                                         retry_builder = new_auth.apply_to_request(retry_builder)?;
                                         match retry_builder.send().await {
                                             Ok(retry_resp) => {
-                                                return Self::handle_response(retry_resp, sql).await
+                                                return Self::handle_response(retry_resp, sql)
+                                                    .await;
                                             },
                                             Err(e) => return Err(e.into()),
                                         }

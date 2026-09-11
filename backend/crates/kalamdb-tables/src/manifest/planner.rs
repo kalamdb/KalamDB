@@ -11,7 +11,7 @@ use kalamdb_commons::{
     constants::SystemColumnNames, ids::SeqId, models::UserId, schemas::TableType, TableId,
 };
 use kalamdb_filestore::{ParquetReadOptions, StorageCached};
-use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait};
+use kalamdb_system::{Manifest, SchemaRegistry as SchemaRegistryTrait, SegmentMetadata};
 
 use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
 
@@ -468,31 +468,50 @@ impl ManifestAccessPlanner {
         pk_column_id: u64,
         pk_value: &str,
     ) -> Vec<String> {
+        Self::select_readable_segment_paths(manifest, |segment| {
+            segment
+                .column_stats
+                .get(&pk_column_id)
+                .is_none_or(|stats| Self::pk_value_in_range(pk_value, stats))
+        })
+    }
+
+    /// Union of segments that may contain any of the given PK values.
+    ///
+    /// Walks each segment once instead of cloning paths per PK.
+    pub fn plan_by_pk_values(
+        &self,
+        manifest: &Manifest,
+        pk_column_id: u64,
+        pk_values: &[String],
+    ) -> Vec<String> {
+        if pk_values.is_empty() {
+            return Vec::new();
+        }
+        Self::select_readable_segment_paths(manifest, |segment| {
+            segment.column_stats.get(&pk_column_id).is_none_or(|stats| {
+                pk_values.iter().any(|pk| Self::pk_value_in_range(pk, stats))
+            })
+        })
+    }
+
+    fn select_readable_segment_paths(
+        manifest: &Manifest,
+        mut include: impl FnMut(&SegmentMetadata) -> bool,
+    ) -> Vec<String> {
         if manifest.segments.is_empty() {
             return Vec::new();
         }
 
-        let mut selected_paths: Vec<String> = Vec::new();
-
+        let mut selected_paths = Vec::new();
         for segment in &manifest.segments {
-            // Skip non-readable segments (in_progress or tombstoned)
             if !segment.is_readable() {
                 continue;
             }
-
-            // Check if segment has column_stats for the PK column
-            if let Some(stats) = segment.column_stats.get(&pk_column_id) {
-                // Check if PK value could be in this segment's range
-                if !Self::pk_value_in_range(pk_value, stats) {
-                    // Definitely not in this segment, skip
-                    continue;
-                }
+            if include(segment) {
+                selected_paths.push(segment.path.clone());
             }
-            // No column_stats for PK column = conservative, include the segment
-
-            selected_paths.push(segment.path.clone());
         }
-
         selected_paths
     }
 
@@ -736,6 +755,51 @@ mod tests {
         let selected = planner.plan_by_pk_value(&manifest, 1, "15");
 
         assert_eq!(selected, vec!["batch-in-range.parquet".to_string()]);
+    }
+
+    #[test]
+    fn plan_by_pk_values_unions_segments_without_repeating_paths() {
+        let table_id = TableId::from_strings("test", "users");
+        let mut manifest = Manifest::new(table_id, None);
+
+        let mut low_stats = HashMap::new();
+        low_stats.insert(1, numeric_stats(1, 10));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "batch-low.parquet".to_string(),
+            "batch-low.parquet".to_string(),
+            low_stats,
+            SeqId::from(1i64),
+            SeqId::from(10i64),
+            5,
+            128,
+            1,
+        ));
+
+        let mut high_stats = HashMap::new();
+        high_stats.insert(1, numeric_stats(20, 30));
+        manifest.add_segment(SegmentMetadata::with_schema_version(
+            "batch-high.parquet".to_string(),
+            "batch-high.parquet".to_string(),
+            high_stats,
+            SeqId::from(11i64),
+            SeqId::from(20i64),
+            5,
+            128,
+            1,
+        ));
+
+        let planner = ManifestAccessPlanner::new();
+        let selected = planner.plan_by_pk_values(
+            &manifest,
+            1,
+            &["5".to_string(), "6".to_string(), "25".to_string()],
+        );
+
+        assert_eq!(
+            selected,
+            vec!["batch-low.parquet".to_string(), "batch-high.parquet".to_string()]
+        );
+        assert!(planner.plan_by_pk_values(&manifest, 1, &["15".to_string()]).is_empty());
     }
 
     #[test]

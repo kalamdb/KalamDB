@@ -43,9 +43,6 @@ pub enum CLIError {
     /// Format error
     FormatError(String),
 
-    /// Subscription error
-    SubscriptionError(String),
-
     /// Server requires initial setup
     SetupRequired(String),
 
@@ -53,14 +50,7 @@ pub enum CLIError {
     Agent(AgentError),
 }
 
-// Allow dead code for error variants that will be used in future features
-#[allow(dead_code)]
 impl CLIError {
-    /// Create a subscription error
-    pub fn subscription_error(msg: impl Into<String>) -> Self {
-        CLIError::SubscriptionError(msg.into())
-    }
-
     fn format_link_error(err: &KalamLinkError) -> String {
         match err {
             KalamLinkError::NetworkError(msg) => Self::clean_nested_message(msg),
@@ -129,7 +119,6 @@ impl fmt::Display for CLIError {
             CLIError::ReadlineError(msg) => write!(f, "Input error: {}", msg),
             CLIError::HistoryError(msg) => write!(f, "History error: {}", msg),
             CLIError::FormatError(msg) => write!(f, "Format error: {}", msg),
-            CLIError::SubscriptionError(msg) => write!(f, "Subscription error: {}", msg),
             CLIError::SetupRequired(msg) => write!(f, "Server setup required: {}", msg),
             CLIError::Agent(error) => write!(f, "{error}"),
         }

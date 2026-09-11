@@ -12,16 +12,18 @@ Use `--template react-ai-chat` when you want a personal assistant with approvals
 ## Quick Start
 
 From this folder, use the **0.7+ CLI from this repo**. A 0.6 `kalam` on PATH
-(`~/.kalam/bin/kalam`) overwrites `src/generated/kalam.ts` and the app fails with
-`does not provide an export named 'createKalam'`.
+(`~/.kalam/bin/kalam`) applies `CREATE PROCEDURE` without activating the JS
+module, so `CALL` fails with `procedure not implemented` and overwrites
+`src/generated/kalam.ts` (the app then fails with
+`does not provide an export named 'createKalam'`).
 
 ```bash
 npm install
-../../target/debug/kalam schema gen
-../../target/debug/kalam dev
+npm run kalam:schema
+npm run kalam:dev
 ```
 
-`kalam dev` starts a local server, applies `kalam/schema.sql`, generates `src/generated/kalam.ts`, builds the TypeScript procedures, and runs Vite:
+`kalam dev` starts a local server, applies `kalam/schema.sql`, generates `src/generated/kalam.ts`, builds and **activates** the TypeScript procedures, and runs Vite. You should see `activated function module backend`. If activation fails, the CLI prints an error; the procedures stay `missing` until it succeeds.
 
 ```toml
 [dev.processes]
@@ -32,11 +34,11 @@ Open the Vite URL, usually `http://127.0.0.1:5174`. Sign-in defaults are `root` 
 
 ```bash
 kalam db reset
-kalam dev
+npm run kalam:dev
 ```
 
 ```bash
-kalam deploy
+npm run kalam:deploy
 ```
 
 ## What It Does
@@ -75,7 +77,7 @@ await api.chatDemo.sendMessage({
 
 ## Tests
 
-With a KalamDB server available (and functions activated via `kalam dev`):
+With a KalamDB server available (and functions activated via `npm run kalam:dev` or `npm run kalam:deploy`):
 
 ```bash
 npm test

@@ -96,10 +96,12 @@ impl TypedStatementHandler<CreateTopicStatement> for CreateTopicHandler {
             stores.get_type(&TypeId::new(topic_id.as_str())).map_err(super::catalog_error)?
         {
             if existing.kind != CatalogTypeKind::TopicPayload {
-                return Err(KalamDbError::AlreadyExists(format!(
-                    "type {} already exists",
-                    existing.type_id
-                )));
+                return Err(KalamDbError::AlreadyExists(match existing.kind {
+                    CatalogTypeKind::ImplicitTableRow => {
+                        format!("topic '{topic_name}' collides with implicit table row type")
+                    },
+                    _ => format!("type {} already exists", existing.type_id),
+                }));
             }
         }
 
@@ -206,6 +208,43 @@ mod tests {
         assert_eq!(catalog_type.kind, CatalogTypeKind::TopicPayload);
         assert_eq!(catalog_type.namespace_id, NamespaceId::new("app"));
         assert_eq!(catalog_type.name, "inbox");
+    }
+
+    #[tokio::test]
+    async fn create_topic_rejects_existing_table_row_type() {
+        let app = test_app_context_simple();
+        ensure_namespace(&app, "app");
+        app.system_tables()
+            .catalog_stores()
+            .upsert_type(kalamdb_system::CatalogType {
+                type_id:        TypeId::new("app.inbox"),
+                namespace_id:   NamespaceId::new("app"),
+                name:           "inbox".to_string(),
+                kind:           CatalogTypeKind::ImplicitTableRow,
+                table_id:       Some(kalamdb_commons::models::TableId::from_strings(
+                    "app", "inbox",
+                )),
+                source_type_id: None,
+                comment:        None,
+            })
+            .unwrap();
+        let handler = CreateTopicHandler::new(Arc::clone(&app));
+        let error = handler
+            .execute(
+                CreateTopicStatement {
+                    topic_name:          "app.inbox".to_string(),
+                    if_not_exists:       false,
+                    partitions:          Some(1),
+                    retention_seconds:   None,
+                    retention_max_bytes: None,
+                },
+                vec![],
+                &dba_ctx(&app),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("collides"), "{error}");
+        assert!(error.to_string().contains("implicit table row type"), "{error}");
     }
 
     #[tokio::test]

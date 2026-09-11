@@ -280,6 +280,50 @@ fn kobj_functions_checkpoint_c_call_nested_db_and_topic() {
 
 #[ntest::timeout(300000)]
 #[test]
+fn kobj_functions_rest_json_in_out() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_json_fn");
+    exec(&format!(
+        "CREATE OR REPLACE PROCEDURE {ns}.send_message(body JSON NOT NULL) RETURNS JSON LANGUAGE \
+         JAVASCRIPT AS $$\n  return {{ ok: true, conversationId: input.body.conversationId, text: \
+         input.body.text }};\n$$"
+    ));
+    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.send_message TO user"));
+
+    let payload = json!({
+        "conversationId": "c1",
+        "text": "hello"
+    });
+    let (status, body) = rest_post(&format!("/v1/functions/{ns}/send_message"), payload);
+    assert!(
+        (200..300).contains(&status),
+        "whole-body JSON REST should succeed: {status} {body}"
+    );
+    let parsed: Value = serde_json::from_str(&body).unwrap_or_else(|err| {
+        panic!("REST JSON body should parse: {err}: {body}");
+    });
+    assert!(parsed.is_object(), "RETURNS JSON must be an object, not a string: {body}");
+    assert_eq!(parsed["ok"], true, "{body}");
+    assert_eq!(parsed["conversationId"], "c1", "{body}");
+    assert_eq!(parsed["text"], "hello", "{body}");
+
+    let wrapped = json!({
+        "body": { "conversationId": "c2", "text": "named" }
+    });
+    let (status, body) = rest_post(&format!("/v1/functions/{ns}/send_message"), wrapped);
+    assert!(
+        (200..300).contains(&status),
+        "named JSON wrap REST should succeed: {status} {body}"
+    );
+    let parsed: Value = serde_json::from_str(&body).expect("named wrap JSON");
+    assert_eq!(parsed["conversationId"], "c2", "{body}");
+    assert_eq!(parsed["text"], "named", "{body}");
+}
+
+#[ntest::timeout(300000)]
+#[test]
 fn kobj_functions_topic_trigger_delivers_and_acks() {
     if skip_if_no_server() {
         return;
@@ -423,7 +467,12 @@ fn kobj_functions_create_type_and_inline_procedure() {
         "ctx.log.info('echo_addr', { city: input && input.addr && input.addr.city });\nreturn \
          input.addr;",
     );
-    create_js_procedure(&ns, "echo_status", &format!("s {ns}.status"), "return String(input.s);");
+    create_js_procedure(
+        &ns,
+        "echo_status",
+        &format!("s {ns}.status NOT NULL"),
+        "return String(input.s);",
+    );
     create_js_procedure(
         &ns,
         "health",
@@ -456,6 +505,69 @@ fn kobj_functions_create_type_and_inline_procedure() {
     assert!(
         body.contains("Paris") && body.contains("FR"),
         "REST composite result should round-trip fields: {body}"
+    );
+
+    let dup = exec_err(&format!("CREATE TYPE {ns}.dup_status AS ENUM ('a', 'a')"));
+    assert!(
+        dup.to_ascii_lowercase().contains("duplicate"),
+        "duplicate enum labels must fail: {dup}"
+    );
+    let empty = exec_err(&format!("CREATE TYPE {ns}.empty_status AS ENUM ('')"));
+    assert!(
+        empty.to_ascii_lowercase().contains("empty"),
+        "empty enum labels must fail: {empty}"
+    );
+    let missing = exec_err(&format!("CREATE TYPE {ns}.envelope AS (status {ns}.does_not_exist)"));
+    assert!(
+        missing.to_ascii_lowercase().contains("not found")
+            || missing.to_ascii_lowercase().contains("does_not_exist"),
+        "unknown nested type must fail: {missing}"
+    );
+    let unknown_proc = exec_err(&format!(
+        "CREATE PROCEDURE {ns}.need_missing(s {ns}.does_not_exist) LANGUAGE JAVASCRIPT AS $$ \
+         return input; $$"
+    ));
+    assert!(
+        unknown_proc.to_ascii_lowercase().contains("not found")
+            || unknown_proc.to_ascii_lowercase().contains("does_not_exist"),
+        "unknown procedure type must fail: {unknown_proc}"
+    );
+
+    let bad_enum = exec_err(&format!("CALL {ns}.echo_status('nope')"));
+    assert!(
+        bad_enum.to_ascii_lowercase().contains("invalid")
+            || bad_enum.to_ascii_lowercase().contains("enum"),
+        "invalid enum CALL must fail: {bad_enum}"
+    );
+    let null_enum = exec_err(&format!("CALL {ns}.echo_status(NULL)"));
+    assert!(
+        null_enum.to_ascii_lowercase().contains("null")
+            || null_enum.to_ascii_lowercase().contains("invalid"),
+        "NOT NULL enum CALL must reject NULL: {null_enum}"
+    );
+    let arity = exec_err(&format!("CALL {ns}.echo_status('active', 'blocked')"));
+    assert!(
+        arity.to_ascii_lowercase().contains("argument"),
+        "arity mismatch must fail: {arity}"
+    );
+
+    exec(&format!("ALTER TYPE {ns}.status ADD VALUE 'archived'"));
+    let archived = query_rows(&format!("CALL {ns}.echo_status('archived')"));
+    let archived_value = cell(&archived[0], "result");
+    assert!(
+        archived_value.as_str() == Some("archived")
+            || archived_value.to_string().contains("archived"),
+        "ADD VALUE label must be callable: {archived:?}"
+    );
+    exec(&format!("ALTER TYPE {ns}.status ADD VALUE IF NOT EXISTS 'archived'"));
+
+    let drop_used = exec_err(&format!("DROP TYPE {ns}.status"));
+    assert!(
+        drop_used.to_ascii_lowercase().contains("depend")
+            || drop_used.to_ascii_lowercase().contains("in use")
+            || drop_used.to_ascii_lowercase().contains("referenced")
+            || drop_used.to_ascii_lowercase().contains("routine"),
+        "DROP TYPE with dependents must fail: {drop_used}"
     );
 }
 

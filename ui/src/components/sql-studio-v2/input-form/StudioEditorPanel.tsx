@@ -8,6 +8,14 @@ import {
   type SqlCompletionEntry,
   type SqlCompletionData,
 } from "./sqlCompletionCatalog";
+import type { ProcedureMetadata } from "@/features/functions/types";
+import {
+  completionsForCallContext,
+  hoverForIdentifier,
+  parseCallCompletionContext,
+  readQualifiedIdentifier,
+  signatureHelpForCall,
+} from "@/features/functions/sqlCompletions";
 
 type ExecuteMode = "all" | "selected";
 
@@ -15,6 +23,7 @@ const EMPTY_COMPLETION_DATA = buildSqlCompletionData([]);
 
 interface StudioEditorPanelProps {
   schema: StudioNamespace[];
+  procedures?: ProcedureMetadata[];
   sql: string;
   onSqlChange: (value: string) => void;
   onRun: (sql: string, mode: ExecuteMode) => void;
@@ -23,6 +32,7 @@ interface StudioEditorPanelProps {
 
 export function StudioEditorPanel({
   schema,
+  procedures = [],
   sql,
   onSqlChange,
   onRun,
@@ -32,12 +42,12 @@ export function StudioEditorPanel({
   const editorListenerRefs = useRef<IDisposable[]>([]);
   const onRunRef = useRef(onRun);
   const sqlRef = useRef(sql);
-  const completionProviderRef = useRef<IDisposable | null>(null);
+  const languageProviderRefs = useRef<IDisposable[]>([]);
   const completionDataRef = useRef<SqlCompletionData>(EMPTY_COMPLETION_DATA);
 
   const completionData = useMemo(() => {
-    return buildSqlCompletionData(schema);
-  }, [schema]);
+    return buildSqlCompletionData(schema, procedures);
+  }, [schema, procedures]);
 
   useEffect(() => {
     completionDataRef.current = completionData;
@@ -53,7 +63,7 @@ export function StudioEditorPanel({
 
   useEffect(() => {
     return () => {
-      completionProviderRef.current?.dispose();
+      languageProviderRefs.current.forEach((listener) => listener.dispose());
       editorListenerRefs.current.forEach((listener) => listener.dispose());
     };
   }, []);
@@ -90,10 +100,11 @@ export function StudioEditorPanel({
     onRunRef.current(nextSql, resolvedMode);
   };
 
-  const registerCompletionProvider = (monaco: Monaco) => {
-    completionProviderRef.current?.dispose();
-    completionProviderRef.current = monaco.languages.registerCompletionItemProvider("sql", {
-      triggerCharacters: [".", " ", ","],
+  const registerLanguageProviders = (monaco: Monaco) => {
+    languageProviderRefs.current.forEach((provider) => provider.dispose());
+    languageProviderRefs.current = [
+      monaco.languages.registerCompletionItemProvider("sql", {
+      triggerCharacters: [".", " ", ",", "("],
       provideCompletionItems: (model: editor.ITextModel, position: Position) => {
         const data = completionDataRef.current;
         const wordUntil = model.getWordUntilPosition(position);
@@ -114,6 +125,7 @@ export function StudioEditorPanel({
         const suggestions: languages.CompletionItem[] = [];
         const seen = new Set<string>();
         const aliasToTable: Record<string, string> = {};
+        const callContext = parseCallCompletionContext(textUntilPosition);
 
         const aliasRegex = /\b(?:from|join)\s+([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)(?:\s+(?:as\s+)?([a-zA-Z_][\w]*))?/gi;
         let aliasMatch: RegExpExecArray | null = aliasRegex.exec(textUntilPosition);
@@ -135,6 +147,7 @@ export function StudioEditorPanel({
           sortText?: string,
           insertTextRules?: languages.CompletionItemInsertTextRule,
           matchText = prefix,
+          suggestionRange = range,
         ) => {
           const key = `${kind}-${label}-${insertText}`;
           if (seen.has(key)) {
@@ -144,10 +157,22 @@ export function StudioEditorPanel({
             return;
           }
           seen.add(key);
-          suggestions.push({ label, kind, detail, insertText, insertTextRules, range, sortText });
+          suggestions.push({
+            label,
+            kind,
+            detail,
+            insertText,
+            insertTextRules,
+            range: suggestionRange,
+            sortText,
+          });
         };
 
-        const pushEntry = (entry: SqlCompletionEntry) => {
+        const pushEntry = (
+          entry: SqlCompletionEntry,
+          matchText = prefix,
+          suggestionRange = range,
+        ) => {
           const snippetRule = entry.isSnippet
             ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
             : undefined;
@@ -166,8 +191,27 @@ export function StudioEditorPanel({
             entry.insertText ?? entry.label,
             entry.sortText,
             snippetRule,
+            matchText,
+            suggestionRange,
           );
         };
+
+        if (callContext) {
+          const callRange = callContext.kind === "name"
+            ? {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: Math.max(1, position.column - (textUntilPosition.length - callContext.replaceFrom)),
+                endColumn: position.column,
+              }
+            : range;
+          completionsForCallContext(callContext, data.procedures).forEach((entry) =>
+            pushEntry(entry, callContext.kind === "name" ? callContext.partial : "", callRange),
+          );
+          if (callContext.kind === "arguments" || callContext.partial.length > 0) {
+            return { suggestions };
+          }
+        }
 
         const contextualCompletion = resolveSqlContextualCompletions(data, textUntilPosition, aliasToTable);
         if (contextualCompletion) {
@@ -184,10 +228,11 @@ export function StudioEditorPanel({
         data.keywords.forEach((keyword) =>
           pushSuggestion(keyword, monaco.languages.CompletionItemKind.Keyword, "SQL keyword", keyword, `2_${keyword}`),
         );
-        data.snippets.forEach(pushEntry);
-        data.functions.forEach(pushEntry);
-        data.types.forEach(pushEntry);
-        data.operators.forEach(pushEntry);
+        data.snippets.forEach((entry) => pushEntry(entry));
+        data.functions.forEach((entry) => pushEntry(entry));
+        data.procedureEntries.forEach((entry) => pushEntry(entry));
+        data.types.forEach((entry) => pushEntry(entry));
+        data.operators.forEach((entry) => pushEntry(entry));
         data.namespaces.forEach((namespaceName) =>
           pushSuggestion(namespaceName, monaco.languages.CompletionItemKind.Module, "Namespace"),
         );
@@ -205,7 +250,58 @@ export function StudioEditorPanel({
 
         return { suggestions };
       },
-    });
+    }),
+      monaco.languages.registerSignatureHelpProvider("sql", {
+        signatureHelpTriggerCharacters: ["(", ",", " "],
+        signatureHelpRetriggerCharacters: [",", " "],
+        provideSignatureHelp: (model: editor.ITextModel, position: Position) => {
+          const textUntilPosition = model.getValueInRange({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          });
+          const context = parseCallCompletionContext(textUntilPosition);
+          if (!context || context.kind !== "arguments") {
+            return { value: { signatures: [], activeSignature: 0, activeParameter: 0 }, dispose: () => {} };
+          }
+          const help = signatureHelpForCall(context, completionDataRef.current.procedures);
+          if (!help) {
+            return { value: { signatures: [], activeSignature: 0, activeParameter: 0 }, dispose: () => {} };
+          }
+          return {
+            value: {
+              signatures: [
+                {
+                  label: help.label,
+                  documentation: help.documentation,
+                  parameters: help.parameters.map((parameter) => ({
+                    label: parameter.label,
+                    documentation: parameter.documentation,
+                  })),
+                },
+              ],
+              activeSignature: 0,
+              activeParameter: help.activeParameter,
+            },
+            dispose: () => {},
+          };
+        },
+      }),
+      monaco.languages.registerHoverProvider("sql", {
+        provideHover: (model: editor.ITextModel, position: Position) => {
+          const offset = model.getOffsetAt(position);
+          const identifier = readQualifiedIdentifier(model.getValue(), offset);
+          const documentation = hoverForIdentifier(identifier, completionDataRef.current.procedures);
+          if (!documentation) {
+            return null;
+          }
+          return {
+            contents: [{ value: documentation }],
+          };
+        },
+      }),
+    ];
   };
 
   const handleEditorMount = (instance: editor.IStandaloneCodeEditor, monaco: Monaco) => {
@@ -223,7 +319,11 @@ export function StudioEditorPanel({
       }),
     ];
     syncSelectedSql();
-    registerCompletionProvider(monaco);
+    try {
+      registerLanguageProviders(monaco);
+    } catch (error) {
+      console.warn("Failed to register SQL language providers", error);
+    }
   };
 
   return (

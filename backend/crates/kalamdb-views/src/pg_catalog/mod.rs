@@ -36,10 +36,14 @@ use crate::{
 
 pub mod attribute;
 pub mod class;
+pub mod constraint;
 pub mod database;
 pub mod empty;
 pub mod get_keywords;
+pub mod index;
 pub mod namespace;
+pub mod proc;
+pub use proc::{function_definition, function_result, identity_arguments};
 pub mod stat_activity;
 pub mod tables;
 pub mod r#type;
@@ -232,6 +236,24 @@ impl PgCatalogSchemaProvider {
             "pg_get_keywords".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(get_keywords::PgGetKeywordsView))),
         );
+        providers.insert(
+            "pg_index".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(index::PgIndexView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_constraint".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(constraint::PgConstraintView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_proc".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(proc::PgProcView::new(Arc::clone(
+                &system_registry,
+            ))))),
+        );
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -279,6 +301,36 @@ pub(crate) fn stable_oid(parts: &[&str]) -> i64 {
         part.hash(&mut hasher);
     }
     (hasher.finish() & 0x7fff_ffff) as i64
+}
+
+pub(crate) fn class_oid(namespace: &str, table: &str) -> i64 {
+    stable_oid(&["class", namespace, table])
+}
+
+pub(crate) fn namespace_oid(namespace: &str) -> i64 {
+    stable_oid(&["namespace", namespace])
+}
+
+pub fn proc_oid(namespace: &str, name: &str) -> i64 {
+    stable_oid(&["proc", namespace, name])
+}
+
+pub(crate) fn primary_index_oid(namespace: &str, table: &str) -> i64 {
+    stable_oid(&["class", namespace, table, "pkey"])
+}
+
+pub(crate) fn primary_constraint_oid(namespace: &str, table: &str) -> i64 {
+    stable_oid(&["constraint", namespace, table, "pkey"])
+}
+
+pub(crate) fn primary_index_relname(table: &str) -> String {
+    format!("{table}_pkey")
+}
+
+pub(crate) fn primary_key_attnums(table: &TableDefinition) -> Vec<i64> {
+    let mut columns: Vec<_> = table.columns.iter().filter(|column| column.is_primary_key).collect();
+    columns.sort_by_key(|column| column.ordinal_position);
+    columns.into_iter().map(|column| column.ordinal_position as i64).collect()
 }
 
 pub(crate) fn visible_table_definitions(

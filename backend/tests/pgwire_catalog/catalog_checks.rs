@@ -65,9 +65,10 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
         },
         CatalogQuery {
             label:    "pg_proc_routines",
-            sql:      "SELECT proname, prokind FROM pg_proc WHERE prokind IN ('f', 'p') ORDER BY \
-                       proname LIMIT 1",
-            min_rows: 0,
+            sql:      "SELECT proname, prokind FROM pg_proc WHERE pronamespace = (SELECT oid FROM \
+                       pg_namespace WHERE nspname = 'catalog_e2e') AND prokind IN ('f', 'p') \
+                       ORDER BY proname",
+            min_rows: 1,
         },
         CatalogQuery {
             label:    "pg_settings_empty",
@@ -94,6 +95,65 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
                        ('pg_catalog', 'information_schema') AND t.typname !~ '^_'",
             min_rows: 1,
         },
+        CatalogQuery {
+            label:    "pg_class_pk_index",
+            sql:      "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'items_pkey' AND \
+                       relkind = 'i'",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "tabularis_columns",
+            sql:      "SELECT c.column_name::text FROM information_schema.columns c WHERE \
+                       c.table_schema = 'catalog_e2e' AND c.table_name = 'items' ORDER BY \
+                       c.ordinal_position",
+            min_rows: 2,
+        },
+        CatalogQuery {
+            label:    "tabularis_column_pk",
+            sql:      "SELECT c.column_name::text, EXISTS ( SELECT 1 FROM pg_constraint pk_con \
+                       JOIN pg_class pk_table ON pk_table.oid = pk_con.conrelid JOIN pg_namespace \
+                       pk_schema ON pk_schema.oid = pk_table.relnamespace JOIN \
+                       unnest(pk_con.conkey) AS pk_col(attnum) ON true JOIN pg_attribute pk_att \
+                       ON pk_att.attrelid = pk_table.oid AND pk_att.attnum = pk_col.attnum AND \
+                       NOT pk_att.attisdropped WHERE pk_con.contype = 'p' AND pk_schema.nspname = \
+                       c.table_schema AND pk_table.relname = c.table_name AND pk_att.attname = \
+                       c.column_name ) AS is_pk FROM information_schema.columns c WHERE \
+                       c.table_schema = 'catalog_e2e' AND c.table_name = 'items' ORDER BY \
+                       c.ordinal_position",
+            min_rows: 2,
+        },
+        CatalogQuery {
+            label:    "tabularis_indexes",
+            sql:      "SELECT i.relname AS index_name FROM pg_class t JOIN pg_namespace n ON \
+                       t.relnamespace = n.oid JOIN pg_index ix ON t.oid = ix.indrelid JOIN \
+                       pg_class i ON i.oid = ix.indexrelid CROSS JOIN LATERAL \
+                       unnest(string_to_array(ix.indkey::text, ' ')::int2[]) WITH ORDINALITY AS \
+                       k(attnum, n) LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = \
+                       k.attnum AND k.attnum <> 0 WHERE t.relkind IN ('r', 'm') AND n.nspname = \
+                       'catalog_e2e' AND t.relname = 'items' ORDER BY i.relname, k.n",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "tabularis_fkeys",
+            sql:      "SELECT con.conname::text AS constraint_name FROM pg_constraint con JOIN \
+                       pg_class src_cl ON src_cl.oid = con.conrelid JOIN pg_namespace src_nsp ON \
+                       src_nsp.oid = src_cl.relnamespace JOIN pg_class ref_cl ON ref_cl.oid = \
+                       con.confrelid JOIN pg_namespace ref_nsp ON ref_nsp.oid = \
+                       ref_cl.relnamespace JOIN unnest(con.conkey, con.confkey) AS \
+                       cols(src_attnum, ref_attnum) ON true JOIN pg_attribute src_att ON \
+                       src_att.attrelid = src_cl.oid AND src_att.attnum = cols.src_attnum AND NOT \
+                       src_att.attisdropped JOIN pg_attribute ref_att ON ref_att.attrelid = \
+                       ref_cl.oid AND ref_att.attnum = cols.ref_attnum AND NOT \
+                       ref_att.attisdropped WHERE con.contype = 'f' AND con.conparentid = 0 AND \
+                       src_nsp.nspname = 'catalog_e2e' AND src_cl.relname = 'items' ORDER BY \
+                       con.conname, cols.src_attnum",
+            min_rows: 0,
+        },
+        CatalogQuery {
+            label:    "pg_get_indexdef",
+            sql:      "SELECT COALESCE(pg_get_indexdef(1, 1, true), '') AS indexdef",
+            min_rows: 1,
+        },
     ]
 }
 
@@ -117,6 +177,27 @@ pub fn required_information_schema_queries() -> &'static [CatalogQuery] {
                        table_schema = 'catalog_e2e' AND table_name = 'items' ORDER BY \
                        ordinal_position",
             min_rows: 2,
+        },
+        CatalogQuery {
+            label:    "routines",
+            sql:      "SELECT routine_name, routine_type FROM information_schema.routines WHERE \
+                       routine_schema = 'catalog_e2e' AND routine_name = 'ping'",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "parameters",
+            sql:      "SELECT p.parameter_name FROM information_schema.parameters p JOIN \
+                       information_schema.routines r ON p.specific_name = r.specific_name WHERE \
+                       r.routine_schema = 'catalog_e2e' AND r.routine_name = 'ping' ORDER BY \
+                       p.ordinal_position",
+            min_rows: 1,
+        },
+        CatalogQuery {
+            label:    "routine_definition",
+            sql:      "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON \
+                       p.pronamespace = n.oid WHERE n.nspname = 'catalog_e2e' AND p.proname = \
+                       'ping'",
+            min_rows: 1,
         },
         CatalogQuery {
             label:    "columns",

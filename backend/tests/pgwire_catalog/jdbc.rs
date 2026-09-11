@@ -114,8 +114,8 @@ fn require_marker(stdout: &str, marker: &str) {
 
 /// HikariCP pool init + JDBC query/DML against KalamDB pgwire (the original JDBC failure).
 #[tokio::test]
-#[ignore = "requires postgres wire listener, JDK, and network for Maven jars; see \
-            tests/pgwire_catalog/jdbc"]
+#[ignore = "requires postgres wire listener, JDK, and network for Maven jars; run via \
+            cli/run-tests.sh (full run or --test-target pgwire_catalog)"]
 #[ntest::timeout(120000)]
 async fn jdbc_hikari_pool_connects_and_queries() {
     let Some((host, port, user, password)) = pgwire_env() else {
@@ -186,6 +186,25 @@ async fn jdbc_hikari_pool_connects_and_queries() {
     require_marker(&stdout, "get_tables_ok");
     require_marker(&stdout, "get_columns_ok");
     require_marker(&stdout, "get_primary_keys_ok");
+    require_marker(&stdout, "get_index_info_ok");
+    require_marker(&stdout, "get_imported_keys_ok");
+    require_marker(&stdout, "get_exported_keys_ok");
+    require_marker(&stdout, "get_procedures_ok");
+    require_marker(&stdout, "get_procedure_columns_ok");
+    require_marker(&stdout, "get_functions_ok");
+    require_marker(&stdout, "get_best_row_identifier_ok");
+    require_marker(&stdout, "get_table_privileges_ok");
+    require_marker(&stdout, "get_column_privileges_ok");
+    require_marker(&stdout, "get_udts_ok");
+    require_marker(&stdout, "tabularis_columns_ok");
+    require_marker(&stdout, "tabularis_indexes_ok");
+    require_marker(&stdout, "tabularis_fkeys_ok");
+    require_marker(&stdout, "tabularis_triggers_ok");
+    require_marker(&stdout, "tabularis_routines_ok");
+    require_marker(&stdout, "information_schema_routines_ok");
+    require_marker(&stdout, "information_schema_parameters_ok");
+    require_marker(&stdout, "tabularis_routine_definition_ok");
+    require_marker(&stdout, "select_star_ok");
     require_marker(&stdout, "get_sql_keywords_ok");
     require_marker(&stdout, "get_uuid_columns_ok");
     require_marker(&stdout, "jdbc_pgwire_smoke_ok");

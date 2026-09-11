@@ -39,6 +39,7 @@ const PG_CATALOG_TYPES: &[(&str, i64, i64)] = &[
     ("timestamp", 1114, 8),
     ("numeric", 1700, -1),
     ("uuid", 2950, 16),
+    ("void", 2278, 4),
 ];
 
 fn schema() -> SchemaRef {

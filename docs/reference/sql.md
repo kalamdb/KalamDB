@@ -352,16 +352,20 @@ Rules:
 3. `NONEMPTY` is allowed on `TEXT`, `BYTES`, and arrays, and requires `NOT NULL`.
 4. Arrays are one-dimensional (`T[]`).
 5. Fields may reference scalars, enums, named composites, table row types,
-   topic payload types, or `JSON`/`JSONB`.
-6. `FROM TABLE` aliases must live in the same schema as the table. A table may
+   topic payload types, or `JSON`/`JSONB`. Named field types must already exist.
+   A composite cannot reference itself.
+6. Enum labels are case-sensitive, unique, non-empty, at most 63 characters, and
+   cannot contain `:`. `'Active'` and `'active'` are distinct.
+7. Composite field names must be unique.
+8. `FROM TABLE` aliases must live in the same schema as the table. A table may
    have at most one explicit row-type alias.
-7. A standalone type cannot reuse a table's implicit row-type name or a topic's
+9. A standalone type cannot reuse a table's implicit row-type name or a topic's
    implicit payload-type name.
-8. `AS UNION` and `AS INTERFACE` are reserved and rejected. Multi-source topics
-   still produce a tagged union of their source row types (see Topics).
-9. Catalog rows live in `system.types` and `system.type_fields`. Optional
-   `COMMENT` text is stored on `system.types.comment` and is documentation only
-   (it does not change the contract hash).
+10. `AS UNION` and `AS INTERFACE` are reserved and rejected. Multi-source topics
+    still produce a tagged union of their source row types (see Topics).
+11. Catalog rows live in `system.types` and `system.type_fields`. Optional
+    `COMMENT` text is stored on `system.types.comment` and is documentation only
+    (it does not change the contract hash).
 
 Use named types in procedure signatures and as nested table columns:
 
@@ -401,12 +405,16 @@ ALTER TYPE [<schema>.]<name> ADD ATTRIBUTE <field> <type> [NOT NULL];
 ALTER TYPE [<schema>.]<name> DROP ATTRIBUTE <field>;
 ALTER TYPE [<schema>.]<name> RENAME ATTRIBUTE <from> TO <to>;
 ALTER TYPE [<schema>.]<name> ALTER ATTRIBUTE <field> TYPE <type>;
+ALTER TYPE [<schema>.]<name> ADD VALUE [IF NOT EXISTS] '<label>' [BEFORE | AFTER '<neighbor>'];
 ALTER TYPE [<schema>.]<name> SET SCHEMA <schema>;
 ```
 
 Attribute operations apply to composite types. `DROP ATTRIBUTE CASCADE` is not
-supported; drop dependents first. `SET SCHEMA` applies to named composites and
-enums only, not implicit row types or `FROM TABLE` aliases.
+supported; drop dependents first. `ADD VALUE` applies to enums only and inserts
+the label at the end, or next to `BEFORE` / `AFTER` an existing label.
+`IF NOT EXISTS` is a no-op when the label is already present. `SET SCHEMA`
+applies to named composites and enums only, not implicit row types or
+`FROM TABLE` aliases.
 
 ### DROP TYPE
 
@@ -495,6 +503,7 @@ Rules:
 3. The namespace must already exist (`CREATE NAMESPACE`). Creating a procedure in
    a missing namespace fails.
 4. Parameters are `IN` only. They are nullable unless `NOT NULL` is present.
+   Named parameter and `RETURNS` types must already exist.
 5. `SECURITY INVOKER` is the default. The procedure runs as the caller; RLS and
    `CURRENT_USER` use that principal.
 6. `SECURITY DEFINER` runs as the procedure owner for that frame. The original
@@ -631,6 +640,18 @@ SQL `CALL` arguments are positional literals or 1-based placeholders:
 Named composite arguments belong on the REST body, not in SQL `CALL`.
 Unqualified `CALL ping()` uses the current default namespace.
 
+`CALL` checks the procedure contract before V8 runs:
+
+- Argument count must match the signature. A single JSON object that contains
+  every parameter name (nested `ctx.functions.call(name, [input])`) is accepted
+  and is not wrapped again.
+- `NOT NULL` parameters and return values reject JSON/SQL null.
+- Enum arguments and returns must be one of the type's labels (case-sensitive).
+- Composite arguments must be objects. Missing `NOT NULL` fields fail; extra
+  fields are ignored.
+- Array `NONEMPTY` rejects `[]`. Invalid arguments return `INVALID_ARGUMENTS`
+  (HTTP 400).
+
 The result is one column named `result`. A root `CALL` starts a request
 transaction when none is open. Nested `ctx.functions.call` and `ctx.db.sql`
 share that transaction. `BEGIN; CALL ...; ROLLBACK;` drops nested inserts and
@@ -660,19 +681,32 @@ Content-Type: application/json
 ```
 
 The body is a JSON object of named parameters, a JSON array of positional
-values, or empty/`null` for a procedure with no arguments:
+values, or empty/`null` for a procedure with no arguments. A procedure with
+exactly one `JSON` parameter also accepts the raw JSON object as the argument
+when the object does not contain that parameter name:
 
 ```http
-POST /v1/functions/app/echo
+POST /v1/functions/app/send_message
 Content-Type: application/json
 
-{ "msg": "rest" }
+{ "conversationId": "c1", "text": "hello" }
 ```
 
-Success response:
+That is equivalent to `{ "body": { "conversationId": "c1", "text": "hello" } }`
+when the signature is `send_message(body JSON)`. Named wrap and positional
+`[{ ... }]` still work.
+
+Success is the procedure return value itself (not `{status, result}`). A
+`RETURNS JSON` procedure returns a JSON object or array:
 
 ```json
-{ "status": "success", "result": "rest" }
+{ "ok": true, "conversationId": "c1", "text": "hello" }
+```
+
+A `RETURNS TEXT` procedure such as `echo` returns the scalar:
+
+```json
+"rest"
 ```
 
 Clients must not send `context`, `ctx`, `source`, `actor`, or `tx`. The host

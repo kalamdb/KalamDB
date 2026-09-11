@@ -1,0 +1,6 @@
+{{header}}
+import type { ProcedureContext } from "../runtime";
+
+export async function {{ident}}(ctx: ProcedureContext, input: unknown): Promise<unknown> {
+{{{body}}}
+}

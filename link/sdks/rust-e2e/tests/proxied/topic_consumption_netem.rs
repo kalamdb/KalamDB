@@ -217,7 +217,7 @@ async fn test_tokio_netem_topic_consume_fragmented_insert_update_delete_and_comm
         let suffix = unique_suffix();
         let namespace = format!("topic_netem_{}", suffix);
         let table = "events";
-        let topic = format!("{}.{}", namespace, table);
+        let topic = format!("{}.events_topic", namespace);
         let group = format!("topic-netem-fragmented-{}", suffix);
 
         setup_topic_with_sources(
@@ -332,7 +332,7 @@ async fn test_tokio_netem_topic_bandwidth_collapse_poll_recovers_without_losing_
         let suffix = unique_suffix();
         let namespace = format!("topic_netem_throttle_{}", suffix);
         let table = "events";
-        let topic = format!("{}.{}", namespace, table);
+        let topic = format!("{}.events_topic", namespace);
         let group = format!("topic-netem-throttle-{}", suffix);
         let impaired_group = format!("topic-netem-throttle-impaired-{}", suffix);
 
@@ -417,7 +417,7 @@ async fn test_tokio_netem_topic_commit_failure_can_be_retried_without_replay() {
         let suffix = unique_suffix();
         let namespace = format!("topic_netem_commit_{}", suffix);
         let table = "events";
-        let topic = format!("{}.{}", namespace, table);
+        let topic = format!("{}.events_topic", namespace);
         let group = format!("topic-netem-commit-{}", suffix);
 
         setup_topic_with_sources(&writer, &namespace, table, &topic, &["INSERT"]).await;

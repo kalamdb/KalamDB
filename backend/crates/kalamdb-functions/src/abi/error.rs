@@ -38,6 +38,23 @@ impl FunctionErrorCode {
             Self::StaleRevision => "STALE_REVISION",
         }
     }
+
+    pub fn parse(code: &str) -> Option<Self> {
+        match code {
+            "PROCEDURE_NOT_FOUND" => Some(Self::ProcedureNotFound),
+            "PROCEDURE_NOT_IMPLEMENTED" => Some(Self::ProcedureNotImplemented),
+            "EXECUTE_DENIED" => Some(Self::ExecuteDenied),
+            "AUTHENTICATION_REQUIRED" => Some(Self::AuthenticationRequired),
+            "INVALID_ARGUMENTS" => Some(Self::InvalidArguments),
+            "RESOURCE_LIMIT" => Some(Self::ResourceLimit),
+            "PROCEDURE_TIMEOUT" => Some(Self::ProcedureTimeout),
+            "INTERNAL_RUNTIME_ERROR" => Some(Self::InternalRuntimeError),
+            "CONTRACT_MISMATCH" => Some(Self::ContractMismatch),
+            "ABI_MISMATCH" => Some(Self::AbiMismatch),
+            "STALE_REVISION" => Some(Self::StaleRevision),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for FunctionErrorCode {
@@ -102,6 +119,48 @@ impl FunctionsError {
             Self::ContractMismatch(_) => FunctionErrorCode::ContractMismatch,
         }
     }
+
+    /// Recover a typed host error after it crosses the V8 exception boundary.
+    pub fn from_code(code: FunctionErrorCode, message: String) -> Self {
+        match code {
+            FunctionErrorCode::ProcedureNotFound => {
+                Self::UnknownProcedure(strip_display_prefix("procedure not found: ", &message))
+            },
+            FunctionErrorCode::ProcedureNotImplemented => {
+                Self::NotImplemented(strip_display_prefix("procedure not implemented: ", &message))
+            },
+            FunctionErrorCode::ExecuteDenied => {
+                Self::ExecuteDenied(strip_display_prefix("EXECUTE denied on procedure ", &message))
+            },
+            FunctionErrorCode::AuthenticationRequired => Self::AuthenticationRequired,
+            FunctionErrorCode::InvalidArguments => {
+                Self::Invalid(strip_display_prefix("invalid arguments: ", &message))
+            },
+            FunctionErrorCode::ResourceLimit => Self::ResourceLimit(strip_display_prefix(
+                "function resource limit exceeded: ",
+                &message,
+            )),
+            FunctionErrorCode::ProcedureTimeout => Self::Timeout,
+            FunctionErrorCode::InternalRuntimeError => {
+                Self::Javascript(strip_display_prefix("javascript exception: ", &message))
+            },
+            FunctionErrorCode::ContractMismatch => {
+                Self::ContractMismatch(strip_display_prefix("contract mismatch: ", &message))
+            },
+            FunctionErrorCode::AbiMismatch => Self::AbiMismatch {
+                artifact: 0,
+                runtime:  0,
+            },
+            FunctionErrorCode::StaleRevision => Self::StaleRevision {
+                expected: message,
+                actual:   String::new(),
+            },
+        }
+    }
+}
+
+fn strip_display_prefix(prefix: &str, message: &str) -> String {
+    message.strip_prefix(prefix).unwrap_or(message).to_string()
 }
 
 pub type Result<T> = std::result::Result<T, FunctionsError>;
@@ -148,5 +207,41 @@ mod tests {
             .code(),
             FunctionErrorCode::AbiMismatch
         );
+    }
+
+    #[test]
+    fn error_codes_parse_from_stable_strings() {
+        for code in [
+            FunctionErrorCode::ProcedureNotFound,
+            FunctionErrorCode::ProcedureNotImplemented,
+            FunctionErrorCode::ExecuteDenied,
+            FunctionErrorCode::AuthenticationRequired,
+            FunctionErrorCode::InvalidArguments,
+            FunctionErrorCode::ResourceLimit,
+            FunctionErrorCode::ProcedureTimeout,
+            FunctionErrorCode::InternalRuntimeError,
+            FunctionErrorCode::ContractMismatch,
+            FunctionErrorCode::AbiMismatch,
+            FunctionErrorCode::StaleRevision,
+        ] {
+            assert_eq!(FunctionErrorCode::parse(code.as_str()), Some(code));
+        }
+        assert_eq!(FunctionErrorCode::parse("not-a-code"), None);
+    }
+
+    #[test]
+    fn from_code_roundtrips_invalid_host_errors() {
+        let error = FunctionsError::from_code(
+            FunctionErrorCode::InvalidArguments,
+            "nested procedures cannot mutate ctx.http".into(),
+        );
+        assert_eq!(error.code(), FunctionErrorCode::InvalidArguments);
+        assert_eq!(error.to_string(), "nested procedures cannot mutate ctx.http");
+        assert!(matches!(error, FunctionsError::Invalid(_)));
+
+        let limit = FunctionsError::ResourceLimit("http header".into());
+        let recovered = FunctionsError::from_code(limit.code(), limit.to_string());
+        assert_eq!(recovered.code(), FunctionErrorCode::ResourceLimit);
+        assert_eq!(recovered.to_string(), limit.to_string());
     }
 }

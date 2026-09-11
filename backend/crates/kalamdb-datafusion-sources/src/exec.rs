@@ -933,6 +933,15 @@ pub trait DeferredBatchSource: Send + Sync {
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
         Ok(DeferredBatchOutput::new(self.produce_batch().await?))
     }
+
+    /// Optional path that materializes [`Row`] maps without Arrow.
+    ///
+    /// Return `None` to keep the RecordBatch path. Cached HTTP point gets
+    /// (`pk = $1`) must return `Some` even when DataFusion left a residual
+    /// Exact physical filter. See `docs/architecture/sql-cache-performance.md`.
+    async fn produce_scalar_rows(&self) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
+        Ok(None)
+    }
 }
 
 /// Shared execution node for one-shot sources that defer batch creation until
@@ -973,6 +982,16 @@ impl DeferredBatchExec {
             },
             None => self.source.produce_batch().await,
         }
+    }
+
+    /// Produce schema-aligned scalar rows when the source supports skipping Arrow.
+    ///
+    /// `Some` is the HTTP cached point-get path. Falling back to
+    /// [`Self::produce_batch_direct`] rebuilds Arrow for a one-row JSON response.
+    pub async fn produce_scalar_rows_direct(
+        &self,
+    ) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
+        self.source.produce_scalar_rows().await
     }
 }
 

@@ -41,8 +41,9 @@ describe("SQL Studio completion catalog", () => {
     expect(data.functions.map((entry) => entry.label)).toEqual(
       expect.arrayContaining(["CURRENT_USER()", "CURRENT_USER_ID()", "CURRENT_ROLE()", "NOW()", "COUNT()", "JSON_GET()"]),
     );
+    expect(data.keywords).toEqual(expect.arrayContaining(["CALL", "SELECT"]));
     expect(data.snippets.map((entry) => entry.label)).toEqual(
-      expect.arrayContaining(["EXECUTE AS USER", "EXPLAIN", "DESCRIBE TABLE", "SUBSCRIBE TO", "KILL LIVE QUERY"]),
+      expect.arrayContaining(["CALL", "EXECUTE AS USER", "EXPLAIN", "DESCRIBE TABLE", "SUBSCRIBE TO", "KILL LIVE QUERY"]),
     );
   });
 
@@ -158,5 +159,39 @@ describe("SQL Studio completion catalog", () => {
       detail: "r alias column",
       partial: "",
     });
+  });
+
+  it("includes catalog procedures in completion data and refreshes when the catalog changes", () => {
+    const first = buildSqlCompletionData([], [
+      {
+        id: "chat.send_message",
+        schema: "chat",
+        name: "send_message",
+        signature: "conversation_id UUID, content TEXT",
+        parameters: [],
+        returnType: { kind: "builtin", builtin: "VOID", sqlName: "VOID", notNull: false, nonempty: false },
+        returnTypeName: "VOID",
+        security: "INVOKER",
+        owner: "root",
+        comment: null,
+        implementation: "module",
+        moduleId: "backend",
+        revisionId: "backend:abc",
+        grants: "dba",
+      },
+    ]);
+    const second = buildSqlCompletionData([], [
+      ...first.procedures,
+      {
+        ...first.procedures[0]!,
+        id: "chat.join_room",
+        name: "join_room",
+      },
+    ]);
+
+    expect(first.procedureEntries.map((entry) => entry.label)).toEqual(["chat.send_message"]);
+    expect(second.procedureEntries.map((entry) => entry.label)).toEqual(
+      expect.arrayContaining(["chat.send_message", "chat.join_room"]),
+    );
   });
 });

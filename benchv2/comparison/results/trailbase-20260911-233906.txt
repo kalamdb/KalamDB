@@ -1,0 +1,6 @@
+# TrailBase comparison (Record API)
+# server_bin=/Users/jamal/git/KalamDB/benchv2/comparison/bin/trail
+# version=v0.33.14
+# stderr_logging=off (v0.33+ logs every request as JSON; do not enable for bake-off)
+# started=2026-09-11T20:39:06Z
+logged in to http://127.0.0.1:4000

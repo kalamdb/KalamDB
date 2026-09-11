@@ -45,21 +45,11 @@ pub struct ColumnDefinition {
     pub primary_key: bool,
 }
 
-impl SchemaSnapshot {
-    pub fn empty(origin: SchemaOrigin) -> Self {
-        Self {
-            origin,
-            tables: BTreeMap::new(),
-            captured_at: Utc::now(),
-        }
-    }
-
-    pub fn table_names(&self) -> Vec<&str> {
-        self.tables.keys().map(String::as_str).collect()
-    }
-}
-
-/// Supported generated language targets in the first release.
+/// Generated client languages. Adding one means: extend this enum and
+/// `parse`/`as_str`, add `schema.targets.<key>` in `kalam.toml`, and add an
+/// adapter that reads [`super::output::SchemaEmitInput`] (procedure clients
+/// from [`super::procedures::ProcedureCatalog`]). Table/row codecs stay in
+/// the adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LanguageTarget {
     TypeScript,

@@ -32,11 +32,15 @@ pub fn execution_result_to_query_result(
     exec_result: ExecutionResult,
     user_role: Option<Role>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    // Batch / non-streaming responses can rebuild Arrow. The bake-off HTTP
+    // path (`execution_paths.rs`) must handle ScalarRows before this helper.
+    let exec_result = exec_result.into_arrow_rows()?;
     match exec_result {
         ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
         ExecutionResult::Rows {
             batches, schema, ..
         } => record_batch_to_query_result(batches, schema, user_role),
+        ExecutionResult::ScalarRows { .. } => unreachable!("converted by into_arrow_rows"),
         ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
             rows_affected,
             Some(format!("Inserted {} row(s)", rows_affected)),

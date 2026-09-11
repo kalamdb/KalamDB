@@ -6,6 +6,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/bin"
 mkdir -p "$BIN"
 
+# GitHub release pins. Bump these and re-run this script to refresh ./bin.
+TRAIL_VERSION="v0.33.14"
+PB_VERSION="0.40.3"
+SURREAL_VERSION="v3.2.4"
+KALAM_RELEASE="v0.5.5-rc.1"
+
 ARCH="$(uname -m)"
 OS="$(uname -s)"
 
@@ -17,25 +23,25 @@ surreal_asset=""
 case "$OS-$ARCH" in
   Darwin-arm64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-macos-aarch64.tar.gz"
-    trail_asset="trailbase_v0.32.1_arm64_apple_darwin.zip"
-    pb_asset="pocketbase_0.29.3_darwin_arm64.zip"
-    surreal_asset="surreal-v3.2.4.darwin-arm64.tgz"
+    trail_asset="trailbase_${TRAIL_VERSION}_aarch64_apple_darwin.zip"
+    pb_asset="pocketbase_${PB_VERSION}_darwin_arm64.zip"
+    surreal_asset="surreal-${SURREAL_VERSION}.darwin-arm64.tgz"
     ;;
   Darwin-x86_64)
-    echo "No KalamDB macos-x86_64 release asset in v0.5.5-rc.1; use arm64 or Linux." >&2
+    echo "No KalamDB macos-x86_64 release asset in ${KALAM_RELEASE}; use arm64 or Linux." >&2
     exit 1
     ;;
   Linux-aarch64|Linux-arm64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-linux-aarch64.tar.gz"
-    trail_asset="trailbase_v0.32.1_arm64_linux.zip"
-    pb_asset="pocketbase_0.29.3_linux_arm64.zip"
-    surreal_asset="surreal-v3.2.4.linux-arm64.tgz"
+    trail_asset="trailbase_${TRAIL_VERSION}_aarch64_linux.zip"
+    pb_asset="pocketbase_${PB_VERSION}_linux_arm64.zip"
+    surreal_asset="surreal-${SURREAL_VERSION}.linux-arm64.tgz"
     ;;
   Linux-x86_64)
     kalam_asset="kalamdb-server-0.5.5-rc.1-linux-x86_64.tar.gz"
-    trail_asset="trailbase_v0.32.1_x86_64_linux.zip"
-    pb_asset="pocketbase_0.29.3_linux_amd64.zip"
-    surreal_asset="surreal-v3.2.4.linux-amd64.tgz"
+    trail_asset="trailbase_${TRAIL_VERSION}_x86_64_linux.zip"
+    pb_asset="pocketbase_${PB_VERSION}_linux_amd64.zip"
+    surreal_asset="surreal-${SURREAL_VERSION}.linux-amd64.tgz"
     ;;
   *)
     echo "Unsupported platform: $OS-$ARCH" >&2
@@ -54,11 +60,21 @@ download() {
   curl -fL --retry 3 -o "$out" "$url"
 }
 
-# KalamDB release
+needs_refresh() {
+  local dest="$1"
+  local stamp="$2"
+  local expected="$3"
+  if [[ -x "$dest" && -f "$stamp" && "$(cat "$stamp")" == "$expected" ]]; then
+    echo "up to date: $dest ($expected)"
+    return 1
+  fi
+  return 0
+}
+
+# KalamDB release (optional local fallback; bake-off prefers target/release/kalamdb-server)
 if [[ ! -x "$BIN/kalamdb-server" ]]; then
-  download "https://github.com/kalamdb/KalamDB/releases/download/v0.5.5-rc.1/${kalam_asset}" "$BIN/${kalam_asset}"
+  download "https://github.com/kalamdb/KalamDB/releases/download/${KALAM_RELEASE}/${kalam_asset}" "$BIN/${kalam_asset}"
   tar -xzf "$BIN/${kalam_asset}" -C "$BIN"
-  # tarball may contain a bare binary named with the version suffix
   if [[ -f "$BIN/kalamdb-server" ]]; then
     chmod +x "$BIN/kalamdb-server"
   else
@@ -69,24 +85,28 @@ if [[ ! -x "$BIN/kalamdb-server" ]]; then
 fi
 
 # TrailBase release
-if [[ ! -x "$BIN/trail" ]]; then
-  download "https://github.com/trailbaseio/trailbase/releases/download/v0.32.1/${trail_asset}" "$BIN/${trail_asset}"
+if needs_refresh "$BIN/trail" "$BIN/.trail-version" "$TRAIL_VERSION"; then
+  download "https://github.com/trailbaseio/trailbase/releases/download/${TRAIL_VERSION}/${trail_asset}" "$BIN/${trail_asset}"
+  rm -rf "$BIN/trailbase-extract"
   unzip -o "$BIN/${trail_asset}" -d "$BIN/trailbase-extract"
   cp "$BIN/trailbase-extract/trail" "$BIN/trail"
   chmod +x "$BIN/trail"
+  printf '%s\n' "$TRAIL_VERSION" >"$BIN/.trail-version"
 fi
 
 # PocketBase release
-if [[ ! -x "$BIN/pocketbase" ]]; then
-  download "https://github.com/pocketbase/pocketbase/releases/download/v0.29.3/${pb_asset}" "$BIN/${pb_asset}"
+if needs_refresh "$BIN/pocketbase" "$BIN/.pocketbase-version" "$PB_VERSION"; then
+  download "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/${pb_asset}" "$BIN/${pb_asset}"
+  rm -rf "$BIN/pocketbase-extract"
   unzip -o "$BIN/${pb_asset}" -d "$BIN/pocketbase-extract"
   cp "$BIN/pocketbase-extract/pocketbase" "$BIN/pocketbase"
   chmod +x "$BIN/pocketbase"
+  printf '%s\n' "$PB_VERSION" >"$BIN/.pocketbase-version"
 fi
 
 # SurrealDB release (RocksDB-backed official binary)
-if [[ ! -x "$BIN/surreal" ]]; then
-  download "https://github.com/surrealdb/surrealdb/releases/download/v3.2.4/${surreal_asset}" "$BIN/${surreal_asset}"
+if needs_refresh "$BIN/surreal" "$BIN/.surreal-version" "$SURREAL_VERSION"; then
+  download "https://github.com/surrealdb/surrealdb/releases/download/${SURREAL_VERSION}/${surreal_asset}" "$BIN/${surreal_asset}"
   mkdir -p "$BIN/surreal-extract"
   tar -xzf "$BIN/${surreal_asset}" -C "$BIN/surreal-extract"
   found="$(find "$BIN/surreal-extract" -type f -name 'surreal' | head -1)"
@@ -95,7 +115,11 @@ if [[ ! -x "$BIN/surreal" ]]; then
   fi
   cp "$found" "$BIN/surreal"
   chmod +x "$BIN/surreal"
+  printf '%s\n' "$SURREAL_VERSION" >"$BIN/.surreal-version"
 fi
 
 echo "Binaries ready in $BIN"
+echo "  TrailBase ${TRAIL_VERSION}"
+echo "  PocketBase v${PB_VERSION}"
+echo "  SurrealDB ${SURREAL_VERSION}"
 ls -la "$BIN/kalamdb-server" "$BIN/trail" "$BIN/pocketbase" "$BIN/surreal"

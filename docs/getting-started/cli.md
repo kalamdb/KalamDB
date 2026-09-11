@@ -605,7 +605,7 @@ This creates:
 ```bash
 # Regenerate workflow artifacts
 # TypeScript uses @kalamdb/orm against the resolved server/namespace.
-# Dart reads schema.sql and writes KalamTableSpec codecs to lib/generated/kalam.dart.
+# Dart reads schema.sql and writes KalamTableSpec codecs plus typed KalamFunctions to lib/generated/kalam.dart.
 kalam schema gen
 kalam schema gen --languages dart
 
@@ -660,6 +660,9 @@ Reports project name, resolved environment (with precedence source), schema mode
 applies migrations, activates the function module, runs configured rollout steps,
 and checks the target's health. Use a CLI and server build with functions support
 and configure the target environment and DBA or System credentials first.
+`kalam dev` also builds and activates on startup and when `functions/src` changes;
+build or activation failures are printed as errors (CALL stays `procedure not
+implemented` until the next successful activate).
 
 ```bash
 kalam deploy --env dev --dry-run  # validate locally without activating

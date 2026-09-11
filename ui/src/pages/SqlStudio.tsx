@@ -111,7 +111,7 @@ import {
   selectWorkspaceTabs,
   selectActiveStudioTab,
 } from "@/features/sql-studio/state/selectors";
-import { useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
+import { useGetProcedureCatalogQuery, useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
 import {
   buildSelectFromTableSql,
   createLogEntry,
@@ -297,6 +297,8 @@ export default function SqlStudio() {
     isFetching: isSchemaRefreshing,
     refetch: refetchSchemaTree,
   } = useGetSqlStudioSchemaTreeQuery();
+  const { data: procedureCatalog } = useGetProcedureCatalogQuery();
+  const procedures = procedureCatalog?.procedures ?? [];
   const schemaFilter = useAppSelector(selectSchemaFilter);
   const favoritesExpanded = useAppSelector(selectFavoritesExpanded);
   const expandedTables = useAppSelector(selectExpandedTables);
@@ -1560,6 +1562,7 @@ export default function SqlStudio() {
                   <Suspense fallback={<EditorSkeleton />}>
                   <StudioEditorPanel
                     schema={schema}
+                    procedures={procedures}
                     sql={activeTab.sql}
                     onSqlChange={(value) => updateActiveTab({ sql: value, isDirty: true })}
                     onRun={(runSql) => runActiveQuery(runSql)}

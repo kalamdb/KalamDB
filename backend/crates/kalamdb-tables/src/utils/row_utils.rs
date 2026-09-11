@@ -309,65 +309,74 @@ impl ScanRow for crate::StreamTableRow {
     }
 }
 
-/// Convert resolved key-value rows into an Arrow RecordBatch with system columns injected
-pub fn rows_to_arrow_batch<K, R, F>(
+/// Convert resolved key-value rows into schema-aligned [`Row`] maps with system columns.
+pub fn materialize_scan_rows<K, R, F>(
     schema: &SchemaRef,
     kvs: Vec<(K, R)>,
     projection: Option<&Vec<usize>>,
     mut enrich_row: F,
-) -> Result<RecordBatch, KalamDbError>
+) -> Result<(SchemaRef, Vec<Row>), KalamDbError>
 where
     R: ScanRow,
     F: FnMut(&mut Row, &R),
 {
-    let row_count = kvs.len();
-
-    if let Some(proj) = projection {
-        if proj.is_empty() {
-            let empty_fields: Vec<datafusion::arrow::datatypes::Field> = Vec::new();
-            let empty_schema = Arc::new(datafusion::arrow::datatypes::Schema::new(empty_fields));
-            if row_count == 0 {
-                return Ok(RecordBatch::new_empty(empty_schema));
-            }
-
-            let options = RecordBatchOptions::new().with_row_count(Some(row_count));
-            return RecordBatch::try_new_with_options(empty_schema, vec![], &options).map_err(
-                |e| KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e)),
-            );
-        }
-    }
-
-    let mut rows: Vec<Row> = Vec::with_capacity(row_count);
-
-    for (_key, row) in kvs.into_iter() {
-        let seq = row.seq_value();
-        let commit_seq = row.commit_seq_value();
-        let deleted = row.deleted_flag();
-
-        // Let the caller inject extra fields (e.g., stream tables add user_id)
-        // while we still have a reference to the typed row.
-        let mut extra = Row::new(BTreeMap::new());
-        enrich_row(&mut extra, &row);
-
-        // Take ownership of the Row to avoid cloning the inner BTreeMap.
-        let mut materialized = row.into_row();
-
-        // Merge any caller-injected fields.
-        if !extra.values.is_empty() {
-            materialized.values.extend(extra.values);
-        }
-
-        inject_system_columns(schema, &mut materialized, seq, commit_seq, deleted);
-        rows.push(materialized);
-    }
-
     let target_schema = if let Some(proj) = projection {
+        if proj.is_empty() {
+            return Ok((
+                Arc::new(datafusion::arrow::datatypes::Schema::new(
+                    Vec::<datafusion::arrow::datatypes::Field>::new(),
+                )),
+                Vec::new(),
+            ));
+        }
         let fields: Vec<datafusion::arrow::datatypes::Field> =
             proj.iter().map(|i| schema.field(*i).clone()).collect();
         Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
     } else {
         schema.clone()
     };
+
+    let mut rows: Vec<Row> = Vec::with_capacity(kvs.len());
+    for (_key, row) in kvs {
+        let seq = row.seq_value();
+        let commit_seq = row.commit_seq_value();
+        let deleted = row.deleted_flag();
+        let mut extra = Row::new(BTreeMap::new());
+        enrich_row(&mut extra, &row);
+        let mut materialized = row.into_row();
+        if !extra.values.is_empty() {
+            materialized.values.extend(extra.values);
+        }
+        inject_system_columns(schema, &mut materialized, seq, commit_seq, deleted);
+        rows.push(materialized);
+    }
+
+    Ok((target_schema, rows))
+}
+
+/// Convert resolved key-value rows into an Arrow RecordBatch with system columns injected
+pub fn rows_to_arrow_batch<K, R, F>(
+    schema: &SchemaRef,
+    kvs: Vec<(K, R)>,
+    projection: Option<&Vec<usize>>,
+    enrich_row: F,
+) -> Result<RecordBatch, KalamDbError>
+where
+    R: ScanRow,
+    F: FnMut(&mut Row, &R),
+{
+    let row_count = kvs.len();
+    let (target_schema, rows) = materialize_scan_rows(schema, kvs, projection, enrich_row)?;
+
+    if target_schema.fields().is_empty() {
+        if row_count == 0 {
+            return Ok(RecordBatch::new_empty(target_schema));
+        }
+        let options = RecordBatchOptions::new().with_row_count(Some(row_count));
+        return RecordBatch::try_new_with_options(target_schema, vec![], &options).map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to build Arrow batch: {}", e))
+        });
+    }
 
     json_rows_to_arrow_batch(&target_schema, rows)
         .into_invalid_operation("Failed to build Arrow batch")

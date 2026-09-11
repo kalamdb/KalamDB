@@ -5,10 +5,12 @@ use bytes::Bytes;
 use futures_util::stream;
 use kalamdb_commons::{
     conversions::mask_sensitive_rows_for_role,
-    models::{KalamCellValue, Role},
+    models::{rows::Row, KalamCellValue, Role},
     schemas::SchemaField,
 };
-use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
+use kalamdb_core::providers::arrow_json_conversion::{
+    record_batch_to_json_arrays, rows_to_json_arrays,
+};
 
 use super::{
     converter::{resolve_arrow_schema, success_response_suffix},
@@ -92,6 +94,32 @@ fn inline_sql_rows_body(
         .map_err(ErrorInternalServerError)?;
     body.extend_from_slice(suffix.as_bytes());
     Ok(Bytes::from(body))
+}
+
+pub fn stream_sql_scalar_rows_response(
+    rows: Vec<Row>,
+    schema: arrow::datatypes::SchemaRef,
+    user_role: Option<Role>,
+    as_user: String,
+    row_count: usize,
+    took: f64,
+) -> Result<HttpResponse, actix_web::Error> {
+    // Cached PK point gets reach HTTP as Row maps. Building a RecordBatch
+    // just to call record_batch_to_json_arrays() is the skip-Arrow regression.
+    let cached = cached_sql_schema(&schema);
+    let suffix = success_response_suffix(row_count, &as_user, took);
+    let mut json_rows = rows_to_json_arrays(&schema, rows).map_err(ErrorInternalServerError)?;
+    if let Some(role) = user_role {
+        mask_sensitive_rows_for_role(&mut json_rows, cached.fields.as_ref(), role);
+    }
+    let mut body =
+        Vec::with_capacity(cached.row_result_prefix.len() + suffix.len() + json_rows.len() * 64);
+    body.extend_from_slice(&cached.row_result_prefix);
+    let mut row_separator_needed = false;
+    append_serialized_rows(&mut body, &json_rows, &mut row_separator_needed)
+        .map_err(ErrorInternalServerError)?;
+    body.extend_from_slice(suffix.as_bytes());
+    Ok(HttpResponse::Ok().content_type("application/json").body(Bytes::from(body)))
 }
 
 pub fn stream_sql_rows_response(

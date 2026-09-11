@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
+  Braces,
   FileText,
   LayoutDashboard,
   PanelLeftClose,
@@ -25,6 +26,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "kalamdb-admin-sidebar-collapsed";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "SQL Studio", href: "/sql", icon: Terminal },
+  { name: "Functions", href: "/functions", icon: Braces },
   { name: "Streaming", href: "/streaming/topics", icon: RadioTower, activePrefix: "/streaming" },
   { name: "Users", href: "/users", icon: Users },
   { name: "Live Queries", href: "/live-queries", icon: Wifi },

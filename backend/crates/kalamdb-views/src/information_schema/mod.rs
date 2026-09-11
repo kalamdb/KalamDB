@@ -19,6 +19,7 @@ pub mod catalog_metadata;
 pub mod columns;
 pub(crate) mod extend;
 pub mod parameters;
+pub mod routines;
 pub mod tables;
 pub mod triggers;
 pub mod views;
@@ -31,6 +32,7 @@ pub struct KalamInformationSchemaProvider {
     columns:    Arc<dyn TableProvider>,
     tables:     Arc<ExtendedInformationSchemaTablesProvider>,
     parameters: Arc<dyn TableProvider>,
+    routines:   Arc<dyn TableProvider>,
     views:      Arc<dyn TableProvider>,
     triggers:   Arc<dyn TableProvider>,
 }
@@ -48,12 +50,17 @@ impl KalamInformationSchemaProvider {
             inner:      InformationSchemaProvider::new(Arc::clone(&catalog_list)),
             columns:    Arc::new(ExtendedInformationSchemaColumnsProvider::new(
                 Arc::clone(&catalog_list),
-                system_tables,
+                Arc::clone(&system_tables),
             )),
             tables:     Arc::clone(&tables),
-            parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(Arc::clone(
-                &catalog_list,
-            ))),
+            parameters: Arc::new(ExtendedInformationSchemaParametersProvider::new(
+                Arc::clone(&catalog_list),
+                Arc::clone(&system_tables),
+            )),
+            routines:   Arc::new(routines::ExtendedInformationSchemaRoutinesProvider::new(
+                Arc::clone(&catalog_list),
+                system_tables,
+            )),
             views:      Arc::new(InformationSchemaViewsProvider::new(tables.inner())),
             triggers:   triggers::empty_triggers_provider(),
         }
@@ -64,7 +71,14 @@ impl KalamInformationSchemaProvider {
 impl SchemaProvider for KalamInformationSchemaProvider {
     fn table_names(&self) -> Vec<String> {
         let mut names = self.inner.table_names();
-        for name in ["columns", "parameters", "tables", "views", "triggers"] {
+        for name in [
+            "columns",
+            "parameters",
+            "routines",
+            "tables",
+            "views",
+            "triggers",
+        ] {
             if names.iter().all(|existing| !existing.eq_ignore_ascii_case(name)) {
                 names.push(name.to_string());
             }
@@ -75,6 +89,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
     fn table_exist(&self, name: &str) -> bool {
         if name.eq_ignore_ascii_case("columns")
             || name.eq_ignore_ascii_case("parameters")
+            || name.eq_ignore_ascii_case("routines")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
             || name.eq_ignore_ascii_case("triggers")
@@ -94,6 +109,9 @@ impl SchemaProvider for KalamInformationSchemaProvider {
         if name.eq_ignore_ascii_case("parameters") {
             return Ok(Some(Arc::clone(&self.parameters)));
         }
+        if name.eq_ignore_ascii_case("routines") {
+            return Ok(Some(Arc::clone(&self.routines)));
+        }
         if name.eq_ignore_ascii_case("views") {
             return Ok(Some(Arc::clone(&self.views)));
         }
@@ -106,6 +124,7 @@ impl SchemaProvider for KalamInformationSchemaProvider {
     async fn table_type(&self, name: &str) -> DataFusionResult<Option<TableType>> {
         if name.eq_ignore_ascii_case("columns")
             || name.eq_ignore_ascii_case("parameters")
+            || name.eq_ignore_ascii_case("routines")
             || name.eq_ignore_ascii_case("tables")
             || name.eq_ignore_ascii_case("views")
             || name.eq_ignore_ascii_case("triggers")

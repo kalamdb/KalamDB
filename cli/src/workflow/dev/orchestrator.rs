@@ -143,11 +143,33 @@ impl DevSchemaLoop {
             Ok(()) => {
                 if let Err(error) = crate::workflow::functions::activate_function_module(ctx).await
                 {
-                    output.detail(format!("function activation deferred: {error}"));
+                    emit_task_failure(
+                        output,
+                        "functions",
+                        format!("Function activation failed: {error}"),
+                        || {
+                            output.error(format!("function activation failed: {error}"));
+                            output.warn(
+                                "CALL will fail with 'procedure not implemented' until activation \
+                                 succeeds",
+                            );
+                        },
+                    );
                 }
             },
             Err(error) => {
-                output.detail(format!("function build deferred: {error}"));
+                emit_task_failure(
+                    output,
+                    "functions",
+                    format!("Function build failed: {error}"),
+                    || {
+                        output.error(format!("function build failed: {error}"));
+                        output.warn(
+                            "CALL will fail with 'procedure not implemented' until the next \
+                             successful build",
+                        );
+                    },
+                );
             },
         }
         self.functions_stamp = functions_watch_stamp(&ctx.project_root);

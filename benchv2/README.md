@@ -37,6 +37,8 @@ The KalamDB Benchmarking Tool is designed to facilitate performance testing of t
 
 - **run-benchmarks.sh**: Shell script to run the default benchmark suite in a Unix-like environment.
 - **run-connection-scale.sh**: Dedicated runner for the opt-in `connection_scale` stress benchmark on macOS/loopback hosts.
+- **comparison/**: HTTP bake-off against TrailBase / PocketBase / SurrealDB.
+- **kalam-vs-pg/**: KalamDB pgwire + KalamDB HTTP SQL vs native PostgreSQL 18. See [kalam-vs-pg/README.md](kalam-vs-pg/README.md).
 
 - **run-benchmarks.ps1**: PowerShell script to run benchmarks in a Windows environment.
 

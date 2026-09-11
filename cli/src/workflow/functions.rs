@@ -17,6 +17,7 @@ use crate::{
     workflow::{
         auth::{login_with_credentials, resolve_workflow_auth_provider},
         generate_schema,
+        project::templates::render_schema_gen_file,
         schema::{
             compile_project_contract,
             procedure_bindings::discover_procedure_bindings,
@@ -77,6 +78,8 @@ pub async fn build_functions(ctx: &WorkflowContext) -> Result<()> {
     typecheck_functions(&ctx.project_root)?;
     write_module_artifact(ctx)?;
     write_build_manifest(ctx)?;
+    ctx.output()
+        .status(format!("built function module {}", ctx.config.functions.module));
     Ok(())
 }
 
@@ -87,18 +90,21 @@ fn typecheck_functions(project_root: &Path) -> Result<()> {
     }
     reject_eval_in_tree(&src)?;
     let tsconfig = project_root.join("functions/tsconfig.json");
-    let tsc = project_root.join("functions/node_modules/.bin/tsc");
-    if tsconfig.exists() && tsc.exists() {
-        let status = Command::new(&tsc)
-            .arg("--noEmit")
-            .arg("-p")
-            .arg(&tsconfig)
-            .current_dir(project_root.join("functions"))
-            .status()
-            .map_err(|error| CLIError::FileError(format!("failed to run tsc: {error}")))?;
-        if !status.success() {
-            return Err(CLIError::ConfigurationError("functions typecheck failed".into()));
-        }
+    if !tsconfig.exists() {
+        return Ok(());
+    }
+    let Some(tsc) = find_tsc_bin(project_root) else {
+        return Ok(());
+    };
+    let status = Command::new(&tsc)
+        .arg("--noEmit")
+        .arg("-p")
+        .arg(&tsconfig)
+        .current_dir(project_root.join("functions"))
+        .status()
+        .map_err(|error| CLIError::FileError(format!("failed to run tsc: {error}")))?;
+    if !status.success() {
+        return Err(CLIError::ConfigurationError("functions typecheck failed".into()));
     }
     Ok(())
 }
@@ -143,11 +149,10 @@ fn write_module_artifact(ctx: &WorkflowContext) -> Result<()> {
     fs::create_dir_all(&generated_dir).map_err(|error| {
         CLIError::FileError(format!("failed to create '{}': {error}", generated_dir.display()))
     })?;
-    fs::write(&registry_path, generate_registry_source(&hash, &bindings, &generated_dir)).map_err(
-        |error| {
+    fs::write(&registry_path, generate_registry_source(&hash, &bindings, &generated_dir)?)
+        .map_err(|error| {
             CLIError::FileError(format!("failed to write '{}': {error}", registry_path.display()))
-        },
-    )?;
+        })?;
     let implemented = bindings.iter().any(|binding| binding.implemented);
     let source = if implemented {
         let esbuild = find_esbuild_bin(&ctx.project_root).ok_or_else(|| {
@@ -159,7 +164,7 @@ fn write_module_artifact(ctx: &WorkflowContext) -> Result<()> {
         })?;
         bundle_registry(&esbuild, &registry_path)?
     } else {
-        empty_module_artifact()
+        empty_module_artifact()?
     };
     let dir = ctx.project_root.join("functions/.kalam/build");
     fs::create_dir_all(&dir).map_err(|error| {
@@ -177,6 +182,16 @@ fn find_esbuild_bin(project_root: &Path) -> Option<PathBuf> {
         "node_modules/esbuild/bin/esbuild",
         "functions/node_modules/esbuild/bin/esbuild",
     ] {
+        let path = project_root.join(rel);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn find_tsc_bin(project_root: &Path) -> Option<PathBuf> {
+    for rel in ["functions/node_modules/.bin/tsc", "node_modules/.bin/tsc"] {
         let path = project_root.join(rel);
         if path.is_file() {
             return Some(path);
@@ -302,22 +317,22 @@ fn esbuild_run_bundle(
     Ok(bundled)
 }
 
-fn kalam_invoke_source() -> &'static str {
-    "function kalamInvoke(name, args) {\n  const ctx = globalThis.__kalamCtx;\n  const input = \
-     args.length === 1 ? args[0] : Array.from(args);\n  const fn = procedures[name];\n  if (typeof \
-     fn !== \"function\") {\n    throw new Error(\"missing export \" + name);\n  }\n  return \
-     fn(ctx, input);\n}\nglobalThis.kalamInvoke = kalamInvoke;\n"
+fn module_entry_source(registry_import: Option<&str>) -> Result<String> {
+    render_schema_gen_file(
+        "typescript",
+        "functions/src/generated/module_entry.js",
+        &serde_json::json!({
+            "registry_import": registry_import.unwrap_or(""),
+        }),
+    )
 }
 
-fn empty_module_artifact() -> String {
-    format!("const procedures = {{}};\n{}", kalam_invoke_source())
+fn empty_module_artifact() -> Result<String> {
+    module_entry_source(None)
 }
 
 fn bundle_registry(esbuild_bin: &Path, registry: &Path) -> Result<String> {
-    let mut entry = String::from("import { procedures } from ");
-    entry.push_str(&path_as_esbuild_import(registry)?);
-    entry.push_str(";\n");
-    entry.push_str(kalam_invoke_source());
+    let entry = module_entry_source(Some(&path_as_esbuild_import(registry)?))?;
     let entry_path = esbuild_temp_path("entry");
     let written = fs::write(&entry_path, &entry)
         .map_err(|error| CLIError::FileError(format!("failed to write esbuild entry: {error}")));
@@ -347,6 +362,13 @@ fn write_build_manifest(ctx: &WorkflowContext) -> Result<()> {
         } else {
             "missing"
         };
+        if kind == "missing" {
+            ctx.output().warn(format!(
+                "procedure {} is not implemented; CALL will fail until a handler exists under \
+                 functions/src/",
+                routine.routine_id
+            ));
+        }
         procedures.insert(routine.routine_id.to_string(), Value::String(kind.to_string()));
     }
     let registry = ctx.project_root.join("functions/src/generated/registry.ts");
@@ -749,7 +771,7 @@ pub fn override_function(ctx: &WorkflowContext, procedure: &str) -> Result<()> {
             path.display()
         )));
     }
-    let body = seed_override_body(ctx, namespace, name);
+    let body = seed_override_body(ctx, namespace, name)?;
     fs::write(&path, body).map_err(|error| {
         CLIError::FileError(format!("failed to write '{}': {error}", path.display()))
     })?;
@@ -757,7 +779,7 @@ pub fn override_function(ctx: &WorkflowContext, procedure: &str) -> Result<()> {
     Ok(())
 }
 
-fn seed_override_body(ctx: &WorkflowContext, namespace: &str, name: &str) -> String {
+fn seed_override_body(ctx: &WorkflowContext, namespace: &str, name: &str) -> Result<String> {
     let Ok((snapshot, _)) = compile_project_contract(&ctx.project_root, &ctx.config) else {
         return implemented_procedure_source(namespace, name, None);
     };
@@ -926,7 +948,7 @@ mod tests {
 
     #[test]
     fn empty_registry_emits_kalam_invoke() {
-        let js = empty_module_artifact();
+        let js = empty_module_artifact().unwrap();
         assert!(js.contains("function kalamInvoke"));
         assert!(js.contains("const procedures = {}"));
     }
@@ -969,6 +991,16 @@ CREATE PROCEDURE api.plus_one(x INT) RETURNS INT;
         assert_eq!(procedures.get("api.health").and_then(Value::as_str), Some("module"));
         assert_eq!(procedures.get("api.greet").and_then(Value::as_str), Some("inline"));
         assert_eq!(procedures.get("api.plus_one").and_then(Value::as_str), Some("missing"));
+    }
+
+    #[test]
+    fn finds_project_root_typescript_for_functions_typecheck() {
+        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/chat-with-ai");
+        let tsc = find_tsc_bin(&example);
+        assert!(
+            tsc.as_ref().is_some_and(|path| path.ends_with("node_modules/.bin/tsc")),
+            "chat-with-ai ships tsc in the app node_modules, not functions/node_modules: {tsc:?}"
+        );
     }
 
     #[test]

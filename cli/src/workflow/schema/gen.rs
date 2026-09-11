@@ -11,6 +11,8 @@ use crate::{
             dart, load,
             model::{parse_language_list, LanguageTarget},
             naming::{assign_names, NamingOptions},
+            output::SchemaEmitInput,
+            procedures::ProcedureCatalog,
             rust, typescript,
         },
         WorkflowContext,
@@ -58,26 +60,19 @@ pub fn generate_languages(
             },
         )?;
         let output_path = project_root.join(&target.output);
+        let procedures = ProcedureCatalog::from_snapshot(&snapshot, &names);
+        let input = SchemaEmitInput {
+            project_root,
+            output_path: &output_path,
+            snapshot: &snapshot,
+            hash: &hash,
+            names: &names,
+            procedures: &procedures,
+        };
         {
             let _spinner = output
                 .map(|out| out.status_spinner(format!("generating {} -> {}", key, target.output)));
-            match language {
-                LanguageTarget::TypeScript => {
-                    typescript::write_typescript(
-                        &output_path,
-                        &snapshot,
-                        &hash,
-                        &names,
-                        project_root,
-                    )?;
-                },
-                LanguageTarget::Dart => {
-                    dart::write_dart_schema(&output_path, &snapshot, &hash, &names)?;
-                },
-                LanguageTarget::Rust => {
-                    rust::write_rust_schema(&output_path, &snapshot, &hash, &names)?;
-                },
-            }
+            write_language(*language, &input)?;
         }
         if let Some(out) = output {
             out.status(format!("generated {} -> {}", key, target.output));
@@ -85,6 +80,15 @@ pub fn generate_languages(
     }
 
     Ok(())
+}
+
+fn write_language(language: LanguageTarget, input: &SchemaEmitInput<'_>) -> Result<()> {
+    // One arm per language adapter. Procedure CALL clients come from `input.procedures`.
+    match language {
+        LanguageTarget::TypeScript => typescript::write_typescript(input),
+        LanguageTarget::Dart => dart::write_dart_schema(input),
+        LanguageTarget::Rust => rust::write_rust_schema(input),
+    }
 }
 
 fn resolve_languages(

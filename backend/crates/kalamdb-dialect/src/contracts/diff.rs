@@ -121,9 +121,13 @@ fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
         (ContractTypeKind::Enum { labels: before }, ContractTypeKind::Enum { labels: after })
             if before != after =>
         {
-            out.push(format!("DROP TYPE {};", current.type_id));
-            out.push(emit_create_type(target));
-            recreated = true;
+            if let Some(statements) = enum_add_value_statements(&current.type_id, before, after) {
+                out.extend(statements);
+            } else {
+                out.push(format!("DROP TYPE {};", current.type_id));
+                out.push(emit_create_type(target));
+                recreated = true;
+            }
         },
         (left, right) if left != right => {
             out.push(format!("DROP TYPE {};", current.type_id));
@@ -279,4 +283,48 @@ fn emit_type_sql(field: &ContractField) -> String {
 
 fn field_signature(field: &ContractField) -> String {
     format!("{}|{}|{}|{}", field.type_name, field.is_array, field.not_null, field.nonempty)
+}
+
+fn enum_add_value_statements(
+    type_id: &kalamdb_commons::models::TypeId,
+    before: &[String],
+    after: &[String],
+) -> Option<Vec<String>> {
+    if !is_label_subsequence(before, after) {
+        return None;
+    }
+    let existing: std::collections::HashSet<&str> = before.iter().map(String::as_str).collect();
+    let mut statements = Vec::new();
+    for (index, label) in after.iter().enumerate() {
+        if existing.contains(label.as_str()) {
+            continue;
+        }
+        let escaped = escape_sql_string(label);
+        let sql = if index == 0 {
+            match after.get(1) {
+                Some(next) => format!(
+                    "ALTER TYPE {type_id} ADD VALUE '{escaped}' BEFORE '{}';",
+                    escape_sql_string(next)
+                ),
+                None => format!("ALTER TYPE {type_id} ADD VALUE '{escaped}';"),
+            }
+        } else {
+            format!(
+                "ALTER TYPE {type_id} ADD VALUE '{escaped}' AFTER '{}';",
+                escape_sql_string(&after[index - 1])
+            )
+        };
+        statements.push(sql);
+    }
+    Some(statements)
+}
+
+fn is_label_subsequence(before: &[String], after: &[String]) -> bool {
+    let mut index = 0;
+    for label in after {
+        if index < before.len() && before[index] == *label {
+            index += 1;
+        }
+    }
+    index == before.len()
 }

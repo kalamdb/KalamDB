@@ -3,10 +3,10 @@
 The host surface is specified once in `kalamdb-functions-host` (`HOST_METHODS`, `ASYNC_OPS`, `NATIVE_FNS`). Emitters write:
 
 - V8 bootstrap (`emit_js_bootstrap()` → `__kalamMakeCtx`)
-- TypeScript `runtime.d.ts` (`emit_typescript()` + schema-typed `FunctionsHost` from `ContractSnapshot`)
-- Generated `procedure.d.ts` / `procedure.js` builders (`emit_procedure_builders`)
+- TypeScript `runtime.d.ts` (CLI Handlebars template plus schema-typed `FunctionsHost` from `ContractSnapshot`)
+- Generated `procedure.d.ts` / `procedure.js` builders (CLI Handlebars templates)
 
-CLI `kalam schema gen` concatenates the TS host types with per-procedure methods. Inline SQL and bundled TS share the same frozen `ctx` at runtime. Native dispatch lives in `kalamdb-functions` (V8 bind / `kalamAsyncOp`); `kalamdb-core` `CoreFunctionHost` only implements AppContext adapters.
+CLI `kalam schema gen` renders those templates. Inline SQL and bundled TS share the same frozen `ctx` at runtime. Native dispatch lives in `kalamdb-functions` (V8 bind / `kalamAsyncOp`); `kalamdb-core` `CoreFunctionHost` only implements AppContext adapters.
 
 SQL table/procedure types and Drizzle `kTable` objects are generated once to
 `src/generated/schema.ts` (sibling of `createKalam` in `src/generated/kalam.ts`).
@@ -142,7 +142,7 @@ Example: `ctx.now()` later. **Do not** add `now` to `CoreFunctionHost`.
 2. If it is a new native or async kind, add it to `NATIVE_FNS` or `ASYNC_OPS`. V8 bind iterates `NATIVE_FNS` and fails the isolate install if a name is missing.
 3. Implement the behavior as a **default method** on `FunctionHost` in `kalamdb-functions` (clock, structured log, etc.). Tests and V8 use the default; core does not copy it.
 4. If the method needs SQL, nested CALL, publish, or HTTP, call the existing adapters (`self.sql`, `self.call`, …) instead of adding a new Core method per feature.
-5. Snapshot tests on `emit_typescript()` / `emit_js_bootstrap()` catch emitter drift. CLI goldens cover typed `FunctionsHost` methods and `procedure` builders.
+5. Snapshot tests on `emit_js_bootstrap()` catch isolate bootstrap drift. CLI goldens cover `runtime.d.ts`, typed `FunctionsHost` methods, and `procedure` builders.
 
 ## Inline shim
 

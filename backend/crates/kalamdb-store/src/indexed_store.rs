@@ -916,7 +916,44 @@ where
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
-            if let Some(entity) = self.get(&primary_key)? {
+            if let Some(bytes) =
+                self.backend.get(&self.main_partition, &primary_key.storage_key())?
+            {
+                let entity = self.codec.decode(&primary_key, &bytes)?;
+                return Ok(Some((primary_key, entity)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Like [`Self::get_latest_by_index_prefix`], decoding only `ordinals`.
+    pub fn get_latest_by_index_prefix_selected(
+        &self,
+        index_idx: usize,
+        prefix: &[u8],
+        ordinals: &[usize],
+    ) -> Result<Option<(K, V)>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut iter =
+            match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                Ok(iter) => iter,
+                Err(StorageError::PartitionNotFound(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+
+        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+            let primary_key = K::from_storage_key(&primary_key_bytes)
+                .map_err(StorageError::SerializationError)?;
+
+            if let Some(bytes) =
+                self.backend.get(&self.main_partition, &primary_key.storage_key())?
+            {
+                let entity = self.codec.decode_selected(&primary_key, &bytes, ordinals)?;
                 return Ok(Some((primary_key, entity)));
             }
         }
@@ -1127,7 +1164,8 @@ where
     /// Runs inline on the caller. This lookup is a reverse iterator with
     /// `limit=1` plus one entity get (microseconds on a cache hit). Offloading
     /// that to `spawn_blocking` costs more than the RocksDB work on the PK
-    /// point-read path.
+    /// point-read path: a 2026-09-11 A/B on the comparison 1M-read phase went
+    /// 16.88s / p50 245µs (inline) → 17.83s / p50 253µs (`spawn_blocking`).
     #[allow(clippy::unused_async)]
     pub async fn get_latest_by_index_prefix_async(
         &self,
@@ -1135,6 +1173,20 @@ where
         prefix: Vec<u8>,
     ) -> Result<Option<(K, V)>> {
         self.get_latest_by_index_prefix(index_idx, &prefix)
+    }
+
+    /// Async version of [`Self::get_latest_by_index_prefix_selected`].
+    ///
+    /// Inline for the same reason as [`Self::get_latest_by_index_prefix_async`]:
+    /// `spawn_blocking` on this one-row lookup is a measured regression.
+    #[allow(clippy::unused_async)]
+    pub async fn get_latest_by_index_prefix_selected_async(
+        &self,
+        index_idx: usize,
+        prefix: Vec<u8>,
+        ordinals: Vec<usize>,
+    ) -> Result<Option<(K, V)>> {
+        self.get_latest_by_index_prefix_selected(index_idx, &prefix, &ordinals)
     }
 
     /// Async version of `get()` from EntityStore.

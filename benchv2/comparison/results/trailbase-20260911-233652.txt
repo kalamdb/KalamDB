@@ -1,0 +1,19 @@
+# TrailBase comparison (Record API)
+# server_bin=/Users/jamal/git/KalamDB/benchv2/comparison/bin/trail
+# version=v0.33.14
+# started=2026-09-11T20:36:52Z
+logged in to http://127.0.0.1:4000
+Inserted 100000 rows in 6.484354708s
+Inserted 10000 rows in 699.231291ms
+Latencies: 
+	p50=1.035458ms 
+	p75=1.261542ms 
+	p90=1.485417ms 
+	p95=1.635ms
+Read 1000000 rows in 51.594298083s
+Latencies: 
+	p50=752.292µs 
+	p75=858.167µs 
+	p90=1.010791ms 
+	p95=1.162875ms
+# finished=2026-09-11T20:37:51Z

@@ -571,6 +571,10 @@ impl AppContext {
                     Arc::downgrade(&app_ctx),
                 )))),
             );
+            DataFusionSessionFactory::register_routine_catalog_functions(
+                &app_ctx.base_session_context,
+                app_ctx.system_tables(),
+            );
 
             // Set AppContext in SchemaRegistry to break circular dependency
             schema_registry.set_app_context(app_ctx.clone());
@@ -1044,6 +1048,10 @@ impl AppContext {
             Arc::new(VectorSearchTableFunction::new(Arc::new(CoreVectorSearchRuntime::new(
                 Arc::downgrade(&app_ctx),
             )))),
+        );
+        DataFusionSessionFactory::register_routine_catalog_functions(
+            &app_ctx.base_session_context,
+            app_ctx.system_tables(),
         );
 
         // Topic publishing is now synchronous in table providers — no need to wire

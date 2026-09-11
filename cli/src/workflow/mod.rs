@@ -340,9 +340,3 @@ pub async fn deploy_project(
 ) -> Result<()> {
     deploy::run_deploy(ctx, &deploy::DeployOptions { env, dry_run }).await
 }
-
-pub fn not_implemented(command: &str) -> Result<()> {
-    Err(CLIError::ConfigurationError(format!(
-        "{command} is not implemented yet; see `kalam {command} --help`"
-    )))
-}

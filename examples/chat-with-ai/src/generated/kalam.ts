@@ -15,7 +15,20 @@ export type KalamQueryClient = {
   }>;
 };
 
+function kalamCallErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.length > 0) {
+      return message;
+    }
+  }
+  return "CALL failed";
+}
+
 function kalamCallResult(response: Awaited<ReturnType<KalamQueryClient["query"]>>): unknown {
+  if (response.status === "error") {
+    throw new Error(kalamCallErrorMessage(response.error));
+  }
   const result = response.results?.[0];
   if (result?.named_rows?.[0] && "result" in result.named_rows[0]) {
     return result.named_rows[0].result;

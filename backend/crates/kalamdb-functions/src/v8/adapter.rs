@@ -19,7 +19,7 @@ use super::{
 use crate::{
     convert::{infer_v8_value, routine_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
-    error::{FunctionsError, Result},
+    error::{FunctionErrorCode, FunctionsError, Result},
     host::InvocationSource,
     limits::{RuntimeLimits, ABI_VERSION},
     revision::ModuleRevision,
@@ -414,11 +414,66 @@ pub(crate) fn current_host(scope: &v8::PinScope) -> Result<Arc<dyn crate::host::
         .ok_or_else(|| FunctionsError::Invalid("function host is not bound".to_string()))
 }
 
-pub(crate) fn throw_host_error(scope: &mut v8::PinScope, error: FunctionsError) {
+const HOST_ERROR_CODE_KEY: &str = "__kalamErrorCode";
+
+pub(crate) fn host_error_value<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    error: &FunctionsError,
+) -> v8::Local<'s, v8::Value> {
     let message = v8::String::new(scope, &error.to_string())
         .unwrap_or_else(|| v8::String::new(scope, "function host error").expect("fallback error"));
     let exception = v8::Exception::error(scope, message);
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
+        if let (Some(key), Some(code)) = (
+            v8::String::new(scope, HOST_ERROR_CODE_KEY),
+            v8::String::new(scope, error.code().as_str()),
+        ) {
+            object.set(scope, key.into(), code.into());
+        }
+    }
+    exception
+}
+
+pub(crate) fn throw_host_error(scope: &mut v8::PinScope, error: FunctionsError) {
+    let exception = host_error_value(scope, &error);
     scope.throw_exception(exception);
+}
+
+pub(crate) fn functions_error_from_value(
+    scope: &v8::PinScope,
+    value: v8::Local<v8::Value>,
+) -> FunctionsError {
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
+        if let Some(key) = v8::String::new(scope, HOST_ERROR_CODE_KEY) {
+            if let Some(code_val) = object.get(scope, key.into()) {
+                if !code_val.is_null_or_undefined() {
+                    let code = code_val.to_rust_string_lossy(scope);
+                    if let Some(code) = FunctionErrorCode::parse(&code) {
+                        return FunctionsError::from_code(code, exception_message(scope, object));
+                    }
+                }
+            }
+        }
+    }
+    let message = format_js_exception(scope, value);
+    if message.contains("heap") || message.contains("memory") {
+        return FunctionsError::MemoryLimit;
+    }
+    FunctionsError::Javascript(message)
+}
+
+fn exception_message(scope: &v8::PinScope, object: v8::Local<v8::Object>) -> String {
+    if let Some(key) = v8::String::new(scope, "message") {
+        if let Some(message) = object.get(scope, key.into()) {
+            if !message.is_null_or_undefined() {
+                let text = message.to_rust_string_lossy(scope);
+                if !text.is_empty() {
+                    return text;
+                }
+            }
+        }
+    }
+    format_js_exception(scope, object.into())
 }
 
 pub(crate) fn arg_string(
@@ -829,11 +884,7 @@ pub(crate) fn js_exception(
     try_catch: &mut v8::PinnedRef<'_, v8::TryCatch<v8::HandleScope>>,
 ) -> FunctionsError {
     if let Some(exception) = try_catch.exception() {
-        let message = format_js_exception(try_catch, exception);
-        if message.contains("heap") || message.contains("memory") {
-            return FunctionsError::MemoryLimit;
-        }
-        return FunctionsError::Javascript(message);
+        return functions_error_from_value(try_catch, exception);
     }
     FunctionsError::Javascript("terminated".to_string())
 }
@@ -1251,6 +1302,35 @@ function kalamInvoke(name, args) {
         }
     }
 
+    struct RejectHttpHost;
+
+    impl crate::FunctionHost for RejectHttpHost {
+        fn sql(&self, _sql: &str, _params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Ok(RoutineValue::new(ScalarValue::Null))
+        }
+        fn call(&self, _procedure: &str, _args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Err(FunctionsError::Invalid("nested call must not run in http test".into()))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Err(FunctionsError::Invalid("nested procedures cannot mutate ctx.http".into()))
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+        fn http_enabled(&self) -> bool {
+            true
+        }
+    }
+
     async fn invoke_wrapped(
         source: &str,
         host: Arc<dyn crate::FunctionHost>,
@@ -1369,6 +1449,27 @@ return 1;
         assert!(
             message.contains("at ") || message.contains("Error: boom-stack"),
             "javascript exception should include V8 stack output: {message}"
+        );
+        assert_eq!(error.code(), crate::FunctionErrorCode::InternalRuntimeError);
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn host_invalid_http_error_keeps_typed_code() {
+        let error = invoke_wrapped(
+            "ctx.http.response.status(500); return 1;",
+            Arc::new(RejectHttpHost) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("host Invalid must fail the CALL");
+        assert_eq!(error.code(), crate::FunctionErrorCode::InvalidArguments, "{error}");
+        assert!(
+            error.to_string().contains("nested procedures cannot mutate ctx.http"),
+            "{error}"
+        );
+        assert!(
+            !matches!(error, FunctionsError::Javascript(_)),
+            "host Invalid must not become a javascript exception: {error}"
         );
     }
 

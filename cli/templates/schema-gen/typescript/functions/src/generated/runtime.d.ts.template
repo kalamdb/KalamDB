@@ -1,0 +1,73 @@
+{{header}}
+
+import type { ProcedureOrm } from "@kalamdb/orm";
+
+export interface Actor {
+  readonly id: string;
+  readonly role: string;
+}
+
+export interface ProcedureContext {
+  readonly actor: Actor;
+  readonly principal: Actor;
+  readonly source: { readonly kind: string };
+  readonly parent: string | null;
+  readonly db: DbHost;
+  readonly orm: ProcedureOrm;
+  readonly functions: FunctionsHost;
+  readonly topics: TopicsHost;
+  readonly log: LogHost;
+  readonly http: HttpHost | null;
+  sleep(ms: number): Promise<void>;
+}
+
+export interface DbHost {
+  query(sql: string, params?: unknown[]): Promise<unknown>;
+  execute(sql: string, params?: unknown[]): Promise<unknown>;
+}
+
+export interface FunctionsHost {
+  call(name: string, args?: unknown): Promise<unknown>;
+}
+
+export interface TopicsHost {
+  publish(topic: string, payload: unknown): Promise<void>;
+}
+
+export interface LogHost {
+  debug(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  error(error: unknown, message?: string, ...args: unknown[]): void;
+}
+
+export interface HttpHost {
+  readonly request: {
+    readonly method: string;
+    readonly path: string;
+    headers: { get(name: string): string | null };
+    query: { get(name: string): string | null };
+  };
+  readonly response: {
+    status(code: number): void;
+    header(name: string, value: string): void;
+    contentType(value: string): void;
+  };
+}
+
+// Isolate `console.debug|log|info|warn|error` forwards to the process logger
+// with channel=console. Prefer ctx.log for structured procedure logs.
+{{#if has_host}}
+import type { {{type_imports}} } from "{{schema_import}}";
+
+export interface FunctionsHost {
+{{#each namespaces}}
+  {{object_ident}}: {
+{{#each procedures}}
+    {{method_ident}}({{#if has_params}}input: {{type_ident}}Request{{/if}}): Promise<{{type_ident}}Result>;
+{{/each}}
+  };
+{{/each}}
+}
+{{/if}}

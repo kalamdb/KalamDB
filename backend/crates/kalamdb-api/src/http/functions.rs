@@ -1,19 +1,19 @@
 //! POST /v1/functions/{namespace}/{procedure}
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::{scalar_value_to_js_json, scalar_value_to_json},
+    conversions::arrow_json_conversion::scalar_value_to_json,
     models::{NamespaceId, RoutineId},
     KalamDataType,
 };
 use kalamdb_core::{
     app_context::AppContext,
     functions::{
-        json_to_routine_value, FunctionCallOrigin, FunctionService, HttpResponseOverrides,
-        RoutineValue,
+        json_to_routine_value, routine_value_as_json, FunctionCallOrigin, FunctionService,
+        HttpResponseOverrides, RoutineValue,
     },
     sql::context::ExecutionContext,
 };
@@ -107,25 +107,17 @@ pub async fn invoke_function_v1(
     .await
     {
         Ok(result) => {
-            let payload = match scalar_value_to_json(&result.value.value) {
-                Ok(value) => value.0,
+            let payload = match function_http_payload(&result.value) {
+                Ok(value) => value,
                 Err(error) => {
                     return HttpResponse::InternalServerError().json(json!({
                         "status": "error",
                         "code": "INTERNAL_RUNTIME_ERROR",
-                        "message": error.to_string(),
+                        "message": error,
                     }));
                 },
             };
-            let status = result.http_status.unwrap_or(200);
-            let mut builder = HttpResponse::build(
-                actix_web::http::StatusCode::from_u16(status)
-                    .unwrap_or(actix_web::http::StatusCode::OK),
-            );
-            for (name, value) in result.http_headers {
-                builder.insert_header((name, value));
-            }
-            builder.json(payload)
+            function_success_response(payload, result.http_status, result.http_headers)
         },
         Err(error) => {
             let (status, code) = function_http_status(&error);
@@ -191,6 +183,10 @@ fn bind_json_args(
             if parameters.is_empty() {
                 return Ok(Vec::new());
             }
+            if is_whole_body_json(map, parameters) {
+                let body = Value::Object(map.clone());
+                return Ok(vec![bind_json_value(&body, Some(&parameters[0]))?]);
+            }
             let mut args = Vec::with_capacity(parameters.len());
             for parameter in parameters {
                 let value = map
@@ -204,14 +200,68 @@ fn bind_json_args(
     }
 }
 
+fn is_whole_body_json(
+    map: &serde_json::Map<String, Value>,
+    parameters: &[kalamdb_system::CatalogRoutineParameter],
+) -> bool {
+    let [parameter] = parameters else {
+        return false;
+    };
+    if parameter.is_array {
+        return false;
+    }
+    parameter.builtin_data_type() == Some(KalamDataType::Json) && !map.contains_key(&parameter.name)
+}
+
+fn function_success_response(
+    payload: Value,
+    status: Option<u16>,
+    headers: HashMap<String, String>,
+) -> HttpResponse {
+    let body = match serde_json::to_vec(&payload) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "code": "INTERNAL_RUNTIME_ERROR",
+                "message": error.to_string(),
+            }));
+        },
+    };
+    let status_code = actix_web::http::StatusCode::from_u16(status.unwrap_or(200))
+        .unwrap_or(actix_web::http::StatusCode::OK);
+    let mut builder = HttpResponse::build(status_code);
+    let mut has_content_type = false;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder.insert_header((name, value));
+    }
+    if !has_content_type {
+        builder.insert_header((actix_web::http::header::CONTENT_TYPE, "application/json"));
+    }
+    builder.body(body)
+}
+
+fn function_http_payload(value: &RoutineValue) -> Result<Value, String> {
+    if value.json_sql {
+        return routine_value_as_json(value)
+            .ok_or_else(|| "JSON procedure result is not valid JSON".to_string());
+    }
+    scalar_value_to_json(&value.value)
+        .map(|value| value.0)
+        .map_err(|error| error.to_string())
+}
+
 fn bind_json_value(
     value: &Value,
     parameter: Option<&kalamdb_system::CatalogRoutineParameter>,
 ) -> Result<RoutineValue, String> {
     let routine = json_to_routine_value(value, parameter_data_type(parameter).as_ref())
         .map_err(|error| error.to_string())?;
-    let json = scalar_value_to_js_json(&routine.value).map_err(|error| error.to_string())?;
-    let bytes = kalamdb_serialization::encode_function_value("rest", &json.0)
+    let json = routine_value_as_json(&routine).unwrap_or(Value::Null);
+    let bytes = kalamdb_serialization::encode_function_value("rest", &json)
         .map_err(|error| error.to_string())?;
     Ok(routine.with_transfer(bytes::Bytes::from(bytes), "rest"))
 }
@@ -228,10 +278,37 @@ fn parameter_data_type(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use kalamdb_commons::{
+        models::{NamespaceId, RoutineId, RoutineParameterId},
+        KalamDataType,
+    };
     use kalamdb_core::error::KalamDbError;
     use kalamdb_functions::{FunctionErrorCode, FunctionsError};
+    use kalamdb_system::CatalogRoutineParameter;
+    use serde_json::json;
 
-    use super::function_http_status;
+    use super::{
+        bind_json_args, function_http_payload, function_http_status, function_success_response,
+    };
+
+    fn json_parameter(name: &str) -> CatalogRoutineParameter {
+        let namespace = NamespaceId::new("app");
+        let routine_id = RoutineId::from_parts(Some(&namespace), "send");
+        CatalogRoutineParameter {
+            parameter_id: RoutineParameterId::new(&routine_id, 0).expect("parameter id"),
+            routine_id,
+            name: name.to_string(),
+            ordinal: 0,
+            type_id: None,
+            type_name: "JSON".to_string(),
+            is_array: false,
+            not_null: true,
+            nonempty: false,
+            data_type: Some(KalamDataType::Json),
+        }
+    }
 
     #[test]
     fn rest_maps_typed_codes_not_message_substrings() {
@@ -245,6 +322,17 @@ mod tests {
         let (status, code) = function_http_status(&missing);
         assert_eq!(status, actix_web::http::StatusCode::NOT_FOUND);
         assert_eq!(code, "PROCEDURE_NOT_IMPLEMENTED");
+
+        let invalid: KalamDbError =
+            FunctionsError::Invalid("nested procedures cannot mutate ctx.http".into()).into();
+        let (status, code) = function_http_status(&invalid);
+        assert_eq!(status, actix_web::http::StatusCode::BAD_REQUEST);
+        assert_eq!(code, "INVALID_ARGUMENTS");
+
+        let js: KalamDbError = FunctionsError::Javascript("boom".into()).into();
+        let (status, code) = function_http_status(&js);
+        assert_eq!(status, actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(code, "INTERNAL_RUNTIME_ERROR");
     }
 
     #[test]
@@ -259,5 +347,101 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn rest_object_transfer_encodes_object_not_string() {
+        let value = serde_json::json!({"city": "Paris"});
+        let routine = super::bind_json_value(&value, None).unwrap();
+        let decoded = kalamdb_serialization::decode_function_value(
+            routine.transfer.as_ref().unwrap(),
+            "rest",
+        )
+        .unwrap();
+        assert_eq!(decoded["city"], "Paris");
+        assert!(decoded.is_object(), "REST composite args must transfer as objects: {decoded}");
+    }
+
+    #[test]
+    fn rest_whole_body_binds_single_json_parameter() {
+        let parameters = vec![json_parameter("body")];
+        let payload = json!({
+            "conversationId": "c1",
+            "text": "hello"
+        });
+        let args = bind_json_args(&payload, &parameters).expect("whole-body JSON bind");
+        assert_eq!(args.len(), 1);
+        assert!(args[0].json_sql);
+        let decoded = kalamdb_serialization::decode_function_value(
+            args[0].transfer.as_ref().unwrap(),
+            "rest",
+        )
+        .unwrap();
+        assert_eq!(decoded["conversationId"], "c1");
+        assert_eq!(decoded["text"], "hello");
+    }
+
+    #[test]
+    fn rest_named_json_wrap_still_binds_inner_object() {
+        let parameters = vec![json_parameter("body")];
+        let payload = json!({
+            "body": { "conversationId": "c1", "text": "hello" }
+        });
+        let args = bind_json_args(&payload, &parameters).expect("named JSON bind");
+        let decoded = kalamdb_serialization::decode_function_value(
+            args[0].transfer.as_ref().unwrap(),
+            "rest",
+        )
+        .unwrap();
+        assert_eq!(decoded["conversationId"], "c1");
+    }
+
+    #[test]
+    fn rest_json_return_encodes_object_not_string() {
+        let value = kalamdb_core::functions::json_to_routine_value(
+            &json!({"ok": true, "text": "hello"}),
+            Some(&KalamDataType::Json),
+        )
+        .expect("typed JSON return");
+        let payload = function_http_payload(&value).expect("HTTP JSON payload");
+        assert_eq!(payload["ok"], true);
+        assert_eq!(payload["text"], "hello");
+        assert!(payload.is_object());
+    }
+
+    #[test]
+    fn rest_success_keeps_js_status_headers_and_content_type() {
+        use actix_web::http::header::CONTENT_TYPE;
+
+        let mut headers = HashMap::new();
+        headers.insert("x-kalam-trace".into(), "ok".into());
+        headers.insert("location".into(), "/created".into());
+        headers.insert("content-type".into(), "application/json".into());
+        let response = function_success_response(json!({"ok": true}), Some(201), headers);
+        assert_eq!(response.status(), actix_web::http::StatusCode::CREATED);
+        assert_eq!(
+            response.headers().get("x-kalam-trace").and_then(|value| value.to_str().ok()),
+            Some("ok")
+        );
+        assert_eq!(
+            response.headers().get("location").and_then(|value| value.to_str().ok()),
+            Some("/created")
+        );
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+    }
+
+    #[test]
+    fn rest_success_defaults_json_content_type() {
+        use actix_web::http::header::CONTENT_TYPE;
+
+        let response = function_success_response(json!("echo"), None, HashMap::new());
+        assert_eq!(response.status(), actix_web::http::StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
     }
 }

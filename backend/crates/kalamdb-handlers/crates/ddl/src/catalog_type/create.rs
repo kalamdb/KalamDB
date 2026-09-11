@@ -231,7 +231,12 @@ pub fn ensure_implicit_row_type(
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
     {
         if existing.kind != CatalogTypeKind::ImplicitTableRow {
-            return Err(KalamDbError::AlreadyExists(format!("type {type_id} already exists")));
+            return Err(KalamDbError::AlreadyExists(match existing.kind {
+                CatalogTypeKind::TopicPayload => {
+                    format!("topic '{type_id}' collides with implicit table row type")
+                },
+                _ => format!("type {type_id} already exists"),
+            }));
         }
         return Ok(type_id);
     }

@@ -50,17 +50,13 @@ pub fn decode_user_row_selected(
     seq: SeqId,
     ordinals: &[usize],
 ) -> Result<UserTableRow> {
-    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
-    let mut reader = Reader::new(payload);
-    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
-    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
-    let fields = decode_selected_fields(&mut reader, schema, indexed, ordinals)?;
+    let decoded = decode_row_body_selected(bytes, schema, ordinals)?;
     Ok(UserTableRow {
         user_id,
         _seq: seq,
-        _commit_seq: commit_seq,
-        _deleted: deleted,
-        fields,
+        _commit_seq: decoded.commit_seq,
+        _deleted: decoded.deleted,
+        fields: decoded.fields,
     })
 }
 
@@ -71,6 +67,17 @@ pub fn decode_shared_row(
     seq: SeqId,
 ) -> Result<(SeqId, u64, bool, Row)> {
     let decoded = decode_row_body(bytes, schema)?;
+    Ok((seq, decoded.commit_seq, decoded.deleted, decoded.fields))
+}
+
+/// Decode only the requested schema ordinals from a shared-table row.
+pub fn decode_shared_row_selected(
+    bytes: &[u8],
+    schema: &StorageSchema,
+    seq: SeqId,
+    ordinals: &[usize],
+) -> Result<(SeqId, u64, bool, Row)> {
+    let decoded = decode_row_body_selected(bytes, schema, ordinals)?;
     Ok((seq, decoded.commit_seq, decoded.deleted, decoded.fields))
 }
 
@@ -114,6 +121,23 @@ pub(crate) fn decode_row_body(bytes: &[u8], schema: &StorageSchema) -> Result<De
     if !reader.is_empty() {
         return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
     }
+    Ok(DecodedRow {
+        commit_seq,
+        deleted,
+        fields,
+    })
+}
+
+fn decode_row_body_selected(
+    bytes: &[u8],
+    schema: &StorageSchema,
+    ordinals: &[usize],
+) -> Result<DecodedRow> {
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    let mut reader = Reader::new(payload);
+    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
+    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
+    let fields = decode_selected_fields(&mut reader, schema, indexed, ordinals)?;
     Ok(DecodedRow {
         commit_seq,
         deleted,

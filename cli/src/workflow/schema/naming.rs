@@ -3,8 +3,7 @@
 use std::collections::BTreeMap;
 
 pub use kalamdb_functions_host::{
-    camel_case, method_ident, namespace_object_ident, pascal_case, sanitize_js_ident,
-    DEFAULT_NAMESPACE,
+    camel_case, method_ident, namespace_object_ident, pascal_case, DEFAULT_NAMESPACE,
 };
 use kalamdb_sql::contracts::ContractSnapshot;
 

@@ -67,7 +67,7 @@ pub(crate) fn reject_access_level_sql(sql: &str) -> DdlResult<()> {
 
 pub use alter_namespace::AlterNamespaceStatement;
 pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
-pub use alter_type::{AlterTypeOperation, AlterTypeStatement};
+pub use alter_type::{AlterTypeOperation, AlterTypeStatement, EnumValueNeighbor};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use call::CallStatement;
 pub use comment::{CommentOnStatement, CommentOnTarget};

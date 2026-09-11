@@ -131,6 +131,8 @@ mod smoke_test_table_transfer;
 // 0.7 ordinal-row / scalar-index storage validation
 #[path = "smoke/kobj/functions.rs"]
 mod kobj_functions;
+#[path = "smoke/kobj/functions_http.rs"]
+mod kobj_functions_http;
 #[path = "smoke/kobj/helpers.rs"]
 pub(crate) mod kobj_helpers;
 #[path = "smoke/kobj/indexes.rs"]

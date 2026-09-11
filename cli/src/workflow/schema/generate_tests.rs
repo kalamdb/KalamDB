@@ -51,11 +51,11 @@ fn all_targets_embed_the_same_contract_hash() {
         },
     )
     .unwrap();
-    let ts = generate_client_source(&snapshot, &hash, &names);
-    let schema = generate_schema_source(&snapshot, &hash, &names);
-    let contracts = generate_contracts_source(&hash, "../../../src/generated/schema");
-    let dart = generate_dart_source(&snapshot, &hash, &names);
-    let rust = generate_rust_source(&snapshot, &hash, &names);
+    let ts = generate_client_source(&snapshot, &hash, &names).unwrap();
+    let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
+    let contracts = generate_contracts_source(&hash, "../../../src/generated/schema").unwrap();
+    let dart = generate_dart_source(&snapshot, &hash, &names).unwrap();
+    let rust = generate_rust_source(&snapshot, &hash, &names).unwrap();
     let marker = format!("contract_hash: {hash}");
     assert!(ts.contains(&marker));
     assert!(schema.contains(&marker));
@@ -75,7 +75,7 @@ fn runtime_dts_nested_typed_call() {
         },
     )
     .unwrap();
-    let dts = generate_runtime_dts(&snapshot, &names, "./schema");
+    let dts = generate_runtime_dts(&snapshot, &names, "./schema").unwrap();
     assert!(dts.contains("createMessage(input: ChatCreateMessageRequest)"), "{dts}");
     assert!(dts.contains("Promise<ChatCreateMessageResult>"), "{dts}");
     assert!(dts.contains("chat:"), "{dts}");
@@ -99,10 +99,10 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
         },
     )
     .unwrap();
-    let ts = generate_client_source(&snapshot, &hash, &names);
-    let schema = generate_schema_source(&snapshot, &hash, &names);
-    let dart = generate_dart_source(&snapshot, &hash, &names);
-    let rust = generate_rust_source(&snapshot, &hash, &names);
+    let ts = generate_client_source(&snapshot, &hash, &names).unwrap();
+    let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
+    let dart = generate_dart_source(&snapshot, &hash, &names).unwrap();
+    let rust = generate_rust_source(&snapshot, &hash, &names).unwrap();
 
     assert!(schema.contains("export type ChatAddress"));
     assert!(schema.contains("address: ChatAddress | null"));
@@ -119,6 +119,13 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     assert!(dart.contains("String? nickname"));
     assert!(dart.contains("typedef ChatUsers = ChatUser;"));
     assert!(dart.contains("ChatAddress.fromJson"));
+    assert!(dart.contains("final class KalamFunctions"));
+    assert!(dart.contains("late final chat = ChatFunctions(_client);"));
+    assert!(dart
+        .contains("Future<ChatCreateMessageResult> createMessage(ChatCreateMessageRequest input)"));
+    assert!(dart.contains("CALL chat.create_message($1, $2)"));
+    assert!(dart.contains("final result = _kalamCallResult(response);"));
+    assert!(dart.contains("ChatUser.fromJson(_asJsonMap(result))"));
 
     assert!(rust.contains("pub struct ChatAddress"));
     assert!(rust.contains("pub address: Option<ChatAddress>"));
@@ -137,8 +144,8 @@ fn unqualified_names_emit_short_idents() {
         },
     )
     .unwrap();
-    let ts = generate_client_source(&snapshot, &hash, &names);
-    let schema = generate_schema_source(&snapshot, &hash, &names);
+    let ts = generate_client_source(&snapshot, &hash, &names).unwrap();
+    let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
     assert!(schema.contains("export type Address"));
     assert!(schema.contains("export type User"));
     assert!(ts.contains("createMessage:"));

@@ -17,7 +17,10 @@ use kalamdb_system::{
 };
 use kalamdb_transactions::CommitSequenceSource;
 
-use crate::error::KalamDbError;
+use crate::{
+    error::KalamDbError,
+    row_codec::{empty_storage_schema, storage_schema_for_table},
+};
 
 /// Combined services struct shared across all table providers.
 ///
@@ -116,6 +119,9 @@ pub struct TableProviderCore {
     /// Cached Arrow schema (prevents panics if table is dropped while provider is in use)
     schema: SchemaRef,
 
+    /// Cached ordinal storage schema for selected-column KOBJ decode.
+    storage_schema: Arc<kalamdb_serialization::StorageSchema>,
+
     /// DataFusion column defaults used by INSERT planning.
     column_defaults: HashMap<String, Expr>,
 
@@ -165,6 +171,9 @@ impl TableProviderCore {
         let table_id =
             TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
 
+        let storage_schema = storage_schema_for_table(table_def.as_ref())
+            .unwrap_or_else(|_| empty_storage_schema());
+
         Self {
             table_def,
             table_id,
@@ -173,6 +182,7 @@ impl TableProviderCore {
             primary_key_column_id,
             is_auto_increment_pk,
             schema,
+            storage_schema,
             column_defaults,
             non_null_columns,
         }
@@ -237,6 +247,11 @@ impl TableProviderCore {
     /// Cached Arrow schema (cloned Arc)
     pub fn schema_ref(&self) -> SchemaRef {
         self.schema.clone()
+    }
+
+    /// Cached ordinal storage schema for selected-column row decode.
+    pub fn storage_schema(&self) -> &Arc<kalamdb_serialization::StorageSchema> {
+        &self.storage_schema
     }
 
     /// Is PK auto-increment? (O(1), precomputed at construction)

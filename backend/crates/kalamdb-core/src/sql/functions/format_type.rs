@@ -36,6 +36,10 @@ impl ScalarUDFImpl for FormatTypeFunction {
                     TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::Int32]),
                     TypeSignature::Exact(vec![ArrowDataType::Int64, ArrowDataType::Int32]),
                     TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::Int64]),
+                    TypeSignature::Exact(vec![ArrowDataType::Int64, ArrowDataType::Null]),
+                    TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::Null]),
+                    TypeSignature::Exact(vec![ArrowDataType::Int64, ArrowDataType::UInt64]),
+                    TypeSignature::Exact(vec![ArrowDataType::Int32, ArrowDataType::UInt64]),
                 ],
                 Volatility::Stable,
             )
@@ -64,6 +68,7 @@ impl ScalarUDFImpl for FormatTypeFunction {
 
 fn type_oid_array(value: &ColumnarValue, row_count: usize) -> DataFusionResult<Vec<i64>> {
     match value {
+        ColumnarValue::Scalar(ScalarValue::Null) => Ok(vec![0; row_count]),
         ColumnarValue::Scalar(ScalarValue::Int64(oid)) => Ok(vec![oid.unwrap_or(0); row_count]),
         ColumnarValue::Scalar(ScalarValue::Int32(oid)) => {
             Ok(vec![oid.unwrap_or(0) as i64; row_count])

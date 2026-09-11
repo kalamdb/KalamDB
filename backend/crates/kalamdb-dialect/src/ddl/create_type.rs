@@ -1,5 +1,7 @@
 //! CREATE TYPE / DROP TYPE parsers for Functions V1 contract types.
 
+use std::collections::HashSet;
+
 use kalamdb_commons::{
     models::{NamespaceId, TypeId},
     KalamDataType,
@@ -248,14 +250,35 @@ pub(crate) fn take_ident(input: &str) -> DdlResult<(String, &str)> {
     Ok((input[..end].to_string(), &input[end..]))
 }
 
+pub(crate) const ENUM_LABEL_MAX_LEN: usize = 63;
+
+pub(crate) fn validate_enum_label(label: &str) -> DdlResult<()> {
+    if label.is_empty() {
+        return Err("ENUM label cannot be empty".to_string());
+    }
+    if label.contains(':') {
+        return Err("ENUM label cannot contain ':'".to_string());
+    }
+    if label.chars().count() > ENUM_LABEL_MAX_LEN {
+        return Err(format!("ENUM label exceeds {ENUM_LABEL_MAX_LEN} characters"));
+    }
+    Ok(())
+}
+
 fn parse_enum_labels(input: &str) -> DdlResult<(Vec<String>, &str)> {
     let (body, leftover) = split_parens(input)?;
     if body.trim().is_empty() {
         return Err("ENUM type requires at least one label".to_string());
     }
     let mut labels = Vec::new();
+    let mut seen = HashSet::new();
     for part in split_top_level(body, ',') {
-        labels.push(parse_sql_string(part.trim())?);
+        let label = parse_sql_string(part.trim())?;
+        validate_enum_label(&label)?;
+        if !seen.insert(label.clone()) {
+            return Err(format!("duplicate ENUM label '{label}'"));
+        }
+        labels.push(label);
     }
     Ok((labels, leftover))
 }
@@ -266,8 +289,13 @@ fn parse_composite_fields(input: &str) -> DdlResult<(Vec<CompositeTypeField>, &s
         return Err("composite type requires at least one field".to_string());
     }
     let mut fields = Vec::new();
+    let mut seen = HashSet::new();
     for part in split_top_level(body, ',') {
-        fields.push(parse_field(part.trim())?);
+        let field = parse_field(part.trim())?;
+        if !seen.insert(field.name.clone()) {
+            return Err(format!("duplicate composite field '{}'", field.name));
+        }
+        fields.push(field);
     }
     Ok((fields, leftover))
 }
@@ -553,6 +581,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(stmt.comment.as_deref(), Some("Singular row alias"));
+    }
+
+    #[test]
+    fn reject_duplicate_enum_labels() {
+        let err = CreateTypeStatement::parse(
+            "CREATE TYPE chat.status AS ENUM ('active', 'active')",
+            &ns(),
+        )
+        .unwrap_err();
+        assert!(err.contains("duplicate ENUM label"), "{err}");
+    }
+
+    #[test]
+    fn reject_empty_enum_label() {
+        let err =
+            CreateTypeStatement::parse("CREATE TYPE chat.status AS ENUM ('')", &ns()).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn allow_case_distinct_enum_labels() {
+        let stmt = CreateTypeStatement::parse(
+            "CREATE TYPE chat.status AS ENUM ('Active', 'active')",
+            &ns(),
+        )
+        .unwrap();
+        match stmt.body {
+            CreateTypeBody::Enum { labels } => {
+                assert_eq!(labels, vec!["Active", "active"]);
+            },
+            _ => panic!("expected enum"),
+        }
+    }
+
+    #[test]
+    fn reject_duplicate_composite_fields() {
+        let err =
+            CreateTypeStatement::parse("CREATE TYPE chat.address AS (city TEXT, city INT)", &ns())
+                .unwrap_err();
+        assert!(err.contains("duplicate composite field"), "{err}");
     }
 
     #[test]

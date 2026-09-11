@@ -3,8 +3,8 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::json_value_to_scalar, json_value_to_scalar_for_column,
-    CallArgument, KalamDataType,
+    conversions::arrow_json_conversion::{json_value_to_scalar, scalar_value_to_js_json},
+    json_value_to_scalar_for_column, CallArgument, KalamDataType,
 };
 use kalamdb_functions::RoutineValue;
 use serde_json::Value as JsonValue;
@@ -15,11 +15,44 @@ pub fn json_to_routine_value(
     value: &JsonValue,
     data_type: Option<&KalamDataType>,
 ) -> Result<RoutineValue, KalamDbError> {
+    if matches!(data_type, Some(KalamDataType::Json)) {
+        return Ok(json_sql_value(value));
+    }
+    if data_type.is_none() {
+        match value {
+            JsonValue::Object(_) | JsonValue::Array(_) => {
+                return Ok(json_sql_value(value));
+            },
+            _ => {},
+        }
+    }
     let scalar = match data_type {
         Some(data_type) => bind_typed_argument(data_type, value)?,
         None => json_value_to_scalar(value),
     };
     Ok(RoutineValue::new(scalar))
+}
+
+fn json_sql_value(value: &JsonValue) -> RoutineValue {
+    if value.is_null() {
+        return RoutineValue::json(ScalarValue::Utf8(None));
+    }
+    RoutineValue::json(ScalarValue::Utf8(Some(value.to_string())))
+}
+
+pub fn routine_value_as_json(arg: &RoutineValue) -> Option<JsonValue> {
+    if arg.json_sql {
+        return match &arg.value {
+            ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
+                serde_json::from_str(text).ok()
+            },
+            ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
+                Some(JsonValue::Null)
+            },
+            _ => None,
+        };
+    }
+    scalar_value_to_js_json(&arg.value).ok().map(|json| json.0)
 }
 
 pub fn bind_call_arguments(
@@ -28,16 +61,18 @@ pub fn bind_call_arguments(
 ) -> Result<Vec<RoutineValue>, KalamDbError> {
     let mut values = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        let scalar = match argument {
-            CallArgument::Null => ScalarValue::Null,
-            CallArgument::Typed { data_type, value } => bind_typed_argument(data_type, value)?,
+        let value = match argument {
+            CallArgument::Null => RoutineValue::new(ScalarValue::Null),
+            CallArgument::Typed { data_type, value } => {
+                json_to_routine_value(value, Some(data_type))?
+            },
             CallArgument::Placeholder(index) => {
-                params.get(index - 1).cloned().ok_or_else(|| {
+                RoutineValue::new(params.get(index - 1).cloned().ok_or_else(|| {
                     KalamDbError::InvalidSql(format!("missing CALL parameter ${index}"))
-                })?
+                })?)
             },
         };
-        values.push(RoutineValue::new(scalar));
+        values.push(value);
     }
     Ok(values)
 }
@@ -99,6 +134,7 @@ fn parse_timestamp_micros(text: &str) -> Result<i64, KalamDbError> {
 }
 
 pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+    let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     match result {
         ExecutionResult::Rows { batches, .. } => rows_to_routine(&batches),
         ExecutionResult::Inserted { rows_affected }
@@ -116,6 +152,7 @@ pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineVal
 }
 
 pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+    let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     let ExecutionResult::Rows { batches, .. } = result else {
         return Err(KalamDbError::InvalidOperation(
             "ctx.db.query requires a row-producing statement".into(),
@@ -257,6 +294,54 @@ mod tests {
         let result = rows_to_routine(&batches).expect("query result conversion");
 
         assert_eq!(result.value, ScalarValue::Int64(Some(42)));
+    }
+
+    #[test]
+    fn typed_json_parameter_keeps_object_for_v8() {
+        use kalamdb_commons::KalamDataType;
+        use serde_json::json;
+
+        use super::{json_to_routine_value, routine_value_as_json};
+
+        let value = json_to_routine_value(
+            &json!({"conversationId": "c1", "text": "hi"}),
+            Some(&KalamDataType::Json),
+        )
+        .expect("typed JSON bind");
+        assert!(value.json_sql);
+        let parsed = routine_value_as_json(&value).expect("json_sql parse");
+        assert_eq!(parsed["conversationId"], "c1");
+        assert_eq!(parsed["text"], "hi");
+    }
+
+    #[test]
+    fn sql_cast_json_call_argument_keeps_object_for_v8() {
+        use kalamdb_commons::{CallArgument, KalamDataType};
+        use serde_json::json;
+
+        use super::{bind_call_arguments, routine_value_as_json};
+
+        let args = bind_call_arguments(
+            &[CallArgument::json(
+                json!({"conversationId": "c1", "text": "hi"}),
+            )],
+            &[],
+        )
+        .expect("CAST JSON CALL bind");
+        assert_eq!(args.len(), 1);
+        assert!(args[0].json_sql, "SQL CAST(... AS JSON) must reach V8 as JSON.parse");
+        let parsed = routine_value_as_json(&args[0]).expect("json_sql parse");
+        assert_eq!(parsed["conversationId"], "c1");
+        assert_eq!(parsed["text"], "hi");
+        let uuid = bind_call_arguments(
+            &[CallArgument::typed(
+                KalamDataType::Uuid,
+                json!("550e8400-e29b-41d4-a716-446655440000"),
+            )],
+            &[],
+        )
+        .expect("typed UUID CALL bind");
+        assert!(!uuid[0].json_sql);
     }
 
     #[test]

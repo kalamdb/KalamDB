@@ -63,6 +63,19 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     let plan_insert_refs: Vec<&str> = plan_inserts.iter().map(String::as_str).collect();
     seed_shared_catalog_rows(server, &format!("{}.plans", ns), &plan_insert_refs).await?;
 
+    create_enum_type(server, &format!("{ns}.plan_tier"), &["free", "pro", "enterprise"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.assign_plan"),
+        "id BIGINT NOT NULL, plan_id BIGINT NOT NULL, action TEXT NOT NULL",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {ns}.activity (id, plan_id, action) VALUES ($1, \
+             $2, $3)', [input.id, input.plan_id, input.action]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.assign_plan")).await?;
+
     let client = server.link_client("root");
 
     // =========================================================
@@ -104,7 +117,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     let user2_client = create_user_and_client(server, &user2_name, &Role::User).await?;
 
     // User 1: Pro plan activities
-    for i in 1..=5 {
+    for i in 1..=4 {
         let resp = user1_client
             .execute_query(
                 &format!(
@@ -118,6 +131,10 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
             .await?;
         assert!(resp.success(), "User1 insert activity {}", i);
     }
+    let resp = user1_client
+        .execute_query(&format!("CALL {ns}.assign_plan(5, 2, 'action_5')"), None, None, None)
+        .await?;
+    assert!(resp.success(), "User1 assign_plan: {:?}", resp.error);
 
     // User 2: Free plan activities
     for i in 101..=105 {
