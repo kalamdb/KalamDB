@@ -49,6 +49,12 @@ impl TopicPublisherService {
         }
 
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+        let fetch_lock = self
+            .group_fetch_locks
+            .entry(cursor_key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _fetch_guard = fetch_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         loop {
             let earliest = self.earliest_available_offset(topic_id, partition_id)?;
@@ -289,6 +295,7 @@ impl TopicPublisherService {
 
     fn trim_consumer_runtime_maps(&self) {
         shrink_dashmap_if_sparse(&self.group_claim_state);
+        shrink_dashmap_if_sparse(&self.group_fetch_locks);
         shrink_dashmap_if_sparse(&self.consumer_groups);
     }
 

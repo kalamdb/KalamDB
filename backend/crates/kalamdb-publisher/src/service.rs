@@ -299,6 +299,9 @@ pub struct TopicPublisherService {
     /// In-memory per-(topic, group, partition) claim state used to avoid
     /// duplicate delivery and to expire stale claims from crashed consumers.
     group_claim_state:     DashMap<GroupPartitionKey, ClaimState>,
+    /// Serializes grouped fetches for a single (topic, group, partition) so
+    /// concurrent consumers cannot observe overlapping claim windows.
+    group_fetch_locks:     DashMap<GroupPartitionKey, Arc<Mutex<()>>>,
     /// Known consumer groups observed from consume/ack activity or restored offsets.
     consumer_groups:       DashMap<ConsumerGroupKey, ()>,
     /// Per-(topic, partition) write locks that serialize offset allocation +
@@ -363,6 +366,7 @@ impl TopicPublisherService {
             primary_key_lookup,
             offset_allocator: OffsetAllocator::new(),
             group_claim_state: DashMap::new(),
+            group_fetch_locks: DashMap::new(),
             consumer_groups: DashMap::new(),
             partition_write_locks: DashMap::new(),
             retained_bytes: DashMap::new(),

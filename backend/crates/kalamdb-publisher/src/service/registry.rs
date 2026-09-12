@@ -44,6 +44,7 @@ impl TopicPublisherService {
         self.route_cache.clear();
         self.offset_allocator.clear();
         self.group_claim_state.clear();
+        self.group_fetch_locks.clear();
         self.consumer_groups.clear();
         self.partition_write_locks.clear();
         self.retained_bytes.clear();
@@ -75,6 +76,7 @@ impl TopicPublisherService {
             .collect();
         for key in claim_keys {
             self.group_claim_state.remove(&key);
+            self.group_fetch_locks.remove(&key);
         }
 
         let consumer_keys: Vec<_> = self
@@ -118,6 +120,7 @@ impl TopicPublisherService {
         }
 
         shrink_dashmap_if_sparse(&self.group_claim_state);
+        shrink_dashmap_if_sparse(&self.group_fetch_locks);
         shrink_dashmap_if_sparse(&self.consumer_groups);
         shrink_dashmap_if_sparse(&self.partition_write_locks);
         shrink_dashmap_if_sparse(&self.retained_bytes);
