@@ -58,7 +58,6 @@ export interface HttpHost {
 
 // Isolate `console.debug|log|info|warn|error` forwards to the process logger
 // with channel=console. Prefer ctx.log for structured procedure logs.
-
 import type { ChatDemoJoinRoomRequest, ChatDemoJoinRoomResult, ChatDemoOnUserMessageRequest, ChatDemoOnUserMessageResult, ChatDemoSendMessageRequest, ChatDemoSendMessageResult } from "../../../src/generated/schema";
 
 export interface FunctionsHost {

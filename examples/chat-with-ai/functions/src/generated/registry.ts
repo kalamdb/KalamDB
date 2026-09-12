@@ -4,7 +4,6 @@
 import { joinRoom as chatDemoJoinRoom } from "../chat_demo/join_room";
 import { onUserMessage as chatDemoOnUserMessage } from "../chat_demo/on_user_message";
 import { sendMessage as chatDemoSendMessage } from "../chat_demo/send_message";
-
 export const procedures = {
   "chat_demo.join_room": chatDemoJoinRoom,
   "chat_demo.on_user_message": chatDemoOnUserMessage,

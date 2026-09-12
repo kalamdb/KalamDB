@@ -55,7 +55,6 @@ export type ChatDemoRooms = {
 export type ChatDemoAiInbox =
   | ({ _table: "chat_demo:direct_messages" } & ChatDemoDirectMessages)
   | ({ _table: "chat_demo:messages" } & ChatDemoMessages);
-
 export type ChatDemoJoinRoomRequest = {
   room_id: string;
 };
@@ -75,6 +74,7 @@ export type ChatDemoSendMessageRequest = {
 };
 
 export type ChatDemoSendMessageResult = ChatDemoAiInbox | null;
+
 
 export const chatDemoAgentEvents = kTable.stream("chat_demo.agent_events", {
   id: bigint("id", { mode: "bigint" }).primaryKey(),

@@ -45,6 +45,7 @@ OUT="$RESULTS/surrealdb-$(date +%Y%m%d-%H%M%S).txt"
   echo "# SurrealDB comparison (HTTP REST /key API, rocksdb)"
   echo "# auth=POST /signin + Bearer JWT (not Basic-per-request)"
   echo "# server_bin=${BIN}"
+  echo "# version=$(cat "$ROOT/bin/.surreal-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   SURREALDB_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_surrealdb
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
