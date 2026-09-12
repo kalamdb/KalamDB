@@ -111,9 +111,6 @@ impl TopicPublisherService {
                 continue;
             };
             state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-            if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)? {
-                state.ack_up_to(last_acked);
-            }
             if !state.has_reservation(reservation_id) {
                 continue;
             }
