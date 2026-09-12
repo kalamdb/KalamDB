@@ -2,7 +2,7 @@
 // - Captures Git commit hash and build timestamp
 // - Falls back to version.toml if git is not available (e.g., Docker builds)
 // - Builds the Admin UI for kalamdb-api release builds (must run before rust-embed)
-// - On Windows MSVC, passes /FORCE:MULTIPLE so V8 + RocksDB can link
+// - On Windows MSVC, kalamdb-server passes /FORCE:MULTIPLE so V8 + RocksDB can link
 
 use std::{
     fs,
@@ -16,7 +16,7 @@ fn main() {
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
     build_isoc23_glibc_shim_if_needed(&repo_root);
-    emit_windows_msvc_duplicate_symbol_link_flags();
+    emit_windows_msvc_duplicate_symbol_link_flags(&package_name);
 
     // Build UI for release builds FIRST (before rust-embed macro runs).
     // Only when the embedded-ui feature is enabled.
@@ -82,7 +82,14 @@ fn main() {
     }
 }
 
-fn emit_windows_msvc_duplicate_symbol_link_flags() {
+fn emit_windows_msvc_duplicate_symbol_link_flags(package_name: &str) {
+    // This file is shared with kalamdb-api (an rlib). rustc-link-arg-bins is only
+    // valid for packages that have a bin target; emitting it from kalamdb-api
+    // fails the Windows release build before link.
+    if package_name != "kalamdb-server" {
+        return;
+    }
+
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if target_os != "windows" || target_env != "msvc" {

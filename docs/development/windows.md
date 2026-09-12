@@ -307,7 +307,8 @@ cargo build
 defines `std::exception_ptr`, and MSVC `link.exe` rejects the duplicates.
 
 **Solution:** The repo already passes `/FORCE:MULTIPLE` for `x86_64-pc-windows-msvc`
-from `.cargo/config.toml` and `backend/build.rs`. Do not clear
+from `.cargo/config.toml` and from `kalamdb-server`'s `backend/build.rs` (not
+from `kalamdb-api`, which has no bin target). Do not clear
 `CARGO_ENCODED_RUSTFLAGS` locally, and keep those flags if you customize
 `~\.cargo\config.toml`. After pulling, rebuild:
 
