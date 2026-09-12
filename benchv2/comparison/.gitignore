@@ -14,3 +14,4 @@ setups/surrealdb/data/
 *.log
 *.tar.gz
 *.zip
+results/*.txt

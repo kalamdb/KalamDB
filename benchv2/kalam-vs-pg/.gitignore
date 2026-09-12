@@ -5,3 +5,4 @@ setups/kalamdb/logs/
 setups/postgres/data/
 setups/postgres/logs/
 *.log
+results/*.txt
