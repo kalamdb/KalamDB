@@ -923,6 +923,59 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
 }
 
 #[test]
+fn test_group_fetch_four_concurrent_consumers_no_overlap() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("four_consumer_claim_topic");
+    let group_id = ConsumerGroupId::new("four_consumer_claim_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..120 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..4 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let batch = service
+                .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 30)
+                .unwrap();
+            let offsets: HashSet<u64> = batch.iter().map(|message| message.offset).collect();
+            tx.send(offsets).unwrap();
+        });
+    }
+    drop(tx);
+
+    let mut combined = HashSet::new();
+    let mut total = 0usize;
+    for _ in 0..4 {
+        let offsets = rx.recv_timeout(StdDuration::from_secs(5)).unwrap();
+        total += offsets.len();
+        for offset in &offsets {
+            assert!(
+                combined.insert(*offset),
+                "concurrent same-group fetches must not overlap on offset {offset}"
+            );
+        }
+    }
+
+    assert_eq!(total, combined.len());
+    assert_eq!(combined.len(), 120);
+}
+
+#[test]
 fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
     let backend = Arc::new(PausingScanBackend::new());
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();

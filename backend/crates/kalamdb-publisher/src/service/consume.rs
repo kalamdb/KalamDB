@@ -51,90 +51,65 @@ impl TopicPublisherService {
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
 
         loop {
-            let (effective_start, effective_limit, has_state) = {
-                if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
-                    state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-                    let (start, window) = state.next_available_window(limit);
-                    (start, window, true)
-                } else {
-                    (
-                        self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?,
-                        limit,
-                        false,
-                    )
-                }
-            };
-
-            if effective_limit == 0 {
-                return Ok(Vec::new());
-            }
-
             let earliest = self.earliest_available_offset(topic_id, partition_id)?;
-            let fetch_start = if effective_start < earliest {
-                if has_state {
-                    let mut state = self
-                        .group_claim_state
-                        .entry(cursor_key.clone())
-                        .or_insert_with(|| ClaimState::new(start_offset));
-                    if state.cursor < earliest {
-                        state.cursor = earliest;
-                        continue;
-                    }
+            let (fetch_start, fetch_limit, pending_index) = {
+                let initial_start =
+                    self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
+                let mut state = self
+                    .group_claim_state
+                    .entry(cursor_key.clone())
+                    .or_insert_with(|| ClaimState::new(initial_start));
+
+                state.expire_stale_claims(Instant::now(), self.visibility_timeout);
+                if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)?
+                {
+                    state.ack_up_to(last_acked);
+                }
+
+                let (current_start, available_limit) = state.next_available_window(limit);
+                if available_limit == 0 {
                     return Ok(Vec::new());
                 }
-                earliest
-            } else {
-                effective_start
+
+                if current_start < earliest {
+                    state.cursor = earliest;
+                    continue;
+                }
+
+                let claimed_at = Instant::now();
+                let pending_index =
+                    state.reserve_window(current_start, available_limit, claimed_at);
+                self.register_consumer_group(topic_id, group_id);
+                (current_start, available_limit, pending_index)
             };
 
             let messages = self
                 .message_store
-                .fetch_messages(topic_id, partition_id, fetch_start, effective_limit)
+                .fetch_messages(topic_id, partition_id, fetch_start, fetch_limit)
                 .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
 
-            let Some(last_message) = messages.last() else {
-                // FROM LATEST (or an explicit offset past the log start) must
-                // remember the tail even when the first poll is empty. Otherwise
-                // the next grouped consume treats the group as new and replays
-                // backlog. Empty polls at the log start stay unpinned.
-                if !has_state && fetch_start > earliest {
-                    self.register_consumer_group(topic_id, group_id);
-                    self.group_claim_state
-                        .entry(cursor_key)
-                        .or_insert_with(|| ClaimState::new(fetch_start));
+            if messages.is_empty() {
+                let pin_tail = fetch_start > earliest;
+                if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+                    state.cancel_reservation(pending_index);
+                    if pin_tail {
+                        state.cursor = fetch_start;
+                    } else if state.pending.is_empty() {
+                        drop(state);
+                        self.group_claim_state.remove(&cursor_key);
+                        self.unregister_consumer_group_if_idle(topic_id, group_id);
+                        self.trim_consumer_runtime_maps();
+                    }
                 }
                 return Ok(messages);
-            };
+            }
 
             let claim_start = messages.first().map(|message| message.offset).unwrap_or(fetch_start);
-            let end_exclusive = last_message.offset + 1;
-            let claimed_at = Instant::now();
-            self.register_consumer_group(topic_id, group_id);
-            let mut state = self
-                .group_claim_state
-                .entry(cursor_key.clone())
-                .or_insert_with(|| ClaimState::new(fetch_start));
+            let end_exclusive = messages.last().map(|message| message.offset + 1).unwrap_or(fetch_start);
 
-            // Durable acks can drop idle claim state while this fetch was scanning.
-            // Re-read only the persisted group offset under the claim lock so we
-            // do not recreate a cursor at a stale fetch_start. The caller's
-            // start_offset is a poll position, not a commit, and must not
-            // suppress visibility-timeout redelivery.
-            state.expire_stale_claims(claimed_at, self.visibility_timeout);
-            if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)? {
-                state.ack_up_to(last_acked);
+            if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+                state.finalize_reservation(pending_index, claim_start, end_exclusive);
             }
-            let (current_start, available_limit) = state.next_available_window(limit);
-            if current_start != fetch_start || available_limit == 0 {
-                continue;
-            }
-
-            state.cursor = end_exclusive;
-            state.pending.push(PendingClaim {
-                start: claim_start,
-                end_exclusive,
-                claimed_at,
-            });
 
             let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
             record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);

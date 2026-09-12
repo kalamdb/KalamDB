@@ -146,6 +146,38 @@ impl ClaimState {
         }
     }
 
+    fn reserve_window(
+        &mut self,
+        fetch_start: u64,
+        available_limit: usize,
+        claimed_at: Instant,
+    ) -> usize {
+        let reserved_end = fetch_start.saturating_add(available_limit as u64);
+        self.pending.push(PendingClaim {
+            start: fetch_start,
+            end_exclusive: reserved_end,
+            claimed_at,
+        });
+        self.pending.len() - 1
+    }
+
+    fn finalize_reservation(
+        &mut self,
+        pending_index: usize,
+        claim_start: u64,
+        end_exclusive: u64,
+    ) {
+        if let Some(claim) = self.pending.get_mut(pending_index) {
+            claim.start = claim_start;
+            claim.end_exclusive = end_exclusive;
+        }
+        self.cursor = end_exclusive;
+    }
+
+    fn cancel_reservation(&mut self, pending_index: usize) {
+        self.pending.remove(pending_index);
+    }
+
     /// Return the next server-owned cursor and maximum contiguous fetch size
     /// before a still-pending claim.
     fn next_available_window(&self, requested_limit: usize) -> (u64, usize) {
