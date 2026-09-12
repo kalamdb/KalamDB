@@ -995,12 +995,14 @@ CREATE PROCEDURE api.plus_one(x INT) RETURNS INT;
 
     #[test]
     fn finds_project_root_typescript_for_functions_typecheck() {
-        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/chat-with-ai");
-        let tsc = find_tsc_bin(&example);
-        assert!(
-            tsc.as_ref().is_some_and(|path| path.ends_with("node_modules/.bin/tsc")),
-            "chat-with-ai ships tsc in the app node_modules, not functions/node_modules: {tsc:?}"
-        );
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        let tsc_path = root.join("node_modules/.bin/tsc");
+        fs::create_dir_all(tsc_path.parent().unwrap()).unwrap();
+        fs::write(&tsc_path, b"#!/bin/sh\n").unwrap();
+
+        let tsc = find_tsc_bin(root);
+        assert_eq!(tsc.as_deref(), Some(tsc_path.as_path()));
     }
 
     #[test]
