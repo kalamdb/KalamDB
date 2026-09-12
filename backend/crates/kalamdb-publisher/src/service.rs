@@ -20,7 +20,7 @@ use std::{
 use dashmap::DashMap;
 use kalamdb_commons::{
     errors::{CommonError, Result},
-    models::{rows::Row, ConsumerGroupId, TableId, TopicId, TopicOp, UserId},
+    models::{ConsumerGroupId, TableId, TopicId, TopicOp, UserId, rows::Row},
     storage::Partition,
 };
 use kalamdb_observability::{record_pubsub_messages_consumed, record_pubsub_messages_published};
@@ -30,8 +30,8 @@ use kalamdb_system::providers::{
     topics::Topic,
 };
 use kalamdb_tables::{
-    TopicMessage, TopicMessageStore, TopicRetentionDeletionStats,
-    TOPIC_RETENTION_INDEX_PARTITION_NAME,
+    TOPIC_RETENTION_INDEX_PARTITION_NAME, TopicMessage, TopicMessageStore,
+    TopicRetentionDeletionStats,
 };
 
 use crate::{
@@ -66,11 +66,13 @@ const MAX_PENDING_CLAIMS: usize = 32;
 #[derive(Debug)]
 struct ClaimState {
     /// Next offset to hand out.
-    cursor:  u64,
+    cursor:              u64,
     /// Pending (unacked) claims with their expiry information.
-    pending: Vec<PendingClaim>,
+    pending:             Vec<PendingClaim>,
     /// Monotonic reservation ids for in-flight grouped fetches.
     next_reservation_id: u64,
+    /// Highest offset this group-partition has acked in-process.
+    last_acked:          Option<u64>,
 }
 
 #[derive(Debug)]
@@ -91,6 +93,7 @@ impl ClaimState {
             cursor,
             pending: Vec::new(),
             next_reservation_id: 1,
+            last_acked: None,
         }
     }
 
@@ -129,6 +132,10 @@ impl ClaimState {
 
     /// Remove pending claims fully covered by the acknowledged offset.
     fn ack_up_to(&mut self, acked_offset_inclusive: u64) {
+        self.last_acked = Some(match self.last_acked {
+            Some(previous) => previous.max(acked_offset_inclusive),
+            None => acked_offset_inclusive,
+        });
         let next = acked_offset_inclusive.saturating_add(1);
         self.pending.retain_mut(|claim| {
             if claim.in_flight {
@@ -148,6 +155,12 @@ impl ClaimState {
             self.cursor = next;
         }
         self.shrink_pending();
+    }
+
+    fn deliver_from(&self, durable_last_acked: Option<u64>) -> u64 {
+        let memory = self.last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+        let durable = durable_last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+        memory.max(durable)
     }
 
     fn shrink_pending(&mut self) {
@@ -177,16 +190,9 @@ impl ClaimState {
         reservation_id
     }
 
-    fn finalize_reservation(
-        &mut self,
-        reservation_id: u64,
-        claim_start: u64,
-        end_exclusive: u64,
-    ) {
-        let Some(claim) = self
-            .pending
-            .iter_mut()
-            .find(|claim| claim.reservation_id == reservation_id)
+    fn finalize_reservation(&mut self, reservation_id: u64, claim_start: u64, end_exclusive: u64) {
+        let Some(claim) =
+            self.pending.iter_mut().find(|claim| claim.reservation_id == reservation_id)
         else {
             return;
         };
@@ -216,16 +222,12 @@ impl ClaimState {
     }
 
     fn overlaps_pending(&self, claim_start: u64, end_exclusive: u64) -> bool {
-        self.pending.iter().any(|claim| {
-            claim.start < end_exclusive && claim_start < claim.end_exclusive
-        })
+        self.pending
+            .iter()
+            .any(|claim| claim.start < end_exclusive && claim_start < claim.end_exclusive)
     }
 
-    fn advance_cursor_for_contiguous_claim(
-        &mut self,
-        claim_start: u64,
-        end_exclusive: u64,
-    ) {
+    fn advance_cursor_for_contiguous_claim(&mut self, claim_start: u64, end_exclusive: u64) {
         // Only advance the hand-out cursor for contiguous claims. Concurrent
         // consumers may reserve windows ahead of the cursor; finalizing those
         // claims must not skip still-unclaimed offsets in the gap.

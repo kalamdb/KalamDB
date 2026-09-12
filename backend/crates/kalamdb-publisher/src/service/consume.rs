@@ -1,6 +1,13 @@
 use super::*;
 
 impl TopicPublisherService {
+    fn group_partition_fetch_lock(&self, cursor_key: &GroupPartitionKey) -> Arc<Mutex<()>> {
+        self.group_fetch_locks
+            .entry(cursor_key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     pub fn fetch_messages(
         &self,
         topic_id: &TopicId,
@@ -49,11 +56,7 @@ impl TopicPublisherService {
         }
 
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
-        let fetch_lock = self
-            .group_fetch_locks
-            .entry(cursor_key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
+        let fetch_lock = self.group_partition_fetch_lock(&cursor_key);
         let _fetch_guard = fetch_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         loop {
@@ -67,7 +70,8 @@ impl TopicPublisherService {
                     .or_insert_with(|| ClaimState::new(initial_start));
 
                 state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-                if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)?
+                if let Some(last_acked) =
+                    self.durable_last_acked(topic_id, group_id, partition_id)?
                 {
                     state.ack_up_to(last_acked);
                 }
@@ -134,13 +138,21 @@ impl TopicPublisherService {
             }
 
             let last_acked = self.durable_last_acked(topic_id, group_id, partition_id)?;
-            let deliver_from = last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
             let reserved_end = fetch_start.saturating_add(fetch_limit as u64);
-            let window_start = fetch_start.max(deliver_from);
-            let messages: Vec<_> = messages
-                .into_iter()
-                .filter(|message| message.offset >= window_start && message.offset < reserved_end)
-                .collect();
+            let messages: Vec<_> = {
+                let state = self.group_claim_state.get(&cursor_key);
+                let deliver_from =
+                    state.as_ref().map(|state| state.deliver_from(last_acked)).unwrap_or_else(
+                        || last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0),
+                    );
+                let window_start = fetch_start.max(deliver_from);
+                messages
+                    .into_iter()
+                    .filter(|message| {
+                        message.offset >= window_start && message.offset < reserved_end
+                    })
+                    .collect()
+            };
             if messages.is_empty() {
                 if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
                     state.cancel_reservation(reservation_id);
@@ -148,18 +160,43 @@ impl TopicPublisherService {
                 continue;
             }
 
-            let claim_start = messages.first().map(|message| message.offset).unwrap_or(fetch_start);
-            let end_exclusive = messages.last().map(|message| message.offset + 1).unwrap_or(fetch_start);
             let claimed_at = Instant::now();
 
             let initial_start =
                 self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
+            let durable_deliver_from =
+                last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
             let mut state = self
                 .group_claim_state
                 .entry(cursor_key.clone())
-                .or_insert_with(|| ClaimState::new(initial_start.max(deliver_from)));
+                .or_insert_with(|| ClaimState::new(initial_start.max(durable_deliver_from)));
 
             state.expire_stale_claims(claimed_at, self.visibility_timeout);
+            let deliver_from = state.deliver_from(last_acked);
+            let messages: Vec<_> = messages
+                .into_iter()
+                .filter(|message| {
+                    message.offset >= deliver_from
+                        && !state.pending.iter().any(|claim| {
+                            claim.reservation_id != reservation_id
+                                && claim.start <= message.offset
+                                && message.offset < claim.end_exclusive
+                        })
+                })
+                .collect();
+            if messages.is_empty() {
+                state.cancel_reservation(reservation_id);
+                continue;
+            }
+
+            let claim_start =
+                messages.iter().map(|message| message.offset).min().unwrap_or(fetch_start);
+            let end_exclusive = messages
+                .iter()
+                .map(|message| message.offset.saturating_add(1))
+                .max()
+                .unwrap_or(fetch_start);
+
             if state.has_reservation(reservation_id) {
                 state.finalize_reservation(reservation_id, claim_start, end_exclusive);
             } else if state.overlaps_pending(claim_start, end_exclusive) {
@@ -236,24 +273,21 @@ impl TopicPublisherService {
         partition_id: u32,
         offset: u64,
     ) -> Result<()> {
+        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+        let fetch_lock = self.group_partition_fetch_lock(&cursor_key);
+        let _fetch_guard = fetch_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
         self.offset_store
             .ack_offset(topic_id, group_id, partition_id, offset)
             .map_err(|e| CommonError::Internal(format!("Failed to ack offset: {}", e)))?;
 
-        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
-        let became_idle = {
-            if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
-                state.ack_up_to(offset);
-                state.pending.is_empty()
-            } else {
-                false
-            }
-        };
-        if became_idle {
-            self.group_claim_state
-                .remove_if(&cursor_key, |_, state| state.pending.is_empty());
-            self.unregister_consumer_group_if_idle(topic_id, group_id);
-            self.trim_consumer_runtime_maps();
+        if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+            state.ack_up_to(offset);
+        } else {
+            let mut state = ClaimState::new(offset.saturating_add(1));
+            state.ack_up_to(offset);
+            self.group_claim_state.insert(cursor_key, state);
+            self.register_consumer_group(topic_id, group_id);
         }
 
         Ok(())

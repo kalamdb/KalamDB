@@ -321,9 +321,8 @@ junit.path = "junit.xml"
 # Show output for failed tests immediately
 failure-output = "immediate-final"
 
-# Temporarily collect every failing test in one CI run. Restore `true` after
-# the inventory run so a dead Fresh server cannot cascade through the suite.
-fail-fast = false
+# Fail fast so a dead Fresh server cannot cascade through the suite.
+fail-fast = true
 
 # Retry flaky tests once
 retries = 1

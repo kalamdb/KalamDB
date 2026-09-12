@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
     sync::{
+        Condvar, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
-        mpsc, Condvar, Mutex as StdMutex,
+        mpsc,
     },
     thread,
     time::Duration as StdDuration,
@@ -10,8 +11,8 @@ use std::{
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    models::{NamespaceId, PayloadMode, TableName},
     StorageKey,
+    models::{NamespaceId, PayloadMode, TableName},
 };
 use kalamdb_store::{
     storage_trait::{KvIterator, Operation, Partition, StorageBackend},
@@ -549,15 +550,21 @@ fn test_publish_message_respects_complex_route_filter_on_insert() {
 
     let routes = service.route_cache.get_matching_routes(&table_id, &TopicOp::Insert);
     let compiled_filter = routes[0].compiled_filter.as_ref().expect("route should compile filter");
-    assert!(compiled_filter
-        .matches(&matching_status_row)
-        .expect("compiled route filter should evaluate"));
-    assert!(compiled_filter
-        .matches(&matching_event_type_row)
-        .expect("compiled route filter should evaluate"));
-    assert!(!compiled_filter
-        .matches(&archived_row)
-        .expect("compiled route filter should evaluate"));
+    assert!(
+        compiled_filter
+            .matches(&matching_status_row)
+            .expect("compiled route filter should evaluate")
+    );
+    assert!(
+        compiled_filter
+            .matches(&matching_event_type_row)
+            .expect("compiled route filter should evaluate")
+    );
+    assert!(
+        !compiled_filter
+            .matches(&archived_row)
+            .expect("compiled route filter should evaluate")
+    );
 
     assert_eq!(
         service
@@ -795,11 +802,13 @@ fn test_byte_retention_can_fully_cleanup_partition() {
             .is_empty(),
         "grouped consume should snap to log start after full retention instead of failing"
     );
-    assert!(service
-        .message_store
-        .retention_entries_for_partition(&topic_id, 0, 10)
-        .unwrap()
-        .is_empty());
+    assert!(
+        service
+            .message_store
+            .retention_entries_for_partition(&topic_id, 0, 10)
+            .unwrap()
+            .is_empty()
+    );
 
     let err = service.fetch_messages(&topic_id, 0, 0, 10).unwrap_err();
     assert!(err.to_string().contains("OffsetOutOfRange"));
@@ -943,9 +952,7 @@ fn test_group_fetch_four_concurrent_consumers_no_overlap() {
         let group_id = group_id.clone();
         let tx = tx.clone();
         thread::spawn(move || {
-            let batch = service
-                .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 30)
-                .unwrap();
+            let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 30).unwrap();
             let offsets: HashSet<u64> = batch.iter().map(|message| message.offset).collect();
             tx.send(offsets).unwrap();
         });
@@ -991,9 +998,7 @@ fn test_concurrent_empty_group_polls_do_not_skip_later_messages() {
         let group_id = group_id.clone();
         let tx = tx.clone();
         thread::spawn(move || {
-            let empty = service
-                .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 100)
-                .unwrap();
+            let empty = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 100).unwrap();
             tx.send(empty.len()).unwrap();
         });
     }
@@ -1009,9 +1014,7 @@ fn test_concurrent_empty_group_polls_do_not_skip_later_messages() {
 
     let mut combined = HashSet::new();
     loop {
-        let batch = service
-            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
-            .unwrap();
+        let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
         if batch.is_empty() {
             break;
         }
@@ -1066,13 +1069,14 @@ fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
     let delayed_batch = delayed_handle.join().unwrap();
     let delayed_last = delayed_batch.last().map(|message| message.offset).unwrap();
     service.ack_offset(&topic_id, &group_id, 0, delayed_last).unwrap();
-    assert!(
-        service
+    {
+        let state = service
             .group_claim_state
             .get(&GroupPartitionKey::new(&topic_id, &group_id, 0))
-            .is_none(),
-        "full ack must drop idle claim state"
-    );
+            .expect("ack must keep the group cursor");
+        assert_eq!(state.cursor, delayed_last + 1);
+        assert!(state.pending.is_empty());
+    }
 
     let next_batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
     let delayed_offsets: HashSet<u64> =
@@ -1186,15 +1190,140 @@ fn test_ack_clears_pending_claims() {
         assert_eq!(state.pending.len(), 1, "Should have one pending claim before ack");
     }
 
-    // Ack clears the pending claim and drops idle claim state so the group does
-    // not pin publisher memory after the consumer has caught up.
     service.ack_offset(&topic_id, &group_id, 0, last_offset).unwrap();
-    assert!(
-        service.group_claim_state.get(&cursor_key).is_none(),
-        "fully acked groups must release claim state"
+    {
+        let state = service.group_claim_state.get(&cursor_key).expect(
+            "fully acked groups must keep the hand-out cursor so a stale client start cannot \
+             replay",
+        );
+        assert!(state.pending.is_empty(), "ack should clear pending claims");
+        assert_eq!(state.cursor, last_offset + 1);
+    }
+}
+
+#[test]
+fn acked_group_keeps_cursor_so_stale_client_start_cannot_replay() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("stale_start_replay_topic");
+    let group_id = ConsumerGroupId::new("stale_start_replay_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..20 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let first = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 1).unwrap();
+    assert_eq!(first.iter().map(|message| message.offset).collect::<Vec<_>>(), vec![0]);
+    service.ack_offset(&topic_id, &group_id, 0, 0).unwrap();
+
+    let state = service.group_claim_state.get(&cursor_key).expect(
+        "ack of a single live offset must not drop claim state; that is the CI overlap=1 window",
     );
-    assert_eq!(service.cache_stats().consumer_partition_count, 0);
-    assert_eq!(service.cache_stats().consumer_group_count, 0);
+    assert_eq!(state.cursor, 1);
+    drop(state);
+
+    let replay = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 5).unwrap();
+    let replay_offsets: HashSet<u64> = replay.iter().map(|message| message.offset).collect();
+    assert!(
+        !replay_offsets.contains(&0),
+        "second consumer must not receive already-acked offset 0, got {replay_offsets:?}"
+    );
+    assert_eq!(
+        replay.iter().map(|message| message.offset).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5]
+    );
+}
+
+#[test]
+fn two_consumers_concurrent_publish_and_delayed_ack_no_overlap() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = Arc::new(TopicPublisherService::new(backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("concurrent_publish_claim_topic");
+    let group_id = ConsumerGroupId::new("concurrent_publish_claim_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..2 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let stop = stop.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut offsets = HashSet::new();
+            loop {
+                let batch =
+                    service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 32).unwrap();
+                if batch.is_empty() {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    thread::yield_now();
+                    continue;
+                }
+                // Mimic CI poll→commit latency so ack cannot race the next fetch.
+                thread::sleep(StdDuration::from_micros(50));
+                let last = batch.last().map(|message| message.offset).unwrap();
+                for message in &batch {
+                    assert!(
+                        offsets.insert(message.offset),
+                        "a single consumer received duplicate offset {}",
+                        message.offset
+                    );
+                }
+                service.ack_offset(&topic_id, &group_id, 0, last).unwrap();
+            }
+            tx.send(offsets).unwrap();
+        });
+    }
+    drop(tx);
+
+    let publisher_count = 8;
+    let messages_per_publisher = 50;
+    let expected = publisher_count * messages_per_publisher;
+    let mut publishers = Vec::with_capacity(publisher_count);
+    for publisher in 0..publisher_count {
+        let service = service.clone();
+        let table_id = table_id.clone();
+        publishers.push(thread::spawn(move || {
+            for idx in 0..messages_per_publisher {
+                let id = (publisher * messages_per_publisher + idx) as i32;
+                let row = create_test_row(id, &format!("event_{id}"));
+                service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+            }
+        }));
+    }
+    for publisher in publishers {
+        publisher.join().unwrap();
+    }
+    stop.store(true, Ordering::Relaxed);
+
+    let first = rx.recv_timeout(StdDuration::from_secs(10)).unwrap();
+    let second = rx.recv_timeout(StdDuration::from_secs(10)).unwrap();
+    let overlap: Vec<u64> = first.intersection(&second).copied().collect();
+    assert!(
+        overlap.is_empty(),
+        "same-group consumers must not overlap; shared offsets={overlap:?} A={} B={}",
+        first.len(),
+        second.len()
+    );
+    assert_eq!(first.len() + second.len(), expected);
 }
 
 #[test]

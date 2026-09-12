@@ -14,8 +14,8 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -1115,13 +1115,17 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
 
     let overlap_count = consumer_a_offsets.intersection(&consumer_b_offsets).count();
     let total_unique = consumer_a_offsets.union(&consumer_b_offsets).count();
+    let overlapping: Vec<(u32, u64)> =
+        consumer_a_offsets.intersection(&consumer_b_offsets).copied().collect();
 
     eprintln!(
-        "[TEST] same-group consumers results: A={}, B={}, overlap={}, total_unique={}",
+        "[TEST] same-group consumers results: A={}, B={}, overlap={}, total_unique={} \
+         overlapping={:?}",
         consumer_a_offsets.len(),
         consumer_b_offsets.len(),
         overlap_count,
-        total_unique
+        total_unique,
+        overlapping
     );
 
     assert_eq!(
