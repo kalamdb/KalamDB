@@ -171,7 +171,12 @@ impl ClaimState {
             claim.start = claim_start;
             claim.end_exclusive = end_exclusive;
         }
-        self.cursor = end_exclusive;
+        // Only advance the hand-out cursor for contiguous claims. Concurrent
+        // consumers may reserve windows ahead of the cursor; finalizing those
+        // claims must not skip still-unclaimed offsets in the gap.
+        if claim_start <= self.cursor {
+            self.cursor = self.cursor.max(end_exclusive);
+        }
     }
 
     fn cancel_reservation(&mut self, pending_index: usize) {
