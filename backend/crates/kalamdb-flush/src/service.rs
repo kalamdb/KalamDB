@@ -367,8 +367,11 @@ impl ManifestService {
 
                 let mut new_entry = old_entry.as_ref().clone();
                 new_entry.mark_pending_write();
-                self.provider
-                    .update_cache_entry_with_old(&rocksdb_key, old_entry.as_ref(), &new_entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &rocksdb_key,
+                    old_entry.as_ref(),
+                    &new_entry,
+                )?;
                 self.insert_memory_entry(rocksdb_key, Arc::new(new_entry));
 
                 // Index automatically updated by IndexedEntityStore
@@ -889,7 +892,11 @@ impl ManifestService {
     ) -> Result<Arc<ManifestCacheEntry>, StorageError> {
         let inserted_new_entry = match self.cached_entry_snapshot(&manifest_id) {
             Ok(Some(old_entry)) => {
-                self.provider.update_cache_entry_with_old(&manifest_id, old_entry.as_ref(), &entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &manifest_id,
+                    old_entry.as_ref(),
+                    &entry,
+                )?;
                 false
             },
             Ok(None) => {
@@ -1024,8 +1031,11 @@ impl ManifestService {
             Ok(Some(old_entry)) => {
                 let mut new_entry = old_entry.as_ref().clone();
                 update(&mut new_entry);
-                self.provider
-                    .update_cache_entry_with_old(&rocksdb_key, old_entry.as_ref(), &new_entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &rocksdb_key,
+                    old_entry.as_ref(),
+                    &new_entry,
+                )?;
                 self.insert_memory_entry(rocksdb_key, Arc::new(new_entry));
             },
             Ok(None) => {

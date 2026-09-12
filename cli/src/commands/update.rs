@@ -1,16 +1,16 @@
 use std::{env, fs, time::Duration};
 
 use kalam_cli::{
+    CLI_BUILD_DATE, CLI_VERSION, CLIError, Result,
     release_download::{
         create_temp_dir, detect_platform, download_bytes, download_text, extract_archive,
         verify_checksum,
     },
-    release_target::{ReleaseTarget, CLI_ARTIFACT_PREFIX},
+    release_target::{CLI_ARTIFACT_PREFIX, ReleaseTarget},
     release_version::ReleaseVersion,
     self_update::replace_installed_binary,
-    update_check,
+    update_check::{self, UpdateChannel, UpdateDecision},
     workflow::dev::server::{install_managed_server_version, managed_server_install_dir},
-    CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
 };
 
 use crate::args::{Cli, UpdateArgs};
@@ -27,6 +27,18 @@ pub async fn handle_update(cli: &Cli, args: &UpdateArgs) -> Result<bool> {
         })?;
 
     let version = resolve_version(&client, args).await?;
+    if should_skip_downgrade(version.as_str(), args) {
+        if args.dry_run {
+            println!("Current version: {}", CLI_VERSION);
+            println!("Target version: {}", version);
+        }
+        println!(
+            "kalam is already at {}, which is newer than {}; skipping downgrade",
+            CLI_VERSION, version
+        );
+        return Ok(true);
+    }
+
     let platform = detect_platform()?;
     let target = ReleaseTarget::new(CLI_ARTIFACT_PREFIX, version, &platform)?;
     let archive_name = target.archive_name();
@@ -202,8 +214,27 @@ async fn resolve_version(client: &reqwest::Client, args: &UpdateArgs) -> Result<
         return ReleaseVersion::parse(version);
     }
 
-    let version = update_check::resolve_release_version(client, args.pre_release).await?;
+    let version = update_check::resolve_release_version(client, update_channel(args)).await?;
     ReleaseVersion::parse(&version)
+}
+
+fn update_channel(args: &UpdateArgs) -> UpdateChannel {
+    if args.pre_release {
+        UpdateChannel::PreRelease
+    } else if args.stable {
+        UpdateChannel::Stable
+    } else {
+        UpdateChannel::Latest
+    }
+}
+
+fn should_skip_downgrade(candidate: &str, args: &UpdateArgs) -> bool {
+    update_check::decide_resolved_update(
+        candidate,
+        CLI_VERSION,
+        update_channel(args),
+        args.version.is_some(),
+    ) == UpdateDecision::SkipWouldDowngrade
 }
 
 #[cfg(test)]
@@ -217,5 +248,36 @@ mod tests {
             update_check::parse_built_line(output),
             Some("2026-06-12 10:00:00 UTC".to_string())
         );
+    }
+
+    fn update_args(pre_release: bool, stable: bool, version: Option<&str>) -> UpdateArgs {
+        UpdateArgs {
+            version: version.map(str::to_string),
+            pre_release,
+            stable,
+            dry_run: false,
+            force: false,
+        }
+    }
+
+    #[test]
+    fn skips_older_pre_release_when_current_is_newer() {
+        assert!(should_skip_downgrade("0.0.1", &update_args(true, false, None)));
+        assert!(should_skip_downgrade("0.0.1", &update_args(false, false, None)));
+    }
+
+    #[test]
+    fn allows_stable_switch_from_installed_pre_release() {
+        let args = update_args(false, true, None);
+        if update_check::version_is_prerelease(CLI_VERSION) {
+            assert!(!should_skip_downgrade("0.0.1", &args));
+        } else {
+            assert!(should_skip_downgrade("0.0.1", &args));
+        }
+    }
+
+    #[test]
+    fn explicit_version_is_never_treated_as_an_implicit_downgrade() {
+        assert!(!should_skip_downgrade("0.0.1", &update_args(false, false, Some("0.0.1"))));
     }
 }

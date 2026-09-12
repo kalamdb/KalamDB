@@ -20,7 +20,7 @@ use std::{
 use dashmap::DashMap;
 use kalamdb_commons::{
     errors::{CommonError, Result},
-    models::{ConsumerGroupId, TableId, TopicId, TopicOp, UserId, rows::Row},
+    models::{rows::Row, ConsumerGroupId, TableId, TopicId, TopicOp, UserId},
     storage::Partition,
 };
 use kalamdb_observability::{record_pubsub_messages_consumed, record_pubsub_messages_published};
@@ -30,8 +30,8 @@ use kalamdb_system::providers::{
     topics::Topic,
 };
 use kalamdb_tables::{
-    TOPIC_RETENTION_INDEX_PARTITION_NAME, TopicMessage, TopicMessageStore,
-    TopicRetentionDeletionStats,
+    TopicMessage, TopicMessageStore, TopicRetentionDeletionStats,
+    TOPIC_RETENTION_INDEX_PARTITION_NAME,
 };
 
 use crate::{

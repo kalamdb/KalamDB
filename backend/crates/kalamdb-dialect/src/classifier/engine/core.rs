@@ -710,6 +710,9 @@ impl SqlStatement {
                         .map(SqlStatementKind::ResetConsumerGroup)
                 })
             },
+            ["RESET", "SEARCH_PATH", ..] => Self::wrap(sql, || {
+                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
+            }),
 
             // Backup and restore operations - require admin
             ["BACKUP", "DATABASE", ..] => {
@@ -780,7 +783,9 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
-            ["SET", "SEARCH_PATH", ..] => Self::wrap(sql, || {
+            ["SET", "SEARCH_PATH", ..]
+            | ["SET", "SESSION", "SEARCH_PATH", ..]
+            | ["SET", "LOCAL", "SEARCH_PATH", ..] => Self::wrap(sql, || {
                 SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
             }),
             ["SET", ..] => {
@@ -892,6 +897,7 @@ impl SqlStatement {
                     | SqlStatementKind::Update(_)
                     | SqlStatementKind::Delete(_)
                     | SqlStatementKind::Call(_)
+                    | SqlStatementKind::SetSearchPath(_)
             )
         {
             return Err(format!(
@@ -1153,6 +1159,15 @@ mod tests {
         let search = SqlStatement::classify_and_parse("SET search_path TO chat", &ns, Role::Dba)
             .expect("SET search_path should classify");
         assert!(matches!(search.kind(), SqlStatementKind::SetSearchPath(_)));
+
+        let session =
+            SqlStatement::classify_and_parse("SET SESSION search_path TO chat", &ns, Role::User)
+                .expect("SET SESSION search_path should classify for any role");
+        assert!(matches!(session.kind(), SqlStatementKind::SetSearchPath(_)));
+
+        let reset = SqlStatement::classify_and_parse("RESET search_path", &ns, Role::Dba)
+            .expect("RESET search_path should classify");
+        assert!(matches!(reset.kind(), SqlStatementKind::SetSearchPath(_)));
 
         let schema = SqlStatement::classify_and_parse("CREATE SCHEMA chat", &ns, Role::Dba)
             .expect("CREATE SCHEMA should classify");

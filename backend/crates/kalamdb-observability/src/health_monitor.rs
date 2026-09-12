@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::runtime_metrics::{current_process_physical_footprint_bytes, SHARED_SYSTEM};
 
@@ -171,200 +174,72 @@ impl HealthMonitor {
 
     /// Log health metrics to debug output
     pub fn log_metrics(metrics: &HealthMetrics) {
-        let open_files_text = Self::format_open_files(metrics);
-        let storage_partitions = metrics
-            .storage_partition_count
-            .map(|count| count.to_string())
-            .unwrap_or_else(|| "n/a".to_string());
-
-        if let (Some(memory_mb), Some(cpu_usage)) = (metrics.memory_mb, metrics.cpu_usage) {
-            log::debug!(
-                "Health metrics: Memory: {} MB | CPU: {:.2}% | Open Files: {} | Storage \
-                 Partitions: {} | Namespaces: {} | Tables: {} | Subscriptions: {} ({} \
-                 connections, {} ws sessions) | Jobs: {} running, {} queued, {} failed (total: {})",
-                memory_mb,
-                cpu_usage,
-                open_files_text,
-                storage_partitions,
-                metrics.namespace_count,
-                metrics.table_count,
-                metrics.subscription_count,
-                metrics.connection_count,
-                metrics.ws_session_count,
-                metrics.jobs_running,
-                metrics.jobs_queued,
-                metrics.jobs_failed,
-                metrics.jobs_total
-            );
-        } else {
-            log::debug!(
-                "Health metrics: Open Files: {} | Storage Partitions: {} | Namespaces: {} | \
-                 Tables: {} | Subscriptions: {} ({} connections, {} ws sessions) | Jobs: {} \
-                 running, {} queued, {} failed (total: {})",
-                open_files_text,
-                storage_partitions,
-                metrics.namespace_count,
-                metrics.table_count,
-                metrics.subscription_count,
-                metrics.connection_count,
-                metrics.ws_session_count,
-                metrics.jobs_running,
-                metrics.jobs_queued,
-                metrics.jobs_failed,
-                metrics.jobs_total
-            );
+        let mut segments = Vec::with_capacity(6);
+        if let Some(memory_mb) = metrics.memory_mb {
+            segments.push(format!("memory {memory_mb} MB"));
         }
+        if let Some(cpu_usage) = metrics.cpu_usage {
+            segments.push(format!("cpu {cpu_usage:.2}%"));
+        }
+        segments.push(format!("files {}", metrics.open_files));
+        segments.push(format!(
+            "connections {}, subscriptions {}, websocket {}",
+            metrics.connection_count, metrics.subscription_count, metrics.ws_session_count
+        ));
+        segments.push(format!(
+            "jobs {} running, {} queued, {} failed",
+            metrics.jobs_running, metrics.jobs_queued, metrics.jobs_failed
+        ));
+        let mut catalog = Vec::with_capacity(3);
+        catalog.push(format!("namespaces {}", metrics.namespace_count));
+        catalog.push(format!("tables {}", metrics.table_count));
+        if let Some(partitions) = metrics.storage_partition_count {
+            catalog.push(format!("partitions {partitions}"));
+        }
+        segments.push(catalog.join(", "));
+        log::debug!("Health metrics: {}", segments.join("; "));
     }
 
     /// Format a concise health log line from system.stats key/value pairs.
     pub fn format_log_from_pairs(metrics: &[(String, String)]) -> String {
-        let metric_map: std::collections::HashMap<&str, &str> =
+        let metric_map: HashMap<&str, &str> =
             metrics.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
 
-        let open_files_text = Self::format_open_files_from_metric_map(&metric_map);
-        let storage_partitions =
-            metric_map.get("storage_partition_count").copied().unwrap_or("n/a");
-        let namespaces = metric_map.get("total_namespaces").copied().unwrap_or("n/a");
-        let tables = metric_map.get("total_tables").copied().unwrap_or("n/a");
-        let subscriptions = metric_map.get("active_subscriptions").copied().unwrap_or("n/a");
-        let subscriptions_peak =
-            metric_map.get("active_subscriptions_peak").copied().unwrap_or("n/a");
-        let connections = metric_map.get("active_connections").copied().unwrap_or("n/a");
-        let connections_peak = metric_map.get("active_connections_peak").copied().unwrap_or("n/a");
-        let connection_limit =
-            metric_map.get("max_connections_configured").copied().unwrap_or("n/a");
-        let ws_sessions = metric_map.get("websocket_sessions").copied().unwrap_or("n/a");
-        let ws_sessions_peak = metric_map.get("websocket_sessions_peak").copied().unwrap_or("n/a");
-        let jobs_running = metric_map.get("jobs_running").copied().unwrap_or("n/a");
-        let jobs_queued = metric_map.get("jobs_queued").copied().unwrap_or("n/a");
-        let jobs_failed = metric_map.get("jobs_failed").copied().unwrap_or("n/a");
-        let jobs_total = metric_map.get("total_jobs").copied().unwrap_or("n/a");
-
-        let mut segments = Vec::new();
-
-        if let Some(memory_mb) = metric_map.get("memory_usage_mb").copied() {
-            let rss_mb = metric_map.get("memory_rss_mb").copied();
-            let rss_gap_mb = metric_map.get("memory_rss_gap_mb").copied();
-
-            let mut memory_segment = format!("Memory: {} MB", memory_mb);
-            if let Some(memory_source) = metric_map.get("memory_usage_source").copied() {
-                memory_segment.push_str(&format!(" ({})", memory_source));
-            }
-            if let Some(rss_mb) = rss_mb {
-                memory_segment.push_str(&format!(", rss {} MB", rss_mb));
-            }
-            if let Some(rss_gap_mb) = rss_gap_mb {
-                memory_segment.push_str(&format!(", gap {} MB", rss_gap_mb));
-            }
-            segments.push(memory_segment);
+        let mut segments = Vec::with_capacity(9);
+        if let Some(memory) = format_memory_segment(&metric_map) {
+            segments.push(memory);
         }
-        if let Some(cpu_usage) = metric_map.get("cpu_usage_percent").copied() {
-            segments.push(format!("CPU: {}%", cpu_usage));
+        if let Some(cpu_usage) = metric(&metric_map, "cpu_usage_percent") {
+            segments.push(format!("cpu {cpu_usage}%"));
+        }
+        if let Some(files) = metric(&metric_map, "open_files_total") {
+            segments.push(format!("files {files}"));
+        }
+        if let Some(sessions) = format_sessions_segment(&metric_map) {
+            segments.push(sessions);
+        }
+        if let Some(queries) = format_queries_segment(&metric_map) {
+            segments.push(queries);
+        }
+        if let Some(functions) = format_functions_segment(&metric_map) {
+            segments.push(functions);
+        }
+        if let Some(instances) = format_instances_segment(&metric_map) {
+            segments.push(instances);
+        }
+        if let Some(jobs) = format_jobs_segment(&metric_map) {
+            segments.push(jobs);
+        }
+        if let Some(catalog) = format_catalog_segment(&metric_map) {
+            segments.push(catalog);
         }
 
-        segments.push(format!("Open Files: {}", open_files_text));
-        segments.push(format!("Storage Partitions: {}", storage_partitions));
-        segments.push(format!("Namespaces: {}", namespaces));
-        segments.push(format!("Tables: {}", tables));
-        segments.push(format!(
-            "Subscriptions: {}/{} peak ({} / {} connections, {} / {} ws sessions, limit {})",
-            subscriptions,
-            subscriptions_peak,
-            connections,
-            connections_peak,
-            ws_sessions,
-            ws_sessions_peak,
-            connection_limit,
-        ));
-        segments.push(format!(
-            "Jobs: {} running, {} queued, {} failed (total: {})",
-            jobs_running, jobs_queued, jobs_failed, jobs_total
-        ));
-
-        let schema_cache_size = metric_map.get("schema_cache_size").copied();
-        let schema_cache_total = metric_map.get("schema_cache_total_entries").copied();
-        let plan_cache_size = metric_map.get("plan_cache_size").copied();
-        let topic_cache_topics = metric_map.get("topic_cache_topic_count").copied();
-        let topic_cache_routes = metric_map.get("topic_cache_total_routes").copied();
-        let interned_strings = metric_map.get("string_interner_unique_strings").copied();
-
-        let mut cache_parts = Vec::new();
-        if let Some(schema_size) = schema_cache_size {
-            if let Some(schema_total) = schema_cache_total {
-                cache_parts.push(format!("Schema {} latest/{} total", schema_size, schema_total));
-            } else {
-                cache_parts.push(format!("Schema {}", schema_size));
-            }
-        }
-        if let Some(plan_size) = plan_cache_size {
-            cache_parts.push(format!("Plan {}", plan_size));
-        }
-        if let Some(topic_topics) = topic_cache_topics {
-            if let Some(topic_routes) = topic_cache_routes {
-                cache_parts.push(format!("Topics {} / {} routes", topic_topics, topic_routes));
-            } else {
-                cache_parts.push(format!("Topics {}", topic_topics));
-            }
-        }
-        if let Some(interned) = interned_strings {
-            cache_parts.push(format!("Strings {}", interned));
-        }
-        if !cache_parts.is_empty() {
-            segments.push(format!("Caches: {}", cache_parts.join(", ")));
-        }
-
-        format!("Health metrics: {}", segments.join(" | "))
+        format!("Health metrics: {}", segments.join("; "))
     }
 
     /// Log health metrics that were sourced from system.stats rows.
     pub fn log_system_stats(metrics: &[(String, String)]) {
         log::debug!("{}", Self::format_log_from_pairs(metrics));
-    }
-
-    fn format_open_files(metrics: &HealthMetrics) -> String {
-        if let Some(breakdown) = metrics.open_file_breakdown {
-            format!(
-                "{} total ({} reg, {} dir, {} kqueue, {} unix, {} ipv4, {} other)",
-                breakdown.total,
-                breakdown.regular,
-                breakdown.directories,
-                breakdown.kqueue,
-                breakdown.unix,
-                breakdown.ipv4,
-                breakdown.other
-            )
-        } else {
-            metrics.open_files.to_string()
-        }
-    }
-
-    fn format_open_files_from_metric_map(
-        metric_map: &std::collections::HashMap<&str, &str>,
-    ) -> String {
-        let total = metric_map.get("open_files_total").copied();
-        let regular = metric_map.get("open_files_regular").copied();
-        let directories = metric_map.get("open_files_directories").copied();
-        let kqueue = metric_map.get("open_files_kqueue").copied();
-        let unix = metric_map.get("open_files_unix").copied();
-        let ipv4 = metric_map.get("open_files_ipv4").copied();
-        let other = metric_map.get("open_files_other").copied();
-
-        match (total, regular, directories, kqueue, unix, ipv4, other) {
-            (
-                Some(total),
-                Some(regular),
-                Some(directories),
-                Some(kqueue),
-                Some(unix),
-                Some(ipv4),
-                Some(other),
-            ) => format!(
-                "{} total ({} reg, {} dir, {} kqueue, {} unix, {} ipv4, {} other)",
-                total, regular, directories, kqueue, unix, ipv4, other
-            ),
-            (Some(total), ..) => total.to_string(),
-            _ => "n/a".to_string(),
-        }
     }
 
     /// Count open file descriptors for the current process (Unix only)
@@ -468,6 +343,129 @@ impl HealthMonitor {
     }
 }
 
+fn metric<'a>(map: &HashMap<&str, &'a str>, key: &str) -> Option<&'a str> {
+    map.get(key).copied()
+}
+
+fn is_nonzero(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+    value.parse::<f64>().map(|number| number > 0.0).unwrap_or(false)
+}
+
+fn current_and_peak(current: Option<&str>, peak: Option<&str>) -> Option<String> {
+    match (current, peak) {
+        (Some(current), Some(peak)) => Some(format!("{current} (peak {peak})")),
+        (Some(current), None) => Some(current.to_string()),
+        (None, Some(peak)) => Some(format!("n/a (peak {peak})")),
+        (None, None) => None,
+    }
+}
+
+fn format_memory_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let used = metric(map, "memory_usage_mb")?;
+    match metric(map, "memory_rss_mb") {
+        Some(rss) if rss != used => Some(format!("memory {used} MB used, rss {rss} MB")),
+        _ => Some(format!("memory {used} MB")),
+    }
+}
+
+fn format_sessions_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let connections =
+        current_and_peak(metric(map, "active_connections"), metric(map, "active_connections_peak"));
+    let subscriptions = current_and_peak(
+        metric(map, "active_subscriptions"),
+        metric(map, "active_subscriptions_peak"),
+    );
+    let websocket =
+        current_and_peak(metric(map, "websocket_sessions"), metric(map, "websocket_sessions_peak"));
+
+    let mut parts = Vec::with_capacity(3);
+    if let Some(connections) = connections {
+        parts.push(format!("connections {connections}"));
+    }
+    if let Some(subscriptions) = subscriptions {
+        parts.push(format!("subscriptions {subscriptions}"));
+    }
+    if let Some(websocket) = websocket {
+        parts.push(format!("websocket {websocket}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
+fn format_queries_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let qps = metric(map, "queries_per_second")?;
+    let avg = metric(map, "avg_query_latency_ms").unwrap_or("n/a");
+    let failed = metric(map, "failed_queries_total").unwrap_or("0");
+    Some(format!("queries {qps}/s, avg {avg} ms, {failed} failed"))
+}
+
+fn format_functions_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let running = metric(map, "function_active_runs")?;
+    let calls = metric(map, "function_invocations_total").unwrap_or("n/a");
+    let errors = metric(map, "function_invocation_errors_total").unwrap_or("n/a");
+    let avg = metric(map, "avg_function_latency_ms").unwrap_or("n/a");
+
+    let mut parts = Vec::with_capacity(7);
+    parts.push(format!("{running} running"));
+    parts.push(format!("{calls} calls"));
+    parts.push(format!("{errors} errors"));
+    if is_nonzero(metric(map, "function_timeouts_total")) {
+        if let Some(timeouts) = metric(map, "function_timeouts_total") {
+            parts.push(format!("{timeouts} timeout"));
+        }
+    }
+    if is_nonzero(metric(map, "function_oom_total")) {
+        if let Some(oom) = metric(map, "function_oom_total") {
+            parts.push(format!("{oom} oom"));
+        }
+    }
+    parts.push(format!("avg {avg} ms"));
+    if is_nonzero(metric(map, "avg_function_queue_wait_ms")) {
+        if let Some(queue) = metric(map, "avg_function_queue_wait_ms") {
+            parts.push(format!("queue {queue} ms"));
+        }
+    }
+    Some(format!("functions {}", parts.join(", ")))
+}
+
+fn format_instances_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let active = metric(map, "function_instances_active")?;
+    let idle = metric(map, "function_instances_idle").unwrap_or("n/a");
+    let reserved = metric(map, "function_memory_reserved_mb").unwrap_or("n/a");
+    Some(format!("instances {active} active, {idle} idle, reserved {reserved} MB"))
+}
+
+fn format_jobs_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let running = metric(map, "jobs_running")?;
+    let queued = metric(map, "jobs_queued").unwrap_or("n/a");
+    let failed = metric(map, "jobs_failed").unwrap_or("n/a");
+    Some(format!("jobs {running} running, {queued} queued, {failed} failed"))
+}
+
+fn format_catalog_segment(map: &HashMap<&str, &str>) -> Option<String> {
+    let mut parts = Vec::with_capacity(3);
+    if let Some(namespaces) = metric(map, "total_namespaces") {
+        parts.push(format!("namespaces {namespaces}"));
+    }
+    if let Some(tables) = metric(map, "total_tables") {
+        parts.push(format!("tables {tables}"));
+    }
+    if let Some(partitions) = metric(map, "storage_partition_count") {
+        parts.push(format!("partitions {partitions}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::HealthMonitor;
@@ -476,14 +474,12 @@ mod tests {
     fn format_log_from_pairs_includes_core_health_segments() {
         let metrics = vec![
             ("memory_usage_mb".to_string(), "109".to_string()),
+            ("memory_rss_mb".to_string(), "109".to_string()),
             ("cpu_usage_percent".to_string(), "0.23".to_string()),
             ("open_files_total".to_string(), "437".to_string()),
             ("open_files_regular".to_string(), "68".to_string()),
             ("open_files_directories".to_string(), "250".to_string()),
             ("open_files_kqueue".to_string(), "80".to_string()),
-            ("open_files_unix".to_string(), "28".to_string()),
-            ("open_files_ipv4".to_string(), "6".to_string()),
-            ("open_files_other".to_string(), "5".to_string()),
             ("storage_partition_count".to_string(), "247".to_string()),
             ("total_namespaces".to_string(), "29".to_string()),
             ("total_tables".to_string(), "30".to_string()),
@@ -494,46 +490,87 @@ mod tests {
             ("max_connections_configured".to_string(), "100000".to_string()),
             ("websocket_sessions".to_string(), "1".to_string()),
             ("websocket_sessions_peak".to_string(), "7".to_string()),
-            ("jobs_running".to_string(), "0".to_string()),
-            ("jobs_queued".to_string(), "0".to_string()),
+            ("queries_per_second".to_string(), "12.40".to_string()),
+            ("avg_query_latency_ms".to_string(), "4.100".to_string()),
+            ("failed_queries_total".to_string(), "2".to_string()),
+            ("jobs_running".to_string(), "1".to_string()),
+            ("jobs_queued".to_string(), "3".to_string()),
             ("jobs_failed".to_string(), "0".to_string()),
             ("total_jobs".to_string(), "100".to_string()),
+            ("function_active_runs".to_string(), "2".to_string()),
+            ("function_invocations_total".to_string(), "1480".to_string()),
+            ("function_invocation_errors_total".to_string(), "3".to_string()),
+            ("function_timeouts_total".to_string(), "1".to_string()),
+            ("function_oom_total".to_string(), "1".to_string()),
+            ("avg_function_latency_ms".to_string(), "12.400".to_string()),
+            ("avg_function_queue_wait_ms".to_string(), "40.200".to_string()),
+            ("function_instances_active".to_string(), "2".to_string()),
+            ("function_instances_idle".to_string(), "4".to_string()),
+            ("function_memory_reserved_mb".to_string(), "48".to_string()),
+            ("function_memory_limit_mb".to_string(), "512".to_string()),
             ("schema_cache_size".to_string(), "30".to_string()),
-            ("schema_cache_total_entries".to_string(), "45".to_string()),
             ("plan_cache_size".to_string(), "7".to_string()),
-            ("topic_cache_topic_count".to_string(), "3".to_string()),
-            ("topic_cache_total_routes".to_string(), "12".to_string()),
             ("string_interner_unique_strings".to_string(), "88".to_string()),
         ];
 
         let line = HealthMonitor::format_log_from_pairs(&metrics);
 
-        assert!(line.contains("Health metrics: Memory: 109 MB | CPU: 0.23%"));
-        assert!(line.contains(
-            "Subscriptions: 24/31 peak (1 / 7 connections, 1 / 7 ws sessions, limit 100000)"
-        ));
-        assert!(line.contains(
-            "Open Files: 437 total (68 reg, 250 dir, 80 kqueue, 28 unix, 6 ipv4, 5 other)"
-        ));
-        assert!(line.contains("Jobs: 0 running, 0 queued, 0 failed (total: 100)"));
-        assert!(line.contains(
-            "Caches: Schema 30 latest/45 total, Plan 7, Topics 3 / 12 routes, Strings 88"
-        ));
+        assert_eq!(
+            line,
+            "Health metrics: memory 109 MB; cpu 0.23%; files 437; connections 1 (peak 7), \
+             subscriptions 24 (peak 31), websocket 1 (peak 7); queries 12.40/s, avg 4.100 ms, 2 \
+             failed; functions 2 running, 1480 calls, 3 errors, 1 timeout, 1 oom, avg 12.400 ms, \
+             queue 40.200 ms; instances 2 active, 4 idle, reserved 48 MB; jobs 1 running, 3 \
+             queued, 0 failed; namespaces 29, tables 30, partitions 247"
+        );
+        assert!(!line.contains("limit"));
+        assert!(!line.contains("physical_footprint"));
+        assert!(!line.contains("kqueue"));
+        assert!(!line.contains("Caches"));
+        assert!(!line.contains("total: 100"));
     }
 
     #[test]
-    fn format_log_from_pairs_includes_memory_source_details_when_present() {
+    fn format_log_from_pairs_makes_used_vs_rss_memory_obvious() {
         let metrics = vec![
-            ("memory_usage_mb".to_string(), "109".to_string()),
+            ("memory_usage_mb".to_string(), "15".to_string()),
             ("memory_usage_source".to_string(), "physical_footprint".to_string()),
-            ("memory_rss_mb".to_string(), "141".to_string()),
-            ("memory_rss_gap_mb".to_string(), "32".to_string()),
+            ("memory_rss_mb".to_string(), "42".to_string()),
+            ("memory_rss_gap_mb".to_string(), "27".to_string()),
         ];
 
         let line = HealthMonitor::format_log_from_pairs(&metrics);
 
-        assert!(line.contains(
-            "Health metrics: Memory: 109 MB (physical_footprint), rss 141 MB, gap 32 MB"
-        ));
+        assert_eq!(line, "Health metrics: memory 15 MB used, rss 42 MB");
+        assert!(!line.contains("physical_footprint"));
+        assert!(!line.contains("gap"));
+    }
+
+    #[test]
+    fn format_log_from_pairs_omits_zero_function_failure_noise() {
+        let metrics = vec![
+            ("function_active_runs".to_string(), "0".to_string()),
+            ("function_invocations_total".to_string(), "12".to_string()),
+            ("function_invocation_errors_total".to_string(), "0".to_string()),
+            ("function_timeouts_total".to_string(), "0".to_string()),
+            ("function_oom_total".to_string(), "0".to_string()),
+            ("avg_function_latency_ms".to_string(), "1.200".to_string()),
+            ("avg_function_queue_wait_ms".to_string(), "0.000".to_string()),
+            ("function_instances_active".to_string(), "0".to_string()),
+            ("function_instances_idle".to_string(), "2".to_string()),
+            ("function_memory_reserved_mb".to_string(), "8".to_string()),
+        ];
+
+        let line = HealthMonitor::format_log_from_pairs(&metrics);
+
+        assert_eq!(
+            line,
+            "Health metrics: functions 0 running, 12 calls, 0 errors, avg 1.200 ms; instances 0 \
+             active, 2 idle, reserved 8 MB"
+        );
+        assert!(!line.contains("timeout"));
+        assert!(!line.contains("oom"));
+        assert!(!line.contains("queue"));
+        assert!(!line.contains("limit"));
     }
 }

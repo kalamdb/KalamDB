@@ -323,9 +323,9 @@ where
     let target_schema = if let Some(proj) = projection {
         if proj.is_empty() {
             return Ok((
-                Arc::new(datafusion::arrow::datatypes::Schema::new(
-                    Vec::<datafusion::arrow::datatypes::Field>::new(),
-                )),
+                Arc::new(datafusion::arrow::datatypes::Schema::new(Vec::<
+                    datafusion::arrow::datatypes::Field,
+                >::new())),
                 Vec::new(),
             ));
         }

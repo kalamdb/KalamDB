@@ -330,12 +330,16 @@ pub enum CliCommand {
 #[derive(Args, Debug, Clone)]
 pub struct UpdateArgs {
     /// Install a specific version instead of the latest release
-    #[arg(long = "version", value_name = "VERSION")]
+    #[arg(long = "version", value_name = "VERSION", conflicts_with_all = ["pre_release", "stable"])]
     pub version: Option<String>,
 
-    /// Use the latest GitHub prerelease
-    #[arg(long = "pre-release")]
+    /// Use the newest published pre-release (rc, beta, alpha)
+    #[arg(long = "pre-release", conflicts_with = "stable")]
     pub pre_release: bool,
+
+    /// Use the latest GitHub stable release. Allows leaving a newer installed pre-release
+    #[arg(long = "stable")]
+    pub stable: bool,
 
     /// Show the resolved update without replacing the binary
     #[arg(long = "dry-run")]
@@ -464,7 +468,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{parse_watch_interval, Cli, CliCommand, DevCommand, TokenCommand, TokenRole};
+    use super::{Cli, CliCommand, DevCommand, TokenCommand, TokenRole, parse_watch_interval};
 
     #[test]
     fn parse_watch_interval_defaults_to_seconds() {

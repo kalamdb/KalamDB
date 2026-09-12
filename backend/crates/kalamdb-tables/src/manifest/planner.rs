@@ -489,9 +489,10 @@ impl ManifestAccessPlanner {
             return Vec::new();
         }
         Self::select_readable_segment_paths(manifest, |segment| {
-            segment.column_stats.get(&pk_column_id).is_none_or(|stats| {
-                pk_values.iter().any(|pk| Self::pk_value_in_range(pk, stats))
-            })
+            segment
+                .column_stats
+                .get(&pk_column_id)
+                .is_none_or(|stats| pk_values.iter().any(|pk| Self::pk_value_in_range(pk, stats)))
         })
     }
 
@@ -797,7 +798,10 @@ mod tests {
 
         assert_eq!(
             selected,
-            vec!["batch-low.parquet".to_string(), "batch-high.parquet".to_string()]
+            vec![
+                "batch-low.parquet".to_string(),
+                "batch-high.parquet".to_string()
+            ]
         );
         assert!(planner.plan_by_pk_values(&manifest, 1, &["15".to_string()]).is_empty());
     }

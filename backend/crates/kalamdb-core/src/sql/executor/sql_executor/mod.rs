@@ -1722,6 +1722,12 @@ impl SqlExecutor {
                     SqlStatementKind::DataFusionMetaCommand => {
                         self.execute_meta_command(sql, exec_ctx).await
                     },
+                    // SET/RESET search_path is a session clause (contract/USE
+                    // canonicalization) with no DDL handler. GUI clients such as
+                    // Tabularis require it to succeed; wire persist applies the schema.
+                    SqlStatementKind::SetSearchPath(_) => Ok(ExecutionResult::Success {
+                        message: "SET".to_string(),
+                    }),
 
                     // Native DataFusion DML path (provider insert/update/delete hooks)
                     SqlStatementKind::Insert(_) => {
@@ -2899,5 +2905,31 @@ mod tests {
         );
         assert_eq!(executor.plan_cache_len(), 1);
         assert!(executor.point_get_fast_path_hits() >= 3);
+    }
+
+    #[tokio::test]
+    async fn postgres_set_search_path_succeeds_without_a_ddl_handler() {
+        let app_context = crate::test_helpers::test_app_context_simple();
+        let executor = SqlExecutor::new(app_context.clone(), Arc::new(HandlerRegistry::new()));
+        let ctx = ExecutionContext::new(
+            UserId::from("tabularis"),
+            Role::User,
+            app_context.base_session_context(),
+        );
+
+        let result = executor
+            .execute("SET search_path TO public", &ctx, Vec::new())
+            .await
+            .expect("Tabularis SET search_path must not require a registered DDL handler");
+        match result {
+            ExecutionResult::Success { message } => assert_eq!(message, "SET"),
+            other => panic!("expected SET success, got {other:?}"),
+        }
+
+        let reset = executor
+            .execute("RESET search_path", &ctx, Vec::new())
+            .await
+            .expect("RESET search_path should succeed");
+        assert!(matches!(reset, ExecutionResult::Success { .. }));
     }
 }

@@ -4,8 +4,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
 
 use crate::{
-    release_download, release_version::ReleaseVersion, CLIError, Result, CLI_BUILD_DATE,
-    CLI_VERSION,
+    CLI_BUILD_DATE, CLI_VERSION, CLIError, Result, release_download,
+    release_version::ReleaseVersion,
 };
 
 pub const GITHUB_REPO: &str = release_download::GITHUB_REPO;
@@ -94,7 +94,7 @@ pub async fn check_for_update(timeout: Duration) -> Result<Option<UpdateAvailabi
         .map_err(|error| {
             CLIError::ConfigurationError(format!("Failed to create HTTP client: {}", error))
         })?;
-    let latest_version = resolve_release_version(&client, false).await?;
+    let latest_version = resolve_release_version(&client, UpdateChannel::Latest).await?;
     if version_is_newer(&latest_version, CLI_VERSION) {
         Ok(Some(UpdateAvailability {
             current_version: CLI_VERSION.to_string(),
@@ -105,12 +105,25 @@ pub async fn check_for_update(timeout: Duration) -> Result<Option<UpdateAvailabi
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateChannel {
+    Latest,
+    PreRelease,
+    Stable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateDecision {
+    Proceed,
+    SkipWouldDowngrade,
+}
+
 pub async fn resolve_release_version(
     client: &reqwest::Client,
-    pre_release: bool,
+    channel: UpdateChannel,
 ) -> Result<String> {
-    if pre_release {
-        let url = format!("https://api.github.com/repos/{}/releases?per_page=20", GITHUB_REPO);
+    if channel == UpdateChannel::PreRelease {
+        let url = format!("https://api.github.com/repos/{}/releases?per_page=100", GITHUB_REPO);
         let releases = client
             .get(url)
             .send()
@@ -127,11 +140,7 @@ pub async fn resolve_release_version(
             .map_err(|error| {
                 CLIError::ConfigurationError(format!("Failed to parse GitHub response: {}", error))
             })?;
-        let release = releases
-            .into_iter()
-            .find(|release| release.prerelease)
-            .ok_or_else(|| CLIError::ConfigurationError("No prerelease was found".to_string()))?;
-        return Ok(ReleaseVersion::parse(&release.tag_name)?.to_string());
+        return select_newest_prerelease(&releases);
     }
 
     let url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
@@ -189,6 +198,50 @@ pub fn version_is_newer(candidate: &str, current: &str) -> bool {
     let candidate = ParsedVersion::parse(candidate);
     let current = ParsedVersion::parse(current);
     candidate > current
+}
+
+pub fn version_is_prerelease(version: &str) -> bool {
+    ParsedVersion::parse(version).prerelease.is_some()
+}
+
+fn select_newest_prerelease(releases: &[GitHubRelease]) -> Result<String> {
+    let mut newest: Option<(ParsedVersion, String)> = None;
+
+    for release in releases {
+        let Ok(version) = ReleaseVersion::parse(&release.tag_name) else {
+            continue;
+        };
+        if !release.prerelease && !version_is_prerelease(version.as_str()) {
+            continue;
+        }
+
+        let parsed = ParsedVersion::parse(version.as_str());
+        if newest.as_ref().is_some_and(|(current, _)| parsed <= *current) {
+            continue;
+        }
+        newest = Some((parsed, version.to_string()));
+    }
+
+    newest
+        .map(|(_, version)| version)
+        .ok_or_else(|| CLIError::ConfigurationError("No prerelease was found".to_string()))
+}
+
+pub fn decide_resolved_update(
+    candidate: &str,
+    current: &str,
+    channel: UpdateChannel,
+    explicit_version: bool,
+) -> UpdateDecision {
+    if explicit_version || !version_is_newer(current, candidate) {
+        return UpdateDecision::Proceed;
+    }
+
+    if channel == UpdateChannel::Stable && version_is_prerelease(current) {
+        return UpdateDecision::Proceed;
+    }
+
+    UpdateDecision::SkipWouldDowngrade
 }
 
 const BUILD_TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S UTC";
@@ -403,5 +456,96 @@ mod tests {
         ));
         assert!(update_needed_for_release(CLI_VERSION, Some("2099-01-01 00:00:00 UTC")));
         assert!(!update_needed_for_release(CLI_VERSION, Some("2000-01-01 00:00:00 UTC")));
+    }
+
+    fn release(tag_name: &str, prerelease: bool) -> GitHubRelease {
+        GitHubRelease {
+            tag_name: tag_name.to_string(),
+            prerelease,
+        }
+    }
+
+    #[test]
+    fn select_newest_prerelease_uses_semver_not_github_flag_or_order() {
+        let releases = vec![
+            release("v0.4.2-rc2", true),
+            release("v0.5.6-rc.0", false),
+            release("v0.6.0-rc.0", false),
+            release("v0.5.0", false),
+        ];
+        assert_eq!(select_newest_prerelease(&releases).unwrap(), "0.6.0-rc.0");
+    }
+
+    #[test]
+    fn select_newest_prerelease_skips_invalid_tags() {
+        let releases = vec![
+            release("0.1.0.1-dev", true),
+            release("v0.4.2-rc2", true),
+            release("not-a-version", true),
+        ];
+        assert_eq!(select_newest_prerelease(&releases).unwrap(), "0.4.2-rc2");
+    }
+
+    #[test]
+    fn version_is_prerelease_detects_identifier() {
+        assert!(version_is_prerelease("0.6.0-rc.0"));
+        assert!(version_is_prerelease("v0.4.2-rc2"));
+        assert!(!version_is_prerelease("0.6.0"));
+    }
+
+    #[test]
+    fn decide_resolved_update_skips_older_prerelease() {
+        assert_eq!(
+            decide_resolved_update("0.4.2-rc2", "0.6.0-rc.0", UpdateChannel::PreRelease, false),
+            UpdateDecision::SkipWouldDowngrade
+        );
+        assert_eq!(
+            decide_resolved_update("0.4.2-rc2", "0.6.0-rc.0", UpdateChannel::Latest, false),
+            UpdateDecision::SkipWouldDowngrade
+        );
+    }
+
+    #[test]
+    fn decide_resolved_update_installs_newer_prerelease() {
+        assert_eq!(
+            decide_resolved_update("0.6.0-rc.1", "0.6.0-rc.0", UpdateChannel::PreRelease, false),
+            UpdateDecision::Proceed
+        );
+    }
+
+    #[test]
+    fn decide_resolved_update_allows_stable_switch_from_prerelease() {
+        assert_eq!(
+            decide_resolved_update("0.5.0", "0.6.0-rc.0", UpdateChannel::Stable, false),
+            UpdateDecision::Proceed
+        );
+    }
+
+    #[test]
+    fn decide_resolved_update_does_not_downgrade_stable_installs() {
+        assert_eq!(
+            decide_resolved_update("0.5.0", "0.6.0", UpdateChannel::Stable, false),
+            UpdateDecision::SkipWouldDowngrade
+        );
+        assert_eq!(
+            decide_resolved_update("0.5.0", "0.6.0", UpdateChannel::Latest, false),
+            UpdateDecision::SkipWouldDowngrade
+        );
+    }
+
+    #[test]
+    fn decide_resolved_update_explicit_version_can_downgrade() {
+        assert_eq!(
+            decide_resolved_update("0.4.2-rc2", "0.6.0-rc.0", UpdateChannel::PreRelease, true),
+            UpdateDecision::Proceed
+        );
+    }
+
+    #[test]
+    fn decide_resolved_update_same_version_proceeds_for_build_date_check() {
+        assert_eq!(
+            decide_resolved_update("0.6.0-rc.0", "0.6.0-rc.0", UpdateChannel::PreRelease, false),
+            UpdateDecision::Proceed
+        );
     }
 }

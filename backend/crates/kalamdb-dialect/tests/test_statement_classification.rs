@@ -192,4 +192,20 @@ fn test_classify_call_procedure() {
         other => panic!("expected CALL, got {other:?}"),
     }
     stmt.check_authorization(Role::User).expect("user may CALL");
+
+    let paged = SqlStatement::classify_and_parse(
+        r#"CALL "kobj_fnlint_mtyd04d2_22tq_0"."health"() LIMIT 501 OFFSET 0"#,
+        &ns,
+        Role::User,
+    )
+    .expect("GUI LIMIT/OFFSET on CALL must classify");
+    match paged.kind() {
+        SqlStatementKind::Call(call) => {
+            assert_eq!(
+                call.call.routine_id.as_str(),
+                "kobj_fnlint_mtyd04d2_22tq_0.health"
+            );
+        },
+        other => panic!("expected CALL, got {other:?}"),
+    }
 }

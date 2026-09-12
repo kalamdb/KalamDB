@@ -958,6 +958,9 @@ jobs:
           CARGO_PROFILE_RELEASE_DIST_CODEGEN_UNITS: "16"
         run: |
           $ErrorActionPreference = "Stop"
+          # Workflow CARGO_ENCODED_RUSTFLAGS="" wipes .cargo/config.toml rustflags.
+          # V8 + RocksDB both define std::exception_ptr (LNK2005/LNK1169) on MSVC.
+          $env:CARGO_ENCODED_RUSTFLAGS = "-C$([char]0x1F)link-arg=/FORCE:MULTIPLE"
           cargo build `
             -p kalamdb-server `
             --no-default-features `

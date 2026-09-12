@@ -178,9 +178,7 @@ impl LiveSqlExecutor for SqlExecutorAdapter {
             .await
             .map_err(|e| LiveError::ExecutionError(e.to_string()))?;
 
-        let result = result
-            .into_arrow_rows()
-            .map_err(|e| LiveError::ExecutionError(e))?;
+        let result = result.into_arrow_rows().map_err(|e| LiveError::ExecutionError(e))?;
 
         match result {
             ExecutionResult::Rows { batches, .. } => Ok(batches),

@@ -171,8 +171,8 @@ impl TableProviderCore {
         let table_id =
             TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
 
-        let storage_schema = storage_schema_for_table(table_def.as_ref())
-            .unwrap_or_else(|_| empty_storage_schema());
+        let storage_schema =
+            storage_schema_for_table(table_def.as_ref()).unwrap_or_else(|_| empty_storage_schema());
 
         Self {
             table_def,

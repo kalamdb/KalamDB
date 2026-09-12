@@ -259,13 +259,9 @@ mod tests {
         assert!(deleted);
         assert_eq!(decoded_fields.values.get("id"), fields.values.get("id"));
 
-        let selected = decode_shared_row_selected(
-            encoded.as_slice(),
-            &schema,
-            SeqId::from_i64(77),
-            &[0],
-        )
-        .unwrap();
+        let selected =
+            decode_shared_row_selected(encoded.as_slice(), &schema, SeqId::from_i64(77), &[0])
+                .unwrap();
         assert_eq!(selected.0, SeqId::from_i64(77));
         assert_eq!(selected.1, 9);
         assert!(selected.2);

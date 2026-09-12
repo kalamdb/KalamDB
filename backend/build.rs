@@ -2,6 +2,7 @@
 // - Captures Git commit hash and build timestamp
 // - Falls back to version.toml if git is not available (e.g., Docker builds)
 // - Builds the Admin UI for kalamdb-api release builds (must run before rust-embed)
+// - On Windows MSVC, passes /FORCE:MULTIPLE so V8 + RocksDB can link
 
 use std::{
     fs,
@@ -15,6 +16,7 @@ fn main() {
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
     build_isoc23_glibc_shim_if_needed(&repo_root);
+    emit_windows_msvc_duplicate_symbol_link_flags();
 
     // Build UI for release builds FIRST (before rust-embed macro runs).
     // Only when the embedded-ui feature is enabled.
@@ -78,6 +80,23 @@ fn main() {
     if version_toml.exists() {
         println!("cargo:rerun-if-changed={}", version_toml.display());
     }
+}
+
+fn emit_windows_msvc_duplicate_symbol_link_flags() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os != "windows" || target_env != "msvc" {
+        return;
+    }
+
+    // rusty_v8 statically includes exception.obj (std::exception_ptr). RocksDB's
+    // MSVC objects define the same symbols, so link.exe fails with LNK2005/LNK1169.
+    // /FORCE:MULTIPLE keeps the first definition. Emit from this build script
+    // because release CI sets CARGO_ENCODED_RUSTFLAGS="" and that overrides
+    // .cargo/config.toml rustflags.
+    println!("cargo:rustc-link-arg=/FORCE:MULTIPLE");
+    println!("cargo:rustc-link-arg-bins=/FORCE:MULTIPLE");
+    println!("cargo:rustc-link-arg-tests=/FORCE:MULTIPLE");
 }
 
 fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {

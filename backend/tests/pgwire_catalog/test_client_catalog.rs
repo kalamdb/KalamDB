@@ -65,9 +65,8 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
         .await
         .map_err(|e| format!("CREATE TABLE fixture failed: {e}"))?;
 
-    let procedure_sql = format!(
-        "CREATE OR REPLACE PROCEDURE {FIXTURE_NAMESPACE}.ping(label TEXT) RETURNS TEXT"
-    );
+    let procedure_sql =
+        format!("CREATE OR REPLACE PROCEDURE {FIXTURE_NAMESPACE}.ping(label TEXT) RETURNS TEXT");
     client
         .batch_execute(&procedure_sql)
         .await
@@ -81,8 +80,8 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
 /// Requires: running server with `postgres_wire.enabled = true`.
 /// Future: replace env-based connect with embedded test server (extend `http_server` harness).
 #[tokio::test]
-#[ignore = "requires postgres wire listener; run via cli/run-tests.sh (full run or \
-            --test-target pgwire_catalog)"]
+#[ignore = "requires postgres wire listener; run via cli/run-tests.sh (full run or --test-target \
+            pgwire_catalog)"]
 async fn wire_client_catalog_returns_data_and_matches_system_views() {
     let client = connect_pgwire().await.expect("connect");
     seed_fixture_metadata(&client).await.expect("seed fixture");

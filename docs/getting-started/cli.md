@@ -149,7 +149,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 ### Top-level commands
 
 - `kalam version` – print CLI version/build metadata
-- `kalam update [--version <version>] [--pre-release]` – replace the current binary with a verified GitHub release artifact
+- `kalam update [--version <version>] [--pre-release | --stable]` – replace the current binary with a verified GitHub release artifact. `--pre-release` installs the newest published rc/beta/alpha and never downgrades. `--stable` switches to GitHub's latest non-draft release and is the only implicit path that may leave a newer installed pre-release.
 - `kalam doctor [--strict]` – inspect binary path, config, credentials, healthcheck, and auth reachability
 - `kalam login --instance <name> --url <url>` – login, save access/refresh tokens, and enter the interactive shell immediately when run from a terminal
 - `kalam logout [--all]` – remove saved credentials locally and best-effort notify the server

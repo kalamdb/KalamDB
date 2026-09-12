@@ -43,8 +43,14 @@ rustflags = [
 ]
 
 # --- Windows (MSVC) ---
+# V8 and RocksDB both emit std::exception_ptr. Without /FORCE:MULTIPLE, link.exe
+# fails with LNK2005/LNK1169. Release CI also emits this from backend/build.rs
+# because CARGO_ENCODED_RUSTFLAGS="" overrides these rustflags.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-Z", "threads=8"]
+rustflags = [
+    "-Z", "threads=8",
+    "-C", "link-arg=/FORCE:MULTIPLE",
+]
 
 [build]
 # Local rebuilds use incremental artifacts. CI sets CARGO_INCREMENTAL=0 so

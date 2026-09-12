@@ -131,6 +131,15 @@ redirected to an arbitrary remote host through the environment.
 
 `kalam update` lives in `cli/src/commands/update.rs`.
 
+Version resolution:
+
+- default: GitHub `/releases/latest`
+- `--pre-release`: newest published version with a prerelease identifier (rc/beta/alpha), including GitHub releases that are not flagged as prereleases
+- `--stable`: same GitHub latest as the default channel, but allowed to replace a newer installed pre-release
+- `--version`: install that exact version
+
+Resolved updates never downgrade unless `--version` is explicit or `--stable` is used while the installed CLI is itself a pre-release. An older `--pre-release` candidate is skipped instead of downloaded.
+
 ```mermaid
 flowchart TD
     A["Parse update args"] --> B["Resolve version"]
@@ -177,7 +186,7 @@ code directly, so it mirrors the same security rules in shell:
 
 1. Re-fetch and re-exec under Bash when invoked through `sh`/`dash` (piping to `sh` consumes
    stdin before re-exec, so `bash -s` cannot be used safely).
-2. Parse `--version`, `--pre-release`, and environment settings.
+2. Parse `--version`, `--pre-release`, `--stable`, and environment settings.
 3. Detect platform.
 4. Require `curl`, archive tooling, and `sha256sum` or `shasum`.
 5. Resolve a requested or latest GitHub version.

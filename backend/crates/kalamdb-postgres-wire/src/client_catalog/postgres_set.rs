@@ -15,14 +15,20 @@ pub enum PostgresSetAction {
 /// (for example `SET datafusion.catalog.default_schema = ...`).
 pub fn classify_postgres_set(sql: &str) -> Option<PostgresSetAction> {
     let trimmed = sql.trim().trim_end_matches(';').trim();
+    if is_reset_search_path(trimmed) {
+        return Some(PostgresSetAction::SetSearchPath {
+            schema: "default".to_string(),
+        });
+    }
     let bytes = trimmed.as_bytes();
     if bytes.len() < 4 || !trimmed[..3].eq_ignore_ascii_case("SET") {
         return None;
     }
-    let rest = trimmed[3..].trim_start();
+    let mut rest = trimmed[3..].trim_start();
     if rest.is_empty() {
         return None;
     }
+    rest = strip_session_or_local_prefix(rest);
 
     // DataFusion config keys — leave alone.
     if rest.to_ascii_lowercase().starts_with("datafusion.") {
@@ -59,6 +65,32 @@ pub fn classify_postgres_set(sql: &str) -> Option<PostgresSetAction> {
             Some(PostgresSetAction::NoOp)
         },
     }
+}
+
+fn strip_session_or_local_prefix(rest: &str) -> &str {
+    if rest.len() >= 7 && rest[..7].eq_ignore_ascii_case("SESSION") {
+        let after = rest[7..].trim_start();
+        if !after.is_empty() {
+            return after;
+        }
+    } else if rest.len() >= 5 && rest[..5].eq_ignore_ascii_case("LOCAL") {
+        let after = rest[5..].trim_start();
+        if !after.is_empty() {
+            return after;
+        }
+    }
+    rest
+}
+
+fn is_reset_search_path(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    if bytes.len() < 17 || !sql[..5].eq_ignore_ascii_case("RESET") {
+        return false;
+    }
+    if !bytes.get(5).is_some_and(|byte| byte.is_ascii_whitespace()) {
+        return false;
+    }
+    sql[5..].trim_start().eq_ignore_ascii_case("SEARCH_PATH")
 }
 
 fn split_set_name_value(rest: &str) -> Option<(&str, &str)> {
@@ -114,7 +146,7 @@ fn unquote_ident(value: &str) -> String {
 /// Map PostgreSQL search_path aliases onto Kalam namespaces.
 pub fn normalize_search_path_schema(name: &str) -> String {
     match name {
-        "$user" | "public" | "PUBLIC" => "default".to_string(),
+        "$user" | "public" | "PUBLIC" | "default" | "DEFAULT" => "default".to_string(),
         other => other.to_string(),
     }
 }
@@ -133,6 +165,18 @@ mod tests {
         );
         assert_eq!(
             classify_postgres_set("SET search_path = public, default"),
+            Some(PostgresSetAction::SetSearchPath {
+                schema: "default".to_string(),
+            })
+        );
+        assert_eq!(
+            classify_postgres_set("SET SESSION search_path TO app"),
+            Some(PostgresSetAction::SetSearchPath {
+                schema: "app".to_string(),
+            })
+        );
+        assert_eq!(
+            classify_postgres_set("RESET search_path"),
             Some(PostgresSetAction::SetSearchPath {
                 schema: "default".to_string(),
             })
