@@ -37,9 +37,10 @@ enable_http2 = true
 [storage]
 # Base data directory for all KalamDB storage
 # Subdirectories are automatically created:
-#   ./data/rocksdb  - RocksDB hot storage (write buffer)
-#   ./data/storage  - Parquet cold storage (flushed segments)
-#   ./data/snapshots - Raft snapshots (consensus state)
+#   ./data/rocksdb    - RocksDB hot storage (write buffer)
+#   ./data/storage    - Parquet cold storage (flushed segments)
+#   ./data/snapshots  - Raft snapshots (consensus state)
+#   ./data/functions  - Function artifacts and per-procedure runtime logs
 data_path = "./data"
 
 # Templates for table storage paths (used by 'local' storage)
@@ -52,8 +53,8 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Tiny shared HyperClockCache (default: 2MB). Set memory_mode = "auto"
-# to size cache and memtables from host RAM, still clamped.
+# Tiny shared HyperClockCache (default: 2MB). Keep memory_mode = "compact"
+# for local/dev. Use "server" or "performance" on dedicated hosts.
 # memory_mode = "compact"
 block_cache_size = 2097152
 
@@ -186,8 +187,8 @@ default_query_limit = 50
 # Log level: error, warn, info, debug, trace (default: info)
 level = "debug"
 
-# Directory for all log files (default: "./logs")
-# Server will create app.log, slow.jsonl, and other log files in this directory
+# Directory for server and slow-query log files (default: "./logs")
+# Procedure invocation/V8 logs live under {data_path}/functions/runtime/<procedure>/logs/
 logs_path = "./logs"
 
 # Also log to console/stdout (default: true)
@@ -559,8 +560,9 @@ max_snapshots_to_keep = 1
 [topics]
 # Visibility timeout for topic consumer claims (seconds).
 # After this period, un-acked messages become available to other consumers.
-# Lower values speed up ack-failure-recovery smoke tests.
-visibility_timeout_secs = 10
+# Keep this above same-group e2e poll+commit latency so live consumers are
+# not treated as crashed while they are still committing batches.
+visibility_timeout_secs = 30
 # # node_id = 2
 # # rpc_addr = "10.0.0.2:2910"
 # # api_addr = "http://10.0.0.2:2900"

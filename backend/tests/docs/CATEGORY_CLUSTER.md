@@ -6,7 +6,7 @@
 3. Assert cluster state and replication behavior.
 
 ## Runnable Test Target
-- `test_cluster` — cluster-only nextest driver
+- `--test e2e` — includes cluster drivers with the rest of server e2e
 
 ## Tests
 - test_cluster_basic_crud_operations — [backend/tests/cluster/test_cluster_basic_operations.rs](backend/tests/cluster/test_cluster_basic_operations.rs#L8)

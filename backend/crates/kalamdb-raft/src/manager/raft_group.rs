@@ -317,6 +317,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let config =
             Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
 
+        // Single-node: OpenRaft 0.9 still awaits LogFlushed, so flush-on-append cannot overlap
+        // the next storage call. Defer log+last_applied into the apply WriteBatch instead.
+        self.storage.set_flush_log_on_append(!is_single_node);
+
         let storage = self.storage.clone();
         let raft = Raft::new(
             node_id.as_u64(),

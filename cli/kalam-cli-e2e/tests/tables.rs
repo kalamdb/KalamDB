@@ -7,8 +7,6 @@
 //   cargo test --test tables test_user_tables
 //   cargo test --test tables test_shared_tables
 
-mod common;
-
 #[path = "tables/test_user_tables.rs"]
 mod test_user_tables;
 

@@ -20,12 +20,14 @@ fi
 
 "$ROOT/scripts/download-binaries.sh"
 
-ORDER="${COMPARISON_ORDER:-kalamdb trailbase pocketbase}"
+ORDER="${COMPARISON_ORDER:-kalamdb kalamdb-functions trailbase pocketbase surrealdb}"
 for system in $ORDER; do
   case "$system" in
     kalamdb) "$ROOT/scripts/run-kalamdb.sh" ;;
+    kalamdb-functions) "$ROOT/scripts/run-kalamdb-functions.sh" ;;
     trailbase) "$ROOT/scripts/run-trailbase.sh" ;;
     pocketbase) "$ROOT/scripts/run-pocketbase.sh" ;;
+    surrealdb) "$ROOT/scripts/run-surrealdb.sh" ;;
     *)
       echo "Unknown comparison system '$system' in COMPARISON_ORDER" >&2
       exit 2

@@ -102,11 +102,14 @@ use std::sync::Arc;
 use datafusion::logical_expr::{Expr, Operator};
 #[cfg(feature = "datafusion")]
 use datafusion::scalar::ScalarValue;
+#[cfg(feature = "datafusion")]
+use kalamdb_commons::models::UserId;
 use kalamdb_commons::{KSerializable, StorageKey};
 
 use crate::{
     async_utils::run_blocking_result,
     entity_store::{EntityIterator, EntityStore},
+    persist::{object_entity_codec, EntityCodec},
     storage_trait::{Operation, Partition, Result, StorageBackend, StorageError},
 };
 
@@ -184,6 +187,19 @@ where
         None
     }
 
+    /// Like [`filter_to_prefix`], with an optional USER-table `user_id` scope.
+    ///
+    /// Default ignores `user_id` and delegates to [`filter_to_prefix`].
+    #[cfg(feature = "datafusion")]
+    fn filter_to_prefix_with_scope(
+        &self,
+        user_id: Option<&UserId>,
+        filter: &Expr,
+    ) -> Option<Vec<u8>> {
+        let _ = user_id;
+        self.filter_to_prefix(filter)
+    }
+
     /// Checks if this index can satisfy the given filter.
     ///
     /// Used by DataFusion's `supports_filters_pushdown()`.
@@ -224,6 +240,7 @@ where
     main_partition:   Partition,
     indexes:          Vec<Arc<dyn IndexDefinition<K, V>>>,
     index_partitions: Vec<Partition>,
+    codec:            Arc<dyn EntityCodec<K, V>>,
     _marker:          std::marker::PhantomData<(K, V)>,
 }
 
@@ -254,6 +271,16 @@ where
         partition: impl Into<String>,
         indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
     ) -> Self {
+        Self::with_codec(backend, partition, indexes, object_entity_codec())
+    }
+
+    /// Create a store with a custom entity codec (used by ordinal row stores).
+    pub fn with_codec(
+        backend: Arc<dyn StorageBackend>,
+        partition: impl Into<String>,
+        indexes: Vec<Arc<dyn IndexDefinition<K, V>>>,
+        codec: Arc<dyn EntityCodec<K, V>>,
+    ) -> Self {
         let partition_str = partition.into();
 
         // Ensure main partition exists
@@ -274,6 +301,7 @@ where
             main_partition,
             indexes,
             index_partitions,
+            codec,
             _marker: std::marker::PhantomData,
         }
     }
@@ -317,13 +345,72 @@ where
             Err(e) => Err(e),
         }
     }
+
+    /// Rebuild one index CF from every row currently in the main partition.
+    ///
+    /// Used by `CREATE INDEX` backfill. Empty tables succeed with zero writes.
+    /// Keys include MVCC `seq`, so this indexes all versions the same way live
+    /// inserts do.
+    pub fn backfill_index(&self, index_idx: usize) -> Result<usize> {
+        let index = self.indexes.get(index_idx).ok_or_else(|| {
+            StorageError::Other(format!("index {} does not exist on this store", index_idx))
+        })?;
+        let index_partition = self.index_partitions.get(index_idx).cloned().ok_or_else(|| {
+            StorageError::Other(format!("index partition {} does not exist", index_idx))
+        })?;
+        let _ = self.backend.create_partition(&index_partition);
+
+        const BATCH_SIZE: usize = 512;
+        let mut operations = Vec::with_capacity(BATCH_SIZE);
+        let mut count = 0usize;
+        for item in self.scan_iterator(None, None)? {
+            let (key, entity) = item?;
+            if let Some(index_key) = index.extract_key(&key, &entity) {
+                operations.push(Operation::Put {
+                    partition: index_partition.clone(),
+                    key:       index_key,
+                    value:     index.index_value(&key, &entity),
+                });
+                count += 1;
+                if operations.len() >= BATCH_SIZE {
+                    self.backend.batch(std::mem::take(&mut operations))?;
+                }
+            }
+        }
+        if !operations.is_empty() {
+            self.backend.batch(operations)?;
+        }
+        Ok(count)
+    }
+
+    /// Drop one index CF without touching the main partition.
+    pub fn drop_index_partition(&self, index_idx: usize) -> Result<()> {
+        let partition = self.index_partitions.get(index_idx).ok_or_else(|| {
+            StorageError::Other(format!("index partition {} does not exist", index_idx))
+        })?;
+        match self.backend.drop_partition(partition) {
+            Ok(()) => Ok(()),
+            Err(e) if e.to_string().to_lowercase().contains("not found") => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Finds the best index for a given filter.
     ///
     /// Returns `Some((index_idx, prefix))` if an index can satisfy the filter.
     #[cfg(feature = "datafusion")]
     fn find_index_for_filter(&self, filter: &Expr) -> Option<(usize, Vec<u8>)> {
+        self.find_index_for_filter_scoped(None, filter)
+    }
+
+    #[cfg(feature = "datafusion")]
+    fn find_index_for_filter_scoped(
+        &self,
+        user_id: Option<&UserId>,
+        filter: &Expr,
+    ) -> Option<(usize, Vec<u8>)> {
         for (idx, index) in self.indexes.iter().enumerate() {
-            if let Some(prefix) = index.filter_to_prefix(filter) {
+            if let Some(prefix) = index.filter_to_prefix_with_scope(user_id, filter) {
                 return Some((idx, prefix));
             }
         }
@@ -335,10 +422,20 @@ where
     /// Strategy: pick the index that yields the longest prefix (more selective).
     #[cfg(feature = "datafusion")]
     pub fn find_best_index_for_filters(&self, filters: &[Expr]) -> Option<(usize, Vec<u8>)> {
+        self.find_best_index_for_filters_scoped(None, filters)
+    }
+
+    /// Like [`find_best_index_for_filters`], scoping USER indexes by `user_id`.
+    #[cfg(feature = "datafusion")]
+    pub fn find_best_index_for_filters_scoped(
+        &self,
+        user_id: Option<&UserId>,
+        filters: &[Expr],
+    ) -> Option<(usize, Vec<u8>)> {
         let mut best: Option<(usize, Vec<u8>)> = None;
 
         for filter in filters {
-            if let Some((idx, prefix)) = self.find_index_for_filter(filter) {
+            if let Some((idx, prefix)) = self.find_index_for_filter_scoped(user_id, filter) {
                 match &best {
                     Some((_best_idx, best_prefix)) if best_prefix.len() >= prefix.len() => {},
                     _ => best = Some((idx, prefix)),
@@ -347,6 +444,18 @@ where
         }
 
         best
+    }
+
+    /// Flatten `AND` trees then pick the longest matching index prefix.
+    #[cfg(feature = "datafusion")]
+    pub fn find_best_index_for_filter_expr(
+        &self,
+        user_id: Option<&UserId>,
+        filter: &Expr,
+    ) -> Option<(usize, Vec<u8>)> {
+        let mut conjuncts = Vec::new();
+        flatten_conjuncts(filter, &mut conjuncts);
+        self.find_best_index_for_filters_scoped(user_id, &conjuncts)
     }
 
     // ========================================================================
@@ -379,7 +488,7 @@ where
 
         // 1. Main entity write
         let partition = self.main_partition.clone();
-        let value = entity.encode()?;
+        let value = self.codec.encode(key, entity)?;
         operations.push(Operation::Put {
             partition,
             key: key.storage_key(),
@@ -449,7 +558,7 @@ where
 
         for (key, entity) in entries {
             // 1. Main entity write
-            let value = entity.encode()?;
+            let value = self.codec.encode(key, entity)?;
             operations.push(Operation::Put {
                 partition: partition.clone(),
                 key: key.storage_key(),
@@ -475,10 +584,9 @@ where
 
     /// Batch insert with pre-encoded entity bytes.
     ///
-    /// Unlike [`insert_batch`] which calls `entity.encode()` per row (creating
-    /// a new FlatBufferBuilder each time), this method accepts pre-encoded
-    /// bytes produced by batch encoders like `batch_encode_user_table_rows()`
-    /// that reuse FlatBufferBuilders across rows.
+    /// Unlike [`insert_batch`] which encodes each entity at the storage boundary,
+    /// this method accepts pre-encoded bytes produced by `ObjectEncoder` /
+    /// `encode_user_row` (or the matching shared/stream helpers).
     ///
     /// The caller is responsible for ensuring that `encoded_values[i]`
     /// corresponds to `entries[i]`. The entries are still needed for index
@@ -486,8 +594,7 @@ where
     ///
     /// ## Performance
     ///
-    /// - Saves N–1 FlatBufferBuilder allocations for N rows
-    /// - Eliminates per-row `.to_vec()` overhead from inner builder
+    /// - Reuses the encoder's buffers across rows
     pub fn insert_batch_preencoded(
         &self,
         entries: &[(K, V)],
@@ -568,7 +675,7 @@ where
         // 1. Delete stale index entries (if entity existed and index key changed)
         // 2. Write new entity
         let partition = self.main_partition.clone();
-        let value = new_entity.encode()?;
+        let value = self.codec.encode(key, new_entity)?;
         operations.push(Operation::Put {
             partition,
             key: key.storage_key(),
@@ -809,7 +916,44 @@ where
             let primary_key = K::from_storage_key(&primary_key_bytes)
                 .map_err(StorageError::SerializationError)?;
 
-            if let Some(entity) = self.get(&primary_key)? {
+            if let Some(bytes) =
+                self.backend.get(&self.main_partition, &primary_key.storage_key())?
+            {
+                let entity = self.codec.decode(&primary_key, &bytes)?;
+                return Ok(Some((primary_key, entity)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Like [`Self::get_latest_by_index_prefix`], decoding only `ordinals`.
+    pub fn get_latest_by_index_prefix_selected(
+        &self,
+        index_idx: usize,
+        prefix: &[u8],
+        ordinals: &[usize],
+    ) -> Result<Option<(K, V)>> {
+        let index_partition = self
+            .index_partitions
+            .get(index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", index_idx)))?
+            .clone();
+        let mut iter =
+            match self.backend.scan_reverse(&index_partition, Some(prefix), None, Some(1)) {
+                Ok(iter) => iter,
+                Err(StorageError::PartitionNotFound(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+
+        while let Some((_index_key, primary_key_bytes)) = iter.next() {
+            let primary_key = K::from_storage_key(&primary_key_bytes)
+                .map_err(StorageError::SerializationError)?;
+
+            if let Some(bytes) =
+                self.backend.get(&self.main_partition, &primary_key.storage_key())?
+            {
+                let entity = self.codec.decode_selected(&primary_key, &bytes, ordinals)?;
                 return Ok(Some((primary_key, entity)));
             }
         }
@@ -907,6 +1051,40 @@ where
     fn partition(&self) -> Partition {
         self.main_partition.clone()
     }
+
+    fn serialize(&self, key: &K, entity: &V) -> Result<Vec<u8>> {
+        self.codec.encode(key, entity)
+    }
+
+    fn deserialize(&self, key: &K, bytes: &[u8]) -> Result<V> {
+        self.codec.decode(key, bytes)
+    }
+
+    fn scan_iterator(
+        &self,
+        prefix: Option<&K>,
+        start_key: Option<&K>,
+    ) -> Result<EntityIterator<'_, K, V>> {
+        let partition = self.partition();
+        let prefix_bytes = prefix.map(|k| k.storage_key());
+        let start_key_bytes = start_key.map(|k| k.storage_key());
+
+        let iter = self.backend().scan(
+            &partition,
+            prefix_bytes.as_deref(),
+            start_key_bytes.as_deref(),
+            None,
+        )?;
+
+        let codec = Arc::clone(&self.codec);
+        let mapped = iter.map(move |(key_bytes, value_bytes)| {
+            let key = K::from_storage_key(&key_bytes).map_err(StorageError::SerializationError)?;
+            let value = codec.decode(&key, &value_bytes)?;
+            Ok((key, value))
+        });
+
+        Ok(Box::new(mapped))
+    }
 }
 
 // ============================================================================
@@ -925,6 +1103,7 @@ where
             main_partition:   self.main_partition.clone(),
             indexes:          self.indexes.clone(),
             index_partitions: self.index_partitions.clone(),
+            codec:            Arc::clone(&self.codec),
             _marker:          std::marker::PhantomData,
         }
     }
@@ -949,8 +1128,12 @@ where
 
     /// Async version of `insert_batch()`.
     ///
-    /// Uses `spawn_blocking` to avoid blocking the async runtime.
+    /// Single-row inserts run inline. Offloading one RocksDB put to
+    /// `spawn_blocking` costs more than the put itself.
     pub async fn insert_batch_async(&self, entries: Vec<(K, V)>) -> Result<()> {
+        if entries.len() <= 1 {
+            return self.insert_batch(&entries);
+        }
         let store = self.clone();
         run_blocking_result(move || store.insert_batch(&entries)).await
     }
@@ -981,7 +1164,8 @@ where
     /// Runs inline on the caller. This lookup is a reverse iterator with
     /// `limit=1` plus one entity get (microseconds on a cache hit). Offloading
     /// that to `spawn_blocking` costs more than the RocksDB work on the PK
-    /// point-read path.
+    /// point-read path: a 2026-09-11 A/B on the comparison 1M-read phase went
+    /// 16.88s / p50 245µs (inline) → 17.83s / p50 253µs (`spawn_blocking`).
     #[allow(clippy::unused_async)]
     pub async fn get_latest_by_index_prefix_async(
         &self,
@@ -989,6 +1173,20 @@ where
         prefix: Vec<u8>,
     ) -> Result<Option<(K, V)>> {
         self.get_latest_by_index_prefix(index_idx, &prefix)
+    }
+
+    /// Async version of [`Self::get_latest_by_index_prefix_selected`].
+    ///
+    /// Inline for the same reason as [`Self::get_latest_by_index_prefix_async`]:
+    /// `spawn_blocking` on this one-row lookup is a measured regression.
+    #[allow(clippy::unused_async)]
+    pub async fn get_latest_by_index_prefix_selected_async(
+        &self,
+        index_idx: usize,
+        prefix: Vec<u8>,
+        ordinals: Vec<usize>,
+    ) -> Result<Option<(K, V)>> {
+        self.get_latest_by_index_prefix_selected(index_idx, &prefix, &ordinals)
     }
 
     /// Async version of `get()` from EntityStore.
@@ -1020,6 +1218,17 @@ where
 // ============================================================================
 // Helper: Extract equality filters for DataFusion integration
 // ============================================================================
+
+#[cfg(feature = "datafusion")]
+fn flatten_conjuncts(expr: &Expr, out: &mut Vec<Expr>) {
+    match expr {
+        Expr::BinaryExpr(binary) if binary.op == Operator::And => {
+            flatten_conjuncts(binary.left.as_ref(), out);
+            flatten_conjuncts(binary.right.as_ref(), out);
+        },
+        other => out.push(other.clone()),
+    }
+}
 
 /// Helper function to extract column equality from a DataFusion Expr.
 ///

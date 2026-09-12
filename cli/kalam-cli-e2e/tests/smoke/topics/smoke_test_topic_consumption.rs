@@ -25,12 +25,12 @@ struct HttpTopicConsumeResponse {
 
 #[derive(Debug, Deserialize)]
 struct HttpTopicMessage {
-    topic_id: String,
+    topic_id:     String,
     partition_id: u32,
-    offset: u64,
-    payload: String,
-    user: Option<String>,
-    op: String,
+    offset:       u64,
+    payload:      String,
+    user:         Option<String>,
+    op:           String,
 }
 
 impl HttpTopicMessage {
@@ -66,6 +66,12 @@ async fn create_topic_with_sources(topic: &str, table: &str, operations: &[&str]
     if common::is_cluster_mode() {
         tokio::time::sleep(Duration::from_millis(750)).await;
     }
+}
+
+/// Topics and tables share the schema-first type catalog, so topic names must
+/// not reuse the source table's qualified name.
+fn unique_topic(namespace: &str, prefix: &str) -> String {
+    format!("{}.{}", namespace, common::generate_unique_table(prefix))
 }
 
 fn response_is_success(response: &serde_json::Value) -> bool {
@@ -241,7 +247,8 @@ async fn poll_sql_consume_until(
     }
 
     panic!(
-        "Timed out waiting for SQL CONSUME to return at least {} rows (last_count={}, last_response={})",
+        "Timed out waiting for SQL CONSUME to return at least {} rows (last_count={}, \
+         last_response={})",
         min_rows, last_count, last_response
     );
 }
@@ -459,7 +466,7 @@ async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, s
 async fn test_topic_consume_insert_events() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("events");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "insert_topic");
 
     // Setup
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -584,7 +591,7 @@ async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
 async fn test_topic_consume_update_events() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("updates");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "update_topic");
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!(
@@ -666,7 +673,7 @@ async fn test_topic_consume_update_events() {
 async fn test_topic_consume_delete_events() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("deletes");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "delete_topic");
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT)", namespace, table))
@@ -735,7 +742,7 @@ async fn test_topic_consume_delete_events() {
 async fn test_topic_consume_mixed_operations() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("mixed");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "mixed_topic");
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!(
@@ -804,7 +811,7 @@ async fn test_topic_consume_mixed_operations() {
 async fn test_topic_consume_offset_persistence() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("offsets");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "offset_topic");
     let group_id = format!("test-offset-group-{}", common::random_string(10));
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
@@ -947,7 +954,7 @@ async fn test_topic_consume_offset_persistence() {
 async fn test_topic_consume_from_earliest() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("earliest");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "earliest_topic");
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
@@ -996,7 +1003,7 @@ async fn test_topic_consume_from_earliest() {
 async fn test_topic_consume_from_latest() {
     let namespace = common::generate_unique_namespace("smoke_topic_ns");
     let table = common::generate_unique_table("latest");
-    let topic = format!("{}.{}", namespace, table);
+    let topic = unique_topic(&namespace, "latest_topic");
 
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
@@ -1076,8 +1083,8 @@ impl StartMode {
 
 #[derive(Clone, Copy)]
 struct ConsumeCase {
-    start: StartMode,
-    batch_size: u32,
+    start:       StartMode,
+    batch_size:  u32,
     auto_commit: bool,
 }
 
@@ -1095,43 +1102,43 @@ struct ConsumeCase {
 async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
     let cases = [
         ConsumeCase {
-            start: StartMode::Earliest,
-            batch_size: 1,
+            start:       StartMode::Earliest,
+            batch_size:  1,
             auto_commit: true,
         },
         ConsumeCase {
-            start: StartMode::Earliest,
-            batch_size: 1,
+            start:       StartMode::Earliest,
+            batch_size:  1,
             auto_commit: false,
         },
         ConsumeCase {
-            start: StartMode::Earliest,
-            batch_size: 20,
+            start:       StartMode::Earliest,
+            batch_size:  20,
             auto_commit: true,
         },
         ConsumeCase {
-            start: StartMode::Earliest,
-            batch_size: 20,
+            start:       StartMode::Earliest,
+            batch_size:  20,
             auto_commit: false,
         },
         ConsumeCase {
-            start: StartMode::Latest,
-            batch_size: 1,
+            start:       StartMode::Latest,
+            batch_size:  1,
             auto_commit: true,
         },
         ConsumeCase {
-            start: StartMode::Latest,
-            batch_size: 1,
+            start:       StartMode::Latest,
+            batch_size:  1,
             auto_commit: false,
         },
         ConsumeCase {
-            start: StartMode::Latest,
-            batch_size: 20,
+            start:       StartMode::Latest,
+            batch_size:  20,
             auto_commit: true,
         },
         ConsumeCase {
-            start: StartMode::Latest,
-            batch_size: 20,
+            start:       StartMode::Latest,
+            batch_size:  20,
             auto_commit: false,
         },
     ];
@@ -1139,8 +1146,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
     for test_case in cases {
         let namespace = common::generate_unique_namespace("smoke_topic_opts");
         let table = common::generate_unique_table("events");
-        let topic = format!("{}.{}", namespace, table);
         let table_id = format!("{}.{}", namespace, table);
+        let topic = unique_topic(&namespace, "opts_topic");
         let group_id = format!(
             "opts-{}-b{}-auto{}-{}",
             test_case.start.as_str(),
@@ -1201,7 +1208,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     &first_offsets,
                     0,
                     &format!(
-                        "earliest batch should start at offset 0 and stay ordered (batch_size={}, auto_commit={})",
+                        "earliest batch should start at offset 0 and stay ordered (batch_size={}, \
+                         auto_commit={})",
                         test_case.batch_size, test_case.auto_commit
                     ),
                 );
@@ -1247,13 +1255,15 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                 assert_eq!(
                     resumed_offsets.first().copied(),
                     Some(first_max_offset + 1),
-                    "resumed earliest consumer should continue from the next offset after the committed batch"
+                    "resumed earliest consumer should continue from the next offset after the \
+                     committed batch"
                 );
                 assert_consecutive_offsets(
                     &resumed_offsets,
                     first_max_offset + 1,
                     &format!(
-                        "resumed earliest consumer should stay ordered after commit (batch_size={}, auto_commit={})",
+                        "resumed earliest consumer should stay ordered after commit \
+                         (batch_size={}, auto_commit={})",
                         test_case.batch_size, test_case.auto_commit
                     ),
                 );
@@ -1307,7 +1317,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                     &live_offsets,
                     backlog_count as u64,
                     &format!(
-                        "latest consumer should receive only newly published offsets in order (batch_size={}, auto_commit={})",
+                        "latest consumer should receive only newly published offsets in order \
+                         (batch_size={}, auto_commit={})",
                         test_case.batch_size, test_case.auto_commit
                     ),
                 );
@@ -1357,7 +1368,8 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
                 );
                 assert!(
                     empty_poll_started.elapsed() < Duration::from_secs(3),
-                    "resumed latest consumer should remain caught up without waiting for claim expiry"
+                    "resumed latest consumer should remain caught up without waiting for claim \
+                     expiry"
                 );
                 let _ = resumed_consumer.close().await;
             },
@@ -1461,54 +1473,54 @@ async fn test_topic_http_consume_preserves_impersonated_user_and_payloads() {
     );
 
     struct ExpectedEvent<'a> {
-        offset: u64,
-        user: &'a str,
-        op: &'a str,
-        id: i64,
-        body: &'a str,
-        status: &'a str,
+        offset:  u64,
+        user:    &'a str,
+        op:      &'a str,
+        id:      i64,
+        body:    &'a str,
+        status:  &'a str,
         version: i64,
         deleted: bool,
     }
 
     let expected_events = [
         ExpectedEvent {
-            offset: 0,
-            user: &alice_user_id,
-            op: "Insert",
-            id: 1,
-            body: "alice message v1",
-            status: "draft",
+            offset:  0,
+            user:    &alice_user_id,
+            op:      "Insert",
+            id:      1,
+            body:    "alice message v1",
+            status:  "draft",
             version: 1,
             deleted: false,
         },
         ExpectedEvent {
-            offset: 1,
-            user: &alice_user_id,
-            op: "Update",
-            id: 1,
-            body: "alice message v2",
-            status: "sent",
+            offset:  1,
+            user:    &alice_user_id,
+            op:      "Update",
+            id:      1,
+            body:    "alice message v2",
+            status:  "sent",
             version: 2,
             deleted: false,
         },
         ExpectedEvent {
-            offset: 2,
-            user: &bob_user_id,
-            op: "Insert",
-            id: 2,
-            body: "bob message v1",
-            status: "queued",
+            offset:  2,
+            user:    &bob_user_id,
+            op:      "Insert",
+            id:      2,
+            body:    "bob message v1",
+            status:  "queued",
             version: 1,
             deleted: false,
         },
         ExpectedEvent {
-            offset: 3,
-            user: &bob_user_id,
-            op: "Delete",
-            id: 2,
-            body: "bob message v1",
-            status: "queued",
+            offset:  3,
+            user:    &bob_user_id,
+            op:      "Delete",
+            id:      2,
+            body:    "bob message v1",
+            status:  "queued",
             version: 1,
             deleted: true,
         },

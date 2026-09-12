@@ -340,7 +340,9 @@ export function StudioInspectorPanel({
                     <span>{entry.rowCount} rows</span>
                   </div>
                   {entry.errorMessage && (
-                    <p className="mt-2 text-xs text-destructive">{entry.errorMessage}</p>
+                    <p className="mt-2 min-w-0 whitespace-pre-wrap break-all text-xs text-destructive">
+                      {entry.errorMessage}
+                    </p>
                   )}
                 </div>
               ))}

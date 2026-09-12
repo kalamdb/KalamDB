@@ -1,33 +1,67 @@
 //! `kalam deploy` workflow with migration guardrails.
 
-pub const DEPLOY_NOT_SUPPORTED_MESSAGE: &str =
-    "kalam deploy is not supported yet; use `kalam db migrate` and your own rollout process";
-
 pub mod health;
 pub mod rollout;
 
 use std::path::Path;
 
+use self::{health::check_deploy_health, rollout::run_rollout};
 use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
+        db::migrate::apply_migrations_for_db_command,
         migration::{list_migration_files, read_migration_file},
         project::config::{KalamProjectConfig, SchemaMode},
-        schema::diff::diff_project_schema_files,
+        schema::gen::{generate_schema_artifacts, GenerateOptions},
         WorkflowContext,
     },
 };
 
 pub struct DeployOptions {
-    pub env: Option<String>,
+    pub env:     Option<String>,
+    pub dry_run: bool,
 }
 
-pub async fn run_deploy(_ctx: &WorkflowContext, _options: &DeployOptions) -> Result<()> {
-    Err(CLIError::ConfigurationError(DEPLOY_NOT_SUPPORTED_MESSAGE.into()))
+pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Result<()> {
+    let mut ctx = ctx.clone();
+    if options.env.is_some() {
+        ctx.env_override = options.env.clone();
+    }
+    let output = ctx.output();
+    let env = ctx.resolved_environment()?;
+    output.status(format!("deploying environment '{}'", env.name));
+    validate_deploy_readiness(&ctx.project_root, &ctx.config, &env.name, &output)?;
+
+    if options.dry_run {
+        output.status("dry-run: parse, schema generate, functions build, and plan only");
+        let has_schema = ctx
+            .config
+            .schema_source_path(&ctx.project_root)
+            .is_some_and(|path| path.is_file());
+        if has_schema && !ctx.config.schema.languages.is_empty() {
+            generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
+        }
+        if ctx.project_root.join(&ctx.config.functions.path).join("package.json").is_file() {
+            crate::workflow::functions::build_functions(&ctx).await?;
+        }
+        output.status("dry-run complete (no migrate, upload, catalog write, or activation)");
+        output.detail(format!("would apply migrations and check {}", env.url));
+        return Ok(());
+    }
+
+    if !ctx.config.schema.languages.is_empty() {
+        generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
+    }
+    crate::workflow::functions::build_functions(&ctx).await?;
+    apply_migrations_for_db_command(&ctx, &output).await?;
+    crate::workflow::functions::activate_function_module(&ctx).await?;
+    run_rollout(&ctx.project_root, &ctx.config, &env.name, &output)?;
+    check_deploy_health(&env.url, &output).await?;
+    output.status("deploy complete");
+    Ok(())
 }
 
-#[allow(dead_code)]
 pub fn validate_deploy_readiness(
     project_root: &Path,
     config: &KalamProjectConfig,
@@ -67,13 +101,12 @@ fn enforce_committed_migrations(
     }
 
     let before_path = config.schema_baseline_path(project_root);
-    let diff = diff_project_schema_files(&before_path, &after_path)?;
+    let diff = crate::workflow::schema::diff::diff_project_schema_files(&before_path, &after_path)?;
 
     if diff.up.trim().is_empty() {
         return Ok(());
     }
 
-    // Schema drift without a committed migration file blocks production deploy.
     if !has_unapplied_migration_covering_diff(project_root, config, &diff.up)? {
         output.warn("schema differs from baseline without committed migration history");
         return Err(CLIError::ConfigurationError(
@@ -100,32 +133,50 @@ fn has_unapplied_migration_covering_diff(
         }
     }
 
-    // Any migration file counts as committed work for v1.
     Ok(!files.is_empty())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::TempDir;
 
     use super::*;
     use crate::workflow::test_support::{prod_deploy_test_config, test_workflow_context};
 
     #[tokio::test]
-    async fn deploy_is_not_supported_yet() {
+    async fn deploy_dry_run_is_mutation_free() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
+        fs::write(root.join("schema.sql"), "CREATE TABLE items (id INTEGER PRIMARY KEY);\n")
+            .unwrap();
+        fs::create_dir_all(root.join("functions")).unwrap();
+        fs::write(root.join("functions/package.json"), r#"{"dependencies":{}}"#).unwrap();
         let mut ctx = test_workflow_context(root);
         ctx.config = prod_deploy_test_config();
+        ctx.config.migrations.auto_create = false;
 
-        let err = run_deploy(
+        run_deploy(
             &ctx,
             &DeployOptions {
-                env: Some("prod".into()),
+                env:     Some("prod".into()),
+                dry_run: true,
             },
         )
         .await
-        .unwrap_err();
-        assert!(err.to_string().contains("not supported"));
+        .expect("dry-run deploy should succeed without a server");
+        assert!(
+            root.join("functions/.kalam/build/module.js").is_file()
+                && root.join("functions/.kalam/build/manifest.json").is_file(),
+            "dry-run should write the function artifact and manifest"
+        );
+        assert!(
+            !root.join("kalam/migrations").exists()
+                || fs::read_dir(root.join("kalam/migrations"))
+                    .map(|entries| entries.count() == 0)
+                    .unwrap_or(true),
+            "dry-run must not write migrations"
+        );
     }
 }

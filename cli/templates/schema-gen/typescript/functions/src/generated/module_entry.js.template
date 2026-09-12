@@ -1,0 +1,15 @@
+{{#if registry_import}}
+import { procedures } from {{{registry_import}}};
+{{else}}
+const procedures = {};
+{{/if}}
+function kalamInvoke(name, args) {
+  const ctx = globalThis.__kalamCtx;
+  const input = args.length === 1 ? args[0] : Array.from(args);
+  const fn = procedures[name];
+  if (typeof fn !== "function") {
+    throw new Error("missing export " + name);
+  }
+  return fn(ctx, input);
+}
+globalThis.kalamInvoke = kalamInvoke;

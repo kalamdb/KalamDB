@@ -49,6 +49,8 @@ pub struct KalamProjectConfig {
     pub dev:        DevSection,
     #[serde(default)]
     pub logging:    LoggingSection,
+    #[serde(default)]
+    pub functions:  FunctionsSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,7 +97,11 @@ pub enum SchemaMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaTarget {
-    pub output: String,
+    pub output:            String,
+    /// Drop schema prefixes from generated type names (`User` instead of `ChatUser`).
+    /// Call paths stay nested. Generate fails if short names collide.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unqualified_names: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,6 +136,16 @@ pub struct LoggingSection {
     pub capture_process_output: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionsSection {
+    #[serde(default = "default_functions_path")]
+    pub path:    String,
+    #[serde(default = "default_functions_runtime")]
+    pub runtime: String,
+    #[serde(default = "default_functions_module")]
+    pub module:  String,
+}
+
 fn default_env_name() -> String {
     "dev".to_string()
 }
@@ -156,6 +172,18 @@ fn default_migrations_dir() -> String {
 
 fn default_log_path() -> String {
     "kalam/cli/logs/kalam.log".to_string()
+}
+
+fn default_functions_path() -> String {
+    "functions".to_string()
+}
+
+fn default_functions_runtime() -> String {
+    "typescript".to_string()
+}
+
+fn default_functions_module() -> String {
+    "backend".to_string()
 }
 
 impl KalamProjectConfig {
@@ -438,6 +466,32 @@ output = "src/generated/kalam.ts"
 "#;
         let config = KalamProjectConfig::parse(toml).expect("parse");
         assert_eq!(config.project.package_manager.as_deref(), Some("pnpm"));
+        assert_eq!(config.functions.module, "backend");
+    }
+
+    #[test]
+    fn parse_functions_section_defaults_and_overrides() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+
+[functions]
+path = "procs"
+runtime = "javascript"
+module = "api"
+"#;
+        let config = KalamProjectConfig::parse(toml).expect("parse");
+        assert_eq!(config.functions.path, "procs");
+        assert_eq!(config.functions.runtime, "javascript");
+        assert_eq!(config.functions.module, "api");
     }
 
     #[test]
@@ -650,13 +704,15 @@ output = "src/generated/kalam.ts"
                 targets:   HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
+                        output:            "src/generated/kalam.ts".into(),
+                        unqualified_names: false,
                     },
                 )]),
             },
             migrations: MigrationsSection::default(),
             dev:        DevSection::default(),
             logging:    LoggingSection::default(),
+            functions:  FunctionsSection::default(),
         }
         .save_to_path(&root.join(KALAM_TOML))
         .unwrap();
@@ -694,6 +750,16 @@ impl Default for LoggingSection {
             file:                   true,
             path:                   default_log_path(),
             capture_process_output: true,
+        }
+    }
+}
+
+impl Default for FunctionsSection {
+    fn default() -> Self {
+        Self {
+            path:    default_functions_path(),
+            runtime: default_functions_runtime(),
+            module:  default_functions_module(),
         }
     }
 }

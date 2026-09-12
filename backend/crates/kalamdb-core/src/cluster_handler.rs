@@ -123,6 +123,7 @@ impl CoreClusterHandler {
         as_user: &str,
         user_role: Role,
     ) -> Result<ForwardedResult, String> {
+        let result = result.into_arrow_rows()?;
         match result {
             ExecutionResult::Success { message } => Ok(ForwardedResult {
                 schema:    Vec::new(),
@@ -213,6 +214,9 @@ impl CoreClusterHandler {
                 message:   Some(format!("Job {} killed: {}", job_id, status)),
                 as_user:   as_user.to_string(),
             }),
+            ExecutionResult::ScalarRows { .. } => {
+                unreachable!("converted by into_arrow_rows")
+            },
         }
     }
 

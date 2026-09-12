@@ -1,0 +1,1545 @@
+//! Sandboxed V8 isolate adapter.
+
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Once,
+    },
+    time::Instant,
+};
+
+use kalamdb_commons::RoutineId;
+use tokio_util::sync::CancellationToken;
+use v8::{self, ScriptOrigin};
+
+use super::{
+    async_ops::Operations, buffer_allocator::BufferAllocator, compiled_scripts::CompiledScripts,
+    host_frame::HostFrame, host_frames::HostFrames,
+};
+use crate::{
+    convert::{infer_v8_value, routine_to_v8, v8_to_routine},
+    deadline::DeadlineGuard,
+    error::{FunctionErrorCode, FunctionsError, Result},
+    host::InvocationSource,
+    limits::{RuntimeLimits, ABI_VERSION},
+    revision::ModuleRevision,
+    value::RoutineValue,
+};
+
+static V8_INIT: Once = Once::new();
+
+fn ensure_v8() {
+    V8_INIT.call_once(|| {
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+    });
+}
+
+/// Pinned V8 session for one module revision.
+pub struct V8Session {
+    pub(crate) isolate:  v8::OwnedIsolate,
+    pub(crate) context:  v8::Global<v8::Context>,
+    pub(crate) revision: ModuleRevision,
+    pub(crate) limits:   RuntimeLimits,
+    heap_watch:          *mut HeapWatch,
+    pub(crate) detached: bool,
+    compiled:            CompiledScripts,
+}
+
+struct HeapWatch {
+    handle: v8::IsolateHandle,
+    hit:    AtomicBool,
+}
+
+impl V8Session {
+    pub fn load(revision: ModuleRevision, limits: RuntimeLimits) -> Result<Self> {
+        ensure_v8();
+        if revision.abi_version != ABI_VERSION {
+            return Err(FunctionsError::AbiMismatch {
+                artifact: revision.abi_version,
+                runtime:  ABI_VERSION,
+            });
+        }
+
+        let mut isolate = v8::Isolate::new(
+            v8::CreateParams::default()
+                .array_buffer_allocator(
+                    BufferAllocator::create(limits.max_heap_bytes / 2).make_shared(),
+                )
+                .heap_limits(0, limits.max_heap_bytes / 2)
+                .set_max_old_generation_size_in_bytes(limits.max_heap_bytes / 2),
+        );
+        isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
+        isolate.set_allow_atomics_wait(false);
+        isolate.set_promise_reject_callback(super::rejections::rejected);
+        let heap_watch = Box::into_raw(Box::new(HeapWatch {
+            handle: isolate.thread_safe_handle(),
+            hit:    AtomicBool::new(false),
+        }));
+        isolate.add_near_heap_limit_callback(near_heap_limit, heap_watch.cast());
+
+        isolate.set_slot(ActiveHost { host: None });
+
+        let deadline = DeadlineGuard::new(
+            isolate.thread_safe_handle(),
+            Instant::now() + limits.timeout,
+            CancellationToken::new(),
+        );
+        let context_result = (|| {
+            v8::scope!(let handle_scope, &mut isolate);
+            let context = v8::Context::new(handle_scope, Default::default());
+            let mut scope = v8::ContextScope::new(handle_scope, context);
+            let sandbox = compile_and_run_cached(&mut scope, include_str!("sandbox_bootstrap.js"))?;
+            let sandbox = v8::Global::new(&scope, sandbox);
+            install_host_functions(&mut scope)?;
+            let bootstrap = compile_and_run_cached(&mut scope, crate::wrap::host_bootstrap())?;
+            let bootstrap = v8::Global::new(&scope, bootstrap);
+            crate::v8_async::install(&mut scope)?;
+            let module = compile_and_run_cached(&mut scope, &revision.source)?;
+            let module = v8::Global::new(&scope, module);
+            Ok((
+                v8::Global::new(&scope, context),
+                CompiledScripts {
+                    sandbox,
+                    bootstrap,
+                    module,
+                },
+            ))
+        })();
+        let context_result: Result<(v8::Global<v8::Context>, CompiledScripts)> = context_result;
+        let context_result = deadline.check().and(context_result);
+        drop(deadline);
+        let (context, compiled) = match context_result {
+            Ok(context) => context,
+            Err(error) => {
+                isolate.remove_near_heap_limit_callback(near_heap_limit, 0);
+                // SAFETY: registration has been removed and this is its unique allocation.
+                unsafe {
+                    drop(Box::from_raw(heap_watch));
+                }
+                return Err(error);
+            },
+        };
+
+        Ok(Self {
+            isolate,
+            context,
+            revision,
+            limits,
+            heap_watch,
+            detached: false,
+            compiled,
+        })
+    }
+
+    /// Leave the isolate before a worker polls another local invocation.
+    pub(crate) fn detach(&mut self) {
+        if !self.detached {
+            // SAFETY: this session is exclusively owned by its worker and currently entered.
+            unsafe {
+                self.isolate.exit();
+            }
+            self.detached = true;
+        }
+    }
+
+    pub(crate) fn attach(&mut self) {
+        if self.detached {
+            // SAFETY: sessions never move across workers; entry and exit are balanced.
+            unsafe {
+                self.isolate.enter();
+            }
+            self.detached = false;
+        }
+    }
+
+    pub fn invoke(
+        &mut self,
+        procedure_id: &RoutineId,
+        args: &[RoutineValue],
+        cancel: &CancellationToken,
+    ) -> Result<RoutineValue> {
+        self.invoke_with_host(procedure_id, args, cancel, None)
+    }
+
+    pub fn invoke_with_host(
+        &mut self,
+        procedure_id: &RoutineId,
+        args: &[RoutineValue],
+        cancel: &CancellationToken,
+        host: Option<Arc<dyn crate::host::FunctionHost>>,
+    ) -> Result<RoutineValue> {
+        if cancel.is_cancelled() {
+            return Err(FunctionsError::Cancelled);
+        }
+        self.isolate.remove_slot::<Operations>();
+        if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
+            slot.host = host;
+        }
+        let guard = DeadlineGuard::new(
+            self.isolate.thread_safe_handle(),
+            Instant::now() + self.limits.timeout,
+            cancel.clone(),
+        );
+        let invoke_result = (|| {
+            // Every invocation gets fresh globals, including module-level state.
+            self.reset_context()?;
+            self.invoke_inner(procedure_id, args)
+        })();
+        self.isolate.perform_microtask_checkpoint();
+        self.isolate.remove_slot::<Operations>();
+        if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
+            slot.host = None;
+        }
+        self.isolate.remove_slot::<HostFrames>();
+        guard.check()?;
+        if self.heap_limit_hit() {
+            return Err(FunctionsError::MemoryLimit);
+        }
+        invoke_result
+    }
+
+    pub(crate) fn reset_context(&mut self) -> Result<()> {
+        v8::scope!(let scope, &mut self.isolate);
+        let context = v8::Context::new(scope, Default::default());
+        let mut scope = v8::ContextScope::new(scope, context);
+        if let Some(host) = scope.get_slot::<ActiveHost>().and_then(|slot| slot.host.clone()) {
+            HostFrames::bind(&mut scope, host);
+        }
+        run_compiled(&mut scope, &self.compiled.sandbox)?;
+        install_host_functions(&mut scope)?;
+        run_compiled(&mut scope, &self.compiled.bootstrap)?;
+        crate::v8_async::install(&mut scope)?;
+        run_compiled(&mut scope, &self.compiled.module)?;
+        self.context = v8::Global::new(&scope, context);
+        Ok(())
+    }
+
+    pub(crate) fn heap_limit_hit(&self) -> bool {
+        // SAFETY: `heap_watch` is allocated in `load` and freed in `Drop`.
+        !self.heap_watch.is_null() && unsafe { (*self.heap_watch).hit.load(Ordering::Relaxed) }
+    }
+
+    pub(crate) fn used_heap_bytes(&mut self) -> usize {
+        self.attach();
+        let stats = self.isolate.get_heap_statistics();
+        stats.used_heap_size().saturating_add(stats.external_memory())
+    }
+
+    fn invoke_inner(
+        &mut self,
+        procedure_id: &RoutineId,
+        args: &[RoutineValue],
+    ) -> Result<RoutineValue> {
+        v8::scope!(let handle_scope, &mut self.isolate);
+        let context = v8::Local::new(handle_scope, &self.context);
+        let mut scope = v8::ContextScope::new(handle_scope, context);
+        invoke_in_scope(&mut scope, procedure_id, args)
+    }
+}
+
+pub(crate) struct ActiveHost {
+    pub(crate) host: Option<Arc<dyn crate::host::FunctionHost>>,
+}
+
+impl Drop for V8Session {
+    fn drop(&mut self) {
+        self.attach();
+        self.isolate.remove_near_heap_limit_callback(near_heap_limit, 0);
+        if !self.heap_watch.is_null() {
+            // SAFETY: allocated in `load`; unique owner until this drop.
+            unsafe {
+                drop(Box::from_raw(self.heap_watch));
+            }
+            self.heap_watch = std::ptr::null_mut();
+        }
+    }
+}
+
+fn invoke_in_scope(
+    scope: &mut v8::PinScope,
+    procedure_id: &RoutineId,
+    args: &[RoutineValue],
+) -> Result<RoutineValue> {
+    bind_ctx(scope)?;
+    v8::tc_scope!(let try_catch, scope);
+    let global = try_catch.get_current_context().global(try_catch);
+    let name = v8::String::new(try_catch, "kalamInvoke")
+        .ok_or_else(|| FunctionsError::Invalid("kalamInvoke name".to_string()))?;
+    let func_value = global
+        .get(try_catch, name.into())
+        .ok_or_else(|| FunctionsError::Invalid("kalamInvoke is not defined".to_string()))?;
+    let func = v8::Local::<v8::Function>::try_from(func_value)
+        .map_err(|_| FunctionsError::Invalid("kalamInvoke is not a function".to_string()))?;
+
+    let procedure = v8::String::new(try_catch, procedure_id.as_str())
+        .ok_or_else(|| FunctionsError::Invalid("procedure name too large".to_string()))?;
+    let js_args = v8::Array::new(try_catch, args.len() as i32);
+    for (index, arg) in args.iter().enumerate() {
+        let js_value = routine_to_v8(try_catch, arg)?;
+        js_args
+            .set_index(try_catch, index as u32, js_value)
+            .ok_or_else(|| FunctionsError::Invalid("failed to set argument".to_string()))?;
+    }
+
+    let recv = v8::undefined(try_catch).into();
+    let call_args: [v8::Local<v8::Value>; 2] = [procedure.into(), js_args.into()];
+    let Some(mut result) = func.call(try_catch, recv, &call_args) else {
+        return Err(js_exception(try_catch));
+    };
+    if try_catch.has_caught() {
+        return Err(js_exception(try_catch));
+    }
+
+    if result.is_promise() {
+        let promise = v8::Local::<v8::Promise>::try_from(result)
+            .map_err(|_| FunctionsError::Invalid("invalid promise".into()))?;
+        try_catch.perform_microtask_checkpoint();
+        match promise.state() {
+            v8::PromiseState::Fulfilled => result = promise.result(try_catch),
+            v8::PromiseState::Rejected => {
+                return Err(FunctionsError::Javascript(format_js_exception(
+                    try_catch,
+                    promise.result(try_catch),
+                )));
+            },
+            v8::PromiseState::Pending => {
+                return Err(FunctionsError::Invalid(
+                    "pending host operations require ABI v2".into(),
+                ));
+            },
+        }
+    }
+
+    let template = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| RoutineValue::new(datafusion_common::ScalarValue::Null));
+    v8_to_routine(try_catch, result, &template)
+}
+
+pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
+    v8::tc_scope!(let try_catch, scope);
+    let global = try_catch.get_current_context().global(try_catch);
+    let name = v8::String::new(try_catch, "__kalamMakeCtx")
+        .ok_or_else(|| FunctionsError::Invalid("__kalamMakeCtx name".to_string()))?;
+    let func_value = global
+        .get(try_catch, name.into())
+        .ok_or_else(|| FunctionsError::Invalid("__kalamMakeCtx is not defined".to_string()))?;
+    let func = v8::Local::<v8::Function>::try_from(func_value)
+        .map_err(|_| FunctionsError::Invalid("__kalamMakeCtx is not a function".to_string()))?;
+    let recv = v8::undefined(try_catch).into();
+    let Some(ctx) = func.call(try_catch, recv, &[]) else {
+        return Err(js_exception(try_catch));
+    };
+    let ctx_name = v8::String::new(try_catch, "__kalamCtx")
+        .ok_or_else(|| FunctionsError::Invalid("__kalamCtx name".to_string()))?;
+    global
+        .set(try_catch, ctx_name.into(), ctx)
+        .ok_or_else(|| FunctionsError::Invalid("failed to bind __kalamCtx".to_string()))?;
+    Ok(())
+}
+
+fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
+    // V8 WebAssembly.Memory bypasses the ArrayBuffer allocator. WASM needs its own bounded
+    // runtime adapter; it must not provide an unaccounted memory path inside JavaScript.
+    let key = v8::String::new(scope, "WebAssembly").unwrap();
+    let undefined = v8::undefined(scope);
+    scope
+        .get_current_context()
+        .global(scope)
+        .define_own_property(
+            scope,
+            key.into(),
+            undefined.into(),
+            v8::PropertyAttribute::READ_ONLY | v8::PropertyAttribute::DONT_DELETE,
+        )
+        .ok_or_else(|| FunctionsError::Invalid("failed to restrict WebAssembly".into()))?;
+    for name in kalamdb_functions_host::NATIVE_FNS {
+        match *name {
+            "kalamHostSql" => bind_native(scope, name, host_sql)?,
+            "kalamHostCall" => bind_native(scope, name, host_call)?,
+            "kalamHostPublish" => bind_native(scope, name, host_publish)?,
+            "kalamHostHttpHeader" => bind_native(scope, name, host_http_header)?,
+            "kalamHostHttpSetStatus" => bind_native(scope, name, host_http_set_status)?,
+            "kalamHostHttpSetHeader" => bind_native(scope, name, host_http_set_header)?,
+            "kalamHostIsHttpRoot" => bind_native(scope, name, host_is_http_root)?,
+            "kalamHostHasHttp" => bind_native(scope, name, host_has_http)?,
+            "kalamHostHttpMethod" => bind_native(scope, name, host_http_method)?,
+            "kalamHostHttpPath" => bind_native(scope, name, host_http_path)?,
+            "kalamHostHttpQuery" => bind_native(scope, name, host_http_query)?,
+            "kalamHostSource" => bind_native(scope, name, host_source)?,
+            "kalamHostParent" => bind_native(scope, name, host_parent)?,
+            "kalamHostRoutineMap" => bind_native(scope, name, host_routine_map)?,
+            "kalamAsyncOp" | "kalamHostMetadata" | "kalamHostLog" => {},
+            other => {
+                return Err(FunctionsError::Invalid(format!(
+                    "native '{other}' is listed in the host spec but not bound"
+                )));
+            },
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn bind_native(
+    scope: &mut v8::PinScope,
+    name: &str,
+    callback: impl v8::MapFnTo<v8::FunctionCallback>,
+) -> Result<()> {
+    let global = scope.get_current_context().global(scope);
+    let function = v8::Function::new(scope, callback)
+        .ok_or_else(|| FunctionsError::Invalid(format!("failed to bind {name}")))?;
+    let key = v8::String::new(scope, name)
+        .ok_or_else(|| FunctionsError::Invalid(format!("{name} too large")))?;
+    global
+        .set(scope, key.into(), function.into())
+        .ok_or_else(|| FunctionsError::Invalid(format!("failed to set {name}")))?;
+    Ok(())
+}
+
+pub(crate) fn current_host(scope: &v8::PinScope) -> Result<Arc<dyn crate::host::FunctionHost>> {
+    if let Some(host) = HostFrames::current(scope) {
+        return Ok(host);
+    }
+    if scope.get_current_context().get_slot::<HostFrame>().is_some() {
+        return Err(FunctionsError::Invalid("expired function host frame".into()));
+    }
+    let slot = scope
+        .get_slot::<ActiveHost>()
+        .ok_or_else(|| FunctionsError::Invalid("function host slot missing".to_string()))?;
+    slot.host
+        .clone()
+        .ok_or_else(|| FunctionsError::Invalid("function host is not bound".to_string()))
+}
+
+const HOST_ERROR_CODE_KEY: &str = "__kalamErrorCode";
+
+pub(crate) fn host_error_value<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    error: &FunctionsError,
+) -> v8::Local<'s, v8::Value> {
+    let message = v8::String::new(scope, &error.to_string())
+        .unwrap_or_else(|| v8::String::new(scope, "function host error").expect("fallback error"));
+    let exception = v8::Exception::error(scope, message);
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
+        if let (Some(key), Some(code)) = (
+            v8::String::new(scope, HOST_ERROR_CODE_KEY),
+            v8::String::new(scope, error.code().as_str()),
+        ) {
+            object.set(scope, key.into(), code.into());
+        }
+    }
+    exception
+}
+
+pub(crate) fn throw_host_error(scope: &mut v8::PinScope, error: FunctionsError) {
+    let exception = host_error_value(scope, &error);
+    scope.throw_exception(exception);
+}
+
+pub(crate) fn functions_error_from_value(
+    scope: &v8::PinScope,
+    value: v8::Local<v8::Value>,
+) -> FunctionsError {
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
+        if let Some(key) = v8::String::new(scope, HOST_ERROR_CODE_KEY) {
+            if let Some(code_val) = object.get(scope, key.into()) {
+                if !code_val.is_null_or_undefined() {
+                    let code = code_val.to_rust_string_lossy(scope);
+                    if let Some(code) = FunctionErrorCode::parse(&code) {
+                        return FunctionsError::from_code(code, exception_message(scope, object));
+                    }
+                }
+            }
+        }
+    }
+    let message = format_js_exception(scope, value);
+    if message.contains("heap") || message.contains("memory") {
+        return FunctionsError::MemoryLimit;
+    }
+    FunctionsError::Javascript(message)
+}
+
+fn exception_message(scope: &v8::PinScope, object: v8::Local<v8::Object>) -> String {
+    if let Some(key) = v8::String::new(scope, "message") {
+        if let Some(message) = object.get(scope, key.into()) {
+            if !message.is_null_or_undefined() {
+                let text = message.to_rust_string_lossy(scope);
+                if !text.is_empty() {
+                    return text;
+                }
+            }
+        }
+    }
+    format_js_exception(scope, object.into())
+}
+
+pub(crate) fn arg_string(
+    scope: &mut v8::PinScope,
+    args: &v8::FunctionCallbackArguments,
+    index: i32,
+) -> String {
+    if args.length() <= index {
+        return String::new();
+    }
+    args.get(index)
+        .to_string(scope)
+        .map(|value| value.to_rust_string_lossy(scope))
+        .unwrap_or_default()
+}
+
+fn host_sql(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let sql = arg_string(scope, &args, 0);
+    match read_sql_params(scope, &args)
+        .and_then(|params| current_host(scope).and_then(|host| host.sql(&sql, &params)))
+    {
+        Ok(value) => match routine_to_v8(scope, &value) {
+            Ok(js) => rv.set(js),
+            Err(error) => throw_host_error(scope, error),
+        },
+        Err(error) => throw_host_error(scope, error),
+    }
+}
+
+fn read_sql_params(
+    scope: &mut v8::PinScope,
+    args: &v8::FunctionCallbackArguments,
+) -> Result<Vec<RoutineValue>> {
+    if args.length() <= 1 {
+        return Ok(Vec::new());
+    }
+    let raw = args.get(1);
+    if raw.is_null_or_undefined() {
+        return Ok(Vec::new());
+    }
+    let array = v8::Local::<v8::Array>::try_from(raw)
+        .map_err(|_| FunctionsError::Invalid("sql params must be an array".into()))?;
+    if array.length() > 1024 {
+        return Err(FunctionsError::ResourceLimit("sql params".into()));
+    }
+    let mut params = Vec::with_capacity(array.length() as usize);
+    for index in 0..array.length() {
+        let element = array
+            .get_index(scope, index)
+            .ok_or_else(|| FunctionsError::Invalid("missing sql param".into()))?;
+        params.push(RoutineValue::new(infer_v8_value(scope, element)?));
+    }
+    Ok(params)
+}
+
+fn host_call(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let procedure = arg_string(scope, &args, 0);
+    let mut call_args = Vec::new();
+    if args.length() > 1 {
+        let raw = args.get(1);
+        if raw.is_array() {
+            if let Ok(array) = v8::Local::<v8::Array>::try_from(raw) {
+                for index in 0..array.length() {
+                    let element =
+                        array.get_index(scope, index).unwrap_or_else(|| v8::null(scope).into());
+                    match crate::convert::infer_v8_value(scope, element) {
+                        Ok(scalar) => call_args.push(RoutineValue::new(scalar)),
+                        Err(error) => {
+                            throw_host_error(scope, error);
+                            return;
+                        },
+                    }
+                }
+            }
+        } else if !raw.is_null_or_undefined() {
+            match crate::convert::infer_v8_value(scope, raw) {
+                Ok(scalar) => call_args.push(RoutineValue::new(scalar)),
+                Err(error) => {
+                    throw_host_error(scope, error);
+                    return;
+                },
+            }
+        }
+    }
+    match current_host(scope).and_then(|host| host.call(&procedure, &call_args)) {
+        Ok(value) => match routine_to_v8(scope, &value) {
+            Ok(js) => rv.set(js),
+            Err(error) => throw_host_error(scope, error),
+        },
+        Err(error) => throw_host_error(scope, error),
+    }
+}
+
+fn host_publish(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    _rv: v8::ReturnValue<v8::Value>,
+) {
+    let topic = arg_string(scope, &args, 0);
+    let payload = if args.length() > 1 {
+        match crate::convert::infer_v8_value(scope, args.get(1)) {
+            Ok(scalar) => RoutineValue::new(scalar),
+            Err(error) => {
+                throw_host_error(scope, error);
+                return;
+            },
+        }
+    } else {
+        RoutineValue::new(datafusion_common::ScalarValue::Null)
+    };
+    if let Err(error) = current_host(scope).and_then(|host| host.publish(&topic, &payload)) {
+        throw_host_error(scope, error);
+    }
+}
+
+fn host_http_header(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let name = arg_string(scope, &args, 0);
+    match current_host(scope).and_then(|host| host.http_request_header(&name)) {
+        Ok(Some(value)) => {
+            if let Some(js) = v8::String::new(scope, &value) {
+                rv.set(js.into());
+            }
+        },
+        Ok(None) => rv.set(v8::null(scope).into()),
+        Err(error) => throw_host_error(scope, error),
+    }
+}
+
+fn host_http_set_status(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    _rv: v8::ReturnValue<v8::Value>,
+) {
+    let status = if args.length() > 0 {
+        args.get(0).int32_value(scope).unwrap_or(200)
+    } else {
+        200
+    };
+    if let Err(error) = current_host(scope).and_then(|host| host.http_set_status(status)) {
+        throw_host_error(scope, error);
+    }
+}
+
+fn host_http_set_header(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    _rv: v8::ReturnValue<v8::Value>,
+) {
+    let name = arg_string(scope, &args, 0);
+    let value = arg_string(scope, &args, 1);
+    if let Err(error) = current_host(scope).and_then(|host| host.http_set_header(&name, &value)) {
+        throw_host_error(scope, error);
+    }
+}
+
+fn host_is_http_root(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    match current_host(scope) {
+        Ok(host) => rv.set(v8::Boolean::new(scope, host.is_http_root()).into()),
+        Err(_) => rv.set(v8::Boolean::new(scope, false).into()),
+    }
+}
+
+fn host_has_http(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    match current_host(scope) {
+        Ok(host) => rv.set(v8::Boolean::new(scope, host.http_enabled()).into()),
+        Err(_) => rv.set(v8::Boolean::new(scope, false).into()),
+    }
+}
+
+fn host_http_method(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let method = current_host(scope).map(|host| host.http_method()).unwrap_or_default();
+    if let Some(value) = v8::String::new(scope, &method) {
+        rv.set(value.into());
+    }
+}
+
+fn host_http_path(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let path = current_host(scope).map(|host| host.http_path()).unwrap_or_default();
+    if let Some(value) = v8::String::new(scope, &path) {
+        rv.set(value.into());
+    }
+}
+
+fn host_http_query(
+    scope: &mut v8::PinScope,
+    args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let name = arg_string(scope, &args, 0);
+    match current_host(scope).and_then(|host| host.http_query(&name)) {
+        Ok(Some(value)) => {
+            if let Some(js) = v8::String::new(scope, &value) {
+                rv.set(js.into());
+            }
+        },
+        Ok(None) => rv.set(v8::null(scope).into()),
+        Err(error) => throw_host_error(scope, error),
+    }
+}
+
+fn host_parent(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    match current_host(scope) {
+        Ok(host) => match host.parent_procedure() {
+            Some(name) => {
+                if let Some(value) = v8::String::new(scope, &name) {
+                    rv.set(value.into());
+                } else {
+                    rv.set(v8::null(scope).into());
+                }
+            },
+            None => rv.set(v8::null(scope).into()),
+        },
+        Err(_) => rv.set(v8::null(scope).into()),
+    }
+}
+
+fn host_routine_map(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let text = current_host(scope)
+        .map(|host| host.routine_js_map())
+        .unwrap_or_else(|_| "{}".to_string());
+    if let Some(value) = v8::String::new(scope, &text) {
+        rv.set(value.into());
+    }
+}
+
+fn host_source(
+    scope: &mut v8::PinScope,
+    _args: v8::FunctionCallbackArguments,
+    mut rv: v8::ReturnValue<v8::Value>,
+) {
+    let source = match current_host(scope) {
+        Ok(host) => host.invocation_source(),
+        Err(_) => InvocationSource::Call,
+    };
+    match source_to_v8(scope, &source) {
+        Ok(value) => rv.set(value),
+        Err(error) => throw_host_error(scope, error),
+    }
+}
+
+fn source_to_v8<'s, 'i>(
+    scope: &mut v8::PinScope<'s, 'i>,
+    source: &InvocationSource,
+) -> Result<v8::Local<'s, v8::Value>> {
+    let object = v8::Object::new(scope);
+    match source {
+        InvocationSource::Call => {
+            set_object_string(scope, &object, "kind", "call")?;
+        },
+        InvocationSource::Topic {
+            topic_name,
+            event_id,
+            partition,
+            offset,
+            attempt,
+        } => {
+            set_object_string(scope, &object, "kind", "topic")?;
+            set_object_string(scope, &object, "topicName", topic_name)?;
+            set_object_string(scope, &object, "eventId", event_id)?;
+            set_object_number(scope, &object, "partition", *partition as f64)?;
+            set_object_number(scope, &object, "offset", *offset as f64)?;
+            set_object_number(scope, &object, "attempt", *attempt as f64)?;
+        },
+    }
+    Ok(object.into())
+}
+
+fn set_object_string(
+    scope: &mut v8::PinScope,
+    object: &v8::Local<v8::Object>,
+    key: &str,
+    value: &str,
+) -> Result<()> {
+    let key = v8::String::new(scope, key)
+        .ok_or_else(|| FunctionsError::Invalid("source key too large".to_string()))?;
+    let value = v8::String::new(scope, value)
+        .ok_or_else(|| FunctionsError::Invalid("source value too large".to_string()))?;
+    object
+        .set(scope, key.into(), value.into())
+        .ok_or_else(|| FunctionsError::Invalid("failed to set source field".to_string()))?;
+    Ok(())
+}
+
+fn set_object_number(
+    scope: &mut v8::PinScope,
+    object: &v8::Local<v8::Object>,
+    key: &str,
+    value: f64,
+) -> Result<()> {
+    let key = v8::String::new(scope, key)
+        .ok_or_else(|| FunctionsError::Invalid("source key too large".to_string()))?;
+    let number = v8::Number::new(scope, value);
+    object
+        .set(scope, key.into(), number.into())
+        .ok_or_else(|| FunctionsError::Invalid("failed to set source field".to_string()))?;
+    Ok(())
+}
+
+/// Parse `source` in a short-lived isolate. Does not run it.
+pub fn compile_javascript_source(source: &str) -> Result<()> {
+    ensure_v8();
+    let mut isolate = v8::Isolate::new(
+        v8::CreateParams::default()
+            .heap_limits(0, 8 * 1024 * 1024)
+            .set_max_old_generation_size_in_bytes(8 * 1024 * 1024),
+    );
+    v8::scope!(let scope, &mut isolate);
+    let context = v8::Context::new(scope, Default::default());
+    let mut scope = v8::ContextScope::new(scope, context);
+    v8::tc_scope!(let try_catch, &mut scope);
+    let code = v8::String::new(try_catch, source)
+        .ok_or_else(|| FunctionsError::Invalid("javascript source too large".into()))?;
+    let origin_name = v8::String::new(try_catch, "inline.js")
+        .ok_or_else(|| FunctionsError::Invalid("javascript origin".into()))?;
+    let origin = ScriptOrigin::new(
+        try_catch,
+        origin_name.into(),
+        0,
+        0,
+        false,
+        0,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    if v8::Script::compile(try_catch, code, Some(&origin)).is_none() {
+        return Err(js_exception(try_catch));
+    }
+    Ok(())
+}
+
+fn compile_and_run_cached<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    source: &str,
+) -> Result<v8::Local<'s, v8::UnboundScript>> {
+    v8::tc_scope!(let try_catch, scope);
+    let code = v8::String::new(try_catch, source)
+        .ok_or_else(|| FunctionsError::Invalid("module source too large".to_string()))?;
+    let origin_name = v8::String::new(try_catch, "module.js").unwrap();
+    let origin = ScriptOrigin::new(
+        try_catch,
+        origin_name.into(),
+        0,
+        0,
+        false,
+        0,
+        None,
+        false,
+        false,
+        false,
+        None,
+    );
+    let Some(script) = v8::Script::compile(try_catch, code, Some(&origin)) else {
+        return Err(js_exception(try_catch));
+    };
+    if script.run(try_catch).is_none() {
+        return Err(js_exception(try_catch));
+    }
+    Ok(script.get_unbound_script(try_catch))
+}
+
+fn run_compiled(scope: &mut v8::PinScope, compiled: &v8::Global<v8::UnboundScript>) -> Result<()> {
+    v8::tc_scope!(let scope, scope);
+    let script = v8::Local::new(scope, compiled).bind_to_current_context(scope);
+    script.run(scope).ok_or_else(|| js_exception(scope))?;
+    Ok(())
+}
+
+pub(crate) fn js_exception(
+    try_catch: &mut v8::PinnedRef<'_, v8::TryCatch<v8::HandleScope>>,
+) -> FunctionsError {
+    if let Some(exception) = try_catch.exception() {
+        return functions_error_from_value(try_catch, exception);
+    }
+    FunctionsError::Javascript("terminated".to_string())
+}
+
+/// Prefer `Error.stack` so procedure logs carry the V8 output, not only `toString()`.
+pub(crate) fn format_js_exception(scope: &v8::PinScope, value: v8::Local<v8::Value>) -> String {
+    if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
+        if let Some(key) = v8::String::new(scope, "stack") {
+            if let Some(stack) = object.get(scope, key.into()) {
+                if !stack.is_null_or_undefined() {
+                    let stack = stack.to_rust_string_lossy(scope);
+                    if !stack.is_empty() {
+                        return stack;
+                    }
+                }
+            }
+        }
+    }
+    value
+        .to_string(scope)
+        .map(|text| text.to_rust_string_lossy(scope))
+        .unwrap_or_else(|| value.to_rust_string_lossy(scope))
+}
+
+unsafe extern "C" fn near_heap_limit(
+    data: *mut std::ffi::c_void,
+    current_heap_limit: usize,
+    _initial_heap_limit: usize,
+) -> usize {
+    if !data.is_null() {
+        // SAFETY: `data` is the `HeapWatch` box registered in `V8Session::load`.
+        let watch = unsafe { &*data.cast::<HeapWatch>() };
+        watch.hit.store(true, Ordering::Relaxed);
+        watch.handle.terminate_execution();
+    }
+    // V8 fatals unless this callback raises the limit enough for the
+    // in-flight allocation to unwind after TerminateExecution.
+    current_heap_limit
+        .saturating_mul(2)
+        .max(current_heap_limit.saturating_add(8 * 1024 * 1024))
+}
+
+pub const FIXTURE_SOURCE: &str = include_str!("../../fixtures/module.js");
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    use arrow::{
+        array::StructArray,
+        datatypes::{DataType, Field},
+    };
+    use datafusion_common::ScalarValue;
+    use kalamdb_commons::RoutineId;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::{
+        error::FunctionsError, invocation::InvocationScope, limits::RuntimeLimits,
+        revision::ModuleRevision, value::RoutineValue, Invocation,
+    };
+
+    fn echo_id() -> RoutineId {
+        RoutineId::new("echo")
+    }
+
+    fn load_fixture(limits: RuntimeLimits) -> V8Session {
+        V8Session::load(ModuleRevision::typescript_fixture(FIXTURE_SOURCE), limits).unwrap()
+    }
+
+    fn invoke_echo(session: &mut V8Session, value: RoutineValue) -> RoutineValue {
+        session.invoke(&echo_id(), &[value], &CancellationToken::new()).unwrap()
+    }
+
+    #[test]
+    fn echo_scalar_struct_list_and_json() {
+        let cold = Instant::now();
+        let mut session = load_fixture(RuntimeLimits::default());
+        let cold_secs = cold.elapsed().as_secs_f64();
+
+        let warm = Instant::now();
+        let scalar = invoke_echo(
+            &mut session,
+            RoutineValue::new(ScalarValue::Utf8(Some("hello".to_string()))),
+        );
+        let warm_secs = warm.elapsed().as_secs_f64();
+        assert_eq!(scalar.value, ScalarValue::Utf8(Some("hello".to_string())));
+
+        let city = Arc::new(Field::new("city", DataType::Utf8, true));
+        let zip = Arc::new(Field::new("zip", DataType::Int32, true));
+        let struct_value = ScalarValue::Struct(Arc::new(StructArray::from(vec![
+            (
+                Arc::clone(&city),
+                ScalarValue::Utf8(Some("Austin".to_string())).to_array().unwrap(),
+            ),
+            (Arc::clone(&zip), ScalarValue::Int32(Some(78701)).to_array().unwrap()),
+        ])));
+        let echoed_struct = invoke_echo(&mut session, RoutineValue::new(struct_value.clone()));
+        assert_eq!(echoed_struct.value, struct_value);
+
+        let list = ScalarValue::List(ScalarValue::new_list(
+            &[
+                ScalarValue::Utf8(Some("a".to_string())),
+                ScalarValue::Utf8(Some("b".to_string())),
+            ],
+            &DataType::Utf8,
+            true,
+        ));
+        let echoed_list = invoke_echo(&mut session, RoutineValue::new(list.clone()));
+        assert_eq!(echoed_list.value, list);
+
+        let json = invoke_echo(
+            &mut session,
+            RoutineValue::json(ScalarValue::Utf8(Some(r#"{"ok":true,"n":1}"#.to_string()))),
+        );
+        assert!(json.json_sql);
+        let ScalarValue::Utf8(Some(text)) = json.value else {
+            panic!("expected utf8 json");
+        };
+        assert!(text.contains("\"ok\":true"));
+        assert!(text.contains("\"n\":1"));
+
+        eprintln!(
+            "kalamdb-functions v8 timings: cold_start={cold_secs:.4}s warm_invoke={warm_secs:.4}s"
+        );
+    }
+
+    #[test]
+    fn hang_times_out() {
+        let mut session = load_fixture(RuntimeLimits {
+            timeout: Duration::from_millis(200),
+            ..RuntimeLimits::default()
+        });
+        let error = session
+            .invoke(&RoutineId::new("hang"), &[], &CancellationToken::new())
+            .unwrap_err();
+        assert!(matches!(error, FunctionsError::Timeout), "{error}");
+    }
+
+    #[test]
+    fn oom_hits_memory_limit() {
+        let mut session = load_fixture(RuntimeLimits {
+            timeout: Duration::from_secs(5),
+            max_heap_bytes: 10 * 1024 * 1024,
+            ..RuntimeLimits::default()
+        });
+        let error = session
+            .invoke(&RoutineId::new("oom"), &[], &CancellationToken::new())
+            .unwrap_err();
+        assert!(matches!(error, FunctionsError::MemoryLimit), "{error}");
+    }
+
+    #[test]
+    fn cancel_stops_hang() {
+        let mut session = load_fixture(RuntimeLimits {
+            timeout: Duration::from_secs(5),
+            ..RuntimeLimits::default()
+        });
+        let cancel = CancellationToken::new();
+        let cancel_watch = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            cancel_watch.cancel();
+        });
+        let error = session.invoke(&RoutineId::new("hang"), &[], &cancel).unwrap_err();
+        assert!(matches!(error, FunctionsError::Cancelled), "{error}");
+    }
+
+    struct SqlHost;
+
+    impl crate::FunctionHost for SqlHost {
+        fn sql(&self, sql: &str, params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            assert!(sql.contains("SELECT 1"));
+            assert!(params.is_empty());
+            Ok(RoutineValue::new(ScalarValue::Int64(Some(1))))
+        }
+        fn call(&self, _procedure: &str, _args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Err(FunctionsError::Invalid("unexpected nested call".to_string()))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn wrapped_body_can_call_host_sql() {
+        let source = crate::wrap_procedure_source("return ctx.db.query('SELECT 1');");
+        let revision = Arc::new(ModuleRevision::typescript_fixture(source));
+        let mut session = V8Session::load((*revision).clone(), RuntimeLimits::default()).unwrap();
+        let host: Arc<dyn crate::FunctionHost> = Arc::new(SqlHost);
+        let invocation = Invocation {
+            routine_id: echo_id(),
+            revision,
+            args: Vec::new(),
+            scope: InvocationScope {
+                deadline: Instant::now() + Duration::from_secs(5),
+                cancel:   CancellationToken::new(),
+                depth:    0,
+            },
+            return_template: None,
+        };
+        let value = session.invoke_async(&invocation, host).await.unwrap();
+        assert!(
+            matches!(value.value, ScalarValue::Int32(Some(1)) | ScalarValue::Int64(Some(1))),
+            "host sql SELECT 1 should round-trip as 1, got {:?}",
+            value.value
+        );
+    }
+
+    struct CaptureSqlHost {
+        sql:    std::sync::Mutex<Option<String>>,
+        params: std::sync::Mutex<Vec<ScalarValue>>,
+    }
+
+    impl crate::FunctionHost for CaptureSqlHost {
+        fn sql(&self, sql: &str, params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            *self.sql.lock().unwrap() = Some(sql.to_string());
+            *self.params.lock().unwrap() = params.iter().map(|param| param.value.clone()).collect();
+            Ok(RoutineValue::new(ScalarValue::Int64(Some(1))))
+        }
+        fn call(&self, _procedure: &str, _args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Err(FunctionsError::Invalid("unexpected nested call".to_string()))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn wrapped_body_passes_sql_bind_params() {
+        let source = crate::wrap_procedure_source(
+            "return ctx.db.query('SELECT id FROM t WHERE id = $1 AND name = $2', [input[0], \
+             input[1]]);",
+        );
+        let revision = Arc::new(ModuleRevision::typescript_fixture(source));
+        let mut session = V8Session::load((*revision).clone(), RuntimeLimits::default()).unwrap();
+        let host = Arc::new(CaptureSqlHost {
+            sql:    std::sync::Mutex::new(None),
+            params: std::sync::Mutex::new(Vec::new()),
+        });
+        let host_trait: Arc<dyn crate::FunctionHost> = host.clone();
+        let id = RoutineValue::new(ScalarValue::Int32(Some(7)));
+        let name = RoutineValue::new(ScalarValue::Utf8(Some("ada".to_string())));
+        let invocation = Invocation {
+            routine_id: echo_id(),
+            revision,
+            args: vec![id, name],
+            scope: InvocationScope {
+                deadline: Instant::now() + Duration::from_secs(5),
+                cancel:   CancellationToken::new(),
+                depth:    0,
+            },
+            return_template: None,
+        };
+        session.invoke_async(&invocation, host_trait).await.unwrap();
+        assert_eq!(
+            host.sql.lock().unwrap().as_deref(),
+            Some("SELECT id FROM t WHERE id = $1 AND name = $2")
+        );
+        assert_eq!(
+            *host.params.lock().unwrap(),
+            vec![
+                ScalarValue::Int32(Some(7)),
+                ScalarValue::Utf8(Some("ada".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn eval_and_function_constructor_are_disabled() {
+        let source = "function kalamInvoke() { return typeof eval; }\n";
+        let mut session =
+            V8Session::load(ModuleRevision::typescript_fixture(source), RuntimeLimits::default())
+                .unwrap();
+        let value = session.invoke(&echo_id(), &[], &CancellationToken::new()).unwrap();
+        assert_eq!(value.value, ScalarValue::Utf8(Some("undefined".to_string())));
+    }
+
+    #[test]
+    fn pool_reset_drops_module_level_leak() {
+        let source = r#"
+let leaked;
+function kalamInvoke(name, args) {
+  if (name === "set") { leaked = args[0]; return 1; }
+  return leaked === undefined ? 0 : 1;
+}
+"#;
+        let mut session =
+            V8Session::load(ModuleRevision::typescript_fixture(source), RuntimeLimits::default())
+                .unwrap();
+        let set_id = RoutineId::new("set");
+        let get_id = RoutineId::new("get");
+        session
+            .invoke(
+                &set_id,
+                &[RoutineValue::new(ScalarValue::Int32(Some(9)))],
+                &CancellationToken::new(),
+            )
+            .unwrap();
+        let value = session.invoke(&get_id, &[], &CancellationToken::new()).unwrap();
+        assert_eq!(
+            value.value,
+            ScalarValue::Int32(Some(0)),
+            "reset_context must drop module-level `let leaked`"
+        );
+    }
+
+    struct TypedCallHost {
+        called: std::sync::Mutex<Option<(String, usize)>>,
+    }
+
+    impl crate::FunctionHost for TypedCallHost {
+        fn sql(&self, _sql: &str, _params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Ok(RoutineValue::new(ScalarValue::Null))
+        }
+        fn call(&self, procedure: &str, args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            *self.called.lock().unwrap() = Some((procedure.to_string(), args.len()));
+            Ok(RoutineValue::new(ScalarValue::Utf8(Some("ok".into()))))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+        fn routine_js_map(&self) -> String {
+            r#"{"api":{"health":"api.health"}}"#.to_string()
+        }
+    }
+
+    struct LogCaptureHost {
+        last: std::sync::Mutex<Option<crate::HostLogRecord>>,
+    }
+
+    impl crate::FunctionHost for LogCaptureHost {
+        fn sql(&self, _sql: &str, _params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Ok(RoutineValue::new(ScalarValue::Null))
+        }
+        fn call(&self, _procedure: &str, _args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Err(FunctionsError::Invalid("nested call must not run in log test".into()))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+        fn metadata(&self) -> Option<crate::InvocationMetadata> {
+            Some(crate::InvocationMetadata {
+                actor:      crate::ActorMeta {
+                    id:   kalamdb_commons::UserId::new("alice"),
+                    role: kalamdb_commons::Role::User,
+                },
+                principal:  crate::ActorMeta {
+                    id:   kalamdb_commons::UserId::new("alice"),
+                    role: kalamdb_commons::Role::User,
+                },
+                namespace:  kalamdb_commons::NamespaceId::new("api"),
+                request_id: "req-1".into(),
+            })
+        }
+        fn procedure_stack(&self) -> String {
+            "api.health".into()
+        }
+        fn log(&self, record: crate::HostLogRecord) -> crate::Result<()> {
+            *self.last.lock().unwrap() = Some(record.clone());
+            crate::host::emit_function_log(self, record)
+        }
+    }
+
+    struct RejectHttpHost;
+
+    impl crate::FunctionHost for RejectHttpHost {
+        fn sql(&self, _sql: &str, _params: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Ok(RoutineValue::new(ScalarValue::Null))
+        }
+        fn call(&self, _procedure: &str, _args: &[RoutineValue]) -> crate::Result<RoutineValue> {
+            Err(FunctionsError::Invalid("nested call must not run in http test".into()))
+        }
+        fn publish(&self, _topic: &str, _payload: &RoutineValue) -> crate::Result<()> {
+            Ok(())
+        }
+        fn http_request_header(&self, _name: &str) -> crate::Result<Option<String>> {
+            Ok(None)
+        }
+        fn http_set_status(&self, _status: i32) -> crate::Result<()> {
+            Err(FunctionsError::Invalid("nested procedures cannot mutate ctx.http".into()))
+        }
+        fn http_set_header(&self, _name: &str, _value: &str) -> crate::Result<()> {
+            Ok(())
+        }
+        fn is_http_root(&self) -> bool {
+            false
+        }
+        fn http_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    async fn invoke_wrapped(
+        source: &str,
+        host: Arc<dyn crate::FunctionHost>,
+    ) -> crate::Result<RoutineValue> {
+        let revision =
+            Arc::new(ModuleRevision::typescript_fixture(crate::wrap_procedure_source(source)));
+        let mut session = V8Session::load((*revision).clone(), RuntimeLimits::default()).unwrap();
+        let invocation = Invocation {
+            routine_id: echo_id(),
+            revision,
+            args: Vec::new(),
+            scope: InvocationScope {
+                deadline: Instant::now() + Duration::from_secs(5),
+                cancel:   CancellationToken::new(),
+                depth:    0,
+            },
+            return_template: None,
+        };
+        session.invoke_async(&invocation, host).await
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn typed_functions_host_dispatches_nested_call() {
+        let host = Arc::new(TypedCallHost {
+            called: std::sync::Mutex::new(None),
+        });
+        let value = invoke_wrapped(
+            "return ctx.functions.api.health({ ok: true });",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .unwrap();
+        assert_eq!(value.value, ScalarValue::Utf8(Some("ok".into())));
+        let called = host.called.lock().unwrap().clone();
+        assert_eq!(called, Some(("api.health".into(), 1)));
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn ctx_log_error_captures_metadata_and_extra_args() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        invoke_wrapped(
+            r#"
+const err = new Error("boom");
+ctx.log.error(err, "failed", { id: 1 });
+return 1;
+"#,
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .unwrap();
+        let record = host.last.lock().unwrap().clone().expect("log record");
+        assert_eq!(record.channel, crate::LogChannel::CtxLog);
+        assert_eq!(record.level, "error");
+        assert_eq!(record.message, "failed");
+        assert!(
+            record.error.as_ref().is_some_and(|error| error.contains("boom")),
+            "{:?}",
+            record.error
+        );
+        assert!(
+            record.args_json.as_ref().is_some_and(|args| args.contains("\"id\":1")),
+            "{:?}",
+            record.args_json
+        );
+        assert!(
+            record.args_json.as_ref().is_none_or(|args| !args.contains("secret-payload")),
+            "CALL payloads must not appear in ctx.log"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn console_log_forwards_to_host_with_console_channel() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        invoke_wrapped(
+            r#"
+console.log("this is a test");
+console.warn("heads up", { id: 7 });
+return 1;
+"#,
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .unwrap();
+        let record = host.last.lock().unwrap().clone().expect("log record");
+        assert_eq!(record.channel, crate::LogChannel::Console);
+        assert_eq!(record.level, "warn");
+        assert_eq!(record.message, "heads up");
+        assert!(
+            record.args_json.as_ref().is_some_and(|args| args.contains("\"id\":7")),
+            "{:?}",
+            record.args_json
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn thrown_error_includes_v8_stack() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "throw new Error('boom-stack');",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("thrown Error must fail the CALL");
+        let message = error.to_string();
+        assert!(message.contains("boom-stack"), "{message}");
+        assert!(
+            message.contains("at ") || message.contains("Error: boom-stack"),
+            "javascript exception should include V8 stack output: {message}"
+        );
+        assert_eq!(error.code(), crate::FunctionErrorCode::InternalRuntimeError);
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn host_invalid_http_error_keeps_typed_code() {
+        let error = invoke_wrapped(
+            "ctx.http.response.status(500); return 1;",
+            Arc::new(RejectHttpHost) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("host Invalid must fail the CALL");
+        assert_eq!(error.code(), crate::FunctionErrorCode::InvalidArguments, "{error}");
+        assert!(
+            error.to_string().contains("nested procedures cannot mutate ctx.http"),
+            "{error}"
+        );
+        assert!(
+            !matches!(error, FunctionsError::Javascript(_)),
+            "host Invalid must not become a javascript exception: {error}"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn unhandled_rejection_includes_js_reason() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "Promise.reject(new Error('detached-boom')); return 1;",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("detached rejection must fail the CALL");
+        let message = error.to_string();
+        assert!(
+            message.contains("detached-boom"),
+            "unhandled rejection should carry the JS reason: {message}"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn returned_rejected_promise_includes_js_reason() {
+        let host = Arc::new(LogCaptureHost {
+            last: std::sync::Mutex::new(None),
+        });
+        let error = invoke_wrapped(
+            "return Promise.reject(new Error('returned-boom'));",
+            Arc::clone(&host) as Arc<dyn crate::FunctionHost>,
+        )
+        .await
+        .expect_err("rejected procedure Promise must fail the CALL");
+        let message = error.to_string();
+        assert!(
+            message.contains("returned-boom"),
+            "rejected Promise should carry the JS reason: {message}"
+        );
+    }
+
+    #[test]
+    fn host_spec_natives_are_explicitly_dispatched() {
+        for name in kalamdb_functions_host::NATIVE_FNS {
+            assert!(
+                matches!(
+                    *name,
+                    "kalamHostSql"
+                        | "kalamHostCall"
+                        | "kalamHostPublish"
+                        | "kalamHostHttpHeader"
+                        | "kalamHostHttpSetStatus"
+                        | "kalamHostHttpSetHeader"
+                        | "kalamHostIsHttpRoot"
+                        | "kalamHostHasHttp"
+                        | "kalamHostHttpMethod"
+                        | "kalamHostHttpPath"
+                        | "kalamHostHttpQuery"
+                        | "kalamHostSource"
+                        | "kalamHostParent"
+                        | "kalamHostRoutineMap"
+                        | "kalamAsyncOp"
+                        | "kalamHostMetadata"
+                        | "kalamHostLog"
+                ),
+                "native {name} is in the host spec but has no V8 bind arm"
+            );
+        }
+        for kind in kalamdb_functions_host::ASYNC_OPS {
+            assert!(kalamdb_functions_host::is_async_op(kind), "{kind}");
+        }
+    }
+}

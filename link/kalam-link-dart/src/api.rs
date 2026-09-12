@@ -556,6 +556,15 @@ pub async fn dart_refresh_token(
     Ok(DartLoginResponse::from(response))
 }
 
+/// Exchange an OIDC ID token for KalamDB access and refresh tokens.
+pub async fn dart_exchange_oidc_token(
+    client: &DartKalamClient,
+    token: String,
+) -> anyhow::Result<DartLoginResponse> {
+    let response = client.inner.exchange_oidc_token(&token).await?;
+    Ok(DartLoginResponse::from(response))
+}
+
 // ---------------------------------------------------------------------------
 // Connection events (async pull model)
 // ---------------------------------------------------------------------------

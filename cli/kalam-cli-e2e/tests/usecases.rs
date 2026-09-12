@@ -10,8 +10,6 @@
 //   cargo test --test usecases test_reactive_transaction_workflow
 //   cargo test --test usecases test_update_all_types
 
-mod common;
-
 #[path = "usecases/test_batch_streaming.rs"]
 mod test_batch_streaming;
 

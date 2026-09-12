@@ -11,7 +11,7 @@ use std::{
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     models::{NamespaceId, PayloadMode, TableName},
-    KSerializable, StorageKey,
+    StorageKey,
 };
 use kalamdb_store::{
     storage_trait::{KvIterator, Operation, Partition, StorageBackend},
@@ -175,7 +175,7 @@ fn put_primary_only_message(
         .put(
             &Partition::new("topic_messages"),
             &message.id().storage_key(),
-            &message.encode().unwrap(),
+            &kalamdb_store::encode_entity(&message).unwrap(),
         )
         .unwrap();
 }
@@ -787,6 +787,14 @@ fn test_byte_retention_can_fully_cleanup_partition() {
     assert_eq!(service.latest_offset(&topic_id, 0).unwrap(), Some(2));
     assert_eq!(service.retained_bytes_for_partition(&topic_id, 0).unwrap(), 0);
     assert!(service.fetch_messages(&topic_id, 0, 3, 10).unwrap().is_empty());
+    let group_id = ConsumerGroupId::new("byte_retention_full_cleanup_group");
+    assert!(
+        service
+            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
+            .unwrap()
+            .is_empty(),
+        "grouped consume should snap to log start after full retention instead of failing"
+    );
     assert!(service
         .message_store
         .retention_entries_for_partition(&topic_id, 0, 10)
@@ -884,6 +892,7 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
     let second_service = service.clone();
     let second_topic = topic_id.clone();
     let second_group = group_id.clone();
+    let second_group = ConsumerGroupId::new("nonblocking_other_group");
     thread::spawn(move || {
         let batch = second_service
             .fetch_messages_for_group(&second_topic, &second_group, 0, 0, 10)
@@ -896,21 +905,180 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
         Err(_) => {
             backend.release_paused_scan();
             let _ = first_handle.join();
-            panic!("second consumer should not wait for the first consumer's storage scan");
+            panic!("a different consumer group should not wait for another group's storage scan");
         },
     };
 
     backend.release_paused_scan();
     let first_batch = first_handle.join().unwrap();
 
-    let first_offsets: HashSet<u64> = first_batch.iter().map(|message| message.offset).collect();
-    let second_offsets: HashSet<u64> = second_batch.iter().map(|message| message.offset).collect();
+    assert_eq!(first_batch.len(), 10);
+    assert_eq!(second_batch.len(), 10);
+}
 
-    assert_eq!(first_offsets.len(), 10);
-    assert_eq!(second_offsets.len(), 10);
+#[test]
+fn test_group_fetch_four_concurrent_consumers_no_overlap() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("four_consumer_claim_topic");
+    let group_id = ConsumerGroupId::new("four_consumer_claim_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..120 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..4 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 30).unwrap();
+            let offsets: HashSet<u64> = batch.iter().map(|message| message.offset).collect();
+            tx.send(offsets).unwrap();
+        });
+    }
+    drop(tx);
+
+    let mut combined = HashSet::new();
+    let mut total = 0usize;
+    for _ in 0..4 {
+        let offsets = rx.recv_timeout(StdDuration::from_secs(5)).unwrap();
+        total += offsets.len();
+        for offset in &offsets {
+            assert!(
+                combined.insert(*offset),
+                "concurrent same-group fetches must not overlap on offset {offset}"
+            );
+        }
+    }
+
+    assert_eq!(total, combined.len());
+    assert_eq!(combined.len(), 120);
+}
+
+#[test]
+fn test_concurrent_empty_group_polls_do_not_skip_later_messages() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("empty_poll_then_publish_topic");
+    let group_id = ConsumerGroupId::new("empty_poll_then_publish_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..4 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let empty = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 100).unwrap();
+            tx.send(empty.len()).unwrap();
+        });
+    }
+    drop(tx);
+    for _ in 0..4 {
+        assert_eq!(rx.recv_timeout(StdDuration::from_secs(5)).unwrap(), 0);
+    }
+
+    for idx in 0..40 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let mut combined = HashSet::new();
+    loop {
+        let batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+        if batch.is_empty() {
+            break;
+        }
+        for message in batch {
+            assert!(
+                combined.insert(message.offset),
+                "empty pre-publish polls must not cause duplicate or skipped offsets"
+            );
+        }
+    }
+
+    assert_eq!(
+        combined.len(),
+        40,
+        "messages published after concurrent empty group polls must still be delivered"
+    );
+}
+
+#[test]
+fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
+    let backend = Arc::new(PausingScanBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("ack_during_scan_topic");
+    let group_id = ConsumerGroupId::new("ack_during_scan_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..30 {
+        let row = create_test_row(idx, &format!("event_{}", idx));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    backend.pause_next_scan();
+
+    let delayed_service = service.clone();
+    let delayed_topic = topic_id.clone();
+    let delayed_group = group_id.clone();
+    let delayed_handle = thread::spawn(move || {
+        delayed_service
+            .fetch_messages_for_group(&delayed_topic, &delayed_group, 0, 0, 10)
+            .unwrap()
+    });
+
+    backend.wait_for_paused_scan();
+    backend.release_paused_scan();
+    let delayed_batch = delayed_handle.join().unwrap();
+    let delayed_last = delayed_batch.last().map(|message| message.offset).unwrap();
+    service.ack_offset(&topic_id, &group_id, 0, delayed_last).unwrap();
+    {
+        let state = service
+            .group_claim_state
+            .get(&GroupPartitionKey::new(&topic_id, &group_id, 0))
+            .expect("ack must keep the group cursor");
+        assert_eq!(state.cursor, delayed_last + 1);
+        assert!(state.pending.is_empty());
+    }
+
+    let next_batch = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    let delayed_offsets: HashSet<u64> =
+        delayed_batch.iter().map(|message| message.offset).collect();
+    let next_offsets: HashSet<u64> = next_batch.iter().map(|message| message.offset).collect();
+
+    assert_eq!(delayed_offsets.len(), 10);
+    assert_eq!(next_offsets.len(), 10);
     assert!(
-        first_offsets.is_disjoint(&second_offsets),
-        "concurrent same-group fetches must reserve disjoint offsets"
+        delayed_offsets.is_disjoint(&next_offsets),
+        "a fetch after another consumer acked must not reclaim that range"
     );
 }
 
@@ -1013,12 +1181,140 @@ fn test_ack_clears_pending_claims() {
         assert_eq!(state.pending.len(), 1, "Should have one pending claim before ack");
     }
 
-    // Ack clears the pending claim
     service.ack_offset(&topic_id, &group_id, 0, last_offset).unwrap();
     {
-        let state = service.group_claim_state.get(&cursor_key).unwrap();
-        assert_eq!(state.pending.len(), 0, "Pending claim should be removed after ack");
+        let state = service.group_claim_state.get(&cursor_key).expect(
+            "fully acked groups must keep the hand-out cursor so a stale client start cannot \
+             replay",
+        );
+        assert!(state.pending.is_empty(), "ack should clear pending claims");
+        assert_eq!(state.cursor, last_offset + 1);
     }
+}
+
+#[test]
+fn acked_group_keeps_cursor_so_stale_client_start_cannot_replay() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("stale_start_replay_topic");
+    let group_id = ConsumerGroupId::new("stale_start_replay_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..20 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let first = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 1).unwrap();
+    assert_eq!(first.iter().map(|message| message.offset).collect::<Vec<_>>(), vec![0]);
+    service.ack_offset(&topic_id, &group_id, 0, 0).unwrap();
+
+    let state = service.group_claim_state.get(&cursor_key).expect(
+        "ack of a single live offset must not drop claim state; that is the CI overlap=1 window",
+    );
+    assert_eq!(state.cursor, 1);
+    drop(state);
+
+    let replay = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 5).unwrap();
+    let replay_offsets: HashSet<u64> = replay.iter().map(|message| message.offset).collect();
+    assert!(
+        !replay_offsets.contains(&0),
+        "second consumer must not receive already-acked offset 0, got {replay_offsets:?}"
+    );
+    assert_eq!(
+        replay.iter().map(|message| message.offset).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4, 5]
+    );
+}
+
+#[test]
+fn two_consumers_concurrent_publish_and_delayed_ack_no_overlap() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = Arc::new(TopicPublisherService::new(backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("concurrent_publish_claim_topic");
+    let group_id = ConsumerGroupId::new("concurrent_publish_claim_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..2 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let stop = stop.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut offsets = HashSet::new();
+            loop {
+                let batch =
+                    service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 32).unwrap();
+                if batch.is_empty() {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    thread::yield_now();
+                    continue;
+                }
+                // Mimic CI poll→commit latency so ack cannot race the next fetch.
+                thread::sleep(StdDuration::from_micros(50));
+                let last = batch.last().map(|message| message.offset).unwrap();
+                for message in &batch {
+                    assert!(
+                        offsets.insert(message.offset),
+                        "a single consumer received duplicate offset {}",
+                        message.offset
+                    );
+                }
+                service.ack_offset(&topic_id, &group_id, 0, last).unwrap();
+            }
+            tx.send(offsets).unwrap();
+        });
+    }
+    drop(tx);
+
+    let publisher_count = 8;
+    let messages_per_publisher = 50;
+    let expected = publisher_count * messages_per_publisher;
+    let mut publishers = Vec::with_capacity(publisher_count);
+    for publisher in 0..publisher_count {
+        let service = service.clone();
+        let table_id = table_id.clone();
+        publishers.push(thread::spawn(move || {
+            for idx in 0..messages_per_publisher {
+                let id = (publisher * messages_per_publisher + idx) as i32;
+                let row = create_test_row(id, &format!("event_{id}"));
+                service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+            }
+        }));
+    }
+    for publisher in publishers {
+        publisher.join().unwrap();
+    }
+    stop.store(true, Ordering::Relaxed);
+
+    let first = rx.recv_timeout(StdDuration::from_secs(10)).unwrap();
+    let second = rx.recv_timeout(StdDuration::from_secs(10)).unwrap();
+    let overlap: Vec<u64> = first.intersection(&second).copied().collect();
+    assert!(
+        overlap.is_empty(),
+        "same-group consumers must not overlap; shared offsets={overlap:?} A={} B={}",
+        first.len(),
+        second.len()
+    );
+    assert_eq!(first.len() + second.len(), expected);
 }
 
 #[test]
@@ -1159,6 +1455,70 @@ fn test_empty_partition_returns_empty() {
 }
 
 #[test]
+fn empty_group_poll_does_not_retain_claim_state() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let topic_id = TopicId::new("empty_poll_no_claim_topic");
+    let group_id = ConsumerGroupId::new("empty_poll_no_claim_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let result = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(result.is_empty());
+    assert!(
+        service.group_claim_state.get(&cursor_key).is_none(),
+        "empty polls must not pin per-group claim state"
+    );
+    assert_eq!(service.cache_stats().consumer_partition_count, 0);
+    assert_eq!(service.cache_stats().consumer_group_count, 0);
+}
+
+#[test]
+fn latest_empty_poll_pins_cursor_so_backlog_is_not_replayed() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("latest_empty_poll_topic");
+    let group_id = ConsumerGroupId::new("latest_empty_poll_group");
+    let cursor_key = GroupPartitionKey::new(&topic_id, &group_id, 0);
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    for idx in 0..5 {
+        let row = create_test_row(idx, &format!("backlog_{}", idx));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let latest_next = service
+        .latest_offset(&topic_id, 0)
+        .unwrap()
+        .map(|offset| offset + 1)
+        .unwrap_or(0);
+    assert_eq!(latest_next, 5);
+    let empty = service
+        .fetch_messages_for_group(&topic_id, &group_id, 0, latest_next, 10)
+        .unwrap();
+    assert!(empty.is_empty());
+    assert_eq!(
+        service.group_claim_state.get(&cursor_key).map(|state| state.cursor),
+        Some(latest_next),
+        "FROM LATEST empty poll must pin the group at the high-water mark"
+    );
+
+    let live = create_test_row(5, "live_5");
+    service.publish_message(&table_id, TopicOp::Insert, &live, None).unwrap();
+
+    let tailed = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert_eq!(
+        tailed.iter().map(|message| message.offset).collect::<Vec<_>>(),
+        vec![5],
+        "pinned latest cursor must not replay backlog on the next grouped fetch"
+    );
+}
+
+#[test]
 fn test_group_fetch_then_ack_then_fetch_continues() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
@@ -1189,4 +1549,36 @@ fn test_group_fetch_then_ack_then_fetch_continues() {
     if !batch2.is_empty() {
         assert!(batch2[0].offset > last1, "Second batch should start after first acked offset");
     }
+}
+
+#[test]
+fn allocated_but_unwritten_offset_is_not_treated_as_retained() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let service = TopicPublisherService::new(backend);
+    let topic_id = TopicId::new("inflight_first_write_topic");
+    let group_id = ConsumerGroupId::new("inflight_group");
+
+    // Publish allocates offset 0 under the partition write lock, then writes the
+    // message. Readers do not take that lock, so they can observe peek_next=1
+    // while the store is still empty. That is not retention: offset 0 must remain
+    // fetchable as an empty result, not OffsetOutOfRange.
+    service.offset_allocator.seed(&topic_id, 0, 1);
+
+    assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 0);
+
+    let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+    assert!(
+        messages.is_empty(),
+        "in-flight first write should return an empty fetch, not an error"
+    );
+
+    let empty_group = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(empty_group.is_empty());
+
+    service.offset_allocator.seed(&topic_id, 0, 1);
+    let still_empty = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
+    assert!(
+        still_empty.is_empty(),
+        "a prior empty group poll must not error when the first offset is still in flight"
+    );
 }

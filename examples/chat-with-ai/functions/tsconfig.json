@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "paths": {
+      "drizzle-orm": ["../node_modules/drizzle-orm"],
+      "drizzle-orm/*": ["../node_modules/drizzle-orm/*"],
+      "@kalamdb/orm": ["../node_modules/@kalamdb/orm"]
+    }
+  },
+  "include": ["src"]
+}

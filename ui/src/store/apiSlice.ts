@@ -71,6 +71,16 @@ import type {
   StreamingTopic,
 } from "@/features/streaming/types";
 import type { JobFilters } from "@/services/jobService";
+import {
+  fetchProcedureCatalog,
+  fetchProcedureLogs,
+  invokeProcedure,
+  rollbackModuleRevision,
+  type InvokeProcedureResult,
+  type ProcedureLogFilters,
+  type RollbackModuleResult,
+} from "@/services/functionsService";
+import type { ProcedureCatalogSnapshot, ProcedureLogRecord } from "@/features/functions/types";
 
 interface CustomQueryError {
   status: "CUSTOM_ERROR";
@@ -95,6 +105,9 @@ export const apiSlice = createApi({
     "StreamingTopics",
     "StreamingGroups",
     "StreamingOffsets",
+    "ProcedureCatalog",
+    "ProcedureLogs",
+    "ModuleRevisions",
   ],
   endpoints: (builder) => ({
     getSettings: builder.query<Setting[], void>({
@@ -401,6 +414,60 @@ export const apiSlice = createApi({
         }
       },
     }),
+    getProcedureCatalog: builder.query<ProcedureCatalogSnapshot, void>({
+      async queryFn() {
+        try {
+          const data = await fetchProcedureCatalog();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch function catalog";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["ProcedureCatalog", "ModuleRevisions"],
+    }),
+    getProcedureLogs: builder.query<ProcedureLogRecord[], ProcedureLogFilters>({
+      async queryFn(filters) {
+        try {
+          const data = await fetchProcedureLogs(filters);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch procedure logs";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["ProcedureLogs"],
+    }),
+    invokeProcedure: builder.mutation<
+      InvokeProcedureResult,
+      { schema: string; name: string; body: Record<string, unknown> }
+    >({
+      async queryFn({ schema, name, body }) {
+        try {
+          const data = await invokeProcedure(schema, name, body);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to invoke procedure";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["ProcedureLogs", "ProcedureCatalog"],
+    }),
+    rollbackModuleRevision: builder.mutation<
+      RollbackModuleResult,
+      { moduleId: string; revisionId: string }
+    >({
+      async queryFn({ moduleId, revisionId }) {
+        try {
+          const data = await rollbackModuleRevision(moduleId, revisionId);
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to roll back module revision";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      invalidatesTags: ["ProcedureCatalog", "ModuleRevisions", "ProcedureLogs"],
+    }),
   }),
 });
 
@@ -430,4 +497,8 @@ export const {
   useGetStreamingConsumerGroupsQuery,
   useGetStreamingOffsetsQuery,
   useConsumeStreamingMessagesMutation,
+  useGetProcedureCatalogQuery,
+  useGetProcedureLogsQuery,
+  useInvokeProcedureMutation,
+  useRollbackModuleRevisionMutation,
 } = apiSlice;

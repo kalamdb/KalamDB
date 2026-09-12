@@ -12,6 +12,13 @@ import {
   system_slow_queries,
   system_stats,
   system_storages,
+  system_procedures,
+  system_modules,
+  system_module_revisions,
+  system_procedure_logs,
+  system_routine_parameters,
+  system_types,
+  system_type_fields,
   system_table_policies,
   system_topic_offsets,
   system_topics,
@@ -35,6 +42,14 @@ export type SystemStorageRow = typeof system_storages.$inferSelect;
 export type SystemTopicOffsetRow = typeof system_topic_offsets.$inferSelect;
 export type SystemTopicRow = typeof system_topics.$inferSelect;
 export type SystemUserRow = typeof system_users.$inferSelect;
+
+export type SystemProcedureRow = typeof system_procedures.$inferSelect;
+export type SystemModuleRow = typeof system_modules.$inferSelect;
+export type SystemModuleRevisionRow = typeof system_module_revisions.$inferSelect;
+export type SystemProcedureLogRow = typeof system_procedure_logs.$inferSelect;
+export type SystemRoutineParameterRow = typeof system_routine_parameters.$inferSelect;
+export type SystemTypeRow = typeof system_types.$inferSelect;
+export type SystemTypeFieldRow = typeof system_type_fields.$inferSelect;
 
 export type SystemUserListRow = Pick<SystemUserRow,
   | "user_id"

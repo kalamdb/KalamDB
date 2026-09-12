@@ -48,4 +48,21 @@ describe("CodeBlock", () => {
     expect(screen.getByText(/9223372036854775807/)).toBeTruthy();
     expect(screen.getByText(/metric-a/)).toBeTruthy();
   });
+
+  it("wraps long JSON lines so they stay readable", () => {
+    const { container } = render(
+      <CodeBlock
+        value={{
+          code: "SQL_EXECUTION_ERROR",
+          message: "procedure foo is not found",
+        }}
+        jsonPreferred
+      />,
+    );
+
+    const pre = container.querySelector("pre");
+    expect(pre?.className).toContain("whitespace-pre-wrap");
+    expect(pre?.className).toContain("break-all");
+    expect(screen.getByText(/SQL_EXECUTION_ERROR/)).toBeTruthy();
+  });
 });

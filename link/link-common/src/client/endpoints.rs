@@ -172,6 +172,38 @@ impl KalamLinkClient {
         Ok(login_response)
     }
 
+    /// Exchange an OIDC ID token (Keycloak, Dex, or any configured issuer) for
+    /// KalamDB access and refresh tokens.
+    #[cfg(feature = "auth-flows")]
+    pub async fn exchange_oidc_token(&self, token: &str) -> Result<crate::models::LoginResponse> {
+        let url = format!("{}/v1/api/auth/oidc/exchange-token", self.base_url);
+        log::debug!("[OIDC] Exchanging ID token at url={url}");
+
+        let start = std::time::Instant::now();
+        let response = self
+            .http_client
+            .post(&url)
+            .json(&serde_json::json!({ "token": token }))
+            .send()
+            .await?;
+
+        let status = response.status();
+        log::debug!("[OIDC] HTTP response received in {:?}, status={}", start.elapsed(), status);
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            log::debug!("[OIDC] Token exchange failed: {error_text}");
+            return Err(KalamLinkError::AuthenticationError(format!(
+                "OIDC token exchange failed ({}): {}",
+                status, error_text
+            )));
+        }
+
+        let login_response = response.json::<crate::models::LoginResponse>().await?;
+        log::debug!("[OIDC] Exchanged ID token in {:?}", start.elapsed());
+        Ok(login_response)
+    }
+
     /// Check if the server requires initial setup.
     #[cfg(feature = "setup")]
     pub async fn check_setup_status(&self) -> Result<crate::models::SetupStatusResponse> {

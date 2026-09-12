@@ -7,8 +7,6 @@
 //   cargo test --test users test_admin
 //   cargo test --test users test_concurrent_users
 
-mod common;
-
 #[path = "users/test_admin.rs"]
 mod test_admin;
 

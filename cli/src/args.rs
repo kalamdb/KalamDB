@@ -10,8 +10,8 @@ mod workflow;
 
 use parsers::parse_watch_interval;
 pub use workflow::{
-    DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, InitArgs, LinkArgs, MigrationArgs,
-    MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
+    DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, FunctionsArgs, FunctionsCommand, InitArgs,
+    LinkArgs, MigrationArgs, MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
 };
 
 // Build information - Create a static version string at compile time
@@ -322,17 +322,24 @@ pub enum CliCommand {
 
     /// Apply migrations and health checks for a deployment
     Deploy(DeployArgs),
+
+    /// Build, inspect, and roll back project procedures
+    Functions(FunctionsArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct UpdateArgs {
     /// Install a specific version instead of the latest release
-    #[arg(long = "version", value_name = "VERSION")]
+    #[arg(long = "version", value_name = "VERSION", conflicts_with_all = ["pre_release", "stable"])]
     pub version: Option<String>,
 
-    /// Use the latest GitHub prerelease
-    #[arg(long = "pre-release")]
+    /// Use the newest published pre-release (rc, beta, alpha)
+    #[arg(long = "pre-release", conflicts_with = "stable")]
     pub pre_release: bool,
+
+    /// Use the latest GitHub stable release. Allows leaving a newer installed pre-release
+    #[arg(long = "stable")]
+    pub stable: bool,
 
     /// Show the resolved update without replacing the binary
     #[arg(long = "dry-run")]
@@ -435,7 +442,6 @@ pub enum TokenRole {
 }
 
 impl TokenRole {
-    #[allow(dead_code)]
     pub fn as_sql(self) -> &'static str {
         match self {
             Self::User => "user",
@@ -446,7 +452,6 @@ impl TokenRole {
     }
 }
 
-#[allow(dead_code)]
 pub fn version_report() -> &'static str {
     version_string!()
 }
@@ -463,7 +468,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{parse_watch_interval, Cli, CliCommand, DevCommand, TokenCommand, TokenRole};
+    use super::{Cli, CliCommand, DevCommand, TokenCommand, TokenRole, parse_watch_interval};
 
     #[test]
     fn parse_watch_interval_defaults_to_seconds() {

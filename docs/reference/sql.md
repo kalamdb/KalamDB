@@ -1,7 +1,7 @@
 # KalamDB SQL Reference
 
 **Version**: 0.1.3  
-**Last Updated**: February 7, 2026
+**Last Updated**: September 6, 2026
 
 This page documents SQL commands and SQL usage only.
 
@@ -172,6 +172,28 @@ DROP SHARED TABLE [IF EXISTS] [<namespace>.]<table_name>;
 DROP STREAM TABLE [IF EXISTS] [<namespace>.]<table_name>;
 ```
 
+### CREATE INDEX / DROP INDEX
+
+Scalar secondary indexes are equality prefix scans on USER and SHARED tables.
+Vector indexes stay on the no-parentheses `USING COSINE|L2|DOT` form.
+
+```sql
+CREATE [UNIQUE] INDEX [IF NOT EXISTS] <index_name>
+  ON [<namespace>.]<table_name> (<column> [, <column> ...]);
+
+ALTER TABLE [<namespace>.]<table_name>
+  CREATE [UNIQUE] INDEX [IF NOT EXISTS] <index_name> (<column> [, <column> ...]);
+
+ALTER TABLE [<namespace>.]<table_name> DROP INDEX [IF EXISTS] <index_name>;
+```
+
+Chat and membership lookups:
+
+```sql
+CREATE INDEX idx_messages_conversation ON app.messages (conversation_id);
+CREATE INDEX idx_conversation_members_user ON app.conversation_members (user_id);
+```
+
 ### CREATE / ALTER / DROP POLICY
 
 Row-level security applies to every shared-table scan, write, live event, and file
@@ -276,6 +298,137 @@ DESCRIBE TABLE [<namespace>.]<table_name> HISTORY;
 SHOW STATS FOR TABLE [<namespace>.]<table_name>;
 ```
 
+## Types
+
+Named types are PostgreSQL-style composites, enums, and table row types.
+They are the same type system used by table columns and procedure signatures.
+`CREATE TYPE`, `ALTER TYPE`, and `DROP TYPE` require a DBA or System role.
+
+Creating a table also catalogs an implicit row type with the same
+schema-qualified name as the table (`app.users` is both the table and the row
+type). `CREATE TYPE ... FROM TABLE` adds an optional second name, usually
+singular, bound to that live row type. Creating a topic catalogs an implicit
+payload type with the same schema-qualified name as the topic. That payload is
+a tagged union of the topic's `ADD SOURCE` tables, discriminated by `_table`
+(the wire form `namespace:table`).
+
+### CREATE TYPE
+
+```sql
+CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> AS (
+  <field> <type> [NOT NULL] [NONEMPTY] [, ...]
+) [COMMENT ['<text>' | = '<text>']];
+
+CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> AS ENUM ('<label>' [, ...])
+  [COMMENT ['<text>' | = '<text>']];
+
+CREATE TYPE [IF NOT EXISTS] [<schema>.]<name> FROM TABLE [<schema>.]<table>
+  [COMMENT ['<text>' | = '<text>']];
+```
+
+Examples:
+
+```sql
+CREATE TYPE app.address AS (
+  city TEXT NOT NULL,
+  country TEXT NOT NULL
+) COMMENT 'Postal address';
+
+CREATE TYPE app.message_status AS ENUM ('sent', 'delivered', 'read');
+
+CREATE SHARED TABLE app.users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  home app.address
+);
+
+CREATE TYPE app.user FROM TABLE app.users;
+```
+
+Rules:
+
+1. Unqualified names use the current default namespace.
+2. Fields are nullable unless `NOT NULL` is present.
+3. `NONEMPTY` is allowed on `TEXT`, `BYTES`, and arrays, and requires `NOT NULL`.
+4. Arrays are one-dimensional (`T[]`).
+5. Fields may reference scalars, enums, named composites, table row types,
+   topic payload types, or `JSON`/`JSONB`. Named field types must already exist.
+   A composite cannot reference itself.
+6. Enum labels are case-sensitive, unique, non-empty, at most 63 characters, and
+   cannot contain `:`. `'Active'` and `'active'` are distinct.
+7. Composite field names must be unique.
+8. `FROM TABLE` aliases must live in the same schema as the table. A table may
+   have at most one explicit row-type alias.
+9. A standalone type cannot reuse a table's implicit row-type name or a topic's
+   implicit payload-type name.
+10. `AS UNION` and `AS INTERFACE` are reserved and rejected. Multi-source topics
+    still produce a tagged union of their source row types (see Topics).
+11. Catalog rows live in `system.types` and `system.type_fields`. Optional
+    `COMMENT` text is stored on `system.types.comment` and is documentation only
+    (it does not change the contract hash).
+
+Use named types in procedure signatures and as nested table columns:
+
+```sql
+CREATE PROCEDURE app.get_user(user_id TEXT NOT NULL)
+RETURNS ROW TYPE app.users
+LANGUAGE JAVASCRIPT
+AS $$
+  return ctx.db.sql("SELECT * FROM app.users WHERE id = $1", [input]);
+$$;
+
+CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+SECURITY DEFINER;
+```
+
+### COMMENT ON
+
+PostgreSQL `COMMENT ON` updates catalog documentation after create. KalamDB
+accepts type and procedure targets. There are no procedure overloads, so the
+procedure name is enough.
+
+```sql
+COMMENT ON TYPE [<schema>.]<name> IS '<text>';
+COMMENT ON TYPE [<schema>.]<name> IS NULL;
+COMMENT ON PROCEDURE [<schema>.]<name> IS '<text>';
+COMMENT ON PROCEDURE [<schema>.]<name> IS NULL;
+```
+
+`COMMENT ON TABLE` and other object kinds are rejected. `IS NULL` clears the
+comment. Generated TypeScript includes the text as JSDoc so schema can be fed
+to an agent.
+
+### ALTER TYPE
+
+```sql
+ALTER TYPE [<schema>.]<name> ADD ATTRIBUTE <field> <type> [NOT NULL];
+ALTER TYPE [<schema>.]<name> DROP ATTRIBUTE <field>;
+ALTER TYPE [<schema>.]<name> RENAME ATTRIBUTE <from> TO <to>;
+ALTER TYPE [<schema>.]<name> ALTER ATTRIBUTE <field> TYPE <type>;
+ALTER TYPE [<schema>.]<name> ADD VALUE [IF NOT EXISTS] '<label>' [BEFORE | AFTER '<neighbor>'];
+ALTER TYPE [<schema>.]<name> SET SCHEMA <schema>;
+```
+
+Attribute operations apply to composite types. `DROP ATTRIBUTE CASCADE` is not
+supported; drop dependents first. `ADD VALUE` applies to enums only and inserts
+the label at the end, or next to `BEFORE` / `AFTER` an existing label.
+`IF NOT EXISTS` is a no-op when the label is already present. `SET SCHEMA`
+applies to named composites and enums only, not implicit row types or
+`FROM TABLE` aliases.
+
+### DROP TYPE
+
+```sql
+DROP TYPE [<schema>.]<name>;
+DROP TYPE IF EXISTS [<schema>.]<name>;
+DROP TYPE [<schema>.]<name> RESTRICT;
+```
+
+`DROP TYPE` fails while another type, alias, or procedure still references it.
+Implicit table row types cannot be dropped; drop the table instead. Implicit
+topic payload types cannot be dropped; drop the topic instead.
+`DROP TYPE CASCADE` is not supported.
+
 ## Data Manipulation (DML)
 
 ### INSERT
@@ -315,6 +468,305 @@ FROM [<namespace>.]<table_name>
 [ORDER BY <expr>]
 [LIMIT <n>];
 ```
+
+## Procedures
+
+Server procedures are transactional business operations invoked with `CALL`.
+They are not SQL expression functions: `SNOWFLAKE_ID()`, `NOW()`, and similar
+built-ins stay in `SELECT` lists. A procedure runs in a V8 isolate, can read
+and write tables, publish topics, call other procedures, and return a typed
+value.
+
+`CREATE PROCEDURE`, `DROP PROCEDURE`, `GRANT EXECUTE`, and `REVOKE EXECUTE`
+require a DBA or System role. `CALL` is allowed for any authenticated role that
+holds `EXECUTE` on that procedure.
+
+### CREATE PROCEDURE
+
+```sql
+CREATE [OR REPLACE] PROCEDURE [<namespace>.]<name> (
+  <arg> <type> [NOT NULL] [NONEMPTY] [, ...]
+)
+[RETURNS [ROW TYPE] <type>]
+[LANGUAGE <JAVASCRIPT|JS|TYPESCRIPT|TS>]
+[SECURITY INVOKER | SECURITY DEFINER]
+[COMMENT ['<text>' | = '<text>']]
+[AS $$
+  <javascript_body>
+$$];
+```
+
+Rules:
+
+1. One procedure per `namespace.name`. Overloads are rejected.
+2. Unqualified names use the current default namespace (`USE` / session namespace).
+3. The namespace must already exist (`CREATE NAMESPACE`). Creating a procedure in
+   a missing namespace fails.
+4. Parameters are `IN` only. They are nullable unless `NOT NULL` is present.
+   Named parameter and `RETURNS` types must already exist.
+5. `SECURITY INVOKER` is the default. The procedure runs as the caller; RLS and
+   `CURRENT_USER` use that principal.
+6. `SECURITY DEFINER` runs as the procedure owner for that frame. The original
+   actor is preserved for audit. Table privileges and RLS use the owner.
+7. `LANGUAGE` is required only when a body is present. Project-backed
+   procedures omit `LANGUAGE` and `AS`. `LANGUAGE JAVASCRIPT` and `JS` are
+   parsed in V8 at CREATE time (syntax + host-API lint) and stored as an inline
+   artifact. `LANGUAGE TYPESCRIPT` and `TS` are stored for introspection and are
+   not executed until a project deployment supplies compiled JavaScript.
+   Dollar-quoted (`$$ ... $$`) or string-literal bodies are accepted.
+8. `LANGUAGE SQL` catalogs the routine but `CALL` is not supported.
+9. `CREATE OR REPLACE` replaces an existing procedure. Without `OR REPLACE`, a
+   duplicate name fails. The success message says `created` or `replaced` and
+   includes the inline source hash / artifact id. This statement does **not**
+   create a function module revision; those come from `kalam deploy`. Omitting
+   `COMMENT` on `CREATE OR REPLACE` keeps the previous comment.
+10. Source-file mapping (`AS 'src/api/orders.ts', 'createOrder'`) is rejected.
+    Project-backed procedures are bound by generated `procedure.<schema>.<method>`
+    builders and named exports, one scaffold file per procedure.
+11. `COMMENT` / `COMMENT =` is optional documentation stored on
+    `system.routines.comment` and exposed on `system.procedures.comment`. It
+    does not change the contract hash. `COMMENT ON PROCEDURE` can set or clear
+    it later. The clause may appear among `RETURNS` / `LANGUAGE` / `SECURITY` /
+    `AS`, including after the body.
+
+The body is wrapped as `(ctx, input) => { ... }` unless it already defines
+`function kalamInvoke(name, args)`. `input` is always a named object matching
+the procedure parameters (`{ x }` for `inc(x INT)`, `{ first, last }` for
+`greet(first TEXT, last TEXT)`). A one-argument SQL `CALL` is packed into that
+object. Nested `ctx.functions.<ns>.<method>(input)` already passes the object
+and is not wrapped again.
+
+Host objects injected into `ctx`:
+
+| Host | Purpose |
+| --- | --- |
+| `ctx.source.kind` | Always `"call"` for SQL, REST, and PGWire invocation. Clients cannot supply this. |
+| `ctx.db.query(sql, params?)` / `ctx.db.execute(sql, params?)` | Nested SQL on the same request transaction. `query` returns rows; `execute` returns a result. `params` is an optional array bound as `$1`..`$n`. STREAM `INSERT`/`UPDATE`/`DELETE` autocommit outside that transaction so live progress rows are visible before the procedure commits. A client `BEGIN` still rejects STREAM DML. |
+| `ctx.sleep(ms)` | Pause up to 60s (also bounded by the procedure deadline). Honors cancellation. |
+| `ctx.functions.call(name, args)` | Nested procedure call. `name` may be `namespace.name` or unqualified. |
+| `ctx.topics.publish(topic, payload)` | Stage a typed topic publish. Commit flushes it; rollback drops it. |
+| `ctx.log.info/debug/warn/error(...)` | Structured logs to `system.procedure_logs` (`outcome=log`, `channel=ctx.log`) and the process logger (`target: kalamdb::functions`). `ctx.log` is an object, not a function. |
+| `console.log/info/debug/warn/error(...)` | Same destinations with `channel=console`. `console.log` maps to info. Uncaught exceptions and unhandled Promise rejections are written as `outcome=error` with the V8 message/stack. |
+| `ctx.http.request.method/path/headers.get/query.get` | HTTP-root only. `Authorization`, `Proxy-Authorization`, and `Cookie` are not readable. SQL/`CALL` and topic origins set `ctx.http` to null. |
+| `ctx.http.response.status/header/contentType` | HTTP-root only; nested procedures cannot mutate the response. `Connection`, `Transfer-Encoding`, `Content-Length`, and `Host` are rejected. |
+
+Examples:
+
+```sql
+CREATE OR REPLACE PROCEDURE app.echo(msg TEXT)
+LANGUAGE JAVASCRIPT
+AS $$
+  ctx.log.info('echo', { msg: input.msg });
+  return input.msg;
+$$;
+
+CREATE OR REPLACE PROCEDURE app.inc(x INT)
+LANGUAGE JAVASCRIPT
+AS $$
+  return input.x + 1;
+$$;
+
+CREATE OR REPLACE PROCEDURE app.plus_one(x INT)
+LANGUAGE JAVASCRIPT
+AS $$
+  return ctx.functions.call('app.inc', [input]);
+$$;
+
+CREATE OR REPLACE PROCEDURE app.place_order(p_id INT)
+LANGUAGE JAVASCRIPT
+SECURITY DEFINER
+AS $$
+  ctx.db.execute("INSERT INTO app.orders (id, status) VALUES ($1, 'ok')", [input.p_id]);
+  ctx.topics.publish('app.events', { id: input, status: 'ok' });
+  return { id: input, status: 'ok' };
+$$;
+```
+
+### DROP PROCEDURE
+
+```sql
+DROP PROCEDURE [<namespace>.]<name>;
+DROP PROCEDURE IF EXISTS [<namespace>.]<name>;
+```
+
+### GRANT / REVOKE EXECUTE
+
+`EXECUTE` is independent of table grants and row-level security. It only decides
+whether a principal may enter the procedure. Nested `ctx.db.sql` still uses the
+effective principal's table privileges and RLS.
+
+```sql
+GRANT EXECUTE ON PROCEDURE [<namespace>.]<name> TO <PUBLIC|user|service|<role>|anonymous>;
+REVOKE EXECUTE ON PROCEDURE [<namespace>.]<name> FROM <PUBLIC|user|service|<role>|anonymous>;
+```
+
+Rules:
+
+1. New procedures have no `PUBLIC` execute privilege. Grant access deliberately.
+2. The owner, DBA, and System roles may always `CALL` a procedure they own or
+   administer.
+3. `TO user` allows end-user sessions. `TO service` allows service accounts.
+   `TO PUBLIC` allows every authenticated role except anonymous.
+4. Anonymous sessions cannot execute procedures unless `GRANT EXECUTE ... TO anonymous`
+   is explicit. `PUBLIC` does not include anonymous. REST
+   `POST /v1/functions/{namespace}/{procedure}` uses a named JSON object, a
+   positional JSON array, or empty; the success body is the procedure return
+   value (not `{status,result}`).
+5. A user can `CALL` a `SECURITY DEFINER` API without holding `INSERT` on the
+   underlying table, as long as they have `EXECUTE` and the owner does.
+
+```sql
+REVOKE EXECUTE ON PROCEDURE app.echo FROM PUBLIC;
+GRANT EXECUTE ON PROCEDURE app.echo TO user;
+CALL app.echo('ok');
+REVOKE EXECUTE ON PROCEDURE app.echo FROM user;
+```
+
+### CALL
+
+```sql
+CALL [<namespace>.]<name>();
+CALL [<namespace>.]<name>(<arg> [, ...]);
+CALL [<namespace>.]<name>($1, $2);
+```
+
+SQL `CALL` arguments are positional literals or 1-based placeholders:
+
+- `NULL`, `TRUE`, `FALSE`
+- integers and floats
+- single-quoted strings
+- `$1`, `$2`, ... bound from the prepared-statement parameter list
+
+Named composite arguments belong on the REST body, not in SQL `CALL`.
+Unqualified `CALL ping()` uses the current default namespace.
+
+`CALL` checks the procedure contract before V8 runs:
+
+- Argument count must match the signature. A single JSON object that contains
+  every parameter name (nested `ctx.functions.call(name, [input])`) is accepted
+  and is not wrapped again.
+- `NOT NULL` parameters and return values reject JSON/SQL null.
+- Enum arguments and returns must be one of the type's labels (case-sensitive).
+- Composite arguments must be objects. Missing `NOT NULL` fields fail; extra
+  fields are ignored.
+- Array `NONEMPTY` rejects `[]`. Invalid arguments return `INVALID_ARGUMENTS`
+  (HTTP 400).
+
+The result is one column named `result`. A root `CALL` starts a request
+transaction when none is open. Nested `ctx.functions.call` and `ctx.db.sql`
+share that transaction. `BEGIN; CALL ...; ROLLBACK;` drops nested inserts and
+staged topic publishes together.
+
+```sql
+CALL app.echo('hello');
+CALL app.plus_one(41);
+CALL app.place_order(7);
+
+BEGIN;
+CALL app.place_order(99);
+ROLLBACK;
+```
+
+PGWire and the SQL HTTP API run the same `CALL` statement through `SqlExecutor`.
+
+### REST invocation
+
+Every executable procedure is also available over HTTP. This is the same
+runtime as SQL `CALL`, not a second controller contract.
+
+```http
+POST /v1/functions/{namespace}/{procedure}
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+The body is a JSON object of named parameters, a JSON array of positional
+values, or empty/`null` for a procedure with no arguments. A procedure with
+exactly one `JSON` parameter also accepts the raw JSON object as the argument
+when the object does not contain that parameter name:
+
+```http
+POST /v1/functions/app/send_message
+Content-Type: application/json
+
+{ "conversationId": "c1", "text": "hello" }
+```
+
+That is equivalent to `{ "body": { "conversationId": "c1", "text": "hello" } }`
+when the signature is `send_message(body JSON)`. Named wrap and positional
+`[{ ... }]` still work.
+
+Success is the procedure return value itself (not `{status, result}`). A
+`RETURNS JSON` procedure returns a JSON object or array:
+
+```json
+{ "ok": true, "conversationId": "c1", "text": "hello" }
+```
+
+A `RETURNS TEXT` procedure such as `echo` returns the scalar:
+
+```json
+"rest"
+```
+
+Clients must not send `context`, `ctx`, `source`, `actor`, or `tx`. The host
+builds those from the authenticated session. HTTP-root procedures may set
+`ctx.http.status` and `ctx.http.header`; those apply only to this REST
+response.
+
+Catalog rows live in `system.routines`, `system.routine_parameters`, and
+`system.routine_grants`. Operators can read the joined catalog from
+`system.procedures` (signature, `inline`/`module`/`missing` implementation,
+current `module_id`/`revision_id`, and `comment`). Deployed modules are stored in
+`system.function_modules` / `system.function_revisions` /
+`system.function_artifacts`; the operator views are `system.modules` and
+`system.module_revisions` (`is_current` is derived from the module pointer).
+Live runtime is `system.module_instances`, `system.active_procedure_runs`,
+and `system.procedure_logs`. Invocation and V8 `console.*`/`ctx.log.*` records
+are stored under `{data_path}/functions/runtime/<procedure_id>/logs/` (default
+`./data/functions/runtime/<procedure_id>/logs/procedures.jsonl`). Compiled module bytes live under
+`{data_path}/functions/artifacts/`.
+
+```sql
+SELECT * FROM system.procedures;
+SELECT * FROM system.module_revisions WHERE is_current;
+SELECT * FROM system.module_instances;
+SELECT * FROM system.procedure_logs
+WHERE procedure_id = 'chat.send_message'
+ORDER BY timestamp DESC;
+```
+
+### Topic triggers
+
+Durable topic delivery is `CREATE TRIGGER … ON TOPIC … EXECUTE PROCEDURE`,
+not table AFTER ROW triggers.
+
+```sql
+CREATE TRIGGER chat.process_message
+  ON TOPIC chat.message_created
+  EXECUTE PROCEDURE chat.on_message_created(PAYLOAD)
+  WITH (
+    principal = 'system',
+    start = 'latest',
+    retries = 5,
+    retry_backoff = '1s',
+    concurrency = 1
+  );
+
+ALTER TRIGGER chat.process_message DISABLE;
+ALTER TRIGGER chat.process_message ENABLE;
+DROP TRIGGER IF EXISTS chat.process_message;
+```
+
+`start` is `latest` (default) or `earliest` and is captured when the trigger
+is created. The dispatcher consumes each partition in order, ACKs after a
+successful commit, retries with backoff, then writes `system.trigger_attempts`
+status `dlq`. Nested `ctx.functions.call` keeps `ctx.source.kind = "topic"`
+and sets `ctx.parent` to the trigger procedure. Disabling or dropping a
+trigger keeps committed offsets.
+
+Catalog rows live in `system.triggers` and `system.trigger_attempts`.
+Consumer group id is `trigger:{trigger_id}`.
 
 ## Execute As
 
@@ -514,7 +966,7 @@ CREATE TOPIC <topic_name> PARTITIONS <count>;
 ### DROP TOPIC
 
 ```sql
-DROP TOPIC <topic_name>;
+DROP TOPIC [IF EXISTS] <topic_name>;
 ```
 
 ### CLEAR TOPIC
@@ -535,6 +987,34 @@ ON <INSERT|UPDATE|DELETE>
 
 `WHERE` is evaluated against the row routed for the selected operation. That lets
 you publish only a subset of inserts or updates into a worker topic.
+
+Creating a topic catalogs an implicit payload type with the same name. Each
+`ADD SOURCE` table (default `payload = 'full'`) is one arm of that type. Full
+payloads include the source row plus `_table` (`namespace:table`) so a trigger
+procedure can narrow the union. Declare the procedure argument as the topic
+name instead of `JSON`:
+
+```sql
+CREATE TOPIC chat.ai_inbox;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
+ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
+
+CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL);
+CREATE TRIGGER chat.process_message
+  ON TOPIC chat.ai_inbox
+  EXECUTE PROCEDURE chat.on_message(PAYLOAD);
+```
+
+Generated TypeScript for that topic:
+
+```ts
+type ChatAiInbox =
+  | ({ _table: "chat:direct_messages" } & ChatDirectMessages)
+  | ({ _table: "chat:messages" } & ChatMessages);
+```
+
+A procedure may also `RETURNS` the topic payload type when it inserts into one
+of those source tables and returns the tagged row.
 
 Example: publish task-cancellation work only when a task is already cancelled on
 insert, or becomes cancelled on update.
@@ -672,6 +1152,10 @@ without replacing the live database. `RESTORE DATABASE` requires a DBA or System
 role.
 
 ## Built-in Functions (Common)
+
+These are SQL expression functions for `SELECT` lists, defaults, and predicates.
+They are not procedures. Application logic that writes tables or publishes
+topics uses [`CALL`](#call), not these names.
 
 ```sql
 SELECT SNOWFLAKE_ID();

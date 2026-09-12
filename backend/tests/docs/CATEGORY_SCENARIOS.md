@@ -2,10 +2,10 @@
 
 ## Runnable Test Targets
 
-- `test_scenarios` — aggregate driver for every scenario below
-- `test_scenarios_realtime` — scenarios 01, 02, 03, 07
-- `test_scenarios_lifecycle` — scenarios 05, 06, 09, 10, 11, 14
-- `test_scenarios_scale` — scenarios 04, 08, 12, 13
+All scenarios compile in `cargo nextest run -p kalamdb-server --features e2e-tests --test e2e`.
+- `realtime` filter — scenarios 01, 02, 03, 07
+- `lifecycle` filter — scenarios 05, 06, 09, 10, 11, 14
+- `scale` filter — scenarios 04, 08, 12, 13
 
 ## Standard Steps
 1. Arrange scenario fixtures and initial data.

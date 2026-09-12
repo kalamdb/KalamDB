@@ -13,7 +13,7 @@
 //! cd backend && cargo run --bin kalamdb-server
 //!
 //! # Terminal 2: Run the tests
-//! cd link && cargo test --test test_websocket_integration -- --nocapture
+//! cd link && cargo nextest run -p kalam-client-e2e --test e2e -- --nocapture
 //! ```
 //!
 //! Tests will be skipped if the server is not running.
@@ -29,7 +29,7 @@ use kalam_client::{
 };
 use tokio::time::{sleep, timeout};
 
-mod common;
+use super::common;
 
 /// Test configuration
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);

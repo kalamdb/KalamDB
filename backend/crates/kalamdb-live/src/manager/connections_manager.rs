@@ -97,16 +97,20 @@ pub struct ConnectionsManager {
 }
 
 impl ConnectionsManager {
-    /// Release retained DashMap bucket capacity once the live registry is fully idle.
+    /// Release retained DashMap bucket capacity when the registry is idle, or
+    /// when live maps have grown far past their current occupancy.
     pub fn trim_idle_capacity(&self) {
-        if self.connection_count() > 0 || self.subscription_count() > 0 {
+        if self.connection_count() == 0 && self.subscription_count() == 0 {
+            self.connections.shrink_to_fit();
+            self.user_table_subscriptions.shrink_to_fit();
+            self.shared_subscribers.shrink_to_fit();
+            self.empty_subscriptions.shrink_to_fit();
             return;
         }
 
-        self.connections.shrink_to_fit();
-        self.user_table_subscriptions.shrink_to_fit();
-        self.shared_subscribers.shrink_to_fit();
-        self.empty_subscriptions.shrink_to_fit();
+        shrink_dashmap_if_sparse(&self.connections);
+        shrink_dashmap_if_sparse(&self.user_table_subscriptions);
+        self.shared_subscribers.shrink_if_sparse();
     }
 
     /// Default maximum connections (100,000 concurrent connections)
@@ -387,7 +391,11 @@ impl ConnectionsManager {
         // Remove from user_table_subscriptions index
         let key = (user_id.clone(), table_id.clone());
         if let Some(handles) = self.user_table_subscriptions.get(&key) {
-            handles.remove(live_id);
+            if let Some((_, handle)) = handles.remove(live_id) {
+                if let Some(flow_control) = handle.flow_control.as_ref() {
+                    flow_control.release_buffer();
+                }
+            }
             if handles.is_empty() {
                 drop(handles);
                 self.user_table_subscriptions.remove(&key);
@@ -682,12 +690,17 @@ impl ConnectionsManager {
             self.unregister_connection(&conn_id);
         }
 
-        // Reclaim high-water capacity off the disconnect/reconnect critical path.
-        // An immediate reconnect can reuse the allocation; a truly idle registry
-        // releases it on the next heartbeat sweep.
-        if self.connection_count() == 0 && self.subscription_count() == 0 {
-            self.trim_idle_capacity();
-        }
+        self.trim_idle_capacity();
+    }
+}
+
+fn shrink_dashmap_if_sparse<K, V>(map: &DashMap<K, V>)
+where
+    K: Eq + std::hash::Hash,
+{
+    let len = map.len();
+    if map.capacity() > len.saturating_mul(4).max(64) {
+        map.shrink_to_fit();
     }
 }
 

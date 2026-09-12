@@ -259,10 +259,10 @@ async fn topic_offset_rows(topic: &str, group_id: &str) -> Vec<HashMap<String, s
 }
 
 struct RawRecordPollConfig {
-    min_records: usize,
-    deadline: Duration,
-    idle_sleep: Duration,
-    per_record_delay: Duration,
+    min_records:       usize,
+    deadline:          Duration,
+    idle_sleep:        Duration,
+    per_record_delay:  Duration,
     commit_each_batch: bool,
 }
 
@@ -1080,11 +1080,11 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
                 &mut consumer,
                 topic_test_support::UniqueOffsetPollConfig {
                     expected_messages: None,
-                    publishers_done: Some(publishers_done),
-                    deadline: Duration::from_secs(150),
-                    idle_break_after: 120,
-                    idle_sleep: Duration::from_millis(100),
-                    per_record_delay: Duration::ZERO,
+                    publishers_done:   Some(publishers_done),
+                    deadline:          Duration::from_secs(150),
+                    idle_break_after:  120,
+                    idle_sleep:        Duration::from_millis(100),
+                    per_record_delay:  Duration::ZERO,
                     commit_each_batch: true,
                 },
             )
@@ -1115,13 +1115,17 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
 
     let overlap_count = consumer_a_offsets.intersection(&consumer_b_offsets).count();
     let total_unique = consumer_a_offsets.union(&consumer_b_offsets).count();
+    let overlapping: Vec<(u32, u64)> =
+        consumer_a_offsets.intersection(&consumer_b_offsets).copied().collect();
 
     eprintln!(
-        "[TEST] same-group consumers results: A={}, B={}, overlap={}, total_unique={}",
+        "[TEST] same-group consumers results: A={}, B={}, overlap={}, total_unique={} \
+         overlapping={:?}",
         consumer_a_offsets.len(),
         consumer_b_offsets.len(),
         overlap_count,
-        total_unique
+        total_unique,
+        overlapping
     );
 
     assert_eq!(
@@ -1188,11 +1192,11 @@ async fn test_topic_fan_out_different_groups_receive_all() {
                     &mut consumer,
                     topic_test_support::UniqueOffsetPollConfig {
                         expected_messages: None,
-                        publishers_done: Some(publishers_done),
-                        deadline: Duration::from_secs(150),
-                        idle_break_after: 40,
-                        idle_sleep: Duration::from_millis(100),
-                        per_record_delay: Duration::ZERO,
+                        publishers_done:   Some(publishers_done),
+                        deadline:          Duration::from_secs(150),
+                        idle_break_after:  40,
+                        idle_sleep:        Duration::from_millis(100),
+                        per_record_delay:  Duration::ZERO,
                         commit_each_batch: true,
                     },
                 )
@@ -1264,8 +1268,9 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     wait_for_topic_ready(&topic, 1).await;
 
     let expected_messages: usize = 1_200;
-    let publishers_done = Arc::new(AtomicBool::new(false));
+    topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
 
+    let publishers_done = Arc::new(AtomicBool::new(true));
     let consumer_count = 4;
     let mut consumer_handles = Vec::with_capacity(consumer_count);
 
@@ -1282,11 +1287,11 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
                 &mut consumer,
                 topic_test_support::UniqueOffsetPollConfig {
                     expected_messages: None,
-                    publishers_done: Some(done),
-                    deadline: Duration::from_secs(180),
-                    idle_break_after: 150,
-                    idle_sleep: Duration::from_millis(80),
-                    per_record_delay: Duration::ZERO,
+                    publishers_done:   Some(done),
+                    deadline:          Duration::from_secs(180),
+                    idle_break_after:  150,
+                    idle_sleep:        Duration::from_millis(80),
+                    per_record_delay:  Duration::ZERO,
                     commit_each_batch: true,
                 },
             )
@@ -1294,11 +1299,6 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
             (label, seen)
         }));
     }
-
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
-    publishers_done.store(true, Ordering::Relaxed);
 
     // Collect results
     let mut all_consumer_offsets: Vec<(String, HashSet<(u32, u64)>)> = Vec::new();
@@ -1392,10 +1392,10 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
         poll_records_raw_until(
             &mut consumer_a,
             RawRecordPollConfig {
-                min_records: consumer_a_claim_target,
-                deadline: Duration::from_secs(35),
-                idle_sleep: Duration::from_millis(80),
-                per_record_delay: Duration::ZERO,
+                min_records:       consumer_a_claim_target,
+                deadline:          Duration::from_secs(35),
+                idle_sleep:        Duration::from_millis(80),
+                per_record_delay:  Duration::ZERO,
                 commit_each_batch: false,
             },
         )
@@ -1419,10 +1419,10 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let recovered_records = poll_records_raw_until(
         &mut consumer_b,
         RawRecordPollConfig {
-            min_records: expected_messages,
-            deadline: topic_recovery_deadline().await,
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::from_millis(2),
+            min_records:       expected_messages,
+            deadline:          topic_recovery_deadline().await,
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::from_millis(2),
             commit_each_batch: false,
         },
     )
@@ -1494,10 +1494,10 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
         poll_records_raw_until(
             &mut consumer_a,
             RawRecordPollConfig {
-                min_records: 60,
-                deadline: Duration::from_secs(20),
-                idle_sleep: Duration::from_millis(80),
-                per_record_delay: Duration::ZERO,
+                min_records:       60,
+                deadline:          Duration::from_secs(20),
+                idle_sleep:        Duration::from_millis(80),
+                per_record_delay:  Duration::ZERO,
                 commit_each_batch: false,
             },
         )
@@ -1538,10 +1538,10 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
     let recovered_records = poll_records_raw_until(
         &mut consumer_c,
         RawRecordPollConfig {
-            min_records: expected_messages,
-            deadline: topic_recovery_deadline().await,
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::ZERO,
+            min_records:       expected_messages,
+            deadline:          topic_recovery_deadline().await,
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1642,10 +1642,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let committed_records = poll_records_raw_until(
         &mut consumer_a,
         RawRecordPollConfig {
-            min_records: committed_prefix_len,
-            deadline: Duration::from_secs(20),
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::ZERO,
+            min_records:       committed_prefix_len,
+            deadline:          Duration::from_secs(20),
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1678,10 +1678,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let pending_records = poll_records_raw_until(
         &mut consumer_a,
         RawRecordPollConfig {
-            min_records: unacked_claim_len,
-            deadline: Duration::from_secs(20),
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::ZERO,
+            min_records:       unacked_claim_len,
+            deadline:          Duration::from_secs(20),
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1702,10 +1702,10 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let recovered_records = poll_records_raw_until(
         &mut consumer_b,
         RawRecordPollConfig {
-            min_records: expected_messages - committed_prefix_len,
-            deadline: topic_recovery_deadline().await,
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::ZERO,
+            min_records:       expected_messages - committed_prefix_len,
+            deadline:          topic_recovery_deadline().await,
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::ZERO,
             commit_each_batch: false,
         },
     )
@@ -1815,10 +1815,10 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
     let records = poll_records_raw_until(
         &mut consumer,
         RawRecordPollConfig {
-            min_records: expected_messages,
-            deadline: Duration::from_secs(60),
-            idle_sleep: Duration::from_millis(80),
-            per_record_delay: Duration::from_millis(5),
+            min_records:       expected_messages,
+            deadline:          Duration::from_secs(60),
+            idle_sleep:        Duration::from_millis(80),
+            per_record_delay:  Duration::from_millis(5),
             commit_each_batch: true,
         },
     )
@@ -1890,8 +1890,8 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
 #[allow(dead_code)]
 struct EventInfo {
     table: String,
-    op: TopicOp,
-    id: i64,
+    op:    TopicOp,
+    id:    i64,
 }
 
 async fn record_expected_event(

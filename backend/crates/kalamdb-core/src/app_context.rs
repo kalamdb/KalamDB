@@ -19,7 +19,7 @@ use kalamdb_commons::{
     NodeId,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_filestore::StorageRegistry;
+use kalamdb_filestore::{StorageCached, StorageRegistry};
 use kalamdb_live::{
     ConnectionsManager, LiveQueryManager, NotificationService, TopicPrimaryKeyLookup,
     TopicPublisherService,
@@ -148,6 +148,12 @@ pub struct AppContext {
     // ===== Slow Query Logger =====
     slow_query_logger: Arc<crate::slow_query_logger::SlowQueryLogger>,
 
+    // ===== Procedure invocation JSONL =====
+    procedure_log_logger: Arc<crate::procedure_log_logger::ProcedureLogLogger>,
+
+    // ===== Node-local function artifacts (`{data_path}/functions`) =====
+    functions_storage: Arc<StorageCached>,
+
     // ===== Manifest Service (unified: memory cache + RocksDB + cold storage) =====
     manifest_service: Arc<crate::manifest::ManifestService>,
 
@@ -168,6 +174,9 @@ pub struct AppContext {
 
     // ===== Shared SqlExecutor =====
     sql_executor: OnceCell<Arc<SqlExecutor>>,
+
+    // ===== Function CALL runtime (staged topic publishes) =====
+    function_runtime: OnceCell<Arc<crate::functions::FunctionRuntimeState>>,
 
     // ===== Auth user cache (invalidated after DDL user mutations) =====
     cached_user_repo: OnceCell<Arc<CachedUsersRepo>>,
@@ -198,9 +207,12 @@ impl std::fmt::Debug for AppContext {
             .field("backend_session_manager", &"OnceCell<Arc<BackendSessionManager>>")
             .field("system_columns_service", &"Arc<SystemColumnsService>")
             .field("slow_query_logger", &"Arc<SlowQueryLogger>")
+            .field("procedure_log_logger", &"Arc<ProcedureLogLogger>")
+            .field("functions_storage", &"Arc<StorageCached>")
             .field("manifest_service", &"Arc<ManifestService>")
             .field("topic_publisher", &"Arc<TopicPublisherService>")
             .field("sql_executor", &"OnceCell<Arc<SqlExecutor>>")
+            .field("function_runtime", &"OnceCell<Arc<FunctionRuntimeState>>")
             .field("cached_user_repo", &"OnceCell<Arc<CachedUsersRepo>>")
             .finish()
     }
@@ -323,6 +335,8 @@ impl AppContext {
             let live_view = system_schema.live_view();
             let sessions_view = system_schema.sessions_view();
             let transactions_view = system_schema.transactions_view();
+            let active_procedure_runs_view = system_schema.active_procedure_runs_view();
+            let module_instances_view = system_schema.module_instances_view();
 
             // Register all system tables in DataFusion
             // Use config-driven DataFusion settings for parallelism
@@ -412,6 +426,14 @@ impl AppContext {
             let slow_query_logger = crate::slow_query_logger::SlowQueryLogger::new(
                 slow_log_path,
                 config.logging.slow_query_threshold_ms,
+            );
+            let functions_dir = config.storage.functions_dir();
+            let _ = std::fs::create_dir_all(config.storage.functions_artifacts_dir());
+            let _ = std::fs::create_dir_all(config.storage.functions_runtime_dir());
+            let functions_storage =
+                Arc::new(kalamdb_filestore::StorageCached::for_functions_dir(&functions_dir));
+            let procedure_log_logger = crate::procedure_log_logger::ProcedureLogLogger::new(
+                config.storage.functions_runtime_dir(),
             );
 
             // Create system columns service (Phase 12, US5, T027)
@@ -530,10 +552,13 @@ impl AppContext {
                 base_session_context,
                 system_columns_service,
                 slow_query_logger,
+                procedure_log_logger,
+                functions_storage,
                 manifest_service,
                 file_storage_service,
                 topic_publisher: Arc::clone(&topic_publisher),
                 sql_executor: OnceCell::new(),
+                function_runtime: OnceCell::new(),
                 cached_user_repo: OnceCell::new(),
                 server_start_time,
             });
@@ -545,6 +570,10 @@ impl AppContext {
                 Arc::new(VectorSearchTableFunction::new(Arc::new(CoreVectorSearchRuntime::new(
                     Arc::downgrade(&app_ctx),
                 )))),
+            );
+            DataFusionSessionFactory::register_routine_catalog_functions(
+                &app_ctx.base_session_context,
+                app_ctx.system_tables(),
             );
 
             // Set AppContext in SchemaRegistry to break circular dependency
@@ -733,6 +762,15 @@ impl AppContext {
                 });
             transactions_view.set_snapshot_callback(transactions_snapshot_callback);
 
+            let app_ctx_for_procedure_runs = Arc::clone(&app_ctx);
+            active_procedure_runs_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_procedure_runs.function_runtime().snapshot_runs()
+            }));
+            let app_ctx_for_module_instances = Arc::clone(&app_ctx);
+            module_instances_view.set_snapshot_callback(Arc::new(move || {
+                app_ctx_for_module_instances.function_runtime().snapshot_instances()
+            }));
+
             let live_query_manager = Arc::new(LiveQueryManager::new(
                 Arc::new(SchemaRegistryLookup::new(app_ctx.schema_registry())),
                 app_ctx.connection_registry(),
@@ -915,6 +953,10 @@ impl AppContext {
 
         // Create minimal slow query logger for tests (no async task)
         let slow_query_logger = Arc::new(crate::slow_query_logger::SlowQueryLogger::new_test());
+        let procedure_log_logger =
+            Arc::new(crate::procedure_log_logger::ProcedureLogLogger::new_test());
+        let functions_storage =
+            Arc::new(StorageCached::for_functions_dir(config.storage.functions_dir()));
 
         // Create system columns service with worker_id=0 for tests
         let system_columns_service = Arc::new(crate::schema_registry::SystemColumnsService::new(0));
@@ -989,10 +1031,13 @@ impl AppContext {
             base_session_context,
             system_columns_service,
             slow_query_logger,
+            procedure_log_logger,
+            functions_storage,
             manifest_service,
             file_storage_service,
             topic_publisher: Arc::clone(&topic_publisher),
             sql_executor: OnceCell::new(),
+            function_runtime: OnceCell::new(),
             cached_user_repo: OnceCell::new(),
             server_start_time,
         });
@@ -1003,6 +1048,10 @@ impl AppContext {
             Arc::new(VectorSearchTableFunction::new(Arc::new(CoreVectorSearchRuntime::new(
                 Arc::downgrade(&app_ctx),
             )))),
+        );
+        DataFusionSessionFactory::register_routine_catalog_functions(
+            &app_ctx.base_session_context,
+            app_ctx.system_tables(),
         );
 
         // Topic publishing is now synchronous in table providers — no need to wire
@@ -1310,6 +1359,15 @@ impl AppContext {
         self.slow_query_logger.clone()
     }
 
+    pub fn procedure_log_logger(&self) -> Arc<crate::procedure_log_logger::ProcedureLogLogger> {
+        self.procedure_log_logger.clone()
+    }
+
+    /// Node-local function artifact store rooted at `{data_path}/functions`.
+    pub fn functions_storage(&self) -> Arc<StorageCached> {
+        self.functions_storage.clone()
+    }
+
     /// Get the manifest service (unified: memory cache + RocksDB + cold storage)
     ///
     /// Returns an Arc reference to the ManifestService that provides:
@@ -1394,6 +1452,19 @@ impl AppContext {
     /// Get the shared SqlExecutor (panics if not yet initialized)
     pub fn sql_executor(&self) -> Arc<SqlExecutor> {
         self.try_sql_executor().expect("SqlExecutor not initialized in AppContext")
+    }
+
+    /// Staged function-runtime state (typed topic publishes).
+    pub fn function_runtime(&self) -> Arc<crate::functions::FunctionRuntimeState> {
+        if let Some(state) = self.function_runtime.get() {
+            return Arc::clone(state);
+        }
+        let _ = self.function_runtime.set(Arc::new(
+            crate::functions::FunctionRuntimeState::from_runtime_settings(
+                &self.config.functions.runtime,
+            ),
+        ));
+        Arc::clone(self.function_runtime.get().expect("function runtime initialized"))
     }
 
     /// Get server uptime in seconds

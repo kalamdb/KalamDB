@@ -65,7 +65,11 @@
 //! `stream_table_provider.rs` so the hot-store scan runs at execute time.
 //! ```
 
-use std::{collections::HashSet, future::Future, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    future::Future,
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -88,11 +92,12 @@ use kalamdb_commons::{
     conversions::arrow_json_conversion::coerce_rows,
     ids::SeqId,
     models::{
-        datatypes::KalamDataType, rows::Row, schemas::TableDefinition, NamespaceId, TableName,
-        UserId,
+        datatypes::KalamDataType,
+        rows::{Row, RowMetadata},
+        schemas::TableDefinition,
+        NamespaceId, TableName, UserId,
     },
     schemas::TableType,
-    serialization::row_codec::RowMetadata,
     try_pk_bucket_key, NotLeaderError, StorageKey, TableId,
 };
 use kalamdb_datafusion_sources::{
@@ -108,6 +113,7 @@ use kalamdb_datafusion_sources::{
 };
 use kalamdb_filestore::registry::{ListResult, StorageCached};
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
+use kalamdb_store::IndexedEntityStore;
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, Manifest, ManifestCacheEntry,
     SchemaRegistry as SchemaRegistryTrait,
@@ -125,7 +131,7 @@ pub(crate) use crate::utils::parquet::{
 };
 pub use crate::utils::row_utils::{
     extract_full_user_context, extract_seq_bounds_from_filter, inject_system_columns,
-    resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
+    materialize_scan_rows, resolve_user_scope, rows_to_arrow_batch, system_user_id, ScanRow,
 };
 use crate::{error::KalamDbError, manifest::ManifestAccessPlanner, utils::unified_dml};
 
@@ -208,10 +214,12 @@ where
     ///
     /// The resolver must inspect the deletion flag from this same lookup so a
     /// point read does not repeat the RocksDB index seek and entity fetch.
+    /// `storage_ordinals` decodes only those KOBJ fields when present.
     async fn scan_latest_hot_pk_entry(
         &self,
         scan_context: &Self::ScanContext,
         pk_value: &ScalarValue,
+        storage_ordinals: Option<&[usize]>,
     ) -> Result<Option<(K, V)>, KalamDbError>;
 
     async fn count_rows_with_context(
@@ -299,7 +307,14 @@ where
 
         if self.allow_pk_fast_path(scan_context) {
             if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
-                let resolved = resolve_pk_point_lookup(self, scan_context, &pk_scalar).await?;
+                let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection);
+                let resolved = resolve_pk_point_lookup(
+                    self,
+                    scan_context,
+                    &pk_scalar,
+                    storage_ordinals.as_deref(),
+                )
+                .await?;
                 let resolved = if self.requires_row_authorization(scan_context) {
                     self.authorize_resolved_rows(scan_context, resolved.into_iter().collect())
                         .await?
@@ -367,6 +382,98 @@ where
         };
         let batch = rows_to_arrow_batch(&schema, authorized_rows, projection, |_, _| {})?;
         Ok(DeferredBatchOutput::new(batch).with_diagnostics(scan_result.diagnostics))
+    }
+
+    /// Materialize projected [`Row`] maps without building Arrow.
+    ///
+    /// Used by skip-Arrow HTTP cached point gets. Returns `None` for the
+    /// COUNT-only fast path so callers can fall back to RecordBatch.
+    async fn scan_materialized_output(
+        &self,
+        scan_context: &Self::ScanContext,
+        projection: Option<&Vec<usize>>,
+        filter: Option<&Expr>,
+        authorization_filter: Option<&Expr>,
+        limit: Option<usize>,
+        include_diagnostics: bool,
+    ) -> Result<Option<(SchemaRef, Vec<Row>)>, KalamDbError> {
+        let schema = self.schema_ref();
+        let pk_name = self.primary_key_field_name();
+
+        if !self.pre_authorize_scan(scan_context, authorization_filter).await? {
+            let (target, rows) =
+                materialize_scan_rows(&schema, Vec::<(K, V)>::new(), projection, |_, _| {})?;
+            return Ok(Some((target, rows)));
+        }
+
+        if self.allow_pk_fast_path(scan_context) {
+            if let Some(pk_scalar) = typed_pk_literal_from_filter(&schema, filter, pk_name) {
+                let storage_ordinals = storage_ordinals_for_scan(self, scan_context, projection);
+                let resolved = resolve_pk_point_lookup(
+                    self,
+                    scan_context,
+                    &pk_scalar,
+                    storage_ordinals.as_deref(),
+                )
+                .await?;
+                let resolved = if self.requires_row_authorization(scan_context) {
+                    self.authorize_resolved_rows(scan_context, resolved.into_iter().collect())
+                        .await?
+                } else {
+                    resolved.into_iter().collect()
+                };
+                let (target, rows) =
+                    materialize_scan_rows(&schema, resolved, projection, |_, _| {})?;
+                return Ok(Some((target, rows)));
+            }
+        }
+
+        if self.allow_count_only_fast_path(scan_context)
+            && is_count_only_projection(projection, filter)
+        {
+            return Ok(None);
+        }
+
+        let (since_seq, _until_seq) = if let Some(expr) = filter {
+            extract_seq_bounds_from_filter(expr)
+        } else {
+            (None, None)
+        };
+        let keep_deleted = filter.map(filter_uses_deleted_column).unwrap_or(false);
+        let cold_columns = compute_cold_columns(projection, &schema, pk_name);
+        let scan_result = if include_diagnostics {
+            self.scan_kvs_with_diagnostics(
+                scan_context,
+                filter,
+                since_seq,
+                limit,
+                keep_deleted,
+                cold_columns.as_deref(),
+            )
+            .await?
+        } else {
+            MvccScanResult {
+                rows:        self
+                    .scan_kvs_with_context(
+                        scan_context,
+                        filter,
+                        since_seq,
+                        limit,
+                        keep_deleted,
+                        cold_columns.as_deref(),
+                    )
+                    .await?,
+                diagnostics: DeferredScanDiagnostics::default(),
+            }
+        };
+        let authorized_rows = if self.requires_row_authorization(scan_context) {
+            self.authorize_resolved_rows(scan_context, scan_result.rows).await?
+        } else {
+            scan_result.rows
+        };
+        let (target, rows) =
+            materialize_scan_rows(&schema, authorized_rows, projection, |_, _| {})?;
+        Ok(Some((target, rows)))
     }
 }
 
@@ -482,6 +589,61 @@ where
 
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
         self.produce_output(true).await
+    }
+
+    async fn produce_scalar_rows(&self) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
+        // `id = $1` is Exact, so `base_scan` keeps a residual physical filter
+        // and output projection. The hot PK lookup already applied that
+        // equality. Treating `physical_filter.is_some()` as "must use Arrow"
+        // disables skip-Arrow on every cached point get, including the
+        // comparison bake-off (`SELECT id, owner, room, data FROM t WHERE id = $1`).
+        //
+        // Inspect the full scan filter list (`authorization_filter`), not
+        // `self.filter`. The latter is the inexact/source-pruning subset, which
+        // is only the PK equality even for `id = $1 AND name = $2`. Skip-Arrow
+        // on that AND would drop the residual name predicate.
+        //
+        // Aliases are not applied here. Scan output keeps catalog names;
+        // `SqlExecutor::project_point_get_scalar_rows` remaps `name AS title`.
+        // Regression: `cached_pk_point_get_skips_arrow_after_plan_cache_hit`.
+        let pk_only = is_simple_pk_equality_filter(
+            self.authorization_filter.as_ref().or(self.filter.as_ref()),
+            self.provider.primary_key_field_name(),
+        );
+        if !pk_only && (self.physical_filter.is_some() || self.output_projection.is_some()) {
+            return Ok(None);
+        }
+        let materialized = self
+            .provider
+            .scan_materialized_output(
+                &self.scan_context,
+                self.projection.as_ref(),
+                self.filter.as_ref(),
+                self.authorization_filter.as_ref(),
+                self.limit,
+                false,
+            )
+            .await
+            .map_err(|error| {
+                DataFusionError::Execution(format!(
+                    "{} failed: {}",
+                    self.provider.scan_source_name(),
+                    error
+                ))
+            })?;
+        let Some((materialized_schema, mut rows)) = materialized else {
+            return Ok(None);
+        };
+        if let Some(limit) = self.limit {
+            rows.truncate(limit);
+        }
+        align_rows_to_output_schema(
+            &materialized_schema,
+            &self.output_schema,
+            self.output_projection.as_deref(),
+            &mut rows,
+        );
+        Ok(Some((Arc::clone(&self.output_schema), rows)))
     }
 }
 
@@ -1077,6 +1239,66 @@ pub fn filter_uses_deleted_column(filter: &Expr) -> bool {
     }
 }
 
+/// Align materialized scan-row keys to the scan `output_schema` field names.
+///
+/// PK-equality scans keep a residual `output_projection` because DataFusion
+/// marks `id = $1` as Exact. Materialized rows still use catalog names and may
+/// include extra columns (`id`, `name`) while the scan output is a subset
+/// (`name`). This does **not** apply SQL aliases (`name AS title`); that remap
+/// happens in `SqlExecutor::project_point_get_scalar_rows`.
+fn align_rows_to_output_schema(
+    materialized_schema: &SchemaRef,
+    output_schema: &SchemaRef,
+    output_projection: Option<&[usize]>,
+    rows: &mut [Row],
+) {
+    let source_indices: Vec<usize> = if let Some(projection) = output_projection {
+        projection.to_vec()
+    } else if materialized_schema.fields().len() == output_schema.fields().len() {
+        (0..output_schema.fields().len()).collect()
+    } else {
+        output_schema
+            .fields()
+            .iter()
+            .map(|output_field| {
+                materialized_schema.index_of(output_field.name()).unwrap_or(usize::MAX)
+            })
+            .collect()
+    };
+
+    for row in rows {
+        let mut aligned = Row::new(BTreeMap::new());
+        for (output_index, output_field) in output_schema.fields().iter().enumerate() {
+            let value = row.values.remove(output_field.name()).or_else(|| {
+                source_indices.get(output_index).and_then(|&source_index| {
+                    materialized_schema
+                        .fields()
+                        .get(source_index)
+                        .and_then(|source| row.values.remove(source.name()))
+                })
+            });
+            aligned
+                .values
+                .insert(output_field.name().clone(), value.unwrap_or(ScalarValue::Null));
+        }
+        *row = aligned;
+    }
+}
+
+/// True when the pushed source filter is a single `pk = literal`.
+///
+/// AND-conjunctions stay on the Arrow path because a residual physical filter
+/// may still drop rows after the PK lookup. Do not recurse into AND here.
+fn is_simple_pk_equality_filter(filter: Option<&Expr>, pk_name: &str) -> bool {
+    let Some(expr) = filter else {
+        return false;
+    };
+    matches!(
+        expr,
+        Expr::BinaryExpr(binary) if binary.op == datafusion::logical_expr::Operator::Eq
+    ) && extract_pk_equality_literal(expr, pk_name).is_some()
+}
+
 /// Extract a PK equality literal from a simple `pk_col = literal` filter.
 ///
 /// Supports both `col = literal` and `literal = col` forms, including
@@ -1162,18 +1384,67 @@ fn cached_manifest_is_hot_only(entry: Option<&ManifestCacheEntry>) -> bool {
     entry.is_some_and(|cached| cached.manifest.segments.is_empty())
 }
 
+/// Storage ordinals for a selected KOBJ decode, or `None` for a full decode.
+///
+/// Selected decode only wins when the projection is a strict subset of live
+/// stored fields. The bake-off `SELECT` lists every user column, so decoding
+/// those ordinals is the same field work as a full decode and was a small
+/// regression (17.31s / p50 252µs vs 16.88s / p50 245µs on 2026-09-11).
+fn storage_ordinals_for_scan<P, K, V>(
+    provider: &P,
+    scan_context: &P::ScanContext,
+    projection: Option<&Vec<usize>>,
+) -> Option<Vec<usize>>
+where
+    P: DeferredMvccScanProvider<K, V>,
+    K: StorageKey + Send + Sync + 'static,
+    V: ScanRow + Send + Sync + 'static,
+{
+    if provider.requires_row_authorization(scan_context) {
+        return None;
+    }
+    let storage = provider.core().storage_schema();
+    if storage.fields.is_empty() {
+        return None;
+    }
+    let proj = projection?;
+    let arrow_schema = provider.schema_ref();
+    let mut ordinals = Vec::with_capacity(proj.len());
+    for &idx in proj {
+        let Some(field) = arrow_schema.fields().get(idx) else {
+            continue;
+        };
+        if let Some(ordinal) = storage.fields.iter().position(|stored| stored.name == *field.name())
+        {
+            ordinals.push(ordinal);
+        }
+    }
+    let covers_all_live = storage
+        .fields
+        .iter()
+        .enumerate()
+        .all(|(index, field)| field.dropped || ordinals.contains(&index));
+    if covers_all_live {
+        return None;
+    }
+    Some(ordinals)
+}
+
 /// Resolve a single PK equality lookup by merging the latest hot and cold versions.
 async fn resolve_pk_point_lookup<P, K, V>(
     provider: &P,
     scan_context: &P::ScanContext,
     pk_scalar: &ScalarValue,
+    storage_ordinals: Option<&[usize]>,
 ) -> Result<Option<(K, V)>, KalamDbError>
 where
     P: DeferredMvccScanProvider<K, V>,
     K: StorageKey + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    let latest_hot = provider.scan_latest_hot_pk_entry(scan_context, pk_scalar).await?;
+    let latest_hot = provider
+        .scan_latest_hot_pk_entry(scan_context, pk_scalar, storage_ordinals)
+        .await?;
     if latest_hot.as_ref().is_some_and(|(_, row)| row.deleted_flag()) {
         return Ok(None);
     }
@@ -1422,8 +1693,8 @@ pub async fn pk_exists_in_cold(
     let manifest_service = core.services.manifest_service.clone();
     let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
 
-    let manifest: Option<Manifest> = match &cache_result {
-        Ok(Some(entry)) => Some(entry.manifest.clone()),
+    let manifest: Option<&Manifest> = match &cache_result {
+        Ok(Some(entry)) => Some(&entry.manifest),
         Ok(None) => {
             // log::trace!(
             //     "[pk_exists_in_cold] No manifest for {}.{} {} - checking all files",
@@ -1633,8 +1904,8 @@ pub async fn pk_exists_batch_in_cold(
     let manifest_service = core.services.manifest_service.clone();
     let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
 
-    let manifest: Option<Manifest> = match &cache_result {
-        Ok(Some(entry)) => Some(entry.manifest.clone()),
+    let manifest: Option<&Manifest> = match &cache_result {
+        Ok(Some(entry)) => Some(&entry.manifest),
         Ok(None) => {
             // log::trace!(
             //     "[pk_exists_batch_in_cold] No manifest for {}.{} {} - checking all files",
@@ -1680,12 +1951,7 @@ pub async fn pk_exists_batch_in_cold(
     let planner = ManifestAccessPlanner::new();
     let mut storage_cached_for_scan: Option<Arc<StorageCached>> = None;
     let files_to_scan: Vec<String> = if let Some(ref m) = manifest {
-        // Collect all potentially relevant files for any PK value
-        let mut relevant_files: HashSet<String> = HashSet::new();
-        for pk_value in pk_values {
-            let pruned_paths = planner.plan_by_pk_value(m, pk_column_id, pk_value);
-            relevant_files.extend(pruned_paths);
-        }
+        let relevant_files = planner.plan_by_pk_values(m, pk_column_id, pk_values);
         if relevant_files.is_empty() {
             log::trace!(
                 "[pk_exists_batch_in_cold] Manifest pruning returned no candidate segments for \
@@ -1706,7 +1972,7 @@ pub async fn pk_exists_batch_in_cold(
                 table.as_str(),
                 scope_label
             );
-            relevant_files.into_iter().collect()
+            relevant_files
         }
     } else {
         // No manifest - use all Parquet files from listing
@@ -1874,6 +2140,19 @@ where
 /// Log a warning when scanning version resolution without filter or limit.
 ///
 /// This helps identify potential performance issues where full table scans are happening.
+/// If `filter` matches a prefix index, return `(index_idx, prefix)` for `scan_by_index`.
+pub(crate) fn hot_index_seek<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    filter: Option<&Expr>,
+    user_id: Option<&UserId>,
+) -> Option<(usize, Vec<u8>)>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: kalamdb_commons::KSerializable + Clone + Send + Sync + 'static,
+{
+    store.find_best_index_for_filter_expr(user_id, filter?)
+}
+
 /// Called by provider-side MVCC scan implementations.
 ///
 /// # Arguments
@@ -2239,5 +2518,42 @@ mod tests {
         assert!(columns.iter().any(|column| column == SystemColumnNames::SEQ));
         assert!(columns.iter().any(|column| column == SystemColumnNames::COMMIT_SEQ));
         assert!(columns.iter().any(|column| column == SystemColumnNames::DELETED));
+    }
+
+    #[test]
+    fn simple_pk_equality_allows_skip_arrow() {
+        use datafusion::logical_expr::{col, lit};
+
+        assert!(is_simple_pk_equality_filter(Some(&col("id").eq(lit(1_i64))), "id"));
+        assert!(is_simple_pk_equality_filter(Some(&lit(1_i64).eq(col("id"))), "id"));
+        assert!(!is_simple_pk_equality_filter(None, "id"));
+        assert!(!is_simple_pk_equality_filter(Some(&col("name").eq(lit("alpha"))), "id"));
+        // Residual AND predicates still need Arrow filtering after the PK lookup.
+        assert!(!is_simple_pk_equality_filter(
+            Some(&col("id").eq(lit(1_i64)).and(col("name").eq(lit("alpha")))),
+            "id"
+        ));
+    }
+
+    #[test]
+    fn align_rows_to_output_schema_applies_alias_via_output_projection() {
+        let materialized = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let output = Arc::new(Schema::new(vec![Field::new("title", DataType::Utf8, true)]));
+        let mut rows = vec![Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Int64(Some(1))),
+            ("name".to_string(), ScalarValue::Utf8(Some("alpha".to_string()))),
+        ])];
+
+        align_rows_to_output_schema(&materialized, &output, Some(&[1]), &mut rows);
+
+        assert_eq!(
+            rows[0].values.get("title"),
+            Some(&ScalarValue::Utf8(Some("alpha".to_string())))
+        );
+        assert!(!rows[0].values.contains_key("name"));
+        assert!(!rows[0].values.contains_key("id"));
     }
 }

@@ -64,6 +64,19 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE items table");
 
+    create_enum_type(server, &format!("{ns}.item_kind"), &["note", "task", "message"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.mark_done"),
+        "id BIGINT NOT NULL",
+        &format!(
+            "return ctx.db.execute('UPDATE {ns}.items SET is_done = TRUE WHERE id = $1', \
+             [input.id]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.mark_done")).await?;
+
     // =========================================================
     // Step 2: Preload data for 10 users (reduced for faster test)
     // =========================================================
@@ -99,6 +112,13 @@ async fn test_scenario_02_offline_sync_parallel() -> anyhow::Result<()> {
                 // Log but continue - some inserts might fail due to concurrent access
                 eprintln!("Warning: Insert failed for user_{} item {}", user_idx, i);
             }
+        }
+        let first_id = user_idx * 10000;
+        let resp = client
+            .execute_query(&format!("CALL {ns}.mark_done({first_id})"), None, None, None)
+            .await?;
+        if !resp.success() {
+            eprintln!("Warning: mark_done failed for user_{} item {}", user_idx, first_id);
         }
     }
 

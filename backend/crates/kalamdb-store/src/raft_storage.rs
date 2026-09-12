@@ -15,10 +15,11 @@
 //!   - DataSharedShard(N): "s:{N:05}"
 //!
 //! Key Types:
-//!   - log:{index:020}  → RaftLogEntry (KSerializable binary payload)
+//!   - log:{index:020}  → packed RaftLogEntry (`version | index | term | payload`)
 //!   - meta:vote        → Vote<u64> (KSerializable binary payload)
-//!   - meta:commit      → Option<LogId<u64>> (KSerializable binary payload)
-//!   - meta:purge       → Option<LogId<u64>> (KSerializable binary payload)
+//!   - meta:commit      → leftover Option<LogId> from older builds (no longer written)
+//!   - meta:purge       → Option<LogId<u64>> packed 16 bytes
+//!   - meta:last_applied → Option<LogId<u64>> packed 16 bytes
 //!   - snap:meta        → SnapshotMeta (KSerializable binary payload)
 //!   - snap:data        → Snapshot file path (string) or inline bytes if small
 //! ```
@@ -47,7 +48,10 @@ use kalamdb_commons::KSerializable;
 pub use kalamdb_sharding::GroupId;
 use serde::{Deserialize, Serialize};
 
-use crate::storage_trait::{Operation, Partition, Result, StorageBackend};
+use crate::{
+    persist::{decode_entity, encode_entity},
+    storage_trait::{Operation, Partition, Result, StorageBackend, StorageError},
+};
 
 /// The single partition name for all Raft data.
 pub const RAFT_PARTITION_NAME: &str = "raft_data";
@@ -68,6 +72,75 @@ pub struct RaftLogEntry {
 }
 
 impl KSerializable for RaftLogEntry {}
+
+impl RaftLogEntry {
+    pub const RECORD_VERSION: u8 = 1;
+    pub const RECORD_HEADER_LEN: usize = 1 + 8 + 8;
+
+    /// Pack `index`, `term`, and tagged payload without a KOBJ envelope.
+    pub fn encode_record_parts(index: u64, term: u64, tagged_payload: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(Self::RECORD_HEADER_LEN + tagged_payload.len());
+        buf.push(Self::RECORD_VERSION);
+        buf.extend_from_slice(&index.to_le_bytes());
+        buf.extend_from_slice(&term.to_le_bytes());
+        buf.extend_from_slice(tagged_payload);
+        buf
+    }
+
+    /// Pack `index`, `term`, and payload without a KOBJ/FlexBuffers envelope.
+    pub fn encode_record(&self) -> Vec<u8> {
+        Self::encode_record_parts(self.index, self.term, &self.payload)
+    }
+
+    /// Tagged `EntryPayload` bytes inside a packed record, or `record` itself if legacy.
+    pub fn tagged_payload(record: &[u8]) -> &[u8] {
+        if record.first() == Some(&Self::RECORD_VERSION) && record.len() >= Self::RECORD_HEADER_LEN
+        {
+            &record[Self::RECORD_HEADER_LEN..]
+        } else {
+            record
+        }
+    }
+
+    /// Decode a packed log record, or a legacy KOBJ `RaftLogEntry`.
+    pub fn decode_record(bytes: &[u8]) -> Result<Self> {
+        if bytes.first() == Some(&Self::RECORD_VERSION) {
+            let index = read_u64_le(bytes, 1).ok_or_else(truncated_log_record)?;
+            let term = read_u64_le(bytes, 9).ok_or_else(truncated_log_record)?;
+            return Ok(Self {
+                index,
+                term,
+                payload: bytes.get(Self::RECORD_HEADER_LEN..).unwrap_or(&[]).to_vec(),
+            });
+        }
+
+        decode_entity(bytes)
+    }
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
+    bytes.get(offset..offset + 8)?.try_into().ok().map(u64::from_le_bytes)
+}
+
+fn truncated_log_record() -> StorageError {
+    StorageError::SerializationError("truncated raft log record".to_string())
+}
+
+fn prefixed_key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(prefix.len() + suffix.len());
+    key.extend_from_slice(prefix);
+    key.extend_from_slice(suffix);
+    key
+}
+
+fn append_padded_u64(buf: &mut Vec<u8>, mut value: u64) {
+    let start = buf.len();
+    buf.resize(start + 20, b'0');
+    for slot in buf.iter_mut().rev().take(20) {
+        *slot = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+}
 
 /// Raft vote state for leader election.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -92,6 +165,34 @@ pub struct RaftLogId {
 }
 
 impl KSerializable for RaftLogId {}
+
+impl RaftLogId {
+    const PACKED_LEN: usize = 16;
+
+    /// Pack term+index as 16 little-endian bytes (no KOBJ envelope).
+    pub fn encode_packed(self) -> [u8; Self::PACKED_LEN] {
+        let mut buf = [0u8; Self::PACKED_LEN];
+        buf[..8].copy_from_slice(&self.term.to_le_bytes());
+        buf[8..].copy_from_slice(&self.index.to_le_bytes());
+        buf
+    }
+
+    /// Decode a packed log id, or a legacy KOBJ `RaftLogId`.
+    pub fn decode_packed(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() == Self::PACKED_LEN {
+            let mut term = [0u8; 8];
+            let mut index = [0u8; 8];
+            term.copy_from_slice(&bytes[..8]);
+            index.copy_from_slice(&bytes[8..]);
+            return Ok(Self {
+                term:  u64::from_le_bytes(term),
+                index: u64::from_le_bytes(index),
+            });
+        }
+
+        decode_entity(bytes)
+    }
+}
 
 /// Snapshot metadata (stored separately from snapshot data).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,10 +224,14 @@ impl KSerializable for RaftSnapshotData {}
 ///
 /// All operations are synchronous and use the `StorageBackend` trait.
 /// Thread-safe via internal `Arc<dyn StorageBackend>`.
+#[derive(Clone)]
 pub struct RaftPartitionStore {
-    backend:   Arc<dyn StorageBackend>,
-    group_id:  GroupId,
-    partition: Partition,
+    backend:          Arc<dyn StorageBackend>,
+    group_id:         GroupId,
+    partition:        Partition,
+    group_prefix:     Vec<u8>,
+    commit_key:       Vec<u8>,
+    last_applied_key: Vec<u8>,
 }
 
 impl RaftPartitionStore {
@@ -134,10 +239,17 @@ impl RaftPartitionStore {
     ///
     /// The partition `raft_data` must already exist in the backend.
     pub fn new(backend: Arc<dyn StorageBackend>, group_id: GroupId) -> Self {
+        let mut group_prefix = group_id.key_prefix().into_bytes();
+        group_prefix.push(b':');
+        let commit_key = prefixed_key(&group_prefix, b"meta:commit");
+        let last_applied_key = prefixed_key(&group_prefix, b"meta:last_applied");
         Self {
             backend,
             group_id,
             partition: Partition::new(RAFT_PARTITION_NAME),
+            group_prefix,
+            commit_key,
+            last_applied_key,
         }
     }
 
@@ -151,19 +263,23 @@ impl RaftPartitionStore {
     // ------------------------------------------------------------------------
 
     fn make_key(&self, suffix: &str) -> Vec<u8> {
-        format!("{}:{}", self.group_id.key_prefix(), suffix).into_bytes()
+        prefixed_key(&self.group_prefix, suffix.as_bytes())
     }
 
     fn log_key(&self, index: u64) -> Vec<u8> {
-        self.make_key(&format!("log:{:020}", index))
+        let mut key = Vec::with_capacity(self.group_prefix.len() + 4 + 20);
+        key.extend_from_slice(&self.group_prefix);
+        key.extend_from_slice(b"log:");
+        append_padded_u64(&mut key, index);
+        key
     }
 
     fn vote_key(&self) -> Vec<u8> {
         self.make_key("meta:vote")
     }
 
-    fn commit_key(&self) -> Vec<u8> {
-        self.make_key("meta:commit")
+    fn commit_key(&self) -> &[u8] {
+        &self.commit_key
     }
 
     fn purge_key(&self) -> Vec<u8> {
@@ -178,12 +294,26 @@ impl RaftPartitionStore {
         self.make_key("snap:data")
     }
 
-    fn last_applied_key(&self) -> Vec<u8> {
-        self.make_key("meta:last_applied")
+    fn last_applied_key(&self) -> &[u8] {
+        &self.last_applied_key
     }
 
     fn last_membership_key(&self) -> Vec<u8> {
         self.make_key("meta:membership")
+    }
+
+    fn put_log_id(&self, key: &[u8], log_id: Option<RaftLogId>) -> Result<()> {
+        match log_id {
+            Some(log_id) => self.backend.put(&self.partition, key, &log_id.encode_packed()),
+            None => self.backend.delete(&self.partition, key),
+        }
+    }
+
+    fn read_log_id(&self, key: &[u8]) -> Result<Option<RaftLogId>> {
+        match self.backend.get(&self.partition, key)? {
+            Some(bytes) => Ok(Some(RaftLogId::decode_packed(&bytes)?)),
+            None => Ok(None),
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -198,18 +328,40 @@ impl RaftPartitionStore {
             return Ok(());
         }
 
-        let ops: Vec<Operation> = entries
-            .iter()
-            .map(|entry| {
-                let key = self.log_key(entry.index);
-                let value = entry.encode()?;
-                Ok(Operation::Put {
-                    partition: self.partition.clone(),
-                    key,
-                    value,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        self.append_encoded(
+            entries.iter().map(|entry| (entry.index, entry.encode_record())).collect(),
+        )
+    }
+
+    /// Append already-packed log records. `value` is the on-disk record bytes.
+    pub fn append_encoded(&self, records: Vec<(u64, Vec<u8>)>) -> Result<()> {
+        self.append_encoded_with(records, None)
+    }
+
+    /// Append packed log records and optionally fold `last_applied` into the same batch.
+    pub fn append_encoded_with(
+        &self,
+        records: Vec<(u64, Vec<u8>)>,
+        last_applied: Option<RaftLogId>,
+    ) -> Result<()> {
+        if records.is_empty() && last_applied.is_none() {
+            return Ok(());
+        }
+
+        let mut ops: Vec<Operation> =
+            Vec::with_capacity(records.len() + usize::from(last_applied.is_some()));
+        ops.extend(records.into_iter().map(|(index, value)| Operation::Put {
+            partition: self.partition.clone(),
+            key: self.log_key(index),
+            value,
+        }));
+        if let Some(last_applied) = last_applied {
+            ops.push(Operation::Put {
+                partition: self.partition.clone(),
+                key:       self.last_applied_key().to_vec(),
+                value:     last_applied.encode_packed().to_vec(),
+            });
+        }
 
         self.backend.batch(ops)
     }
@@ -218,7 +370,7 @@ impl RaftPartitionStore {
     pub fn get_log(&self, index: u64) -> Result<Option<RaftLogEntry>> {
         let key = self.log_key(index);
         match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftLogEntry::decode(&bytes)?)),
+            Some(bytes) => Ok(Some(RaftLogEntry::decode_record(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -243,7 +395,7 @@ impl RaftPartitionStore {
                 if index >= end {
                     break; // Keys are sorted, so we can stop
                 }
-                entries.push(RaftLogEntry::decode(&value)?);
+                entries.push(RaftLogEntry::decode_record(&value)?);
             }
         }
 
@@ -350,7 +502,7 @@ impl RaftPartitionStore {
     /// Saves the current vote state.
     pub fn save_vote(&self, vote: &RaftVote) -> Result<()> {
         let key = self.vote_key();
-        let value = vote.encode()?;
+        let value = encode_entity(vote)?;
         self.backend.put(&self.partition, &key, &value)
     }
 
@@ -358,7 +510,7 @@ impl RaftPartitionStore {
     pub fn read_vote(&self) -> Result<Option<RaftVote>> {
         let key = self.vote_key();
         match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftVote::decode(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_entity(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -369,44 +521,22 @@ impl RaftPartitionStore {
 
     /// Saves the committed log ID.
     pub fn save_commit(&self, commit: Option<RaftLogId>) -> Result<()> {
-        let key = self.commit_key();
-        match commit {
-            Some(log_id) => {
-                let value = log_id.encode()?;
-                self.backend.put(&self.partition, &key, &value)
-            },
-            None => self.backend.delete(&self.partition, &key),
-        }
+        self.put_log_id(self.commit_key(), commit)
     }
 
     /// Reads the committed log ID.
     pub fn read_commit(&self) -> Result<Option<RaftLogId>> {
-        let key = self.commit_key();
-        match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
-            None => Ok(None),
-        }
+        self.read_log_id(self.commit_key())
     }
 
     /// Saves the last purged log ID.
     pub fn save_purge(&self, purge: Option<RaftLogId>) -> Result<()> {
-        let key = self.purge_key();
-        match purge {
-            Some(log_id) => {
-                let value = log_id.encode()?;
-                self.backend.put(&self.partition, &key, &value)
-            },
-            None => self.backend.delete(&self.partition, &key),
-        }
+        self.put_log_id(&self.purge_key(), purge)
     }
 
     /// Reads the last purged log ID.
     pub fn read_purge(&self) -> Result<Option<RaftLogId>> {
-        let key = self.purge_key();
-        match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
-            None => Ok(None),
-        }
+        self.read_log_id(&self.purge_key())
     }
 
     // ------------------------------------------------------------------------
@@ -419,23 +549,12 @@ impl RaftPartitionStore {
     /// which log entries have already been applied to the state machine and
     /// should not be replayed.
     pub fn save_last_applied(&self, last_applied: Option<RaftLogId>) -> Result<()> {
-        let key = self.last_applied_key();
-        match last_applied {
-            Some(log_id) => {
-                let value = log_id.encode()?;
-                self.backend.put(&self.partition, &key, &value)
-            },
-            None => self.backend.delete(&self.partition, &key),
-        }
+        self.put_log_id(self.last_applied_key(), last_applied)
     }
 
     /// Reads the last applied log ID.
     pub fn read_last_applied(&self) -> Result<Option<RaftLogId>> {
-        let key = self.last_applied_key();
-        match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftLogId::decode(&bytes)?)),
-            None => Ok(None),
-        }
+        self.read_log_id(self.last_applied_key())
     }
 
     /// Saves the last membership configuration.
@@ -460,7 +579,7 @@ impl RaftPartitionStore {
     /// Saves snapshot metadata.
     pub fn save_snapshot_meta(&self, meta: &RaftSnapshotMeta) -> Result<()> {
         let key = self.snap_meta_key();
-        let value = meta.encode()?;
+        let value = encode_entity(meta)?;
         self.backend.put(&self.partition, &key, &value)
     }
 
@@ -468,7 +587,7 @@ impl RaftPartitionStore {
     pub fn read_snapshot_meta(&self) -> Result<Option<RaftSnapshotMeta>> {
         let key = self.snap_meta_key();
         match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftSnapshotMeta::decode(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_entity(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -476,7 +595,7 @@ impl RaftPartitionStore {
     /// Saves snapshot data reference (inline or file path).
     pub fn save_snapshot_data(&self, data: &RaftSnapshotData) -> Result<()> {
         let key = self.snap_data_key();
-        let value = data.encode()?;
+        let value = encode_entity(data)?;
         self.backend.put(&self.partition, &key, &value)
     }
 
@@ -484,7 +603,7 @@ impl RaftPartitionStore {
     pub fn read_snapshot_data(&self) -> Result<Option<RaftSnapshotData>> {
         let key = self.snap_data_key();
         match self.backend.get(&self.partition, &key)? {
-            Some(bytes) => Ok(Some(RaftSnapshotData::decode(&bytes)?)),
+            Some(bytes) => Ok(Some(decode_entity(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -801,5 +920,61 @@ mod tests {
         assert_eq!(GroupId::DataUserShard(0).key_prefix(), "u:00000");
         assert_eq!(GroupId::DataUserShard(31).key_prefix(), "u:00031");
         assert_eq!(GroupId::DataSharedShard(0).key_prefix(), "s:00000");
+    }
+
+    #[test]
+    fn packed_log_record_roundtrips_and_reads_legacy_kobj() {
+        let entry = RaftLogEntry {
+            index:   7,
+            term:    3,
+            payload: b"cmd".to_vec(),
+        };
+
+        let packed = entry.encode_record();
+        assert!(!kalamdb_serialization::has_object_magic(&packed));
+        let decoded = RaftLogEntry::decode_record(&packed).unwrap();
+        assert_eq!(decoded.index, 7);
+        assert_eq!(decoded.term, 3);
+        assert_eq!(decoded.payload, b"cmd");
+
+        let legacy = encode_entity(&entry).unwrap();
+        assert!(kalamdb_serialization::has_object_magic(&legacy));
+        let decoded_legacy = RaftLogEntry::decode_record(&legacy).unwrap();
+        assert_eq!(decoded_legacy.index, 7);
+        assert_eq!(decoded_legacy.payload, b"cmd");
+    }
+
+    #[test]
+    fn packed_log_id_roundtrips_and_reads_legacy_kobj() {
+        let id = RaftLogId {
+            term:  4,
+            index: 99,
+        };
+        let packed = id.encode_packed();
+        assert_eq!(packed.len(), 16);
+        assert!(!kalamdb_serialization::has_object_magic(&packed));
+        assert_eq!(RaftLogId::decode_packed(&packed).unwrap(), id);
+
+        let legacy = encode_entity(&id).unwrap();
+        assert!(kalamdb_serialization::has_object_magic(&legacy));
+        assert_eq!(RaftLogId::decode_packed(&legacy).unwrap(), id);
+    }
+
+    #[test]
+    fn append_encoded_with_folds_last_applied() {
+        let store = create_test_store(GroupId::Meta);
+        let entry = RaftLogEntry {
+            index:   4,
+            term:    2,
+            payload: b"cmd".to_vec(),
+        };
+        let applied = RaftLogId { term: 2, index: 4 };
+        store
+            .append_encoded_with(vec![(4, entry.encode_record())], Some(applied))
+            .unwrap();
+
+        let decoded = store.get_log(4).unwrap().unwrap();
+        assert_eq!(decoded.payload, b"cmd");
+        assert_eq!(store.read_last_applied().unwrap(), Some(applied));
     }
 }

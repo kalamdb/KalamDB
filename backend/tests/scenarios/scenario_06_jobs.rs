@@ -43,8 +43,21 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
     let username = format!("{}_jobs_user", ns);
     let client = create_user_and_client(server, &username, &Role::User).await?;
 
+    create_enum_type(server, &format!("{ns}.job_value_kind"), &["plain", "retry"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.ingest"),
+        &format!("id BIGINT NOT NULL, value TEXT NOT NULL, kind {ns}.job_value_kind NOT NULL"),
+        &format!(
+            "return ctx.db.execute('INSERT INTO {ns}.data (id, value) VALUES ($1, $2)', \
+             [input.id, input.value]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.ingest")).await?;
+
     // Insert data to trigger flush eligibility
-    for i in 1..=20 {
+    for i in 1..=18 {
         let resp = client
             .execute_query(
                 &format!("INSERT INTO {}.data (id, value) VALUES ({}, 'value_{}')", ns, i, i),
@@ -54,6 +67,17 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
             )
             .await?;
         assert!(resp.success(), "Insert {}", i);
+    }
+    for i in 19..=20 {
+        let resp = client
+            .execute_query(
+                &format!("CALL {ns}.ingest({i}, 'value_{i}', 'plain')"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+        assert!(resp.success(), "ingest {i}: {:?}", resp.error);
     }
 
     // =========================================================

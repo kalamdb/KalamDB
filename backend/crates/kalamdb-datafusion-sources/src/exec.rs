@@ -34,8 +34,10 @@ use datafusion::{
     },
 };
 use kalamdb_commons::{
-    constants::SystemColumnNames, conversions::arrow_json_conversion::arrow_value_to_scalar,
-    ids::SeqId, models::rows::Row, serialization::row_codec::RowMetadata,
+    constants::SystemColumnNames,
+    conversions::arrow_json_conversion::arrow_value_to_scalar,
+    ids::SeqId,
+    models::rows::{Row, RowMetadata, SharedTableRow},
 };
 pub use kalamdb_commons::{
     pk_bucket_key_from_array, pk_bucket_key_from_row, pk_bucket_key_from_scalar, PkBucketKey,
@@ -323,6 +325,31 @@ pub trait VersionedRow {
             Some(value) if !value.is_empty() => PkBucketKey::Text(value),
             _ => PkBucketKey::Seq(self.seq_id().as_i64()),
         }
+    }
+}
+
+impl VersionedRow for SharedTableRow {
+    fn seq_id(&self) -> SeqId {
+        self._seq
+    }
+
+    fn commit_seq(&self) -> u64 {
+        self._commit_seq
+    }
+
+    fn deleted(&self) -> bool {
+        self._deleted
+    }
+
+    fn pk_value(&self, pk_name: &str) -> Option<String> {
+        match self.pk_bucket_key(pk_name) {
+            PkBucketKey::Seq(_) => None,
+            key => Some(key.to_string()),
+        }
+    }
+
+    fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
+        pk_bucket_key_from_row(&self.fields, pk_name, self._seq)
     }
 }
 
@@ -906,6 +933,15 @@ pub trait DeferredBatchSource: Send + Sync {
     async fn produce_batch_with_diagnostics(&self) -> DataFusionResult<DeferredBatchOutput> {
         Ok(DeferredBatchOutput::new(self.produce_batch().await?))
     }
+
+    /// Optional path that materializes [`Row`] maps without Arrow.
+    ///
+    /// Return `None` to keep the RecordBatch path. Cached HTTP point gets
+    /// (`pk = $1`) must return `Some` even when DataFusion left a residual
+    /// Exact physical filter. See `docs/architecture/sql-cache-performance.md`.
+    async fn produce_scalar_rows(&self) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
+        Ok(None)
+    }
 }
 
 /// Shared execution node for one-shot sources that defer batch creation until
@@ -946,6 +982,16 @@ impl DeferredBatchExec {
             },
             None => self.source.produce_batch().await,
         }
+    }
+
+    /// Produce schema-aligned scalar rows when the source supports skipping Arrow.
+    ///
+    /// `Some` is the HTTP cached point-get path. Falling back to
+    /// [`Self::produce_batch_direct`] rebuilds Arrow for a one-row JSON response.
+    pub async fn produce_scalar_rows_direct(
+        &self,
+    ) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
+        self.source.produce_scalar_rows().await
     }
 }
 

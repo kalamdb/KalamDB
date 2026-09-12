@@ -68,6 +68,7 @@ import {
   executeSqlStudioQuery,
   normalizeSchema,
 } from "@/services/sqlStudioService";
+import { getErrorMessage, toSerializableErrorPayload } from "@/lib/errors";
 import {
   addWorkspaceTab,
   appendWorkspaceLiveRows,
@@ -110,7 +111,7 @@ import {
   selectWorkspaceTabs,
   selectActiveStudioTab,
 } from "@/features/sql-studio/state/selectors";
-import { useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
+import { useGetProcedureCatalogQuery, useGetSqlStudioSchemaTreeQuery } from "@/store/apiSlice";
 import {
   buildSelectFromTableSql,
   createLogEntry,
@@ -296,6 +297,8 @@ export default function SqlStudio() {
     isFetching: isSchemaRefreshing,
     refetch: refetchSchemaTree,
   } = useGetSqlStudioSchemaTreeQuery();
+  const { data: procedureCatalog } = useGetProcedureCatalogQuery();
+  const procedures = procedureCatalog?.procedures ?? [];
   const schemaFilter = useAppSelector(selectSchemaFilter);
   const favoritesExpanded = useAppSelector(selectFavoritesExpanded);
   const expandedTables = useAppSelector(selectExpandedTables);
@@ -635,14 +638,14 @@ export default function SqlStudio() {
         void refreshExplorerSchema();
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Query execution failed";
+      const message = getErrorMessage(error, "Query execution failed");
       dispatch(setWorkspaceTabResult({ tabId, result: {
         status: "error",
         rows: [],
         schema: [],
         tookMs: 0,
         rowCount: 0,
-        logs: [createLogEntry(message, "error", user?.username, error)],
+        logs: [createLogEntry(message, "error", user?.username, toSerializableErrorPayload(error))],
         errorMessage: message,
       } }));
       updateTab(tabId, { resultView: "log" });
@@ -672,10 +675,10 @@ export default function SqlStudio() {
       dispatch(appendWorkspaceResultLog({
         tabId,
         entry: createLogEntry(
-          error instanceof Error ? error.message : "Failed to fetch next live batch",
+          getErrorMessage(error, "Failed to fetch next live batch"),
           "error",
           user?.username,
-          error,
+          toSerializableErrorPayload(error),
         ),
         statusOverride: "error",
       }));
@@ -765,7 +768,7 @@ export default function SqlStudio() {
           `WebSocket disconnected: ${extractMessage(reason, "unknown reason")}`,
           "error",
           user?.username,
-          reason,
+          toSerializableErrorPayload(reason),
         ),
         statusOverride: "error",
       }));
@@ -780,7 +783,7 @@ export default function SqlStudio() {
           `Connection error: ${extractMessage(error, "unknown error")}`,
           "error",
           user?.username,
-          error,
+          toSerializableErrorPayload(error),
         ),
       }));
     });
@@ -921,10 +924,10 @@ export default function SqlStudio() {
       dispatch(appendWorkspaceResultLog({
         tabId: tab.id,
         entry: createLogEntry(
-          error instanceof Error ? error.message : "Failed to subscribe to live query",
+          getErrorMessage(error, "Failed to subscribe to live query"),
           "error",
           user?.username,
-          error,
+          toSerializableErrorPayload(error),
         ),
         statusOverride: "error",
       }));
@@ -1559,6 +1562,7 @@ export default function SqlStudio() {
                   <Suspense fallback={<EditorSkeleton />}>
                   <StudioEditorPanel
                     schema={schema}
+                    procedures={procedures}
                     sql={activeTab.sql}
                     onSqlChange={(value) => updateActiveTab({ sql: value, isDirty: true })}
                     onRun={(runSql) => runActiveQuery(runSql)}

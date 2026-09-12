@@ -2,11 +2,11 @@
 
 This document summarizes the high-level, multi-feature scenarios implemented in `backend/tests/scenarios`. These combine Auth, SQL, Live Queries, and Flush into comprehensive use cases.
 
-Runnable scenario targets:
-- `cargo nextest run -p kalamdb-server --features e2e-tests --test test_scenarios`
-- `cargo nextest run -p kalamdb-server --features e2e-tests --test test_scenarios_realtime`
-- `cargo nextest run -p kalamdb-server --features e2e-tests --test test_scenarios_lifecycle`
-- `cargo nextest run -p kalamdb-server --features e2e-tests --test test_scenarios_scale`
+Runnable scenario target:
+- `cargo nextest run -p kalamdb-server --features e2e-tests --test e2e`
+- Realtime only: add filter `realtime`
+- Lifecycle only: add filter `lifecycle`
+- Scale only: add filter `scale`
 
 ## List of Implemented Scenarios
 

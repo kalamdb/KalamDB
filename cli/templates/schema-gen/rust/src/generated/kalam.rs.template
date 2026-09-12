@@ -1,0 +1,22 @@
+{{header}}
+// {{contract_hash_line}}
+
+{{#each decls}}
+{{{doc}}}{{#if is_enum}}#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum {{ident}} {
+{{#each variants}}    {{ident}},
+{{/each}}}
+
+{{/if}}{{#if is_struct}}#[derive(Debug, Clone, PartialEq)]
+pub struct {{ident}} {
+{{#each fields}}    pub {{name}}: {{{ty}}},
+{{/each}}}
+
+{{/if}}{{#if is_alias}}pub type {{ident}} = {{{alias_of}}};
+
+{{/if}}{{#if is_topic}}#[derive(Debug, Clone, PartialEq)]
+pub enum {{ident}} {
+{{#each variants}}    {{ident}}({{ident}}),
+{{/each}}}
+
+{{/if}}{{/each}}

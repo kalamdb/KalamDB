@@ -34,6 +34,9 @@ kalamdb-backend = { workspace = true }
 kalamdb-transactions = { path = "../kalamdb-transactions" }
 kalamdb-views = { path = "../kalamdb-views" }
 kalamdb-vector = { path = "../kalamdb-vector" }
+kalamdb-functions = { path = "../kalamdb-functions" }
+kalamdb-functions-host = { path = "../kalamdb-functions-host" }
+kalamdb-serialization = { path = "../kalamdb-serialization" }
 
 # Apache Arrow ecosystem
 arrow = { workspace = true }
@@ -49,11 +52,14 @@ sqlparser = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
 moka = { workspace = true }
+arc-swap = { workspace = true }
+smallvec = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-util = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

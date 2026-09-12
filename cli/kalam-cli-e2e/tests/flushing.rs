@@ -6,7 +6,5 @@
 // Run individual test files:
 //   cargo test --test flushing test_flush
 
-mod common;
-
 #[path = "flushing/test_flush.rs"]
 mod test_flush;

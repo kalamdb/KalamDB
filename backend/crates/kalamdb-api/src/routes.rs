@@ -100,14 +100,26 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                         .service(http::table_transfer::start_table_export)
                         .service(http::table_transfer::get_table_export_status)
                         .service(http::table_transfer::start_table_import)
-                        .service(http::table_transfer::get_table_import_status),
+                        .service(http::table_transfer::get_table_import_status)
+                        .route(
+                            "/functions/modules/{module}/activate",
+                            web::post().to(http::functions_admin::activate_function_module_v1),
+                        )
+                        .route(
+                            "/functions/modules/{module}/rollback",
+                            web::post().to(http::functions_admin::rollback_function_module_v1),
+                        ),
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)
                 .service(http::files::download_file)
                 // Export download endpoint
                 .service(http::files::download_export)
                 .service(http::files::download_table_export)
-                .service(ws::websocket_handler),
+                .service(ws::websocket_handler)
+                .route(
+                    "/functions/{namespace}/{procedure}",
+                    web::post().to(http::functions::invoke_function_v1),
+                ),
         );
 }
 

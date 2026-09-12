@@ -155,7 +155,6 @@ pub struct CLISession {
     auth: AuthProvider,
 
     /// Configured timeouts for operations
-    #[allow(dead_code)] // Reserved for future use
     timeouts: KalamLinkTimeouts,
 }
 

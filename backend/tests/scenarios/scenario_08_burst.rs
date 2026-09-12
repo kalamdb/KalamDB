@@ -49,6 +49,20 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
     let username = format!("{}_burst_user", ns);
     let client = create_user_and_client(server, &username, &Role::User).await?;
 
+    create_enum_type(server, &format!("{ns}.event_kind"), &["burst", "marker"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.record_event"),
+        &format!("id BIGINT NOT NULL, event_type {ns}.event_kind NOT NULL, payload TEXT"),
+        &format!(
+            "return ctx.db.execute('INSERT INTO {ns}.events (id, event_type, payload) VALUES ($1, \
+             $2, $3)', [input.id, input.event_type, input.payload]).then(function () {{ return 1; \
+             }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.record_event")).await?;
+
     // =========================================================
     // Step 2: Start subscription
     // =========================================================
@@ -77,18 +91,16 @@ async fn test_scenario_08_burst_writes() -> anyhow::Result<()> {
             tokio::spawn(async move {
                 for i in 0..writes_per_writer {
                     let id = writer_idx * writes_per_writer + i;
-                    let resp = client
-                        .execute_query(
-                            &format!(
-                                "INSERT INTO {}.events (id, event_type, payload) VALUES ({}, \
-                                 'burst', 'data_{}')",
-                                ns, id, id
-                            ),
-                            None,
-                            None,
-                            None,
+                    let sql = if i == 0 {
+                        format!("CALL {ns}.record_event({id}, 'burst', 'data_{id}')")
+                    } else {
+                        format!(
+                            "INSERT INTO {}.events (id, event_type, payload) VALUES ({}, 'burst', \
+                             'data_{}')",
+                            ns, id, id
                         )
-                        .await?;
+                    };
+                    let resp = client.execute_query(&sql, None, None, None).await?;
                     if resp.success() {
                         count.fetch_add(1, Ordering::SeqCst);
                     }

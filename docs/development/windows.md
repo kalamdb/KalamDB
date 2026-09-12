@@ -301,6 +301,21 @@ cargo clean
 cargo build
 ```
 
+### Issue: `LNK2005` / `LNK1169` (`std::exception_ptr` already defined)
+
+**Cause:** The server links both V8 (`rusty_v8`) and RocksDB. Each C++ library
+defines `std::exception_ptr`, and MSVC `link.exe` rejects the duplicates.
+
+**Solution:** The repo already passes `/FORCE:MULTIPLE` for `x86_64-pc-windows-msvc`
+from `.cargo/config.toml` and from `kalamdb-server`'s `backend/build.rs` (not
+from `kalamdb-api`, which has no bin target). Do not clear
+`CARGO_ENCODED_RUSTFLAGS` locally, and keep those flags if you customize
+`~\.cargo\config.toml`. After pulling, rebuild:
+
+```powershell
+cargo build -p kalamdb-server --bin kalamdb-server
+```
+
 ### Issue: "MSVCP140.dll was not found" or "VCRUNTIME140.dll was not found" when running a release binary
 
 **Cause:** The Windows release was built with MSVC and depends on the Microsoft C++ runtime.

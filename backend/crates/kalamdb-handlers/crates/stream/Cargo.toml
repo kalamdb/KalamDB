@@ -21,5 +21,9 @@ arrow = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
 
+[dev-dependencies]
+kalamdb-core = { path = "../../../kalamdb-core", features = ["test-helpers"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
 [lib]
 doctest = false

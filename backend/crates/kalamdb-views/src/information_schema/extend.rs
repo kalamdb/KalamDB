@@ -5,6 +5,7 @@ use std::sync::Arc;
 use datafusion::{
     arrow::{
         array::{ArrayRef, UInt64Array},
+        compute::cast,
         datatypes::{DataType, Field, SchemaRef},
         record_batch::RecordBatch,
     },
@@ -84,4 +85,36 @@ pub(crate) fn schema_with_field(base: &SchemaRef, field_name: &str) -> SchemaRef
         fields.push(Arc::new(Field::new(field_name, DataType::UInt64, true)));
     }
     Arc::new(datafusion::arrow::datatypes::Schema::new(fields))
+}
+
+pub(crate) fn cast_batch_to_schema(
+    batch: RecordBatch,
+    schema: &SchemaRef,
+) -> DataFusionResult<RecordBatch> {
+    let mut columns = Vec::with_capacity(schema.fields().len());
+    for (index, field) in schema.fields().iter().enumerate() {
+        let column = batch.column(index);
+        if column.data_type() == field.data_type() {
+            columns.push(Arc::clone(column));
+        } else {
+            columns.push(cast(column, field.data_type())?);
+        }
+    }
+    RecordBatch::try_new(Arc::clone(schema), columns)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+}
+
+pub(crate) fn concat_or_either(
+    schema: &SchemaRef,
+    left: RecordBatch,
+    right: RecordBatch,
+) -> DataFusionResult<RecordBatch> {
+    if left.num_rows() == 0 {
+        return Ok(right);
+    }
+    if right.num_rows() == 0 {
+        return Ok(left);
+    }
+    datafusion::arrow::compute::concat_batches(schema, &[left, right])
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }

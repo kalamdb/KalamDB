@@ -197,6 +197,16 @@ mod tests {
     }
 
     #[test]
+    fn postgres_gui_set_search_path_is_accepted_as_client_set() {
+        assert!(SqlExecutor::is_postgres_client_set("SET search_path TO public"));
+        assert!(SqlExecutor::is_postgres_client_set(r#"SET search_path TO "system""#));
+        assert!(SqlExecutor::is_postgres_client_set("SET SESSION search_path TO app"));
+        assert!(!SqlExecutor::is_postgres_client_set(
+            "SET datafusion.catalog.default_schema = 'system'"
+        ));
+    }
+
+    #[test]
     fn parenthesized_analyze_is_detected() {
         assert!(SqlExecutor::is_explain_analyze(
             "EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) select * from system.users"

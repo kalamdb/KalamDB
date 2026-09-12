@@ -439,8 +439,8 @@ pub fn default_websocket_heartbeat_interval() -> Option<u64> {
 }
 
 // RocksDB defaults stay tiny so a few tables and low traffic do not reserve
-// large memtables or cache. Raise the numbers, or set memory_mode = "auto",
-// when the deployment actually needs more.
+// large memtables or cache. Raise the numbers, or set memory_mode to
+// "balanced", "server", or "performance", when the deployment needs more.
 pub fn default_rocksdb_system_meta_write_buffer_size() -> usize {
     32 * 1024 // 32KB: low-write system metadata and compatibility partitions
 }
@@ -573,4 +573,84 @@ pub fn default_remote_request_timeout() -> u64 {
 
 pub fn default_remote_connect_timeout() -> u64 {
     10 // 10 seconds for connection establishment
+}
+
+pub fn default_functions_module() -> String {
+    "backend".to_string()
+}
+
+pub fn default_functions_max_active() -> usize {
+    16
+}
+
+pub fn default_functions_max_queued() -> usize {
+    128
+}
+
+pub fn default_functions_max_memory_mb() -> usize {
+    256
+}
+
+pub fn default_functions_heap_soft_mb() -> usize {
+    16
+}
+
+pub fn default_functions_heap_hard_mb() -> usize {
+    64
+}
+
+pub fn default_functions_max_idle_per_lane() -> usize {
+    1
+}
+
+pub fn default_functions_idle_ttl_secs() -> u64 {
+    30
+}
+
+pub fn default_functions_max_instance_age_secs() -> u64 {
+    300
+}
+
+pub fn default_functions_max_invocations_per_instance() -> u64 {
+    10_000
+}
+
+pub fn default_functions_timeout_ms() -> u64 {
+    5_000
+}
+
+pub fn default_functions_max_depth() -> usize {
+    16
+}
+
+pub fn default_functions_max_artifact_bytes() -> usize {
+    16 * 1024 * 1024
+}
+
+pub fn default_functions_max_value_bytes() -> usize {
+    8 * 1024 * 1024
+}
+
+pub fn default_functions_max_sql_text_bytes() -> usize {
+    1024 * 1024
+}
+
+pub fn default_functions_max_result_rows() -> usize {
+    10_000
+}
+
+pub fn default_functions_max_result_bytes() -> usize {
+    8 * 1024 * 1024
+}
+
+pub fn default_functions_max_topic_bytes() -> usize {
+    1024 * 1024
+}
+
+pub fn default_functions_max_log_bytes() -> usize {
+    64 * 1024
+}
+
+pub fn default_functions_max_header_bytes() -> usize {
+    16 * 1024
 }

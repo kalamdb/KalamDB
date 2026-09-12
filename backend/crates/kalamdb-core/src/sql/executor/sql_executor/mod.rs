@@ -9,7 +9,7 @@ use arrow::{
     datatypes::{Field, Schema, SchemaRef},
 };
 use datafusion::{
-    common::tree_node::{Transformed, TransformedResult, TreeNode},
+    common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion},
     dataframe::DataFrame,
     datasource::MemTable,
     logical_expr::{Expr as DataFusionExpr, LogicalPlan},
@@ -114,6 +114,35 @@ fn contains_internal_namespace_hint(sql: &str) -> bool {
     contains_ignore_ascii_case(sql, "system.") || contains_ignore_ascii_case(sql, "dba.")
 }
 
+fn table_ref_is_client_catalog(table: &datafusion::common::TableReference) -> bool {
+    matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
+}
+
+fn extract_select_from_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+    let lowered = sql.to_ascii_lowercase();
+    let from_idx = lowered.find(" from ")?;
+    let rest = sql[from_idx + 6..].trim_start();
+    let ident: String = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '.')
+        .collect();
+    if ident.is_empty() {
+        return None;
+    }
+    let mut parts = ident.split('.');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(table), None, None) => Some(TableId::from_strings(default_namespace, table)),
+        (Some(namespace), Some(table), None) => Some(TableId::from_strings(namespace, table)),
+        _ => None,
+    }
+}
+
+fn extract_sql_target_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+    kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
+        .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
+        .or_else(|| extract_select_from_table_id(sql, default_namespace))
+}
+
 fn quote_sql_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -157,7 +186,7 @@ impl SqlExecutor {
             }
         }
 
-        let parsed_statement = match metadata.parsed_dml.as_ref() {
+        let parsed_statement = match metadata.parsed_dml.as_deref() {
             Some(statement) => statement,
             None => return Ok(None),
         };
@@ -168,12 +197,13 @@ impl SqlExecutor {
                 if let Some(on_conflict_rows) =
                     super::transaction_batch_insert::try_build_literal_on_conflict_update_rows(
                         parsed_statement,
-                        self.app_context.as_ref(),
+                        Arc::clone(&self.app_context),
                         self.sql_cache_registry.as_ref(),
                         exec_ctx,
                         table_id,
                         params,
-                    )?
+                    )
+                    .await?
                 {
                     return self
                         .execute_literal_on_conflict_update(table_id, exec_ctx, on_conflict_rows)
@@ -191,12 +221,13 @@ impl SqlExecutor {
 
         let Some(insert_rows) = super::transaction_batch_insert::try_build_literal_insert_rows(
             parsed_statement,
-            self.app_context.as_ref(),
+            Arc::clone(&self.app_context),
             self.sql_cache_registry.as_ref(),
             exec_ctx,
             table_id,
             params,
-        )?
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -627,6 +658,21 @@ impl SqlExecutor {
         }
     }
 
+    fn logical_plan_is_client_catalog_introspection(plan: &LogicalPlan) -> bool {
+        let mut saw_scan = false;
+        let mut only_catalog = true;
+        let walked = plan.apply(|node| {
+            if let LogicalPlan::TableScan(scan) = node {
+                saw_scan = true;
+                if !table_ref_is_client_catalog(&scan.table_name) {
+                    only_catalog = false;
+                }
+            }
+            Ok(TreeNodeRecursion::Continue)
+        });
+        walked.is_ok() && saw_scan && only_catalog
+    }
+
     fn apply_select_limits(
         &self,
         df: datafusion::dataframe::DataFrame,
@@ -637,22 +683,24 @@ impl SqlExecutor {
         let has_explicit_limit = Self::logical_plan_has_limit(df.logical_plan());
 
         if !has_explicit_limit && default_query_limit > 0 {
-            let effective_default_limit = if max_query_limit > 0 {
-                default_query_limit.min(max_query_limit)
-            } else {
-                default_query_limit
-            };
+            if !Self::logical_plan_is_client_catalog_introspection(df.logical_plan()) {
+                let effective_default_limit = if max_query_limit > 0 {
+                    default_query_limit.min(max_query_limit)
+                } else {
+                    default_query_limit
+                };
 
-            log::debug!(
-                target: "sql::exec",
-                "Applying default query limit {} to unbounded SELECT | sql='{}'",
-                effective_default_limit,
-                sql
-            );
+                log::debug!(
+                    target: "sql::exec",
+                    "Applying default query limit {} to unbounded SELECT | sql='{}'",
+                    effective_default_limit,
+                    sql
+                );
 
-            return df
-                .limit(0, Some(effective_default_limit))
-                .map_err(Self::datafusion_to_execution_error);
+                return df
+                    .limit(0, Some(effective_default_limit))
+                    .map_err(Self::datafusion_to_execution_error);
+            }
         }
 
         if max_query_limit > 0 {
@@ -725,6 +773,18 @@ impl SqlExecutor {
                 | SqlStatementKind::CreatePolicy(_)
                 | SqlStatementKind::AlterPolicy(_)
                 | SqlStatementKind::DropPolicy(_)
+                | SqlStatementKind::CreateType(_)
+                | SqlStatementKind::AlterType(_)
+                | SqlStatementKind::DropType(_)
+                | SqlStatementKind::CreateProcedure(_)
+                | SqlStatementKind::DropProcedure(_)
+                | SqlStatementKind::CommentOn(_)
+                | SqlStatementKind::CreateTrigger(_)
+                | SqlStatementKind::DropTrigger(_)
+                | SqlStatementKind::AlterTrigger(_)
+                | SqlStatementKind::GrantExecute(_)
+                | SqlStatementKind::RevokeExecute(_)
+                | SqlStatementKind::CreateSchema(_)
         )
     }
 
@@ -970,6 +1030,86 @@ impl SqlExecutor {
         }
     }
 
+    async fn should_autocommit_stream_dml(
+        &self,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<bool, KalamDbError> {
+        if !exec_ctx.allows_stream_autocommit() {
+            return Ok(false);
+        }
+        if matches!(self.resolve_prepared_table_type(metadata).await?, Some(TableType::Stream)) {
+            return Ok(true);
+        }
+        self.is_stream_target_sql(metadata.sql.as_str(), metadata.table_id.as_ref(), exec_ctx)
+            .await
+    }
+
+    async fn is_stream_target_sql(
+        &self,
+        sql: &str,
+        table_id: Option<&TableId>,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<bool, KalamDbError> {
+        if !exec_ctx.allows_stream_autocommit() {
+            return Ok(false);
+        }
+        let Some(table_id) = table_id
+            .cloned()
+            .or_else(|| extract_sql_target_table_id(sql, exec_ctx.default_namespace().as_str()))
+        else {
+            return Ok(false);
+        };
+        Ok(self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists_async(&table_id)
+            .await?
+            .is_some_and(|table| table.table_type == TableType::Stream))
+    }
+
+    fn isolated_stream_exec_ctx(exec_ctx: &ExecutionContext) -> ExecutionContext {
+        exec_ctx
+            .clone()
+            .without_transaction_id()
+            .with_request_id(format!("stream-{}", Uuid::now_v7()))
+    }
+
+    async fn execute_table_dml(
+        &self,
+        sql: &str,
+        metadata: &PreparedExecutionStatement,
+        params: Vec<ScalarValue>,
+        exec_ctx: &ExecutionContext,
+        dml_kind: DmlKind,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let isolated;
+        let dml_ctx = if self.should_autocommit_stream_dml(metadata, exec_ctx).await? {
+            isolated = Self::isolated_stream_exec_ctx(exec_ctx);
+            &isolated
+        } else {
+            exec_ctx
+        };
+
+        self.reject_unsupported_dml_in_active_request_transaction(metadata, dml_ctx)
+            .await?;
+
+        if matches!(dml_kind, DmlKind::Insert) {
+            match self
+                .try_execute_literal_insert_via_applier(sql, metadata, dml_ctx, &params)
+                .await
+            {
+                Ok(Some(result)) => Ok(result),
+                Ok(None) => {
+                    self.execute_dml_via_datafusion(sql, metadata, params, dml_ctx, dml_kind).await
+                },
+                Err(error) => Err(error),
+            }
+        } else {
+            self.execute_dml_via_datafusion(sql, metadata, params, dml_ctx, dml_kind).await
+        }
+    }
+
     /// Construct a new executor with a pre-built handler registry.
     pub fn new(
         app_context: std::sync::Arc<crate::app_context::AppContext>,
@@ -1088,6 +1228,76 @@ impl SqlExecutor {
         batches.into_iter().map(|batch| batch.project(&indices).ok()).collect()
     }
 
+    /// Source column name for a cached point-get projection expr.
+    ///
+    /// Only column refs (plus Alias/Cast wrappers) can skip Arrow. Computed
+    /// projections fall back to DataFusion.
+    fn point_get_source_column_name(expr: &DataFusionExpr) -> Option<&str> {
+        match expr {
+            DataFusionExpr::Column(column) => Some(column.name.as_str()),
+            DataFusionExpr::Alias(alias) => Self::point_get_source_column_name(alias.expr.as_ref()),
+            DataFusionExpr::Cast(cast) => Self::point_get_source_column_name(cast.expr.as_ref()),
+            DataFusionExpr::TryCast(try_cast) => {
+                Self::point_get_source_column_name(try_cast.expr.as_ref())
+            },
+            _ => None,
+        }
+    }
+
+    fn project_point_get_scalar_rows(
+        mut rows: Vec<Row>,
+        source_schema: &SchemaRef,
+        target_schema: SchemaRef,
+        projection_exprs: Option<&[DataFusionExpr]>,
+    ) -> Option<Vec<Row>> {
+        let names_already_match = source_schema.fields().len() == target_schema.fields().len()
+            && source_schema
+                .fields()
+                .iter()
+                .zip(target_schema.fields())
+                .all(|(left, right)| left.name() == right.name());
+        if names_already_match && projection_exprs.is_none() {
+            return Some(rows);
+        }
+
+        // Scan rows keep catalog names (`name`). The logical Projection may
+        // alias them (`title`) and the scan may still carry extra columns
+        // because `id = $1` is Exact. Looking up `title` in the unmapped Row
+        // yields Null in JSON. Use projection exprs when present; otherwise
+        // positional remap only if field counts match. Missing mappings return
+        // None so we fall back to Arrow instead of inventing Nulls.
+        // Regression: `cached_point_get_projects_non_pk_columns_across_table_types`.
+        let source_names: Vec<&str> = if let Some(exprs) = projection_exprs {
+            if exprs.len() != target_schema.fields().len() {
+                return None;
+            }
+            exprs
+                .iter()
+                .map(Self::point_get_source_column_name)
+                .collect::<Option<Vec<_>>>()?
+        } else if source_schema.fields().len() == target_schema.fields().len() {
+            source_schema.fields().iter().map(|field| field.name().as_str()).collect()
+        } else {
+            target_schema.fields().iter().map(|field| field.name().as_str()).collect()
+        };
+
+        for row in &mut rows {
+            let mut projected = Row::new(std::collections::BTreeMap::new());
+            for (target_field, source_name) in target_schema.fields().iter().zip(&source_names) {
+                let value = row
+                    .values
+                    .remove(*source_name)
+                    .or_else(|| row.values.remove(target_field.name()));
+                let Some(value) = value else {
+                    return None;
+                };
+                projected.values.insert(target_field.name().clone(), value);
+            }
+            *row = projected;
+        }
+        Some(rows)
+    }
+
     /// Execute a cached, optimized single-PK table scan without rebuilding a
     /// DataFusion logical/physical plan. Provider `scan` still enforces access,
     /// leader routing, transaction snapshots/overlays, MVCC, and tombstones.
@@ -1100,18 +1310,24 @@ impl SqlExecutor {
         params: &[ScalarValue],
         exec_ctx: &ExecutionContext,
     ) -> Result<Option<ExecutionResult>, KalamDbError> {
-        let (scan, requested_schema) = match Self::unwrap_default_order_wrappers(plan) {
-            LogicalPlan::TableScan(scan) => (scan, None),
-            LogicalPlan::Projection(projection) => {
-                let LogicalPlan::TableScan(scan) =
-                    Self::unwrap_default_order_wrappers(projection.input.as_ref())
-                else {
-                    return Ok(None);
-                };
-                (scan, Some(Arc::new(projection.schema.as_arrow().clone())))
-            },
-            _ => return Ok(None),
-        };
+        let (scan, requested_schema, projection_exprs) =
+            match Self::unwrap_default_order_wrappers(plan) {
+                LogicalPlan::TableScan(scan) => (scan, None, None),
+                LogicalPlan::Projection(projection) => {
+                    let LogicalPlan::TableScan(scan) =
+                        Self::unwrap_default_order_wrappers(projection.input.as_ref())
+                    else {
+                        return Ok(None);
+                    };
+                    (
+                        scan,
+                        Some(Arc::new(projection.schema.as_arrow().clone())),
+                        // Needed so `name AS title` remaps scan-row keys.
+                        Some(projection.expr.as_slice()),
+                    )
+                },
+                _ => return Ok(None),
+            };
 
         let namespace = scan
             .table_name
@@ -1157,6 +1373,39 @@ impl SqlExecutor {
             .scan(state.as_ref(), scan.projection.as_ref(), &filters, limit)
             .await
             .map_err(Self::datafusion_to_execution_error)?;
+        // HTTP `/v1/api/sql` serializes ScalarRows without Arrow. If this
+        // returns None for a simple `pk = $1` scan, the bake-off falls back
+        // to RecordBatch + JSON and regresses (~1.6s / ~25µs p50 on 1M reads).
+        // Keep this Some-path; do not scan again on success.
+        if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
+            if let Some((schema, rows)) = deferred
+                .produce_scalar_rows_direct()
+                .await
+                .map_err(Self::datafusion_to_execution_error)?
+            {
+                let (rows, schema) = if let Some(target_schema) = requested_schema {
+                    let Some(projected) = Self::project_point_get_scalar_rows(
+                        rows,
+                        &schema,
+                        Arc::clone(&target_schema),
+                        projection_exprs,
+                    ) else {
+                        return Ok(None);
+                    };
+                    (projected, target_schema)
+                } else {
+                    (rows, schema)
+                };
+                let row_count = rows.len();
+                #[cfg(test)]
+                self.point_get_fast_path_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return Ok(Some(ExecutionResult::ScalarRows {
+                    rows,
+                    row_count,
+                    schema,
+                }));
+            }
+        }
         let schema = physical_plan.schema();
         let batches = if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
             vec![deferred
@@ -1204,7 +1453,7 @@ impl SqlExecutor {
         transaction_id: &TransactionId,
     ) -> Result<Option<Vec<crate::sql::ExecutionResult>>, KalamDbError> {
         let parsed_stmts: Option<Vec<&sqlparser::ast::Statement>> =
-            statements.iter().map(|statement| statement.parsed_dml.as_ref()).collect();
+            statements.iter().map(|statement| statement.parsed_dml.as_deref()).collect();
         let parsed_stmts = match parsed_stmts {
             Some(stmts) => stmts,
             None => return Ok(None),
@@ -1217,7 +1466,7 @@ impl SqlExecutor {
 
         match super::transaction_batch_insert::try_batch_inserts_in_transaction(
             &parsed_stmts,
-            self.app_context.as_ref(),
+            Arc::clone(&self.app_context),
             self.sql_cache_registry.as_ref(),
             exec_ctx,
             table_id,
@@ -1400,7 +1649,7 @@ impl SqlExecutor {
         kalamdb_observability::kdb_await_in_info_span!(
             async {
             let query_start = Instant::now();
-            let classified = match metadata.classified_statement.as_ref() {
+            let classified = match metadata.classified_statement.as_deref() {
                 Some(classified) => classified,
                 None => {
                     kalamdb_observability::observe_query(
@@ -1451,6 +1700,15 @@ impl SqlExecutor {
                     SqlStatementKind::RollbackTransaction => {
                         self.execute_rollback_transaction(exec_ctx)
                     },
+                    SqlStatementKind::Call(statement) => {
+                        crate::functions::FunctionService::execute_call(
+                            Arc::clone(&self.app_context),
+                            exec_ctx,
+                            statement,
+                            &params,
+                        )
+                        .await
+                    },
 
                     // Hot path: SELECT queries use DataFusion
                     // Tables are already registered in base session, we just inject user_id
@@ -1464,71 +1722,43 @@ impl SqlExecutor {
                     SqlStatementKind::DataFusionMetaCommand => {
                         self.execute_meta_command(sql, exec_ctx).await
                     },
+                    // SET/RESET search_path is a session clause (contract/USE
+                    // canonicalization) with no DDL handler. GUI clients such as
+                    // Tabularis require it to succeed; wire persist applies the schema.
+                    SqlStatementKind::SetSearchPath(_) => Ok(ExecutionResult::Success {
+                        message: "SET".to_string(),
+                    }),
 
                     // Native DataFusion DML path (provider insert/update/delete hooks)
                     SqlStatementKind::Insert(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            match self
-                                .try_execute_literal_insert_via_applier(
-                                    classified.as_str(),
-                                    metadata,
-                                    exec_ctx,
-                                    &params)
-                                .await
-                            {
-                                Ok(Some(result)) => Ok(result),
-                                Ok(None) => {
-                                    self.execute_dml_via_datafusion(
-                                        classified.as_str(),
-                                        metadata,
-                                        params,
-                                        exec_ctx,
-                                        DmlKind::Insert)
-                                    .await
-                                },
-                                Err(error) => Err(error),
-                            }
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Insert,
+                        )
+                        .await
                     },
                     SqlStatementKind::Update(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            self.execute_dml_via_datafusion(
-                                classified.as_str(),
-                                metadata,
-                                params,
-                                exec_ctx,
-                                DmlKind::Update)
-                            .await
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Update,
+                        )
+                        .await
                     },
                     SqlStatementKind::Delete(_) => {
-                        if let Err(error) = self
-                            .reject_unsupported_dml_in_active_request_transaction(
-                                metadata, exec_ctx)
-                            .await
-                        {
-                            Err(error)
-                        } else {
-                            self.execute_dml_via_datafusion(
-                                classified.as_str(),
-                                metadata,
-                                params,
-                                exec_ctx,
-                                DmlKind::Delete)
-                            .await
-                        }
+                        self.execute_table_dml(
+                            classified.as_str(),
+                            metadata,
+                            params,
+                            exec_ctx,
+                            DmlKind::Delete,
+                        )
+                        .await
                     },
 
                     // DDL operations that modify table/view structure require plan cache invalidation
@@ -1541,7 +1771,10 @@ impl SqlExecutor {
                     | SqlStatementKind::AlterPolicy(_)
                     | SqlStatementKind::DropPolicy(_)
                     | SqlStatementKind::CreateNamespace(_)
-                    | SqlStatementKind::DropNamespace(_) => {
+                    | SqlStatementKind::DropNamespace(_)
+                    | SqlStatementKind::CreateType(_)
+                    | SqlStatementKind::AlterType(_)
+                    | SqlStatementKind::DropType(_) => {
                         let result = self
                             .handler_registry
                             .handle(classified.clone(), params, exec_ctx)
@@ -1569,7 +1802,8 @@ impl SqlExecutor {
             #[cfg(feature = "traceability")]
             if let Ok(ref res) = result {
                 let rows = match res {
-                    ExecutionResult::Rows { row_count, .. } => *row_count,
+                    ExecutionResult::Rows { row_count, .. }
+                    | ExecutionResult::ScalarRows { row_count, .. } => *row_count,
                     ExecutionResult::Inserted { rows_affected } => *rows_affected,
                     ExecutionResult::Updated { rows_affected } => *rows_affected,
                     ExecutionResult::Deleted { rows_affected } => *rows_affected,
@@ -1858,6 +2092,13 @@ impl SqlExecutor {
         params: Vec<ScalarValue>,
         exec_ctx: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
+        let isolated;
+        let exec_ctx = if self.is_stream_target_sql(sql, None, exec_ctx).await? {
+            isolated = Self::isolated_stream_exec_ctx(exec_ctx);
+            &isolated
+        } else {
+            exec_ctx
+        };
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
 
@@ -2314,7 +2555,8 @@ mod tests {
 
     fn result_row_count(result: ExecutionResult) -> usize {
         match result {
-            ExecutionResult::Rows { row_count, .. } => row_count,
+            ExecutionResult::Rows { row_count, .. }
+            | ExecutionResult::ScalarRows { row_count, .. } => row_count,
             other => panic!("expected rows, got {other:?}"),
         }
     }
@@ -2496,6 +2738,59 @@ mod tests {
         assert_eq!(projected[0].schema().field(0).name(), "file_ref");
     }
 
+    #[test]
+    fn project_point_get_scalar_rows_remaps_alias_when_scan_keeps_pk() {
+        use arrow::datatypes::DataType;
+        use datafusion::logical_expr::col;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let target_schema = Arc::new(Schema::new(vec![Field::new("title", DataType::Utf8, true)]));
+        let rows = vec![Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Int64(Some(1))),
+            ("name".to_string(), ScalarValue::Utf8(Some("alpha".to_string()))),
+        ])];
+        let exprs = vec![col("name").alias("title")];
+
+        let projected = SqlExecutor::project_point_get_scalar_rows(
+            rows,
+            &source_schema,
+            target_schema,
+            Some(exprs.as_slice()),
+        )
+        .expect("aliased projection");
+
+        assert_eq!(
+            projected[0].values.get("title"),
+            Some(&ScalarValue::Utf8(Some("alpha".to_string())))
+        );
+        assert!(!projected[0].values.contains_key("name"));
+        assert!(!projected[0].values.contains_key("id"));
+    }
+
+    #[test]
+    fn project_point_get_scalar_rows_returns_none_for_unknown_alias_without_exprs() {
+        use arrow::datatypes::DataType;
+
+        let source_schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let target_schema = Arc::new(Schema::new(vec![Field::new("title", DataType::Utf8, true)]));
+        let rows = vec![Row::from_vec(vec![
+            ("id".to_string(), ScalarValue::Int64(Some(1))),
+            ("name".to_string(), ScalarValue::Utf8(Some("alpha".to_string()))),
+        ])];
+
+        assert!(
+            SqlExecutor::project_point_get_scalar_rows(rows, &source_schema, target_schema, None)
+                .is_none(),
+            "unmapped aliases must fall back to Arrow instead of JSON null"
+        );
+    }
+
     #[tokio::test]
     async fn cached_point_plan_binds_rls_principal_per_execution() {
         let app_context = crate::test_helpers::test_app_context_simple();
@@ -2610,5 +2905,31 @@ mod tests {
         );
         assert_eq!(executor.plan_cache_len(), 1);
         assert!(executor.point_get_fast_path_hits() >= 3);
+    }
+
+    #[tokio::test]
+    async fn postgres_set_search_path_succeeds_without_a_ddl_handler() {
+        let app_context = crate::test_helpers::test_app_context_simple();
+        let executor = SqlExecutor::new(app_context.clone(), Arc::new(HandlerRegistry::new()));
+        let ctx = ExecutionContext::new(
+            UserId::from("tabularis"),
+            Role::User,
+            app_context.base_session_context(),
+        );
+
+        let result = executor
+            .execute("SET search_path TO public", &ctx, Vec::new())
+            .await
+            .expect("Tabularis SET search_path must not require a registered DDL handler");
+        match result {
+            ExecutionResult::Success { message } => assert_eq!(message, "SET"),
+            other => panic!("expected SET success, got {other:?}"),
+        }
+
+        let reset = executor
+            .execute("RESET search_path", &ctx, Vec::new())
+            .await
+            .expect("RESET search_path should succeed");
+        assert!(matches!(reset, ExecutionResult::Success { .. }));
     }
 }

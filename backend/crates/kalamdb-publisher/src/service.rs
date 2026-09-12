@@ -54,6 +54,10 @@ pub trait TopicPrimaryKeyLookup: Send + Sync {
 /// claimed range is released so another consumer can re-deliver it.
 const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Cap in-flight claim ranges per group-partition so a consumer that polls
+/// without acking cannot grow `pending` without bound.
+const MAX_PENDING_CLAIMS: usize = 32;
+
 /// Tracks per-(topic, group, partition) claim state for consumer groups.
 ///
 /// The cursor prevents multiple consumers from receiving the same offset range.
@@ -62,18 +66,25 @@ const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Debug)]
 struct ClaimState {
     /// Next offset to hand out.
-    cursor:  u64,
+    cursor:              u64,
     /// Pending (unacked) claims with their expiry information.
-    pending: Vec<PendingClaim>,
+    pending:             Vec<PendingClaim>,
+    /// Monotonic reservation ids for in-flight grouped fetches.
+    next_reservation_id: u64,
+    /// Highest offset this group-partition has acked in-process.
+    last_acked:          Option<u64>,
 }
 
 #[derive(Debug)]
 struct PendingClaim {
-    start:         u64,
+    reservation_id: u64,
+    start:          u64,
     /// Exclusive upper bound of the claimed range.
-    end_exclusive: u64,
-    /// When the claim was issued.
-    claimed_at:    Instant,
+    end_exclusive:  u64,
+    /// When the claim was issued to a consumer.
+    claimed_at:     Instant,
+    /// True while a storage scan is still in progress for this reservation.
+    in_flight:      bool,
 }
 
 impl ClaimState {
@@ -81,6 +92,8 @@ impl ClaimState {
         Self {
             cursor,
             pending: Vec::new(),
+            next_reservation_id: 1,
+            last_acked: None,
         }
     }
 
@@ -91,6 +104,9 @@ impl ClaimState {
     fn expire_stale_claims(&mut self, now: Instant, timeout: Duration) {
         let mut earliest_expired: Option<u64> = None;
         self.pending.retain(|claim| {
+            if claim.in_flight {
+                return true;
+            }
             if now.duration_since(claim.claimed_at) > timeout {
                 earliest_expired =
                     Some(earliest_expired.map_or(claim.start, |e: u64| e.min(claim.start)));
@@ -110,12 +126,21 @@ impl ClaimState {
                 self.cursor = reset_to;
             }
         }
+
+        self.shrink_pending();
     }
 
     /// Remove pending claims fully covered by the acknowledged offset.
     fn ack_up_to(&mut self, acked_offset_inclusive: u64) {
+        self.last_acked = Some(match self.last_acked {
+            Some(previous) => previous.max(acked_offset_inclusive),
+            None => acked_offset_inclusive,
+        });
         let next = acked_offset_inclusive.saturating_add(1);
         self.pending.retain_mut(|claim| {
+            if claim.in_flight {
+                return true;
+            }
             if claim.end_exclusive <= next {
                 return false;
             }
@@ -129,11 +154,103 @@ impl ClaimState {
         if self.cursor < next {
             self.cursor = next;
         }
+        self.shrink_pending();
+    }
+
+    fn deliver_from(&self, durable_last_acked: Option<u64>) -> u64 {
+        let memory = self.last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+        let durable = durable_last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+        memory.max(durable)
+    }
+
+    fn shrink_pending(&mut self) {
+        if self.pending.capacity() > 8
+            && self.pending.capacity() > self.pending.len().saturating_mul(2)
+        {
+            self.pending.shrink_to_fit();
+        }
+    }
+
+    fn reserve_window(
+        &mut self,
+        fetch_start: u64,
+        available_limit: usize,
+        claimed_at: Instant,
+    ) -> u64 {
+        let reservation_id = self.next_reservation_id;
+        self.next_reservation_id = self.next_reservation_id.saturating_add(1);
+        let reserved_end = fetch_start.saturating_add(available_limit as u64);
+        self.pending.push(PendingClaim {
+            reservation_id,
+            start: fetch_start,
+            end_exclusive: reserved_end,
+            claimed_at,
+            in_flight: true,
+        });
+        reservation_id
+    }
+
+    fn finalize_reservation(&mut self, reservation_id: u64, claim_start: u64, end_exclusive: u64) {
+        let Some(claim) =
+            self.pending.iter_mut().find(|claim| claim.reservation_id == reservation_id)
+        else {
+            return;
+        };
+        claim.start = claim_start;
+        claim.end_exclusive = end_exclusive;
+        claim.in_flight = false;
+        claim.claimed_at = Instant::now();
+        Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
+    }
+
+    fn register_delivered_claim(
+        &mut self,
+        claim_start: u64,
+        end_exclusive: u64,
+        claimed_at: Instant,
+    ) {
+        let reservation_id = self.next_reservation_id;
+        self.next_reservation_id = self.next_reservation_id.saturating_add(1);
+        self.pending.push(PendingClaim {
+            reservation_id,
+            start: claim_start,
+            end_exclusive,
+            claimed_at,
+            in_flight: false,
+        });
+        Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
+    }
+
+    fn overlaps_pending(&self, claim_start: u64, end_exclusive: u64) -> bool {
+        self.pending
+            .iter()
+            .any(|claim| claim.start < end_exclusive && claim_start < claim.end_exclusive)
+    }
+
+    fn advance_cursor_for_contiguous_claim(&mut self, claim_start: u64, end_exclusive: u64) {
+        // Only advance the hand-out cursor for contiguous claims. Concurrent
+        // consumers may reserve windows ahead of the cursor; finalizing those
+        // claims must not skip still-unclaimed offsets in the gap.
+        if claim_start <= self.cursor {
+            self.cursor = self.cursor.max(end_exclusive);
+        }
+    }
+
+    fn cancel_reservation(&mut self, reservation_id: u64) {
+        self.pending.retain(|claim| claim.reservation_id != reservation_id);
+    }
+
+    fn has_reservation(&self, reservation_id: u64) -> bool {
+        self.pending.iter().any(|claim| claim.reservation_id == reservation_id)
     }
 
     /// Return the next server-owned cursor and maximum contiguous fetch size
     /// before a still-pending claim.
     fn next_available_window(&self, requested_limit: usize) -> (u64, usize) {
+        if self.pending.len() >= MAX_PENDING_CLAIMS {
+            return (self.cursor, 0);
+        }
+
         let mut next = self.cursor;
 
         loop {
@@ -184,6 +301,9 @@ pub struct TopicPublisherService {
     /// In-memory per-(topic, group, partition) claim state used to avoid
     /// duplicate delivery and to expire stale claims from crashed consumers.
     group_claim_state:     DashMap<GroupPartitionKey, ClaimState>,
+    /// Serializes grouped fetches for a single (topic, group, partition) so
+    /// concurrent consumers cannot observe overlapping claim windows.
+    group_fetch_locks:     DashMap<GroupPartitionKey, Arc<Mutex<()>>>,
     /// Known consumer groups observed from consume/ack activity or restored offsets.
     consumer_groups:       DashMap<ConsumerGroupKey, ()>,
     /// Per-(topic, partition) write locks that serialize offset allocation +
@@ -192,6 +312,10 @@ pub struct TopicPublisherService {
     /// Approximate retained message bytes per topic partition, populated on
     /// demand and updated by publish/retention paths.
     retained_bytes:        DashMap<TopicPartitionKey, u64>,
+    /// Kafka-style log start offset. Advanced only by retention, never by the
+    /// allocator. An in-flight first publish can leave `peek_next=1` while the
+    /// store is still empty; that must not look like offset 0 was retained.
+    log_start_offsets:     DashMap<TopicPartitionKey, u64>,
     /// How long a consumer claim stays valid before re-delivery.
     visibility_timeout:    Duration,
 }
@@ -244,9 +368,11 @@ impl TopicPublisherService {
             primary_key_lookup,
             offset_allocator: OffsetAllocator::new(),
             group_claim_state: DashMap::new(),
+            group_fetch_locks: DashMap::new(),
             consumer_groups: DashMap::new(),
             partition_write_locks: DashMap::new(),
             retained_bytes: DashMap::new(),
+            log_start_offsets: DashMap::new(),
             visibility_timeout,
         }
     }
@@ -306,6 +432,16 @@ impl TopicPublisherService {
             consumer_group_count:     self.consumer_groups.len(),
             consumer_partition_count: self.group_claim_state.len(),
         }
+    }
+}
+
+fn shrink_dashmap_if_sparse<K, V>(map: &DashMap<K, V>)
+where
+    K: Eq + std::hash::Hash,
+{
+    let len = map.len();
+    if map.capacity() > len.saturating_mul(4).max(16) {
+        map.shrink_to_fit();
     }
 }
 

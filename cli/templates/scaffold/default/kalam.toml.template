@@ -47,3 +47,8 @@ app = "{{dev_process_command}}"
 [logging]
 file = true
 capture_process_output = true
+
+[functions]
+path = "functions"
+runtime = "typescript"
+module = "backend"

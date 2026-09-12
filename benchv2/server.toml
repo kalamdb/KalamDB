@@ -41,9 +41,15 @@ batch_size = 1024
 
 [flush]
 default_row_limit = 10000
-default_time_interval = 300
+default_time_interval = 30
 flush_batch_size = 10000
-check_interval_seconds = 60
+check_interval_seconds = 15
+
+[topics]
+default_retention_seconds = 60
+default_retention_max_bytes = 1048576
+retention_check_interval_seconds = 15
+retention_batch_size = 10000
 
 [stream]
 default_ttl_seconds = 10

@@ -1,0 +1,30 @@
+{{header}}
+
+import type { ProcedureContext } from "./runtime";
+{{#if has_type_imports}}
+import type { {{type_imports}} } from "{{schema_import}}";
+
+{{/if}}
+export type ProcedureHandler<TInput, TOutput> = (
+  ctx: ProcedureContext,
+  input: TInput,
+) => TOutput | Promise<TOutput>;
+
+export interface ProcedureBuilder<TInput, TOutput> {
+  (handler: ProcedureHandler<TInput, TOutput>): ProcedureHandler<TInput, TOutput>;
+  unimplemented(): ProcedureHandler<TInput, TOutput>;
+}
+
+{{#if has_namespaces}}
+export declare const procedure: {
+{{#each namespaces}}
+  {{object_ident}}: {
+{{#each procedures}}
+    {{method_ident}}: ProcedureBuilder<{{type_ident}}Request, {{type_ident}}Result>;
+{{/each}}
+  };
+{{/each}}
+};
+{{else}}
+export declare const procedure: Record<string, never>;
+{{/if}}

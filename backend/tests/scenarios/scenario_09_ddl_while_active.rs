@@ -74,6 +74,28 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
     let initial = drain_initial_data(&mut subscription, Duration::from_secs(5)).await?;
     assert_eq!(initial, 10, "Should have 10 initial rows");
 
+    create_enum_type(server, &format!("{ns}.row_label"), &["live", "schema"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.echo_label"),
+        &format!("label {ns}.row_label NOT NULL"),
+        "return String(input.label);",
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.echo_label")).await?;
+    let resp = client
+        .execute_query(&format!("CALL {ns}.echo_label('live')"), None, None, None)
+        .await?;
+    assert!(resp.success(), "echo_label before ADD VALUE: {:?}", resp.error);
+    let alter_enum = server
+        .execute_sql(&format!("ALTER TYPE {ns}.row_label ADD VALUE 'migrated'"))
+        .await?;
+    assert_success(&alter_enum, "ALTER TYPE ADD VALUE while subscription is active");
+    let resp = client
+        .execute_query(&format!("CALL {ns}.echo_label('migrated')"), None, None, None)
+        .await?;
+    assert!(resp.success(), "echo_label after ADD VALUE: {:?}", resp.error);
+
     // =========================================================
     // Step 4: Attempt schema change (ADD COLUMN)
     // =========================================================

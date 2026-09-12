@@ -276,6 +276,76 @@ async fn cached_point_get_keeps_file_ref_select_list_after_update() {
     }
 }
 
+fn assert_cached_scalar_rows(label: &str, result: ExecutionResult) -> ExecutionResult {
+    assert!(
+        result.is_scalar_rows(),
+        "{label}: cached `pk = $1` must skip Arrow (ExecutionResult::ScalarRows). Returning Rows \
+         rebuilds a RecordBatch for HTTP JSON. See docs/architecture/sql-cache-performance.md. \
+         Got {result:?}"
+    );
+    result
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+async fn cached_pk_point_get_skips_arrow_after_plan_cache_hit() {
+    let (app_ctx, _test_db) = create_cluster_app_context().await;
+    let executor = create_executor(Arc::clone(&app_ctx));
+    let exec_ctx = observer_exec_ctx(&app_ctx);
+    let table =
+        create_shared_table(&app_ctx, &unique_namespace("sql_point_get_skip_arrow"), "message")
+            .await;
+    execute_ok(&executor, &exec_ctx, &insert_sql(&table, 1, "alpha")).await;
+
+    let qualified = format!("{}.{}", table.namespace_id(), table.table_name());
+    let all_user_columns = format!("SELECT id, name FROM {qualified} WHERE id = $1");
+    let pk = vec![ScalarValue::Int64(Some(1))];
+
+    // First execution populates the plan cache and may still use Arrow.
+    let _ = execute_ok_with_params(&executor, &exec_ctx, &all_user_columns, pk.clone()).await;
+    let cached = assert_cached_scalar_rows(
+        "SELECT id, name WHERE id = $1",
+        execute_ok_with_params(&executor, &exec_ctx, &all_user_columns, pk.clone()).await,
+    );
+    let rows = result_rows(cached);
+    assert_eq!(cell_text(&rows[0], "id"), "1");
+    assert_eq!(cell_text(&rows[0], "name"), "alpha");
+
+    let projected = format!("SELECT name FROM {qualified} WHERE id = $1");
+    let _ = execute_ok_with_params(&executor, &exec_ctx, &projected, pk.clone()).await;
+    let projected_cached = assert_cached_scalar_rows(
+        "SELECT name WHERE id = $1",
+        execute_ok_with_params(&executor, &exec_ctx, &projected, pk.clone()).await,
+    );
+    assert_name_point_get("projected skip-Arrow", projected_cached, "alpha");
+
+    let extra_predicate = format!("SELECT name FROM {qualified} WHERE id = $1 AND name = $2");
+    let extra_params = vec![
+        ScalarValue::Int64(Some(1)),
+        ScalarValue::Utf8(Some("alpha".to_string())),
+    ];
+    let _ =
+        execute_ok_with_params(&executor, &exec_ctx, &extra_predicate, extra_params.clone()).await;
+    let extra_cached =
+        execute_ok_with_params(&executor, &exec_ctx, &extra_predicate, extra_params).await;
+    assert!(
+        !extra_cached.is_scalar_rows(),
+        "AND predicates after the PK lookup must keep the Arrow residual-filter path, got \
+         {extra_cached:?}"
+    );
+    assert_name_point_get("pk plus name filter", extra_cached, "alpha");
+
+    let miss_params = vec![
+        ScalarValue::Int64(Some(1)),
+        ScalarValue::Utf8(Some("nope".to_string())),
+    ];
+    let miss = execute_ok_with_params(&executor, &exec_ctx, &extra_predicate, miss_params).await;
+    assert!(
+        result_rows(miss).is_empty(),
+        "skip-Arrow must not drop residual AND filters after the PK lookup"
+    );
+}
+
 #[tokio::test]
 #[ntest::timeout(20000)]
 async fn cached_point_get_projects_non_pk_columns_across_table_types() {
@@ -318,32 +388,20 @@ async fn cached_point_get_projects_non_pk_columns_across_table_types() {
     )
     .await;
 
+    let aliased_sql = format!(
+        "SELECT name AS title FROM {}.{} WHERE id = $1",
+        user_table.namespace_id(),
+        user_table.table_name()
+    );
+    let aliased_pk = vec![ScalarValue::Int64(Some(1))];
     let aliased = result_rows(
-        execute_ok_with_params(
-            &executor,
-            &exec_ctx,
-            &format!(
-                "SELECT name AS title FROM {}.{} WHERE id = $1",
-                user_table.namespace_id(),
-                user_table.table_name()
-            ),
-            vec![ScalarValue::Int64(Some(1))],
-        )
-        .await,
+        execute_ok_with_params(&executor, &exec_ctx, &aliased_sql, aliased_pk.clone()).await,
     );
-    let aliased_cached = result_rows(
-        execute_ok_with_params(
-            &executor,
-            &exec_ctx,
-            &format!(
-                "SELECT name AS title FROM {}.{} WHERE id = $1",
-                user_table.namespace_id(),
-                user_table.table_name()
-            ),
-            vec![ScalarValue::Int64(Some(1))],
-        )
-        .await,
+    let aliased_cached = assert_cached_scalar_rows(
+        "SELECT name AS title WHERE id = $1",
+        execute_ok_with_params(&executor, &exec_ctx, &aliased_sql, aliased_pk).await,
     );
+    let aliased_cached = result_rows(aliased_cached);
     for (label, rows) in [("first", &aliased), ("cached", &aliased_cached)] {
         assert_eq!(rows.len(), 1, "{label} alias lookup");
         assert_eq!(

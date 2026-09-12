@@ -1,0 +1,19 @@
+[package]
+name = "kalamdb-functions-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Language-neutral host API spec and emitters for KalamDB functions ctx"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+name = "kalamdb_functions_host"
+path = "src/lib.rs"
+doctest = false

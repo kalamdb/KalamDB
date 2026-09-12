@@ -14,6 +14,8 @@ const OAuthCallback = lazy(() => import("./pages/OAuthCallback"));
 const SetupWizard = lazy(() => import("./pages/SetupWizard"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const SqlStudio = lazy(() => import("./pages/SqlStudio"));
+const Functions = lazy(() => import("./pages/Functions"));
+const FunctionDetail = lazy(() => import("./pages/FunctionDetail"));
 const Users = lazy(() => import("./pages/Users"));
 const LiveQueries = lazy(() => import("./pages/LiveQueries"));
 const Logging = lazy(() => import("./pages/Logging"));
@@ -56,6 +58,9 @@ function App() {
                         <Route index element={<Navigate to="/dashboard" replace />} />
                         <Route path="dashboard" element={<Dashboard />} />
                         <Route path="sql" element={<SqlStudio />} />
+                        <Route path="functions" element={<Functions />} />
+                        <Route path="functions/:procedureId" element={<FunctionDetail />} />
+                        <Route path="functions/:procedureId/:tab" element={<FunctionDetail />} />
                         <Route path="users" element={<Users />} />
                         <Route path="live-queries" element={<LiveQueries />} />
                         <Route path="streaming" element={<Navigate to="/streaming/topics" replace />} />

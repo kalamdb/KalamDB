@@ -49,6 +49,10 @@ Registered in `kalamdb-views/src/pg_catalog/mod.rs` when pg_catalog is enabled:
 | `pg_get_keywords` | Static PostgreSQL extra keywords | JDBC `getSQLKeywords()`; function-call form `pg_get_keywords()` is rewritten to this view |
 | `pg_database` | Static `"kalam"` database row | Single-database deployment |
 | `pg_stat_activity` | Backend session registry | Admin-only; projects wire/gRPC sessions |
+| `pg_tables` | Visible relations | `hasindexes` is true when the table has a primary key |
+| `pg_index` | Primary-key indexes | `indkey` is `List<Int64>` of `attnum`s; index relation OIDs match `pg_class` `relkind = 'i'` rows |
+| `pg_constraint` | Primary-key constraints | `contype = 'p'`, `conkey`/`confkey` lists, `conparentid`, `confupdtype`/`confdeltype`. Foreign keys are absent until modeled |
+| `pg_proc` | `system.routines` | One row per CALL-able procedure (`prokind = 'p'`). JDBC `getProcedureColumns` columns: `prorettype`, `proargtypes`, `proargnames`, `proargmodes`, `proallargtypes`. VOID returns use oid `2278` |
 
 ## SQL rewrite: DBeaver `pg_type` filter
 
@@ -59,6 +63,12 @@ WHERE (t.typrelid = 0 OR (SELECT c.relkind = 'c' FROM pg_catalog.pg_class c WHER
 ```
 
 Because KalamDB's `pg_type` shim always sets `typrelid = 0`, the OR branch is dead. `rewrite_dbeaver_typrelid_filter` (regex) and `DbeaverTyprelidRewriter` (AST visitor) in `kalamdb-dialect/src/parser/utils.rs` simplify this to `(t.typrelid = 0)` before planning. The rewrite runs twice: once before and once after AST operator rewrites (`!~` → `regexp_like`), because sqlparser round-trip may emit `FROM pg_catalog.pg_class AS c` aliases the pre-AST regex does not match.
+
+## SQL rewrite: PostgreSQL `UNNEST` table factors
+
+PostgreSQL GUI browsers (Tabularis, TablePlus-style inspectors) expand `pg_constraint.conkey` and `pg_index.indkey` with table-factor `unnest(...)` / `UNNEST(...) WITH ORDINALITY`. DataFusion sessions use the DuckDB dialect, which looks those up as UDTFs and fails with `table function 'UNNEST' not found` (logged as a misleading "Table not found").
+
+`apply_pg_table_function_rewrites` in `kalamdb-dialect/src/parser/pg_unnest.rs` rewrites those table factors to correlated `LATERAL (SELECT unnest(...) AS col, …)` (and `ROW_NUMBER() OVER ()` for `WITH ORDINALITY`), maps `INT2`/`INT4`/`INT8` casts to `SMALLINT`/`INT`/`BIGINT`, and simplifies `string_to_array(indkey::text, ' ')::int2[]` back to `indkey` when the column is already a list. Tabularis column probes also use `EXISTS (SELECT 1 FROM pg_constraint … JOIN unnest(conkey) …)`; DataFusion cannot execute `Exists` physically, so that probe is rewritten to `information_schema.columns.kdb_primary_key`. `pg_get_indexdef` is registered as a NULL stub so `COALESCE(attname, pg_get_indexdef(...))` still returns column names.
 
 ## JDBC `DatabaseMetaData` (PostgreSQL JDBC 42.7)
 
@@ -73,6 +83,14 @@ The PostgreSQL JDBC driver issues catalog SQL that DataFusion cannot plan as-is.
 | `getColumns` (non-core types, e.g. UUID) | TypeInfoCache `array_upper(current_schemas())` + `generate_series` | Drop search-path join; `typinput='array_in'::regproc` → `FALSE` |
 | `getSQLKeywords` | `pg_catalog.pg_get_keywords()` + `<> ALL ('{…}'::text[])` | `pg_get_keywords` view + `NOT IN` |
 | `getPrimaryKeys` | `information_schema._pg_expandarray(indkey)` | `information_schema.columns` where `kdb_primary_key` |
+| `getIndexInfo` | `_pg_expandarray` + `pg_am` inner join | `information_schema.columns` where `kdb_primary_key` (PK indexes) |
+| `getImportedKeys` / `getExportedKeys` | `generate_series` + `con.conkey[n]` | Empty result with JDBC column aliases (no FK catalog yet) |
+| `getProcedures` / `getProcedureColumns` | `pg_proc` + `pg_description` / `pg_type` | Populated `pg_proc`; reserved `NULL, NULL, NULL` aliased; `proname \|\| oid` rewritten to `concat`; VOID type seeded |
+| `getFunctions` / `getFunctionColumns` | `pg_get_function_result` + `substring … FROM … FOR` | DataFusion `unicode_expressions` plans `SUBSTRING`/`SUBSTR`; `substring` also rewritten to `substr`; catalog-aware `pg_get_function_result`; `format_type(..., NULL)` accepted. Kalam procedures are `prokind = 'p'`, so `getFunctions` is empty |
+| `getBestRowIdentifier` | `_pg_expandarray(indkey)` | PK columns via `information_schema.columns.kdb_primary_key` + `pg_attribute` |
+| `getTablePrivileges` / `getColumnPrivileges` | `relacl` / `attacl` + `pg_roles` | Empty result (no PostgreSQL ACL catalog) |
+| `getUDTs` | `obj_description` + `typtype IN ('c','d')` | `obj_description` NULL stub; no composite/distinct types yet |
+| GUI table inspector (Tabularis) | `JOIN unnest(...)` / `WITH ORDINALITY` / `EXISTS (pg_constraint…)` / `pg_proc` / `pg_get_functiondef` | PK `EXISTS` → `kdb_primary_key`; index/FK probes → `information_schema` PK rows / empty FK result; routines from populated `pg_proc`; arguments from `information_schema.parameters`; definition from `pg_get_functiondef` |
 | `getMaxColumnNameLength` | `pg_type.typname = 'name'` in `pg_catalog` | Seeded `name` type with `typlen = 64` |
 
 HikariCP also requires `SHOW TRANSACTION ISOLATION LEVEL` (executor GUC path, not DataFusion).
@@ -88,9 +106,7 @@ Empty-table shims (schema-correct, zero rows) unblock many client probes that on
 | `pg_settings` | DBeaver/pgAdmin read server parameters on connect |
 | `pg_roles` / `pg_authid` | Role listing, privilege checks |
 | `pg_tables` / `pg_views` | `\dt`, object browser tree |
-| `pg_proc` | Function/procedure browser (empty OK initially) |
-| `pg_index` | Index metadata in table property panels |
-| `pg_constraint` | PK/FK/unique constraint display |
+| `pg_proc` | Function/procedure browser — **populated from `system.routines`** |
 | `pg_description` | Comment tooltips (empty OK) |
 | `pg_collation` | Type/column introspection joins |
 | `pg_attrdef` | Column default display in `\d+` style queries |
@@ -126,6 +142,12 @@ Empty-table shims (schema-correct, zero rows) unblock many client probes that on
 | `col_description(oid, colnum)` | Column comment tooltips (stub NULL until comments stored) |
 | `format_type(oid, typmod)` | Column type display in metadata queries |
 | `pg_get_expr(adbin, adrelid)` | Default expression text |
+| `pg_get_indexdef(oid[, col, pretty])` | Index definition text (NULL stub; column names come from `pg_attribute`) |
+| `pg_get_function_result(oid)` | JDBC `getFunctions` result-type CASE; catalog-aware once routines are loaded |
+| `pg_get_functiondef(oid)` | Tabularis / DBeaver routine source (`CREATE PROCEDURE …`) |
+| `pg_get_function_identity_arguments(oid)` / `pg_get_function_arguments(oid)` | Argument list for DROP/identity display |
+| `obj_description(oid[, catalog])` | Object comment tooltips (NULL stub) |
+| `has_function_privilege` / `has_table_privilege` / `has_schema_privilege` | ACL filters; currently always true |
 | `has_*_privilege(...)` | ACL-aware object filtering |
 | `pg_table_is_visible(oid)` | Visibility filter used by psql `\d` |
 
@@ -140,6 +162,14 @@ DataFusion's built-in `information_schema.columns` omits PostgreSQL `udt_name` a
 ## `information_schema.tables`
 
 The stock DataFusion `information_schema.tables` view is wrapped to append Kalam-only `kdb_*` columns from `system.tables` semantics: `kdb_namespace_id`, `kdb_table_type`, `kdb_storage_id`, `kdb_version`, `kdb_options`, `kdb_comment`, `kdb_updated_at`, `kdb_created_at`. `information_schema.views` filters the extended tables provider.
+
+## `information_schema.routines`
+
+DataFusion's `information_schema.routines` lists session UDFs (scalar/aggregate/window) in the default catalog/schema. KalamDB wraps that view and **appends CALL-able procedures** from `system.routines` with `routine_type = 'PROCEDURE'` and `routine_schema` set to the owning Kalam namespace, so SQL-standard clients and Tabularis see the same routines as `pg_proc`. `specific_name` is the schema-qualified `routine_id` so overloads in different namespaces do not collide.
+
+## `information_schema.parameters`
+
+The stock DataFusion `parameters` view lists session UDF arguments. KalamDB appends `character_maximum_length` (always NULL) and **procedure arguments** from `system.routine_parameters`, joined by Tabularis as `parameters.specific_name = routines.specific_name`.
 
 Kalam-only metadata should use the `kdb_*` prefix, matching how `udt_name` was added for PostgreSQL compatibility.
 
@@ -157,7 +187,7 @@ The CLI (`\dt`, `--watch-schema`), pgwire parity tests, and SDK smoke tests have
 - Prefer **typed view providers** projecting from `system.*` over string-matched SQL rewrites when semantics are stable.
 - Use **empty-table shims** with correct column names/types when clients only probe existence.
 - Keep rewrites in `kalamdb-dialect` for patterns DataFusion cannot plan (correlated subqueries, DuckDB lambda/`->` conflicts, PostgreSQL regex operators).
-- Regression gates: `kalamdb-dialect` rewrite unit tests, `pg_catalog_shims` integration tests (including JDBC `getTables`/`getColumns`/`getSchemas`/`getPrimaryKeys` SQL), `pgwire_catalog/catalog_checks.rs`, JDBC/HikariCP + `DatabaseMetaData` smoke (`pgwire_catalog/jdbc`).
+- Regression gates: `kalamdb-dialect` rewrite unit tests, `pg_catalog_shims` integration tests (including JDBC `getTables`/`getColumns`/`getSchemas`/`getPrimaryKeys` SQL), `pgwire_catalog/catalog_checks.rs`, JDBC/HikariCP + `DatabaseMetaData` smoke (`pgwire_catalog/jdbc`). Live wire/JDBC e2e runs from `cli/run-tests.sh` (full run or `--test-target pgwire_catalog`) against the running `[postgres_wire]` listener.
 
 ## References
 

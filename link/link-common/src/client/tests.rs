@@ -124,6 +124,67 @@ async fn test_set_auth_updates_http_query_executor() {
     server.abort();
 }
 
+#[cfg(feature = "auth-flows")]
+#[tokio::test]
+async fn test_exchange_oidc_token_posts_id_token() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+    let address = listener.local_addr().expect("read local addr");
+
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let Ok(request) = read_test_request(&mut stream).await else {
+                break;
+            };
+            let body = if request.target.contains("/v1/api/auth/oidc/exchange-token")
+                && request.body.contains("kc-id-token")
+            {
+                json!({
+                    "user": {
+                        "id": "oidc-user",
+                        "role": "user",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z"
+                    },
+                    "admin_ui_access": false,
+                    "expires_at": "2026-01-02T00:00:00Z",
+                    "access_token": "kalam-access",
+                    "refresh_token": "kalam-refresh"
+                })
+                .to_string()
+            } else {
+                json!({"error": "unexpected"}).to_string()
+            };
+            let status_line = if request.body.contains("kc-id-token") {
+                "HTTP/1.1 200 OK"
+            } else {
+                "HTTP/1.1 400 Bad Request"
+            };
+            let response = format!(
+                "{status_line}\r\ncontent-type: application/json\r\ncontent-length: \
+                 {}\r\nconnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+            let _ = stream.shutdown().await;
+        }
+    });
+
+    let client = KalamLinkClient::builder()
+        .base_url(format!("http://{}", address))
+        .jwt_token("unused")
+        .build()
+        .expect("build client");
+
+    let login = client.exchange_oidc_token("kc-id-token").await.expect("exchange");
+    assert_eq!(login.access_token, "kalam-access");
+    assert_eq!(login.refresh_token.as_deref(), Some("kalam-refresh"));
+
+    server.abort();
+}
+
 async fn handle_test_request(
     mut stream: TcpStream,
     state: Arc<Mutex<QueryAuthState>>,
@@ -164,7 +225,9 @@ async fn handle_test_request(
 }
 
 struct TestRequest {
+    target:  String,
     headers: HashMap<String, String>,
+    body:    String,
 }
 
 async fn read_test_request(stream: &mut TcpStream) -> std::io::Result<TestRequest> {
@@ -203,12 +266,23 @@ async fn read_test_request(stream: &mut TcpStream) -> std::io::Result<TestReques
 
     let header_end = header_end.expect("request should include headers");
     let header_text = String::from_utf8_lossy(&buffer[..header_end - 4]);
+    let target = header_text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or_default()
+        .to_string();
     let mut headers = HashMap::new();
     for line in header_text.lines().skip(1) {
         if let Some((name, value)) = line.split_once(':') {
             headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
         }
     }
+    let body = String::from_utf8_lossy(&buffer[header_end..]).into_owned();
 
-    Ok(TestRequest { headers })
+    Ok(TestRequest {
+        target,
+        headers,
+        body,
+    })
 }

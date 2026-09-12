@@ -2,8 +2,8 @@ import type { KalamDBClient, QueryResponse, UploadProgress, UserId } from '@kala
 import type { SQLWrapper } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { rewriteSqlParamsForFileUploads } from './file-upload.js';
-import { stripDefaults } from './driver.js';
 import { stripQuotedIdentifiers } from './query-normalize.js';
+import { stripDefaults } from './strip-defaults.js';
 
 type ExecuteAsUserClient = Pick<KalamDBClient, 'executeAsUser'>;
 type QueryWithFilesClient = Pick<KalamDBClient, 'queryWithFiles'>;

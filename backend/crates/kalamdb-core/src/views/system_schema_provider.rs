@@ -19,11 +19,17 @@ use kalamdb_raft::CommandExecutor;
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_system::SystemTablesRegistry;
 use kalamdb_views::{
+    active_procedure_runs::{ActiveProcedureRunsTableProvider, ActiveProcedureRunsView},
     cluster::create_cluster_provider,
     cluster_groups::create_cluster_groups_provider,
     datatypes::{DatatypesTableProvider, DatatypesView},
     describe::DescribeView,
     live::{LiveTableProvider, LiveView},
+    module_instances::{ModuleInstancesTableProvider, ModuleInstancesView},
+    module_revisions::create_module_revisions_provider,
+    modules::create_modules_provider,
+    procedure_logs::create_procedure_logs_provider,
+    procedures::create_procedures_provider,
     server_logs::create_server_logs_provider,
     sessions::{SessionsTableProvider, SessionsView},
     settings::{SettingsTableProvider, SettingsView},
@@ -41,19 +47,23 @@ use crate::schema_registry::SchemaRegistry;
 /// Configuration for view initialization
 pub struct ViewConfig {
     /// Server configuration (for settings view)
-    pub config:            Arc<ServerConfig>,
+    pub config:                     Arc<ServerConfig>,
     /// Logs path (for server_logs view)
-    pub logs_path:         PathBuf,
+    pub logs_path:                  PathBuf,
     /// Command executor (for cluster views, set after Raft init)
-    pub executor:          RwLock<Option<Arc<dyn CommandExecutor>>>,
+    pub executor:                   RwLock<Option<Arc<dyn CommandExecutor>>>,
     /// Pre-created StatsView for callback wiring
-    pub stats_view:        Arc<StatsView>,
+    pub stats_view:                 Arc<StatsView>,
     /// Pre-created system.live view for callback wiring.
-    pub live_view:         Arc<LiveView>,
+    pub live_view:                  Arc<LiveView>,
     /// Pre-created system.sessions view for callback wiring.
-    pub sessions_view:     Arc<SessionsView>,
+    pub sessions_view:              Arc<SessionsView>,
     /// Pre-created system.transactions view for callback wiring.
-    pub transactions_view: Arc<TransactionsView>,
+    pub transactions_view:          Arc<TransactionsView>,
+    /// Pre-created system.active_procedure_runs view for callback wiring.
+    pub active_procedure_runs_view: Arc<ActiveProcedureRunsView>,
+    /// Pre-created system.module_instances view for callback wiring.
+    pub module_instances_view:      Arc<ModuleInstancesView>,
 }
 
 impl std::fmt::Debug for ViewConfig {
@@ -100,6 +110,8 @@ impl SystemSchemaProvider {
                 live_view: Arc::new(LiveView::new(SystemTable::Live)),
                 sessions_view: Arc::new(SessionsView::new()),
                 transactions_view: Arc::new(TransactionsView::new()),
+                active_procedure_runs_view: Arc::new(ActiveProcedureRunsView::new()),
+                module_instances_view: Arc::new(ModuleInstancesView::new()),
             }),
         }
     }
@@ -133,6 +145,14 @@ impl SystemSchemaProvider {
         Arc::clone(&self.view_config.transactions_view)
     }
 
+    pub fn active_procedure_runs_view(&self) -> Arc<ActiveProcedureRunsView> {
+        Arc::clone(&self.view_config.active_procedure_runs_view)
+    }
+
+    pub fn module_instances_view(&self) -> Arc<ModuleInstancesView> {
+        Arc::clone(&self.view_config.module_instances_view)
+    }
+
     /// Get or create a view provider, storing it in SchemaRegistry's CachedTableData
     fn get_or_create_view_provider(
         &self,
@@ -163,6 +183,39 @@ impl SystemSchemaProvider {
                 let provider = Arc::new(SessionsTableProvider::new(Arc::clone(
                     &self.view_config.sessions_view,
                 )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::ActiveProcedureRuns => {
+                let provider = Arc::new(ActiveProcedureRunsTableProvider::new(Arc::clone(
+                    &self.view_config.active_procedure_runs_view,
+                )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::ProcedureLogs => {
+                let provider = Arc::new(create_procedure_logs_provider(
+                    self.view_config.config.storage.functions_runtime_dir(),
+                    &self.view_config.logs_path,
+                ));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::ModuleInstances => {
+                let provider = Arc::new(ModuleInstancesTableProvider::new(Arc::clone(
+                    &self.view_config.module_instances_view,
+                )));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::Procedures => {
+                let provider =
+                    Arc::new(create_procedures_provider(Arc::clone(&self.system_tables)));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::Modules => {
+                let provider = Arc::new(create_modules_provider(Arc::clone(&self.system_tables)));
+                provider as Arc<dyn TableProvider>
+            },
+            SystemTable::ModuleRevisions => {
+                let provider =
+                    Arc::new(create_module_revisions_provider(Arc::clone(&self.system_tables)));
                 provider as Arc<dyn TableProvider>
             },
             SystemTable::Transactions => {

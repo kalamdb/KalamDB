@@ -149,7 +149,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 ### Top-level commands
 
 - `kalam version` – print CLI version/build metadata
-- `kalam update [--version <version>] [--pre-release]` – replace the current binary with a verified GitHub release artifact
+- `kalam update [--version <version>] [--pre-release | --stable]` – replace the current binary with a verified GitHub release artifact. `--pre-release` installs the newest published rc/beta/alpha and never downgrades. `--stable` switches to GitHub's latest non-draft release and is the only implicit path that may leave a newer installed pre-release.
 - `kalam doctor [--strict]` – inspect binary path, config, credentials, healthcheck, and auth reachability
 - `kalam login --instance <name> --url <url>` – login, save access/refresh tokens, and enter the interactive shell immediately when run from a terminal
 - `kalam logout [--all]` – remove saved credentials locally and best-effort notify the server
@@ -605,7 +605,7 @@ This creates:
 ```bash
 # Regenerate workflow artifacts
 # TypeScript uses @kalamdb/orm against the resolved server/namespace.
-# Dart reads schema.sql and writes KalamTableSpec codecs to lib/generated/kalam.dart.
+# Dart reads schema.sql and writes KalamTableSpec codecs plus typed KalamFunctions to lib/generated/kalam.dart.
 kalam schema gen
 kalam schema gen --languages dart
 
@@ -656,17 +656,58 @@ Reports project name, resolved environment (with precedence source), schema mode
 
 ### Deploy with migration guardrails
 
+`kalam deploy` generates schema artifacts, builds the project's server functions,
+applies migrations, activates the function module, runs configured rollout steps,
+and checks the target's health. Use a CLI and server build with functions support
+and configure the target environment and DBA or System credentials first.
+`kalam dev` also builds and activates on startup and when `functions/src` changes;
+build or activation failures are printed as errors (CALL stays `procedure not
+implemented` until the next successful activate).
+
 ```bash
-kalam db migrate          # apply locally first
+kalam deploy --env dev --dry-run  # validate locally without activating
+kalam deploy --env dev
 kalam deploy --env prod
 ```
 
-Deploy blocks when:
+The dry run generates schema artifacts and builds functions when
+`functions/package.json` is present. It does not apply migrations, upload functions,
+or activate a revision. To build functions independently, use `kalam functions build`.
+Production-like environments enforce migration history when automatic migrations
+are enabled: schema changes must be covered by a migration before deployment.
 
-- pending migrations exist (run `kalam db migrate` first)
-- production schema drift exists without a committed migration file
+### Server functions
 
-After rollout, deploy runs `GET {url}/ui` and accepts 2xx/3xx responses.
+Declare a bodyless `CREATE PROCEDURE` in your schema and run `kalam schema gen`.
+TypeScript generation writes `procedure.<schema>.<method>` builders and a one-time
+named-export scaffold at `functions/src/<namespace>/<procedure>.ts` for each
+unbound procedure. Existing implementations are preserved. Edit the implementation, then use `kalam deploy`
+to build and activate the project module. See the
+[README example](../../README.md#deploy-a-function-to-your-backend)
+and [SQL procedure reference](../reference/sql.md#create-procedure).
+
+```bash
+kalam functions build
+kalam functions status --env dev
+kalam functions revisions --env dev
+kalam functions runtime --env dev
+kalam functions logs --env dev
+kalam functions logs api.health --env dev
+kalam functions override api.health
+kalam functions rollback backend:<artifact> --env dev
+```
+
+`status` prints the current module, every procedure (implementation and
+signature), and function memory/isolate stats. `revisions` lists module
+history with `is_current`. `runtime` lists resident V8 isolates and
+in-flight root calls. `logs` prints recent invocation, V8 console/`ctx.log`, and error records from
+`system.procedure_logs`. On disk those files are
+`{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`
+(default `./data/functions/runtime/...`).
+
+To restore a previously activated revision, use
+`kalam functions rollback <revision> --env dev` with an identifier from
+`kalam functions revisions`. This changes the active revision without rebuilding.
 
 ---
 

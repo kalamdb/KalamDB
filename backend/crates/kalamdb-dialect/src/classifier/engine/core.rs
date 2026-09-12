@@ -148,6 +148,62 @@ impl SqlStatement {
                     CreateNamespaceStatement::parse(sql).map(SqlStatementKind::CreateNamespace)
                 })
             },
+            ["CREATE", "SCHEMA", ..] => {
+                if !is_admin {
+                    return Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges (DBA or System role) required for schema operations"
+                            .to_string(),
+                    ));
+                }
+                Self::wrap(sql, || {
+                    CreateSchemaStatement::parse(sql).map(SqlStatementKind::CreateSchema)
+                })
+            },
+            ["CREATE", "TYPE", ..] => Self::wrap(sql, || {
+                CreateTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::CreateType)
+            }),
+            ["ALTER", "TYPE", ..] => Self::wrap(sql, || {
+                AlterTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::AlterType)
+            }),
+            ["DROP", "TYPE", ..] => Self::wrap(sql, || {
+                DropTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::DropType)
+            }),
+            ["CREATE", "PROCEDURE", ..] | ["CREATE", "OR", "REPLACE", "PROCEDURE", ..] => {
+                Self::wrap(sql, || {
+                    CreateProcedureStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::CreateProcedure)
+                })
+            },
+            ["DROP", "PROCEDURE", ..] => Self::wrap(sql, || {
+                DropProcedureStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::DropProcedure)
+            }),
+            ["COMMENT", "ON", ..] => Self::wrap(sql, || {
+                CommentOnStatement::parse(sql, default_namespace).map(SqlStatementKind::CommentOn)
+            }),
+            ["GRANT", "EXECUTE", ..] => Self::wrap(sql, || {
+                GrantExecuteStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::GrantExecute)
+            }),
+            ["REVOKE", "EXECUTE", ..] => Self::wrap(sql, || {
+                RevokeExecuteStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::RevokeExecute)
+            }),
+            ["CALL", ..] => Self::wrap(sql, || {
+                CallStatement::parse(sql, default_namespace).map(SqlStatementKind::Call)
+            }),
+            ["CREATE", "TRIGGER", ..] => Self::wrap(sql, || {
+                CreateTriggerStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::CreateTrigger)
+            }),
+            ["DROP", "TRIGGER", ..] => Self::wrap(sql, || {
+                DropTriggerStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::DropTrigger)
+            }),
+            ["ALTER", "TRIGGER", ..] => Self::wrap(sql, || {
+                AlterTriggerStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::AlterTrigger)
+            }),
             ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -257,7 +313,7 @@ impl SqlStatement {
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
                 // Parse CREATE TABLE statement with detailed error logging
-                match CreateTableStatement::parse(sql, default_namespace.as_str()) {
+                match CreateTableStatement::parse(sql, default_namespace) {
                     Ok(stmt) => Ok(Self::new(sql.to_string(), SqlStatementKind::CreateTable(stmt))),
                     Err(e) => {
                         log::error!(
@@ -274,6 +330,9 @@ impl SqlStatement {
                     },
                 }
             },
+            ["CREATE", "INDEX", ..] | ["CREATE", "UNIQUE", "INDEX", ..] => Self::wrap(sql, || {
+                parse_create_index_on(sql, default_namespace).map(SqlStatementKind::AlterTable)
+            }),
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]
@@ -651,6 +710,9 @@ impl SqlStatement {
                         .map(SqlStatementKind::ResetConsumerGroup)
                 })
             },
+            ["RESET", "SEARCH_PATH", ..] => Self::wrap(sql, || {
+                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
+            }),
 
             // Backup and restore operations - require admin
             ["BACKUP", "DATABASE", ..] => {
@@ -721,6 +783,11 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
+            ["SET", "SEARCH_PATH", ..]
+            | ["SET", "SESSION", "SEARCH_PATH", ..]
+            | ["SET", "LOCAL", "SEARCH_PATH", ..] => Self::wrap(sql, || {
+                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
+            }),
             ["SET", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -829,6 +896,8 @@ impl SqlStatement {
                     | SqlStatementKind::Insert(_)
                     | SqlStatementKind::Update(_)
                     | SqlStatementKind::Delete(_)
+                    | SqlStatementKind::Call(_)
+                    | SqlStatementKind::SetSearchPath(_)
             )
         {
             return Err(format!(
@@ -868,12 +937,12 @@ impl SqlStatement {
 
             // Namespace DDL requires admin privileges
             SqlStatementKind::CreateNamespace(_)
+            | SqlStatementKind::CreateSchema(_)
             | SqlStatementKind::AlterNamespace(_)
             | SqlStatementKind::DropNamespace(_) => Err("Admin privileges (DBA or System role) \
                                                          required for namespace operations"
                 .to_string()),
 
-            // Read-only operations on system tables are allowed for all authenticated users
             SqlStatementKind::ShowNamespaces(_)
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::ShowStorages(_)
@@ -881,12 +950,22 @@ impl SqlStatement {
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_)
-            | SqlStatementKind::UseNamespace(_) => Ok(()),
+            | SqlStatementKind::UseNamespace(_)
+            | SqlStatementKind::SetSearchPath(_) => Ok(()),
 
-            // CREATE TABLE/VIEW, DROP TABLE, STORAGE FLUSH/COMPACT, ALTER TABLE - defer to
-            // ownership checks
             SqlStatementKind::CreateTable(_)
             | SqlStatementKind::CreateView(_)
+            | SqlStatementKind::CreateType(_)
+            | SqlStatementKind::AlterType(_)
+            | SqlStatementKind::DropType(_)
+            | SqlStatementKind::CreateProcedure(_)
+            | SqlStatementKind::DropProcedure(_)
+            | SqlStatementKind::CommentOn(_)
+            | SqlStatementKind::CreateTrigger(_)
+            | SqlStatementKind::DropTrigger(_)
+            | SqlStatementKind::AlterTrigger(_)
+            | SqlStatementKind::GrantExecute(_)
+            | SqlStatementKind::RevokeExecute(_)
             | SqlStatementKind::AlterTable(_)
             | SqlStatementKind::DropTable(_)
             | SqlStatementKind::FlushTable(_)
@@ -929,7 +1008,8 @@ impl SqlStatement {
             | SqlStatementKind::ShowExport(_)
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
-            | SqlStatementKind::RollbackTransaction => Ok(()),
+            | SqlStatementKind::RollbackTransaction
+            | SqlStatementKind::Call(_) => Ok(()),
 
             // Topic management requires admin
             SqlStatementKind::CreateTopic(_)
@@ -1028,6 +1108,7 @@ mod tests {
             "INSERT INTO default.tasks (id) VALUES (1)",
             "UPDATE default.tasks SET id = 2 WHERE id = 1",
             "DELETE FROM default.tasks WHERE id = 1",
+            "CALL default.echo('hi')",
         ] {
             let stmt = SqlStatement::classify_and_parse(sql, &namespace, Role::User)
                 .expect("DML/query should classify for regular users");
@@ -1044,5 +1125,52 @@ mod tests {
                 .expect("statement should classify before central authorization check");
             assert!(stmt.check_authorization(Role::User).is_err(), "{sql}");
         }
+    }
+
+    #[test]
+    fn classify_create_type_composite_and_reserved() {
+        let ns = NamespaceId::new("app");
+        let stmt = SqlStatement::classify_and_parse(
+            "CREATE TYPE chat.recipient_result AS (user_id TEXT NOT NULL, delivered BOOLEAN NOT \
+             NULL)",
+            &ns,
+            Role::Dba,
+        )
+        .expect("CREATE TYPE should classify");
+        assert!(matches!(stmt.kind(), SqlStatementKind::CreateType(_)));
+
+        let err =
+            SqlStatement::classify_and_parse("CREATE TYPE t AS UNION (a INT)", &ns, Role::Dba)
+                .expect_err("UNION must be reserved");
+        assert!(err.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn classify_from_table_and_search_path() {
+        let ns = NamespaceId::new("app");
+        let from_table = SqlStatement::classify_and_parse(
+            "CREATE TYPE chat.user FROM TABLE chat.users",
+            &ns,
+            Role::Dba,
+        )
+        .expect("FROM TABLE should classify");
+        assert!(matches!(from_table.kind(), SqlStatementKind::CreateType(_)));
+
+        let search = SqlStatement::classify_and_parse("SET search_path TO chat", &ns, Role::Dba)
+            .expect("SET search_path should classify");
+        assert!(matches!(search.kind(), SqlStatementKind::SetSearchPath(_)));
+
+        let session =
+            SqlStatement::classify_and_parse("SET SESSION search_path TO chat", &ns, Role::User)
+                .expect("SET SESSION search_path should classify for any role");
+        assert!(matches!(session.kind(), SqlStatementKind::SetSearchPath(_)));
+
+        let reset = SqlStatement::classify_and_parse("RESET search_path", &ns, Role::Dba)
+            .expect("RESET search_path should classify");
+        assert!(matches!(reset.kind(), SqlStatementKind::SetSearchPath(_)));
+
+        let schema = SqlStatement::classify_and_parse("CREATE SCHEMA chat", &ns, Role::Dba)
+            .expect("CREATE SCHEMA should classify");
+        assert!(matches!(schema.kind(), SqlStatementKind::CreateSchema(_)));
     }
 }

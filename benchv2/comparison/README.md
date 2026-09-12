@@ -1,4 +1,4 @@
-# Backend comparison benchmarks (KalamDB / TrailBase / PocketBase)
+# Backend comparison benchmarks (KalamDB SQL / KalamDB functions / TrailBase / PocketBase / SurrealDB)
 
 Public, reproducible bake-off adapted from
 [trailbaseio/trailbase-benchmark](https://github.com/trailbaseio/trailbase-benchmark)
@@ -11,6 +11,10 @@ This folder contains:
 - server **setups** (schema / config)
 - scripts to download binaries and run each system
 - measured results from a local Apple Silicon run
+
+For **KalamDB vs PostgreSQL** (pgwire plus a KalamDB HTTP SQL column, same
+SQL and phase sizes), see [`../kalam-vs-pg`](../kalam-vs-pg). The HTTP column
+there is KalamDB `/v1/api/sql` only — not this BaaS bake-off.
 
 ## What we measure
 
@@ -35,26 +39,34 @@ We keep the comparison **honest**:
 
 1. **Same machine**, same concurrency, same phase sizes.
 2. **Rust HTTP clients** for all three (no Dart/Node client-floor bias).
-3. Each system uses its **primary public write/read path**:
+3. Each system uses a **documented public write/read path** (KalamDB has two columns):
    - TrailBase → Record API (`/api/records/v1/message_api`)
    - PocketBase → Collections API (`/api/collections/message/records`)
-   - KalamDB → SQL HTTP API (`/v1/api/sql`) with **parameterized** `$1` binds
-4. **No multi-row batch inserts** on any side — TB/PB/KalamDB all issue
-   **one HTTP create/get per row** with concurrency 16 (TrailBase harness shape).
+   - KalamDB SQL → SQL HTTP API (`/v1/api/sql`) with **parameterized** `$1` binds
+   - KalamDB functions → REST `POST /v1/functions/bench/{insert_message,get_message}`
+   - SurrealDB → REST `/key/:table/:id` (not `/sql` CREATE, not in-memory)
+4. **No multi-row batch inserts** on any side — TB/PB/KalamDB SQL/KalamDB functions/SurrealDB
+   all issue **one HTTP create/get per row** with concurrency 16 (TrailBase harness shape).
 5. **KalamDB is hot-only** for this suite (no Parquet / cold flush):
    - table created **without** `FLUSH_POLICY`
    - `setups/kalamdb/server.toml` sets `flush.check_interval_seconds = 0`
    - drivers never call `STORAGE FLUSH`
-6. KalamDB comparison `server.toml` is **performance-tuned** (larger RocksDB
-   block cache / memtables / DataFusion) — not the tiny low-memory `benchv2`
-   defaults — while still documenting the settings.
+6. KalamDB comparison `server.toml` uses `storage.rocksdb.memory_mode = "server"`
+   so cache/memtables scale from host RAM (cache ≈ RAM/8, hot memtable ≥ 64 MiB).
+   Product default remains `compact` (2 MiB cache / 128 KiB memtables). DataFusion
+   is still raised for the bake-off.
 7. Auth / ACL differences are documented, not hidden:
    - TrailBase create rule checks `room_members`
    - PocketBase create rule checks `room_members`
-   - KalamDB uses a DBA SQL session (no row-level ACL equivalent in this path)
+   - KalamDB SQL and functions use a DBA session (no row-level ACL equivalent in these paths)
+   - SurrealDB uses root user `root`/`root` (table `PERMISSIONS FULL`; no room ACL)
+   - SurrealDB signs in once (`POST /signin`) and reuses a Bearer JWT. HTTP
+     Basic on every request re-runs Argon2id and is **not** fair usage.
 8. Timed point reads consume the complete response body as **bytes** and validate
-   the HTTP status for all three systems. JSON decoding needed for setup and
+   the HTTP status for all systems. JSON decoding needed for setup and
    generated insert IDs stays outside the timed point-read comparison.
+9. **SurrealDB is RocksDB-backed** (`rocksdb://…`), not `--mem` / `memory://`.
+   In-memory would not be comparable to the other file-backed engines.
 
 Do **not** collapse results into a single “X is faster” headline. Writes and reads can rank differently.
 
@@ -64,10 +76,12 @@ Do **not** collapse results into a single “X is faster” headline. Writes and
 benchv2/comparison/
   Cargo.toml                 # workspace
   common/                    # shared constants + percentile helper
-  drivers/
+   drivers/
     kalamdb/                 # hot-only SQL HTTP driver
+    kalamdb_functions/       # hot-only functions REST driver
     trailbase/               # Record API driver
     pocketbase/              # Collections API driver
+    surrealdb/               # REST /key API driver (RocksDB)
   setups/
     kalamdb/server.toml      # flush scheduler disabled
     trailbase/traildepot/    # migrations + message_api config
@@ -76,8 +90,10 @@ benchv2/comparison/
     download-binaries.sh
     bootstrap-pocketbase.sh
     run-kalamdb.sh
+    run-kalamdb-functions.sh
     run-trailbase.sh
     run-pocketbase.sh
+    run-surrealdb.sh
     run-all.sh
   results/                   # timestamped run outputs
 ```
@@ -86,7 +102,7 @@ benchv2/comparison/
 
 - Rust toolchain (edition 2021 / recent stable)
 - `curl`, `python3`, `unzip`, `tar`
-- Ports free: **2900** (KalamDB), **4000** (TrailBase), **8090** (PocketBase)
+- Ports free: **2900** (KalamDB SQL and KalamDB functions, sequential), **4000** (TrailBase), **8090** (PocketBase), **8000** (SurrealDB)
 
 ## How to run
 
@@ -99,33 +115,46 @@ chmod +x scripts/*.sh
 
 # 2) Run one system
 ./scripts/run-kalamdb.sh
+./scripts/run-kalamdb-functions.sh
 ./scripts/run-trailbase.sh
 ./scripts/run-pocketbase.sh
+./scripts/run-surrealdb.sh
 
 # Or all sequentially
 ./scripts/run-all.sh
 
 # Recommended for publishable results: repeat with rotated server order
-COMPARISON_ORDER="trailbase pocketbase kalamdb" ./scripts/run-all.sh
-COMPARISON_ORDER="pocketbase kalamdb trailbase" ./scripts/run-all.sh
+COMPARISON_ORDER="trailbase pocketbase surrealdb kalamdb kalamdb-functions" ./scripts/run-all.sh
+COMPARISON_ORDER="pocketbase surrealdb kalamdb kalamdb-functions trailbase" ./scripts/run-all.sh
 ```
 
 Outputs land in `results/*.txt`.
+
+Current GitHub release pins (`scripts/download-binaries.sh`):
+
+- TrailBase **v0.33.14**
+- PocketBase **v0.40.3**
+- SurrealDB **v3.2.4**
+
+Re-run `./scripts/download-binaries.sh` after a pin bump; it refreshes `./bin`
+when the stamped version no longer matches.
 
 ### Environment overrides
 
 | Variable | Default |
 |---|---|
 | `KALAMDB_URL` | `http://127.0.0.1:2900` |
+| `KALAMDB_SERVER_BIN` | `./bin/kalamdb-server` (must understand `memory_mode = "server"`) |
 | `TRAILBASE_URL` | `http://127.0.0.1:4000` |
 | `POCKETBASE_URL` | `http://127.0.0.1:8090` |
-| `COMPARISON_ORDER` | `kalamdb trailbase pocketbase` |
+| `SURREALDB_URL` | `http://127.0.0.1:8000` |
+| `COMPARISON_ORDER` | `kalamdb kalamdb-functions trailbase pocketbase surrealdb` |
 
 ### Build drivers only
 
 ```bash
 cd benchv2/comparison
-cargo build --release -p comparison_kalamdb -p comparison_trailbase -p comparison_pocketbase
+cargo build --release -p comparison_kalamdb -p comparison_kalamdb_functions -p comparison_trailbase -p comparison_pocketbase -p comparison_surrealdb
 ```
 
 ## KalamDB hot-only details
@@ -150,6 +179,11 @@ CREATE TABLE bench.message (
 ```
 
 The flush scheduler explicitly skips tables with no flush policy (“hot-only”).
+
+`setups/kalamdb/server.toml` sets `storage.rocksdb.memory_mode = "server"` so the
+block cache and hot memtables scale from host RAM. Product default remains
+`compact`. Point `KALAMDB_SERVER_BIN` at a server built from this tree; the
+downloaded `v0.5.5-rc.1` binary does not know the `server` profile.
 
 ## Driver code (what each request looks like)
 
@@ -176,6 +210,27 @@ POST /v1/api/sql
 Do **not** string-interpolate literals into SQL for this bench — that defeats caching
 (unique SQL → unique cache key → replan every request).
 
+### KalamDB functions REST insert / point read
+
+Second KalamDB column. Setup still uses SQL HTTP (`CREATE TABLE` + `CREATE PROCEDURE`).
+Timed requests are functions REST only — not `/v1/api/sql`:
+
+```http
+POST /v1/functions/bench/insert_message
+Authorization: Bearer <access_token>
+{ "id": 1, "owner": "user1", "room": "room0", "data": "a message 1" }
+
+POST /v1/functions/bench/get_message
+{ "id": 1 }
+```
+
+Procedures run JS on the server and issue nested `ctx.db.sql(sql, params)` with
+`$n` placeholders so the nested statements share the SQL HTTP plan cache. That is
+still **not** a Surreal `/key` equivalent: each call still pays V8 + nested SQL + Raft.
+
+KalamDB SQL and functions share port **2900** and the same `setups/kalamdb` data dir.
+Run them sequentially (as `run-all.sh` does), or set `KALAMDB_PORT` for one of them.
+
 ### TrailBase insert / point read
 
 ```http
@@ -196,8 +251,31 @@ Authorization: <token>
 GET /api/collections/message/records/{id}
 ```
 
+### SurrealDB insert / point read
+
+Durable engine: `surreal start … rocksdb://setups/surrealdb/data`. Namespace/database `bench`. Client-chosen integer ids (same as KalamDB).
+
+```http
+POST /signin
+{ "user": "root", "pass": "root" }
+→ { "token": "<jwt>" }
+
+POST /key/message/{id}
+Authorization: Bearer <jwt>
+Accept: application/json
+Surreal-NS: bench
+Surreal-DB: bench
+{ "owner": "user1", "room": "room0", "data": "a message 1" }
+
+GET /key/message/{id}
+```
+
+Do **not** send `Authorization: Basic` on the timed create/get path. SurrealDB
+verifies root passwords with Argon2id, so Basic-per-request adds tens of
+milliseconds that the other drivers do not pay (they all log in once).
+
 Concurrency is a Tokio `Semaphore` of size **16** (same as TrailBase’s Rust harness).
-Timed point reads consume response bytes without decoding JSON in all three drivers.
+Timed point reads consume response bytes without decoding JSON in all five drivers.
 This keeps client-side JSON parsing out of the server read comparison.
 
 ## Default credentials (local bench only)
@@ -207,6 +285,7 @@ This keeps client-side JSON parsing out of the server read comparison.
 | KalamDB | `admin` | `kalamdb123` |
 | TrailBase | `user@localhost` | `secret` |
 | PocketBase | `user@bar.com` / admin `admin@bar.com` | `1234567890` |
+| SurrealDB | `root` | `root` |
 
 ## Measured snapshot (2026-08-11)
 
@@ -215,7 +294,7 @@ Machine: **Apple M5 Pro**, 15 cores, 24 GB RAM.
 Versions:
 
 - KalamDB **v0.5.5-rc.1** (GitHub release binary)
-- TrailBase **v0.32.1** (GitHub release binary)
+- TrailBase **v0.32.1** (GitHub release binary; current pin is v0.33.14)
 
 | Metric | TrailBase | KalamDB (hot-only) |
 |---|---:|---:|

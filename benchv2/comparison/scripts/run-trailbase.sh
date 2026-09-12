@@ -24,7 +24,7 @@ fi
   make clean >/dev/null 2>&1 || rm -rf data secrets backups uploads
 )
 
-DEPOT="$DEPOT" "$BIN" run --address "127.0.0.1:${PORT}" --stderr-logging >"$RESULTS/trailbase-server.log" 2>&1 &
+DEPOT="$DEPOT" "$BIN" run --address "127.0.0.1:${PORT}" >"$RESULTS/trailbase-server.log" 2>&1 &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -42,6 +42,9 @@ cargo build --release -p comparison_trailbase
 OUT="$RESULTS/trailbase-$(date +%Y%m%d-%H%M%S).txt"
 {
   echo "# TrailBase comparison (Record API)"
+  echo "# server_bin=${BIN}"
+  echo "# version=$(cat "$ROOT/bin/.trail-version" 2>/dev/null || echo unknown)"
+  echo "# stderr_logging=off (v0.33+ logs every request as JSON; do not enable for bake-off)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   TRAILBASE_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_trailbase
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

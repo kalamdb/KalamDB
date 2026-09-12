@@ -19,6 +19,8 @@ path = "src/main.rs"
 kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["native-cli"] }
 kalamdb-commons = { workspace = true, default-features = false, features = ["serde", "websocket-auth"] }
 kalam-schema-diff = { path = "crates/kalam-schema-diff" }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../backend/crates/kalamdb-dialect" }
+kalamdb-functions-host = { path = "../backend/crates/kalamdb-functions-host" }
 
 # CLI argument parsing
 clap = { workspace = true }
@@ -70,6 +72,10 @@ crossterm = { workspace = true }
 chrono = { workspace = true }
 rand.workspace = true
 sha2 = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
 hex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }

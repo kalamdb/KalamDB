@@ -3,8 +3,10 @@ resolver = "2"
 members = [
     "common",
     "drivers/kalamdb",
+    "drivers/kalamdb_functions",
     "drivers/trailbase",
     "drivers/pocketbase",
+    "drivers/surrealdb",
 ]
 
 [workspace.package]

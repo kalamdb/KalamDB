@@ -1,0 +1,11 @@
+{{header}}
+// {{contract_hash_line}}
+
+{{#each imports}}
+import { {{names}} } from "{{from}}";
+{{/each}}
+export const procedures = {
+{{#each procedures}}
+  "{{routine_id}}": {{ident}},
+{{/each}}
+};

@@ -1,6 +1,6 @@
 name: kalam_sync_generator
 description: Code generation for typed kalam_sync action payloads and queues.
-version: 0.6.0-rc.0
+version: 0.7.0-dev.0
 homepage: https://kalamdb.org
 repository: https://github.com/kalamdb/KalamDB
 documentation: https://kalamdb.org/docs/dart-sdk/sync-actions
@@ -11,7 +11,7 @@ environment:
 dependencies:
   analyzer: ">=13.3.0 <15.0.0"
   build: ^4.0.7
-  kalam_sync: ">=0.6.0-0 <0.7.0"
+  kalam_sync: ">=0.7.0-0 <0.8.0"
   source_gen: ^4.2.4
 
 dev_dependencies:

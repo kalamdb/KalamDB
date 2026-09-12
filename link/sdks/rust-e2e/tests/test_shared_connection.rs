@@ -26,7 +26,7 @@ use kalam_client::{
 };
 use tokio::time::{sleep, timeout, Instant};
 
-mod common;
+use super::common;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 

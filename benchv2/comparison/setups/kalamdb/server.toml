@@ -3,9 +3,9 @@
 # Learned from benchv2/server.toml:
 # - Keep the same section layout, auth.local.bcrypt_cost=4, high rate limits,
 #   and actix performance ceilings (those are already good for load tests).
-# - Do NOT copy benchv2 RocksDB/DataFusion sizes. benchv2/server.toml is the
-#   low-memory profile (2 MiB block cache, 128 KiB hot memtables, DF 64 MiB /
-#   parallelism 2). That starves this point-lookup bake-off.
+# - Do NOT copy benchv2 RocksDB compact sizes. Product default is compact
+#   (2 MiB block cache, 128 KiB hot memtables). This bake-off uses
+#   memory_mode = "server" so RocksDB scales from host RAM.
 #
 # Hot-only:
 # - flush.check_interval_seconds = 0
@@ -27,8 +27,12 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Inverse of benchv2 low-mem profile: feed point lookups a real block cache.
-block_cache_size = 1073741824         # 1 GiB (host has 24 GiB)
+# Product default is compact (2 MiB cache / 128 KiB hot memtables). This bake-off
+# uses the server profile so cache/memtables scale from host RAM:
+# cache ≈ RAM/8, hot_data memtable ≥ 64 MiB (192 MiB on a 24 GiB host).
+# Explicit sizes below are used only if host RAM cannot be detected.
+memory_mode = "server"
+block_cache_size = 1073741824         # 1 GiB fallback
 max_background_jobs = 8
 max_open_files = 8192
 sync_writes = false
@@ -36,23 +40,23 @@ disable_wal = false
 compact_on_startup = false
 
 [storage.rocksdb.cf_profiles.system_meta]
-write_buffer_size = 8388608           # 8 MiB
+write_buffer_size = 8388608
 max_write_buffers = 3
 
 [storage.rocksdb.cf_profiles.system_index]
-write_buffer_size = 8388608           # 8 MiB
+write_buffer_size = 8388608
 max_write_buffers = 3
 
 [storage.rocksdb.cf_profiles.hot_data]
-write_buffer_size = 134217728         # 128 MiB (absorb 100k insert burst)
+write_buffer_size = 134217728         # 128 MiB fallback
 max_write_buffers = 4
 
 [storage.rocksdb.cf_profiles.hot_index]
-write_buffer_size = 67108864          # 64 MiB
+write_buffer_size = 67108864
 max_write_buffers = 4
 
 [storage.rocksdb.cf_profiles.raft]
-write_buffer_size = 33554432          # 32 MiB
+write_buffer_size = 33554432
 max_write_buffers = 3
 
 [datafusion]

@@ -135,43 +135,43 @@ impl PkExistenceChecker {
             .unwrap_or_else(|| format!("scope={}", table_type.as_str()));
 
         // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
-        let manifest: Option<Manifest> =
-            match self.manifest_service.get_or_load_async(table_id, user_id).await {
-                Ok(Some(entry)) => {
-                    log::trace!(
-                        "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
-                        namespace.as_str(),
-                        table.as_str(),
-                        scope_label
-                    );
-                    Some(entry.manifest.clone())
-                },
-                Ok(None) => {
-                    log::trace!(
-                        "[PkExistenceChecker] No manifest for {}.{} {} - will check all files",
-                        namespace.as_str(),
-                        table.as_str(),
-                        scope_label
-                    );
-                    None
-                },
-                Err(StorageError::SerializationError(e)) => {
-                    return Err(KalamDbError::InvalidOperation(format!(
-                        "Failed to load manifest for {} {}: {}",
-                        table_id, scope_label, e
-                    )));
-                },
-                Err(e) => {
-                    log::warn!(
-                        "[PkExistenceChecker] Manifest cache error for {}.{} {}: {}",
-                        namespace.as_str(),
-                        table.as_str(),
-                        scope_label,
-                        e
-                    );
-                    None
-                },
-            };
+        let cache_result = self.manifest_service.get_or_load_async(table_id, user_id).await;
+        let manifest: Option<&Manifest> = match &cache_result {
+            Ok(Some(entry)) => {
+                log::trace!(
+                    "[PkExistenceChecker] Manifest loaded from cache for {}.{} {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                Some(&entry.manifest)
+            },
+            Ok(None) => {
+                log::trace!(
+                    "[PkExistenceChecker] No manifest for {}.{} {} - will check all files",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label
+                );
+                None
+            },
+            Err(StorageError::SerializationError(e)) => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Failed to load manifest for {} {}: {}",
+                    table_id, scope_label, e
+                )));
+            },
+            Err(e) => {
+                log::warn!(
+                    "[PkExistenceChecker] Manifest cache error for {}.{} {}: {}",
+                    namespace.as_str(),
+                    table.as_str(),
+                    scope_label,
+                    e
+                );
+                None
+            },
+        };
 
         if let Some(ref m) = manifest {
             if m.segments.is_empty() {
@@ -544,6 +544,7 @@ mod tests {
             next_column_id: 3,
             schema_version: 1,
             table_comment:  None,
+            scalar_indexes: Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }

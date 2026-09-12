@@ -124,13 +124,13 @@ threads-required = 15
 # filter = 'test(test_topic_consume_option_matrix_start_batch_auto_ack_modes)'
 # test-group = "stateful-heavy"
 
-# [[profile.default.overrides]]
-# filter = 'test(test_topic_high_load_two_consumers_same_group_single_delivery)'
-# test-group = "stateful-heavy"
+[[profile.default.overrides]]
+filter = 'test(test_topic_high_load_two_consumers_same_group_single_delivery)'
+test-group = "stateful-heavy"
 
-# [[profile.default.overrides]]
-# filter = 'test(test_topic_four_consumers_same_group_no_duplicates)'
-# test-group = "stateful-heavy"
+[[profile.default.overrides]]
+filter = 'test(test_topic_four_consumers_same_group_no_duplicates)'
+test-group = "stateful-heavy"
 
 # [[profile.default.overrides]]
 # filter = 'test(test_topic_ack_failure_recovery_no_message_loss_with_latency)'
@@ -300,6 +300,12 @@ threads-required = 15
 # # Queries global system.jobs count — must not race with concurrent tests creating jobs.
 # test-group = "stateful-heavy"
 
+# Functions e2e share one V8 heap budget on the running server. Overlap
+# previously tripped "function memory" RESOURCE_LIMIT under default 15 threads.
+[[profile.default.overrides]]
+filter = 'test(kobj_functions_)'
+test-group = "stateful-heavy"
+
 # [[profile.default.overrides]]
 # filter = 'package(kalamdb-server)'
 # threads-required = 15
@@ -315,8 +321,7 @@ junit.path = "junit.xml"
 # Show output for failed tests immediately
 failure-output = "immediate-final"
 
-# Stop on the first unrecoverable failure instead of cascading against a dead
-# shared Fresh server for the remainder of the workspace suite.
+# Fail fast so a dead Fresh server cannot cascade through the suite.
 fail-fast = true
 
 # Retry flaky tests once

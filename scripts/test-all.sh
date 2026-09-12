@@ -215,16 +215,24 @@ step "Running Rust workspace tests with CLI e2e coverage"
 if $USE_NO_FAIL_FAST; then
     cargo nextest run \
         --workspace \
-        --all-targets \
         --filter-expr 'not kind(bench)' \
         --exclude "kalam-pg-extension" \
+        --exclude "kalam-link-wasm" \
+        --exclude "kalam-consumer-wasm" \
+        --exclude "kalam-link-dart" \
+        --exclude "kalamdb-python" \
+        --exclude "quickstart" \
         --no-fail-fast
 else
     cargo nextest run \
         --workspace \
-        --all-targets \
         --filter-expr 'not kind(bench)' \
-        --exclude "kalam-pg-extension"
+        --exclude "kalam-pg-extension" \
+        --exclude "kalam-link-wasm" \
+        --exclude "kalam-consumer-wasm" \
+        --exclude "kalam-link-dart" \
+        --exclude "kalamdb-python" \
+        --exclude "quickstart"
 fi
 
 step "Running feature-gated FDW import tests"

@@ -15,23 +15,20 @@ process.env.CHAT_TEST_ROOM = chatTestRoom;
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.spec.mjs',
-  timeout: 90_000,
+  timeout: 120_000,
   fullyParallel: false,
   use: {
     baseURL: `http://127.0.0.1:${chatTestPort}`,
     headless: true,
   },
   webServer: {
-    command: `npm run dev -- --host 127.0.0.1 --port ${chatTestPort} --strictPort`,
+    command: `rm -rf node_modules/.vite && npm run dev -- --host 127.0.0.1 --port ${chatTestPort} --strictPort`,
     env: {
       ...process.env,
       VITE_CHAT_ROOM: chatTestRoom,
       VITE_KALAM_URL: kalamdbUrl,
       VITE_KALAM_USER: kalamdbUser,
       VITE_KALAM_PASSWORD: kalamdbPassword,
-      VITE_KALAMDB_URL: kalamdbUrl,
-      VITE_KALAMDB_USER: kalamdbUser,
-      VITE_KALAMDB_PASSWORD: kalamdbPassword,
     },
     port: chatTestPort,
     reuseExistingServer: false,

@@ -1,6 +1,6 @@
 //! Healthcheck feature tests.
 
-mod common;
+use super::common;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]

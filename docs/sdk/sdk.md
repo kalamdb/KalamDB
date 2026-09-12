@@ -83,7 +83,7 @@ Server-backed integration tests live in `kalam-client-e2e` and require a running
 
 ```bash
 cd link
-cargo test -p kalam-client-e2e
+cargo nextest run -p kalam-client-e2e --test e2e
 ```
 
 ### Build the TypeScript SDK

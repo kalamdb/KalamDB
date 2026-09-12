@@ -6,6 +6,7 @@ pub mod db;
 pub mod deploy;
 pub mod dev;
 pub(crate) mod display;
+pub mod functions;
 pub(crate) mod io;
 pub mod migration;
 pub mod project;
@@ -332,12 +333,10 @@ pub async fn project_status(ctx: &WorkflowContext) -> Result<()> {
     show_status(ctx, &output).await
 }
 
-pub async fn deploy_project(ctx: &WorkflowContext, env: Option<String>) -> Result<()> {
-    deploy::run_deploy(ctx, &deploy::DeployOptions { env }).await
-}
-
-pub fn not_implemented(command: &str) -> Result<()> {
-    Err(CLIError::ConfigurationError(format!(
-        "{command} is not implemented yet; see `kalam {command} --help`"
-    )))
+pub async fn deploy_project(
+    ctx: &WorkflowContext,
+    env: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    deploy::run_deploy(ctx, &deploy::DeployOptions { env, dry_run }).await
 }

@@ -1,0 +1,33 @@
+{{header}}
+// {{contract_hash_line}}
+
+{{#if needs_orm}}
+import { kTable } from '@kalamdb/orm';
+import { integer, text, timestamp, boolean, jsonb, bigint } from 'drizzle-orm/pg-core';
+
+{{/if}}
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+{{#each decls}}
+{{{jsdoc}}}{{#if is_enum}}export type {{ident}} = {{{union}}};
+{{/if}}{{#if is_object}}export type {{ident}} = {
+{{#each fields}}  {{name}}: {{{ty}}};
+{{/each}}};
+
+{{/if}}{{#if is_alias}}export type {{ident}} = {{alias_of}};
+{{/if}}{{#if is_topic_empty}}export type {{ident}} = never;
+
+{{/if}}{{#if is_topic}}export type {{ident}} =
+{{#each variants}}  | ({ _table: "{{tag}}" } & {{row_ident}}){{terminator}}
+{{/each}}
+{{/if}}{{#if is_request_empty}}export type {{ident}} = Record<string, never>;
+
+{{/if}}{{#if is_result}}export type {{ident}} = {{{ty}}};
+
+{{/if}}{{/each}}
+{{#each tables}}
+export const {{var_name}} = {{factory}}("{{table_name}}", {
+{{#each columns}}  {{name}}: {{{expr}}},
+{{/each}}});
+
+{{/each}}

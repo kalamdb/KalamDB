@@ -2,6 +2,8 @@
 
 include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
 
+use std::sync::OnceLock;
+
 use handlebars::Handlebars;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -71,6 +73,66 @@ pub fn find_scaffold_template_file(project_path: &str) -> Result<&'static str> {
         CLIError::ConfigurationError(format!(
             "missing scaffold template file '{project_path}' in '{DEFAULT_SCAFFOLD_TEMPLATE}'"
         ))
+    })
+}
+
+/// Language folder for `kalam schema gen` / functions artifacts.
+///
+/// Kept out of `typescript` / `dart` so `kalam init` does not list these as
+/// project starters.
+pub const SCHEMA_GEN_LANGUAGE: &str = "schema-gen";
+
+pub fn find_schema_gen_template(id: &str) -> Result<&'static EmbeddedTemplate> {
+    find_template(SCHEMA_GEN_LANGUAGE, id).ok_or_else(|| {
+        CLIError::ConfigurationError(format!("missing built-in schema-gen template '{id}'"))
+    })
+}
+
+pub fn find_schema_gen_template_file(id: &str, project_path: &str) -> Result<&'static str> {
+    let template = find_schema_gen_template(id)?;
+    find_template_file(template, project_path).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "missing schema-gen template file '{project_path}' in '{id}'"
+        ))
+    })
+}
+
+pub fn render_schema_gen_file(
+    id: &str,
+    project_path: &str,
+    context: &impl Serialize,
+) -> Result<String> {
+    let name = schema_gen_template_name(id, project_path);
+    schema_gen_registry().render(&name, context).map_err(|error| {
+        CLIError::ConfigurationError(format!(
+            "failed to render schema-gen template '{name}': {error}"
+        ))
+    })
+}
+
+fn schema_gen_template_name(id: &str, project_path: &str) -> String {
+    format!("{id}:{project_path}")
+}
+
+fn schema_gen_registry() -> &'static Handlebars<'static> {
+    static REGISTRY: OnceLock<Handlebars<'static>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut handlebars = Handlebars::new();
+        handlebars.register_escape_fn(handlebars::no_escape);
+        for template in EMBEDDED_TEMPLATES
+            .iter()
+            .filter(|template| template.language == SCHEMA_GEN_LANGUAGE)
+        {
+            for file in template.files {
+                let name = schema_gen_template_name(template.id, file.project_path);
+                handlebars
+                    .register_template_string(&name, file.content)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid schema-gen template '{name}': {error}");
+                    });
+            }
+        }
+        handlebars
     })
 }
 
@@ -180,16 +242,6 @@ pub fn escape_double_quoted_string(value: &str) -> String {
     escape_common_string(value, '"')
 }
 
-/// Escape a value for use inside a TOML basic string (`"..."`).
-pub fn escape_toml_basic_string(value: &str) -> String {
-    escape_double_quoted_string(value)
-}
-
-/// Escape a value for use inside a JSON double-quoted string.
-pub fn escape_json_string(value: &str) -> String {
-    escape_double_quoted_string(value)
-}
-
 /// Escape a value for use inside a JavaScript single-quoted string literal.
 pub fn escape_js_single_quoted_string(value: &str) -> String {
     escape_common_string(value, '\'')
@@ -216,14 +268,68 @@ mod tests {
     }
 
     #[test]
+    fn schema_gen_typescript_is_embedded_and_not_an_init_starter() {
+        assert!(templates_for_language("typescript")
+            .iter()
+            .all(|template| template.id != "schema-gen"));
+        let template = find_schema_gen_template("typescript").expect("schema-gen typescript");
+        for path in [
+            "src/generated/kalam.ts",
+            "src/generated/schema.ts",
+            "functions/src/generated/runtime.js",
+            "functions/src/generated/runtime.d.ts",
+            "functions/src/generated/procedure.d.ts",
+            "functions/src/generated/procedure.js",
+            "functions/src/generated/contracts.ts",
+            "functions/src/generated/registry.ts",
+            "functions/src/generated/inline.ts",
+            "functions/src/generated/module_entry.js",
+            "functions/src/procedure.unimplemented.ts",
+            "functions/src/procedure.implemented.ts",
+        ] {
+            assert!(find_template_file(template, path).is_some(), "missing schema-gen file {path}");
+        }
+        assert!(templates_for_language("dart")
+            .iter()
+            .all(|template| template.id != "schema-gen"));
+        assert!(find_schema_gen_template("dart").is_ok());
+        assert!(find_schema_gen_template("rust").is_ok());
+        assert!(find_schema_gen_template_file("dart", "lib/generated/kalam.dart").is_ok());
+        assert!(find_schema_gen_template_file("rust", "src/generated/kalam.rs").is_ok());
+    }
+
+    #[test]
+    fn schema_gen_registry_template_loops_imports_and_procedures() {
+        let rendered = render_schema_gen_file(
+            "typescript",
+            "functions/src/generated/registry.ts",
+            &serde_json::json!({
+                "header": "// header",
+                "contract_hash_line": "contract_hash: abc",
+                "imports": [{
+                    "names": "joinRoom as chatDemoJoinRoom",
+                    "from": "../chat_demo/join_room"
+                }],
+                "procedures": [{
+                    "routine_id": "chat_demo.join_room",
+                    "ident": "chatDemoJoinRoom"
+                }],
+            }),
+        )
+        .unwrap();
+        assert!(rendered.contains("from \"../chat_demo/join_room\""));
+        assert!(rendered.contains("\"chat_demo.join_room\": chatDemoJoinRoom"));
+    }
+
+    #[test]
     fn render_template_replaces_placeholders() {
         let rendered = render_template_pairs("hello {{name}}", &[("name", "world")]).unwrap();
         assert_eq!(rendered, "hello world");
     }
 
     #[test]
-    fn escape_toml_basic_string_quotes_special_characters() {
-        assert_eq!(escape_toml_basic_string("my\"app\n"), "my\\\"app\\n");
+    fn escape_double_quoted_string_quotes_special_characters() {
+        assert_eq!(escape_double_quoted_string("my\"app\n"), "my\\\"app\\n");
     }
 
     #[test]

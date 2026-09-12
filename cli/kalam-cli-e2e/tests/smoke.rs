@@ -18,8 +18,6 @@
 //   cargo test --test smoke subscription
 //   cargo test --test smoke flushing
 
-mod common;
-
 // Use case tests
 #[path = "smoke/usecases/chat_ai_example_smoke.rs"]
 mod chat_ai_example_smoke;
@@ -82,7 +80,7 @@ mod smoke_test_topic_high_load;
 #[path = "smoke/topics/smoke_test_topic_throughput.rs"]
 mod smoke_test_topic_throughput;
 #[path = "smoke/topics/topic_test_support.rs"]
-mod topic_test_support;
+pub(crate) mod topic_test_support;
 
 // CLI tests
 #[path = "smoke/cli/smoke_test_cli_commands.rs"]
@@ -129,6 +127,18 @@ mod smoke_test_export_user_data;
 mod smoke_test_table_option_alters;
 #[path = "smoke/ddl/smoke_test_table_transfer.rs"]
 mod smoke_test_table_transfer;
+
+// 0.7 ordinal-row / scalar-index storage validation
+#[path = "smoke/kobj/functions.rs"]
+mod kobj_functions;
+#[path = "smoke/kobj/functions_http.rs"]
+mod kobj_functions_http;
+#[path = "smoke/kobj/helpers.rs"]
+pub(crate) mod kobj_helpers;
+#[path = "smoke/kobj/indexes.rs"]
+mod kobj_indexes;
+#[path = "smoke/kobj/rows.rs"]
+mod kobj_rows;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

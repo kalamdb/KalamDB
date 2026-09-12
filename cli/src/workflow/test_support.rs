@@ -9,8 +9,8 @@ use crate::{
     workflow::{
         project::{
             config::{
-                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-                ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+                MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
             },
             resolve::{ResolutionSource, ResolvedEnvironment},
         },
@@ -70,6 +70,7 @@ pub fn minimal_sql_project_config() -> KalamProjectConfig {
         migrations: MigrationsSection::default(),
         dev:        DevSection::default(),
         logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     }
 }
 
@@ -79,7 +80,8 @@ pub fn sql_project_config_with_typescript_target() -> KalamProjectConfig {
     config.schema.targets = HashMap::from([(
         "typescript".into(),
         SchemaTarget {
-            output: "src/generated/kalam.ts".into(),
+            output:            "src/generated/kalam.ts".into(),
+            unqualified_names: false,
         },
     )]);
     config

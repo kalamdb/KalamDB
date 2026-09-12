@@ -181,19 +181,6 @@ pub(crate) fn resolve_server_url(
     Ok(resolve_server_target(cli, credential_store)?.value)
 }
 
-/// Resolve server URL using workflow precedence when a project config is available.
-#[allow(dead_code)]
-pub(crate) fn resolve_workflow_server_url(
-    cli: &Cli,
-    credential_store: &FileCredentialStore,
-    workflow_url: Option<&str>,
-) -> Result<String> {
-    if let Some(url) = workflow_url.map(str::trim).filter(|v| !v.is_empty()) {
-        return normalize_and_validate_server_url(url);
-    }
-    resolve_server_url(cli, credential_store)
-}
-
 fn resolve_server_target(
     cli: &Cli,
     credential_store: &FileCredentialStore,

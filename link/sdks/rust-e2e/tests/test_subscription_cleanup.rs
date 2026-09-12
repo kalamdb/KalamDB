@@ -29,7 +29,7 @@ use kalam_client::{
 };
 use tokio::time::{sleep, timeout};
 
-mod common;
+use super::common;
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 

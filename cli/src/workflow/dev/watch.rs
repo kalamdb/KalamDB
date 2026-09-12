@@ -161,6 +161,48 @@ pub fn schema_watch_path(project_root: &Path, config: &KalamProjectConfig) -> Op
     config.schema_source_path(project_root)
 }
 
+/// Latest mtime among function sources, package.json, lockfile, and tsconfig.
+pub fn functions_watch_stamp(project_root: &Path) -> Option<SystemTime> {
+    let functions = project_root.join("functions");
+    if !functions.exists() {
+        return None;
+    }
+    let mut latest: Option<SystemTime> = None;
+    let mut stack = vec![functions];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().and_then(|n| n.to_str()) == Some("node_modules") {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let watch = name == "package.json"
+                || name == "package-lock.json"
+                || name == "pnpm-lock.yaml"
+                || name == "yarn.lock"
+                || name == "tsconfig.json"
+                || path.extension().and_then(|ext| ext.to_str()) == Some("ts")
+                || path.extension().and_then(|ext| ext.to_str()) == Some("js")
+                || path.extension().and_then(|ext| ext.to_str()) == Some("sql");
+            if !watch {
+                continue;
+            }
+            if let Some(mtime) = schema_file_mtime(&path) {
+                latest = Some(match latest {
+                    Some(current) if current >= mtime => current,
+                    _ => mtime,
+                });
+            }
+        }
+    }
+    latest
+}
+
 /// Read filesystem modification time for a schema watch target.
 pub fn schema_file_mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).ok()?.modified().ok()

@@ -1,4 +1,14 @@
 export { kalamDriver } from './driver.js';
+export {
+  bindFunctionOrm,
+  kalamFunctionDb,
+  kalamFunctionDriver,
+  toDrizzleRows,
+  type FunctionDbHost,
+  type FunctionOrm,
+  type KalamFunctionDriverOptions,
+  type ProcedureOrm,
+} from './function-driver.js';
 export { parseKalamDataType, type KalamDataTypeDescriptor, type KalamDataTypeKind } from './data-types.js';
 export { generateSchema, type GenerateOptions } from './generate.js';
 export { bytes, embedding, file } from './file-column.js';
