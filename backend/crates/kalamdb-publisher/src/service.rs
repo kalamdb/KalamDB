@@ -79,8 +79,10 @@ struct PendingClaim {
     start:          u64,
     /// Exclusive upper bound of the claimed range.
     end_exclusive:  u64,
-    /// When the claim was issued.
+    /// When the claim was issued to a consumer.
     claimed_at:     Instant,
+    /// True while a storage scan is still in progress for this reservation.
+    in_flight:      bool,
 }
 
 impl ClaimState {
@@ -99,6 +101,9 @@ impl ClaimState {
     fn expire_stale_claims(&mut self, now: Instant, timeout: Duration) {
         let mut earliest_expired: Option<u64> = None;
         self.pending.retain(|claim| {
+            if claim.in_flight {
+                return true;
+            }
             if now.duration_since(claim.claimed_at) > timeout {
                 earliest_expired =
                     Some(earliest_expired.map_or(claim.start, |e: u64| e.min(claim.start)));
@@ -164,6 +169,7 @@ impl ClaimState {
             start: fetch_start,
             end_exclusive: reserved_end,
             claimed_at,
+            in_flight: true,
         });
         reservation_id
     }
@@ -183,6 +189,8 @@ impl ClaimState {
         };
         claim.start = claim_start;
         claim.end_exclusive = end_exclusive;
+        claim.in_flight = false;
+        claim.claimed_at = Instant::now();
         Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
     }
 
@@ -199,6 +207,7 @@ impl ClaimState {
             start: claim_start,
             end_exclusive,
             claimed_at,
+            in_flight: false,
         });
         Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
     }
