@@ -135,9 +135,11 @@ impl TopicPublisherService {
 
             let last_acked = self.durable_last_acked(topic_id, group_id, partition_id)?;
             let deliver_from = last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+            let reserved_end = fetch_start.saturating_add(fetch_limit as u64);
+            let window_start = fetch_start.max(deliver_from);
             let messages: Vec<_> = messages
                 .into_iter()
-                .filter(|message| message.offset >= deliver_from)
+                .filter(|message| message.offset >= window_start && message.offset < reserved_end)
                 .collect();
             if messages.is_empty() {
                 if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {

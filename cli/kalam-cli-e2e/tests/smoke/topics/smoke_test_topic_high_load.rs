@@ -1264,8 +1264,9 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     wait_for_topic_ready(&topic, 1).await;
 
     let expected_messages: usize = 1_200;
-    let publishers_done = Arc::new(AtomicBool::new(false));
+    topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
 
+    let publishers_done = Arc::new(AtomicBool::new(true));
     let consumer_count = 4;
     let mut consumer_handles = Vec::with_capacity(consumer_count);
 
@@ -1294,11 +1295,6 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
             (label, seen)
         }));
     }
-
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    topic_test_support::publish_numbered_rows(&table, "value", "item", expected_messages, 24).await;
-    publishers_done.store(true, Ordering::Relaxed);
 
     // Collect results
     let mut all_consumer_offsets: Vec<(String, HashSet<(u32, u64)>)> = Vec::new();
