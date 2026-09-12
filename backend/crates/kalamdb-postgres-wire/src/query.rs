@@ -8,7 +8,7 @@ use pgwire::{
         query::{ExtendedQueryHandler, SimpleQueryHandler},
         results::{Response, Tag},
         stmt::StoredStatement,
-        store::PortalStore,
+        store::{Entry, PortalStore},
         ClientInfo, ClientPortalStore, DEFAULT_NAME,
     },
     error::{ErrorInfo, PgWireError, PgWireResult},
@@ -154,14 +154,18 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             .map_err(limit_error_to_pg)?;
 
         let parser = self.query_parser();
-        let stmt = StoredStatement::parse(client, &message, parser).await?;
-        state
-            .put_prepared_statement(WirePreparedStatement {
-                name: stmt.id.clone(),
-                sql:  message.query,
-            })
-            .map_err(limit_error_to_pg)?;
-        client.portal_store().put_statement(Arc::new(stmt));
+        match StoredStatement::parse(client, &message, parser).await? {
+            Some(stmt) => {
+                state
+                    .put_prepared_statement(WirePreparedStatement {
+                        name: stmt.id.clone(),
+                        sql:  message.query,
+                    })
+                    .map_err(limit_error_to_pg)?;
+                client.portal_store().put_statement(Arc::new(stmt));
+            },
+            None => client.portal_store().put_empty_statement(statement_name),
+        }
         client.send(PgWireBackendMessage::ParseComplete(ParseComplete::new())).await?;
 
         Ok(())
@@ -182,18 +186,36 @@ impl ExtendedQueryHandler for KalamQueryHandler {
         let portal_name = message.portal_name.as_deref().unwrap_or(DEFAULT_NAME);
         state.ensure_portal_capacity(portal_name).map_err(limit_error_to_pg)?;
 
-        let statement = client
-            .portal_store()
-            .get_statement(statement_name)
-            .ok_or_else(|| PgWireError::StatementNotFound(statement_name.to_string()))?;
-        let portal = Portal::try_new(&message, statement)?;
-        state
-            .put_portal(WirePortal {
-                name:           portal.name.clone(),
-                statement_name: statement_name.to_string(),
-            })
-            .map_err(limit_error_to_pg)?;
-        client.portal_store().put_portal(Arc::new(portal));
+        match client.portal_store().get_statement(statement_name) {
+            Some(Entry::Value(statement)) => {
+                let portal = Portal::try_new(&message, statement)?;
+                state
+                    .put_portal(WirePortal {
+                        name:           portal.name.clone(),
+                        statement_name: statement_name.to_string(),
+                    })
+                    .map_err(limit_error_to_pg)?;
+                client.portal_store().put_portal(Arc::new(portal));
+            },
+            Some(Entry::Empty) => {
+                if !message.parameters.is_empty() {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "08P01".to_owned(),
+                        format!(
+                            "bind message supplies {} parameters, but prepared statement {:?} \
+                             requires 0",
+                            message.parameters.len(),
+                            statement_name
+                        ),
+                    ))));
+                }
+                client.portal_store().put_empty_portal(portal_name);
+            },
+            None => {
+                return Err(PgWireError::StatementNotFound(statement_name.to_string()));
+            },
+        }
         client.send(PgWireBackendMessage::BindComplete(BindComplete::new())).await?;
 
         Ok(())

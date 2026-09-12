@@ -247,7 +247,8 @@ fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
         .replace_all(&s3h, "concat(p.proname, '_', CAST(p.oid AS VARCHAR))");
     let s3j = JDBC_PROCEDURE_RESERVED_NULLS_RE.replace_all(
         &s3i,
-        "${1}CAST(NULL AS VARCHAR) AS reserved1, CAST(NULL AS VARCHAR) AS reserved2, CAST(NULL AS VARCHAR) AS reserved3$2",
+        "${1}CAST(NULL AS VARCHAR) AS reserved1, CAST(NULL AS VARCHAR) AS reserved2, CAST(NULL AS \
+         VARCHAR) AS reserved3$2",
     );
     let s4 = DBEAVER_FORMAT_REGCLASS_OID_RE.replace_all(&s3j, "0");
     let s5 = CURRENT_SCHEMAS_FIRST_ELEM_RE.replace_all(&s4, "KDB_CURRENT_SCHEMA()");
@@ -333,6 +334,9 @@ fn rewrite_jdbc_catalog_queries(sql: &str) -> std::borrow::Cow<'_, str> {
     {
         return rewrite_jdbc_imported_keys();
     }
+    if lower.contains("type_cat") && lower.contains("typbasetype") && lower.contains("typtype") {
+        return rewrite_jdbc_get_udts();
+    }
     if lower.contains("relacl") && lower.contains("pg_roles") {
         if lower.contains("attacl") {
             return rewrite_jdbc_column_privileges(sql);
@@ -352,11 +356,9 @@ fn is_tabularis_index_probe(lower: &str) -> bool {
     lower.contains("pg_index")
         && lower.contains("unnest")
         && lower.contains("indkey")
+        && lower.contains("string_to_array")
         && lower.contains("pg_class")
         && lower.contains("pg_namespace")
-        && (lower.contains("pg_get_indexdef")
-            || lower.contains("indisprimary")
-            || lower.contains("is_primary"))
 }
 
 fn is_tabularis_fkey_probe(lower: &str) -> bool {
@@ -500,6 +502,16 @@ fn rewrite_jdbc_imported_keys() -> std::borrow::Cow<'static, str> {
          \"UPDATE_RULE\", CAST(NULL AS SMALLINT) AS \"DELETE_RULE\", CAST(NULL AS VARCHAR) AS \
          \"FK_NAME\", CAST(NULL AS VARCHAR) AS \"PK_NAME\", CAST(NULL AS SMALLINT) AS \
          \"DEFERRABILITY\" FROM (SELECT 1) AS _kdb_jdbc_fk WHERE false"
+            .to_string(),
+    )
+}
+
+fn rewrite_jdbc_get_udts() -> std::borrow::Cow<'static, str> {
+    std::borrow::Cow::Owned(
+        "SELECT CAST(NULL AS VARCHAR) AS \"TYPE_CAT\", CAST(NULL AS VARCHAR) AS \"TYPE_SCHEM\", \
+         CAST(NULL AS VARCHAR) AS \"TYPE_NAME\", CAST(NULL AS VARCHAR) AS \"CLASS_NAME\", \
+         CAST(NULL AS INTEGER) AS \"DATA_TYPE\", CAST(NULL AS VARCHAR) AS \"REMARKS\", CAST(NULL \
+         AS SMALLINT) AS \"BASE_TYPE\" FROM (SELECT 1) AS _kdb_jdbc_udt WHERE false"
             .to_string(),
     )
 }
@@ -2260,6 +2272,28 @@ SELECT pg_catalog.col_description(format('%I.%I', table_schema, table_name)::reg
     }
 
     #[test]
+    fn test_rewrite_jdbc_get_udts_correlated_base_type() {
+        let sql = "select current_database() as \"TYPE_CAT\", n.nspname as \"TYPE_SCHEM\", \
+                   t.typname as \"TYPE_NAME\", null as \"CLASS_NAME\", CASE WHEN t.typtype='c' \
+                   then 2002 else 2001 end as \"DATA_TYPE\", pg_catalog.obj_description(t.oid, \
+                   'pg_type') as \"REMARKS\", CASE WHEN t.typtype = 'd' then (select CASE when \
+                   base_type.oid = 23 then 4 else 1111 end from pg_type base_type where \
+                   base_type.oid=t.typbasetype) else null end as \"BASE_TYPE\" from \
+                   pg_catalog.pg_type t, pg_catalog.pg_namespace n where t.typnamespace = n.oid \
+                   and t.typtype IN ('c','d')";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            !lower.contains("typbasetype"),
+            "expected JDBC getUDTs correlated subquery rewritten: {rewritten}"
+        );
+        assert!(
+            lower.contains("type_cat") && lower.contains("where false"),
+            "expected empty getUDTs result: {rewritten}"
+        );
+    }
+
+    #[test]
     fn test_rewrite_tabularis_column_probe_exists_to_kdb_primary_key() {
         let sql = "SELECT c.column_name::text, EXISTS ( SELECT 1 FROM pg_constraint pk_con JOIN \
                    pg_class pk_table ON pk_table.oid = pk_con.conrelid JOIN unnest(pk_con.conkey) \
@@ -2301,6 +2335,29 @@ SELECT pg_catalog.col_description(format('%I.%I', table_schema, table_name)::reg
         assert!(
             rewritten.contains("$1") && rewritten.contains("$2"),
             "expected prepared-statement placeholders preserved: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_simplified_tabularis_index_probe_without_indisprimary() {
+        let sql = "SELECT i.relname AS index_name FROM pg_class t JOIN pg_namespace n ON \
+                   t.relnamespace = n.oid JOIN pg_index ix ON t.oid = ix.indrelid JOIN pg_class i \
+                   ON i.oid = ix.indexrelid CROSS JOIN LATERAL \
+                   unnest(string_to_array(ix.indkey::text, ' ')::int2[]) WITH ORDINALITY AS \
+                   k(attnum, n) WHERE n.nspname = 'catalog_e2e' AND t.relname = 'items'";
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            rewritten.contains("kdb_primary_key"),
+            "expected simplified Tabularis index probe rewritten: {rewritten}"
+        );
+        assert!(
+            !lower.contains("unnest"),
+            "expected correlated unnest index probe to be replaced: {rewritten}"
+        );
+        assert!(
+            rewritten.contains("'catalog_e2e'") && rewritten.contains("'items'"),
+            "expected literal schema/table filters preserved: {rewritten}"
         );
     }
 

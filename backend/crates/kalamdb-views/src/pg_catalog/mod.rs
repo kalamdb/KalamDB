@@ -44,6 +44,7 @@ pub mod index;
 pub mod namespace;
 pub mod proc;
 pub use proc::{function_definition, function_result, identity_arguments};
+pub mod settings;
 pub mod stat_activity;
 pub mod tables;
 pub mod r#type;
@@ -254,6 +255,10 @@ impl PgCatalogSchemaProvider {
                 &system_registry,
             ))))),
         );
+        providers.insert(
+            "pg_settings".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(settings::PgSettingsView))),
+        );
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -267,6 +272,9 @@ fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn Tabl
     mod wire_empty_tables;
 
     for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
+        if name == "pg_settings" {
+            continue;
+        }
         providers.insert(
             name.to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(empty::EmptyPgCatalogView::new(

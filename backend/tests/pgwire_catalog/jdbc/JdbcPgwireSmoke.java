@@ -306,13 +306,13 @@ public final class JdbcPgwireSmoke {
 
             try (ResultSet rs = meta.getBestRowIdentifier(
                     null, namespace, table, DatabaseMetaData.bestRowTemporary, true)) {
-                boolean foundPk = false;
+                boolean foundBestRowPk = false;
                 while (rs.next()) {
                     if ("id".equals(rs.getString("COLUMN_NAME"))) {
-                        foundPk = true;
+                        foundBestRowPk = true;
                     }
                 }
-                if (!foundPk) {
+                if (!foundBestRowPk) {
                     throw new IllegalStateException(
                             "getBestRowIdentifier missed PK id for " + qualified);
                 }
@@ -344,15 +344,15 @@ public final class JdbcPgwireSmoke {
                 ps.setString(1, namespace);
                 ps.setString(2, table);
                 try (ResultSet rs = ps.executeQuery()) {
-                    boolean foundId = false;
-                    boolean foundPk = false;
+                    boolean foundTabularisId = false;
+                    boolean foundTabularisPk = false;
                     while (rs.next()) {
                         if ("id".equals(rs.getString("column_name"))) {
-                            foundId = true;
-                            foundPk = rs.getBoolean("is_pk");
+                            foundTabularisId = true;
+                            foundTabularisPk = rs.getBoolean("is_pk");
                         }
                     }
-                    if (!foundId || !foundPk) {
+                    if (!foundTabularisId || !foundTabularisPk) {
                         throw new IllegalStateException(
                                 "Tabularis column probe missed PK id for " + qualified);
                     }

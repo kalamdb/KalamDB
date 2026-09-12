@@ -17,8 +17,9 @@
 //! Key Types:
 //!   - log:{index:020}  → packed RaftLogEntry (`version | index | term | payload`)
 //!   - meta:vote        → Vote<u64> (KSerializable binary payload)
-//!   - meta:commit      → Option<LogId<u64>> (KSerializable binary payload)
-//!   - meta:purge       → Option<LogId<u64>> (KSerializable binary payload)
+//!   - meta:commit      → leftover Option<LogId> from older builds (no longer written)
+//!   - meta:purge       → Option<LogId<u64>> packed 16 bytes
+//!   - meta:last_applied → Option<LogId<u64>> packed 16 bytes
 //!   - snap:meta        → SnapshotMeta (KSerializable binary payload)
 //!   - snap:data        → Snapshot file path (string) or inline bytes if small
 //! ```
@@ -351,7 +352,7 @@ impl RaftPartitionStore {
             Vec::with_capacity(records.len() + usize::from(last_applied.is_some()));
         ops.extend(records.into_iter().map(|(index, value)| Operation::Put {
             partition: self.partition.clone(),
-            key:       self.log_key(index),
+            key: self.log_key(index),
             value,
         }));
         if let Some(last_applied) = last_applied {
@@ -957,5 +958,23 @@ mod tests {
         let legacy = encode_entity(&id).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
         assert_eq!(RaftLogId::decode_packed(&legacy).unwrap(), id);
+    }
+
+    #[test]
+    fn append_encoded_with_folds_last_applied() {
+        let store = create_test_store(GroupId::Meta);
+        let entry = RaftLogEntry {
+            index:   4,
+            term:    2,
+            payload: b"cmd".to_vec(),
+        };
+        let applied = RaftLogId { term: 2, index: 4 };
+        store
+            .append_encoded_with(vec![(4, entry.encode_record())], Some(applied))
+            .unwrap();
+
+        let decoded = store.get_log(4).unwrap().unwrap();
+        assert_eq!(decoded.payload, b"cmd");
+        assert_eq!(store.read_last_applied().unwrap(), Some(applied));
     }
 }

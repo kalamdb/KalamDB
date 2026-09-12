@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arrow::{
     array::{
         Array, BooleanArray, Date32Array, Date64Array, Float32Array, Float64Array, Int16Array,
-        Int32Array, Int64Array, Int8Array, LargeStringArray, RecordBatch, StringArray,
+        Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray, RecordBatch, StringArray,
         StringViewArray, TimestampMicrosecondArray, TimestampMillisecondArray,
         TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
         UInt8Array,
@@ -143,7 +143,27 @@ fn pg_type_for_arrow(data_type: &DataType) -> PgWireResult<Type> {
         DataType::Timestamp(_, _) => Type::TIMESTAMP,
         DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Type::TEXT,
         DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::TEXT,
+        DataType::List(item) => pg_array_type_for_arrow(item.data_type())?,
         _ => return Err(unsupported_type_error(data_type)),
+    })
+}
+
+fn pg_array_type_for_arrow(item_type: &DataType) -> PgWireResult<Type> {
+    Ok(match item_type {
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Type::TEXT_ARRAY,
+        DataType::Int8 | DataType::Int16 => Type::INT2_ARRAY,
+        DataType::Int32 | DataType::UInt8 | DataType::UInt16 => Type::INT4_ARRAY,
+        DataType::Int64 | DataType::UInt32 => Type::INT8_ARRAY,
+        DataType::Boolean => Type::BOOL_ARRAY,
+        DataType::Float32 => Type::FLOAT4_ARRAY,
+        DataType::Float64 => Type::FLOAT8_ARRAY,
+        _ => {
+            return Err(unsupported_type_error(&DataType::List(Arc::new(Field::new(
+                "item",
+                item_type.clone(),
+                true,
+            )))))
+        },
     })
 }
 
@@ -198,6 +218,9 @@ fn encode_array_value(
     if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
         return encoder.encode_field(&array.value(row_index));
     }
+    if let Some(array) = array.as_any().downcast_ref::<ListArray>() {
+        return encode_list_array_value(encoder, array, row_index);
+    }
 
     match array.data_type() {
         DataType::Timestamp(TimeUnit::Second, _) => {
@@ -239,6 +262,73 @@ fn encode_array_value(
         )))
     })?;
     encoder.encode_field(&value)
+}
+
+fn encode_list_array_value(
+    encoder: &mut DataRowEncoder,
+    list: &ListArray,
+    row_index: usize,
+) -> PgWireResult<()> {
+    let values = list.value(row_index);
+    match values.data_type() {
+        DataType::Utf8 => {
+            let strings = values.as_any().downcast_ref::<StringArray>().expect("utf8 list values");
+            let items = (0..strings.len())
+                .map(|index| {
+                    if strings.is_null(index) {
+                        None
+                    } else {
+                        Some(strings.value(index).to_string())
+                    }
+                })
+                .collect::<Vec<Option<String>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Int64 => {
+            let ints = values.as_any().downcast_ref::<Int64Array>().expect("int64 list values");
+            let items = (0..ints.len())
+                .map(|index| {
+                    if ints.is_null(index) {
+                        None
+                    } else {
+                        Some(ints.value(index))
+                    }
+                })
+                .collect::<Vec<Option<i64>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Int32 => {
+            let ints = values.as_any().downcast_ref::<Int32Array>().expect("int32 list values");
+            let items = (0..ints.len())
+                .map(|index| {
+                    if ints.is_null(index) {
+                        None
+                    } else {
+                        Some(ints.value(index))
+                    }
+                })
+                .collect::<Vec<Option<i32>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Boolean => {
+            let flags = values.as_any().downcast_ref::<BooleanArray>().expect("bool list values");
+            let items = (0..flags.len())
+                .map(|index| {
+                    if flags.is_null(index) {
+                        None
+                    } else {
+                        Some(flags.value(index))
+                    }
+                })
+                .collect::<Vec<Option<bool>>>();
+            encoder.encode_field(&items)
+        },
+        other => Err(unsupported_type_error(&DataType::List(Arc::new(Field::new(
+            "item",
+            other.clone(),
+            true,
+        ))))),
+    }
 }
 
 fn encode_timestamp_micros(encoder: &mut DataRowEncoder, micros: i64) -> PgWireResult<()> {
@@ -394,6 +484,52 @@ mod tests {
         };
         assert_eq!(query.row_schema.len(), 1);
         assert_eq!(query.row_schema[0].datatype(), &Type::TEXT);
+    }
+
+    #[test]
+    fn encodes_utf8_and_int64_list_columns() {
+        use arrow::array::{Int64Builder, ListBuilder, StringBuilder};
+
+        let mut names = ListBuilder::new(StringBuilder::new());
+        names.values().append_value("label");
+        names.append(true);
+        let mut oids = ListBuilder::new(Int64Builder::new());
+        oids.values().append_value(25);
+        oids.append(true);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(
+                "proargnames",
+                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                true,
+            ),
+            Field::new(
+                "proallargtypes",
+                DataType::List(Arc::new(Field::new("item", DataType::Int64, true))),
+                true,
+            ),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(names.finish()) as ArrayRef,
+                Arc::new(oids.finish()) as ArrayRef,
+            ],
+        )
+        .expect("batch is valid");
+
+        let responses = execution_result_to_responses(ExecutionResult::Rows {
+            batches:   vec![batch],
+            row_count: 1,
+            schema:    Some(schema),
+        })
+        .expect("list values encode");
+
+        let Response::Query(query) = &responses[0] else {
+            panic!("expected query response");
+        };
+        assert_eq!(query.row_schema[0].datatype(), &Type::TEXT_ARRAY);
+        assert_eq!(query.row_schema[1].datatype(), &Type::INT8_ARRAY);
     }
 
     #[test]

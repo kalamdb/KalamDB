@@ -71,9 +71,9 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
             min_rows: 1,
         },
         CatalogQuery {
-            label:    "pg_settings_empty",
-            sql:      "SELECT name FROM pg_settings LIMIT 1",
-            min_rows: 0,
+            label:    "pg_settings_max_index_keys",
+            sql:      "SELECT setting FROM pg_catalog.pg_settings WHERE name = 'max_index_keys'",
+            min_rows: 1,
         },
         CatalogQuery {
             label:    "pg_roles_empty",
@@ -124,9 +124,11 @@ pub fn required_pg_catalog_queries() -> &'static [CatalogQuery] {
         },
         CatalogQuery {
             label:    "tabularis_indexes",
-            sql:      "SELECT i.relname AS index_name FROM pg_class t JOIN pg_namespace n ON \
-                       t.relnamespace = n.oid JOIN pg_index ix ON t.oid = ix.indrelid JOIN \
-                       pg_class i ON i.oid = ix.indexrelid CROSS JOIN LATERAL \
+            sql:      "SELECT i.relname AS index_name, COALESCE(a.attname::text, \
+                       pg_get_indexdef(ix.indexrelid, k.n::int, true)) AS column_name, \
+                       ix.indisunique AS is_unique, ix.indisprimary AS is_primary FROM pg_class t \
+                       JOIN pg_namespace n ON t.relnamespace = n.oid JOIN pg_index ix ON t.oid = \
+                       ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid CROSS JOIN LATERAL \
                        unnest(string_to_array(ix.indkey::text, ' ')::int2[]) WITH ORDINALITY AS \
                        k(attnum, n) LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = \
                        k.attnum AND k.attnum <> 0 WHERE t.relkind IN ('r', 'm') AND n.nspname = \

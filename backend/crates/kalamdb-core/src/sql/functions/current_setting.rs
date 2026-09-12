@@ -147,6 +147,8 @@ fn setting_value(name: &str) -> &'static str {
         "datestyle" => "ISO, MDY",
         "extra_float_digits" => "3",
         "application_name" => "",
+        "max_index_keys" => "32",
+        "max_identifier_length" => "63",
         _ => "",
     }
 }
@@ -192,6 +194,8 @@ mod tests {
         assert_eq!(setting_value("server_version_num"), "160000");
         assert_eq!(setting_value("SERVER_VERSION"), "16.0");
         assert_eq!(setting_value("transaction_isolation"), "read committed");
+        assert_eq!(setting_value("max_index_keys"), "32");
+        assert_eq!(setting_value("max_identifier_length"), "63");
         assert_eq!(setting_value("unknown_setting"), "");
     }
 

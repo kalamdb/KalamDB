@@ -324,7 +324,7 @@ pub(super) fn prepare_call(
         KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
     })?;
     let Some(routine) = routine else {
-        return Err(KalamDbError::NotFound(format!("procedure {routine_id} not found")));
+        return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
     };
 
     let (caller_user, caller_role) = {

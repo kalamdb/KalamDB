@@ -318,8 +318,13 @@ mod tests {
         assert_eq!(code, "EXECUTE_DENIED");
         assert_eq!(denied.function_error_code(), Some(FunctionErrorCode::ExecuteDenied));
 
-        let missing: KalamDbError = FunctionsError::NotImplemented("api.x".into()).into();
+        let missing: KalamDbError = FunctionsError::UnknownProcedure("api.x".into()).into();
         let (status, code) = function_http_status(&missing);
+        assert_eq!(status, actix_web::http::StatusCode::NOT_FOUND);
+        assert_eq!(code, "PROCEDURE_NOT_FOUND");
+
+        let unimplemented: KalamDbError = FunctionsError::NotImplemented("api.x".into()).into();
+        let (status, code) = function_http_status(&unimplemented);
         assert_eq!(status, actix_web::http::StatusCode::NOT_FOUND);
         assert_eq!(code, "PROCEDURE_NOT_IMPLEMENTED");
 

@@ -64,7 +64,7 @@ impl QueryParser for KalamQueryParser {
         client: &C,
         sql: &str,
         _types: &[Option<Type>],
-    ) -> PgWireResult<Self::Statement>
+    ) -> PgWireResult<Option<Self::Statement>>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
@@ -91,11 +91,11 @@ impl QueryParser for KalamQueryParser {
         });
         let result_columns = self.infer_result_columns(sql).await.unwrap_or_default();
 
-        Ok(WireCachedStatement {
+        Ok(Some(WireCachedStatement {
             metadata,
             parameter_types,
             result_columns,
-        })
+        }))
     }
 
     fn get_parameter_types(&self, stmt: &Self::Statement) -> PgWireResult<Vec<Type>> {

@@ -1,5 +1,5 @@
 use kalamdb_commons::{
-    models::{TransactionId, UserId},
+    models::{NamespaceId, TableName, TransactionId, UserId},
     TableId,
 };
 use kalamdb_serialization::{decode_protocol, encode_protocol, ProtocolKind};
@@ -218,22 +218,23 @@ fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert, RaftError
     let mut pos = 1usize;
     let required_meta_index = read_u64(bytes, &mut pos)?;
     let flags = read_u8(bytes, &mut pos)?;
-    let transaction_id = if flags & FLAG_HAS_TX != 0 {
-        Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
-            RaftError::Serialization(format!("packed insert transaction id: {e}"))
-        })?)
-    } else {
-        None
-    };
+    let transaction_id =
+        if flags & FLAG_HAS_TX != 0 {
+            Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
+                RaftError::Serialization(format!("packed insert transaction id: {e}"))
+            })?)
+        } else {
+            None
+        };
     let ns = read_u16_str(bytes, &mut pos)?;
     let table = read_u16_str(bytes, &mut pos)?;
-    let table_id = TableId::try_from_strings(ns, table)
-        .map_err(|e| RaftError::Serialization(format!("packed insert table id: {e}")))?;
+    // Reconstruct IDs from the log with the same constructors used at propose
+    // time. `try_from_strings` re-applies CREATE-time SQL identifier rules and
+    // rejects names that `NamespaceId::new` already accepted (for example test
+    // namespaces longer than 64 characters).
+    let table_id = TableId::new(NamespaceId::new(ns), TableName::new(table));
     let user_id = if flags & FLAG_HAS_USER != 0 {
-        Some(
-            UserId::try_new(read_u16_str(bytes, &mut pos)?)
-                .map_err(|e| RaftError::Serialization(format!("packed insert user id: {e}")))?,
-        )
+        Some(UserId::new(read_u16_str(bytes, &mut pos)?))
     } else {
         None
     };
@@ -256,16 +257,16 @@ fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert, RaftError
 
 fn decode_packed_user_insert(bytes: &[u8]) -> Result<UserDataCommand, RaftError> {
     let packed = decode_packed_insert(PACKED_USER_INSERT, bytes)?;
-    let user_id = packed
-        .user_id
-        .ok_or_else(|| RaftError::Serialization("packed user insert missing user id".to_string()))?;
+    let user_id = packed.user_id.ok_or_else(|| {
+        RaftError::Serialization("packed user insert missing user id".to_string())
+    })?;
     Ok(UserDataCommand::Insert {
         required_meta_index: packed.required_meta_index,
-        transaction_id:      packed.transaction_id,
-        table_id:            packed.table_id,
+        transaction_id: packed.transaction_id,
+        table_id: packed.table_id,
         user_id,
-        rows:                Vec::new(),
-        encoded_fields:      packed.encoded_fields,
+        rows: Vec::new(),
+        encoded_fields: packed.encoded_fields,
     })
 }
 
@@ -376,8 +377,7 @@ fn read_u16_bytes<'a>(bytes: &'a [u8], pos: &mut usize) -> Result<&'a [u8], Raft
 
 fn read_u16_str<'a>(bytes: &'a [u8], pos: &mut usize) -> Result<&'a str, RaftError> {
     let slice = read_u16_bytes(bytes, pos)?;
-    std::str::from_utf8(slice)
-        .map_err(|e| RaftError::Serialization(format!("packed utf8: {e}")))
+    std::str::from_utf8(slice).map_err(|e| RaftError::Serialization(format!("packed utf8: {e}")))
 }
 
 fn read_u32_bytes<'a>(bytes: &'a [u8], pos: &mut usize) -> Result<&'a [u8], RaftError> {
@@ -531,6 +531,32 @@ mod tests {
                 assert_eq!(user_id.as_str(), "u1");
                 assert!(rows.is_empty());
                 assert_eq!(encoded_fields, vec![vec![9, 8, 7]]);
+            },
+            _ => panic!("expected insert"),
+        }
+    }
+
+    #[test]
+    fn packed_insert_roundtrips_namespace_longer_than_sql_identifier_limit() {
+        let namespace = format!("sql_insert_conflict_return_update_{}", "a".repeat(32));
+        assert!(namespace.len() > 64);
+        let cmd = UserDataCommand::Insert {
+            required_meta_index: 0,
+            transaction_id:      None,
+            table_id:            TableId::new(
+                NamespaceId::new(namespace.clone()),
+                TableName::from("items"),
+            ),
+            user_id:             kalamdb_commons::models::UserId::from(
+                "sql-insert-conflict-return-user",
+            ),
+            rows:                vec![],
+            encoded_fields:      vec![vec![9, 8, 7]],
+        };
+        let bytes = encode_user_data_command(&cmd).expect("encode");
+        match decode_user_data_command(&bytes).expect("decode") {
+            UserDataCommand::Insert { table_id, .. } => {
+                assert_eq!(table_id.namespace_id().as_str(), namespace);
             },
             _ => panic!("expected insert"),
         }
