@@ -52,7 +52,7 @@ impl TopicPublisherService {
 
         loop {
             let earliest = self.earliest_available_offset(topic_id, partition_id)?;
-            let (fetch_start, fetch_limit, pending_index) = {
+            let (fetch_start, fetch_limit, reservation_id) = {
                 let initial_start =
                     self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
                 let mut state = self
@@ -77,10 +77,10 @@ impl TopicPublisherService {
                 }
 
                 let claimed_at = Instant::now();
-                let pending_index =
+                let reservation_id =
                     state.reserve_window(current_start, available_limit, claimed_at);
                 self.register_consumer_group(topic_id, group_id);
-                (current_start, available_limit, pending_index)
+                (current_start, available_limit, reservation_id)
             };
 
             let messages = self
@@ -91,7 +91,7 @@ impl TopicPublisherService {
             if messages.is_empty() {
                 let pin_tail = fetch_start > earliest;
                 if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
-                    state.cancel_reservation(pending_index);
+                    state.cancel_reservation(reservation_id);
                     if pin_tail {
                         state.cursor = fetch_start;
                     } else if state.pending.is_empty() {
@@ -107,9 +107,18 @@ impl TopicPublisherService {
             let claim_start = messages.first().map(|message| message.offset).unwrap_or(fetch_start);
             let end_exclusive = messages.last().map(|message| message.offset + 1).unwrap_or(fetch_start);
 
-            if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
-                state.finalize_reservation(pending_index, claim_start, end_exclusive);
+            let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) else {
+                continue;
+            };
+            state.expire_stale_claims(Instant::now(), self.visibility_timeout);
+            if let Some(last_acked) = self.durable_last_acked(topic_id, group_id, partition_id)? {
+                state.ack_up_to(last_acked);
             }
+            if !state.has_reservation(reservation_id) {
+                continue;
+            }
+
+            state.finalize_reservation(reservation_id, claim_start, end_exclusive);
 
             let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
             record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);

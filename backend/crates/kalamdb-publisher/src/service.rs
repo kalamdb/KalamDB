@@ -69,15 +69,18 @@ struct ClaimState {
     cursor:  u64,
     /// Pending (unacked) claims with their expiry information.
     pending: Vec<PendingClaim>,
+    /// Monotonic reservation ids for in-flight grouped fetches.
+    next_reservation_id: u64,
 }
 
 #[derive(Debug)]
 struct PendingClaim {
-    start:         u64,
+    reservation_id: u64,
+    start:          u64,
     /// Exclusive upper bound of the claimed range.
-    end_exclusive: u64,
+    end_exclusive:  u64,
     /// When the claim was issued.
-    claimed_at:    Instant,
+    claimed_at:     Instant,
 }
 
 impl ClaimState {
@@ -85,6 +88,7 @@ impl ClaimState {
         Self {
             cursor,
             pending: Vec::new(),
+            next_reservation_id: 1,
         }
     }
 
@@ -151,26 +155,34 @@ impl ClaimState {
         fetch_start: u64,
         available_limit: usize,
         claimed_at: Instant,
-    ) -> usize {
+    ) -> u64 {
+        let reservation_id = self.next_reservation_id;
+        self.next_reservation_id = self.next_reservation_id.saturating_add(1);
         let reserved_end = fetch_start.saturating_add(available_limit as u64);
         self.pending.push(PendingClaim {
+            reservation_id,
             start: fetch_start,
             end_exclusive: reserved_end,
             claimed_at,
         });
-        self.pending.len() - 1
+        reservation_id
     }
 
     fn finalize_reservation(
         &mut self,
-        pending_index: usize,
+        reservation_id: u64,
         claim_start: u64,
         end_exclusive: u64,
     ) {
-        if let Some(claim) = self.pending.get_mut(pending_index) {
-            claim.start = claim_start;
-            claim.end_exclusive = end_exclusive;
-        }
+        let Some(claim) = self
+            .pending
+            .iter_mut()
+            .find(|claim| claim.reservation_id == reservation_id)
+        else {
+            return;
+        };
+        claim.start = claim_start;
+        claim.end_exclusive = end_exclusive;
         // Only advance the hand-out cursor for contiguous claims. Concurrent
         // consumers may reserve windows ahead of the cursor; finalizing those
         // claims must not skip still-unclaimed offsets in the gap.
@@ -179,8 +191,12 @@ impl ClaimState {
         }
     }
 
-    fn cancel_reservation(&mut self, pending_index: usize) {
-        self.pending.remove(pending_index);
+    fn cancel_reservation(&mut self, reservation_id: u64) {
+        self.pending.retain(|claim| claim.reservation_id != reservation_id);
+    }
+
+    fn has_reservation(&self, reservation_id: u64) -> bool {
+        self.pending.iter().any(|claim| claim.reservation_id == reservation_id)
     }
 
     /// Return the next server-owned cursor and maximum contiguous fetch size
