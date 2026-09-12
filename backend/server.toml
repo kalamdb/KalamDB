@@ -560,8 +560,9 @@ max_snapshots_to_keep = 1
 [topics]
 # Visibility timeout for topic consumer claims (seconds).
 # After this period, un-acked messages become available to other consumers.
-# Lower values speed up ack-failure-recovery smoke tests.
-visibility_timeout_secs = 10
+# Keep this above same-group e2e poll+commit latency so live consumers are
+# not treated as crashed while they are still committing batches.
+visibility_timeout_secs = 30
 # # node_id = 2
 # # rpc_addr = "10.0.0.2:2910"
 # # api_addr = "http://10.0.0.2:2900"

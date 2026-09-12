@@ -131,6 +131,9 @@ impl ClaimState {
     fn ack_up_to(&mut self, acked_offset_inclusive: u64) {
         let next = acked_offset_inclusive.saturating_add(1);
         self.pending.retain_mut(|claim| {
+            if claim.in_flight {
+                return true;
+            }
             if claim.end_exclusive <= next {
                 return false;
             }

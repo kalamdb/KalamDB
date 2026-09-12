@@ -127,6 +127,19 @@ impl TopicPublisherService {
                 return Ok(messages);
             }
 
+            let last_acked = self.durable_last_acked(topic_id, group_id, partition_id)?;
+            let deliver_from = last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+            let messages: Vec<_> = messages
+                .into_iter()
+                .filter(|message| message.offset >= deliver_from)
+                .collect();
+            if messages.is_empty() {
+                if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+                    state.cancel_reservation(reservation_id);
+                }
+                continue;
+            }
+
             let claim_start = messages.first().map(|message| message.offset).unwrap_or(fetch_start);
             let end_exclusive = messages.last().map(|message| message.offset + 1).unwrap_or(fetch_start);
             let claimed_at = Instant::now();
@@ -136,7 +149,7 @@ impl TopicPublisherService {
             let mut state = self
                 .group_claim_state
                 .entry(cursor_key.clone())
-                .or_insert_with(|| ClaimState::new(initial_start));
+                .or_insert_with(|| ClaimState::new(initial_start.max(deliver_from)));
 
             state.expire_stale_claims(claimed_at, self.visibility_timeout);
             if state.has_reservation(reservation_id) {
