@@ -183,6 +183,37 @@ impl ClaimState {
         };
         claim.start = claim_start;
         claim.end_exclusive = end_exclusive;
+        Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
+    }
+
+    fn register_delivered_claim(
+        &mut self,
+        claim_start: u64,
+        end_exclusive: u64,
+        claimed_at: Instant,
+    ) {
+        let reservation_id = self.next_reservation_id;
+        self.next_reservation_id = self.next_reservation_id.saturating_add(1);
+        self.pending.push(PendingClaim {
+            reservation_id,
+            start: claim_start,
+            end_exclusive,
+            claimed_at,
+        });
+        Self::advance_cursor_for_contiguous_claim(self, claim_start, end_exclusive);
+    }
+
+    fn overlaps_pending(&self, claim_start: u64, end_exclusive: u64) -> bool {
+        self.pending.iter().any(|claim| {
+            claim.start < end_exclusive && claim_start < claim.end_exclusive
+        })
+    }
+
+    fn advance_cursor_for_contiguous_claim(
+        &mut self,
+        claim_start: u64,
+        end_exclusive: u64,
+    ) {
         // Only advance the hand-out cursor for contiguous claims. Concurrent
         // consumers may reserve windows ahead of the cursor; finalizing those
         // claims must not skip still-unclaimed offsets in the gap.

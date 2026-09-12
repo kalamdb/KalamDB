@@ -106,16 +106,23 @@ impl TopicPublisherService {
 
             let claim_start = messages.first().map(|message| message.offset).unwrap_or(fetch_start);
             let end_exclusive = messages.last().map(|message| message.offset + 1).unwrap_or(fetch_start);
+            let claimed_at = Instant::now();
 
-            let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) else {
+            let initial_start =
+                self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
+            let mut state = self
+                .group_claim_state
+                .entry(cursor_key.clone())
+                .or_insert_with(|| ClaimState::new(initial_start));
+
+            state.expire_stale_claims(claimed_at, self.visibility_timeout);
+            if state.has_reservation(reservation_id) {
+                state.finalize_reservation(reservation_id, claim_start, end_exclusive);
+            } else if state.overlaps_pending(claim_start, end_exclusive) {
                 continue;
-            };
-            state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-            if !state.has_reservation(reservation_id) {
-                continue;
+            } else {
+                state.register_delivered_claim(claim_start, end_exclusive, claimed_at);
             }
-
-            state.finalize_reservation(reservation_id, claim_start, end_exclusive);
 
             let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
             record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);
