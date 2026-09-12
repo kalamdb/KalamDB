@@ -234,15 +234,16 @@ pub async fn poll_unique_offsets_until(
     {
         match consumer.poll().await {
             Ok(batch) if batch.is_empty() => {
-                idle_loops += 1;
-                if config
+                let publishers_done = config
                     .publishers_done
                     .as_ref()
                     .map(|done| done.load(Ordering::Relaxed))
-                    .unwrap_or(false)
-                    && idle_loops >= config.idle_break_after
-                {
-                    break;
+                    .unwrap_or(true);
+                if publishers_done {
+                    idle_loops += 1;
+                    if idle_loops >= config.idle_break_after {
+                        break;
+                    }
                 }
                 tokio::time::sleep(config.idle_sleep).await;
             },

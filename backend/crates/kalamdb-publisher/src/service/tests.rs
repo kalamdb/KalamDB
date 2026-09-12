@@ -976,6 +976,67 @@ fn test_group_fetch_four_concurrent_consumers_no_overlap() {
 }
 
 #[test]
+fn test_concurrent_empty_group_polls_do_not_skip_later_messages() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let storage_backend: Arc<dyn StorageBackend> = backend.clone();
+    let service = Arc::new(TopicPublisherService::new(storage_backend));
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns.clone(), TableName::from("events"));
+    let topic_id = TopicId::new("empty_poll_then_publish_topic");
+    let group_id = ConsumerGroupId::new("empty_poll_then_publish_group");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..4 {
+        let service = service.clone();
+        let topic_id = topic_id.clone();
+        let group_id = group_id.clone();
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let empty = service
+                .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 100)
+                .unwrap();
+            tx.send(empty.len()).unwrap();
+        });
+    }
+    drop(tx);
+    for _ in 0..4 {
+        assert_eq!(rx.recv_timeout(StdDuration::from_secs(5)).unwrap(), 0);
+    }
+
+    for idx in 0..40 {
+        let row = create_test_row(idx, &format!("event_{idx}"));
+        service.publish_message(&table_id, TopicOp::Insert, &row, None).unwrap();
+    }
+
+    let mut combined = HashSet::new();
+    loop {
+        let batch = service
+            .fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10)
+            .unwrap();
+        if batch.is_empty() {
+            break;
+        }
+        for message in batch {
+            assert!(
+                combined.insert(message.offset),
+                "empty pre-publish polls must not cause duplicate or skipped offsets"
+            );
+        }
+    }
+
+    assert_eq!(
+        combined.len(),
+        40,
+        "messages published after concurrent empty group polls must still be delivered"
+    );
+}
+
+#[test]
 fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
     let backend = Arc::new(PausingScanBackend::new());
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();

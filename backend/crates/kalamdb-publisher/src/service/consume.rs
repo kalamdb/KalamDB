@@ -66,14 +66,36 @@ impl TopicPublisherService {
                     state.ack_up_to(last_acked);
                 }
 
-                let (current_start, available_limit) = state.next_available_window(limit);
-                if available_limit == 0 {
+                let (current_start, window_limit) = state.next_available_window(limit);
+                if window_limit == 0 {
                     return Ok(Vec::new());
                 }
 
                 if current_start < earliest {
                     state.cursor = earliest;
                     continue;
+                }
+
+                let high_watermark = self.log_high_watermark(topic_id, partition_id, earliest)?;
+                let fetchable = high_watermark.saturating_sub(current_start);
+                let available_limit =
+                    window_limit.min(usize::try_from(fetchable).unwrap_or(usize::MAX));
+                if available_limit == 0 {
+                    // At the true log tail. Pin FROM LATEST so the next poll
+                    // does not replay backlog. Do not reserve phantom ranges
+                    // past the high watermark — concurrent empty polls would
+                    // otherwise stack windows at 100, 200, … and skip later
+                    // messages written at offset 0.
+                    if current_start > earliest {
+                        state.cursor = current_start;
+                        self.register_consumer_group(topic_id, group_id);
+                    } else if state.pending.is_empty() {
+                        drop(state);
+                        self.group_claim_state.remove(&cursor_key);
+                        self.unregister_consumer_group_if_idle(topic_id, group_id);
+                        self.trim_consumer_runtime_maps();
+                    }
+                    return Ok(Vec::new());
                 }
 
                 let claimed_at = Instant::now();
@@ -89,7 +111,8 @@ impl TopicPublisherService {
                 .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
 
             if messages.is_empty() {
-                let pin_tail = fetch_start > earliest;
+                let high_watermark = self.log_high_watermark(topic_id, partition_id, earliest)?;
+                let pin_tail = fetch_start >= high_watermark && fetch_start > earliest;
                 if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
                     state.cancel_reservation(reservation_id);
                     if pin_tail {
@@ -153,6 +176,18 @@ impl TopicPublisherService {
         }
 
         Ok(self.log_start_offset(topic_id, partition_id))
+    }
+
+    fn log_high_watermark(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        earliest: u64,
+    ) -> Result<u64> {
+        Ok(self
+            .latest_offset(topic_id, partition_id)?
+            .map(|last| last.saturating_add(1))
+            .unwrap_or(earliest))
     }
 
     pub(crate) fn log_start_offset(&self, topic_id: &TopicId, partition_id: u32) -> u64 {
