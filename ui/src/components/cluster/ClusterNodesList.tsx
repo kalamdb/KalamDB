@@ -9,10 +9,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, RefreshCw, Loader2, Crown, CheckCircle2, Server } from 'lucide-react';
+import { Search, RefreshCw, Crown, CheckCircle2, Server } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -118,7 +119,7 @@ export function ClusterNodesList({ nodes, isLoading, onRefresh }: ClusterNodesLi
       <CardContent>
         {isLoading && nodes.length === 0 ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : (
           <div className="border rounded-lg">

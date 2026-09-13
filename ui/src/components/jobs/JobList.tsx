@@ -10,6 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -28,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, RefreshCw, Filter, X, Eye, Play, CheckCircle, XCircle, Clock, AlertCircle, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { RefreshCw, Filter, X, Eye, Play, CheckCircle, XCircle, Clock, AlertCircle, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { formatTimestamp, toMilliseconds } from '@/lib/formatters';
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/config';
 
@@ -260,15 +261,15 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
               <span>per page</span>
             </div>
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon-sm" disabled={page === 0} onClick={() => handlePageChange(page - 1)}>
+              <Button variant="outline" size="icon-lg" disabled={page === 0} onClick={() => handlePageChange(page - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-sm text-muted-foreground px-2">{page + 1}</span>
-              <Button variant="outline" size="icon-sm" disabled={jobs.length < pageSize} onClick={() => handlePageChange(page + 1)}>
+              <Button variant="outline" size="icon-lg" disabled={jobs.length < pageSize} onClick={() => handlePageChange(page + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <Button variant="outline" size="icon-sm" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh jobs">
+            <Button variant="outline" size="icon-lg" onClick={() => refetch()} disabled={isLoading} aria-label="Refresh jobs">
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
@@ -323,7 +324,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
       {/* Table */}
       {isLoading && jobs.length === 0 ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Spinner className="size-6 text-muted-foreground" />
         </div>
       ) : jobs.length === 0 ? (
         <Card>

@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Field, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -22,6 +24,14 @@ function errorForPath(errors: TestFieldError[], path: string): string | undefine
   return errors.find((error) => error.path === path)?.message;
 }
 
+function fieldId(path: string): string {
+  return `fn-param-${path.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+}
+
+function TypeHint({ type }: { type: ResolvedKalamType }) {
+  return <span className="font-normal text-muted-foreground">{formatDeclaredType(type)}</span>;
+}
+
 function jsonText(value: TestValue): string {
   if (typeof value === "string") {
     return value;
@@ -40,6 +50,31 @@ function datetimeLocalValue(value: TestValue): string {
   return iso.slice(0, 16);
 }
 
+function ParameterField({
+  name,
+  type,
+  htmlFor,
+  error,
+  children,
+}: {
+  name: string;
+  type: ResolvedKalamType;
+  htmlFor?: string;
+  error?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Field data-invalid={error ? true : undefined}>
+      <FieldLabel htmlFor={htmlFor}>
+        {name}
+        <TypeHint type={type} />
+      </FieldLabel>
+      {children}
+      <FieldError>{error}</FieldError>
+    </Field>
+  );
+}
+
 export function FunctionParameterInput({
   name,
   path,
@@ -56,16 +91,17 @@ export function FunctionParameterInput({
   onChange: (path: string, next: TestValue) => void;
 }) {
   const error = errorForPath(errors, path);
+  const inputId = fieldId(path);
 
   if (type.kind === "array") {
     const items = Array.isArray(value) ? value : [];
     return (
-      <fieldset className="grid gap-2">
-        <legend className="text-xs font-medium">
+      <FieldSet>
+        <FieldLegend className="text-xs">
           {name}
-          <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-        </legend>
-        <div className="grid gap-3">
+          <TypeHint type={type} />
+        </FieldLegend>
+        <FieldGroup className="gap-3">
           {items.map((item, index) => (
             <div key={`${path}-${index}`} className="rounded-md border p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -75,11 +111,11 @@ export function FunctionParameterInput({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon-xxs"
+                  size="icon-sm"
                   aria-label={`Remove ${name} item ${index + 1}`}
                   onClick={() => onChange(path, items.filter((_, itemIndex) => itemIndex !== index))}
                 >
-                  <Trash2 className="size-3.5" />
+                  <Trash2 />
                 </Button>
               </div>
               <FunctionParameterInput
@@ -92,22 +128,22 @@ export function FunctionParameterInput({
               />
             </div>
           ))}
-        </div>
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onChange(path, [...items, defaultValueForType({ ...type.element, notNull: true })])
-            }
-          >
-            <Plus className="size-3.5" />
-            Add item
-          </Button>
-        </div>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      </fieldset>
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                onChange(path, [...items, defaultValueForType({ ...type.element, notNull: true })])
+              }
+            >
+              <Plus data-icon="inline-start" />
+              Add item
+            </Button>
+          </div>
+          <FieldError>{error}</FieldError>
+        </FieldGroup>
+      </FieldSet>
     );
   }
 
@@ -116,40 +152,38 @@ export function FunctionParameterInput({
       ? (value as Record<string, TestValue>)
       : {};
     return (
-      <fieldset className="grid gap-3 rounded-md border p-3">
-        <legend className="px-1 text-xs font-medium">
+      <FieldSet className="rounded-md border p-3">
+        <FieldLegend className="px-1 text-xs">
           {name}
-          <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-        </legend>
-        {type.fields.map((field) => (
-          <FunctionParameterInput
-            key={field.name}
-            name={field.name}
-            path={`${path}.${field.name}`}
-            type={field.type}
-            value={record[field.name]}
-            errors={errors}
-            onChange={onChange}
-          />
-        ))}
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      </fieldset>
+          <TypeHint type={type} />
+        </FieldLegend>
+        <FieldGroup className="gap-3">
+          {type.fields.map((field) => (
+            <FunctionParameterInput
+              key={field.name}
+              name={field.name}
+              path={`${path}.${field.name}`}
+              type={field.type}
+              value={record[field.name]}
+              errors={errors}
+              onChange={onChange}
+            />
+          ))}
+          <FieldError>{error}</FieldError>
+        </FieldGroup>
+      </FieldSet>
     );
   }
 
   if (type.kind === "enum") {
     const selected = typeof value === "string" && value !== "" ? value : NULL_SELECT_VALUE;
     return (
-      <label className="grid gap-1.5">
-        <span className="text-xs font-medium">
-          {name}
-          <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-        </span>
+      <ParameterField name={name} type={type} error={error}>
         <Select
           value={selected}
           onValueChange={(next) => onChange(path, next === NULL_SELECT_VALUE ? null : next)}
         >
-          <SelectTrigger aria-invalid={Boolean(error)}>
+          <SelectTrigger id={inputId} aria-invalid={Boolean(error)} aria-label={name}>
             <SelectValue placeholder={`Select ${name}`} />
           </SelectTrigger>
           <SelectContent>
@@ -161,8 +195,10 @@ export function FunctionParameterInput({
             ))}
           </SelectContent>
         </Select>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      </label>
+        {type.values.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No enum labels found for {type.sqlName}.</p>
+        ) : null}
+      </ParameterField>
     );
   }
 
@@ -173,11 +209,7 @@ export function FunctionParameterInput({
       const selected =
         value === true ? "true" : value === false ? "false" : NULL_SELECT_VALUE;
       return (
-        <label className="grid gap-1.5">
-          <span className="text-xs font-medium">
-            {name}
-            <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-          </span>
+        <ParameterField name={name} type={type} error={error}>
           <Select
             value={selected}
             onValueChange={(next) => {
@@ -188,7 +220,7 @@ export function FunctionParameterInput({
               onChange(path, next === "true");
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger id={inputId} aria-label={name}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -197,42 +229,38 @@ export function FunctionParameterInput({
               <SelectItem value="false">false</SelectItem>
             </SelectContent>
           </Select>
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        </label>
+        </ParameterField>
       );
     }
 
     return (
-      <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+      <Field orientation="horizontal" className="rounded-md border px-3 py-2">
         <div className="grid gap-0.5">
           <span className="text-xs font-medium">{name}</span>
           <span className="text-xs text-muted-foreground">{formatDeclaredType(type)}</span>
         </div>
         <Switch
+          id={inputId}
           checked={value === true}
           onCheckedChange={(checked) => onChange(path, checked)}
           aria-label={name}
         />
-      </div>
+      </Field>
     );
   }
 
   if (builtin === "json") {
     return (
-      <label className="grid gap-1.5">
-        <span className="text-xs font-medium">
-          {name}
-          <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-        </span>
+      <ParameterField name={name} type={type} htmlFor={inputId} error={error}>
         <Textarea
+          id={inputId}
           className="min-h-28 font-mono text-xs"
           value={jsonText(value)}
           aria-invalid={Boolean(error)}
           onChange={(event) => onChange(path, event.target.value)}
           placeholder="{}"
         />
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      </label>
+      </ParameterField>
     );
   }
 
@@ -247,12 +275,9 @@ export function FunctionParameterInput({
         : String(value);
 
   return (
-    <label className="grid gap-1.5">
-      <span className="text-xs font-medium">
-        {name}
-        <span className="ml-2 font-normal text-muted-foreground">{formatDeclaredType(type)}</span>
-      </span>
+    <ParameterField name={name} type={type} htmlFor={inputId} error={error}>
       <Input
+        id={inputId}
         type={inputType}
         step={builtin === "float" || builtin === "decimal" ? "any" : undefined}
         value={displayValue}
@@ -261,7 +286,6 @@ export function FunctionParameterInput({
         placeholder={builtin === "uuid" ? "00000000-0000-0000-0000-000000000000" : undefined}
         onChange={(event) => onChange(path, event.target.value === "" ? (type.notNull ? "" : null) : event.target.value)}
       />
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-    </label>
+    </ParameterField>
   );
 }

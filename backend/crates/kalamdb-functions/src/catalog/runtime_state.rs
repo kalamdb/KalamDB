@@ -118,6 +118,7 @@ impl FunctionRuntimeState {
                 state:           row.state,
                 reserved_bytes:  i64::try_from(row.reserved_bytes).unwrap_or(i64::MAX),
                 used_heap_bytes: i64::try_from(row.used_heap_bytes).unwrap_or(i64::MAX),
+                peak_heap_bytes: i64::try_from(row.peak_heap_bytes).unwrap_or(i64::MAX),
                 invocations:     i64::try_from(row.invocations).unwrap_or(i64::MAX),
             })
             .collect()

@@ -8,7 +8,7 @@ repository = { workspace = true }
 
 [features]
 default = ["tls"]
-tls = ["tonic/tls-webpki-roots", "tonic/tls-ring", "kalamdb-pg/tls"]
+tls = ["tonic/tls-native-roots", "tonic/tls-aws-lc", "kalamdb-pg/tls"]
 
 [dependencies]
 arrow = { workspace = true }

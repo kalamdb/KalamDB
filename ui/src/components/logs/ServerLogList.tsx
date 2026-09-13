@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGetServerLogsQuery } from '@/store/apiSlice';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, Search, Pause, Info, AlertTriangle, AlertCircle, Bug, RefreshCw, Play, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Pause, Info, AlertTriangle, AlertCircle, Bug, RefreshCw, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -329,7 +330,7 @@ export function ServerLogList() {
           </div>
         ) : isLoading && filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : filteredLogs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground font-sans">

@@ -1,16 +1,16 @@
 use std::{env, fs, time::Duration};
 
 use kalam_cli::{
-    CLI_BUILD_DATE, CLI_VERSION, CLIError, Result,
     release_download::{
         create_temp_dir, detect_platform, download_bytes, download_text, extract_archive,
         verify_checksum,
     },
-    release_target::{CLI_ARTIFACT_PREFIX, ReleaseTarget},
+    release_target::{ReleaseTarget, CLI_ARTIFACT_PREFIX},
     release_version::ReleaseVersion,
     self_update::replace_installed_binary,
     update_check::{self, UpdateChannel, UpdateDecision},
     workflow::dev::server::{install_managed_server_version, managed_server_install_dir},
+    CLIError, Result, CLI_BUILD_DATE, CLI_VERSION,
 };
 
 use crate::args::{Cli, UpdateArgs};

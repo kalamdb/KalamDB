@@ -1,31 +1,35 @@
+import { toMilliseconds } from "@/lib/formatters";
 import type {
-  ModuleRevision,
   ProcedureListItem,
-  ProcedureLogRecord,
   ProcedureMetadata,
   ProcedureStatus,
+  SystemModuleRevisionRow,
+  SystemProcedureLogRow,
 } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const INVOCATION_OUTCOMES = new Set(["ok", "error"]);
 
-function parseTimestampMs(timestamp: string): number | null {
-  const parsed = Date.parse(timestamp);
-  return Number.isNaN(parsed) ? null : parsed;
+export function parseTimestampMs(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = toMilliseconds(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 export function deriveProcedureStatus(
   procedure: ProcedureMetadata,
-  logs: ProcedureLogRecord[],
+  logs: SystemProcedureLogRow[],
   nowMs = Date.now(),
 ): ProcedureStatus {
   if (procedure.implementation === "missing") {
-    return "error";
+    return "unimplemented";
   }
 
   const cutoff = nowMs - DAY_MS;
   const hasRecentError = logs.some((log) => {
-    if (log.procedureId !== procedure.id) {
+    if (log.procedure_id !== procedure.id) {
       return false;
     }
     if (log.outcome !== "error" && log.level.toLowerCase() !== "error") {
@@ -40,43 +44,81 @@ export function deriveProcedureStatus(
 
 export function currentRevisionForProcedure(
   procedure: ProcedureMetadata,
-  revisions: ModuleRevision[],
-): ModuleRevision | null {
-  if (procedure.revisionId) {
-    return revisions.find((revision) => revision.revisionId === procedure.revisionId) ?? null;
-  }
+  revisions: SystemModuleRevisionRow[],
+): SystemModuleRevisionRow | null {
   if (!procedure.moduleId) {
+    if (!procedure.revisionId) {
+      return null;
+    }
+    return revisions.find((revision) => revision.revision_id === procedure.revisionId) ?? null;
+  }
+
+  const moduleRevisions = revisions.filter((revision) => revision.module_id === procedure.moduleId);
+
+  if (procedure.revisionId) {
+    const exact =
+      moduleRevisions.find((revision) => revision.revision_id === procedure.revisionId) ??
+      revisions.find((revision) => revision.revision_id === procedure.revisionId);
+    if (exact) {
+      return exact;
+    }
+  }
+
+  const current = moduleRevisions.find((revision) => revision.is_current);
+  if (current) {
+    return current;
+  }
+
+  if (moduleRevisions.length === 0) {
     return null;
   }
-  return (
-    revisions.find((revision) => revision.moduleId === procedure.moduleId && revision.isCurrent) ??
-    null
+
+  return moduleRevisions.reduce((latest, revision) =>
+    (parseTimestampMs(revision.created_at) ?? 0) > (parseTimestampMs(latest.created_at) ?? 0)
+      ? revision
+      : latest,
   );
+}
+
+function latestLogMs(procedureId: string, logs: SystemProcedureLogRow[]): number | null {
+  let latest: number | null = null;
+  for (const log of logs) {
+    if (log.procedure_id !== procedureId) {
+      continue;
+    }
+    const timestampMs = parseTimestampMs(log.timestamp);
+    if (timestampMs !== null && (latest === null || timestampMs > latest)) {
+      latest = timestampMs;
+    }
+  }
+  return latest;
 }
 
 export function toProcedureListItem(
   procedure: ProcedureMetadata,
-  logs: ProcedureLogRecord[],
-  revisions: ModuleRevision[],
+  logs: SystemProcedureLogRow[],
+  revisions: SystemModuleRevisionRow[],
   nowMs = Date.now(),
 ): ProcedureListItem {
   const cutoff = nowMs - DAY_MS;
   const invocationLogs = logs.filter((log) => {
-    if (log.procedureId !== procedure.id || !INVOCATION_OUTCOMES.has(log.outcome)) {
+    if (log.procedure_id !== procedure.id || !INVOCATION_OUTCOMES.has(log.outcome)) {
       return false;
     }
     const timestampMs = parseTimestampMs(log.timestamp);
     return timestampMs !== null && timestampMs >= cutoff;
   });
   const durations = invocationLogs
-    .map((log) => log.durationMs)
+    .map((log) => log.duration_ms)
     .filter((duration) => Number.isFinite(duration) && duration > 0);
   const currentRevision = currentRevisionForProcedure(procedure, revisions);
 
   return {
     ...procedure,
     status: deriveProcedureStatus(procedure, logs, nowMs),
-    lastUpdatedMs: currentRevision?.createdAtMs ?? null,
+    lastUpdatedMs:
+      (currentRevision ? parseTimestampMs(currentRevision.created_at) : null) ??
+      latestLogMs(procedure.id, logs),
     calls24h: invocationLogs.length,
     errors24h: invocationLogs.filter((log) => log.outcome === "error").length,
     averageDurationMs:
@@ -89,6 +131,7 @@ export function toProcedureListItem(
 export function summarizeProcedureStatuses(items: ProcedureListItem[]): {
   total: number;
   ready: number;
+  unimplemented: number;
   warning: number;
   error: number;
 } {
@@ -98,6 +141,6 @@ export function summarizeProcedureStatuses(items: ProcedureListItem[]): {
       summary[item.status] += 1;
       return summary;
     },
-    { total: 0, ready: 0, warning: 0, error: 0 },
+    { total: 0, ready: 0, unimplemented: 0, warning: 0, error: 0 },
   );
 }

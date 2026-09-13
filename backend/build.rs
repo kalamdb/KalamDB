@@ -161,6 +161,7 @@ fn build_ui_if_release(repo_root: &Path) {
                  unset SKIP_UI_BUILD."
             );
         }
+        assert_ui_dist_is_real(&index_file);
         return;
     }
 
@@ -267,6 +268,7 @@ fn build_ui_if_release(repo_root: &Path) {
     if !index_file.exists() {
         panic!("UI build completed but ui/dist/index.html not found - UI build may have failed!");
     }
+    assert_ui_dist_is_real(&index_file);
 
     // Rerun if UI inputs change.
     // NOTE: do NOT watch link/sdks/typescript/client/src. The SDK build creates/removes wasm and
@@ -313,6 +315,17 @@ fn ensure_ui_dist_exists(repo_root: &Path) {
         if let Err(e) = std::fs::write(&placeholder, content) {
             println!("cargo:warning=Failed to create placeholder index.html: {}", e);
         }
+    }
+}
+
+fn assert_ui_dist_is_real(index_file: &Path) {
+    let contents = fs::read_to_string(index_file).unwrap_or_default();
+    if contents.contains("UI Not Built") || !contents.contains("id=\"root\"") {
+        panic!(
+            "{} is not a built Admin UI. Build `ui/` first or unset SKIP_UI_BUILD so the release \
+             binary can embed it.",
+            index_file.display()
+        );
     }
 }
 

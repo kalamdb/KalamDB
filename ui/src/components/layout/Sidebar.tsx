@@ -111,17 +111,18 @@ export default function Sidebar() {
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
+                size={collapsed ? "icon-lg" : "lg"}
                 className={cn(
-                  "w-full justify-start text-muted-foreground hover:text-foreground",
-                  collapsed ? "h-8 w-8 p-0 justify-center" : "h-8 gap-2 px-2.5 text-sm"
+                  "w-full text-muted-foreground hover:text-foreground",
+                  collapsed ? "justify-center" : "justify-start",
                 )}
                 aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
                 onClick={() => setCollapsed((prev) => !prev)}
               >
                 {collapsed ? (
-                  <PanelLeftOpen className="h-4 w-4" />
+                  <PanelLeftOpen />
                 ) : (
-                  <PanelLeftClose className="h-4 w-4 mr-2" />
+                  <PanelLeftClose data-icon="inline-start" />
                 )}
                 {!collapsed && <span>Collapse</span>}
               </Button>

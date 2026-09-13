@@ -7,7 +7,10 @@ use datafusion::arrow::{
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
-use kalamdb_commons::SystemTable;
+use kalamdb_commons::{
+    models::{FunctionModuleId, FunctionRevisionId},
+    SystemTable,
+};
 use kalamdb_system::{
     CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,
     CatalogStores, SystemTablesRegistry,
@@ -50,14 +53,16 @@ impl ProceduresView {
                 nullable_text_col(
                     8,
                     "revision_id",
-                    "Current module revision when implementation is module",
+                    "Pinned module revision, or inline isolate revision",
                 ),
                 text_col(9, "security", "INVOKER or DEFINER"),
                 text_col(10, "owner", "Routine owner"),
                 text_col(11, "grants", "EXECUTE grantees"),
                 nullable_text_col(12, "comment", "Optional procedure comment"),
+                nullable_text_col(13, "language", "Declared LANGUAGE, when set"),
+                nullable_text_col(14, "source", "Inline SQL/JS body when implementation is inline"),
             ],
-            "CALL-able procedures with signature, implementation kind, grants, and comments",
+            "CALL-able procedures with signature, implementation kind, grants, comments, and inline source",
         )
     }
 }
@@ -116,10 +121,12 @@ impl VirtualView for ProceduresView {
         let mut owners = StringBuilder::new();
         let mut grants = StringBuilder::new();
         let mut comments = StringBuilder::new();
+        let mut languages = StringBuilder::new();
+        let mut sources = StringBuilder::new();
 
         for routine in routines {
             let procedure_id = routine.routine_id.as_str();
-            let module_ref = current_modules.lookup(procedure_id, routine.body.is_none());
+            let module_ref = current_modules.lookup(procedure_id);
             let implementation = if module_ref.is_some() {
                 "module"
             } else if routine.body.is_some() {
@@ -142,7 +149,12 @@ impl VirtualView for ProceduresView {
                 },
                 None => {
                     module_ids.append_null();
-                    revision_ids.append_null();
+                    match routine.inline_artifact_id.as_ref() {
+                        Some(artifact_id) => {
+                            revision_ids.append_value(revision_id_for_inline_artifact(artifact_id));
+                        },
+                        None => revision_ids.append_null(),
+                    }
                 },
             }
             securities.append_value(routine.security.as_str());
@@ -151,6 +163,12 @@ impl VirtualView for ProceduresView {
                 grants_by_routine.get(procedure_id).map(Vec::as_slice).unwrap_or(&[]),
             ));
             comments.append_option(routine.comment.as_deref());
+            languages.append_option(routine.language.as_deref());
+            if implementation == "inline" {
+                sources.append_option(routine.body.as_deref());
+            } else {
+                sources.append_null();
+            }
         }
 
         RecordBatch::try_new(
@@ -168,6 +186,8 @@ impl VirtualView for ProceduresView {
                 Arc::new(owners.finish()) as ArrayRef,
                 Arc::new(grants.finish()) as ArrayRef,
                 Arc::new(comments.finish()) as ArrayRef,
+                Arc::new(languages.finish()) as ArrayRef,
+                Arc::new(sources.finish()) as ArrayRef,
             ],
         )
         .map_err(|error| RegistryError::Other(format!("failed to build procedures batch: {error}")))
@@ -184,21 +204,14 @@ pub fn create_procedures_provider(
 }
 
 struct CurrentModuleExports {
-    by_procedure:     BTreeMap<String, (String, String)>,
-    legacy_fallbacks: Vec<(String, String)>,
+    by_procedure: BTreeMap<String, (String, String)>,
 }
 
 impl CurrentModuleExports {
-    fn lookup(&self, procedure_id: &str, bodyless: bool) -> Option<(&str, &str)> {
-        if let Some((module_id, revision_id)) = self.by_procedure.get(procedure_id) {
-            return Some((module_id.as_str(), revision_id.as_str()));
-        }
-        if bodyless {
-            if let Some((module_id, revision_id)) = self.legacy_fallbacks.first() {
-                return Some((module_id.as_str(), revision_id.as_str()));
-            }
-        }
-        None
+    fn lookup(&self, procedure_id: &str) -> Option<(&str, &str)> {
+        self.by_procedure
+            .get(procedure_id)
+            .map(|(module_id, revision_id)| (module_id.as_str(), revision_id.as_str()))
     }
 }
 
@@ -216,7 +229,6 @@ fn current_module_exports(stores: &CatalogStores) -> Result<CurrentModuleExports
         .collect();
 
     let mut by_procedure = BTreeMap::new();
-    let mut legacy_fallbacks = Vec::new();
     for module in modules {
         let Some(revision_id) = module.active_revision_id else {
             continue;
@@ -226,18 +238,13 @@ fn current_module_exports(stores: &CatalogStores) -> Result<CurrentModuleExports
         };
         let module_id = module.module_id.as_str().to_string();
         let revision_id = revision_id.into_string();
-        if revision.exported_procedure_ids.is_empty() {
-            legacy_fallbacks.push((module_id, revision_id));
-            continue;
-        }
+        // An empty export list means no project-backed procedures, not "every
+        // bodyless routine belongs to this module".
         for procedure_id in &revision.exported_procedure_ids {
             by_procedure.insert(procedure_id.clone(), (module_id.clone(), revision_id.clone()));
         }
     }
-    Ok(CurrentModuleExports {
-        by_procedure,
-        legacy_fallbacks,
-    })
+    Ok(CurrentModuleExports { by_procedure })
 }
 
 fn format_signature(parameters: &[CatalogRoutineParameter]) -> String {
@@ -260,6 +267,13 @@ fn format_return_type(routine: &CatalogRoutine) -> String {
     return_type
 }
 
+const INLINE_MODULE_NAME: &str = "inline";
+
+fn revision_id_for_inline_artifact(artifact_id: &kalamdb_commons::models::ArtifactId) -> String {
+    FunctionRevisionId::from_module_artifact(&FunctionModuleId::new(INLINE_MODULE_NAME), artifact_id)
+        .into_string()
+}
+
 fn format_grants(grants: &[CatalogRoutineGrant]) -> String {
     let mut keys: Vec<String> = grants.iter().map(|grant| grant.grantee.catalog_key()).collect();
     keys.sort();
@@ -274,9 +288,34 @@ mod tests {
     fn procedures_view_definition_uses_operator_name() {
         let definition = ProceduresView::definition();
         assert_eq!(definition.table_name.as_str(), "procedures");
-        assert_eq!(definition.columns.len(), 12);
+        assert_eq!(definition.columns.len(), 14);
         assert_eq!(definition.columns[0].column_name.as_str(), "procedure_id");
         assert_eq!(definition.columns[5].column_name.as_str(), "implementation");
         assert_eq!(definition.columns[11].column_name.as_str(), "comment");
+        assert_eq!(definition.columns[12].column_name.as_str(), "language");
+        assert_eq!(definition.columns[13].column_name.as_str(), "source");
+    }
+
+    #[test]
+    fn inline_revision_id_matches_runtime_key() {
+        let artifact = kalamdb_commons::models::ArtifactId::new("abc123");
+        assert_eq!(revision_id_for_inline_artifact(&artifact), "inline:abc123");
+    }
+
+    #[test]
+    fn empty_export_set_does_not_claim_bodyless_routines() {
+        let exports = CurrentModuleExports {
+            by_procedure: BTreeMap::new(),
+        };
+        assert!(exports.lookup("api.plus_one").is_none());
+    }
+
+    #[test]
+    fn listed_export_is_module_backed() {
+        let mut by_procedure = BTreeMap::new();
+        by_procedure.insert("api.health".to_string(), ("backend".to_string(), "backend:rev".to_string()));
+        let exports = CurrentModuleExports { by_procedure };
+        assert_eq!(exports.lookup("api.health"), Some(("backend", "backend:rev")));
+        assert!(exports.lookup("api.plus_one").is_none());
     }
 }

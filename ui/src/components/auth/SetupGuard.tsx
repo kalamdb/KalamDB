@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Loader2, Database } from "lucide-react";
+import { Database } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { checkSetupStatus } from "@/store/setupSlice";
 
@@ -43,7 +44,7 @@ export default function SetupGuard({ children }: SetupGuardProps) {
           <span className="text-2xl font-bold">KalamDB</span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" />
+          <Spinner className="size-5" />
           <span>Checking server status...</span>
         </div>
       </div>

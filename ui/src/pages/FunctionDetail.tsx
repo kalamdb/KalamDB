@@ -1,12 +1,14 @@
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import { FunctionLogs } from "@/components/functions/FunctionLogs";
 import { FunctionOverview } from "@/components/functions/FunctionOverview";
 import { FunctionRevisions } from "@/components/functions/FunctionRevisions";
 import { FunctionTest } from "@/components/functions/FunctionTest";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { PageLayout } from "@/components/layout/PageLayout";
+import { PageTabs, PageTabsList } from "@/components/layout/PageTabs";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { rtkErrorMessage } from "@/features/functions/display";
 import { functionDetailPath, functionListPath } from "@/features/functions/paths";
 import { listItemsFromCatalog } from "@/services/functionsService";
@@ -27,10 +29,13 @@ export default function FunctionDetail() {
   const procedureId = decodeURIComponent(params.procedureId ?? "");
   const tab = params.tab && isFunctionDetailTab(params.tab) ? params.tab : "overview";
 
-  const { data: catalog, isFetching, error, refetch } = useGetProcedureCatalogQuery();
+  const { data: catalog, isFetching, error, refetch } = useGetProcedureCatalogQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  });
   const items = useMemo(() => (catalog ? listItemsFromCatalog(catalog) : []), [catalog]);
   const procedure = items.find((item) => item.id.toLowerCase() === procedureId.toLowerCase()) ?? null;
   const errorMessage = rtkErrorMessage(error, "Failed to load function catalog");
+  const title = procedure?.id ?? procedureId;
 
   if (params.tab && !isFunctionDetailTab(params.tab) && procedureId) {
     return <Navigate to={functionDetailPath(procedureId)} replace />;
@@ -38,24 +43,23 @@ export default function FunctionDetail() {
 
   return (
     <PageLayout
-      title={procedure?.id ?? procedureId}
+      breadcrumb={(
+        <PageBreadcrumb
+          items={[
+            { label: "Functions", to: functionListPath() },
+            { label: title, mono: true },
+          ]}
+        />
+      )}
+      title={<span className="font-mono">{title}</span>}
       description={procedure?.comment || "Inspect this server function."}
       actions={(
         <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching}>
-          <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+          <RefreshCw data-icon="inline-start" className={isFetching ? "animate-spin" : undefined} />
           Refresh
         </Button>
       )}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Link to={functionListPath()} className="inline-flex items-center gap-1 hover:text-foreground">
-          <ArrowLeft className="size-3.5" />
-          Functions
-        </Link>
-        <span>/</span>
-        <span className="text-foreground">{procedure?.id ?? procedureId}</span>
-      </div>
-
       {errorMessage ? <p className="text-sm text-destructive">{errorMessage}</p> : null}
 
       {!catalog && isFetching ? (
@@ -63,7 +67,7 @@ export default function FunctionDetail() {
       ) : !catalog || !procedure ? (
         <p className="text-sm text-muted-foreground">Procedure {procedureId} was not found in the catalog.</p>
       ) : (
-        <Tabs
+        <PageTabs
           value={tab}
           onValueChange={(next) => {
             if (isFunctionDetailTab(next)) {
@@ -71,26 +75,26 @@ export default function FunctionDetail() {
             }
           }}
         >
-          <TabsList variant="line">
+          <PageTabsList>
             {FUNCTION_DETAIL_TABS.map((item) => (
               <TabsTrigger key={item} value={item}>
                 {TAB_LABELS[item]}
               </TabsTrigger>
             ))}
-          </TabsList>
-          <TabsContent value="overview" className="mt-4">
+          </PageTabsList>
+          <TabsContent value="overview">
             <FunctionOverview procedure={procedure} snapshot={catalog} />
           </TabsContent>
-          <TabsContent value="logs" className="mt-4">
+          <TabsContent value="logs">
             <FunctionLogs procedureId={procedure.id} />
           </TabsContent>
-          <TabsContent value="revisions" className="mt-4">
+          <TabsContent value="revisions">
             <FunctionRevisions moduleId={procedure.moduleId} revisions={catalog.revisions} />
           </TabsContent>
-          <TabsContent value="test" className="mt-4">
+          <TabsContent value="test">
             {tab === "test" ? <FunctionTest procedure={procedure} /> : null}
           </TabsContent>
-        </Tabs>
+        </PageTabs>
       )}
     </PageLayout>
   );

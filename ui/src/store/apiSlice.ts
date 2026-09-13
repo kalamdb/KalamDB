@@ -74,13 +74,14 @@ import type { JobFilters } from "@/services/jobService";
 import {
   fetchProcedureCatalog,
   fetchProcedureLogs,
+  fetchModuleInstances,
   invokeProcedure,
   rollbackModuleRevision,
   type InvokeProcedureResult,
   type ProcedureLogFilters,
   type RollbackModuleResult,
 } from "@/services/functionsService";
-import type { ProcedureCatalogSnapshot, ProcedureLogRecord } from "@/features/functions/types";
+import type { ProcedureCatalogSnapshot, SystemModuleInstanceRow, SystemProcedureLogRow } from "@/features/functions/types";
 
 interface CustomQueryError {
   status: "CUSTOM_ERROR";
@@ -108,6 +109,7 @@ export const apiSlice = createApi({
     "ProcedureCatalog",
     "ProcedureLogs",
     "ModuleRevisions",
+    "ModuleInstances",
   ],
   endpoints: (builder) => ({
     getSettings: builder.query<Setting[], void>({
@@ -426,7 +428,7 @@ export const apiSlice = createApi({
       },
       providesTags: ["ProcedureCatalog", "ModuleRevisions"],
     }),
-    getProcedureLogs: builder.query<ProcedureLogRecord[], ProcedureLogFilters>({
+    getProcedureLogs: builder.query<SystemProcedureLogRow[], ProcedureLogFilters>({
       async queryFn(filters) {
         try {
           const data = await fetchProcedureLogs(filters);
@@ -437,6 +439,18 @@ export const apiSlice = createApi({
         }
       },
       providesTags: ["ProcedureLogs"],
+    }),
+    getModuleInstances: builder.query<SystemModuleInstanceRow[], void>({
+      async queryFn() {
+        try {
+          const data = await fetchModuleInstances();
+          return { data };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to fetch module instances";
+          return { error: { status: "CUSTOM_ERROR", error: message } };
+        }
+      },
+      providesTags: ["ModuleInstances"],
     }),
     invokeProcedure: builder.mutation<
       InvokeProcedureResult,
@@ -451,7 +465,7 @@ export const apiSlice = createApi({
           return { error: { status: "CUSTOM_ERROR", error: message } };
         }
       },
-      invalidatesTags: ["ProcedureLogs", "ProcedureCatalog"],
+      invalidatesTags: ["ProcedureLogs", "ModuleInstances"],
     }),
     rollbackModuleRevision: builder.mutation<
       RollbackModuleResult,
@@ -499,6 +513,7 @@ export const {
   useConsumeStreamingMessagesMutation,
   useGetProcedureCatalogQuery,
   useGetProcedureLogsQuery,
+  useGetModuleInstancesQuery,
   useInvokeProcedureMutation,
   useRollbackModuleRevisionMutation,
 } = apiSlice;

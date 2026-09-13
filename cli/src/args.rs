@@ -468,7 +468,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{Cli, CliCommand, DevCommand, TokenCommand, TokenRole, parse_watch_interval};
+    use super::{parse_watch_interval, Cli, CliCommand, DevCommand, TokenCommand, TokenRole};
 
     #[test]
     fn parse_watch_interval_defaults_to_seconds() {

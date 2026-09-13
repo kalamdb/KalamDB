@@ -15,9 +15,7 @@ use url::Url;
 use crate::{
     error::{CLIError, Result},
     process::spawn_detached,
-    session::auth_options::{
-        exchange_oidc_authorization_code, ExternalLoginSession, OidcLoginOptions,
-    },
+    session::auth_options::{exchange_oidc_authorization_code, ExternalLoginSession, OidcLoginOptions},
     terminal_ui,
 };
 

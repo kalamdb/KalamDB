@@ -17,10 +17,12 @@ import { summarizeProcedureStatuses } from "@/features/functions/status";
 import type { ProcedureStatus } from "@/features/functions/types";
 import { useGetProcedureCatalogQuery } from "@/store/apiSlice";
 
-const STATUS_FILTERS = ["all", "ready", "warning", "error"] as const;
+const STATUS_FILTERS = ["all", "ready", "unimplemented", "warning", "error"] as const;
 
 export default function Functions() {
-  const { data: catalog, isFetching, error, refetch } = useGetProcedureCatalogQuery();
+  const { data: catalog, isFetching, error, refetch } = useGetProcedureCatalogQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>("all");
 
@@ -51,7 +53,7 @@ export default function Functions() {
       description="Manage server functions."
       actions={(
         <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching}>
-          <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+          <RefreshCw data-icon="inline-start" className={isFetching ? "animate-spin" : undefined} />
           Refresh
         </Button>
       )}
@@ -61,16 +63,17 @@ export default function Functions() {
           {formatCount(summary.total)} function{summary.total === 1 ? "" : "s"}
         </span>
         <span className="text-muted-foreground">
-          {summary.ready} ready · {summary.warning} warning · {summary.error} errors
+          {summary.ready} ready · {summary.unimplemented} unimplemented · {summary.warning} warning ·{" "}
+          {summary.error} errors
         </span>
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative max-w-sm flex-1">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search functions..."
-            className="pl-9"
+            className="pl-8"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />

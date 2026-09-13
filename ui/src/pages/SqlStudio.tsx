@@ -297,7 +297,9 @@ export default function SqlStudio() {
     isFetching: isSchemaRefreshing,
     refetch: refetchSchemaTree,
   } = useGetSqlStudioSchemaTreeQuery();
-  const { data: procedureCatalog } = useGetProcedureCatalogQuery();
+  const { data: procedureCatalog } = useGetProcedureCatalogQuery(undefined, {
+    refetchOnMountOrArgChange: true,
+  });
   const procedures = procedureCatalog?.procedures ?? [];
   const schemaFilter = useAppSelector(selectSchemaFilter);
   const favoritesExpanded = useAppSelector(selectFavoritesExpanded);
@@ -1245,7 +1247,7 @@ export default function SqlStudio() {
             <div className="relative">
               <Button
                 variant="secondary"
-                size="icon-xs"
+                size="icon"
                 onClick={() => setShowSubscriptionOptions((prev) => !prev)}
                 aria-label="Subscription options"
                 title="Subscription options"
@@ -1261,8 +1263,8 @@ export default function SqlStudio() {
                     <span className="text-xs font-medium text-foreground">Subscription options</span>
                     <Button
                       variant="ghost"
-                      size="xs"
-                      className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                      size="sm"
+                      className="text-muted-foreground hover:text-foreground"
                       onClick={() => updateActiveTab({ subscriptionOptions: undefined, isDirty: true })}
                     >
                       Clear
@@ -1362,8 +1364,7 @@ export default function SqlStudio() {
       </div>
       <Button
         variant="secondary"
-        size="xs"
-        className="h-[26px]"
+        size="sm"
         onClick={() => saveTab(activeTab.id, false)}
       >
         <Save data-icon="inline-start" />
@@ -1371,8 +1372,7 @@ export default function SqlStudio() {
       </Button>
       {activeTab.isLive ? (
         <Button
-          size="xs"
-          className="h-[26px]"
+          size="sm"
           onClick={() => executeFromToolbar("auto")}
           disabled={isExecuteDisabled}
         >
@@ -1390,8 +1390,8 @@ export default function SqlStudio() {
       ) : (
         <div className="flex shrink-0">
           <Button
-            size="xs"
-            className="h-[26px] rounded-r-none"
+            size="sm"
+            className="rounded-r-none"
             onClick={() => executeFromToolbar("auto")}
             disabled={isExecuteDisabled}
           >
@@ -1401,12 +1401,12 @@ export default function SqlStudio() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                size="xs"
-                className="h-[26px] rounded-l-none border-l border-primary-foreground/20 px-2"
+                size="sm"
+                className="rounded-l-none border-l border-primary-foreground/20 px-1.5"
                 disabled={isExecuteDisabled}
                 aria-label="Execute options"
               >
-                <ChevronDown className="h-3.5 w-3.5" />
+                <ChevronDown data-icon="inline-end" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1426,17 +1426,17 @@ export default function SqlStudio() {
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="secondary" size="icon-xs" className="h-[26px]" aria-label="More query actions">
+          <Button variant="secondary" size="icon" aria-label="More query actions">
             <MoreHorizontal data-icon="only" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => saveTab(activeTab.id, true)}>
-            <Copy className="mr-2 h-3.5 w-3.5" />
+            <Copy />
             Save a copy
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={deleteActiveTab} className="text-destructive">
-            <Trash2 className="mr-2 h-3.5 w-3.5" />
+          <DropdownMenuItem variant="destructive" onSelect={deleteActiveTab}>
+            <Trash2 />
             Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1523,15 +1523,15 @@ export default function SqlStudio() {
                   <div className="absolute right-2 top-1.5 z-20">
                     <Button
                       variant="ghost"
-                      size="icon-sm"
+                      size="icon-lg"
                       className="text-muted-foreground hover:text-foreground"
                       onClick={toggleInspector}
                       title={isInspectorCollapsed ? "Expand details panel" : "Collapse details panel"}
                     >
                       {isInspectorCollapsed ? (
-                        <PanelRightOpen className="h-4 w-4" />
+                        <PanelRightOpen />
                       ) : (
-                        <PanelRightClose className="h-4 w-4" />
+                        <PanelRightClose />
                       )}
                     </Button>
                   </div>

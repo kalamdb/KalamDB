@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -22,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Loader2, RefreshCw, Database, HardDrive, Cloud, Plus, Pencil, Activity } from 'lucide-react';
+import { RefreshCw, Database, HardDrive, Cloud, Plus, Pencil, Activity } from 'lucide-react';
 
 interface StorageListProps {
   onSelectStorage?: (storage: Storage) => void;
@@ -183,7 +184,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
           <div className="space-y-4">
             {healthLoadingId === healthStorage?.storage_id ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Spinner className="size-4" />
                 Running health checks...
               </div>
             ) : healthError ? (
@@ -227,7 +228,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
       {/* Table */}
       {isLoading && storages.length === 0 ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Spinner className="size-6 text-muted-foreground" />
         </div>
       ) : storages.length === 0 ? (
         <Card>
@@ -290,7 +291,7 @@ export function StorageList({ onSelectStorage }: StorageListProps) {
                         disabled={healthLoadingId === storage.storage_id}
                       >
                         {healthLoadingId === storage.storage_id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Spinner className="size-4" />
                         ) : (
                           <Activity className="h-4 w-4" />
                         )}

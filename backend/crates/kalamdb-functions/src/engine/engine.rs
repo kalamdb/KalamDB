@@ -35,6 +35,7 @@ pub struct FunctionInstanceSnapshot {
     pub state:           String,
     pub reserved_bytes:  u64,
     pub used_heap_bytes: u64,
+    pub peak_heap_bytes: u64,
     pub invocations:     u64,
 }
 
@@ -138,6 +139,7 @@ impl SessionInstance {
                 state: "active".into(),
                 reserved_bytes: memory.amount as u64,
                 used_heap_bytes,
+                peak_heap_bytes: used_heap_bytes,
                 invocations: 0,
             },
         );
@@ -154,8 +156,10 @@ impl SessionInstance {
 
     fn publish(&self, state: &str, used_heap_bytes: usize) {
         if let Some(mut row) = self.instances.get_mut(&self.id) {
+            let used = used_heap_bytes as u64;
             row.state = state.to_string();
-            row.used_heap_bytes = used_heap_bytes as u64;
+            row.used_heap_bytes = used;
+            row.peak_heap_bytes = row.peak_heap_bytes.max(used);
             row.invocations = self.invocations;
         }
     }
@@ -994,6 +998,7 @@ mod tests {
         assert_eq!(snapshot[0].state, "idle");
         assert_eq!(snapshot[0].worker, 0);
         assert!(snapshot[0].reserved_bytes > 0);
+        assert!(snapshot[0].peak_heap_bytes >= snapshot[0].used_heap_bytes);
     }
 
     #[tokio::test]

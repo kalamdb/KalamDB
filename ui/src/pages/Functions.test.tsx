@@ -30,6 +30,8 @@ const snapshot: ProcedureCatalogSnapshot = {
       moduleId: "backend",
       revisionId: "backend:aaa111",
       grants: "dba",
+      language: null,
+      source: null,
     },
     {
       id: "chat.send_message",
@@ -46,6 +48,26 @@ const snapshot: ProcedureCatalogSnapshot = {
       moduleId: "backend",
       revisionId: "backend:84ac91abcdef",
       grants: "dba",
+      language: null,
+      source: null,
+    },
+    {
+      id: "api.plus_one",
+      schema: "api",
+      name: "plus_one",
+      signature: "x INT",
+      parameters: [],
+      returnType: { kind: "builtin", builtin: "INT", sqlName: "INT", notNull: false, nonempty: false },
+      returnTypeName: "INT",
+      security: "INVOKER",
+      owner: "root",
+      comment: null,
+      implementation: "missing",
+      moduleId: null,
+      revisionId: null,
+      grants: "dba",
+      language: null,
+      source: null,
     },
   ],
   types: [],
@@ -53,42 +75,42 @@ const snapshot: ProcedureCatalogSnapshot = {
   parameters: [],
   modules: [
     {
-      moduleId: "backend",
+      module_id: "backend",
       runtime: "typescript",
-      currentRevisionId: "backend:84ac91abcdef",
-      contractHash: "hash",
-      abiVersion: 2,
+      current_revision_id: "backend:84ac91abcdef",
+      contract_hash: "hash",
+      abi_version: 2,
     },
   ],
   revisions: [
     {
-      moduleId: "backend",
-      revisionId: "backend:84ac91abcdef",
-      artifactId: "84ac91abcdef",
-      artifactBytes: 84000,
-      contractHash: "hash",
-      createdAtMs: Date.parse("2024-10-24T12:41:00Z"),
-      isCurrent: true,
-      exports: ["chat.send_message"],
+      module_id: "backend",
+      revision_id: "backend:84ac91abcdef",
+      artifact_id: "84ac91abcdef",
+      artifact_bytes: 84000,
+      contract_hash: "hash",
+      created_at: "2024-10-24T12:41:00.000Z",
+      is_current: true,
+      exports: "chat.send_message",
     },
   ],
   logs: [
     {
       timestamp: "2026-09-11T11:00:00.000Z",
-      nodeId: "n1",
-      executionId: "01KERR",
-      requestId: "01KERR",
-      procedureId: "chat.send_message",
-      moduleId: "backend",
-      revisionId: "backend:84ac91abcdef",
+      node_id: "n1",
+      execution_id: "01KERR",
+      request_id: "01KERR",
+      procedure_id: "chat.send_message",
+      module_id: "backend",
+      revision_id: "backend:84ac91abcdef",
       actor: "root",
       origin: "http",
       outcome: "error",
       channel: "invocation",
       level: "error",
-      errorCode: "RATE_LIMIT",
+      error_code: "RATE_LIMIT",
       message: "rate limited",
-      durationMs: 12,
+      duration_ms: 12,
     },
   ],
 };
@@ -123,7 +145,15 @@ describe("Functions list", () => {
     renderList();
     expect(screen.getByText("api.create_order")).toBeTruthy();
     expect(screen.getByText("chat.send_message")).toBeTruthy();
-    expect(screen.getByText("2 functions")).toBeTruthy();
+    expect(screen.getByText("3 functions")).toBeTruthy();
+    expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
+    expect(screen.getByText("Unimplemented")).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Function" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Status" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Current revision" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Last updated" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Calls 24h" })).toBeTruthy();
+    expect(screen.getByText("backend:aaa111")).toBeTruthy();
   });
 
   it("filters procedures by search", () => {

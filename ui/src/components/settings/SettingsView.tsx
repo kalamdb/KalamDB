@@ -3,7 +3,8 @@ import { useGetSettingsQuery } from '@/store/apiSlice';
 import { mapSettingsRows, type Setting } from '@/services/systemTableService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
+import { RefreshCw, Settings as SettingsIcon } from 'lucide-react';
 
 interface SettingsViewProps {
   filterCategory?: string;
@@ -45,7 +46,7 @@ export function SettingsView({ filterCategory }: SettingsViewProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Spinner className="size-6 text-muted-foreground" />
       </div>
     );
   }

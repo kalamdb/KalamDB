@@ -360,7 +360,7 @@ export default function StreamingOffsets() {
               <div className="flex items-center gap-1">
                 <Button
                   variant="outline"
-                  size="icon-sm"
+                  size="icon-lg"
                   disabled={page === 0}
                   onClick={() => setPage((currentPage) => Math.max(0, currentPage - 1))}
                 >
@@ -369,7 +369,7 @@ export default function StreamingOffsets() {
                 <span className="px-2 text-sm text-muted-foreground">{page + 1} / {totalPages}</span>
                 <Button
                   variant="outline"
-                  size="icon-sm"
+                  size="icon-lg"
                   disabled={page >= totalPages - 1}
                   onClick={() => setPage((currentPage) => Math.min(totalPages - 1, currentPage + 1))}
                 >

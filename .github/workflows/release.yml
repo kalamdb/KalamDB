@@ -83,6 +83,10 @@ env:
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # kalamdb-server default features are empty. Linux/macOS used to cargo-build
+  # without this list, so GitHub server archives shipped with UI: disabled.
+  # Same feature set on every platform so GitHub binaries match Docker/runtime.
+  KALAMDB_SERVER_RELEASE_FEATURES: embedded-ui,traceability,mimalloc,cloud-aws
 
 jobs:
   resolve_platforms:
@@ -712,6 +716,10 @@ jobs:
           name: ui-dist
           path: ui/dist
 
+      - name: Verify Admin UI dist
+        shell: bash
+        run: .github/scripts/verify-ui-dist.sh ui/dist/index.html
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -740,6 +748,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo build \
+            -p kalamdb-server \
+            --no-default-features \
+            --features "${KALAMDB_SERVER_RELEASE_FEATURES}" \
             --profile release-dist \
             --target x86_64-unknown-linux-gnu \
             --bin kalamdb-server
@@ -781,6 +792,10 @@ jobs:
           name: ui-dist
           path: ui/dist
 
+      - name: Verify Admin UI dist
+        shell: bash
+        run: .github/scripts/verify-ui-dist.sh ui/dist/index.html
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -807,6 +822,9 @@ jobs:
         run: |
           set -euo pipefail
           cross build \
+            -p kalamdb-server \
+            --no-default-features \
+            --features "${KALAMDB_SERVER_RELEASE_FEATURES}" \
             --profile docker \
             --target aarch64-unknown-linux-gnu \
             --bin kalamdb-server
@@ -910,6 +928,10 @@ jobs:
           name: ui-dist
           path: ui/dist
 
+      - name: Verify Admin UI dist
+        shell: bash
+        run: .github/scripts/verify-ui-dist.sh ui/dist/index.html
+
       - name: Setup Rust (MSVC)
         uses: dtolnay/rust-toolchain@master
         with:
@@ -964,7 +986,7 @@ jobs:
           cargo build `
             -p kalamdb-server `
             --no-default-features `
-            --features embedded-ui,traceability,mimalloc,cloud-aws `
+            --features "$env:KALAMDB_SERVER_RELEASE_FEATURES" `
             --profile release-dist `
             --timings `
             --bin kalamdb-server
@@ -1017,6 +1039,10 @@ jobs:
           name: ui-dist
           path: ui/dist
 
+      - name: Verify Admin UI dist
+        shell: bash
+        run: .github/scripts/verify-ui-dist.sh ui/dist/index.html
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -1055,6 +1081,9 @@ jobs:
         run: |
           set -euo pipefail
           "$HOME/.cargo/bin/rustup" run "${{ env.RUST_VERSION }}" cargo build \
+            -p kalamdb-server \
+            --no-default-features \
+            --features "${KALAMDB_SERVER_RELEASE_FEATURES}" \
             --profile release-dist \
             --target aarch64-apple-darwin \
             --bin kalamdb-server
@@ -1091,6 +1120,23 @@ jobs:
 
           if ! curl -s http://localhost:2900/v1/api/healthcheck > /dev/null 2>&1; then
             echo "Server failed to start within 60 seconds"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+
+          UI_STATUS=$(curl -sS -o /tmp/admin-ui.html -w "%{http_code}" http://127.0.0.1:2900/ui/)
+          if [[ "$UI_STATUS" != "200" ]]; then
+            echo "Admin UI HTTP $UI_STATUS — expected 200 from embedded /ui/"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          if grep -Fq "UI Not Built" /tmp/admin-ui.html || grep -Fq "Admin UI not built" /tmp/admin-ui.html; then
+            echo "Admin UI was not embedded in the release binary"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          fi
+          if ! grep -Fq "KalamDB Admin" /tmp/admin-ui.html; then
+            echo "Admin UI HTML missing expected title"
             kill $SERVER_PID 2>/dev/null || true
             exit 1
           fi

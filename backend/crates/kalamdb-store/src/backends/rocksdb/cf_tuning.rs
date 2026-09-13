@@ -30,7 +30,7 @@ pub(crate) fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSetting
     let profile_settings = profile_settings(settings, profile);
     cf_opts.set_write_buffer_size(profile_settings.write_buffer_size);
     cf_opts.set_max_write_buffer_number(profile_settings.max_write_buffers);
-    cf_opts.set_compression_type(DBCompressionType::Lz4);
+    cf_opts.set_compression_type(DBCompressionType::Zstd);
     cf_opts.set_bottommost_compression_type(DBCompressionType::Zstd);
     cf_opts.set_level_compaction_dynamic_level_bytes(true);
     cf_opts.set_compaction_pri(CompactionPri::MinOverlappingRatio);

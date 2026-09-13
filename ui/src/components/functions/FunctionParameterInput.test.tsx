@@ -6,89 +6,93 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FunctionParameterInput } from "./FunctionParameterInput";
 import { resolveProcedureCatalog } from "@/features/functions/catalog";
 import { defaultValueForType, type TestFieldError, type TestValue } from "@/features/functions/testValues";
-import type { CatalogParameterRow, CatalogTypeFieldRow, CatalogTypeRow, ResolvedKalamType } from "@/features/functions/types";
+import type { ResolvedKalamType, SystemRoutineParameterRow, SystemTypeFieldRow, SystemTypeRow } from "@/features/functions/types";
 
 function parameter(
   name: string,
   ordinal: number,
   typeName: string,
-  extras: Partial<CatalogParameterRow> = {},
-): CatalogParameterRow {
+  extras: Partial<SystemRoutineParameterRow> = {},
+): SystemRoutineParameterRow {
   return {
-    parameterId: `p:${ordinal}`,
-    routineId: "api.create_order",
+    parameter_id: `p:${ordinal}`,
+    routine_id: "api.create_order",
     name,
     ordinal,
-    typeId: extras.typeId ?? null,
-    typeName,
-    isArray: extras.isArray ?? false,
-    notNull: extras.notNull ?? false,
-    nonempty: extras.nonempty ?? false,
+    type_id: null,
+    type_name: typeName,
+    is_array: false,
+    not_null: false,
+    nonempty: false,
+    data_type: null,
+    ...extras,
   };
 }
 
-const types: CatalogTypeRow[] = [
+const types: SystemTypeRow[] = [
   {
-    typeId: "api.address",
-    namespaceId: "api",
+    type_id: "api.address",
+    namespace_id: "api",
     name: "address",
     kind: "composite",
-    tableId: null,
-    sourceTypeId: null,
+    table_id: null,
+    source_type_id: null,
     comment: null,
   },
   {
-    typeId: "chat.message_status",
-    namespaceId: "chat",
+    type_id: "chat.message_status",
+    namespace_id: "chat",
     name: "message_status",
     kind: "enum",
-    tableId: null,
-    sourceTypeId: null,
+    table_id: null,
+    source_type_id: null,
     comment: null,
   },
   {
-    typeId: "api.order_item",
-    namespaceId: "api",
+    type_id: "api.order_item",
+    namespace_id: "api",
     name: "order_item",
     kind: "composite",
-    tableId: null,
-    sourceTypeId: null,
+    table_id: null,
+    source_type_id: null,
     comment: null,
   },
 ];
 
-const fields: CatalogTypeFieldRow[] = [
-  { typeFieldId: "a:city", typeId: "api.address", name: "city", ordinal: 1, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "a:country", typeId: "api.address", name: "country", ordinal: 2, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "s:sent", typeId: "chat.message_status", name: "sent", ordinal: 1, fieldTypeId: null, typeName: "sent", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "s:delivered", typeId: "chat.message_status", name: "delivered", ordinal: 2, fieldTypeId: null, typeName: "delivered", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "i:sku", typeId: "api.order_item", name: "sku", ordinal: 1, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "i:qty", typeId: "api.order_item", name: "quantity", ordinal: 2, fieldTypeId: null, typeName: "INT", isArray: false, notNull: true, nonempty: false },
+const fields: SystemTypeFieldRow[] = [
+  { type_field_id: "a:city", type_id: "api.address", name: "city", ordinal: 1, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "a:country", type_id: "api.address", name: "country", ordinal: 2, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "s:sent", type_id: "chat.message_status", name: "sent", ordinal: 1, field_type_id: null, type_name: "sent", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "s:delivered", type_id: "chat.message_status", name: "delivered", ordinal: 2, field_type_id: null, type_name: "delivered", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "i:sku", type_id: "api.order_item", name: "sku", ordinal: 1, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "i:qty", type_id: "api.order_item", name: "quantity", ordinal: 2, field_type_id: null, type_name: "INT", is_array: false, not_null: true, nonempty: false, data_type: null },
 ];
 
 const [procedure] = resolveProcedureCatalog(
   [
     {
-      procedureId: "api.create_order",
+      procedure_id: "api.create_order",
       schema: "api",
       name: "create_order",
       signature: "",
-      returnType: "UUID",
+      return_type: "UUID",
       implementation: "module",
-      moduleId: "backend",
-      revisionId: "backend:abc",
+      module_id: "backend",
+      revision_id: "backend:abc",
       security: "INVOKER",
       owner: "root",
       grants: "dba",
       comment: null,
+      language: null,
+      source: null,
     },
   ],
   [
-    parameter("customer_id", 1, "UUID", { notNull: true }),
+    parameter("customer_id", 1, "UUID", { not_null: true }),
     parameter("comment", 2, "TEXT"),
-    parameter("status", 3, "chat.message_status", { typeId: "chat.message_status" }),
-    parameter("items", 4, "api.order_item", { typeId: "api.order_item", isArray: true, notNull: true }),
-    parameter("address", 5, "api.address", { typeId: "api.address", notNull: true }),
+    parameter("status", 3, "chat.message_status", { type_id: "chat.message_status" }),
+    parameter("items", 4, "api.order_item", { type_id: "api.order_item", is_array: true, not_null: true }),
+    parameter("address", 5, "api.address", { type_id: "api.address", not_null: true }),
   ],
   types,
   fields,
@@ -167,6 +171,7 @@ describe("FunctionParameterInput", () => {
     render(<Harness name="items" type={type} />);
     fireEvent.click(screen.getByRole("button", { name: "Add item" }));
     expect(screen.getByText("sku")).toBeTruthy();
+    expect(screen.getAllByText("sku")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Remove items item 1" }));
     expect(screen.queryByText("sku")).toBeNull();
   });

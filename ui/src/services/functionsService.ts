@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { getCurrentToken } from "@/lib/kalam-client";
 import {
   system_module_revisions,
+  system_module_instances,
   system_modules,
   system_procedure_logs,
   system_procedures,
@@ -11,26 +12,12 @@ import {
   system_type_fields,
   system_types,
 } from "@/lib/schema";
-import { and, desc, eq, type SQL } from "drizzle-orm";
-import {
-  normalizeCatalogParameter,
-  normalizeCatalogProcedure,
-  normalizeCatalogType,
-  normalizeCatalogTypeField,
-  resolveProcedureCatalog,
-} from "@/features/functions/catalog";
+import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { catalogText, resolveProcedureCatalog } from "@/features/functions/catalog";
+import { isBuiltinSqlTypeName } from "@/features/functions/format";
 import { toProcedureListItem } from "@/features/functions/status";
-import type {
-  CatalogParameterRow,
-  CatalogProcedureRow,
-  CatalogTypeFieldRow,
-  CatalogTypeRow,
-  FunctionModule,
-  ModuleRevision,
-  ProcedureCatalogSnapshot,
-  ProcedureListItem,
-  ProcedureLogRecord,
-} from "@/features/functions/types";
+import type { SystemModuleInstanceRow, SystemProcedureLogRow, SystemTypeFieldRow, SystemTypeRow } from "@/lib/models";
+import type { ProcedureCatalogSnapshot, ProcedureListItem } from "@/features/functions/types";
 
 export interface ProcedureLogFilters {
   procedureId: string;
@@ -59,148 +46,166 @@ export interface RollbackModuleResult {
   message?: string;
 }
 
-function unwrapText(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return null;
+const CATALOG_SCAN_LIMIT = 1000;
+
+function isNamedCatalogTypeId(typeId: string): boolean {
+  return Boolean(typeId) && !isBuiltinSqlTypeName(typeId);
 }
 
-function unwrapNumber(value: unknown, fallback = 0): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
+export function selectTypeFieldsForCatalog(
+  scannedFields: SystemTypeFieldRow[],
+  seedTypeIds: Iterable<string>,
+): SystemTypeFieldRow[] {
+  const fieldsByTypeId = new Map<string, SystemTypeFieldRow[]>();
+  for (const row of scannedFields) {
+    const typeId = catalogText(row.type_id);
+    if (!typeId) {
+      continue;
+    }
+    const existing = fieldsByTypeId.get(typeId);
+    if (existing) {
+      existing.push(row);
+    } else {
+      fieldsByTypeId.set(typeId, [row]);
     }
   }
-  return fallback;
+
+  const selected: SystemTypeFieldRow[] = [];
+  const seen = new Set<string>();
+  const pending = [...new Set(seedTypeIds)].filter(isNamedCatalogTypeId);
+
+  for (let index = 0; index < pending.length; index += 1) {
+    const typeId = pending[index];
+    if (seen.has(typeId)) {
+      continue;
+    }
+    seen.add(typeId);
+    const rows = fieldsByTypeId.get(typeId);
+    if (!rows) {
+      continue;
+    }
+    selected.push(...rows);
+    for (const row of rows) {
+      const nested = catalogText(row.field_type_id);
+      if (nested && !seen.has(nested) && isNamedCatalogTypeId(nested)) {
+        pending.push(nested);
+      }
+    }
+  }
+
+  return selected;
 }
 
-function unwrapBoolean(value: unknown): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    return normalized === "true" || normalized === "1";
-  }
-  return false;
-}
-
-function splitExports(value: string): string[] {
-  if (!value.trim()) {
+async function fetchMissingTypes(typeIds: string[], presentTypeIds: Set<string>): Promise<SystemTypeRow[]> {
+  const missing = [...new Set(typeIds)].filter(
+    (typeId) => isNamedCatalogTypeId(typeId) && !presentTypeIds.has(typeId),
+  );
+  if (missing.length === 0) {
     return [];
   }
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const db = getDb();
+  return db
+    .select()
+    .from(system_types)
+    .where(inArray(system_types.type_id, missing))
+    .limit(CATALOG_SCAN_LIMIT);
 }
 
-export function normalizeProcedureLog(row: {
-  timestamp: unknown;
-  node_id: unknown;
-  execution_id: unknown;
-  request_id: unknown;
-  procedure_id: unknown;
-  module_id?: unknown;
-  revision_id?: unknown;
-  actor: unknown;
-  origin: unknown;
-  outcome: unknown;
-  channel: unknown;
-  level: unknown;
-  error_code?: unknown;
-  message?: unknown;
-  duration_ms: unknown;
-}): ProcedureLogRecord {
-  return {
-    timestamp: unwrapText(row.timestamp) ?? "",
-    nodeId: unwrapText(row.node_id) ?? "",
-    executionId: unwrapText(row.execution_id) ?? "",
-    requestId: unwrapText(row.request_id) ?? "",
-    procedureId: unwrapText(row.procedure_id) ?? "",
-    moduleId: unwrapText(row.module_id),
-    revisionId: unwrapText(row.revision_id),
-    actor: unwrapText(row.actor) ?? "",
-    origin: unwrapText(row.origin) ?? "",
-    outcome: unwrapText(row.outcome) ?? "",
-    channel: unwrapText(row.channel) ?? "",
-    level: unwrapText(row.level) ?? "info",
-    errorCode: unwrapText(row.error_code),
-    message: unwrapText(row.message),
-    durationMs: unwrapNumber(row.duration_ms),
-  };
+async function fetchTypeFieldsForCatalog(
+  seedTypeIds: Iterable<string>,
+  scannedFields: SystemTypeFieldRow[],
+): Promise<SystemTypeFieldRow[]> {
+  const selected = selectTypeFieldsForCatalog(scannedFields, seedTypeIds);
+  if (scannedFields.length < CATALOG_SCAN_LIMIT) {
+    return selected;
+  }
+
+  const selectedTypeIds = new Set(selected.map((row) => catalogText(row.type_id)).filter(Boolean));
+  const missing = [...new Set(seedTypeIds)].filter(
+    (typeId) => isNamedCatalogTypeId(typeId) && !selectedTypeIds.has(typeId),
+  );
+  if (missing.length === 0) {
+    return selected;
+  }
+
+  const db = getDb();
+  const extra = await db
+    .select()
+    .from(system_type_fields)
+    .where(inArray(system_type_fields.type_id, missing))
+    .limit(CATALOG_SCAN_LIMIT);
+  return [...selected, ...selectTypeFieldsForCatalog(extra, missing)];
 }
 
-export function normalizeModuleRevision(row: {
-  module_id: unknown;
-  revision_id: unknown;
-  artifact_id: unknown;
-  artifact_bytes: unknown;
-  contract_hash: unknown;
-  created_at: unknown;
-  is_current: unknown;
-  exports: unknown;
-}): ModuleRevision {
-  return {
-    moduleId: unwrapText(row.module_id) ?? "",
-    revisionId: unwrapText(row.revision_id) ?? "",
-    artifactId: unwrapText(row.artifact_id) ?? "",
-    artifactBytes: unwrapNumber(row.artifact_bytes),
-    contractHash: unwrapText(row.contract_hash) ?? "",
-    createdAtMs: unwrapNumber(row.created_at),
-    isCurrent: unwrapBoolean(row.is_current),
-    exports: splitExports(unwrapText(row.exports) ?? ""),
-  };
-}
-
-export function normalizeFunctionModule(row: {
-  module_id: unknown;
-  runtime: unknown;
-  current_revision_id?: unknown;
-  contract_hash?: unknown;
-  abi_version: unknown;
-}): FunctionModule {
-  return {
-    moduleId: unwrapText(row.module_id) ?? "",
-    runtime: unwrapText(row.runtime) ?? "typescript",
-    currentRevisionId: unwrapText(row.current_revision_id),
-    contractHash: unwrapText(row.contract_hash),
-    abiVersion: unwrapNumber(row.abi_version),
-  };
+export async function fetchModuleInstances(): Promise<SystemModuleInstanceRow[]> {
+  const db = getDb();
+  return db.select().from(system_module_instances).limit(CATALOG_SCAN_LIMIT);
 }
 
 export async function fetchProcedureCatalog(): Promise<ProcedureCatalogSnapshot> {
   const db = getDb();
-  const [procedureRows, parameterRows, typeRows, fieldRows, moduleRows, revisionRows, logRows] =
+  const [procedures, parameters, scannedTypes, scannedTypeFields, modules, revisions, logs] =
     await Promise.all([
-      db.select().from(system_procedures),
-      db.select().from(system_routine_parameters),
-      db.select().from(system_types),
-      db.select().from(system_type_fields),
-      db.select().from(system_modules),
-      db.select().from(system_module_revisions),
+      db.select().from(system_procedures).limit(CATALOG_SCAN_LIMIT),
+      db.select().from(system_routine_parameters).limit(CATALOG_SCAN_LIMIT),
+      db.select().from(system_types).limit(CATALOG_SCAN_LIMIT),
+      db.select().from(system_type_fields).limit(CATALOG_SCAN_LIMIT),
+      db.select().from(system_modules).limit(CATALOG_SCAN_LIMIT),
+      db.select().from(system_module_revisions).limit(CATALOG_SCAN_LIMIT),
       db.select().from(system_procedure_logs).orderBy(desc(system_procedure_logs.timestamp)).limit(200),
     ]);
 
-  const procedures: CatalogProcedureRow[] = procedureRows.map(normalizeCatalogProcedure);
-  const parameters: CatalogParameterRow[] = parameterRows.map(normalizeCatalogParameter);
-  const types: CatalogTypeRow[] = typeRows.map(normalizeCatalogType);
-  const typeFields: CatalogTypeFieldRow[] = fieldRows.map(normalizeCatalogTypeField);
-  const modules = moduleRows.map(normalizeFunctionModule);
-  const revisions = revisionRows.map(normalizeModuleRevision);
-  const logs = logRows.map(normalizeProcedureLog);
+  const types: SystemTypeRow[] = [...scannedTypes];
+  const presentTypeIds = new Set(types.map((type) => catalogText(type.type_id)).filter(Boolean));
+
+  const seedTypeIds = new Set<string>();
+  for (const parameter of parameters) {
+    const typeId = catalogText(parameter.type_id) || catalogText(parameter.type_name);
+    if (typeId && isNamedCatalogTypeId(typeId)) {
+      seedTypeIds.add(typeId);
+    }
+  }
+  for (const procedure of procedures) {
+    const returnType = catalogText(procedure.return_type);
+    if (returnType && returnType.toUpperCase() !== "VOID") {
+      const inner = returnType.endsWith("[]") ? returnType.slice(0, -2) : returnType;
+      if (isNamedCatalogTypeId(inner)) {
+        seedTypeIds.add(inner);
+      }
+    }
+  }
+
+  const extraTypes = await fetchMissingTypes([...seedTypeIds], presentTypeIds);
+  types.push(...extraTypes);
+  for (const type of extraTypes) {
+    const typeId = catalogText(type.type_id);
+    if (typeId) {
+      presentTypeIds.add(typeId);
+    }
+  }
+
+  const sourceTypeIds: string[] = [];
+  for (const type of types) {
+    const typeId = catalogText(type.type_id);
+    if (!typeId || !seedTypeIds.has(typeId)) {
+      continue;
+    }
+    const source = catalogText(type.source_type_id);
+    if (source && isNamedCatalogTypeId(source)) {
+      seedTypeIds.add(source);
+      sourceTypeIds.push(source);
+    }
+  }
+  const extraSourceTypes = await fetchMissingTypes(sourceTypeIds, presentTypeIds);
+  types.push(...extraSourceTypes);
+  for (const type of extraSourceTypes) {
+    const typeId = catalogText(type.type_id);
+    if (typeId) {
+      presentTypeIds.add(typeId);
+    }
+  }
+
+  const typeFields = await fetchTypeFieldsForCatalog(seedTypeIds, scannedTypeFields);
 
   return {
     procedures: resolveProcedureCatalog(procedures, parameters, types, typeFields),
@@ -222,7 +227,7 @@ export function listItemsFromCatalog(
   );
 }
 
-export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<ProcedureLogRecord[]> {
+export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<SystemProcedureLogRow[]> {
   const db = getDb();
   const conditions: SQL[] = [eq(system_procedure_logs.procedure_id, filters.procedureId)];
 
@@ -247,18 +252,18 @@ export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<
     .limit(filters.limit ?? 200);
 
   const search = filters.search?.trim().toLowerCase();
-  const logs = rows.map(normalizeProcedureLog);
   if (!search) {
-    return logs;
+    return rows;
   }
 
-  return logs.filter((log) => {
+  return rows.filter((log) => {
     return (
       log.message?.toLowerCase().includes(search) ||
-      log.executionId.toLowerCase().includes(search) ||
-      log.revisionId?.toLowerCase().includes(search) ||
-      log.errorCode?.toLowerCase().includes(search) ||
-      log.actor.toLowerCase().includes(search)
+      log.execution_id.toLowerCase().includes(search) ||
+      log.revision_id?.toLowerCase().includes(search) ||
+      log.error_code?.toLowerCase().includes(search) ||
+      log.actor.toLowerCase().includes(search) ||
+      log.origin.toLowerCase().includes(search)
     );
   });
 }
@@ -341,20 +346,20 @@ export async function rollbackModuleRevision(
 }
 
 export function logsForExecution(
-  logs: ProcedureLogRecord[],
+  logs: SystemProcedureLogRow[],
   procedureId: string,
   startedAt: string,
   executionId?: string,
-): ProcedureLogRecord[] {
+): SystemProcedureLogRow[] {
   if (executionId) {
     return logs
-      .filter((log) => log.procedureId === procedureId && log.executionId === executionId)
+      .filter((log) => log.procedure_id === procedureId && log.execution_id === executionId)
       .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
   }
 
   const startedMs = Date.parse(startedAt);
   const matching = logs.filter((log) => {
-    if (log.procedureId !== procedureId) {
+    if (log.procedure_id !== procedureId) {
       return false;
     }
     const timestampMs = Date.parse(log.timestamp);
@@ -364,12 +369,12 @@ export function logsForExecution(
     return timestampMs + 2000 >= startedMs;
   });
   const newestExecution = matching.find((log) => log.outcome === "ok" || log.outcome === "error")
-    ?.executionId;
+    ?.execution_id;
   if (!newestExecution) {
     return matching.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
   }
   return matching
-    .filter((log) => log.executionId === newestExecution)
+    .filter((log) => log.execution_id === newestExecution)
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 }
 
@@ -377,7 +382,7 @@ export function moduleRuntimeLabel(snapshot: ProcedureCatalogSnapshot, moduleId:
   if (!moduleId) {
     return "TypeScript / V8";
   }
-  const module = snapshot.modules.find((item) => item.moduleId === moduleId);
+  const module = snapshot.modules.find((item) => item.module_id === moduleId);
   const runtime = module?.runtime?.trim() || "typescript";
   if (runtime.toLowerCase() === "typescript") {
     return "TypeScript / V8";

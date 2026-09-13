@@ -1,4 +1,4 @@
-import { formatRelativeTime, formatUtcTimestamp } from "@/lib/formatters";
+import { formatRelativeTime, formatUtcTimestamp, toMilliseconds } from "@/lib/formatters";
 import { displayLogLevel } from "./format";
 import type { ProcedureStatus } from "./types";
 
@@ -19,6 +19,8 @@ export function statusLabel(status: ProcedureStatus): string {
   switch (status) {
     case "ready":
       return "Ready";
+    case "unimplemented":
+      return "Unimplemented";
     case "warning":
       return "Warning";
     case "error":
@@ -33,11 +35,15 @@ export function formatCount(value: number | null | undefined): string {
   return value.toLocaleString();
 }
 
-export function formatEpochMs(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+export function formatEpochMs(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) {
     return "—";
   }
-  const date = new Date(value);
+  const ms = toMilliseconds(value);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "—";
+  }
+  const date = new Date(ms);
   if (Number.isNaN(date.getTime())) {
     return "—";
   }
@@ -45,7 +51,7 @@ export function formatEpochMs(value: number | null | undefined): string {
   if (ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000) {
     return formatRelativeTime(date);
   }
-  return formatUtcTimestamp(value);
+  return formatUtcTimestamp(ms);
 }
 
 export function formatLogTime(timestamp: string): string {

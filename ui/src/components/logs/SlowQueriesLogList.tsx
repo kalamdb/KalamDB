@@ -11,9 +11,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw } from 'lucide-react';
 import { PAGE_SIZE_OPTIONS } from '@/lib/config';
 
 function formatDuration(durationMs: unknown): string {
@@ -100,7 +101,7 @@ export function SlowQueriesLogList() {
           </div>
         ) : isLoading && queries.length === 0 ? (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : queries.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

@@ -22,7 +22,7 @@ import {
   type TestFieldError,
   type TestValue,
 } from "@/features/functions/testValues";
-import type { ProcedureLogRecord, ProcedureMetadata } from "@/features/functions/types";
+import type { ProcedureMetadata, SystemProcedureLogRow } from "@/features/functions/types";
 import { logsForExecution } from "@/services/functionsService";
 import {
   useGetProcedureLogsQuery,
@@ -40,17 +40,27 @@ export function FunctionTest({ procedure }: { procedure: ProcedureMetadata }) {
     limit: 200,
   });
 
+  const parameterSignature = procedure.parameters
+    .map((parameter) => {
+      const typeKey =
+        parameter.type.kind === "enum"
+          ? `enum:${parameter.type.values.join(",")}`
+          : parameter.type.kind;
+      return `${parameter.name}:${typeKey}`;
+    })
+    .join("|");
+
   useEffect(() => {
     setValues(defaultTestValues(procedure));
     setErrors([]);
     setStartedAt(null);
-  }, [procedure.id]);
+  }, [procedure.id, parameterSignature]);
 
   const result = invokeState.data;
   const invokeError = rtkErrorMessage(invokeState.error, "Failed to invoke procedure");
   const executionLogs = useMemo(() => {
     if (!startedAt) {
-      return [] as ProcedureLogRecord[];
+      return [] as SystemProcedureLogRow[];
     }
     return logsForExecution(logs, procedure.id, startedAt);
   }, [logs, procedure.id, startedAt]);
@@ -78,7 +88,7 @@ export function FunctionTest({ procedure }: { procedure: ProcedureMetadata }) {
   };
 
   const durationMs =
-    executionLogs.find((log) => log.outcome === "ok" || log.outcome === "error")?.durationMs ||
+    executionLogs.find((log) => log.outcome === "ok" || log.outcome === "error")?.duration_ms ||
     result?.durationMs ||
     null;
 
@@ -193,7 +203,7 @@ export function FunctionTest({ procedure }: { procedure: ProcedureMetadata }) {
             ) : (
               <ol className="grid gap-1 font-mono text-xs">
                 {executionLogs.map((log) => (
-                  <li key={`${log.timestamp}-${log.executionId}-${log.message}`}>
+                  <li key={`${log.timestamp}-${log.execution_id}-${log.message}`}>
                     <span className="text-muted-foreground">{formatLogTime(log.timestamp)}</span>{" "}
                     <span className={logLevelClassName(log.level)}>{displayLogLevel(log.level)}</span>{" "}
                     <span>{log.message || "—"}</span>

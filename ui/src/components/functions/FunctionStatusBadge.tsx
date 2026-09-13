@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 const DOT_CLASS: Record<ProcedureStatus, string> = {
   ready: "bg-emerald-500",
+  unimplemented: "bg-muted-foreground",
   warning: "bg-amber-500",
   error: "bg-destructive",
 };

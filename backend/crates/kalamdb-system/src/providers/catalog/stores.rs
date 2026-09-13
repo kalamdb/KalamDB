@@ -421,6 +421,47 @@ impl CatalogStores {
             }
         }
 
+        self.force_drop_type(type_id)
+    }
+
+    /// Drop procedures, types, and triggers owned by `namespace_id`.
+    ///
+    /// `DROP NAMESPACE` uses this so catalog objects cannot outlive the schema.
+    /// Referential checks are skipped because the whole namespace is going away.
+    pub fn drop_namespace_catalog(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
+        let trigger_ids: Vec<TriggerId> = self
+            .list_triggers()?
+            .into_iter()
+            .filter(|trigger| trigger.namespace_id == *namespace_id)
+            .map(|trigger| trigger.trigger_id)
+            .collect();
+        for trigger_id in trigger_ids {
+            self.drop_trigger(&trigger_id)?;
+        }
+
+        let routine_ids: Vec<RoutineId> = self
+            .list_routines()?
+            .into_iter()
+            .filter(|routine| routine.namespace_id == *namespace_id)
+            .map(|routine| routine.routine_id)
+            .collect();
+        for routine_id in routine_ids {
+            self.drop_routine(&routine_id)?;
+        }
+
+        let type_ids: Vec<TypeId> = self
+            .list_types()?
+            .into_iter()
+            .filter(|catalog_type| catalog_type.namespace_id == *namespace_id)
+            .map(|catalog_type| catalog_type.type_id)
+            .collect();
+        for type_id in type_ids {
+            self.force_drop_type(&type_id)?;
+        }
+        Ok(())
+    }
+
+    fn force_drop_type(&self, type_id: &TypeId) -> Result<(), SystemError> {
         let field_keys = self
             .list_type_fields(type_id)?
             .into_iter()

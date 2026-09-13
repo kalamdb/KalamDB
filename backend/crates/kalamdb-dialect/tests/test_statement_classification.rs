@@ -201,10 +201,7 @@ fn test_classify_call_procedure() {
     .expect("GUI LIMIT/OFFSET on CALL must classify");
     match paged.kind() {
         SqlStatementKind::Call(call) => {
-            assert_eq!(
-                call.call.routine_id.as_str(),
-                "kobj_fnlint_mtyd04d2_22tq_0.health"
-            );
+            assert_eq!(call.call.routine_id.as_str(), "kobj_fnlint_mtyd04d2_22tq_0.health");
         },
         other => panic!("expected CALL, got {other:?}"),
     }

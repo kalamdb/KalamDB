@@ -240,10 +240,7 @@ fn accept_optional_nonce(_nonce: Option<&openidconnect::Nonce>) -> std::result::
 }
 
 fn map_device_token_error(
-    error: RequestTokenError<
-        HttpClientError<openidconnect::reqwest::Error>,
-        DeviceCodeErrorResponse,
-    >,
+    error: RequestTokenError<HttpClientError<openidconnect::reqwest::Error>, DeviceCodeErrorResponse>,
 ) -> CLIError {
     match error {
         RequestTokenError::ServerResponse(response) => match response.error() {

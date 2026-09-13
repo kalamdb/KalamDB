@@ -322,6 +322,57 @@ fn kobj_functions_rest_json_in_out() {
     assert_eq!(parsed["text"], "named", "{body}");
 }
 
+fn wait_for_sql_count(sql: &str, expected: i64) -> bool {
+    for _ in 0..40 {
+        if count_sql(sql) == expected {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+fn trigger_context_handler(hits: &str) -> String {
+    format!(
+        "var payload = input && input.payload != null ? input.payload : input;\nif (typeof \
+         payload === 'string') {{ try {{ payload = JSON.parse(payload); }} catch (e) {{}} }}\nvar \
+         id = (payload && payload.id != null) ? payload.id : payload;\nvar source = (ctx.source \
+         && ctx.source.kind) ? ctx.source.kind : '';\nvar http = ctx.http === null ? 'null' : \
+         'present';\nvar topic = (ctx.source && ctx.source.topicName) ? ctx.source.topicName : \
+         '';\nreturn ctx.db.execute(\n\"INSERT INTO {hits} (id, source, http, topic) VALUES (\" + \
+         id + \", '\" + source + \"', '\" + http + \"', '\" + topic + \"')\"\n).then(function () \
+         {{ return payload; }});"
+    )
+}
+
+fn assert_topic_trigger_hit(hits: &str, topic: &str, id: i64) {
+    let rows = query_rows(&format!("SELECT id, source, http, topic FROM {hits} WHERE id = {id}"));
+    assert_eq!(rows.len(), 1, "expected one trigger hit for id={id}: {rows:?}");
+    assert_eq!(
+        cell_str(&rows[0], "source").as_deref(),
+        Some("topic"),
+        "topic origin must set ctx.source.kind=topic: {rows:?}"
+    );
+    assert_eq!(
+        cell_str(&rows[0], "http").as_deref(),
+        Some("null"),
+        "topic origin must set ctx.http=null: {rows:?}"
+    );
+    let seen_topic = cell_str(&rows[0], "topic").unwrap_or_default();
+    assert!(
+        seen_topic.contains(topic) || seen_topic == topic,
+        "ctx.source.topicName should name {topic}: {rows:?}"
+    );
+    let attempts = query_rows(&format!(
+        "SELECT status FROM system.trigger_attempts WHERE event_id LIKE '%{topic}%'"
+    ));
+    assert!(
+        attempts.iter().any(|row| cell(row, "status").as_str() == Some("succeeded")
+            || cell_str(row, "status").as_deref() == Some("succeeded")),
+        "trigger attempt should be succeeded: {attempts:?}"
+    );
+}
+
 #[ntest::timeout(300000)]
 #[test]
 fn kobj_functions_topic_trigger_delivers_and_acks() {
@@ -331,24 +382,14 @@ fn kobj_functions_topic_trigger_delivers_and_acks() {
     let ns = setup_namespace("kobj_trig");
     let hits = format!("{ns}.trig_hits");
     exec(&format!(
-        "CREATE TABLE {hits} (id INT PRIMARY KEY, note TEXT) WITH (TYPE = 'SHARED')"
+        "CREATE TABLE {hits} (id INT PRIMARY KEY, source TEXT, http TEXT, topic TEXT) WITH (TYPE \
+         = 'SHARED')"
     ));
     grant_public_shared_table_access(&hits);
     ready(&hits);
     let topic = format!("{ns}.trig_events");
     exec(&format!("CREATE TOPIC {topic}"));
-    create_js_procedure(
-        &ns,
-        "on_trig",
-        "payload TEXT",
-        &format!(
-            "var payload = input && input.payload != null ? input.payload : input;\nif (typeof \
-             payload === 'string') {{ try {{ payload = JSON.parse(payload); }} catch (e) {{}} \
-             }}\nvar id = (payload && payload.id != null) ? payload.id : payload;\nreturn \
-             ctx.db.execute(\"INSERT INTO {hits} (id, note) VALUES (\" + id + \", \
-             'ok')\").then(function () {{ return payload; }});"
-        ),
-    );
+    create_js_procedure(&ns, "on_trig", "payload TEXT", &trigger_context_handler(&hits));
     create_js_procedure(
         &ns,
         "publish_trig",
@@ -364,21 +405,59 @@ fn kobj_functions_topic_trigger_delivers_and_acks() {
     ));
     exec(&format!("CALL {ns}.publish_trig(7)"));
 
-    let mut delivered = false;
-    for _ in 0..40 {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        if count_sql(&format!("SELECT COUNT(*) FROM {hits} WHERE id = 7")) == 1 {
-            delivered = true;
-            break;
-        }
-    }
-    assert!(delivered, "trigger should insert into {hits} after topic publish");
-    let attempts = query_rows(&format!(
-        "SELECT status FROM system.trigger_attempts WHERE event_id LIKE '%{topic}%'"
-    ));
     assert!(
-        attempts.iter().any(|row| cell(row, "status").as_str() == Some("succeeded")),
-        "trigger attempt should be succeeded: {attempts:?}"
+        wait_for_sql_count(&format!("SELECT COUNT(*) FROM {hits} WHERE id = 7"), 1),
+        "trigger should insert into {hits} after topic publish"
+    );
+    assert_topic_trigger_hit(&hits, &topic, 7);
+}
+
+#[ntest::timeout(300000)]
+#[test]
+fn kobj_functions_topic_trigger_wakes_on_table_insert() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_trig_src");
+    let source_table = format!("{ns}.trig_src");
+    let hits = format!("{ns}.trig_src_hits");
+    exec(&format!(
+        "CREATE TABLE {source_table} (id INT PRIMARY KEY, note TEXT) WITH (TYPE = 'SHARED')"
+    ));
+    exec(&format!(
+        "CREATE TABLE {hits} (id INT PRIMARY KEY, source TEXT, http TEXT, topic TEXT) WITH (TYPE \
+         = 'SHARED')"
+    ));
+    grant_public_shared_table_access(&source_table);
+    grant_public_shared_table_access(&hits);
+    ready(&source_table);
+    ready(&hits);
+
+    let topic = format!("{ns}.trig_src_events");
+    exec(&format!("CREATE TOPIC {topic} PARTITIONS 1"));
+    exec(&format!(
+        "ALTER TOPIC {topic} ADD SOURCE {source_table} ON INSERT WITH (payload = 'full')"
+    ));
+    create_js_procedure(&ns, "on_src", "payload TEXT", &trigger_context_handler(&hits));
+    exec(&format!(
+        "CREATE TRIGGER {ns}.on_src_event ON TOPIC {topic} EXECUTE PROCEDURE {ns}.on_src(PAYLOAD) \
+         WITH (principal = 'system', start = 'latest', retries = 3, retry_backoff = '100ms')"
+    ));
+
+    exec(&format!("INSERT INTO {source_table} (id, note) VALUES (7, 'from-table')"));
+    assert!(
+        wait_for_sql_count(&format!("SELECT COUNT(*) FROM {hits} WHERE id = 7"), 1),
+        "table INSERT should publish to {topic} and wake trigger into {hits}"
+    );
+    assert_topic_trigger_hit(&hits, &topic, 7);
+
+    exec(&format!("ALTER TRIGGER {ns}.on_src_event DISABLE"));
+    exec(&format!("INSERT INTO {source_table} (id, note) VALUES (8, 'after-disable')"));
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {hits} WHERE id = 8")),
+        0,
+        "disabled trigger must not consume later table inserts"
     );
 }
 
@@ -534,10 +613,14 @@ fn kobj_functions_create_type_and_inline_procedure() {
     );
 
     let bad_enum = exec_err(&format!("CALL {ns}.echo_status('nope')"));
+    let bad_enum_lower = bad_enum.to_ascii_lowercase();
     assert!(
-        bad_enum.to_ascii_lowercase().contains("invalid")
-            || bad_enum.to_ascii_lowercase().contains("enum"),
+        bad_enum_lower.contains("invalid") && bad_enum_lower.contains("enum"),
         "invalid enum CALL must fail: {bad_enum}"
+    );
+    assert!(
+        bad_enum_lower.contains("active") && bad_enum_lower.contains("blocked"),
+        "invalid enum CALL must list supported values: {bad_enum}"
     );
     let null_enum = exec_err(&format!("CALL {ns}.echo_status(NULL)"));
     assert!(

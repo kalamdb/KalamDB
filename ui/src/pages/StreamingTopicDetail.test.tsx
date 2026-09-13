@@ -142,9 +142,9 @@ describe("StreamingTopicDetail", () => {
   it("uses topic breadcrumbs and local inspector tabs without the global streaming tabs", () => {
     renderTopicDetail();
 
-    expect(screen.getByRole("heading", { name: "Streaming Topic" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Topics/i })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Topics" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "blog.summarizer" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "breadcrumb" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Topics" })).toHaveAttribute("href", "/streaming/topics");
     expect(screen.queryByRole("link", { name: "Consumers" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Inspect Messages" })).toHaveAttribute("data-state", "active");
     expect(screen.getByRole("tab", { name: "Committed Offsets" })).toBeInTheDocument();

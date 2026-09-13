@@ -706,7 +706,8 @@ pub async fn show_function_runtime(ctx: &WorkflowContext) -> Result<()> {
         ctx,
         &client,
         "SELECT instance_id, worker, module_id, revision_id, state, reserved_bytes, \
-         used_heap_bytes, invocations FROM system.module_instances ORDER BY worker, instance_id",
+         used_heap_bytes, peak_heap_bytes, invocations FROM system.module_instances ORDER BY \
+         worker, instance_id",
         namespace,
         "functions runtime",
     )

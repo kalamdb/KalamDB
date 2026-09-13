@@ -23,7 +23,7 @@ kalamdb-transactions = { path = "../kalamdb-transactions" }
 openraft = { workspace = true }
 
 # gRPC network layer
-tonic = { workspace = true, features = ["tls-webpki-roots", "tls-ring"] }
+tonic = { workspace = true, features = ["tls-native-roots", "tls-aws-lc"] }
 tonic-prost = { workspace = true }
 prost = { workspace = true }
 

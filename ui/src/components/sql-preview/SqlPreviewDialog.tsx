@@ -26,6 +26,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { cn } from '@/lib/utils';
 import {
@@ -33,7 +34,6 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
-  Loader2,
   Undo2,
 } from 'lucide-react';
 
@@ -428,7 +428,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
                 status === 'error' && 'bg-rose-100 text-rose-700',
               )}
             >
-              {status === 'executing' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {status === 'executing' && <Spinner className="size-3.5" />}
               {status === 'success' && <CheckCircle2 className="h-3.5 w-3.5" />}
               {status === 'error' && <AlertCircle className="h-3.5 w-3.5" />}
               {status === 'idle' ? 'Ready' : status === 'executing' ? 'Executing' : status === 'success' ? 'Committed' : 'Failed'}
@@ -590,7 +590,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
                                     item.status === 'failed' && 'bg-rose-100 text-rose-700',
                                   )}
                                 >
-                                  {badgeStatus === 'running' && <Loader2 className="h-3 w-3 animate-spin" />}
+                                  {badgeStatus === 'running' && <Spinner className="size-3" />}
                                   {item.status === 'success' && <CheckCircle2 className="h-3 w-3" />}
                                   {item.status === 'failed' && <AlertCircle className="h-3 w-3" />}
                                   {badgeStatus === 'pending' && 'Queued'}
@@ -631,7 +631,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
             )}
             {status === 'executing' && (
               <span className="flex items-center gap-1.5 text-blue-600">
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Spinner className="size-4" />
                 {statusMessage}
               </span>
             )}
@@ -683,7 +683,7 @@ export function SqlPreviewDialog({ open, options, onClose }: SqlPreviewDialogPro
             >
               {status === 'executing' ? (
                 <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Spinner className="size-3.5" />
                   Executing...
                 </>
               ) : status === 'success' ? (

@@ -18,28 +18,29 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RevisionIdDisplay } from "@/components/functions/RevisionIdDisplay";
-import { formatBytes } from "@/features/functions/format";
+import { formatBytes, revisionExports } from "@/features/functions/format";
 import { formatEpochMs, rtkErrorMessage } from "@/features/functions/display";
+import { parseTimestampMs } from "@/features/functions/status";
 import { useRollbackModuleRevisionMutation } from "@/store/apiSlice";
-import type { ModuleRevision } from "@/features/functions/types";
+import type { SystemModuleRevisionRow } from "@/features/functions/types";
 
 export function FunctionRevisions({
   moduleId,
   revisions,
 }: {
   moduleId: string | null;
-  revisions: ModuleRevision[];
+  revisions: SystemModuleRevisionRow[];
 }) {
-  const [selected, setSelected] = useState<ModuleRevision | null>(null);
-  const [pendingRollback, setPendingRollback] = useState<ModuleRevision | null>(null);
+  const [selected, setSelected] = useState<SystemModuleRevisionRow | null>(null);
+  const [pendingRollback, setPendingRollback] = useState<SystemModuleRevisionRow | null>(null);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
   const [rollbackModule, rollbackState] = useRollbackModuleRevisionMutation();
 
   const moduleRevisions = moduleId
     ? revisions
-        .filter((revision) => revision.moduleId === moduleId)
+        .filter((revision) => revision.module_id === moduleId)
         .slice()
-        .sort((left, right) => right.createdAtMs - left.createdAtMs)
+        .sort((left, right) => (parseTimestampMs(right.created_at) ?? 0) - (parseTimestampMs(left.created_at) ?? 0))
     : [];
 
   const confirmRollback = async () => {
@@ -48,7 +49,7 @@ export function FunctionRevisions({
     }
     setRollbackError(null);
     try {
-      await rollbackModule({ moduleId, revisionId: pendingRollback.revisionId }).unwrap();
+      await rollbackModule({ moduleId, revisionId: pendingRollback.revision_id }).unwrap();
       setPendingRollback(null);
       setSelected(null);
     } catch (error) {
@@ -83,7 +84,7 @@ export function FunctionRevisions({
             <TableBody>
               {moduleRevisions.map((revision) => (
                 <TableRow
-                  key={revision.revisionId}
+                  key={revision.revision_id}
                   className="cursor-pointer"
                   onClick={() => {
                     setSelected(revision);
@@ -91,11 +92,11 @@ export function FunctionRevisions({
                   }}
                 >
                   <TableCell>
-                    <RevisionIdDisplay revisionId={revision.revisionId} />
+                    <RevisionIdDisplay revisionId={revision.revision_id} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{formatEpochMs(revision.createdAtMs)}</TableCell>
-                  <TableCell>{formatBytes(revision.artifactBytes)}</TableCell>
-                  <TableCell>{revision.isCurrent ? "Current" : ""}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatEpochMs(revision.created_at)}</TableCell>
+                  <TableCell>{formatBytes(revision.artifact_bytes)}</TableCell>
+                  <TableCell>{revision.is_current ? "Current" : ""}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -108,7 +109,7 @@ export function FunctionRevisions({
           <SheetHeader>
             <SheetTitle>Revision details</SheetTitle>
             <SheetDescription>
-              {selected?.isCurrent ? "This revision is currently active." : "A previous immutable revision."}
+              {selected?.is_current ? "This revision is currently active." : "A previous immutable revision."}
             </SheetDescription>
           </SheetHeader>
           {selected ? (
@@ -119,26 +120,26 @@ export function FunctionRevisions({
                 </CardHeader>
                 <CardContent className="grid gap-3 text-sm">
                   <Detail label="Revision ID">
-                    <RevisionIdDisplay revisionId={selected.revisionId} />
+                    <RevisionIdDisplay revisionId={selected.revision_id} />
                   </Detail>
                   <Detail label="Artifact ID">
-                    <span className="break-all font-mono text-xs">{selected.artifactId || "—"}</span>
+                    <span className="break-all font-mono text-xs">{selected.artifact_id || "—"}</span>
                   </Detail>
-                  <Detail label="Artifact size">{formatBytes(selected.artifactBytes)}</Detail>
+                  <Detail label="Artifact size">{formatBytes(selected.artifact_bytes)}</Detail>
                   <Detail label="Contract hash">
-                    <span className="break-all font-mono text-xs">{selected.contractHash || "—"}</span>
+                    <span className="break-all font-mono text-xs">{selected.contract_hash || "—"}</span>
                   </Detail>
-                  <Detail label="Created">{formatEpochMs(selected.createdAtMs)}</Detail>
+                  <Detail label="Created">{formatEpochMs(selected.created_at)}</Detail>
                   <Detail label="Exports">
-                    {selected.exports.length > 0 ? selected.exports.join(", ") : "—"}
+                    {revisionExports(selected.exports).join(", ") || "—"}
                   </Detail>
-                  <Detail label="Status">{selected.isCurrent ? "Current" : "Previous"}</Detail>
+                  <Detail label="Status">{selected.is_current ? "Current" : "Previous"}</Detail>
                 </CardContent>
               </Card>
 
               {rollbackError ? <p className="text-sm text-destructive">{rollbackError}</p> : null}
 
-              {!selected.isCurrent && moduleId ? (
+              {!selected.is_current && moduleId ? (
                 <Button
                   type="button"
                   variant="outline"

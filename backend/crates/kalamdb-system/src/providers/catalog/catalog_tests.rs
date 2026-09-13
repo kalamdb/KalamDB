@@ -284,6 +284,73 @@ fn inline_javascript_hash_and_artifact_persist() {
 }
 
 #[test]
+fn drop_namespace_catalog_removes_routines_types_and_spares_other_schemas() {
+    let stores = stores();
+    stores.upsert_type(address_type()).unwrap();
+    stores.upsert_type_field(street_field()).unwrap();
+    stores.upsert_type(implicit_row_type()).unwrap();
+    stores.upsert_type_field(nested_location_field()).unwrap();
+    stores.upsert_routine(create_message_routine()).unwrap();
+    stores
+        .upsert_parameter(CatalogRoutineParameter {
+            parameter_id: RoutineParameterId::new(
+                &RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+                0,
+            )
+            .unwrap(),
+            routine_id:   RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+            name:         "payload".to_string(),
+            ordinal:      0,
+            type_id:      Some(TypeId::from_parts(Some(&chat_ns()), "message")),
+            type_name:    "chat.message".to_string(),
+            is_array:     false,
+            not_null:     true,
+            nonempty:     false,
+            data_type:    None,
+        })
+        .unwrap();
+
+    let other_ns = NamespaceId::new("other");
+    let other_type = CatalogType {
+        type_id:        TypeId::from_parts(Some(&other_ns), "keep"),
+        namespace_id:   other_ns.clone(),
+        name:           "keep".to_string(),
+        kind:           CatalogTypeKind::Composite,
+        table_id:       None,
+        source_type_id: None,
+        comment:        None,
+    };
+    stores.upsert_type(other_type.clone()).unwrap();
+
+    stores.drop_namespace_catalog(&chat_ns()).unwrap();
+
+    assert!(stores
+        .get_routine(&RoutineId::from_parts(Some(&chat_ns()), "create_message"))
+        .unwrap()
+        .is_none());
+    assert!(stores
+        .list_parameters(&RoutineId::from_parts(Some(&chat_ns()), "create_message"))
+        .unwrap()
+        .is_empty());
+    assert!(stores
+        .get_type(&TypeId::from_parts(Some(&chat_ns()), "message"))
+        .unwrap()
+        .is_none());
+    assert!(stores
+        .get_type(&TypeId::from_parts(Some(&chat_ns()), "address"))
+        .unwrap()
+        .is_none());
+    assert!(stores
+        .list_type_fields(&TypeId::from_parts(Some(&chat_ns()), "address"))
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        stores.get_type(&TypeId::from_parts(Some(&other_ns), "keep")).unwrap().unwrap(),
+        other_type
+    );
+}
+
+#[test]
 fn drop_type_is_blocked_by_alias_nested_field_and_routine() {
     let stores = stores();
     stores.upsert_type(address_type()).unwrap();

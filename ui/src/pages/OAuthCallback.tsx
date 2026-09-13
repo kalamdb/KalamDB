@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/lib/auth";
 import { consumeOAuthRedirect } from "@/lib/oauth";
 
@@ -43,7 +44,7 @@ export default function OAuthCallback() {
         {error ? (
           <>
             <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
+              <AlertCircle />
               <AlertDescription>{error}</AlertDescription>
             </Alert>
             <Button asChild className="h-11 w-full">
@@ -52,7 +53,7 @@ export default function OAuthCallback() {
           </>
         ) : (
           <div className="flex items-center justify-center gap-3 py-8 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Spinner className="size-5" />
             <span>Signing in...</span>
           </div>
         )}

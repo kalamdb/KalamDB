@@ -25,6 +25,7 @@ pub struct ModuleInstanceSnapshot {
     pub state:           String,
     pub reserved_bytes:  i64,
     pub used_heap_bytes: i64,
+    pub peak_heap_bytes: i64,
     pub invocations:     i64,
 }
 
@@ -67,7 +68,8 @@ impl ModuleInstancesView {
                 text_col(5, "state", "idle or active"),
                 int_col(6, "reserved_bytes", "Admission reservation including heap hard limit"),
                 int_col(7, "used_heap_bytes", "Last observed V8 heap plus external memory"),
-                int_col(8, "invocations", "Calls served by this isolate"),
+                int_col(8, "peak_heap_bytes", "High-water V8 heap plus external memory"),
+                int_col(9, "invocations", "Calls served by this isolate"),
             ],
             "Resident module isolates (in-memory; idle included)",
         )
@@ -104,6 +106,7 @@ impl VirtualView for ModuleInstancesView {
         let mut states = StringBuilder::new();
         let mut reserved_bytes = Int64Builder::new();
         let mut used_heap_bytes = Int64Builder::new();
+        let mut peak_heap_bytes = Int64Builder::new();
         let mut invocations = Int64Builder::new();
 
         for instance in snapshot {
@@ -114,6 +117,7 @@ impl VirtualView for ModuleInstancesView {
             states.append_value(&instance.state);
             reserved_bytes.append_value(instance.reserved_bytes);
             used_heap_bytes.append_value(instance.used_heap_bytes);
+            peak_heap_bytes.append_value(instance.peak_heap_bytes);
             invocations.append_value(instance.invocations);
         }
 
@@ -127,6 +131,7 @@ impl VirtualView for ModuleInstancesView {
                 Arc::new(states.finish()) as ArrayRef,
                 Arc::new(reserved_bytes.finish()) as ArrayRef,
                 Arc::new(used_heap_bytes.finish()) as ArrayRef,
+                Arc::new(peak_heap_bytes.finish()) as ArrayRef,
                 Arc::new(invocations.finish()) as ArrayRef,
             ],
         )
@@ -156,11 +161,14 @@ mod tests {
                 state:           "idle".into(),
                 reserved_bytes:  64 * 1024 * 1024,
                 used_heap_bytes: 1024,
+                peak_heap_bytes: 2048,
                 invocations:     3,
             }]
         }));
         let batch = view.compute_batch().expect("batch");
         assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.num_columns(), 9);
         assert_eq!(ModuleInstancesView::definition().table_name.as_str(), "module_instances");
+        assert_eq!(ModuleInstancesView::definition().columns.len(), 9);
     }
 }

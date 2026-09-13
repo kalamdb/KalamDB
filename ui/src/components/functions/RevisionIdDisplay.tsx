@@ -36,10 +36,10 @@ export function RevisionIdDisplay({
 
   return (
     <TooltipProvider delayDuration={200}>
-      <span className="inline-flex max-w-full items-center gap-1 font-mono text-xs">
+      <span className="inline-flex min-w-0 max-w-full items-center gap-1 font-mono text-xs">
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="truncate" title={revisionId}>
+            <span className="min-w-0" title={revisionId}>
               {short}
             </span>
           </TooltipTrigger>
@@ -52,7 +52,7 @@ export function RevisionIdDisplay({
         <Button
           type="button"
           variant="ghost"
-          size="icon-xxs"
+          size="icon-sm"
           className="text-muted-foreground"
           onClick={(event) => {
             event.stopPropagation();

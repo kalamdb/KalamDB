@@ -3,7 +3,7 @@
 // This module provides utilities for creating and managing HttpOnly cookies
 // for JWT token storage in the Admin UI.
 
-use actix_web::cookie::{Cookie, SameSite};
+use actix_web::cookie::{time::Duration as CookieDuration, time::OffsetDateTime, Cookie, SameSite};
 use chrono::{Duration, Utc};
 
 /// Cookie name for the authentication token
@@ -39,16 +39,14 @@ fn build_token_cookie<'a>(
         .secure(config.secure)
         .same_site(config.same_site)
         .expires(
-            cookie::time::OffsetDateTime::from_unix_timestamp(expiry.timestamp()).unwrap_or_else(
-                |_| {
-                    log::warn!(
-                        "JWT expiry timestamp {} is out of OffsetDateTime range; falling back to \
-                         current time plus 24 h",
-                        expiry.timestamp()
-                    );
-                    cookie::time::OffsetDateTime::now_utc() + cookie::time::Duration::hours(24)
-                },
-            ),
+            OffsetDateTime::from_unix_timestamp(expiry.timestamp()).unwrap_or_else(|_| {
+                log::warn!(
+                    "JWT expiry timestamp {} is out of OffsetDateTime range; falling back to \
+                     current time plus 24 h",
+                    expiry.timestamp()
+                );
+                OffsetDateTime::now_utc() + CookieDuration::hours(24)
+            }),
         )
         .finish();
 
@@ -65,7 +63,7 @@ fn build_expired_cookie<'a>(name: &'a str, config: &CookieConfig) -> Cookie<'a> 
         .http_only(true)
         .secure(config.secure)
         .same_site(config.same_site)
-        .expires(cookie::time::OffsetDateTime::UNIX_EPOCH)
+        .expires(OffsetDateTime::UNIX_EPOCH)
         .finish();
 
     if let Some(ref domain) = config.domain {

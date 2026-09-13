@@ -6,17 +6,18 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import FunctionDetail from "@/pages/FunctionDetail";
 import { resolveProcedureCatalog } from "@/features/functions/catalog";
 import type {
-  CatalogParameterRow,
-  CatalogTypeFieldRow,
-  CatalogTypeRow,
   ProcedureCatalogSnapshot,
-  ProcedureLogRecord,
+  SystemProcedureLogRow,
+  SystemRoutineParameterRow,
+  SystemTypeFieldRow,
+  SystemTypeRow,
 } from "@/features/functions/types";
 import type { InvokeProcedureResult } from "@/services/functionsService";
 
 const {
   mockCatalogQuery,
   mockLogsQuery,
+  mockInstancesQuery,
   mockInvoke,
   mockRollback,
   mockRefetchCatalog,
@@ -25,6 +26,7 @@ const {
 } = vi.hoisted(() => ({
   mockCatalogQuery: vi.fn(),
   mockLogsQuery: vi.fn(),
+  mockInstancesQuery: vi.fn(),
   mockInvoke: vi.fn(),
   mockRollback: vi.fn(),
   mockRefetchCatalog: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("@kalamdb/client", () => ({
 vi.mock("@/store/apiSlice", () => ({
   useGetProcedureCatalogQuery: () => mockCatalogQuery(),
   useGetProcedureLogsQuery: (...args: unknown[]) => mockLogsQuery(...args),
+  useGetModuleInstancesQuery: (...args: unknown[]) => mockInstancesQuery(...args),
   useInvokeProcedureMutation: () => [mockInvoke, invokeState],
   useRollbackModuleRevisionMutation: () => [mockRollback, { isLoading: false, error: null }],
 }));
@@ -61,130 +64,150 @@ function parameter(
   name: string,
   ordinal: number,
   typeName: string,
-  extras: Partial<CatalogParameterRow> = {},
-): CatalogParameterRow {
+  extras: Partial<SystemRoutineParameterRow> = {},
+): SystemRoutineParameterRow {
   return {
-    parameterId: `${routineId}:${ordinal}`,
-    routineId,
+    parameter_id: `${routineId}:${ordinal}`,
+    routine_id: routineId,
     name,
     ordinal,
-    typeId: extras.typeId ?? null,
-    typeName,
-    isArray: extras.isArray ?? false,
-    notNull: extras.notNull ?? false,
-    nonempty: extras.nonempty ?? false,
+    type_id: null,
+    type_name: typeName,
+    is_array: false,
+    not_null: false,
+    nonempty: false,
+    data_type: null,
+    ...extras,
   };
 }
 
-const addressType: CatalogTypeRow = {
-  typeId: "api.address",
-  namespaceId: "api",
+const addressType: SystemTypeRow = {
+  type_id: "api.address",
+  namespace_id: "api",
   name: "address",
   kind: "composite",
-  tableId: null,
-  sourceTypeId: null,
+  table_id: null,
+  source_type_id: null,
   comment: null,
 };
 
-const orderItemType: CatalogTypeRow = {
-  typeId: "api.order_item",
-  namespaceId: "api",
+const orderItemType: SystemTypeRow = {
+  type_id: "api.order_item",
+  namespace_id: "api",
   name: "order_item",
   kind: "composite",
-  tableId: null,
-  sourceTypeId: null,
+  table_id: null,
+  source_type_id: null,
   comment: null,
 };
 
-const statusEnum: CatalogTypeRow = {
-  typeId: "chat.message_status",
-  namespaceId: "chat",
+const statusEnum: SystemTypeRow = {
+  type_id: "chat.message_status",
+  namespace_id: "chat",
   name: "message_status",
   kind: "enum",
-  tableId: null,
-  sourceTypeId: null,
+  table_id: null,
+  source_type_id: null,
   comment: null,
 };
 
-const addressFields: CatalogTypeFieldRow[] = [
-  { typeFieldId: "api.address:city", typeId: "api.address", name: "city", ordinal: 1, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "api.address:country", typeId: "api.address", name: "country", ordinal: 2, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
+const addressFields: SystemTypeFieldRow[] = [
+  { type_field_id: "api.address:city", type_id: "api.address", name: "city", ordinal: 1, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "api.address:country", type_id: "api.address", name: "country", ordinal: 2, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
 ];
 
-const orderItemFields: CatalogTypeFieldRow[] = [
-  { typeFieldId: "api.order_item:sku", typeId: "api.order_item", name: "sku", ordinal: 1, fieldTypeId: null, typeName: "TEXT", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "api.order_item:quantity", typeId: "api.order_item", name: "quantity", ordinal: 2, fieldTypeId: null, typeName: "INT", isArray: false, notNull: true, nonempty: false },
+const orderItemFields: SystemTypeFieldRow[] = [
+  { type_field_id: "api.order_item:sku", type_id: "api.order_item", name: "sku", ordinal: 1, field_type_id: null, type_name: "TEXT", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "api.order_item:quantity", type_id: "api.order_item", name: "quantity", ordinal: 2, field_type_id: null, type_name: "INT", is_array: false, not_null: true, nonempty: false, data_type: null },
 ];
 
-const enumFields: CatalogTypeFieldRow[] = [
-  { typeFieldId: "chat.message_status:sent", typeId: "chat.message_status", name: "sent", ordinal: 1, fieldTypeId: null, typeName: "sent", isArray: false, notNull: true, nonempty: false },
-  { typeFieldId: "chat.message_status:delivered", typeId: "chat.message_status", name: "delivered", ordinal: 2, fieldTypeId: null, typeName: "delivered", isArray: false, notNull: true, nonempty: false },
+const enumFields: SystemTypeFieldRow[] = [
+  { type_field_id: "chat.message_status:sent", type_id: "chat.message_status", name: "sent", ordinal: 1, field_type_id: null, type_name: "sent", is_array: false, not_null: true, nonempty: false, data_type: null },
+  { type_field_id: "chat.message_status:delivered", type_id: "chat.message_status", name: "delivered", ordinal: 2, field_type_id: null, type_name: "delivered", is_array: false, not_null: true, nonempty: false, data_type: null },
 ];
 
 const procedures = resolveProcedureCatalog(
   [
     {
-      procedureId: "api.create_order",
+      procedure_id: "api.create_order",
       schema: "api",
       name: "create_order",
       signature: "customer_id UUID, items api.order_item[]",
-      returnType: "UUID",
+      return_type: "UUID",
       implementation: "module",
-      moduleId: "backend",
-      revisionId: "backend:84ac91abcdef",
+      module_id: "backend",
+      revision_id: "backend:84ac91abcdef",
       security: "INVOKER",
       owner: "root",
       grants: "dba",
       comment: "Creates an order",
+      language: null,
+      source: null,
+    },
+    {
+      procedure_id: "ns.book_tickets",
+      schema: "ns",
+      name: "book_tickets",
+      signature: "venue_id TEXT NOT NULL",
+      return_type: "TEXT",
+      implementation: "inline",
+      module_id: null,
+      revision_id: "inline:deadbeef",
+      security: "INVOKER",
+      owner: "root",
+      grants: "dba",
+      comment: "Concert booking",
+      language: "JAVASCRIPT",
+      source: "var venueId = input.venue_id;\nreturn venueId;",
     },
   ],
   [
-    parameter("api.create_order", "customer_id", 1, "UUID", { notNull: true }),
-    parameter("api.create_order", "quantity", 2, "INT", { notNull: true }),
+    parameter("api.create_order", "customer_id", 1, "UUID", { not_null: true }),
+    parameter("api.create_order", "quantity", 2, "INT", { not_null: true }),
     parameter("api.create_order", "comment", 3, "TEXT"),
-    parameter("api.create_order", "priority", 4, "BOOLEAN", { notNull: true }),
-    parameter("api.create_order", "status", 5, "chat.message_status", { typeId: "chat.message_status" }),
-    parameter("api.create_order", "items", 6, "api.order_item", { typeId: "api.order_item", isArray: true, notNull: true }),
-    parameter("api.create_order", "address", 7, "api.address", { typeId: "api.address", notNull: true }),
+    parameter("api.create_order", "priority", 4, "BOOLEAN", { not_null: true }),
+    parameter("api.create_order", "status", 5, "chat.message_status", { type_id: "chat.message_status" }),
+    parameter("api.create_order", "items", 6, "api.order_item", { type_id: "api.order_item", is_array: true, not_null: true }),
+    parameter("api.create_order", "address", 7, "api.address", { type_id: "api.address", not_null: true }),
   ],
   [addressType, orderItemType, statusEnum],
   [...addressFields, ...orderItemFields, ...enumFields],
 );
 
-const logs: ProcedureLogRecord[] = [
+const logs: SystemProcedureLogRow[] = [
   {
     timestamp: "2026-09-11T12:42:10.114Z",
-    nodeId: "n1",
-    executionId: "01KTEST",
-    requestId: "01KTEST",
-    procedureId: "api.create_order",
-    moduleId: "backend",
-    revisionId: "backend:84ac91abcdef",
+    node_id: "n1",
+    execution_id: "01KTEST",
+    request_id: "01KTEST",
+    procedure_id: "api.create_order",
+    module_id: "backend",
+    revision_id: "backend:84ac91abcdef",
     actor: "Alex",
     origin: "http",
     outcome: "ok",
     channel: "invocation",
     level: "info",
-    errorCode: null,
+    error_code: null,
     message: "order created",
-    durationMs: 12,
+    duration_ms: 12,
   },
   {
     timestamp: "2026-09-11T12:38:11.000Z",
-    nodeId: "n1",
-    executionId: "01KWARN",
-    requestId: "01KWARN",
-    procedureId: "api.create_order",
-    moduleId: "backend",
-    revisionId: "backend:84ac91abcdef",
+    node_id: "n1",
+    execution_id: "01KWARN",
+    request_id: "01KWARN",
+    procedure_id: "api.create_order",
+    module_id: "backend",
+    revision_id: "backend:84ac91abcdef",
     actor: "Alex",
     origin: "sql",
     outcome: "log",
     channel: "ctx.log",
     level: "warn",
-    errorCode: null,
+    error_code: null,
     message: "Rate limit approaching",
-    durationMs: 0,
+    duration_ms: 0,
   },
 ];
 
@@ -195,33 +218,33 @@ const snapshot: ProcedureCatalogSnapshot = {
   parameters: [],
   modules: [
     {
-      moduleId: "backend",
+      module_id: "backend",
       runtime: "typescript",
-      currentRevisionId: "backend:84ac91abcdef",
-      contractHash: "contract-hash",
-      abiVersion: 2,
+      current_revision_id: "backend:84ac91abcdef",
+      contract_hash: "contract-hash",
+      abi_version: 2,
     },
   ],
   revisions: [
     {
-      moduleId: "backend",
-      revisionId: "backend:84ac91abcdef",
-      artifactId: "84ac91abcdef",
-      artifactBytes: 86016,
-      contractHash: "contract-hash",
-      createdAtMs: Date.parse("2024-10-24T12:41:00Z"),
-      isCurrent: true,
-      exports: ["api.create_order"],
+      module_id: "backend",
+      revision_id: "backend:84ac91abcdef",
+      artifact_id: "84ac91abcdef",
+      artifact_bytes: 86016,
+      contract_hash: "contract-hash",
+      created_at: "2024-10-24T12:41:00.000Z",
+      is_current: true,
+      exports: "api.create_order",
     },
     {
-      moduleId: "backend",
-      revisionId: "backend:719acprevious",
-      artifactId: "719acprevious",
-      artifactBytes: 82944,
-      contractHash: "older-hash",
-      createdAtMs: Date.parse("2024-10-23T09:17:00Z"),
-      isCurrent: false,
-      exports: ["api.create_order"],
+      module_id: "backend",
+      revision_id: "backend:719acprevious",
+      artifact_id: "719acprevious",
+      artifact_bytes: 82944,
+      contract_hash: "older-hash",
+      created_at: "2024-10-23T09:17:00.000Z",
+      is_current: false,
+      exports: "api.create_order",
     },
   ],
   logs,
@@ -295,6 +318,23 @@ describe("Function detail", () => {
       error: null,
       refetch: mockRefetchLogs,
     });
+    mockInstancesQuery.mockReturnValue({
+      data: [
+        {
+          instance_id: 1,
+          worker: 0,
+          module_id: "backend",
+          revision_id: "backend:84ac91abcdef",
+          state: "idle",
+          reserved_bytes: 64 * 1024 * 1024,
+          used_heap_bytes: 2048,
+          peak_heap_bytes: 4096,
+          invocations: 3,
+        },
+      ],
+      isFetching: false,
+      error: null,
+    });
     mockInvoke.mockImplementation(() => {
       invokeState.data = successResult;
       return { unwrap: vi.fn().mockResolvedValue(successResult) };
@@ -311,14 +351,62 @@ describe("Function detail", () => {
   it("renders overview metadata and the current revision", () => {
     renderDetail("/functions/api.create_order");
     expect(screen.getByRole("heading", { name: "api.create_order" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "breadcrumb" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Functions" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Overview" }).getAttribute("data-state")).toBe("active");
+    expect(screen.getByRole("tab", { name: "Logs" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Revisions" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Test" })).toBeTruthy();
     expect(screen.getAllByText("Creates an order").length).toBeGreaterThan(0);
     expect(screen.getByText("Function details")).toBeTruthy();
+    expect(screen.getByText("Project module")).toBeTruthy();
+    expect(screen.getByText("SECURITY INVOKER")).toBeTruthy();
     expect(screen.getByText(/backend:84ac91/)).toBeTruthy();
+    expect(screen.getByText("2024-10-24T12:41:00Z")).toBeTruthy();
     expect(screen.getByText("TypeScript / V8")).toBeTruthy();
+    expect(screen.getByText("Used heap")).toBeTruthy();
+    expect(screen.getByText("Peak heap")).toBeTruthy();
+    expect(screen.getByText("2.0 KB")).toBeTruthy();
+    expect(screen.getByText("4.0 KB")).toBeTruthy();
+    expect(screen.getByText("64 MB")).toBeTruthy();
+    expect(screen.queryByTestId("function-inline-source")).toBeNull();
+    expect(screen.getAllByText("Alex").length).toBeGreaterThan(0);
+    expect(screen.getByText("HTTP")).toBeTruthy();
+    expect(screen.getByText("SQL")).toBeTruthy();
     expect(screen.getByText("Rate limit approaching")).toBeTruthy();
     expect(mockLogsQuery).toHaveBeenCalledWith(
       expect.objectContaining({ procedureId: "api.create_order", limit: 10 }),
     );
+  });
+
+  it("shows inline source and isolate memory for an inline procedure", () => {
+    mockInstancesQuery.mockReturnValue({
+      data: [
+        {
+          instance_id: 7,
+          worker: 0,
+          module_id: "inline",
+          revision_id: "inline:deadbeef",
+          state: "idle",
+          reserved_bytes: 32 * 1024 * 1024,
+          used_heap_bytes: 1024,
+          peak_heap_bytes: 1536,
+          invocations: 1,
+        },
+      ],
+      isFetching: false,
+      error: null,
+    });
+
+    renderDetail("/functions/ns.book_tickets");
+    expect(screen.getByText("Inline script")).toBeTruthy();
+    expect(screen.getByText("JAVASCRIPT")).toBeTruthy();
+    expect(screen.getByTestId("function-inline-source")).toBeTruthy();
+    expect(screen.getByText(/var venueId = input.venue_id/)).toBeTruthy();
+    expect(screen.getByTestId("function-runtime-memory")).toBeTruthy();
+    expect(screen.getByText("Used heap")).toBeTruthy();
+    expect(screen.getByText("1.0 KB")).toBeTruthy();
+    expect(screen.getByText(/inline:deadbeef/)).toBeTruthy();
   });
 
   it("requests logs for the current procedure and renders levels", () => {
@@ -330,6 +418,9 @@ describe("Function detail", () => {
     expect(logsCall?.procedureId).toBe("api.create_order");
     expect(screen.getByText("WARN")).toBeTruthy();
     expect(screen.getByText("Rate limit approaching")).toBeTruthy();
+    expect(screen.getAllByText("Alex").length).toBeGreaterThan(0);
+    expect(screen.getByText("HTTP")).toBeTruthy();
+    expect(screen.getByText("SQL")).toBeTruthy();
   });
 
   it("shows an empty logs state", () => {
@@ -375,6 +466,7 @@ describe("Function detail", () => {
 
     expect(screen.getByText("customer_id")).toBeTruthy();
     expect(screen.getByText("comment")).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: /status/i })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "priority" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add item" })).toBeTruthy();
 
@@ -386,10 +478,10 @@ describe("Function detail", () => {
       target: { value: "2c1c0a1a-1111-4111-8111-aaaaaaaaaaaa" },
     });
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "2" } });
-    fireEvent.change(screen.getByText("city").parentElement!.querySelector("input")!, {
+    fireEvent.change(screen.getByRole("textbox", { name: /city/i }), {
       target: { value: "Austin" },
     });
-    fireEvent.change(screen.getByText("country").parentElement!.querySelector("input")!, {
+    fireEvent.change(screen.getByRole("textbox", { name: /country/i }), {
       target: { value: "US" },
     });
 

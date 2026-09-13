@@ -106,6 +106,22 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
         })
         .await?;
 
+        // Procedures/types can remain after a partial namespace drop. Sweep them
+        // whenever the schema exists, and also for IF EXISTS so leftover catalog
+        // from a previous incomplete CASCADE is repaired.
+        if namespace_opt.is_some() || statement.if_exists {
+            let app_ctx = self.app_context.clone();
+            let ns_id = namespace_id.clone();
+            run_blocking(move || {
+                app_ctx
+                    .system_tables()
+                    .catalog_stores()
+                    .drop_namespace_catalog(&ns_id)
+                    .map_err(KalamDbError::from)
+            })
+            .await?;
+        }
+
         let namespace = match namespace_opt {
             Some(ns) => ns,
             None => {
@@ -239,14 +255,14 @@ mod tests {
         models::{
             datatypes::KalamDataType,
             schemas::{ColumnDefinition, TableDefinition, TableOptions},
-            TableName, UserId,
+            CatalogTypeKind, RoutineId, RoutineSecurityMode, TableName, TypeId, UserId,
         },
         schemas::TableType,
         Role,
     };
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
     use kalamdb_store::EntityStore;
-    use kalamdb_system::{Migration, Namespace};
+    use kalamdb_system::{CatalogRoutine, CatalogType, Migration, Namespace};
 
     use super::*;
 
@@ -478,5 +494,106 @@ mod tests {
             !app_ctx.storage_backend().partition_exists(&pk_partition),
             "user-table PK index partition should be dropped during namespace cascade cleanup"
         );
+    }
+
+    #[tokio::test]
+    async fn drop_namespace_removes_procedures_and_types() {
+        let app_ctx = test_app_context_simple();
+        let suffix = unique_suffix();
+        let namespace_id = NamespaceId::new(format!("drop_catalog_{}", suffix));
+        let handler = DropNamespaceHandler::new(app_ctx.clone());
+
+        app_ctx
+            .system_tables()
+            .namespaces()
+            .create_namespace(Namespace {
+                namespace_id: namespace_id.clone(),
+                name:         namespace_id.as_str().to_string(),
+                created_at:   chrono::Utc::now().timestamp_millis(),
+                options:      Some(serde_json::json!({})),
+                table_count:  0,
+            })
+            .expect("create namespace");
+
+        let stores = app_ctx.system_tables().catalog_stores();
+        let type_id = TypeId::from_parts(Some(&namespace_id), "ticket_status");
+        stores
+            .upsert_type(CatalogType {
+                type_id:        type_id.clone(),
+                namespace_id:   namespace_id.clone(),
+                name:           "ticket_status".to_string(),
+                kind:           CatalogTypeKind::Enum,
+                table_id:       None,
+                source_type_id: None,
+                comment:        None,
+            })
+            .expect("upsert type");
+        let routine_id = RoutineId::from_parts(Some(&namespace_id), "book_tickets");
+        stores
+            .upsert_routine(CatalogRoutine {
+                routine_id:         routine_id.clone(),
+                namespace_id:       namespace_id.clone(),
+                name:               "book_tickets".to_string(),
+                owner:              UserId::new("root"),
+                security:           RoutineSecurityMode::Invoker,
+                language:           Some("javascript".to_string()),
+                body:               Some("return 1;".to_string()),
+                return_type_id:     None,
+                return_type_name:   None,
+                return_is_array:    false,
+                return_not_null:    false,
+                comment:            None,
+                return_data_type:   None,
+                inline_source_hash: None,
+                inline_artifact_id: None,
+            })
+            .expect("upsert routine");
+
+        let stmt = DropNamespaceStatement {
+            name:      namespace_id.clone(),
+            if_exists: false,
+            cascade:   true,
+        };
+        let _ = handler.execute(stmt, vec![], &create_test_context()).await;
+        assert!(stores.get_routine(&routine_id).expect("load routine").is_none());
+        assert!(stores.get_type(&type_id).expect("load type").is_none());
+    }
+
+    #[tokio::test]
+    async fn drop_namespace_if_exists_cleans_orphan_catalog() {
+        let app_ctx = test_app_context_simple();
+        let suffix = unique_suffix();
+        let namespace_id = NamespaceId::new(format!("orphan_catalog_{}", suffix));
+        let handler = DropNamespaceHandler::new(app_ctx.clone());
+        let stores = app_ctx.system_tables().catalog_stores();
+        let routine_id = RoutineId::from_parts(Some(&namespace_id), "book_tickets");
+        stores
+            .upsert_routine(CatalogRoutine {
+                routine_id:         routine_id.clone(),
+                namespace_id:       namespace_id.clone(),
+                name:               "book_tickets".to_string(),
+                owner:              UserId::new("root"),
+                security:           RoutineSecurityMode::Invoker,
+                language:           Some("javascript".to_string()),
+                body:               Some("return 1;".to_string()),
+                return_type_id:     None,
+                return_type_name:   None,
+                return_is_array:    false,
+                return_not_null:    false,
+                comment:            None,
+                return_data_type:   None,
+                inline_source_hash: None,
+                inline_artifact_id: None,
+            })
+            .expect("upsert orphan routine");
+
+        let stmt = DropNamespaceStatement {
+            name:      namespace_id.clone(),
+            if_exists: true,
+            cascade:   true,
+        };
+        let result = handler.execute(stmt, vec![], &create_test_context()).await;
+        assert!(result.is_ok(), "{result:?}");
+        assert!(stores.get_routine(&routine_id).expect("load routine").is_none());
     }
 }

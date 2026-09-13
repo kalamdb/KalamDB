@@ -15,6 +15,7 @@ import {
   system_procedures,
   system_modules,
   system_module_revisions,
+  system_module_instances,
   system_procedure_logs,
   system_routine_parameters,
   system_types,
@@ -46,6 +47,7 @@ export type SystemUserRow = typeof system_users.$inferSelect;
 export type SystemProcedureRow = typeof system_procedures.$inferSelect;
 export type SystemModuleRow = typeof system_modules.$inferSelect;
 export type SystemModuleRevisionRow = typeof system_module_revisions.$inferSelect;
+export type SystemModuleInstanceRow = typeof system_module_instances.$inferSelect;
 export type SystemProcedureLogRow = typeof system_procedure_logs.$inferSelect;
 export type SystemRoutineParameterRow = typeof system_routine_parameters.$inferSelect;
 export type SystemTypeRow = typeof system_types.$inferSelect;

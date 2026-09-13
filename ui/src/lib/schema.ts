@@ -255,6 +255,8 @@ export const system_procedures = kTable('system.procedures', {
   owner: text('owner').notNull(),
   grants: text('grants').notNull(),
   comment: text('comment'),
+  language: text('language'),
+  source: text('source'),
 });
 
 export const system_modules = kTable('system.modules', {
@@ -271,9 +273,21 @@ export const system_module_revisions = kTable('system.module_revisions', {
   artifact_id: text('artifact_id').notNull(),
   artifact_bytes: integer('artifact_bytes').notNull(),
   contract_hash: text('contract_hash').notNull(),
-  created_at: integer('created_at').notNull(),
+  created_at: text('created_at').notNull(),
   is_current: boolean('is_current').notNull(),
   exports: text('exports').notNull(),
+});
+
+export const system_module_instances = kTable('system.module_instances', {
+  instance_id: integer('instance_id').notNull(),
+  worker: integer('worker').notNull(),
+  module_id: text('module_id').notNull(),
+  revision_id: text('revision_id').notNull(),
+  state: text('state').notNull(),
+  reserved_bytes: integer('reserved_bytes').notNull(),
+  used_heap_bytes: integer('used_heap_bytes').notNull(),
+  peak_heap_bytes: integer('peak_heap_bytes').notNull(),
+  invocations: integer('invocations').notNull(),
 });
 
 export const system_procedure_logs = kTable('system.procedure_logs', {

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Cloud, Database, HardDrive, Loader2 } from "lucide-react";
+import { AlertCircle, Cloud, Database, HardDrive } from "lucide-react";
 import { useCreateStorageMutation, useUpdateStorageMutation } from "@/store/apiSlice";
 import type { Storage } from "@/services/storageService";
 import { getErrorMessage } from "@/lib/errors";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -369,7 +370,7 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
             Cancel
           </Button>
           <Button form="storage-form" type="submit" disabled={isSubmitting || !canSubmit}>
-            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isSubmitting && <Spinner data-icon="inline-start" />}
             {isEditing ? "Save Changes" : "Create Storage"}
           </Button>
         </SheetFooter>

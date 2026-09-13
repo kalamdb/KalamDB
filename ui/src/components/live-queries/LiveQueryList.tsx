@@ -18,9 +18,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import type { LiveQuery, LiveQueryFilters } from '@/services/liveQueryService';
 import { useKillLiveQueryMutation, useGetLiveQueriesQuery } from '@/store/apiSlice';
-import { Loader2, RefreshCw, XCircle, Activity, Clock, Database, CheckCircle } from 'lucide-react';
+import { RefreshCw, XCircle, Activity, Clock, Database, CheckCircle } from 'lucide-react';
 
 export function LiveQueryList() {
   const [filters, setFilters] = useState({
@@ -237,7 +238,7 @@ export function LiveQueryList() {
               {isLoading && liveQueries.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                    <Spinner className="mx-auto size-6 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground mt-2">Loading live queries...</p>
                   </TableCell>
                 </TableRow>
@@ -273,7 +274,7 @@ export function LiveQueryList() {
                         disabled={killingIds.has(query.live_id)}
                       >
                         {killingIds.has(query.live_id) ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Spinner className="size-4" />
                         ) : (
                           <>
                             <XCircle className="h-4 w-4 mr-1" />

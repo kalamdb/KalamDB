@@ -1,10 +1,12 @@
+import type {
+  SystemProcedureRow,
+  SystemRoutineParameterRow,
+  SystemTypeFieldRow,
+  SystemTypeRow,
+} from "@/lib/models";
 import { isBuiltinSqlTypeName } from "./format";
 import type {
-  CatalogParameterRow,
-  CatalogProcedureRow,
-  CatalogTypeFieldRow,
   CatalogTypeKind,
-  CatalogTypeRow,
   ProcedureImplementation,
   ProcedureMetadata,
   ProcedureParameter,
@@ -20,176 +22,133 @@ const CATALOG_TYPE_KINDS = new Set<CatalogTypeKind>([
   "enum",
 ]);
 
-function unwrapBoolean(value: unknown, fallback = false): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    return normalized === "true" || normalized === "1";
-  }
-  return fallback;
+function normalizeKindToken(value: string): string {
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
 }
 
-function unwrapNumber(value: unknown, fallback = 0): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+export function parseCatalogTypeKind(value: unknown): CatalogTypeKind | null {
+  const normalized = normalizeKindToken(catalogText(value));
+  if (!normalized) {
+    return null;
   }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return fallback;
+  return CATALOG_TYPE_KINDS.has(normalized as CatalogTypeKind) ? (normalized as CatalogTypeKind) : null;
 }
 
-function unwrapText(value: unknown): string | null {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return null;
-}
-
-function requiredText(value: unknown, fallback = ""): string {
-  return unwrapText(value) ?? fallback;
-}
-
-export function parseCatalogTypeKind(value: string): CatalogTypeKind | null {
-  return CATALOG_TYPE_KINDS.has(value as CatalogTypeKind) ? (value as CatalogTypeKind) : null;
-}
-
-export function parseImplementation(value: string): ProcedureImplementation {
-  if (value === "module" || value === "inline" || value === "missing") {
-    return value;
+export function parseImplementation(value: unknown): ProcedureImplementation {
+  const normalized = catalogText(value);
+  if (normalized === "module" || normalized === "inline" || normalized === "missing") {
+    return normalized;
   }
   return "missing";
 }
 
-export function normalizeCatalogType(row: {
-  type_id: unknown;
-  namespace_id: unknown;
-  name: unknown;
-  kind: unknown;
-  table_id?: unknown;
-  source_type_id?: unknown;
-  comment?: unknown;
-}): CatalogTypeRow {
-  return {
-    typeId: requiredText(row.type_id),
-    namespaceId: requiredText(row.namespace_id),
-    name: requiredText(row.name),
-    kind: requiredText(row.kind),
-    tableId: unwrapText(row.table_id),
-    sourceTypeId: unwrapText(row.source_type_id),
-    comment: unwrapText(row.comment),
-  };
-}
-
-export function normalizeCatalogTypeField(row: {
-  type_field_id: unknown;
-  type_id: unknown;
-  name: unknown;
-  ordinal: unknown;
-  field_type_id?: unknown;
-  type_name: unknown;
-  is_array: unknown;
-  not_null: unknown;
-  nonempty: unknown;
-}): CatalogTypeFieldRow {
-  return {
-    typeFieldId: requiredText(row.type_field_id),
-    typeId: requiredText(row.type_id),
-    name: requiredText(row.name),
-    ordinal: unwrapNumber(row.ordinal),
-    fieldTypeId: unwrapText(row.field_type_id),
-    typeName: requiredText(row.type_name),
-    isArray: unwrapBoolean(row.is_array),
-    notNull: unwrapBoolean(row.not_null),
-    nonempty: unwrapBoolean(row.nonempty),
-  };
-}
-
-export function normalizeCatalogParameter(row: {
-  parameter_id: unknown;
-  routine_id: unknown;
-  name: unknown;
-  ordinal: unknown;
-  type_id?: unknown;
-  type_name: unknown;
-  is_array: unknown;
-  not_null: unknown;
-  nonempty: unknown;
-}): CatalogParameterRow {
-  return {
-    parameterId: requiredText(row.parameter_id),
-    routineId: requiredText(row.routine_id),
-    name: requiredText(row.name),
-    ordinal: unwrapNumber(row.ordinal),
-    typeId: unwrapText(row.type_id),
-    typeName: requiredText(row.type_name),
-    isArray: unwrapBoolean(row.is_array),
-    notNull: unwrapBoolean(row.not_null),
-    nonempty: unwrapBoolean(row.nonempty),
-  };
-}
-
-export function normalizeCatalogProcedure(row: {
-  procedure_id: unknown;
-  schema: unknown;
-  name: unknown;
-  signature: unknown;
-  return_type: unknown;
-  implementation: unknown;
-  module_id?: unknown;
-  revision_id?: unknown;
-  security: unknown;
-  owner: unknown;
-  grants: unknown;
-  comment?: unknown;
-}): CatalogProcedureRow {
-  return {
-    procedureId: requiredText(row.procedure_id),
-    schema: requiredText(row.schema),
-    name: requiredText(row.name),
-    signature: requiredText(row.signature),
-    returnType: requiredText(row.return_type, "VOID"),
-    implementation: requiredText(row.implementation, "missing"),
-    moduleId: unwrapText(row.module_id),
-    revisionId: unwrapText(row.revision_id),
-    security: requiredText(row.security, "INVOKER"),
-    owner: requiredText(row.owner),
-    grants: requiredText(row.grants),
-    comment: unwrapText(row.comment),
-  };
-}
-
 interface TypeIndex {
-  types: Map<string, CatalogTypeRow>;
-  fields: Map<string, CatalogTypeFieldRow[]>;
+  types: Map<string, SystemTypeRow>;
+  fields: Map<string, SystemTypeFieldRow[]>;
 }
 
-function buildTypeIndex(types: CatalogTypeRow[], fields: CatalogTypeFieldRow[]): TypeIndex {
-  const typeMap = new Map<string, CatalogTypeRow>();
+export function catalogText(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.asString === "function") {
+      const text = record.asString();
+      if (typeof text === "string" && text !== "NULL") {
+        return text;
+      }
+      if (text === null) {
+        return "";
+      }
+    }
+    if (typeof record.toJson === "function") {
+      return catalogText(record.toJson());
+    }
+    if (typeof record.Utf8 === "string") {
+      return record.Utf8;
+    }
+    if (typeof record.String === "string") {
+      return record.String;
+    }
+    if (typeof record.toString === "function") {
+      const text = record.toString();
+      if (typeof text === "string" && text !== "[object Object]") {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+function catalogBool(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  const text = catalogText(value).toLowerCase();
+  return text === "true" || text === "1";
+}
+
+function catalogNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  const parsed = Number(catalogText(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function looksLikeEnumFields(fields: SystemTypeFieldRow[]): boolean {
+  return (
+    fields.length > 0 &&
+    fields.every((field) => {
+      const fieldTypeId = catalogText(field.field_type_id);
+      const name = catalogText(field.name);
+      const typeName = catalogText(field.type_name);
+      return !fieldTypeId && Boolean(name) && typeName === name;
+    })
+  );
+}
+
+function buildTypeIndex(types: SystemTypeRow[], fields: SystemTypeFieldRow[]): TypeIndex {
+  const typeMap = new Map<string, SystemTypeRow>();
   for (const type of types) {
-    typeMap.set(type.typeId, type);
+    const typeId = catalogText(type.type_id);
+    const namespaceId = catalogText(type.namespace_id);
+    const name = catalogText(type.name);
+    if (typeId) {
+      typeMap.set(typeId, type);
+    }
+    if (namespaceId && name) {
+      typeMap.set(`${namespaceId}.${name}`, type);
+    }
+    if (name && !typeMap.has(name)) {
+      typeMap.set(name, type);
+    }
   }
 
-  const fieldMap = new Map<string, CatalogTypeFieldRow[]>();
+  const fieldMap = new Map<string, SystemTypeFieldRow[]>();
   for (const field of fields) {
-    const existing = fieldMap.get(field.typeId) ?? [];
+    const typeId = catalogText(field.type_id);
+    if (!typeId) {
+      continue;
+    }
+    const existing = fieldMap.get(typeId) ?? [];
     existing.push(field);
-    fieldMap.set(field.typeId, existing);
+    fieldMap.set(typeId, existing);
   }
   for (const list of fieldMap.values()) {
-    list.sort((left, right) => left.ordinal - right.ordinal);
+    list.sort((left, right) => catalogNumber(left.ordinal) - catalogNumber(right.ordinal));
   }
 
   return { types: typeMap, fields: fieldMap };
@@ -227,8 +186,20 @@ function resolveNamedType(
     return { kind: "unknown", sqlName: typeId, notNull, nonempty };
   }
 
-  const catalogType = index.types.get(typeId);
+  const lookupId = catalogText(typeId) || typeId;
+  const catalogType = index.types.get(lookupId);
+  const orphanFields = index.fields.get(lookupId) ?? [];
   if (!catalogType) {
+    if (looksLikeEnumFields(orphanFields)) {
+      return {
+        kind: "enum",
+        typeId: lookupId,
+        sqlName: lookupId,
+        values: orphanFields.map((field) => catalogText(field.name)),
+        notNull,
+        nonempty,
+      };
+    }
     if (isBuiltinSqlTypeName(typeId)) {
       return {
         kind: "builtin",
@@ -241,22 +212,23 @@ function resolveNamedType(
     return { kind: "unknown", sqlName: typeId, notNull, nonempty };
   }
 
-  if (catalogType.sourceTypeId && parseCatalogTypeKind(catalogType.kind) === "row_alias") {
+  const catalogTypeId = catalogText(catalogType.type_id) || typeId;
+  if (catalogText(catalogType.source_type_id) && parseCatalogTypeKind(catalogType.kind) === "row_alias") {
     stack.add(typeId);
-    const resolved = resolveNamedType(catalogType.sourceTypeId, index, notNull, nonempty, stack);
+    const resolved = resolveNamedType(catalogText(catalogType.source_type_id), index, notNull, nonempty, stack);
     stack.delete(typeId);
-    return { ...resolved, sqlName: catalogType.typeId };
+    return { ...resolved, sqlName: catalogTypeId };
   }
 
   const kind = parseCatalogTypeKind(catalogType.kind);
-  const fields = index.fields.get(typeId) ?? [];
+  const fields = index.fields.get(catalogTypeId) ?? [];
 
-  if (kind === "enum") {
+  if (kind === "enum" || (!kind && looksLikeEnumFields(fields))) {
     return {
       kind: "enum",
-      typeId,
-      sqlName: typeId,
-      values: fields.map((field) => field.name),
+      typeId: catalogTypeId,
+      sqlName: catalogTypeId,
+      values: fields.map((field) => catalogText(field.name)),
       notNull,
       nonempty,
     };
@@ -265,13 +237,13 @@ function resolveNamedType(
   if (kind === "composite" || kind === "implicit_table_row" || kind === "topic_payload") {
     stack.add(typeId);
     const resolvedFields: ResolvedTypeField[] = fields.map((field) => ({
-      name: field.name,
+      name: catalogText(field.name) || field.name,
       type: resolveTypeReference(
-        field.fieldTypeId,
-        field.typeName,
-        field.isArray,
-        field.notNull,
-        field.nonempty,
+        field.field_type_id,
+        field.type_name,
+        catalogBool(field.is_array),
+        catalogBool(field.not_null),
+        catalogBool(field.nonempty),
         index,
         stack,
       ),
@@ -279,15 +251,15 @@ function resolveNamedType(
     stack.delete(typeId);
     return {
       kind: "composite",
-      typeId,
-      sqlName: typeId,
+      typeId: catalogTypeId,
+      sqlName: catalogTypeId,
       fields: resolvedFields,
       notNull,
       nonempty,
     };
   }
 
-  return { kind: "unknown", sqlName: typeId, notNull, nonempty };
+  return { kind: "unknown", sqlName: catalogTypeId, notNull, nonempty };
 }
 
 export function resolveTypeReference(
@@ -301,19 +273,21 @@ export function resolveTypeReference(
 ): ResolvedKalamType {
   const innerNotNull = isArray ? false : notNull;
   const innerNonempty = isArray ? false : nonempty;
-  const resolved = typeId
-    ? resolveNamedType(typeId, index, innerNotNull, innerNonempty, stack)
-    : isBuiltinSqlTypeName(typeName)
+  const namedTypeId = catalogText(typeId);
+  const namedTypeName = catalogText(typeName) || typeName;
+  const resolved = namedTypeId
+    ? resolveNamedType(namedTypeId, index, innerNotNull, innerNonempty, stack)
+    : isBuiltinSqlTypeName(namedTypeName)
       ? {
           kind: "builtin" as const,
-          builtin: typeName.split("(")[0]?.trim().toUpperCase() || typeName.toUpperCase(),
-          sqlName: typeName,
+          builtin: namedTypeName.split("(")[0]?.trim().toUpperCase() || namedTypeName.toUpperCase(),
+          sqlName: namedTypeName,
           notNull: innerNotNull,
           nonempty: innerNonempty,
         }
-      : index.types.has(typeName)
-        ? resolveNamedType(typeName, index, innerNotNull, innerNonempty, stack)
-        : { kind: "unknown" as const, sqlName: typeName, notNull: innerNotNull, nonempty: innerNonempty };
+      : index.types.has(namedTypeName)
+        ? resolveNamedType(namedTypeName, index, innerNotNull, innerNonempty, stack)
+        : { kind: "unknown" as const, sqlName: namedTypeName, notNull: innerNotNull, nonempty: innerNonempty };
 
   if (isArray) {
     return wrapArray(resolved, notNull, nonempty);
@@ -321,8 +295,8 @@ export function resolveTypeReference(
   return { ...resolved, notNull, nonempty };
 }
 
-function resolveReturnType(returnTypeName: string, index: TypeIndex): ResolvedKalamType {
-  const trimmed = returnTypeName.trim();
+function resolveReturnType(returnTypeName: unknown, index: TypeIndex): ResolvedKalamType {
+  const trimmed = catalogText(returnTypeName).trim();
   if (!trimmed || trimmed.toUpperCase() === "VOID") {
     return { kind: "builtin", builtin: "VOID", sqlName: "VOID", notNull: false, nonempty: false };
   }
@@ -339,89 +313,65 @@ function resolveReturnType(returnTypeName: string, index: TypeIndex): ResolvedKa
   );
 }
 
-export function resolveProcedureMetadata(
-  procedure: CatalogProcedureRow,
-  parameters: CatalogParameterRow[],
-  types: CatalogTypeRow[],
-  fields: CatalogTypeFieldRow[],
+function metadataFromRows(
+  procedure: SystemProcedureRow,
+  parameters: SystemRoutineParameterRow[],
+  index: TypeIndex,
 ): ProcedureMetadata {
-  const index = buildTypeIndex(types, fields);
   const resolvedParameters: ProcedureParameter[] = parameters
-    .filter((parameter) => parameter.routineId === procedure.procedureId)
-    .sort((left, right) => left.ordinal - right.ordinal)
+    .filter((parameter) => catalogText(parameter.routine_id) === catalogText(procedure.procedure_id))
+    .sort((left, right) => catalogNumber(left.ordinal) - catalogNumber(right.ordinal))
     .map((parameter) => ({
-      name: parameter.name,
-      ordinal: parameter.ordinal,
+      name: catalogText(parameter.name) || parameter.name,
+      ordinal: catalogNumber(parameter.ordinal),
       type: resolveTypeReference(
-        parameter.typeId,
-        parameter.typeName,
-        parameter.isArray,
-        parameter.notNull,
-        parameter.nonempty,
+        parameter.type_id,
+        parameter.type_name,
+        catalogBool(parameter.is_array),
+        catalogBool(parameter.not_null),
+        catalogBool(parameter.nonempty),
         index,
       ),
     }));
 
   return {
-    id: procedure.procedureId,
-    schema: procedure.schema,
-    name: procedure.name,
-    signature: procedure.signature,
+    id: catalogText(procedure.procedure_id) || procedure.procedure_id,
+    schema: catalogText(procedure.schema) || procedure.schema,
+    name: catalogText(procedure.name) || procedure.name,
+    signature: catalogText(procedure.signature) || procedure.signature,
     parameters: resolvedParameters,
-    returnType: resolveReturnType(procedure.returnType, index),
-    returnTypeName: procedure.returnType,
-    security: procedure.security,
-    owner: procedure.owner,
-    comment: procedure.comment,
+    returnType: resolveReturnType(procedure.return_type || "VOID", index),
+    returnTypeName: catalogText(procedure.return_type) || procedure.return_type || "VOID",
+    security: catalogText(procedure.security) || procedure.security,
+    owner: catalogText(procedure.owner) || procedure.owner,
+    comment: procedure.comment == null ? null : catalogText(procedure.comment) || procedure.comment,
     implementation: parseImplementation(procedure.implementation),
-    moduleId: procedure.moduleId,
-    revisionId: procedure.revisionId,
-    grants: procedure.grants,
+    moduleId: procedure.module_id == null ? null : catalogText(procedure.module_id) || procedure.module_id,
+    revisionId: procedure.revision_id == null ? null : catalogText(procedure.revision_id) || procedure.revision_id,
+    grants: catalogText(procedure.grants) || procedure.grants,
+    language: procedure.language == null ? null : catalogText(procedure.language) || procedure.language,
+    source: procedure.source == null ? null : catalogText(procedure.source) || procedure.source,
   };
 }
 
+export function resolveProcedureMetadata(
+  procedure: SystemProcedureRow,
+  parameters: SystemRoutineParameterRow[],
+  types: SystemTypeRow[],
+  fields: SystemTypeFieldRow[],
+): ProcedureMetadata {
+  return metadataFromRows(procedure, parameters, buildTypeIndex(types, fields));
+}
+
 export function resolveProcedureCatalog(
-  procedures: CatalogProcedureRow[],
-  parameters: CatalogParameterRow[],
-  types: CatalogTypeRow[],
-  fields: CatalogTypeFieldRow[],
+  procedures: SystemProcedureRow[],
+  parameters: SystemRoutineParameterRow[],
+  types: SystemTypeRow[],
+  fields: SystemTypeFieldRow[],
 ): ProcedureMetadata[] {
   const index = buildTypeIndex(types, fields);
   return procedures
     .slice()
-    .sort((left, right) => left.procedureId.localeCompare(right.procedureId))
-    .map((procedure) => {
-      const resolvedParameters: ProcedureParameter[] = parameters
-        .filter((parameter) => parameter.routineId === procedure.procedureId)
-        .sort((left, right) => left.ordinal - right.ordinal)
-        .map((parameter) => ({
-          name: parameter.name,
-          ordinal: parameter.ordinal,
-          type: resolveTypeReference(
-            parameter.typeId,
-            parameter.typeName,
-            parameter.isArray,
-            parameter.notNull,
-            parameter.nonempty,
-            index,
-          ),
-        }));
-
-      return {
-        id: procedure.procedureId,
-        schema: procedure.schema,
-        name: procedure.name,
-        signature: procedure.signature,
-        parameters: resolvedParameters,
-        returnType: resolveReturnType(procedure.returnType, index),
-        returnTypeName: procedure.returnType,
-        security: procedure.security,
-        owner: procedure.owner,
-        comment: procedure.comment,
-        implementation: parseImplementation(procedure.implementation),
-        moduleId: procedure.moduleId,
-        revisionId: procedure.revisionId,
-        grants: procedure.grants,
-      };
-    });
+    .sort((left, right) => catalogText(left.procedure_id).localeCompare(catalogText(right.procedure_id)))
+    .map((procedure) => metadataFromRows(procedure, parameters, index));
 }

@@ -60,6 +60,7 @@ export function FunctionsTable({
             items.map((item) => (
               <TableRow
                 key={item.id}
+                data-testid={`functions-row-${item.id}`}
                 className="cursor-pointer"
                 onClick={() => navigate(functionDetailPath(item.id))}
               >
@@ -85,7 +86,7 @@ export function FunctionsTable({
                       <Button
                         type="button"
                         variant="ghost"
-                        size="icon-xs"
+                        size="icon"
                         aria-label={`Actions for ${item.id}`}
                         onClick={(event) => event.stopPropagation()}
                       >

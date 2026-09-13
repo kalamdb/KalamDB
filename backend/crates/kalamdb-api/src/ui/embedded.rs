@@ -21,7 +21,6 @@ use super::UiRuntimeConfig;
 #[folder = "../../../ui/dist"]
 #[prefix = ""]
 #[exclude = "*.map"]
-#[exclude = "kalam_client_bg.wasm"]
 struct UiAssets;
 
 fn embedded_asset_body(data: Cow<'static, [u8]>) -> web::Bytes {
@@ -29,6 +28,16 @@ fn embedded_asset_body(data: Cow<'static, [u8]>) -> web::Bytes {
         Cow::Borrowed(bytes) => web::Bytes::from_static(bytes),
         Cow::Owned(bytes) => web::Bytes::from(bytes),
     }
+}
+
+fn is_missing_static_asset(path: &str) -> bool {
+    const ASSET_EXTENSIONS: &[&str] = &[
+        "css", "gif", "ico", "jpeg", "jpg", "js", "map", "otf", "png", "svg", "ttf", "wasm",
+        "webp", "woff", "woff2",
+    ];
+    path.rsplit_once('.')
+        .map(|(_, ext)| ASSET_EXTENSIONS.iter().any(|asset| ext.eq_ignore_ascii_case(asset)))
+        .unwrap_or(false)
 }
 
 /// Serve embedded UI assets
@@ -55,6 +64,11 @@ pub async fn serve_embedded_ui(req: HttpRequest) -> HttpResponse {
         return HttpResponse::Ok()
             .content_type(mime_type)
             .body(embedded_asset_body(content.data));
+    }
+
+    if is_missing_static_asset(path) {
+        debug!("[embedded_ui] Static asset not found: {}", path);
+        return HttpResponse::NotFound().finish();
     }
 
     debug!("[embedded_ui] File not found: {}, falling back to index.html", path);
@@ -95,4 +109,30 @@ pub fn configure_embedded_ui(cfg: &mut web::ServiceConfig, runtime_config: UiRun
 /// Check if UI assets are available in the binary
 pub fn is_ui_embedded() -> bool {
     UiAssets::get("index.html").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_missing_static_asset, is_ui_embedded};
+
+    #[test]
+    fn embedded_ui_packs_index_html() {
+        assert!(
+            is_ui_embedded(),
+            "embedded-ui is enabled but ui/dist/index.html was not packed into the binary"
+        );
+    }
+
+    #[test]
+    fn missing_favicon_is_a_static_asset() {
+        assert!(is_missing_static_asset(
+            "functions/concerts_e2e.book_tickets/favicon.png"
+        ));
+        assert!(!is_missing_static_asset(
+            "functions/concerts_e2e.book_tickets"
+        ));
+        assert!(!is_missing_static_asset(
+            "functions/concerts_e2e.book_tickets/test"
+        ));
+    }
 }

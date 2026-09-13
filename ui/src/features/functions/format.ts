@@ -30,6 +30,16 @@ const BUILTIN_SQL_TYPES = new Set([
   "VOID",
 ]);
 
+export function revisionExports(value: string): string[] {
+  if (!value.trim()) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function isBuiltinSqlTypeName(sqlName: string): boolean {
   const normalized = sqlName.trim().toUpperCase();
   if (BUILTIN_SQL_TYPES.has(normalized)) {
@@ -153,4 +163,52 @@ export function displayLogLevel(level: string): string {
     return "DEBUG";
   }
   return "INFO";
+}
+
+export function displaySecurityPolicy(security: string): string {
+  const normalized = security.trim().toUpperCase().replace(/\s+/g, " ");
+  if (normalized === "DEFINER" || normalized === "SECURITY DEFINER") {
+    return "SECURITY DEFINER";
+  }
+  if (normalized === "INVOKER" || normalized === "SECURITY INVOKER" || !normalized) {
+    return "SECURITY INVOKER";
+  }
+  return security.trim();
+}
+
+export function displayImplementation(implementation: string | null | undefined): string {
+  switch (implementation?.trim().toLowerCase()) {
+    case "inline":
+      return "Inline script";
+    case "module":
+      return "Project module";
+    case "missing":
+      return "Unimplemented";
+    default:
+      return implementation?.trim() || "—";
+  }
+}
+
+export function displayLanguage(language: string | null | undefined): string {
+  const trimmed = language?.trim();
+  return trimmed ? trimmed.toUpperCase() : "—";
+}
+
+export function displayLogOrigin(origin: string | null | undefined): string {
+  const normalized = origin?.trim().toLowerCase() ?? "";
+  if (normalized === "sql") {
+    return "SQL";
+  }
+  if (normalized === "http") {
+    return "HTTP";
+  }
+  if (normalized === "topic") {
+    return "Topic";
+  }
+  return origin?.trim() || "—";
+}
+
+export function displayLogActor(actor: string | null | undefined): string {
+  const trimmed = actor?.trim() ?? "";
+  return trimmed || "—";
 }

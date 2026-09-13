@@ -205,16 +205,20 @@ fn validate_named_type(
     let fields = load_type_fields(stores, &catalog_type)?;
     match catalog_type.kind {
         CatalogTypeKind::Enum => {
+            let supported = format_supported_enum_values(&fields);
             let JsonValue::String(label) = json else {
                 return Err(invalid_args(format!(
-                    "{} must be an enum label of {type_id}",
+                    "{} must be an enum label of {type_id}; {supported}",
                     spec.display
                 )));
             };
             if fields.iter().any(|field| field.name == *label) {
                 Ok(())
             } else {
-                Err(invalid_args(format!("invalid enum label '{label}' for {}", spec.display)))
+                Err(invalid_args(format!(
+                    "invalid enum label '{label}' for {}; {supported}",
+                    spec.display
+                )))
             }
         },
         CatalogTypeKind::Composite
@@ -289,13 +293,43 @@ fn invalid_args(message: String) -> KalamDbError {
     FunctionsError::InvalidArguments(message).into()
 }
 
+fn format_supported_enum_values(fields: &[CatalogTypeField]) -> String {
+    format_supported_enum_labels(fields.iter().map(|field| field.name.as_str()))
+}
+
+fn format_supported_enum_labels<'a, I>(labels: I) -> String
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let labels: Vec<&str> = labels.into_iter().collect();
+    if labels.is_empty() {
+        return "supported values: none".to_string();
+    }
+    const LIMIT: usize = 32;
+    let mut out = String::from("supported values: ");
+    for (index, label) in labels.iter().copied().take(LIMIT).enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push('\'');
+        out.push_str(label);
+        out.push('\'');
+    }
+    if labels.len() > LIMIT {
+        out.push_str(" (and ");
+        out.push_str(&(labels.len() - LIMIT).to_string());
+        out.push_str(" more)");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_functions::RoutineValue;
     use serde_json::json;
 
-    use super::{is_empty_object, structured_json};
+    use super::{format_supported_enum_labels, is_empty_object, structured_json};
     use crate::functions::convert::{json_to_routine_value, routine_value_as_json};
 
     #[test]
@@ -317,5 +351,24 @@ mod tests {
     fn empty_object_is_detected() {
         let value = json_to_routine_value(&json!({}), None).unwrap();
         assert!(is_empty_object(&value));
+    }
+
+    #[test]
+    fn supported_enum_labels_are_quoted_in_error_text() {
+        assert_eq!(
+            format_supported_enum_labels(["active", "blocked"]),
+            "supported values: 'active', 'blocked'"
+        );
+        assert_eq!(format_supported_enum_labels(std::iter::empty()), "supported values: none");
+    }
+
+    #[test]
+    fn supported_enum_labels_truncate_long_lists() {
+        let labels: Vec<String> = (0..34).map(|index| format!("v{index}")).collect();
+        let text = format_supported_enum_labels(labels.iter().map(String::as_str));
+        assert!(text.starts_with("supported values: 'v0'"));
+        assert!(text.contains("'v31'"));
+        assert!(!text.contains("'v32'"));
+        assert!(text.ends_with("(and 2 more)"));
     }
 }

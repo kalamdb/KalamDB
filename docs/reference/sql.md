@@ -477,6 +477,18 @@ built-ins stay in `SELECT` lists. A procedure runs in a V8 isolate, can read
 and write tables, publish topics, call other procedures, and return a typed
 value.
 
+There is one procedure type (`CREATE PROCEDURE`) and three invocation origins:
+
+| Origin | How it runs | `ctx.http` | `ctx.source.kind` |
+| --- | --- | --- | --- |
+| SQL / PGWire | `CALL schema.name(...)` | `null` | `"call"` |
+| HTTP | `POST /v1/functions/{namespace}/{procedure}` | present | `"call"` |
+| Topic trigger | `CREATE TRIGGER ... ON TOPIC ... EXECUTE PROCEDURE` | `null` | `"topic"` |
+
+The same procedure can be called from SQL and HTTP. Topic handlers usually take
+the topic `PAYLOAD`. Table `AFTER ROW` triggers and scheduled/cron procedures
+are not in this release; react to writes by routing the table into a topic.
+
 `CREATE PROCEDURE`, `DROP PROCEDURE`, `GRANT EXECUTE`, and `REVOKE EXECUTE`
 require a DBA or System role. `CALL` is allowed for any authenticated role that
 holds `EXECUTE` on that procedure.

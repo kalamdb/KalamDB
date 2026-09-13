@@ -11,6 +11,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -20,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Loader2, RefreshCw, Filter, X, Eye, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { RefreshCw, Filter, X, Eye, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/config';
 
@@ -191,7 +192,7 @@ function getActionColor(action: string): string {
           <div className="flex items-center gap-1">
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon-lg"
               disabled={page === 0}
               onClick={() => handlePageChange(page - 1)}
             >
@@ -200,14 +201,14 @@ function getActionColor(action: string): string {
             <span className="text-sm text-muted-foreground px-2">{page + 1}</span>
             <Button
               variant="outline"
-              size="icon-sm"
+              size="icon-lg"
               disabled={logs.length < pageSize}
               onClick={() => handlePageChange(page + 1)}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="icon-sm" onClick={handleRefresh} disabled={isLoading} aria-label="Refresh audit logs">
+          <Button variant="outline" size="icon-lg" onClick={handleRefresh} disabled={isLoading} aria-label="Refresh audit logs">
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -256,7 +257,7 @@ function getActionColor(action: string): string {
       {/* Table */}
       {isLoading && logs.length === 0 ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Spinner className="size-6 text-muted-foreground" />
         </div>
       ) : logs.length === 0 ? (
         <Card>

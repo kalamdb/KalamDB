@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -29,7 +30,6 @@ import { DeleteUserDialog } from "./DeleteUserDialog";
 import {
   ChevronLeft,
   ChevronRight,
-  Loader2,
   Pencil,
   Plus,
   RefreshCw,
@@ -232,7 +232,7 @@ export function UsersList() {
 
       {isLoading && users.length === 0 && invites.length === 0 ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <Spinner className="size-6 text-muted-foreground" />
         </div>
       ) : (
         <div className="space-y-5">

@@ -24,10 +24,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RevisionIdDisplay } from "@/components/functions/RevisionIdDisplay";
-import { displayLogLevel, formatDurationMs } from "@/features/functions/format";
+import { displayLogActor, displayLogLevel, displayLogOrigin, formatDurationMs } from "@/features/functions/format";
 import { formatLogTime, formatLogTimestamp, logLevelClassName, rtkErrorMessage } from "@/features/functions/display";
 import { useGetProcedureLogsQuery } from "@/store/apiSlice";
-import type { ProcedureLogRecord } from "@/features/functions/types";
+import type { SystemProcedureLogRow } from "@/features/functions/types";
 
 const LEVELS = ["all", "debug", "info", "warn", "error"] as const;
 const ORIGINS = ["all", "sql", "http", "topic"] as const;
@@ -38,7 +38,7 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
   const [origin, setOrigin] = useState<string>("all");
   const [executionId, setExecutionId] = useState("");
   const [revisionId, setRevisionId] = useState("");
-  const [selected, setSelected] = useState<ProcedureLogRecord | null>(null);
+  const [selected, setSelected] = useState<SystemProcedureLogRow | null>(null);
 
   const filters = useMemo(
     () => ({
@@ -120,6 +120,8 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
             <TableRow>
               <TableHead>Time</TableHead>
               <TableHead>Level</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Origin</TableHead>
               <TableHead>Execution</TableHead>
               <TableHead>Message</TableHead>
             </TableRow>
@@ -127,20 +129,20 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
           <TableBody>
             {isFetching && logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                   Loading logs…
                 </TableCell>
               </TableRow>
             ) : logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
                   No logs for this procedure.
                 </TableCell>
               </TableRow>
             ) : (
               logs.map((log) => (
                 <TableRow
-                  key={`${log.timestamp}-${log.executionId}-${log.channel}-${log.message}`}
+                  key={`${log.timestamp}-${log.execution_id}-${log.channel}-${log.message}`}
                   className="cursor-pointer"
                   onClick={() => setSelected(log)}
                 >
@@ -148,7 +150,9 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
                     {formatLogTime(log.timestamp)}
                   </TableCell>
                   <TableCell className={logLevelClassName(log.level)}>{displayLogLevel(log.level)}</TableCell>
-                  <TableCell className="max-w-[10rem] truncate font-mono text-xs">{log.executionId || "—"}</TableCell>
+                  <TableCell className="max-w-[8rem] truncate">{displayLogActor(log.actor)}</TableCell>
+                  <TableCell className="text-muted-foreground">{displayLogOrigin(log.origin)}</TableCell>
+                  <TableCell className="max-w-[10rem] truncate font-mono text-xs">{log.execution_id || "—"}</TableCell>
                   <TableCell className="max-w-xl truncate">{log.message || "—"}</TableCell>
                 </TableRow>
               ))
@@ -170,22 +174,22 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
   );
 }
 
-function LogDetails({ log }: { log: ProcedureLogRecord }) {
+function LogDetails({ log }: { log: SystemProcedureLogRow }) {
   const rows: Array<[string, ReactNode]> = [
     ["Timestamp", formatLogTimestamp(log.timestamp)],
     ["Level", displayLogLevel(log.level)],
     ["Message", log.message || "—"],
-    ["Execution ID", <span className="break-all font-mono text-xs">{log.executionId || "—"}</span>],
-    ["Request ID", <span className="break-all font-mono text-xs">{log.requestId || "—"}</span>],
-    ["Origin", log.origin || "—"],
+    ["Execution ID", <span className="break-all font-mono text-xs">{log.execution_id || "—"}</span>],
+    ["Request ID", <span className="break-all font-mono text-xs">{log.request_id || "—"}</span>],
+    ["Origin", displayLogOrigin(log.origin)],
     ["Outcome", log.outcome || "—"],
-    ["Actor", log.actor || "—"],
-    ["Node", log.nodeId || "—"],
+    ["Actor", displayLogActor(log.actor)],
+    ["Node", log.node_id || "—"],
     ["Channel", log.channel || "—"],
-    ["Revision", <RevisionIdDisplay revisionId={log.revisionId} />],
-    ["Module", log.moduleId || "—"],
-    ["Error code", log.errorCode || "—"],
-    ["Duration", formatDurationMs(log.durationMs)],
+    ["Revision", <RevisionIdDisplay revisionId={log.revision_id} />],
+    ["Module", log.module_id || "—"],
+    ["Error code", log.error_code || "—"],
+    ["Duration", formatDurationMs(log.duration_ms)],
   ];
 
   return (

@@ -4,8 +4,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Deserialize;
 
 use crate::{
-    CLI_BUILD_DATE, CLI_VERSION, CLIError, Result, release_download,
-    release_version::ReleaseVersion,
+    release_download, release_version::ReleaseVersion, CLIError, Result, CLI_BUILD_DATE,
+    CLI_VERSION,
 };
 
 pub const GITHUB_REPO: &str = release_download::GITHUB_REPO;

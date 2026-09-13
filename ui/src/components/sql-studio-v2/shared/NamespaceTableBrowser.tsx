@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Database,
   KeyRound,
-  Loader2,
   Radio,
   Search,
   Star,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
   SelectContent,
@@ -274,7 +274,7 @@ export function TableColumnTree({
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">
             {isRefreshing ? (
               <span className="inline-flex items-center gap-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Spinner className="size-3" />
                 Loading schema...
               </span>
             ) : (

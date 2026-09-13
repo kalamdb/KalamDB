@@ -178,6 +178,8 @@ describe("SQL Studio completion catalog", () => {
         moduleId: "backend",
         revisionId: "backend:abc",
         grants: "dba",
+        language: null,
+        source: null,
       },
     ]);
     const second = buildSqlCompletionData([], [
