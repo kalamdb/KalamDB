@@ -28,6 +28,7 @@ export interface ProcedureLogFilters {
   channel?: string;
   executionId?: string;
   revisionId?: string;
+  scheduleId?: string;
   limit?: number;
 }
 
@@ -253,6 +254,9 @@ export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<
   }
   if (filters.revisionId?.trim()) {
     conditions.push(eq(system_procedure_logs.revision_id, filters.revisionId.trim()));
+  }
+  if (filters.scheduleId?.trim()) {
+    conditions.push(eq(system_procedure_logs.schedule_id, filters.scheduleId.trim()));
   }
 
   const rows = await db

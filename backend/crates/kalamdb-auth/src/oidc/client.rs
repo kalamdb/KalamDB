@@ -433,10 +433,7 @@ mod tests {
     fn client_cache_is_bounded() {
         let cache = oidc_client_cache(8);
         assert_eq!(cache.policy().max_capacity(), Some(8));
-        assert_eq!(
-            cache.policy().time_to_live(),
-            Some(std::time::Duration::from_secs(5 * 60))
-        );
+        assert_eq!(cache.policy().time_to_live(), Some(std::time::Duration::from_secs(5 * 60)));
     }
 
     #[test]
@@ -582,10 +579,8 @@ mod tests {
             .timeout(std::time::Duration::from_secs(3))
             .build()
             .expect("HTTP client should build");
-        let discovery = http
-            .get("http://127.0.0.1:5556/.well-known/openid-configuration")
-            .send()
-            .await;
+        let discovery =
+            http.get("http://127.0.0.1:5556/.well-known/openid-configuration").send().await;
         let Ok(discovery) = discovery else {
             return;
         };
@@ -597,7 +592,8 @@ mod tests {
             .post("http://127.0.0.1:5556/token")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(
-                "grant_type=password&username=heidi%40example.org&password=kalamdb123&client_id=client&scope=openid%20email%20profile",
+                "grant_type=password&username=heidi%40example.org&password=kalamdb123&\
+                 client_id=client&scope=openid%20email%20profile",
             )
             .send()
             .await

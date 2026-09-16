@@ -135,7 +135,6 @@ impl JobType {
             JobType::Cleanup |      // Delete external Parquet + metadata
             JobType::Backup |       // External storage upload
             JobType::Restore |      // External storage download
-            JobType::JobCleanup |   // Raft-replicated job table cleanup
             JobType::UserCleanup |  // Cascade via Raft
             JobType::TopicCleanup | // Delete topic messages + offsets
             JobType::UserExport | // Export user data to zip
@@ -157,6 +156,7 @@ impl JobType {
             self,
             JobType::Flush |            // Delete flushed rows from RocksDB + compact
             JobType::Compact |          // RocksDB compaction (local files)
+            JobType::JobCleanup |       // Local system.jobs / job_nodes history GC
             JobType::ManifestEviction | // Local cache eviction
             JobType::StreamEviction |   // Local stream log cleanup
             JobType::Retention |        // Local soft-delete cleanup
@@ -235,5 +235,15 @@ mod tests {
         assert!(!JobType::SegmentCompact.has_local_work());
         assert!(JobType::SegmentCompact.is_leader_only());
         assert_eq!(JobType::from("segment_compact"), JobType::SegmentCompact);
+    }
+
+    #[test]
+    fn job_cleanup_is_local_history_gc() {
+        assert_eq!(JobType::JobCleanup.as_str(), "job_cleanup");
+        assert_eq!(JobType::JobCleanup.short_prefix(), "JC");
+        assert!(!JobType::JobCleanup.has_leader_actions());
+        assert!(JobType::JobCleanup.has_local_work());
+        assert!(!JobType::JobCleanup.is_leader_only());
+        assert_eq!(JobType::from("job_cleanup"), JobType::JobCleanup);
     }
 }

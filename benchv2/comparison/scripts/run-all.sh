@@ -3,20 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REPO="$(cd "$ROOT/../.." && pwd)"
 
-# Prefer a locally built release server (includes schema-cache / hot-only PK tweaks).
-if [[ -z "${KALAMDB_SERVER_BIN:-}" ]]; then
-  for candidate in \
-    "$REPO/target/release/kalamdb-server" \
-    "$ROOT/bin/kalamdb-server"
-  do
-    if [[ -x "$candidate" ]]; then
-      export KALAMDB_SERVER_BIN="$candidate"
-      break
-    fi
-  done
-fi
+# Prefer a locally built release server (schema-first functions + hot-only PK tweaks).
+# shellcheck source=resolve-kalamdb-server.sh
+source "$ROOT/scripts/resolve-kalamdb-server.sh"
 
 "$ROOT/scripts/download-binaries.sh"
 

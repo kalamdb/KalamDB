@@ -76,10 +76,12 @@ impl JobsManager {
         }
     }
 
-    /// Recover incomplete jobs on startup
+    /// Recover incomplete jobs on startup.
     ///
-    /// Marks all Running jobs as Failed with "Server restarted" error.
-    /// Uses provider's async methods which handle spawn_blocking internally.
+    /// Leader-only jobs (backup, restore, export, …) complete their job_node
+    /// immediately and keep `system.jobs.status = Running` until leader actions
+    /// finish. If the process dies in that window, job_node recovery finds
+    /// nothing and the job would otherwise stay Running forever.
     pub(crate) async fn recover_incomplete_jobs(&self) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
 
@@ -93,60 +95,148 @@ impl JobsManager {
 
             if job_nodes.is_empty() {
                 log::debug!("No incomplete job_nodes to recover for this node");
-                return Ok(());
+            } else {
+                log::warn!("Recovering {} incomplete job_nodes from previous run", job_nodes.len());
+
+                for node in job_nodes {
+                    let job_id = node.job_id.clone();
+                    let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
+                        job_id,
+                        node_id: self.node_id,
+                        status: JobStatus::Queued,
+                        error_message: Some("Node restarted".to_string()),
+                        updated_at: chrono::Utc::now(),
+                    };
+
+                    app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+                        KalamDbError::Other(format!("Failed to recover job_node via Raft: {}", e))
+                    })?;
+                }
             }
+        }
 
-            log::warn!("Recovering {} incomplete job_nodes from previous run", job_nodes.len());
+        // Followers must not fail global jobs: a healthy leader may still be
+        // inside backup/restore after the local job_node is already Completed.
+        if self.is_cluster_leader().await {
+            self.fail_jobs_without_in_progress_nodes("Server restarted").await?;
+        }
 
-            for node in job_nodes {
-                let job_id = node.job_id.clone();
-                let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
-                    job_id,
-                    node_id: self.node_id,
-                    status: JobStatus::Queued,
-                    error_message: Some("Node restarted".to_string()),
-                    updated_at: chrono::Utc::now(),
-                };
+        Ok(())
+    }
 
-                app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
-                    KalamDbError::Other(format!("Failed to recover job_node via Raft: {}", e))
-                })?;
-            }
-
+    /// Fail Running/Retrying jobs that have no in-progress job_nodes.
+    ///
+    /// That is the leader-only hang/crash signature: local phase already
+    /// marked the node Completed, then leader work died before updating
+    /// `system.jobs`.
+    pub(crate) async fn fail_jobs_without_in_progress_nodes(
+        &self,
+        reason: &str,
+    ) -> Result<(), KalamDbError> {
+        if !self.is_cluster_leader().await {
             return Ok(());
         }
 
         let filter = JobFilter {
-            status: Some(JobStatus::Running),
+            statuses: Some(vec![JobStatus::Running, JobStatus::Retrying]),
+            limit: None,
             ..Default::default()
         };
 
         let running_jobs = self.list_jobs(filter).await?;
-
         if running_jobs.is_empty() {
             log::debug!("No incomplete jobs to recover");
             return Ok(());
         }
 
-        log::warn!("Recovering {} incomplete jobs from previous run", running_jobs.len());
+        let now_ms = Utc::now().timestamp_millis();
+        for job in running_jobs {
+            let job_nodes = self
+                .job_nodes_provider
+                .list_for_job_id_async(&job.job_id)
+                .await
+                .into_kalamdb_error("Failed to list job_nodes for zombie job recovery")?;
+            if job_nodes.iter().any(|node| node.status.is_in_progress()) {
+                continue;
+            }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
-
-        // Update each job using provider's async method
-        for mut job in running_jobs {
             let job_id = job.job_id.clone();
-            job.status = JobStatus::Failed;
-            job.message = Some("Server restarted".to_string());
-            job.exception_trace = Some("Job was running when server shut down".to_string());
-            job.updated_at = now_ms;
-            job.finished_at = Some(now_ms);
-
+            log::warn!(
+                "[{}] Failing leader-phase job with no in-progress job_nodes: {}",
+                job_id.as_str(),
+                reason
+            );
+            // Direct provider write: crash recovery must be visible immediately.
+            // Raft FailJob can return before apply, leaving system.jobs Running.
+            let mut failed = job;
+            failed.status = JobStatus::Failed;
+            failed.message = Some(reason.to_string());
+            failed.updated_at = now_ms;
+            failed.finished_at = Some(now_ms);
             self.jobs_provider
-                .update_job_async(job)
+                .update_job_async(failed)
                 .await
                 .into_kalamdb_error("Failed to recover job")?;
+            self.finalize_job_nodes(&job_id, JobStatus::Failed, Some(reason.to_string()))
+                .await?;
+            self.log_job_event(&job_id, &Level::Error, &format!("Job marked as failed ({reason})"));
+        }
 
-            self.log_job_event(&job_id, &Level::Error, "Job marked as failed (server restart)");
+        Ok(())
+    }
+
+    /// Fail Running jobs whose executor is not alive in this process.
+    ///
+    /// Catches the same leader-only zombie without requiring a restart,
+    /// while leaving jobs that are actually executing (or still queued on
+    /// a job_node) alone.
+    pub(crate) async fn fail_orphaned_running_jobs(&self) -> Result<(), KalamDbError> {
+        if !self.is_cluster_leader().await {
+            return Ok(());
+        }
+
+        const GRACE_MS: i64 = 30_000;
+        let now_ms = Utc::now().timestamp_millis();
+        let executing = self.executing_jobs.lock().clone();
+
+        let filter = JobFilter {
+            statuses: Some(vec![JobStatus::Running, JobStatus::Retrying]),
+            limit: None,
+            ..Default::default()
+        };
+
+        for job in self.list_jobs(filter).await? {
+            if executing.contains(&job.job_id) {
+                continue;
+            }
+            let started_at = job.started_at.unwrap_or(job.created_at);
+            if now_ms.saturating_sub(started_at) < GRACE_MS {
+                continue;
+            }
+
+            let job_nodes = self
+                .job_nodes_provider
+                .list_for_job_id_async(&job.job_id)
+                .await
+                .into_kalamdb_error("Failed to list job_nodes for orphan scan")?;
+            if job_nodes.iter().any(|node| node.status.is_in_progress()) {
+                continue;
+            }
+
+            let job_id = job.job_id.clone();
+            let reason = "Job executor dropped without completing";
+            log::error!("[{}] {}", job_id.as_str(), reason);
+            let mut failed = job;
+            failed.status = JobStatus::Failed;
+            failed.message = Some(reason.to_string());
+            failed.updated_at = now_ms;
+            failed.finished_at = Some(now_ms);
+            self.jobs_provider
+                .update_job_async(failed)
+                .await
+                .into_kalamdb_error("Failed to fail orphaned job")?;
+            self.finalize_job_nodes(&job_id, JobStatus::Failed, Some(reason.to_string()))
+                .await?;
         }
 
         Ok(())
@@ -200,5 +290,232 @@ impl JobsManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kalamdb_commons::{JobId, NodeId};
+    use kalamdb_core::{app_context::AppContext, test_helpers::test_app_context_simple};
+    use kalamdb_system::{providers::jobs::models::Job, JobNode, JobStatus, JobType};
+
+    use crate::{init_job_manager, AppContextJobsExt};
+
+    async fn ready_app() -> Arc<AppContext> {
+        let app_ctx = test_app_context_simple();
+        init_job_manager(&app_ctx);
+        app_ctx.executor().start().await.unwrap();
+        app_ctx.executor().initialize_cluster().await.unwrap();
+        app_ctx.wire_raft_appliers();
+        app_ctx
+    }
+
+    fn running_backup(job_id: &str, node_id: NodeId, now_ms: i64) -> Job {
+        Job {
+            job_id: JobId::new(job_id),
+            job_type: JobType::Backup,
+            status: JobStatus::Running,
+            leader_status: None,
+            parameters: Some(serde_json::json!({"backup_path": "/tmp/kdb_restore_stuck"})),
+            message: None,
+            exception_trace: None,
+            idempotency_key: None,
+            retry_count: 0,
+            max_retries: 3,
+            memory_used: None,
+            cpu_used: None,
+            created_at: now_ms,
+            updated_at: now_ms,
+            started_at: Some(now_ms),
+            finished_at: None,
+            node_id,
+            leader_node_id: None,
+            queue: None,
+            priority: None,
+        }
+    }
+
+    fn job_node(
+        job_id: &str,
+        node_id: NodeId,
+        status: JobStatus,
+        now_ms: i64,
+        finished: bool,
+    ) -> JobNode {
+        JobNode {
+            created_at: now_ms,
+            updated_at: now_ms,
+            started_at: Some(now_ms),
+            finished_at: finished.then_some(now_ms),
+            job_id: JobId::new(job_id),
+            node_id,
+            status,
+            error_message: None,
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn recover_fails_leader_only_running_job_when_job_node_already_completed() {
+        let app_ctx = ready_app().await;
+        let jobs_manager = app_ctx.job_manager();
+        let node_id = *app_ctx.node_id().as_ref();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let job_id = "BK-7950b366d357";
+
+        app_ctx
+            .system_tables()
+            .jobs()
+            .create_job(running_backup(job_id, node_id, now_ms))
+            .unwrap();
+        app_ctx
+            .system_tables()
+            .job_nodes()
+            .create_job_node(job_node(job_id, node_id, JobStatus::Completed, now_ms, true))
+            .unwrap();
+
+        jobs_manager.recover_incomplete_jobs().await.expect("recover incomplete jobs");
+
+        let recovered = app_ctx
+            .system_tables()
+            .jobs()
+            .get_job(&JobId::new(job_id))
+            .unwrap()
+            .expect("job must still exist");
+        assert_eq!(recovered.status, JobStatus::Failed);
+        assert!(recovered.finished_at.is_some(), "restart recovery must set finished_at");
+        let message = recovered.message.unwrap_or_default();
+        assert!(
+            message.to_ascii_lowercase().contains("restart"),
+            "expected restart failure message, got {message}"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn recover_does_not_fail_jobs_with_in_progress_job_nodes() {
+        let app_ctx = ready_app().await;
+        let jobs_manager = app_ctx.job_manager();
+        let node_id = *app_ctx.node_id().as_ref();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let job_id = "FL-still-running-local";
+
+        let mut flush = running_backup(job_id, node_id, now_ms);
+        flush.job_type = JobType::Flush;
+        app_ctx.system_tables().jobs().create_job(flush).unwrap();
+        app_ctx
+            .system_tables()
+            .job_nodes()
+            .create_job_node(job_node(job_id, node_id, JobStatus::Running, now_ms, false))
+            .unwrap();
+
+        jobs_manager.recover_incomplete_jobs().await.expect("recover incomplete jobs");
+
+        let recovered = app_ctx
+            .system_tables()
+            .jobs()
+            .get_job(&JobId::new(job_id))
+            .unwrap()
+            .expect("job must still exist");
+        assert_eq!(recovered.status, JobStatus::Running);
+        assert!(recovered.finished_at.is_none());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn orphan_scan_fails_leader_only_running_job_without_live_executor() {
+        let app_ctx = ready_app().await;
+        let jobs_manager = app_ctx.job_manager();
+        let node_id = *app_ctx.node_id().as_ref();
+        let now_ms = chrono::Utc::now().timestamp_millis() - 45_000;
+        let job_id = "BK-orphaned-no-executor";
+
+        app_ctx
+            .system_tables()
+            .jobs()
+            .create_job(running_backup(job_id, node_id, now_ms))
+            .unwrap();
+        app_ctx
+            .system_tables()
+            .job_nodes()
+            .create_job_node(job_node(job_id, node_id, JobStatus::Completed, now_ms, true))
+            .unwrap();
+
+        jobs_manager.fail_orphaned_running_jobs().await.expect("orphan scan");
+
+        let recovered = app_ctx
+            .system_tables()
+            .jobs()
+            .get_job(&JobId::new(job_id))
+            .unwrap()
+            .expect("job must still exist");
+        assert_eq!(recovered.status, JobStatus::Failed);
+        assert!(recovered.finished_at.is_some());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn orphan_scan_skips_job_still_tracked_as_executing() {
+        let app_ctx = ready_app().await;
+        let jobs_manager = app_ctx.job_manager();
+        let node_id = *app_ctx.node_id().as_ref();
+        let now_ms = chrono::Utc::now().timestamp_millis() - 45_000;
+        let job_id = "BK-still-executing";
+
+        app_ctx
+            .system_tables()
+            .jobs()
+            .create_job(running_backup(job_id, node_id, now_ms))
+            .unwrap();
+        app_ctx
+            .system_tables()
+            .job_nodes()
+            .create_job_node(job_node(job_id, node_id, JobStatus::Completed, now_ms, true))
+            .unwrap();
+
+        let _guard = jobs_manager.track_executing(JobId::new(job_id));
+        jobs_manager.fail_orphaned_running_jobs().await.expect("orphan scan");
+
+        let recovered = app_ctx
+            .system_tables()
+            .jobs()
+            .get_job(&JobId::new(job_id))
+            .unwrap()
+            .expect("job must still exist");
+        assert_eq!(recovered.status, JobStatus::Running);
+        assert!(recovered.finished_at.is_none());
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(15000)]
+    async fn orphan_scan_does_not_fail_within_grace_period() {
+        let app_ctx = ready_app().await;
+        let jobs_manager = app_ctx.job_manager();
+        let node_id = *app_ctx.node_id().as_ref();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let job_id = "BK-within-grace";
+
+        app_ctx
+            .system_tables()
+            .jobs()
+            .create_job(running_backup(job_id, node_id, now_ms))
+            .unwrap();
+        app_ctx
+            .system_tables()
+            .job_nodes()
+            .create_job_node(job_node(job_id, node_id, JobStatus::Completed, now_ms, true))
+            .unwrap();
+
+        jobs_manager.fail_orphaned_running_jobs().await.expect("orphan scan");
+
+        let recovered = app_ctx
+            .system_tables()
+            .jobs()
+            .get_job(&JobId::new(job_id))
+            .unwrap()
+            .expect("job must still exist");
+        assert_eq!(recovered.status, JobStatus::Running);
     }
 }

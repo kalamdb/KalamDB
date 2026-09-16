@@ -29,6 +29,12 @@ Client SDK documentation.
 
 - **[sdk.md](sdk/sdk.md)** – TypeScript/JavaScript SDK guide
 
+### [releases/](releases/)
+GitHub Releases body copy. One file per version; paste into the GitHub release when cutting a tag.
+
+- **[README.md](releases/README.md)** – Index (newest first)
+- **[0.7.0-beta.0.md](releases/0.7.0-beta.0.md)** – Typed nested data, scalar indexes, server functions, everyday CLI
+
 ### [architecture/](architecture/)
 System architecture and design decisions.
 
@@ -80,6 +86,7 @@ Bruno API collection for testing endpoints.
 2. [Development Setup](development/development-setup.md) – Full environment setup
 3. [Architecture Decisions](architecture/decisions/) – Understand design choices
 4. [Plans](plans/) – Execution-ready project plans
+5. [Release notes](releases/) – GitHub Releases copy for shipped versions
 
 ---
 
@@ -108,4 +115,4 @@ KalamDB stores each user's messages in isolated storage partitions instead of a 
 ---
 
 **Last Updated**: September 2026  
-**KalamDB Version**: 0.6.x (0.7 program: serialization + scalar indexes + functions V1)
+**KalamDB Version**: 0.7.0-beta.0

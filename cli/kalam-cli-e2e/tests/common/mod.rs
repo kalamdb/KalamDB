@@ -2662,6 +2662,25 @@ pub fn rows_as_hashmaps(
     Some(result)
 }
 
+fn named_rows_as_hashmaps(
+    result: &serde_json::Value,
+) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
+    use std::collections::HashMap;
+
+    use serde_json::Value;
+
+    let named = result.get("named_rows")?.as_array()?;
+    Some(
+        named
+            .iter()
+            .filter_map(|row| {
+                let obj = row.as_object()?;
+                Some(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            })
+            .collect::<Vec<HashMap<String, Value>>>(),
+    )
+}
+
 /// Get rows from API response as HashMaps.
 ///
 /// Convenience function that extracts `results[0]` and converts its rows to HashMaps.
@@ -2669,7 +2688,7 @@ pub fn get_rows_as_hashmaps(
     json: &serde_json::Value,
 ) -> Option<Vec<std::collections::HashMap<String, serde_json::Value>>> {
     let first_result = json.get("results")?.as_array()?.first()?;
-    rows_as_hashmaps(first_result)
+    rows_as_hashmaps(first_result).or_else(|| named_rows_as_hashmaps(first_result))
 }
 
 pub fn parse_json_from_cli_output(
@@ -5103,75 +5122,11 @@ pub fn verify_job_completed(
     } else {
         timeout
     };
-    let start = std::time::Instant::now();
-    let poll_interval = Duration::from_millis(200);
-
-    loop {
-        if start.elapsed() > timeout {
-            return Err(format!(
-                "Timeout waiting for job {} to complete after {:?}",
-                job_id, timeout
-            )
-            .into());
-        }
-
-        // Query system.jobs for this specific job
-        let query =
-            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
-
-        match execute_sql_as_root_via_client_json(&query) {
-            Ok(output) => {
-                // Parse JSON output
-                let json: serde_json::Value = serde_json::from_str(&output).map_err(|e| {
-                    format!("Failed to parse JSON output: {}. Output: {}", e, output)
-                })?;
-
-                if let Some(rows) = get_rows_as_hashmaps(&json) {
-                    if let Some(row) = rows.first() {
-                        let status_value = row
-                            .get("status")
-                            .and_then(extract_arrow_value)
-                            .or_else(|| row.get("status").cloned())
-                            .unwrap_or(serde_json::Value::Null);
-                        let status_owned = status_value
-                            .as_str()
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| status_value.to_string());
-                        let status = status_owned.as_str();
-
-                        let error_value = row
-                            .get("message")
-                            .and_then(extract_arrow_value)
-                            .or_else(|| row.get("message").cloned())
-                            .unwrap_or(serde_json::Value::Null);
-                        let error_message = error_value.as_str().unwrap_or("");
-
-                        if status.eq_ignore_ascii_case("completed") {
-                            return Ok(());
-                        }
-
-                        if status.eq_ignore_ascii_case("failed") {
-                            return Err(
-                                format!("Job {} failed. Error: {}", job_id, error_message).into()
-                            );
-                        }
-                    }
-                } else {
-                    // No row found - print debug info
-                    if start.elapsed().as_secs().is_multiple_of(5)
-                        && start.elapsed().as_millis() % 1000 < 250
-                    {
-                        println!("[DEBUG] Job {} not found in system.jobs", job_id);
-                    }
-                }
-            },
-            Err(e) => {
-                // If we can't query the jobs table, that's an error
-                return Err(format!("Failed to query system.jobs for job {}: {}", job_id, e).into());
-            },
-        }
-
-        std::thread::sleep(poll_interval);
+    let status = wait_for_job_finished(job_id, timeout)?;
+    if status == "completed" {
+        Ok(())
+    } else {
+        Err(format!("Job {job_id} ended as {status}, expected completed").into())
     }
 }
 
@@ -5186,6 +5141,77 @@ pub fn verify_jobs_completed(
         verify_job_completed(job_id, timeout)?;
     }
     Ok(())
+}
+
+/// How `wait_for_job_finished` should treat a `system.jobs.status` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobWaitState {
+    Pending,
+    Completed,
+    Failed,
+    Cancelled,
+    Skipped,
+    Unknown,
+}
+
+/// Classify a job status string. Uses exact match so values like
+/// `"Local phase completed"` are not treated as success.
+pub fn classify_job_status(status: &str) -> JobWaitState {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "new" | "queued" | "running" | "retrying" => JobWaitState::Pending,
+        "completed" => JobWaitState::Completed,
+        "failed" => JobWaitState::Failed,
+        "cancelled" => JobWaitState::Cancelled,
+        "skipped" => JobWaitState::Skipped,
+        _ => JobWaitState::Unknown,
+    }
+}
+
+fn json_cell_text(
+    row: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    let value = row
+        .get(key)
+        .and_then(extract_arrow_value)
+        .or_else(|| row.get(key).cloned())
+        .unwrap_or(serde_json::Value::Null);
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+                None
+            } else {
+                Some(s)
+            }
+        },
+        other => {
+            let text = other.to_string();
+            let trimmed = text.trim().trim_matches('"');
+            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        },
+    }
+}
+
+fn json_cell_i64(
+    row: &std::collections::HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<i64> {
+    let value = row
+        .get(key)
+        .and_then(extract_arrow_value)
+        .or_else(|| row.get(key).cloned())
+        .unwrap_or(serde_json::Value::Null);
+    match value {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
 }
 
 /// Wait until a job reaches a terminal state (completed or failed)
@@ -5207,8 +5233,10 @@ pub fn wait_for_job_finished(
             .into());
         }
 
-        let query =
-            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
+        let query = format!(
+            "SELECT job_id, status, message, finished_at FROM system.jobs WHERE job_id = '{}'",
+            job_id
+        );
 
         match execute_sql_as_root_via_client_json(&query) {
             Ok(output) => {
@@ -5218,23 +5246,27 @@ pub fn wait_for_job_finished(
 
                 if let Some(rows) = get_rows_as_hashmaps(&json) {
                     if let Some(row) = rows.first() {
-                        let status_value = row
-                            .get("status")
-                            .and_then(extract_arrow_value)
-                            .or_else(|| row.get("status").cloned())
-                            .unwrap_or(serde_json::Value::Null);
-                        let status_owned = status_value
-                            .as_str()
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| status_value.to_string());
-                        let status = status_owned.as_str();
-                        let status_lower = status.to_lowercase();
-
-                        if status_lower.contains("completed") {
-                            return Ok("completed".to_string());
-                        }
-                        if status_lower.contains("failed") {
-                            return Ok("failed".to_string());
+                        let status_owned = json_cell_text(row, "status").unwrap_or_default();
+                        match classify_job_status(&status_owned) {
+                            JobWaitState::Pending => {},
+                            JobWaitState::Completed | JobWaitState::Skipped => {
+                                if json_cell_text(row, "finished_at").is_none() {
+                                    // Status flipped before finished_at was written; keep polling.
+                                    std::thread::sleep(poll_interval);
+                                    continue;
+                                }
+                                return Ok(status_owned.to_ascii_lowercase());
+                            },
+                            JobWaitState::Failed | JobWaitState::Cancelled => {
+                                return Ok(status_owned.to_ascii_lowercase());
+                            },
+                            JobWaitState::Unknown => {
+                                return Err(format!(
+                                    "Unknown job status for {}: {}",
+                                    job_id, status_owned
+                                )
+                                .into());
+                            },
                         }
                     }
                 }
@@ -5244,6 +5276,78 @@ pub fn wait_for_job_finished(
 
         std::thread::sleep(poll_interval);
     }
+}
+
+/// Re-query `system.jobs` and require a terminal status plus `finished_at`.
+pub fn assert_job_fully_terminal(job_id: &str, expected_status: &str) {
+    let query = format!(
+        "SELECT job_id, status, message, finished_at FROM system.jobs WHERE job_id = '{}'",
+        job_id
+    );
+    let output = execute_sql_as_root_via_client_json(&query)
+        .unwrap_or_else(|e| panic!("query job {} after wait: {}", job_id, e));
+    let json: serde_json::Value =
+        serde_json::from_str(&output).unwrap_or_else(|e| panic!("parse job json: {e}"));
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+    let row = rows
+        .first()
+        .unwrap_or_else(|| panic!("job {} missing from system.jobs after wait", job_id));
+    let status = json_cell_text(row, "status").unwrap_or_default().to_ascii_lowercase();
+    assert_eq!(
+        status,
+        expected_status,
+        "job {} ended as {} (message={:?})",
+        job_id,
+        status,
+        json_cell_text(row, "message")
+    );
+    assert!(
+        json_cell_text(row, "finished_at").is_some(),
+        "job {} is {} but finished_at is null — leader-only jobs can look done on job_nodes while \
+         system.jobs is still running",
+        job_id,
+        status
+    );
+}
+
+/// Fail if backup/restore jobs have been in-progress longer than `max_age`.
+///
+/// Leader-only jobs complete their job_node immediately, so a leftover
+/// `system.jobs.status = running` row is otherwise invisible to tests that
+/// only wait for a substring of "completed".
+pub fn assert_no_stale_active_backup_restore_jobs(max_age: Duration) {
+    let cutoff_ms = chrono::Utc::now().timestamp_millis() - max_age.as_millis() as i64;
+    let query = "SELECT job_id, job_type, status, started_at, created_at, finished_at FROM \
+                 system.jobs WHERE status IN ('new', 'queued', 'running', 'retrying')";
+    let output = execute_sql_as_root_via_client_json(query)
+        .unwrap_or_else(|e| panic!("query active jobs: {e}"));
+    let json: serde_json::Value =
+        serde_json::from_str(&output).unwrap_or_else(|e| panic!("parse active jobs json: {e}"));
+    let rows = get_rows_as_hashmaps(&json).unwrap_or_default();
+    let mut stale = Vec::new();
+    for row in rows {
+        let job_type = json_cell_text(&row, "job_type").unwrap_or_default().to_ascii_lowercase();
+        if job_type != "backup" && job_type != "restore" {
+            continue;
+        }
+        let started = json_cell_i64(&row, "started_at")
+            .or_else(|| json_cell_i64(&row, "created_at"))
+            .unwrap_or(0);
+        if started > 0 && started <= cutoff_ms {
+            stale.push(format!(
+                "{} type={} status={}",
+                json_cell_text(&row, "job_id").unwrap_or_default(),
+                job_type,
+                json_cell_text(&row, "status").unwrap_or_default()
+            ));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "stale in-progress backup/restore jobs (older than {:?}): {:?}",
+        max_age,
+        stale
+    );
 }
 
 /// Wait until all jobs reach a terminal state; returns a Vec of final statuses aligned with job_ids
@@ -6137,4 +6241,27 @@ pub fn verify_consistent_across_nodes(sql: &str, expected_contains: &[&str]) -> 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod job_wait_tests {
+    use super::{classify_job_status, JobWaitState};
+
+    #[test]
+    fn running_is_pending_not_completed() {
+        assert_eq!(classify_job_status("running"), JobWaitState::Pending);
+        assert_eq!(classify_job_status("Running"), JobWaitState::Pending);
+    }
+
+    #[test]
+    fn substring_completed_is_unknown() {
+        assert_eq!(classify_job_status("Local phase completed"), JobWaitState::Unknown);
+        assert_eq!(classify_job_status("Backup completed: '/tmp/x'"), JobWaitState::Unknown);
+    }
+
+    #[test]
+    fn exact_completed_matches() {
+        assert_eq!(classify_job_status("completed"), JobWaitState::Completed);
+        assert_eq!(classify_job_status("COMPLETED"), JobWaitState::Completed);
+    }
 }

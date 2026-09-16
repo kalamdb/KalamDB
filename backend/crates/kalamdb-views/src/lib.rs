@@ -11,6 +11,7 @@
 
 pub mod error;
 pub mod information_schema;
+pub mod jsonl_tail;
 pub mod pg_catalog;
 pub mod system;
 pub mod view_base;

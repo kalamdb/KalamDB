@@ -390,6 +390,7 @@ describe("procedure status", () => {
         error_code: "INVALID_ARGUMENTS",
         message: "failed",
         duration_ms: 12,
+        schedule_id: null,
       },
     ];
 
@@ -473,6 +474,7 @@ describe("procedure status", () => {
           error_code: null,
           message: "ok",
           duration_ms: 8,
+          schedule_id: null,
         },
       ],
       revisions,

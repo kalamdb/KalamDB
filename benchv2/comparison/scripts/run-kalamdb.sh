@@ -3,14 +3,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="${KALAMDB_SERVER_BIN:-$ROOT/bin/kalamdb-server}"
+# shellcheck source=resolve-kalamdb-server.sh
+source "$ROOT/scripts/resolve-kalamdb-server.sh"
+BIN="$KALAMDB_SERVER_BIN"
 SETUP="$ROOT/setups/kalamdb"
 RESULTS="$ROOT/results"
 PORT="${KALAMDB_PORT:-2900}"
 RPC_PORT="${KALAMDB_RPC_PORT:-$((PORT + 10))}"
 
 mkdir -p "$RESULTS" "$SETUP/data" "$SETUP/logs"
-[[ -x "$BIN" ]] || { echo "Missing $BIN — set KALAMDB_SERVER_BIN or run scripts/download-binaries.sh" >&2; exit 1; }
+[[ -x "$BIN" ]] || { echo "Missing $BIN — set KALAMDB_SERVER_BIN or cargo build --release -p kalamdb-server" >&2; exit 1; }
 
 if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
   echo "Port ${PORT} already has a healthy KalamDB — refusing to clobber" >&2

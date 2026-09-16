@@ -444,6 +444,14 @@ retry_backoff_ms = 100
 # can be reclaimed (default: 300 seconds). Set to 0 to disable.
 wal_cleanup_interval_seconds = 300
 
+# How often the leader scans system.jobs for expired history and creates a
+# cleanup job (default: 3600 seconds). Set to 0 to disable job-history cleanup.
+history_cleanup_interval_seconds = 3600
+
+# Keep completed, failed, cancelled, and skipped jobs for this many days
+# (default: 7). Ignored when history_cleanup_interval_seconds = 0.
+history_retention_days = 7
+
 # Phase 11, T026: SQL Handler Execution Configuration
 [execution]
 # Handler execution timeout in seconds (default: 30)

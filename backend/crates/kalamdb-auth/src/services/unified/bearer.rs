@@ -51,9 +51,7 @@ pub(super) async fn authenticate_bearer(
         let claims = match validate_bearer_token(token, &alg, &issuer, &config).await {
             Ok(claims) => claims,
             Err(error) => {
-                log::warn!(
-                    "Bearer token validation failed for issuer={issuer}: {error}"
-                );
+                log::warn!("Bearer token validation failed for issuer={issuer}: {error}");
                 return Err(error);
             },
         };

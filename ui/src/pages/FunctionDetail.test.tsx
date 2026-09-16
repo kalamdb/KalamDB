@@ -197,6 +197,7 @@ const logs: SystemProcedureLogRow[] = [
     error_code: null,
     message: "order created",
     duration_ms: 12,
+    schedule_id: null,
   },
   {
     timestamp: "2026-09-11T12:38:11.000Z",
@@ -214,6 +215,7 @@ const logs: SystemProcedureLogRow[] = [
     error_code: null,
     message: "Rate limit approaching",
     duration_ms: 0,
+    schedule_id: null,
   },
 ];
 

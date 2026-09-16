@@ -42,7 +42,7 @@ export const FUNCTION_DETAIL_TABS: readonly FunctionDetailTab[] = [
 
 export type ProcedureLogLevel = "debug" | "info" | "warn" | "error";
 
-export type ProcedureLogOrigin = "sql" | "http" | "topic";
+export type ProcedureLogOrigin = "sql" | "http" | "topic" | "schedule" | "runtime";
 
 interface ResolvedTypeCommon {
   sqlName: string;

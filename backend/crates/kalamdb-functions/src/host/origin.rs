@@ -59,6 +59,14 @@ impl FunctionCallOrigin {
             Self::Schedule { .. } => "schedule",
         }
     }
+
+    /// Schedule identity when this call was dispatched by `CREATE SCHEDULE`.
+    pub fn schedule_id(&self) -> Option<&str> {
+        match self {
+            Self::Schedule { schedule_id, .. } => Some(schedule_id.as_str()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,5 +161,17 @@ mod tests {
         assert_eq!(method, "POST");
         assert_eq!(headers.len(), 2);
         assert_eq!(query[0].1, "1");
+    }
+
+    #[test]
+    fn schedule_origin_exposes_kind_and_id() {
+        let origin = FunctionCallOrigin::Schedule {
+            schedule_id:  kalamdb_commons::ScheduleId::new("reports.daily"),
+            run_id:       "run-1".into(),
+            scheduled_at: 1,
+        };
+        assert_eq!(origin.kind(), "schedule");
+        assert_eq!(origin.schedule_id(), Some("reports.daily"));
+        assert_eq!(FunctionCallOrigin::Sql.schedule_id(), None);
     }
 }

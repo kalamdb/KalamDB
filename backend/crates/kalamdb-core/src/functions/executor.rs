@@ -103,6 +103,7 @@ impl FunctionService {
 
         let actor = exec_ctx.user_id().clone();
         let origin_kind = origin.kind();
+        let schedule_id = origin.schedule_id().map(str::to_owned);
         kalamdb_observability::begin_function_run();
         let started = std::time::Instant::now();
         let invoke_result = invoke_root(
@@ -174,6 +175,7 @@ impl FunctionService {
                 duration_ms,
                 timestamp: now_ms(),
                 node_id: app.node_id().as_ref().to_string(),
+                schedule_id,
             });
         kalamdb_observability::finish_function_run(started.elapsed(), invoke_result.is_err());
         log::debug!(

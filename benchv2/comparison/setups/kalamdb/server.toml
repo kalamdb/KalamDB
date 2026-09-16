@@ -167,6 +167,8 @@ max_concurrent = 10
 max_retries = 3
 retry_backoff_ms = 100
 wal_cleanup_interval_seconds = 300
+history_cleanup_interval_seconds = 3600
+history_retention_days = 7
 
 [execution]
 handler_timeout_seconds = 30
@@ -174,6 +176,14 @@ max_parameters = 50
 max_parameter_size_bytes = 524288
 sql_plan_cache_max_entries = 4000
 sql_plan_cache_ttl_seconds = 7200
+
+# Shared by the SQL HTTP and functions REST tracks (same process / data dir).
+# max_active matches harness concurrency (16).
+[functions.runtime]
+max_active = 16
+max_queued = 128
+max_memory_mb = 1024
+timeout_ms = 15000
 
 [cluster]
 node_id = 1

@@ -23,6 +23,39 @@ pub fn setup_namespace(prefix: &str) -> String {
     namespace
 }
 
+/// Drops the namespace when the test ends, including panic and timeout unwind.
+///
+/// Schedules and stream tables with TTL keep writing after a leaked namespace, so
+/// tests that create background work must hold this guard.
+#[must_use]
+pub struct NamespaceGuard {
+    namespace: String,
+}
+
+impl NamespaceGuard {
+    pub fn new(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+        }
+    }
+}
+
+impl Drop for NamespaceGuard {
+    fn drop(&mut self) {
+        let namespace = &self.namespace;
+        let _ = execute_sql_as_root_via_client(&format!(
+            "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
+        ));
+    }
+}
+
+/// Create a unique namespace that is dropped when `_guard` is dropped.
+pub fn setup_ephemeral_namespace(prefix: &str) -> (String, NamespaceGuard) {
+    let namespace = setup_namespace(prefix);
+    let guard = NamespaceGuard::new(namespace.clone());
+    (namespace, guard)
+}
+
 pub fn ready(full_table: &str) {
     wait_for_table_ready(full_table, Duration::from_secs(15))
         .unwrap_or_else(|err| panic!("{full_table} not ready: {err}"));

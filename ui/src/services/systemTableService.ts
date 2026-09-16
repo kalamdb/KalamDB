@@ -1,4 +1,5 @@
-import { getDb } from "@/lib/db";
+import { compileQuery } from "@kalamdb/orm";
+import { getDb, sqlWithInlineParams } from "@/lib/db";
 import type { SystemSettingRow, SystemSlowQueryRow } from "@/lib/models";
 import { system_settings, system_slow_queries, system_stats } from "@/lib/schema";
 import { desc } from "drizzle-orm";
@@ -105,11 +106,29 @@ export function statsMapToDashboardSample(stats: SystemStatsMap, sampledAt = Dat
   return hasMetric ? sample : null;
 }
 
-export async function fetchSlowQueries(limit = 20): Promise<SlowQuery[]> {
+function slowQueriesQuery(limit = 20) {
   const db = getDb();
   return db
-    .select()
+    .select({
+      timestamp: system_slow_queries.timestamp,
+      timestamp_ms: system_slow_queries.timestamp_ms,
+      duration_ms: system_slow_queries.duration_ms,
+      user_id: system_slow_queries.user_id,
+      table_type: system_slow_queries.table_type,
+      table_name: system_slow_queries.table_name,
+      row_count: system_slow_queries.row_count,
+      query: system_slow_queries.query,
+    })
     .from(system_slow_queries)
     .orderBy(desc(system_slow_queries.timestamp_ms))
     .limit(limit);
+}
+
+export async function fetchSlowQueries(limit = 20): Promise<SlowQuery[]> {
+  return slowQueriesQuery(limit);
+}
+
+export function compileSlowQueriesSql(limit = 20): string {
+  const compiled = compileQuery(slowQueriesQuery(limit));
+  return sqlWithInlineParams(compiled.sql, compiled.params);
 }

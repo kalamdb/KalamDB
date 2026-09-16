@@ -736,8 +736,15 @@ current `module_id`/`revision_id`, and `comment`). Deployed modules are stored i
 Live runtime is `system.module_instances`, `system.active_procedure_runs`,
 and `system.procedure_logs`. Invocation and V8 `console.*`/`ctx.log.*` records
 are stored under `{data_path}/functions/runtime/<procedure_id>/logs/` (default
-`./data/functions/runtime/<procedure_id>/logs/procedures.jsonl`). Compiled module bytes live under
+`./data/functions/runtime/<procedure_id>/logs/procedures.jsonl`). The
+`system.procedure_logs` view tails those files from EOF; it does not load a
+full log into memory. Compiled module bytes live under
 `{data_path}/functions/artifacts/`.
+
+Scheduled invocations set `origin = 'schedule'` and `schedule_id` to the
+scheduler identity, and reuse the schedule `run_id` as `request_id` /
+`execution_id` so nested CALL and SQL can correlate later. Manual SQL and HTTP
+calls of the same procedure omit `schedule_id`.
 
 `system.procedure_logs` is also the runtime audit trail (`channel = 'lifecycle'`,
 `actor = 'system'`): `deployed` when an active function set is published, and per
@@ -754,6 +761,10 @@ WHERE procedure_id = 'chat.send_message'
 ORDER BY timestamp DESC;
 SELECT timestamp, outcome, message FROM system.procedure_logs
 WHERE channel = 'lifecycle' AND module_id = 'backend'
+ORDER BY timestamp DESC;
+SELECT timestamp, outcome, duration_ms, execution_id
+FROM system.procedure_logs
+WHERE origin = 'schedule' AND schedule_id = 'reports.daily_summary'
 ORDER BY timestamp DESC;
 ```
 

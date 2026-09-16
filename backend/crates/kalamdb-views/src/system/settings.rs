@@ -656,6 +656,18 @@ impl VirtualView for SettingsView {
                         "Interval for periodic RocksDB WAL cleanup flushes",
                         "jobs"
                     ),
+                    (
+                        "jobs.history_cleanup_interval_seconds",
+                        config.jobs.history_cleanup_interval_seconds,
+                        "Interval for job-history cleanup (0 disables)",
+                        "jobs"
+                    ),
+                    (
+                        "jobs.history_retention_days",
+                        config.jobs.history_retention_days,
+                        "Days to keep completed, failed, cancelled, and skipped jobs",
+                        "jobs"
+                    ),
                 ]
             );
 

@@ -1,14 +1,10 @@
 //! system.slow_queries virtual view
 //!
-//! Exposes recent slow-query JSONL entries without keeping query text in memory
-//! or reading unbounded log files on each scan.
+//! Exposes recent slow-query JSONL entries via the shared reverse-from-EOF
+//! JSONL reader. A 1GB `slow.jsonl` stays on disk; each scan keeps at most the
+//! newest parsed lines.
 
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use datafusion::arrow::{
     array::{ArrayRef, Float64Builder, Int64Builder, StringBuilder},
@@ -22,12 +18,15 @@ use kalamdb_commons::{
 use kalamdb_system::SystemTable;
 
 use super::common::{system_view_definition, view_provider_with, SystemViewProvider};
-use crate::{error::RegistryError, view_base::VirtualView};
+use crate::{
+    error::RegistryError,
+    jsonl_tail::{parse_json_log_line, read_jsonl_tail, JsonlTailLimits},
+    view_base::VirtualView,
+};
 
 crate::memoized_view_schema!(slow_queries_schema, SlowQueriesView);
 
-const SLOW_QUERY_READ_BYTES: u64 = 1024 * 1024;
-const SLOW_QUERY_MAX_ROWS: usize = 200;
+const LOG_TAIL: JsonlTailLimits = JsonlTailLimits::DEFAULT;
 
 #[derive(Debug)]
 struct SlowQueryLogEntry {
@@ -197,70 +196,13 @@ impl SlowQueriesView {
         }
     }
 
-    fn read_log_tail(&self) -> Result<String, RegistryError> {
-        let path = self.slow_log_path();
-        if !path.exists() {
-            return Ok(String::new());
-        }
-
-        let mut file = File::open(&path).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to open slow query log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let file_len = file
-            .metadata()
-            .map_err(|error| {
-                RegistryError::Other(format!(
-                    "Failed to stat slow query log {}: {}",
-                    path.display(),
-                    error
-                ))
-            })?
-            .len();
-        let offset = file_len.saturating_sub(SLOW_QUERY_READ_BYTES);
-        file.seek(SeekFrom::Start(offset)).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to seek slow query log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-        let mut content = String::new();
-        file.read_to_string(&mut content).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to read slow query log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-
-        if offset == 0 {
-            return Ok(content);
-        }
-
-        Ok(content.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default())
-    }
-
     fn read_entries(&self) -> Result<Vec<SlowQueryLogEntry>, RegistryError> {
-        let content = self.read_log_tail()?;
-        let mut entries = Vec::new();
-        for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            if let Ok(raw) = serde_json::from_str::<RawSlowQueryLogEntry>(line) {
-                if let Some(entry) = raw.into_entry() {
-                    if entries.len() == SLOW_QUERY_MAX_ROWS {
-                        entries.remove(0);
-                    }
-                    entries.push(entry);
-                }
-            }
-        }
-
-        Ok(entries)
+        read_jsonl_tail(&self.slow_log_path(), LOG_TAIL, parse_slow_query_log_line)
     }
+}
+
+fn parse_slow_query_log_line(bytes: &[u8]) -> Option<SlowQueryLogEntry> {
+    parse_json_log_line(bytes, LOG_TAIL.max_line_bytes, RawSlowQueryLogEntry::into_entry)
 }
 
 impl VirtualView for SlowQueriesView {
@@ -356,5 +298,30 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].duration_ms, 1250.0);
         assert_eq!(entries[0].table_name.as_deref(), Some("events"));
+    }
+
+    fn slow_line(index: usize, query: &str) -> String {
+        format!(
+            r#"{{"timestamp":"2026-05-26T10:30:00.{index:06}Z","timestamp_ms":{},"duration_ms":1.0,"row_count":1,"user_id":"root","table_type":"user","table_name":"events","query":"{query}"}}"#,
+            1_780_000_000_000i64 + index as i64
+        )
+    }
+
+    #[test]
+    fn tails_only_the_newest_rows() {
+        let dir = tempdir().unwrap();
+        let log_file = dir.path().join("slow.jsonl");
+        let mut file = std::fs::File::create(&log_file).unwrap();
+        let total = LOG_TAIL.max_rows + 12;
+        for index in 0..total {
+            writeln!(file, "{}", slow_line(index, &format!("old-{index}"))).unwrap();
+        }
+        writeln!(file, "{}", slow_line(total, "new-line")).unwrap();
+
+        let view = SlowQueriesView::new(dir.path());
+        let entries = view.read_entries().unwrap();
+        assert_eq!(entries.len(), LOG_TAIL.max_rows);
+        assert!(entries.iter().all(|entry| entry.query != "old-0"));
+        assert_eq!(entries.last().map(|entry| entry.query.as_str()), Some("new-line"));
     }
 }

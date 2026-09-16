@@ -3,9 +3,10 @@
 //! Writes one record per completed root CALL (`ok`/`error`), one record per
 //! V8 `console.*` / `ctx.log.*` line (`outcome=log`, `channel=console`), and
 //! isolate/deploy events (`channel=lifecycle`: created, reused, idle, dropped,
-//! deployed). Never includes request bodies, arguments, results, tokens, or
-//! source. Writes are synchronous so `system.procedure_logs` can be queried
-//! immediately after CALL.
+//! deployed). Scheduled invocations stamp `schedule_id`; other origins omit that
+//! field. Never includes request bodies, arguments, results, tokens, or source.
+//! Writes are synchronous so `system.procedure_logs` can be queried immediately
+//! after CALL.
 //!
 //! Cost per record is kept to one JSON serialization into a single buffer and one
 //! `open`/`write` pair; directories are only created on the first miss and rotation
@@ -48,6 +49,8 @@ pub struct ProcedureLogRecord {
     pub duration_ms:  i64,
     pub timestamp:    i64,
     pub node_id:      String,
+    /// Present when `origin` is `schedule`; omitted from JSONL otherwise.
+    pub schedule_id:  Option<String>,
 }
 
 /// JSONL writer for per-procedure `procedures.jsonl` files under the runtime root.
@@ -141,6 +144,8 @@ struct LogLine<'a> {
     error_code:   Option<&'a str>,
     message:      Option<&'a str>,
     duration_ms:  i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schedule_id:  Option<&'a str>,
 }
 
 impl<'a> From<&'a ProcedureLogRecord> for LogLine<'a> {
@@ -161,6 +166,7 @@ impl<'a> From<&'a ProcedureLogRecord> for LogLine<'a> {
             error_code:   entry.error_code.as_deref(),
             message:      entry.message.as_deref(),
             duration_ms:  entry.duration_ms,
+            schedule_id:  entry.schedule_id.as_deref(),
         }
     }
 }
@@ -237,6 +243,7 @@ mod tests {
             duration_ms:  0,
             timestamp:    1_700_000_000_000,
             node_id:      "1".into(),
+            schedule_id:  None,
         }
     }
 
@@ -274,6 +281,7 @@ mod tests {
             duration_ms:  12,
             timestamp:    1_700_000_000_000,
             node_id:      "1".into(),
+            schedule_id:  None,
         });
         logger.record(sample_record("chat.send_message", "hello-from-v8"));
         let path = procedure_log_path(dir.path(), "chat.send_message");
@@ -289,7 +297,24 @@ mod tests {
         assert!(contents.contains("\"module_id\":\"backend\""));
         assert!(contents.contains("hello-from-v8"));
         assert!(!contents.contains("Authorization"));
+        assert!(!contents.contains("schedule_id"));
         assert_eq!(contents.lines().count(), 2);
+    }
+
+    #[test]
+    fn record_includes_schedule_id_only_when_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let logger = ProcedureLogLogger::new(dir.path());
+        let mut scheduled = sample_record("reports.summary", "from-schedule");
+        scheduled.origin = "schedule".into();
+        scheduled.channel = "invocation".into();
+        scheduled.outcome = "ok".into();
+        scheduled.schedule_id = Some("reports.daily".into());
+        logger.record(scheduled);
+        let contents =
+            fs::read_to_string(procedure_log_path(dir.path(), "reports.summary")).unwrap();
+        assert!(contents.contains("\"schedule_id\":\"reports.daily\""));
+        assert!(contents.contains("\"origin\":\"schedule\""));
     }
 
     #[test]

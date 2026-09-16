@@ -267,6 +267,14 @@ pub fn default_jobs_wal_cleanup_interval() -> u64 {
     300 // 5 minutes
 }
 
+pub fn default_jobs_history_cleanup_interval() -> u64 {
+    3600 // 1 hour; set to 0 to disable
+}
+
+pub fn default_jobs_history_retention_days() -> i64 {
+    7
+}
+
 // Execution defaults (Phase 11, T026)
 pub fn default_handler_timeout_seconds() -> u64 {
     30 // 30 seconds

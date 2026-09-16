@@ -19,6 +19,7 @@ function log(overrides: Partial<SystemProcedureLogRow>): SystemProcedureLogRow {
     error_code: null,
     message: "starting create_order",
     duration_ms: 0,
+    schedule_id: null,
     ...overrides,
   };
 }

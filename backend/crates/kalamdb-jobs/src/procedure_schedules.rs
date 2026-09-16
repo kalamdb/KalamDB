@@ -202,17 +202,19 @@ async fn invoke_schedule(
             })?;
         user.role
     };
+    let run_id = row
+        .run_id
+        .clone()
+        .ok_or_else(|| KalamDbError::ExecutionError("Missing schedule claim".into()))?;
     let context =
-        ExecutionContext::new(row.principal_user_id.clone(), role, app.base_session_context());
+        ExecutionContext::new(row.principal_user_id.clone(), role, app.base_session_context())
+            .with_request_id(run_id.clone());
     FunctionService::invoke(
         Arc::clone(app),
         &context,
         FunctionCallOrigin::Schedule {
             schedule_id: row.schedule_id.clone(),
-            run_id: row
-                .run_id
-                .clone()
-                .ok_or_else(|| KalamDbError::ExecutionError("Missing schedule claim".into()))?,
+            run_id,
             scheduled_at,
         },
         row.routine_id.clone(),
@@ -340,7 +342,7 @@ mod tests {
         let manager = app.job_manager();
         let started = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
-        manager.job_registry.register(Arc::new(BlockedJob {
+        manager.job_registry.register_or_replace(Arc::new(BlockedJob {
             started: Arc::clone(&started),
             release: Arc::clone(&release),
         }));

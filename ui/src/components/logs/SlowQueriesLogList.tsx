@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGetSlowQueriesQuery } from '@/store/apiSlice';
 import { formatTimestamp } from '@/lib/formatters';
@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Play, RefreshCw } from 'lucide-react';
 import { PAGE_SIZE_OPTIONS } from '@/lib/config';
+import { compileSlowQueriesSql } from '@/services/systemTableService';
 
 function formatDuration(durationMs: unknown): string {
   const value = typeof durationMs === 'number' ? durationMs : Number(durationMs ?? 0);
@@ -44,19 +45,10 @@ export function SlowQueriesLogList() {
       ? 'Failed to fetch slow queries'
       : null;
 
-  const pageSql = useMemo(() => {
-    return [
-      'SELECT timestamp, timestamp_ms, duration_ms, user_id, table_type, table_name, row_count, query',
-      'FROM system.slow_queries',
-      'ORDER BY timestamp_ms DESC',
-      `LIMIT ${limit};`,
-    ].join('\n');
-  }, [limit]);
-
   const openSqlStudio = () => {
     navigate('/sql', {
       state: {
-        prefillSql: pageSql,
+        prefillSql: compileSlowQueriesSql(limit),
         prefillTitle: 'Slow Queries',
       },
     });

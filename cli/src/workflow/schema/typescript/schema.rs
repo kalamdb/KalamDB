@@ -296,7 +296,10 @@ fn snapshot_has_file_column(snapshot: &ContractSnapshot) -> bool {
 }
 
 fn snapshot_has_default_column(snapshot: &ContractSnapshot) -> bool {
-    snapshot.tables.values().any(|table| table.fields.iter().any(|field| field.has_default))
+    snapshot
+        .tables
+        .values()
+        .any(|table| table.fields.iter().any(|field| field.has_default))
 }
 
 fn is_file_column(field: &ContractField) -> bool {

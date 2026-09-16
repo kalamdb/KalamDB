@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { formatTimestamp } from '@/lib/formatters';
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS } from '@/lib/config';
+import { compileServerLogsSql } from '@/services/serverLogService';
 
 const LOG_GRID_TEMPLATE_COLUMNS = 'minmax(190px, 220px) minmax(74px, 90px) minmax(180px, 240px) minmax(360px, 1fr)';
 const GRAPH_BUCKET_COUNT = 48;
@@ -29,10 +30,6 @@ const LEVEL_CONFIG: Record<string, { color: string; icon: typeof AlertCircle }> 
 
 function getLevelConfig(level: string) {
   return LEVEL_CONFIG[level.toUpperCase()] || { color: 'text-gray-500', icon: Info };
-}
-
-function sqlLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function parseTimestamp(value: string): number | null {
@@ -135,38 +132,16 @@ export function ServerLogList() {
   const hasOlderPage = logs.length === pageSize;
   const hasNewerPage = pageIndex > 0;
 
-  const pageSql = useMemo(() => {
-    const where: string[] = [];
-    if (logType !== 'all') {
-      where.push(`level = ${sqlLiteral(logType.toUpperCase())}`);
-    }
-    if (cursor) {
-      where.push(`timestamp < ${sqlLiteral(cursor)}`);
-    }
-    if (searchQuery.trim().length > 0) {
-      const escaped = `%${searchQuery.trim()}%`;
-      if (caseSensitive) {
-        where.push(`message LIKE ${sqlLiteral(escaped)}`);
-      } else {
-        where.push(`LOWER(message) LIKE LOWER(${sqlLiteral(escaped)})`);
-      }
-    }
-
-    return [
-      'SELECT timestamp, level, target, line, message',
-      'FROM system.server_logs',
-      where.length > 0 ? `WHERE ${where.join(' AND ')}` : null,
-      'ORDER BY timestamp DESC',
-      `LIMIT ${pageSize};`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }, [logType, cursor, searchQuery, caseSensitive, pageSize]);
-
   const openSqlStudio = () => {
     navigate('/sql', {
       state: {
-        prefillSql: pageSql,
+        prefillSql: compileServerLogsSql({
+          limit: pageSize,
+          level: logType !== 'all' ? logType.toUpperCase() : undefined,
+          beforeTimestamp: cursor ?? undefined,
+          message: searchQuery.trim() || undefined,
+          caseSensitive,
+        }),
         prefillTitle: 'Server Logs',
       },
     });

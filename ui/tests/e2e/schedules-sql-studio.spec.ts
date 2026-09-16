@@ -100,6 +100,13 @@ test("SQL Studio creates a schedule that runs a procedure and the Schedules UI t
 
       await expect(row.getByText("Failed", { exact: true })).toHaveCount(0);
       await expect(row.locator("p.text-destructive")).toHaveCount(0);
+
+      await page.getByRole("button", { name: `View history for ${scheduleId}` }).click();
+      await expect(page.getByTestId("schedule-history-table")).toBeVisible();
+      await expect(page.getByTestId("schedule-history-table")).toContainText(/Succeeded|ok/i, {
+        timeout: 20_000,
+      });
+      await page.keyboard.press("Escape");
     });
 
     await test.step("function overview shows the scheduled invocation", async () => {
@@ -144,14 +151,25 @@ test("SQL Studio creates a schedule that runs a procedure and the Schedules UI t
 
       await runSql(
         page,
-        `SELECT origin, outcome FROM system.procedure_logs WHERE procedure_id = '${procedureId}' AND origin = 'schedule' AND outcome = 'ok';`,
+        `SELECT origin, outcome, schedule_id FROM system.procedure_logs WHERE schedule_id = '${scheduleId}' AND origin = 'schedule' AND outcome = 'ok';`,
       );
-      const logs = await readSqlRows(page, ["origin", "outcome"]);
-      expect(logs.some((row) => row.origin === "schedule" && row.outcome === "ok")).toBe(true);
+      const logs = await readSqlRows(page, ["origin", "outcome", "schedule_id"]);
+      expect(logs.some((row) => row.origin === "schedule" && row.outcome === "ok" && row.schedule_id === scheduleId)).toBe(true);
     });
   } finally {
     await openSqlStudio(page).catch(() => undefined);
     await openFreshSqlTab(page).catch(() => undefined);
     await runSql(page, `DROP NAMESPACE IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
   }
+});
+
+test("Create schedule opens SQL Studio with a CREATE SCHEDULE template", async ({ page }) => {
+  await skipUnlessLiveAdminUi(page);
+  await openSchedules(page);
+  await page.getByRole("button", { name: "Create schedule" }).click();
+  await expect(page.getByRole("button", { name: /^Run(?: selected)?$/ })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByText("CREATE SCHEDULE").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("EXECUTE PROCEDURE").first()).toBeVisible();
 });

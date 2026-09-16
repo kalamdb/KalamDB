@@ -512,49 +512,7 @@ pub(super) fn wait_for_terminal_job_status(
     job_id: &str,
     timeout: Duration,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let effective_timeout = std::cmp::max(timeout, Duration::from_secs(30));
-    let start = std::time::Instant::now();
-    let poll_interval = Duration::from_millis(250);
-
-    loop {
-        if start.elapsed() > effective_timeout {
-            return Err(format!(
-                "Timeout waiting for job {} to reach a terminal state after {:?}",
-                job_id, effective_timeout
-            )
-            .into());
-        }
-
-        let query =
-            format!("SELECT job_id, status, message FROM system.jobs WHERE job_id = '{}'", job_id);
-
-        let output = execute_sql_as_root_via_client_json(&query)?;
-        let json: JsonValue = serde_json::from_str(&output)?;
-        if let Some(rows) = get_rows_as_hashmaps(&json) {
-            if let Some(row) = rows.first() {
-                let status_value = row
-                    .get("status")
-                    .and_then(|value| Some(extract_typed_value(value)))
-                    .or_else(|| row.get("status").cloned())
-                    .unwrap_or(JsonValue::Null);
-                let status = status_value
-                    .as_str()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| status_value.to_string());
-                let status_lower = status.to_lowercase();
-
-                if status_lower.contains("completed")
-                    || status_lower.contains("failed")
-                    || status_lower.contains("skipped")
-                    || status_lower.contains("cancelled")
-                {
-                    return Ok(status_lower);
-                }
-            }
-        }
-
-        std::thread::sleep(poll_interval);
-    }
+    wait_for_job_finished(job_id, timeout)
 }
 
 pub(super) fn start_table_export_sync(

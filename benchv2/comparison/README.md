@@ -144,7 +144,7 @@ when the stamped version no longer matches.
 | Variable | Default |
 |---|---|
 | `KALAMDB_URL` | `http://127.0.0.1:2900` |
-| `KALAMDB_SERVER_BIN` | `./bin/kalamdb-server` (must understand `memory_mode = "server"`) |
+| `KALAMDB_SERVER_BIN` | `../../target/release/kalamdb-server`, else `./bin/kalamdb-server` |
 | `TRAILBASE_URL` | `http://127.0.0.1:4000` |
 | `POCKETBASE_URL` | `http://127.0.0.1:8090` |
 | `SURREALDB_URL` | `http://127.0.0.1:8000` |
@@ -183,7 +183,11 @@ The flush scheduler explicitly skips tables with no flush policy (“hot-only”
 `setups/kalamdb/server.toml` sets `storage.rocksdb.memory_mode = "server"` so the
 block cache and hot memtables scale from host RAM. Product default remains
 `compact`. Point `KALAMDB_SERVER_BIN` at a server built from this tree; the
-downloaded `v0.5.5-rc.1` binary does not know the `server` profile.
+downloaded `v0.5.5-rc.1` binary does not know the `server` profile or ABI v2
+host SQL (`ctx.db.execute` / `ctx.db.query`).
+
+The SQL and functions tracks share this config. `[functions.runtime]` sets
+`max_active = 16` (same as harness concurrency) and a 15s procedure timeout.
 
 ## Driver code (what each request looks like)
 
@@ -224,9 +228,11 @@ POST /v1/functions/bench/get_message
 { "id": 1 }
 ```
 
-Procedures run JS on the server and issue nested `ctx.db.sql(sql, params)` with
-`$n` placeholders so the nested statements share the SQL HTTP plan cache. That is
-still **not** a Surreal `/key` equivalent: each call still pays V8 + nested SQL + Raft.
+Procedures are schema-first inline JavaScript (`RETURNS` + `LANGUAGE JAVASCRIPT`
++ dollar-quoted body). They issue nested `ctx.db.execute` / `ctx.db.query` with
+`$n` placeholders and named `input` (`input.id`, …) so the nested statements
+share the SQL HTTP plan cache. That is still **not** a Surreal `/key` equivalent:
+each call still pays V8 + nested SQL + Raft.
 
 KalamDB SQL and functions share port **2900** and the same `setups/kalamdb` data dir.
 Run them sequentially (as `run-all.sh` does), or set `KALAMDB_PORT` for one of them.
@@ -287,26 +293,28 @@ This keeps client-side JSON parsing out of the server read comparison.
 | PocketBase | `user@bar.com` / admin `admin@bar.com` | `1234567890` |
 | SurrealDB | `root` | `root` |
 
-## Measured snapshot (2026-08-11)
+## Measured snapshot (2026-09-16)
 
 Machine: **Apple M5 Pro**, 15 cores, 24 GB RAM.
 
 Versions:
 
-- KalamDB **v0.5.5-rc.1** (GitHub release binary)
-- TrailBase **v0.32.1** (GitHub release binary; current pin is v0.33.14)
+- KalamDB **v0.7.0-dev.0** (`902bf610`, local release binary)
+- TrailBase **v0.33.14**
+- PocketBase **v0.40.3**
+- SurrealDB **v3.2.4**
 
-| Metric | TrailBase | KalamDB (hot-only) |
-|---|---:|---:|
-| 100k inserts (wall) | 15.47 s | **11.72 s** |
-| Insert p50 / p95 | 1.20 ms / 5.11 ms | 1.98 ms / 2.96 ms |
-| 1M point reads (wall) | **26.30 s** | 108.17 s |
-| Read p50 / p95 | **310 µs / 657 µs** | 1.67 ms / 2.36 ms |
-| RSS after load | ~411 MB | ~52 MB |
+| Metric | KalamDB SQL | KalamDB functions | TrailBase | PocketBase | SurrealDB |
+|---|---:|---:|---:|---:|---:|
+| 100k inserts (wall) | 3.38 s | 11.82 s | 6.62 s | 12.30 s | 2.59 s |
+| Insert p50 / p95 | 356 µs / 509 µs | 1.69 ms / 2.56 ms | 1.02 ms / 1.59 ms | 1.65 ms / 4.38 ms | 341 µs / 464 µs |
+| 1M point reads (wall) | 15.05 s | 78.48 s | 49.79 s | 19.24 s | 14.31 s |
+| Read p50 / p95 | 218 µs / 298 µs | 1.18 ms / 1.80 ms | 724 µs / 1.06 ms | 248 µs / 497 µs | 194 µs / 281 µs |
 
-PocketBase was not part of that first measured pair; use `./scripts/run-pocketbase.sh` on the same machine for an apples-to-apples third column, then append to `results/`.
+KalamDB functions use schema-first inline JS (`ctx.db.execute` / `ctx.db.query`).
+That column is not a Record/CRUD GET: each call still pays V8 + nested SQL.
 
-Full captured logs from the initial run: see `results/2026-08-11-apple-m5-pro.md`.
+Full captured logs: `results/2026-09-16-apple-m5-pro.md`.
 
 ## Attribution
 

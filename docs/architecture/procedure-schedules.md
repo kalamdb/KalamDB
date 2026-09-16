@@ -52,9 +52,9 @@ ctx.http === null;
 
 ## Monitoring
 
-The admin **Schedules** page polls `system.schedules` every five seconds, with pagination and all/enabled/disabled/running filters. It shows timing, time zone, principal, owner, next run, latest start/finish/error, and run/skip counters. Enable/disable/delete use the same SQL DDL. Maintenance jobs remain available in Logs & Analytics.
+The admin **Schedules** page polls `system.schedules` every five seconds, with pagination and all/enabled/disabled/running filters. It shows timing, time zone, principal, owner, next run, latest start/finish/error, and run/skip counters. Clicking a schedule opens that schedule's invocation history from `system.procedure_logs` (`origin = 'schedule'` and `schedule_id` matching the row). Manual SQL/HTTP calls of the same procedure are excluded. Create schedule opens SQL Studio with a `CREATE SCHEDULE` template. Enable/disable/delete use the same SQL DDL. Maintenance jobs (`system.jobs`) remain available in Logs & Analytics; they are not schedule history.
 
-`system.schedules` stores the latest execution state, not an unbounded attempt history. Procedure logs and active procedure runs record origin `schedule`. A running claim may remain visible during the recovery grace period after a crash or missing completion. Catalog timestamps are Unix milliseconds; the UI displays them in the browser's local time zone.
+`system.schedules` stores the latest execution state, not an unbounded attempt history. Each scheduled invoke stamps `schedule_id` onto the existing procedure JSONL and sets `request_id`/`execution_id` to the schedule `run_id`, so later nested CALL and SQL can correlate without a second log file. Procedure logs and active procedure runs record origin `schedule`. Skipped overlap/misfire/capacity ticks never invoke and stay on `skip_count`. A running claim may remain visible during the recovery grace period after a crash or missing completion. Catalog timestamps are Unix milliseconds; the UI displays them in the browser's local time zone.
 
 Timing uses the [croner parser](https://docs.rs/croner/latest/croner/struct.Cron.html) and chrono-tz rather than a new cron evaluator.
 

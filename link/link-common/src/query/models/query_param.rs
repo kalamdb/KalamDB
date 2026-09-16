@@ -122,6 +122,7 @@ impl From<QueryParam> for JsonValue {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub(crate) fn params_to_json(params: Option<Vec<QueryParam>>) -> Option<Vec<JsonValue>> {
     params.map(|items| items.into_iter().map(|param| param.to_json()).collect())
 }

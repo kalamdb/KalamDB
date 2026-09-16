@@ -15,8 +15,8 @@ struct RecordedSqlRequest {
     namespace_id: Option<String>,
 }
 
-fn start_recording_sql_server()
--> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
+fn start_recording_sql_server(
+) -> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind recording server");
     let addr = listener.local_addr().expect("recording server addr");
     let url = format!("http://{}", addr);

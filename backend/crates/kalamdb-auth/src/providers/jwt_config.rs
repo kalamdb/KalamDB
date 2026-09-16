@@ -12,8 +12,7 @@ use crate::{
     errors::error::{AuthError, AuthResult},
     oidc::{
         default_oidc_http_client, get_or_discover_oidc_client, invalidate_oidc_client,
-        oidc_client_cache, oidc_jwks_may_be_stale, OidcClientCache,
-        OidcClientHandle, OidcError,
+        oidc_client_cache, oidc_jwks_may_be_stale, OidcClientCache, OidcClientHandle, OidcError,
     },
     providers::jwt_auth,
 };
@@ -151,7 +150,8 @@ impl JwtConfig {
             Ok(claims) => Ok(claims),
             Err(error) if oidc_jwks_may_be_stale(&error) => {
                 log::warn!(
-                    "OIDC token verification failed for issuer={issuer}; rediscovering JWKS: {error}"
+                    "OIDC token verification failed for issuer={issuer}; rediscovering JWKS: \
+                     {error}"
                 );
                 self.forget_oidc_client(issuer).await;
                 let client = self.get_oidc_client(issuer).await?;

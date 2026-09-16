@@ -1,4 +1,6 @@
 import { executeSql } from "@/lib/api";
+import type { SystemProcedureLogRow } from "@/lib/models";
+import { fetchProcedureLogs } from "@/services/functionsService";
 
 export interface ScheduleRow {
   schedule_id: string;
@@ -21,6 +23,21 @@ export interface ScheduleRow {
 }
 export type ScheduleFilter = "all" | "enabled" | "disabled" | "running";
 export const SCHEDULE_PAGE_SIZE = 50;
+export const SCHEDULE_HISTORY_PAGE_SIZE = 100;
+
+export const CREATE_SCHEDULE_SQL = `-- Edit the names, timing, and procedure, then run.
+-- The target must be an existing zero-parameter procedure.
+CREATE SCHEDULE app.daily_job
+  CRON '0 9 * * *'
+  TIME ZONE 'UTC'
+  EXECUTE PROCEDURE app.my_procedure()
+  WITH (principal = 'system', overlap = 'skip', misfire = 'skip');
+
+-- Interval alternative:
+-- CREATE SCHEDULE app.frequent_job
+--   INTERVAL '30 seconds'
+--   EXECUTE PROCEDURE app.my_procedure();
+`;
 
 export function scheduleSqlName(row: Pick<ScheduleRow, "namespace_id" | "name">): string {
   const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
@@ -30,6 +47,24 @@ export function scheduleStatus(row: Pick<ScheduleRow, "enabled" | "running_until
   if (row.running_until != null) return row.running_until > now ? "Running" : "Recovering";
   if (!row.enabled) return "Disabled";
   return row.last_error ? "Failed" : "Scheduled";
+}
+export function formatScheduleTime(value: number | string | null | undefined): string {
+  if (value == null || value === "") {
+    return "—";
+  }
+  const raw = typeof value === "string" ? value.trim() : value;
+  if (typeof raw === "number" || /^-?\d+(\.\d+)?$/.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return new Date(numeric).toLocaleString();
+    }
+    return "—";
+  }
+  const parsed = Date.parse(String(raw));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return "—";
+  }
+  return new Date(parsed).toLocaleString();
 }
 export async function fetchSchedules(page: number, filter: ScheduleFilter): Promise<{ rows: ScheduleRow[]; hasMore: boolean }> {
   const clauses = {
@@ -50,4 +85,14 @@ export async function setScheduleEnabled(row: ScheduleRow, enabled: boolean): Pr
 }
 export async function dropSchedule(row: ScheduleRow): Promise<void> {
   await executeSql(`DROP SCHEDULE IF EXISTS ${scheduleSqlName(row)}`);
+}
+
+export async function fetchScheduleHistory(row: Pick<ScheduleRow, "schedule_id" | "routine_id">): Promise<SystemProcedureLogRow[]> {
+  return fetchProcedureLogs({
+    procedureId: row.routine_id,
+    origin: "schedule",
+    channel: "invocation",
+    scheduleId: row.schedule_id,
+    limit: SCHEDULE_HISTORY_PAGE_SIZE,
+  });
 }

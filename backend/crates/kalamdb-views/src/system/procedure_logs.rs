@@ -1,16 +1,17 @@
 //! system.procedure_logs virtual view
 //!
-//! Bounded tail of node-local rotating `procedures.jsonl` files. Current layout
-//! is `{data_path}/functions/runtime/<procedure>/logs/procedures.jsonl`. Legacy
-//! `{logs_path}/procedures.jsonl` is still read when present. Records never
-//! include request bodies, arguments, results, tokens, or source. V8
-//! `console.*` / `ctx.log.*` lines use `outcome=log`; root CALL completion
-//! uses `outcome=ok` or `outcome=error`; isolate and deploy events use
-//! `channel=lifecycle`.
+//! Bounded reverse tail of node-local rotating `procedures.jsonl` files. Current
+//! layout is `{data_path}/functions/runtime/<procedure>/logs/procedures.jsonl`.
+//! Legacy `{logs_path}/procedures.jsonl` is still read when present. Each file
+//! is walked from EOF in small chunks (shared [`crate::jsonl_tail`]); a 1GB log
+//! stays on disk. After merging files the view keeps the newest parsed rows
+//! globally. Records never include request bodies, arguments, results, tokens,
+//! or source. V8 `console.*` / `ctx.log.*` lines use `outcome=log`; root CALL
+//! completion uses `outcome=ok` or `outcome=error`; isolate and deploy events
+//! use `channel=lifecycle`.
 
 use std::{
-    fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -26,12 +27,15 @@ use super::common::{
     int_col, nullable_text_col, system_view_definition, text_col, view_provider_with,
     SystemViewProvider,
 };
-use crate::{error::RegistryError, view_base::VirtualView};
+use crate::{
+    error::RegistryError,
+    jsonl_tail::{keep_newest_by, parse_json_log_line, read_jsonl_tail, JsonlTailLimits},
+    view_base::VirtualView,
+};
 
 crate::memoized_view_schema!(procedure_logs_schema, ProcedureLogsView);
 
-const PROCEDURE_LOG_READ_BYTES: u64 = 1024 * 1024;
-const PROCEDURE_LOG_MAX_ROWS: usize = 200;
+const LOG_TAIL: JsonlTailLimits = JsonlTailLimits::DEFAULT;
 
 #[derive(Debug)]
 struct ProcedureLogEntry {
@@ -50,6 +54,7 @@ struct ProcedureLogEntry {
     error_code:   Option<String>,
     message:      Option<String>,
     duration_ms:  i64,
+    schedule_id:  Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -69,6 +74,7 @@ struct RawProcedureLogEntry {
     error_code:   Option<String>,
     message:      Option<String>,
     duration_ms:  Option<i64>,
+    schedule_id:  Option<String>,
 }
 
 impl RawProcedureLogEntry {
@@ -104,6 +110,7 @@ impl RawProcedureLogEntry {
             error_code: self.error_code.filter(|value| !value.is_empty()),
             message: self.message.filter(|value| !value.is_empty()),
             duration_ms: self.duration_ms?,
+            schedule_id: self.schedule_id.filter(|value| !value.is_empty()),
         })
     }
 }
@@ -134,13 +141,14 @@ impl ProcedureLogsView {
                 nullable_text_col(6, "module_id", "Module when implementation is module"),
                 nullable_text_col(7, "revision_id", "Pinned module revision"),
                 text_col(8, "actor", "Calling user id"),
-                text_col(9, "origin", "sql | http | topic"),
+                text_col(9, "origin", "sql | http | topic | schedule | runtime"),
                 text_col(10, "outcome", "ok | error | log"),
                 text_col(11, "channel", "invocation | console | ctx.log"),
                 text_col(12, "level", "debug | info | warn | error"),
                 nullable_text_col(13, "error_code", "Typed procedure error code"),
                 nullable_text_col(14, "message", "V8 console/ctx.log text or sanitized error"),
                 int_col(15, "duration_ms", "Root invocation duration; 0 for V8 log lines"),
+                nullable_text_col(16, "schedule_id", "Schedule identity when origin is schedule"),
             ],
             "Disk-backed procedure invocation, V8 console/ctx.log, and error records (no bodies \
              or secrets)",
@@ -161,68 +169,19 @@ impl ProcedureLogsView {
         files
     }
 
-    fn read_log_tail(path: &Path) -> Result<String, RegistryError> {
-        if !path.exists() {
-            return Ok(String::new());
-        }
-        let mut file = File::open(path).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to open procedure log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let file_len = file
-            .metadata()
-            .map_err(|error| {
-                RegistryError::Other(format!(
-                    "Failed to stat procedure log {}: {}",
-                    path.display(),
-                    error
-                ))
-            })?
-            .len();
-        let offset = file_len.saturating_sub(PROCEDURE_LOG_READ_BYTES);
-        file.seek(SeekFrom::Start(offset)).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to seek procedure log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        let mut content = String::new();
-        file.read_to_string(&mut content).map_err(|error| {
-            RegistryError::Other(format!(
-                "Failed to read procedure log {}: {}",
-                path.display(),
-                error
-            ))
-        })?;
-        if offset == 0 {
-            return Ok(content);
-        }
-        Ok(content.split_once('\n').map(|(_, rest)| rest.to_string()).unwrap_or_default())
-    }
-
     fn read_entries(&self) -> Result<Vec<ProcedureLogEntry>, RegistryError> {
         let mut entries = Vec::new();
         for path in self.log_paths() {
-            let content = Self::read_log_tail(&path)?;
-            for line in content.lines().map(str::trim).filter(|line| !line.is_empty()) {
-                if let Ok(raw) = serde_json::from_str::<RawProcedureLogEntry>(line) {
-                    if let Some(entry) = raw.into_entry() {
-                        entries.push(entry);
-                    }
-                }
-            }
+            entries.extend(read_jsonl_tail(&path, LOG_TAIL, parse_procedure_log_line)?);
         }
-        entries.sort_by_key(|entry| entry.timestamp.clone());
-        if entries.len() > PROCEDURE_LOG_MAX_ROWS {
-            let skip = entries.len() - PROCEDURE_LOG_MAX_ROWS;
-            entries.drain(0..skip);
-        }
-        Ok(entries)
+        Ok(keep_newest_by(entries, LOG_TAIL.max_rows, |left, right| {
+            left.timestamp.cmp(&right.timestamp)
+        }))
     }
+}
+
+fn parse_procedure_log_line(bytes: &[u8]) -> Option<ProcedureLogEntry> {
+    parse_json_log_line(bytes, LOG_TAIL.max_line_bytes, RawProcedureLogEntry::into_entry)
 }
 
 impl VirtualView for ProcedureLogsView {
@@ -251,6 +210,7 @@ impl VirtualView for ProcedureLogsView {
         let mut error_codes = StringBuilder::new();
         let mut messages = StringBuilder::new();
         let mut duration_ms = Int64Builder::new();
+        let mut schedule_ids = StringBuilder::new();
 
         for entry in entries {
             timestamps.append_value(&entry.timestamp);
@@ -280,6 +240,10 @@ impl VirtualView for ProcedureLogsView {
                 None => messages.append_null(),
             }
             duration_ms.append_value(entry.duration_ms);
+            match entry.schedule_id {
+                Some(schedule_id) => schedule_ids.append_value(schedule_id),
+                None => schedule_ids.append_null(),
+            }
         }
 
         RecordBatch::try_new(
@@ -300,6 +264,7 @@ impl VirtualView for ProcedureLogsView {
                 Arc::new(error_codes.finish()) as ArrayRef,
                 Arc::new(messages.finish()) as ArrayRef,
                 Arc::new(duration_ms.finish()) as ArrayRef,
+                Arc::new(schedule_ids.finish()) as ArrayRef,
             ],
         )
         .map_err(|error| {
@@ -332,7 +297,7 @@ fn push_jsonl_pair(files: &mut Vec<PathBuf>, logs_dir: &Path) {
 mod tests {
     use std::io::Write;
 
-    use datafusion::arrow::array::StringArray;
+    use datafusion::arrow::array::{Array, StringArray};
     use tempfile::tempdir;
 
     use super::*;
@@ -360,7 +325,7 @@ mod tests {
         let view = ProcedureLogsView::new(dir.path().to_path_buf(), PathBuf::new());
         let batch = view.compute_batch().expect("batch");
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 15);
+        assert_eq!(batch.num_columns(), 16);
         let messages =
             batch.column(13).as_any().downcast_ref::<StringArray>().expect("message column");
         assert!(messages.value(1).contains("hello-from-v8"));
@@ -408,5 +373,72 @@ mod tests {
         let mut ids: Vec<&str> = (0..batch.num_rows()).map(|i| procedure_ids.value(i)).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["billing.charge", "chat.send_message", "legacy.proc"]);
+    }
+
+    #[test]
+    fn procedure_logs_view_reads_optional_schedule_id() {
+        let dir = tempdir().unwrap();
+        write_procedure_log(
+            dir.path(),
+            "reports.summary",
+            &[
+                r#"{"timestamp":"2026-09-10T00:00:00.000Z","node_id":"1","execution_id":"run-1","request_id":"run-1","procedure_id":"reports.summary","actor":"system","origin":"schedule","outcome":"ok","channel":"invocation","level":"info","duration_ms":4,"schedule_id":"reports.daily"}"#,
+                r#"{"timestamp":"2026-09-10T00:00:00.001Z","node_id":"1","execution_id":"e2","request_id":"r2","procedure_id":"reports.summary","actor":"alice","origin":"sql","outcome":"ok","channel":"invocation","level":"info","duration_ms":3}"#,
+            ],
+        );
+        let view = ProcedureLogsView::new(dir.path().to_path_buf(), PathBuf::new());
+        let batch = view.compute_batch().expect("batch");
+        assert_eq!(batch.num_columns(), 16);
+        let schedule_ids = batch
+            .column(15)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("schedule_id column");
+        assert_eq!(schedule_ids.value(0), "reports.daily");
+        assert!(schedule_ids.is_null(1));
+    }
+
+    fn procedure_log_line(timestamp: &str, procedure_id: &str, message: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{timestamp}","node_id":"1","execution_id":"e1","request_id":"r1","procedure_id":"{procedure_id}","actor":"alice","origin":"sql","outcome":"ok","channel":"invocation","level":"info","message":"{message}","duration_ms":1}}"#
+        )
+    }
+
+    #[test]
+    fn procedure_logs_view_tails_each_file_and_keeps_global_newest() {
+        let dir = tempdir().unwrap();
+        let total = LOG_TAIL.max_rows + 12;
+        let lines: Vec<String> = (0..total)
+            .map(|index| {
+                procedure_log_line(
+                    &format!("2026-09-10T00:00:00.{index:06}Z"),
+                    "chat.send_message",
+                    &format!("old-{index}"),
+                )
+            })
+            .collect();
+        write_procedure_log(
+            dir.path(),
+            "chat.send_message",
+            &lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        write_procedure_log(
+            dir.path(),
+            "billing.charge",
+            &[&procedure_log_line(
+                "2026-09-10T00:00:01.000000Z",
+                "billing.charge",
+                "newest",
+            )],
+        );
+
+        let view = ProcedureLogsView::new(dir.path().to_path_buf(), PathBuf::new());
+        let batch = view.compute_batch().expect("batch");
+        assert_eq!(batch.num_rows(), LOG_TAIL.max_rows);
+        let messages =
+            batch.column(13).as_any().downcast_ref::<StringArray>().expect("message column");
+        let values: Vec<&str> = (0..batch.num_rows()).map(|index| messages.value(index)).collect();
+        assert!(!values.iter().any(|message| *message == "old-0"));
+        assert_eq!(values.last().copied(), Some("newest"));
     }
 }

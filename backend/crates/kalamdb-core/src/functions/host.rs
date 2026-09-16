@@ -154,6 +154,7 @@ impl CoreFunctionHost {
             duration_ms: 0,
             timestamp: kalamdb_functions::now_ms(),
             node_id: self.app.node_id().as_ref().to_string(),
+            schedule_id: self.origin.schedule_id().map(str::to_owned),
         });
     }
 

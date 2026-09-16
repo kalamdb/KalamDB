@@ -1143,7 +1143,7 @@ fn kobj_functions_stream_insert_is_visible_inside_procedure() {
     if skip_if_no_server() {
         return;
     }
-    let ns = setup_namespace("kobj_fnstream");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_fnstream");
     let stream = format!("{ns}.fn_stream");
     exec(&format!(
         "CREATE STREAM TABLE {stream} (id INT PRIMARY KEY, note TEXT) WITH (TTL_SECONDS = 30)"

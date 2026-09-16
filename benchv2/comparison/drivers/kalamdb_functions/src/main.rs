@@ -9,8 +9,9 @@
 //! `CREATE PROCEDURE`). Timed insert/read go through
 //! `POST /v1/functions/{namespace}/{procedure}` only.
 //!
-//! Nested host SQL is ABI v1 `ctx.db.sql(sql, params)` with `$n` binds so
-//! the nested statements hit the same plan cache as SQL HTTP.
+//! Nested host SQL is ABI v2 `ctx.db.execute` / `ctx.db.query` with `$n`
+//! binds and named `input` so nested statements hit the same plan cache as
+//! SQL HTTP.
 
 use std::{
     env,
@@ -46,6 +47,43 @@ fn insert_url(base: &str) -> String {
 
 fn get_url(base: &str) -> String {
     format!("{base}/v1/functions/{KALAMDB_NAMESPACE}/get_message")
+}
+
+fn insert_procedure_sql() -> String {
+    format!(
+        r#"CREATE OR REPLACE PROCEDURE {ns}.insert_message(
+  id INT,
+  owner TEXT,
+  room TEXT,
+  data TEXT
+)
+RETURNS INT
+LANGUAGE JAVASCRIPT
+AS $$
+return ctx.db.execute(
+  "INSERT INTO {ns}.message (id, owner, room, data) VALUES ($1, $2, $3, $4)",
+  [input.id, input.owner, input.room, input.data]
+).then(function () {{ return 1; }});
+$$"#,
+        ns = KALAMDB_NAMESPACE
+    )
+}
+
+fn get_procedure_sql() -> String {
+    format!(
+        r#"CREATE OR REPLACE PROCEDURE {ns}.get_message(
+  id INT
+)
+RETURNS JSON
+LANGUAGE JAVASCRIPT
+AS $$
+return ctx.db.query(
+  "SELECT id, owner, room, data FROM {ns}.message WHERE id = $1",
+  [input.id]
+);
+$$"#,
+        ns = KALAMDB_NAMESPACE
+    )
 }
 
 async fn setup_and_login(http: &Client, base: &str, require_h2: bool) -> anyhow::Result<String> {
@@ -281,32 +319,8 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
     )
     .await?;
 
-    sql_ok(
-        http,
-        base,
-        token,
-        &format!(
-            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.insert_message(id INT, owner TEXT, \
-             room TEXT, data TEXT)\nLANGUAGE JAVASCRIPT\nAS $$\nctx.db.sql(\"INSERT INTO \
-             {KALAMDB_NAMESPACE}.message (id, owner, room, data) VALUES ($1, $2, $3, $4)\", \
-             input);\nreturn 1;\n$$"
-        ),
-        None,
-    )
-    .await?;
-
-    sql_ok(
-        http,
-        base,
-        token,
-        &format!(
-            "CREATE OR REPLACE PROCEDURE {KALAMDB_NAMESPACE}.get_message(id INT)\nLANGUAGE \
-             JAVASCRIPT\nAS $$\nreturn ctx.db.sql(\"SELECT id, owner, room, data FROM \
-             {KALAMDB_NAMESPACE}.message WHERE id = $1\", [input]);\n$$"
-        ),
-        None,
-    )
-    .await?;
+    sql_ok(http, base, token, &insert_procedure_sql(), None).await?;
+    sql_ok(http, base, token, &get_procedure_sql(), None).await?;
     Ok(())
 }
 
@@ -327,7 +341,7 @@ async fn main() -> anyhow::Result<()> {
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
     println!("timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}}");
-    println!("nested_sql=ABI v1 ctx.db.sql($n, params) (plan-cache binds)");
+    println!("nested_sql=ABI v2 ctx.db.execute/query($n, named input) (plan-cache binds)");
     println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
 
     create_schema(&http, &base, &token).await?;
@@ -362,6 +376,24 @@ mod tests {
             get_url("http://127.0.0.1:2900"),
             "http://127.0.0.1:2900/v1/functions/bench/get_message"
         );
+    }
+
+    #[test]
+    fn procedures_use_schema_first_abi_v2() {
+        let insert = insert_procedure_sql();
+        assert!(insert.contains("RETURNS INT"), "{insert}");
+        assert!(insert.contains("LANGUAGE JAVASCRIPT"), "{insert}");
+        assert!(insert.contains("ctx.db.execute"), "{insert}");
+        assert!(insert.contains("input.id"), "{insert}");
+        assert!(insert.contains("input.owner"), "{insert}");
+        assert!(!insert.contains("ctx.db.sql"), "{insert}");
+
+        let get = get_procedure_sql();
+        assert!(get.contains("RETURNS JSON"), "{get}");
+        assert!(get.contains("LANGUAGE JAVASCRIPT"), "{get}");
+        assert!(get.contains("ctx.db.query"), "{get}");
+        assert!(get.contains("[input.id]"), "{get}");
+        assert!(!get.contains("ctx.db.sql"), "{get}");
     }
 
     #[tokio::test]

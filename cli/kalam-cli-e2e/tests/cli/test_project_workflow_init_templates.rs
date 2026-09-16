@@ -421,9 +421,9 @@ fn ensure_wasm_pack_available() {
     match status {
         Ok(status) if status.success() => {},
         _ => panic!(
-            "wasm-pack is required to build unpublished @kalamdb/client and \
-             @kalamdb/consumer for kalam init file: installs. Install wasm-pack \
-             0.15.0 and the wasm32-unknown-unknown Rust target."
+            "wasm-pack is required to build unpublished @kalamdb/client and @kalamdb/consumer for \
+             kalam init file: installs. Install wasm-pack 0.15.0 and the wasm32-unknown-unknown \
+             Rust target."
         ),
     }
 }

@@ -89,6 +89,16 @@ Storage-adjacent observability counters are also maintained as lightweight atomi
 
 ## `system.slow_queries`
 
-Slow queries are written asynchronously to `slow.jsonl` after the configured threshold is exceeded. The `system.slow_queries` virtual view reads a bounded tail of that JSONL file and exposes recent entries with timestamp, duration, user, table metadata, row count, and redacted SQL text.
+Slow queries are written asynchronously to `slow.jsonl` after the configured threshold is exceeded. The `system.slow_queries` virtual view tails that JSONL from EOF with the shared JSON Lines reader (`kalamdb-views::jsonl_tail`) and exposes recent entries with timestamp, duration, user, table metadata, row count, and redacted SQL text.
 
-The view limits file IO to a fixed tail size and returns at most the most recent rows, so dashboard reads do not scan unbounded logs or add memory pressure while the server is idle.
+A 1GB log stays on disk. Each scan walks backward in small chunks, like `tail -n`, and keeps at most the newest parsed lines so dashboard `ORDER BY … LIMIT N` stays inside the DataFusion memory pool.
+
+## `system.server_logs`
+
+`system.server_logs` is a JSON Lines view over `server.jsonl` (with `server.log` as a fallback). It is not a full log archive. Each scan uses the same reverse-from-EOF reader as `system.slow_queries` and `system.procedure_logs`.
+
+A 1GB log file stays on disk. The reader never `read_to_string`s the file or a multi-megabyte window. That keeps `ORDER BY timestamp DESC LIMIT N` inside the DataFusion memory pool: TopK retains the source batch, so the batch itself must stay small.
+
+## `system.procedure_logs`
+
+`system.procedure_logs` merges per-procedure `procedures.jsonl` files (plus rotated `.1` and the legacy path). Each file is tailed the same way; after the merge the view keeps the newest parsed rows globally so one busy procedure cannot emit an unbounded batch.

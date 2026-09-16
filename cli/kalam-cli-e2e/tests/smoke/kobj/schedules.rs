@@ -76,7 +76,7 @@ fn disable_and_drop_namespace(ns: &str, schedules: &[&str]) {
 #[ntest::timeout(180000)]
 fn smoke_schedule_01_rejects_missing_procedure() {
     require_server();
-    let ns = setup_namespace("kobj_sched_miss");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_miss");
     let err = exec_err(&format!(
         "CREATE SCHEDULE {ns}.clock INTERVAL '1 second' EXECUTE PROCEDURE {ns}.does_not_exist()"
     ));
@@ -92,7 +92,7 @@ fn smoke_schedule_01_rejects_missing_procedure() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_02_rejects_parameterized_procedure() {
     require_server();
-    let ns = setup_namespace("kobj_sched_args");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_args");
     create_js_procedure(&ns, "needs_arg", "x INT", "return input.x;");
     let err = exec_err(&format!(
         "CREATE SCHEDULE {ns}.clock INTERVAL '1 second' EXECUTE PROCEDURE {ns}.needs_arg()"
@@ -108,7 +108,7 @@ fn smoke_schedule_02_rejects_parameterized_procedure() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_03_rejects_missing_namespace() {
     require_server();
-    let ns = setup_namespace("kobj_sched_ns");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_ns");
     create_js_procedure(&ns, "tick", "", "return 1;");
     let ghost = format!("ghost_{}", &ns[ns.len().saturating_sub(8)..]);
     let err = exec_err(&format!(
@@ -125,7 +125,7 @@ fn smoke_schedule_03_rejects_missing_namespace() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_04_rejects_invalid_cron_interval_timezone_and_principal() {
     require_server();
-    let ns = setup_namespace("kobj_sched_cfg");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_cfg");
     create_js_procedure(&ns, "tick", "", "return 1;");
     let cases = [
         (
@@ -179,7 +179,7 @@ fn smoke_schedule_04_rejects_invalid_cron_interval_timezone_and_principal() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_05_rejects_duplicate_name() {
     require_server();
-    let ns = setup_namespace("kobj_sched_dup");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_dup");
     create_js_procedure(&ns, "tick", "", "return 1;");
     exec(&format!(
         "CREATE SCHEDULE {ns}.clock INTERVAL '1 hour' EXECUTE PROCEDURE {ns}.tick()"
@@ -198,7 +198,7 @@ fn smoke_schedule_05_rejects_duplicate_name() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
     require_server();
-    let ns = setup_namespace("kobj_sched_wake");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_wake");
     let hits = create_hits_table(&ns);
     create_js_procedure(&ns, "tick", "", &ok_tick_body(&ns, "clock", &hits));
     exec(&format!(
@@ -217,10 +217,16 @@ fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
         "hit rows must record ctx.source.kind=schedule: {kinds:?}"
     );
     let logs = query_rows(&format!(
-        "SELECT origin, outcome FROM system.procedure_logs WHERE procedure_id LIKE '%{ns}.tick%' \
-         AND origin = 'schedule' AND outcome = 'ok'"
+        "SELECT origin, outcome, schedule_id FROM system.procedure_logs WHERE schedule_id = \
+         '{ns}.clock' AND origin = 'schedule' AND outcome = 'ok'"
     ));
     assert!(!logs.is_empty(), "procedure_logs must record origin=schedule: {logs:?}");
+    let expected_schedule = format!("{ns}.clock");
+    assert!(
+        logs.iter()
+            .any(|row| cell_str(row, "schedule_id").as_deref() == Some(expected_schedule.as_str())),
+        "scheduled invoke must stamp schedule_id: {logs:?}"
+    );
     disable_and_drop_namespace(&ns, &["clock"]);
 }
 
@@ -228,7 +234,7 @@ fn smoke_schedule_06_interval_wakes_and_runs_procedure() {
 #[ntest::timeout(45000)]
 fn smoke_schedule_07_records_failed_and_missing_function_calls() {
     require_server();
-    let ns = setup_namespace("kobj_sched_fail");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_fail");
     let marker = format!("schedule-boom-{ns}");
     create_js_procedure(&ns, "boom", "", &format!("throw new Error('{marker}');"));
     create_js_procedure(
@@ -268,9 +274,9 @@ fn smoke_schedule_07_records_failed_and_missing_function_calls() {
     );
 
     let errors = query_rows(&format!(
-        "SELECT origin, outcome, procedure_id FROM system.procedure_logs WHERE origin = \
-         'schedule' AND outcome = 'error' AND (procedure_id LIKE '%{ns}.boom%' OR procedure_id \
-         LIKE '%{ns}.missing_call%')"
+        "SELECT origin, outcome, procedure_id, schedule_id FROM system.procedure_logs WHERE \
+         origin = 'schedule' AND outcome = 'error' AND (schedule_id = '{ns}.boom' OR schedule_id \
+         = '{ns}.missing')"
     ));
     assert!(
         errors
@@ -285,7 +291,7 @@ fn smoke_schedule_07_records_failed_and_missing_function_calls() {
 #[ntest::timeout(30000)]
 fn smoke_schedule_08_cron_next_run_is_nine_utc() {
     require_server();
-    let ns = setup_namespace("kobj_sched_nine");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_nine");
     create_js_procedure(&ns, "tick", "", "return 1;");
     exec(&format!(
         "CREATE SCHEDULE {ns}.daily CRON '0 9 * * *' TIME ZONE 'UTC' EXECUTE PROCEDURE {ns}.tick()"
@@ -315,7 +321,7 @@ fn smoke_schedule_08_cron_next_run_is_nine_utc() {
 #[ntest::timeout(180000)]
 fn smoke_schedule_09_cron_every_minute_wakes_and_runs() {
     require_server();
-    let ns = setup_namespace("kobj_sched_cron");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_cron");
     let hits = create_hits_table(&ns);
     create_js_procedure(&ns, "tick", "", &ok_tick_body(&ns, "minutely", &hits));
     exec(&format!(
@@ -337,8 +343,8 @@ fn smoke_schedule_09_cron_every_minute_wakes_and_runs() {
         "cron wakeup must execute the procedure"
     );
     let logs = query_rows(&format!(
-        "SELECT origin, outcome FROM system.procedure_logs WHERE procedure_id LIKE '%{ns}.tick%' \
-         AND origin = 'schedule' AND outcome = 'ok'"
+        "SELECT origin, outcome, schedule_id FROM system.procedure_logs WHERE schedule_id = \
+         '{ns}.minutely' AND origin = 'schedule' AND outcome = 'ok'"
     ));
     assert!(!logs.is_empty(), "cron firing must log origin=schedule: {logs:?}");
     disable_and_drop_namespace(&ns, &["minutely"]);
@@ -348,7 +354,7 @@ fn smoke_schedule_09_cron_every_minute_wakes_and_runs() {
 #[ntest::timeout(45000)]
 fn smoke_schedule_10_disable_skips_overlap_and_blocks_drop_procedure() {
     require_server();
-    let ns = setup_namespace("kobj_sched_life");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_sched_life");
     create_js_procedure(
         &ns,
         "tick",

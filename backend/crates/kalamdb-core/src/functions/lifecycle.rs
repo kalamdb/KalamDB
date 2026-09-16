@@ -51,6 +51,7 @@ impl FunctionLifecycleObserver for FunctionRuntimeLogObserver {
             duration_ms: 0,
             timestamp: now_ms(),
             node_id: self.node_id.to_string(),
+            schedule_id: None,
         });
     }
 }
@@ -82,5 +83,6 @@ pub fn record_deployment(
         duration_ms: 0,
         timestamp: now_ms(),
         node_id: node_id.into(),
+        schedule_id: None,
     });
 }

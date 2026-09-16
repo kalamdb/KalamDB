@@ -1308,6 +1308,16 @@ pub struct JobsSettings {
     /// files can be reclaimed (default: 300s = 5 minutes). Set to 0 to disable.
     #[serde(default = "default_jobs_wal_cleanup_interval")]
     pub wal_cleanup_interval_seconds: u64,
+
+    /// How often the leader scans `system.jobs` and creates a history-cleanup
+    /// job (default: 3600s = 1 hour). Set to 0 to disable job-history cleanup.
+    #[serde(default = "default_jobs_history_cleanup_interval")]
+    pub history_cleanup_interval_seconds: u64,
+
+    /// Keep completed, failed, cancelled, and skipped jobs for this many days
+    /// (default: 7). Ignored when `history_cleanup_interval_seconds` is 0.
+    #[serde(default = "default_jobs_history_retention_days")]
+    pub history_retention_days: i64,
 }
 
 /// SQL execution settings (Phase 11, T026)
@@ -1648,10 +1658,12 @@ impl Default for UserManagementSettings {
 impl Default for JobsSettings {
     fn default() -> Self {
         Self {
-            max_concurrent:               default_jobs_max_concurrent(),
-            max_retries:                  default_jobs_max_retries(),
-            retry_backoff_ms:             default_jobs_retry_backoff_ms(),
+            max_concurrent: default_jobs_max_concurrent(),
+            max_retries: default_jobs_max_retries(),
+            retry_backoff_ms: default_jobs_retry_backoff_ms(),
             wal_cleanup_interval_seconds: default_jobs_wal_cleanup_interval(),
+            history_cleanup_interval_seconds: default_jobs_history_cleanup_interval(),
+            history_retention_days: default_jobs_history_retention_days(),
         }
     }
 }

@@ -111,6 +111,7 @@ const snapshot: ProcedureCatalogSnapshot = {
       error_code: "RATE_LIMIT",
       message: "rate limited",
       duration_ms: 12,
+      schedule_id: null,
     },
   ],
 };

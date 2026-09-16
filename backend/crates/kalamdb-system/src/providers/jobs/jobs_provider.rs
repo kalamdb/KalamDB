@@ -423,43 +423,58 @@ impl JobsTableProvider {
         Ok(())
     }
 
+    /// Whether any terminal job is older than `retention_days`.
+    ///
+    /// Used by job-history cleanup pre-validation so the scheduler can skip
+    /// creating a Raft job when there is nothing to delete.
+    pub fn has_expired_terminal_jobs(&self, retention_days: i64) -> Result<bool, SystemError> {
+        Ok(!self.expired_terminal_job_ids(retention_days, Some(1))?.is_empty())
+    }
+
     /// Delete jobs older than retention period (in days).
     ///
-    /// Optimized to use the status index to avoid full table scan.
-    /// Only cleans up terminal statuses: Completed, Failed, Cancelled.
+    /// Uses the status index to avoid a full table scan.
+    /// Only cleans up terminal statuses: Completed, Failed, Cancelled, Skipped.
     pub fn cleanup_old_jobs(&self, retention_days: i64) -> Result<usize, SystemError> {
-        let now = chrono::Utc::now().timestamp_millis();
-        let retention_ms = retention_days * 24 * 60 * 60 * 1000;
-        let cutoff_time = now - retention_ms;
-
+        let job_ids = self.expired_terminal_job_ids(retention_days, None)?;
         let mut deleted = 0;
+        for job_id in job_ids {
+            self.delete_job(&job_id)?;
+            deleted += 1;
+        }
+        Ok(deleted)
+    }
 
-        // Only clean up terminal statuses
-        let target_statuses = [
-            JobStatus::Completed,
-            JobStatus::Failed,
-            JobStatus::Cancelled,
-        ];
-
-        // Status index is index 0 (JobStatusCreatedAtIndex)
+    fn expired_terminal_job_ids(
+        &self,
+        retention_days: i64,
+        limit: Option<usize>,
+    ) -> Result<Vec<JobId>, SystemError> {
+        let cutoff_time = history_cutoff_millis(retention_days)?;
+        let mut expired = Vec::new();
         const STATUS_INDEX: usize = 0;
 
-        for status in target_statuses {
+        for status in TERMINAL_JOB_STATUSES {
+            if limit.is_some_and(|max| expired.len() >= max) {
+                break;
+            }
+
             let status_byte = status_to_u8(status);
             let prefix = vec![status_byte];
 
-            // Scan index for this status using scan_index_raw
-            // Keys are [status_byte][created_at_be][job_id_bytes]
-            // Sorted by created_at ASC
+            // Keys are [status_byte][created_at_be][job_id_bytes], sorted by created_at ASC.
             let iter = self
                 .store
                 .scan_index_raw_typed_iter(STATUS_INDEX, Some(&prefix), None, None)
                 .into_system_error("scan_index_raw_typed_iter error")?;
 
             for entry in iter {
+                if limit.is_some_and(|max| expired.len() >= max) {
+                    break;
+                }
+
                 let (key_bytes, job_id) =
                     entry.into_system_error("scan_index_raw_typed_iter error")?;
-                // Extract created_at (bytes 1..9)
                 if key_bytes.len() < 9 {
                     continue;
                 }
@@ -468,27 +483,24 @@ impl JobsTableProvider {
                 created_at_bytes.copy_from_slice(&key_bytes[1..9]);
                 let created_at = i64::from_be_bytes(created_at_bytes);
 
-                // Optimization: Since index is sorted by created_at, if we encounter
-                // a job created AFTER the cutoff, we can stop scanning this status.
+                // Index is sorted by created_at, so later keys cannot be expired.
                 if created_at > cutoff_time {
                     break;
                 }
 
-                // Load job to check actual finished_at
                 if let Some(row) = self.store.get(&job_id)? {
                     let job = Self::decode_job_row(&row)?;
                     let reference_time =
                         job.finished_at.or(job.started_at).unwrap_or(job.created_at);
 
                     if reference_time < cutoff_time {
-                        self.delete_job(&job.job_id)?;
-                        deleted += 1;
+                        expired.push(job.job_id);
                     }
                 }
             }
         }
 
-        Ok(deleted)
+        Ok(expired)
     }
 
     /// Helper to create RecordBatch from jobs
@@ -592,6 +604,23 @@ fn matches_filter_sync(job: &Job, filter: &JobFilter) -> bool {
         }
     }
     true
+}
+
+const TERMINAL_JOB_STATUSES: [JobStatus; 4] = [
+    JobStatus::Completed,
+    JobStatus::Failed,
+    JobStatus::Cancelled,
+    JobStatus::Skipped,
+];
+
+fn history_cutoff_millis(retention_days: i64) -> Result<i64, SystemError> {
+    if retention_days <= 0 {
+        return Err(SystemError::Other("retention_days must be greater than 0".to_string()));
+    }
+    let retention_ms = retention_days
+        .checked_mul(24 * 60 * 60 * 1000)
+        .ok_or_else(|| SystemError::Other("retention_days is too large".to_string()))?;
+    Ok(chrono::Utc::now().timestamp_millis() - retention_ms)
 }
 
 crate::impl_system_table_provider_metadata!(
@@ -768,5 +797,42 @@ mod tests {
         // Scan via DataFusion
         let plan = provider.scan(&state, None, &[], None).await.unwrap();
         assert!(!plan.schema().fields().is_empty());
+    }
+
+    fn terminal_job(job_id: &str, status: JobStatus, age_days: i64) -> Job {
+        let now = chrono::Utc::now().timestamp_millis();
+        let ts = now - age_days * 24 * 60 * 60 * 1000;
+        let mut job = create_test_job(job_id);
+        job.status = status;
+        job.created_at = ts;
+        job.updated_at = ts;
+        job.started_at = Some(ts);
+        job.finished_at = Some(ts + 1);
+        job.message = Some("done".to_string());
+        job
+    }
+
+    #[test]
+    fn test_cleanup_old_jobs_deletes_expired_terminal_history() {
+        let provider = create_test_provider();
+        provider
+            .create_job(terminal_job("old_completed", JobStatus::Completed, 10))
+            .unwrap();
+        provider
+            .create_job(terminal_job("old_skipped", JobStatus::Skipped, 10))
+            .unwrap();
+        provider
+            .create_job(terminal_job("recent_failed", JobStatus::Failed, 1))
+            .unwrap();
+        provider.create_job(create_test_job("still_running")).unwrap();
+
+        assert!(provider.has_expired_terminal_jobs(7).unwrap());
+        assert_eq!(provider.cleanup_old_jobs(7).unwrap(), 2);
+        assert!(!provider.has_expired_terminal_jobs(7).unwrap());
+
+        assert!(provider.get_job_by_id(&JobId::new("old_completed")).unwrap().is_none());
+        assert!(provider.get_job_by_id(&JobId::new("old_skipped")).unwrap().is_none());
+        assert!(provider.get_job_by_id(&JobId::new("recent_failed")).unwrap().is_some());
+        assert!(provider.get_job_by_id(&JobId::new("still_running")).unwrap().is_some());
     }
 }

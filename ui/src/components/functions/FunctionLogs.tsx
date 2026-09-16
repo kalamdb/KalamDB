@@ -203,6 +203,7 @@ function LogDetails({ log }: { log: SystemProcedureLogRow }) {
     ["Execution ID", <span className="break-all font-mono text-xs">{log.execution_id || "—"}</span>],
     ["Request ID", <span className="break-all font-mono text-xs">{log.request_id || "—"}</span>],
     ["Origin", displayLogOrigin(log.origin)],
+    ["Schedule", log.schedule_id || "—"],
     ["Outcome", log.outcome || "—"],
     ["Actor", displayLogActor(log.actor)],
     ["Node", log.node_id || "—"],

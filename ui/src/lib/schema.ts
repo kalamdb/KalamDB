@@ -187,7 +187,7 @@ export const system_server_logs = kTable('system.server_logs', {
   level: text('level').notNull(),
   thread: text('thread'),
   target: text('target'),
-  line: text('line'),
+  line: integer('line'),
   message: text('message').notNull(),
 });
 
@@ -306,6 +306,7 @@ export const system_procedure_logs = kTable('system.procedure_logs', {
   error_code: text('error_code'),
   message: text('message'),
   duration_ms: integer('duration_ms').notNull(),
+  schedule_id: text('schedule_id'),
 });
 
 export const system_routine_parameters = kTable('system.routine_parameters', {

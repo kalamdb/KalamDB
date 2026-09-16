@@ -363,7 +363,7 @@ fn kobj_stream_seq_reconstruction_and_burst() {
     if skip_if_no_server() {
         return;
     }
-    let ns = setup_namespace("kobj_st");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_st");
     let table = generate_unique_table("events");
     let full = format!("{ns}.{table}");
 
@@ -499,7 +499,7 @@ fn kobj_stream_ttl_expires_old_keeps_new() {
     if skip_if_no_server() {
         return;
     }
-    let ns = setup_namespace("kobj_ttl");
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_ttl");
     let table = generate_unique_table("ttl_events");
     let full = format!("{ns}.{table}");
     exec(&format!(

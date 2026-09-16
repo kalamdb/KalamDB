@@ -1449,14 +1449,20 @@ export default function SqlStudio() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
+      <div
+        className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground"
+        data-sql-studio-ready="false"
+      >
         Loading SQL workspace...
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground">
+    <div
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
+      data-sql-studio-ready={isRemoteWorkspaceHydrated ? "true" : "false"}
+    >
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
           <ResizablePanel

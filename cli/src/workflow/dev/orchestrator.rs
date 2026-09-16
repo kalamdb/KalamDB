@@ -10,13 +10,12 @@ use crate::{
     output::{WorkflowDisplayMode, WorkflowOutput},
     terminal_ui::ProgressTaskStatus,
     workflow::{
-        WorkflowContext,
         agent::destructive_schema_objects,
         dev::{
             display::{emit_task_failure, emit_task_success},
             draft_prompt::{
-                DraftPromptDecision, draft_migration_exists, draft_migration_path,
-                prompt_for_draft_application,
+                draft_migration_exists, draft_migration_path, prompt_for_draft_application,
+                DraftPromptDecision,
             },
             logs::ServiceLogRegistry,
             precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
@@ -24,16 +23,16 @@ use crate::{
             server::{wait_for_server_ready, write_managed_server_config},
             session::wait_for_dev_shutdown_signal,
             watch::{
-                SCHEMA_WATCH_INTERVAL_SECS, functions_watch_stamp, run_schema_pipeline,
-                schema_file_changed, schema_file_mtime, schema_watch_path, update_schema_baseline,
-                wait_for_stable_schema_file,
+                functions_watch_stamp, run_schema_pipeline, schema_file_changed, schema_file_mtime,
+                schema_watch_path, update_schema_baseline, wait_for_stable_schema_file,
+                SCHEMA_WATCH_INTERVAL_SECS,
             },
         },
         display_project_path,
         instance::{self, StartedBy},
         lifecycle::prepare_managed_server,
         migration::{
-            apply::{ApplyMigrationOptions, apply_pending_migrations},
+            apply::{apply_pending_migrations, ApplyMigrationOptions},
             create::update_draft_migration,
         },
         project::{
@@ -41,8 +40,9 @@ use crate::{
             guidance::{dev_local_kalamdb_server_start_failed, dev_reusing_existing_local_server},
             resolve::load_project_dotenv,
         },
-        schema::{GenerateOptions, generate_schema_artifacts},
+        schema::{generate_schema_artifacts, GenerateOptions},
         sql::{build_workflow_client, drop_namespace_if_exists},
+        WorkflowContext,
     },
 };
 
@@ -976,10 +976,11 @@ mod tests {
         let error = reject_destructive_agent_sql(sql, false).expect_err("drop table must fail");
         assert!(is_fatal_schema_pipeline_error(&error));
         assert!(reject_destructive_agent_sql(sql, true).is_ok());
-        assert!(
-            reject_destructive_agent_sql("CREATE TABLE tasks (id INTEGER PRIMARY KEY);", false)
-                .is_ok()
-        );
+        assert!(reject_destructive_agent_sql(
+            "CREATE TABLE tasks (id INTEGER PRIMARY KEY);",
+            false
+        )
+        .is_ok());
     }
 
     #[test]

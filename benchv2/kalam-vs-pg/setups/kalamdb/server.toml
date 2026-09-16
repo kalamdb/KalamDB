@@ -164,6 +164,8 @@ max_concurrent = 10
 max_retries = 3
 retry_backoff_ms = 100
 wal_cleanup_interval_seconds = 300
+history_cleanup_interval_seconds = 3600
+history_retention_days = 7
 
 [execution]
 handler_timeout_seconds = 30

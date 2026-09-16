@@ -41,6 +41,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - `benchv2/`: benchmarks.
 - `ui/`: admin UI.
 - `docs/`: maintained architecture, API, security, and operational docs.
+- `docs/releases/`: GitHub Releases body copy (one file per version).
 - `docker/`: container builds and local deployment.
 
 ## Crate Ownership
@@ -97,6 +98,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - SDK changes under `link/sdks/**` or SDK bridge crates must update corresponding SDK docs in `../KalamSite/content/sdk/**` and include tests.
 - User-facing command, CLI flag, SQL syntax, system table, SDK entry point, config/env, or runbook changes must update canonical skill content in `../kalamdb-skills` and generated in-repo mirrors when applicable.
 - Architecture-affecting changes must update relevant docs under `docs/architecture/` or `docs/architecture/decisions/`.
+- Version ships (GitHub Releases) must add `docs/releases/<version>.md` (the release body) and a link in `docs/releases/README.md`.
 
 ## Security
 

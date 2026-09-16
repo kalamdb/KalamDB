@@ -20,20 +20,26 @@ static DATABASE_TRANSFER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new
 /// Maximum time to wait for storage-writing jobs before backup/restore.
 const STORAGE_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const STORAGE_QUIESCENCE_POLL: Duration = Duration::from_millis(500);
+/// Backup/restore must not wait forever if another transfer is stuck.
+const DATABASE_TRANSFER_LOCK_TIMEOUT: Duration = Duration::from_secs(6 * 60);
 
 /// Jobs that write Parquet / manifest data and must finish before transfer.
 const STORAGE_QUIESCENCE_JOB_TYPES: [JobType; 2] = [JobType::Flush, JobType::SegmentCompact];
 
 fn is_active_job_status(status: JobStatus) -> bool {
-    matches!(
-        status,
-        JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying
-    )
+    status.is_in_progress()
 }
 
 /// Serialize full-database backup/restore against each other.
-pub(crate) async fn acquire_database_transfer_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    DATABASE_TRANSFER_LOCK.lock().await
+pub(crate) async fn acquire_database_transfer_lock(
+) -> Result<tokio::sync::MutexGuard<'static, ()>, KalamDbError> {
+    tokio::time::timeout(DATABASE_TRANSFER_LOCK_TIMEOUT, DATABASE_TRANSFER_LOCK.lock())
+        .await
+        .map_err(|_| {
+            KalamDbError::InvalidOperation(
+                "timed out waiting for another database backup or restore to finish".to_string(),
+            )
+        })
 }
 
 /// Wait until no flush or segment-compaction jobs are active.
