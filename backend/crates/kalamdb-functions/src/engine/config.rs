@@ -41,7 +41,7 @@ impl Default for EngineConfig {
             max_depth: 16,
             max_heap_bytes: 64 * 1024 * 1024,
             heap_soft_bytes: 16 * 1024 * 1024,
-            max_memory_bytes: 256 * 1024 * 1024,
+            max_memory_bytes: 2048 * 1024 * 1024,
             max_artifact_bytes: 16 * 1024 * 1024,
             max_value_bytes: 8 * 1024 * 1024,
             cache_bytes: 128 * 1024 * 1024,
@@ -99,6 +99,15 @@ mod tests {
     #[test]
     fn default_idle_pool_keeps_several_warm_isolates() {
         assert_eq!(EngineConfig::default().max_idle_per_lane, 8);
+    }
+
+    #[test]
+    fn default_memory_covers_max_active_hard_heaps() {
+        let config = EngineConfig::default();
+        assert!(
+            config.max_memory_bytes >= config.max_active.saturating_mul(config.max_heap_bytes),
+            "default max_memory_bytes must admit max_active concurrent hard-heap isolates"
+        );
     }
 
     #[test]

@@ -588,7 +588,9 @@ pub fn default_functions_max_queued() -> usize {
 }
 
 pub fn default_functions_max_memory_mb() -> usize {
-    256
+    // Resident isolates charge `heap_hard_mb` while running. Size this at least
+    // `max_active * heap_hard_mb` so concurrent roots (and a nested CALL) can admit.
+    2048
 }
 
 pub fn default_functions_heap_soft_mb() -> usize {
@@ -653,4 +655,18 @@ pub fn default_functions_max_log_bytes() -> usize {
 
 pub fn default_functions_max_header_bytes() -> usize {
     16 * 1024
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_function_memory_covers_max_active_hard_heaps() {
+        assert!(
+            default_functions_max_memory_mb()
+                >= default_functions_max_active().saturating_mul(default_functions_heap_hard_mb()),
+            "default max_memory_mb must admit max_active concurrent hard-heap isolates"
+        );
+    }
 }

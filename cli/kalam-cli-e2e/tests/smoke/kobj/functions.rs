@@ -7,6 +7,19 @@ use tempfile::TempDir;
 
 use crate::{common::*, kobj_helpers::*};
 
+/// Shared-server smoke can have other namespaces' roots in flight. Only this
+/// test's finished procedures must be absent from `system.active_procedure_runs`.
+fn assert_no_active_runs_for(ns: &str) {
+    let runs = query_rows(&format!(
+        "SELECT execution_id, procedure_id FROM system.active_procedure_runs WHERE procedure_id \
+         LIKE '{ns}.%'"
+    ));
+    assert!(
+        runs.is_empty(),
+        "finished roots for {ns} must leave system.active_procedure_runs: {runs:?}"
+    );
+}
+
 fn create_js_procedure(ns: &str, name: &str, params: &str, body: &str) {
     exec(&format!(
         "CREATE OR REPLACE PROCEDURE {ns}.{name}({params}) LANGUAGE JAVASCRIPT AS $$\n{body}\n$$"
@@ -471,11 +484,10 @@ fn kobj_functions_active_runs_and_structured_errors() {
     create_js_procedure(&ns, "ok", "", "return 1;");
     create_js_procedure(&ns, "boom", "", "throw new Error('boom');");
     let _ = query_rows(&format!("CALL {ns}.ok()"));
-    let runs = query_rows("SELECT execution_id FROM system.active_procedure_runs");
-    assert!(
-        runs.is_empty(),
-        "finished roots must leave system.active_procedure_runs: {runs:?}"
-    );
+    assert_no_active_runs_for(&ns);
+    let boom = exec_err(&format!("CALL {ns}.boom()"));
+    assert!(boom.to_ascii_lowercase().contains("boom"), "boom error: {boom}");
+    assert_no_active_runs_for(&ns);
     let stats = query_rows(
         "SELECT metric_name, metric_value FROM system.stats WHERE metric_name LIKE \
          'function_memory%' OR metric_name LIKE 'function_instances%'",
@@ -505,8 +517,6 @@ fn kobj_functions_active_runs_and_structured_errors() {
             .any(|row| cell_str(row, "implementation").as_deref() == Some("inline")),
         "system.procedures should list the inline CALL: {procedures:?}"
     );
-    let boom = exec_err(&format!("CALL {ns}.boom()"));
-    assert!(boom.to_ascii_lowercase().contains("boom"), "boom error: {boom}");
     let errors = query_rows(&format!(
         "SELECT error_code, procedure_id FROM system.procedure_logs WHERE procedure_id LIKE \
          '%{ns}.boom%' AND outcome = 'error'"
