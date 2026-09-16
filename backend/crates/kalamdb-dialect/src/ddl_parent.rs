@@ -46,8 +46,11 @@ impl DdlAst for AlterTypeStatement {}
 impl DdlAst for CreateProcedureStatement {}
 impl DdlAst for DropProcedureStatement {}
 impl DdlAst for CreateTriggerStatement {}
+impl DdlAst for CreateScheduleStatement {}
 impl DdlAst for DropTriggerStatement {}
+impl DdlAst for DropScheduleStatement {}
 impl DdlAst for AlterTriggerStatement {}
+impl DdlAst for AlterScheduleStatement {}
 impl DdlAst for GrantExecuteStatement {}
 impl DdlAst for RevokeExecuteStatement {}
 impl DdlAst for CallStatement {}

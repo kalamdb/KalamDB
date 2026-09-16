@@ -40,6 +40,8 @@ thiserror = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
+croner = { workspace = true }
 
 # Logging
 log = { workspace = true }

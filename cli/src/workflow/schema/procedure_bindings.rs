@@ -63,10 +63,6 @@ pub fn discover_procedure_bindings(
     Ok(bindings)
 }
 
-pub fn implemented_bindings(bindings: &[ProcedureBinding]) -> Vec<&ProcedureBinding> {
-    bindings.iter().filter(|binding| binding.implemented).collect()
-}
-
 fn identity_map(
     snapshot: &ContractSnapshot,
 ) -> BTreeMap<(String, String), (String, String, String)> {

@@ -19,7 +19,8 @@ pub use catalog::revision::ModuleRevision;
 pub use catalog::runtime_state::{now_ms, FunctionRuntimeState, StagedTopicPublish};
 pub use engine::{
     config::EngineConfig,
-    engine::{FunctionEngine, FunctionInstanceSnapshot, FunctionMemoryCensus},
+    engine::{FunctionAdmission, FunctionEngine, FunctionInstanceSnapshot, FunctionMemoryCensus},
+    lifecycle::{FunctionLifecycleEvent, FunctionLifecycleKind, FunctionLifecycleObserver},
     limits::{check_host_bytes, RuntimeLimits, ABI_VERSION},
     runtime::FunctionRuntime,
 };

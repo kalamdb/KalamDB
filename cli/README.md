@@ -185,9 +185,7 @@ CONFIG:
     -v, --verbose                   Enable verbose logging
 
 CREDENTIALS:
-    --show-credentials              Show stored credentials for instance
-    --update-credentials            Login and update stored credentials
-    --delete-credentials            Delete stored credentials
+    --save-credentials              Save JWT token after login
     --list-instances                List all stored credential instances
 
 INFO:
@@ -211,7 +209,6 @@ kalam --subscribe "SUBSCRIBE TO app.messages WHERE user_id = 'alice'"
 kalam login --instance local --user root --password ""
 kalam whoami --instance local
 kalam logout --instance local
-kalam --show-credentials --instance local
 kalam --list-instances
 
 # Create a CI service token
@@ -388,9 +385,6 @@ kalam whoami --instance prod
 
 # Remove saved credentials
 kalam logout --instance prod
-
-# Legacy credential flags still work for scripts that already use them
-kalam --update-credentials --instance local --user root --password ""
 ```
 
 ### Service Tokens
@@ -586,29 +580,29 @@ cargo build --release
 
 ### Project Workflow
 
-Project-oriented workflow commands such as `kalam init`, `kalam dev`, `kalam link`,
-`kalam schema gen`, `kalam migration create`, `kalam status`, and `kalam deploy` are
-documented in [`DEV.md`](./DEV.md).
+Project-oriented workflow commands (`kalam init`, `kalam up`, `kalam down`,
+`kalam status`, `kalam logs`, `kalam dev`, `kalam link`, `kalam schema gen`,
+`kalam db`, and `kalam deploy`) are documented in [`DEV.md`](./DEV.md) and
+[`AGENTS.md`](./AGENTS.md).
 
 For AI coding agents and automation:
 
 ```bash
 kalam init --yes
+kalam up
 kalam dev --agent
 kalam -c "<SQL>" --json
 ```
 
-`kalam dev --agent` runs the local KalamDB development environment in deterministic, non-interactive mode optimized for AI coding agents and automation. Use `kalam dev start|status|logs|stop` when a foreground process is inconvenient; `start` detaches the same `--agent` loop and records a project session file.
+`kalam dev --agent` runs the local development loop in deterministic, non-interactive mode. Use `kalam up`/`down`/`status`/`logs` for the database itself. `kalam dev start|status|logs|stop` remains the advanced control for a detached development session.
 
-When `kalam dev` starts a local server, the generated `kalam/server/server.toml` uses
-`root` / `kalamdb123` by default. Scaffolded `.env` files include the same password for
-local development.
+When `kalam up` or `kalam dev` starts a local server, `server.toml` uses
+`root` / `kalamdb123` by default. Application processes receive `KALAM_URL` and
+`KALAM_NAMESPACE` only — not the CLI root password.
 
-Access the running server at **http://localhost:2900** (UI at **http://localhost:2900/ui**)
-with **`root` / `kalamdb123`**, or run
-`kalam --url http://127.0.0.1:2900 --user root --password kalamdb123` in another terminal.
+Access the running server at **http://localhost:2900** (UI at **http://localhost:2900/ui**).
 
-Use `kalam db reset` to clear local project state (`kalam/server/`, schema baseline) and drop the linked namespace when appropriate. Use `--yes` when reusing a non-project server or in non-interactive shells. Run `kalam dev` afterward for a fresh database.
+Use `kalam db reset` to rebuild the **local** database from committed migrations and `kalam/seed.sql`. Remote namespace drop is not part of this command.
 
 Use that guide for:
 

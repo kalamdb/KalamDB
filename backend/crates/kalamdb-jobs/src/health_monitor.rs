@@ -14,7 +14,7 @@ pub use kalamdb_observability::{
 };
 
 const IDLE_TRIM_GRACE: Duration = Duration::from_secs(60);
-const IDLE_TRIM_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const IDLE_TRIM_INTERVAL: Duration = Duration::from_secs(30);
 
 static LAST_IDLE_TRIM_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -72,7 +72,7 @@ impl HealthMonitor {
         if active_subscriptions == 0 && active_connections == 0 && ws_sessions == 0 {
             app_context.connection_registry().trim_idle_capacity();
         }
-        kalamdb_observability::force_allocator_collection(true);
+        kalamdb_observability::reclaim_idle_process_memory();
 
         if cleared_plan_cache > 0 {
             log::debug!(
@@ -100,5 +100,16 @@ impl HealthMonitor {
         let metrics = app_context.compute_metrics_async().await?;
         kalamdb_observability::HealthMonitor::log_system_stats(&metrics);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_trim_retries_while_the_server_stays_quiet() {
+        assert_eq!(IDLE_TRIM_GRACE, Duration::from_secs(60));
+        assert_eq!(IDLE_TRIM_INTERVAL, Duration::from_secs(30));
     }
 }

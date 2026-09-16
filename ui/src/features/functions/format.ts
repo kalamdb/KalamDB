@@ -205,6 +205,12 @@ export function displayLogOrigin(origin: string | null | undefined): string {
   if (normalized === "topic") {
     return "Topic";
   }
+  if (normalized === "schedule") {
+    return "Schedule";
+  }
+  if (normalized === "runtime") {
+    return "Runtime";
+  }
   return origin?.trim() || "—";
 }
 

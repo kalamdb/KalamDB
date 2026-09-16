@@ -1,26 +1,36 @@
-//! Rotating JSONL logger for procedure invocations and V8 output.
+//! Rotating JSONL logger for procedure invocations, V8 output, and runtime lifecycle.
 //!
-//! Writes one record per completed root CALL (`ok`/`error`) and one record per
-//! V8 `console.*` / `ctx.log.*` line (`outcome=log`). Never includes request
-//! bodies, arguments, results, tokens, or source. Writes are synchronous so
-//! `system.procedure_logs` can be queried immediately after CALL.
+//! Writes one record per completed root CALL (`ok`/`error`), one record per
+//! V8 `console.*` / `ctx.log.*` line (`outcome=log`, `channel=console`), and
+//! isolate/deploy events (`channel=lifecycle`: created, reused, idle, dropped,
+//! deployed). Never includes request bodies, arguments, results, tokens, or
+//! source. Writes are synchronous so `system.procedure_logs` can be queried
+//! immediately after CALL.
+//!
+//! Cost per record is kept to one JSON serialization into a single buffer and one
+//! `open`/`write` pair; directories are only created on the first miss and rotation
+//! uses the already-open handle's `fstat`.
 //!
 //! On-disk layout is always local:
 //! `{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`.
 
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    borrow::Cow,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use parking_lot::Mutex;
+use serde::{Serialize, Serializer};
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PROCEDURE_DIR_LEN: usize = 200;
+const LINE_CAPACITY: usize = 512;
 
-/// One procedure log line: a root CALL outcome or a V8 console/ctx.log record.
+/// One procedure log line: a root CALL outcome, a V8 console/ctx.log record, or a lifecycle event.
+///
+/// Enumerated fields are `Cow` so the common `&'static str` values do not allocate.
 #[derive(Debug, Clone)]
 pub struct ProcedureLogRecord {
     pub execution_id: String,
@@ -28,11 +38,11 @@ pub struct ProcedureLogRecord {
     pub procedure_id: String,
     pub module_id:    Option<String>,
     pub revision_id:  Option<String>,
-    pub actor:        String,
-    pub origin:       String,
-    pub outcome:      String,
-    pub channel:      String,
-    pub level:        String,
+    pub actor:        Cow<'static, str>,
+    pub origin:       Cow<'static, str>,
+    pub outcome:      Cow<'static, str>,
+    pub channel:      Cow<'static, str>,
+    pub level:        Cow<'static, str>,
     pub error_code:   Option<String>,
     pub message:      Option<String>,
     pub duration_ms:  i64,
@@ -42,7 +52,7 @@ pub struct ProcedureLogRecord {
 
 /// JSONL writer for per-procedure `procedures.jsonl` files under the runtime root.
 pub struct ProcedureLogLogger {
-    runtime_root: Mutex<Option<PathBuf>>,
+    runtime_root: Option<PathBuf>,
 }
 
 impl ProcedureLogLogger {
@@ -50,37 +60,32 @@ impl ProcedureLogLogger {
         let runtime_root = runtime_root.into();
         let _ = fs::create_dir_all(&runtime_root);
         Arc::new(Self {
-            runtime_root: Mutex::new(Some(runtime_root)),
+            runtime_root: Some(runtime_root),
         })
     }
 
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn new_test() -> Self {
-        Self {
-            runtime_root: Mutex::new(None),
-        }
+        Self { runtime_root: None }
     }
 
     pub fn record(&self, entry: ProcedureLogRecord) {
-        let root = {
-            let guard = self.runtime_root.lock();
-            match guard.as_ref() {
-                Some(root) => root.clone(),
-                None => return,
-            }
+        let Some(root) = self.runtime_root.as_deref() else {
+            return;
         };
-        let path = procedure_log_path(&root, &entry.procedure_id);
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        write_record(&path, &entry);
+        write_record(&procedure_log_path(root, &entry.procedure_id), &entry);
     }
 }
 
-/// Strip obvious credential prefixes from procedure log text.
-pub fn sanitize_procedure_log_message(message: &str) -> String {
-    let mut sanitized = message.to_string();
-    for secret in ["Authorization", "Bearer ", "Cookie:", "cookie="] {
+/// Strip obvious credential prefixes from procedure log text. Returns the input untouched
+/// (no copy) when nothing needs redacting.
+pub fn sanitize_procedure_log_message(message: String) -> String {
+    const SECRETS: [&str; 4] = ["Authorization", "Bearer ", "Cookie:", "cookie="];
+    if !SECRETS.iter().any(|secret| message.contains(secret)) {
+        return message;
+    }
+    let mut sanitized = message;
+    for secret in SECRETS {
         if sanitized.contains(secret) {
             sanitized = sanitized.replace(secret, "[redacted]");
         }
@@ -117,42 +122,95 @@ pub fn procedure_log_path(runtime_root: &Path, procedure_id: &str) -> PathBuf {
         .join("procedures.jsonl")
 }
 
-fn write_record(path: &Path, entry: &ProcedureLogRecord) {
-    let timestamp = chrono::DateTime::from_timestamp_millis(entry.timestamp)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_else(|| "unknown".to_string());
-    let log_line = serde_json::json!({
-        "timestamp": timestamp,
-        "node_id": entry.node_id,
-        "execution_id": entry.execution_id,
-        "request_id": entry.request_id,
-        "procedure_id": entry.procedure_id,
-        "module_id": entry.module_id,
-        "revision_id": entry.revision_id,
-        "actor": entry.actor,
-        "origin": entry.origin,
-        "outcome": entry.outcome,
-        "channel": entry.channel,
-        "level": entry.level,
-        "error_code": entry.error_code,
-        "message": entry.message,
-        "duration_ms": entry.duration_ms,
-    })
-    .to_string();
-    let bytes = format!("{log_line}\n");
-    rotate_if_needed(path, bytes.len() as u64);
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(bytes.as_bytes());
+/// Borrowed wire shape; serialized straight into the line buffer.
+#[derive(Serialize)]
+struct LogLine<'a> {
+    #[serde(serialize_with = "serialize_rfc3339_millis")]
+    timestamp:    i64,
+    node_id:      &'a str,
+    execution_id: &'a str,
+    request_id:   &'a str,
+    procedure_id: &'a str,
+    module_id:    Option<&'a str>,
+    revision_id:  Option<&'a str>,
+    actor:        &'a str,
+    origin:       &'a str,
+    outcome:      &'a str,
+    channel:      &'a str,
+    level:        &'a str,
+    error_code:   Option<&'a str>,
+    message:      Option<&'a str>,
+    duration_ms:  i64,
+}
+
+impl<'a> From<&'a ProcedureLogRecord> for LogLine<'a> {
+    fn from(entry: &'a ProcedureLogRecord) -> Self {
+        Self {
+            timestamp:    entry.timestamp,
+            node_id:      &entry.node_id,
+            execution_id: &entry.execution_id,
+            request_id:   &entry.request_id,
+            procedure_id: &entry.procedure_id,
+            module_id:    entry.module_id.as_deref(),
+            revision_id:  entry.revision_id.as_deref(),
+            actor:        &entry.actor,
+            origin:       &entry.origin,
+            outcome:      &entry.outcome,
+            channel:      &entry.channel,
+            level:        &entry.level,
+            error_code:   entry.error_code.as_deref(),
+            message:      entry.message.as_deref(),
+            duration_ms:  entry.duration_ms,
+        }
     }
 }
 
-fn rotate_if_needed(path: &Path, incoming: u64) {
-    let Ok(metadata) = fs::metadata(path) else {
-        return;
-    };
-    if metadata.len().saturating_add(incoming) <= MAX_LOG_BYTES {
+fn serialize_rfc3339_millis<S: Serializer>(millis: &i64, serializer: S) -> Result<S::Ok, S::Error> {
+    match chrono::DateTime::from_timestamp_millis(*millis) {
+        Some(dt) => serializer.collect_str(&dt.format("%Y-%m-%dT%H:%M:%S%.3fZ")),
+        None => serializer.serialize_str("unknown"),
+    }
+}
+
+fn write_record(path: &Path, entry: &ProcedureLogRecord) {
+    let mut line = Vec::with_capacity(LINE_CAPACITY);
+    if serde_json::to_writer(&mut line, &LogLine::from(entry)).is_err() {
         return;
     }
+    line.push(b'\n');
+
+    let Some(mut file) = open_append(path) else {
+        return;
+    };
+    let over_limit = file
+        .metadata()
+        .map(|meta| meta.len().saturating_add(line.len() as u64) > MAX_LOG_BYTES)
+        .unwrap_or(false);
+    if over_limit {
+        drop(file);
+        rotate(path);
+        let Some(reopened) = open_append(path) else {
+            return;
+        };
+        file = reopened;
+    }
+    let _ = file.write_all(&line);
+}
+
+/// Open for append; create the procedure directory only when the first open reports it missing.
+fn open_append(path: &Path) -> Option<File> {
+    let open = || OpenOptions::new().create(true).append(true).open(path);
+    match open() {
+        Ok(file) => Some(file),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir_all(path.parent()?).ok()?;
+            open().ok()
+        },
+        Err(_) => None,
+    }
+}
+
+fn rotate(path: &Path) {
     let rotated = path.with_extension("jsonl.1");
     let _ = fs::remove_file(&rotated);
     let _ = fs::rename(path, rotated);
@@ -183,13 +241,17 @@ mod tests {
     }
 
     #[test]
-    fn rotate_renames_when_over_limit() {
+    fn write_rotates_when_over_limit() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("procedures.jsonl");
         fs::write(&path, vec![b'x'; (MAX_LOG_BYTES as usize) + 1]).unwrap();
-        rotate_if_needed(&path, 16);
-        assert!(!path.exists());
-        assert!(path.with_extension("jsonl.1").exists());
+        write_record(&path, &sample_record("p", "after-rotate"));
+        let rotated = path.with_extension("jsonl.1");
+        assert!(rotated.exists());
+        assert_eq!(fs::metadata(&rotated).unwrap().len(), MAX_LOG_BYTES + 1);
+        let fresh = fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains("after-rotate"));
+        assert!(fresh.ends_with('\n'));
     }
 
     #[test]
@@ -220,11 +282,14 @@ mod tests {
             dir.path().join("chat.send_message").join("logs").join("procedures.jsonl")
         );
         let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("\"timestamp\":\"2023-11-14T22:13:20.000Z\""));
         assert!(contents.contains("chat.send_message"));
         assert!(contents.contains("PROCEDURE_TIMEOUT"));
         assert!(contents.contains("\"channel\":\"console\""));
+        assert!(contents.contains("\"module_id\":\"backend\""));
         assert!(contents.contains("hello-from-v8"));
         assert!(!contents.contains("Authorization"));
+        assert_eq!(contents.lines().count(), 2);
     }
 
     #[test]
@@ -251,10 +316,12 @@ mod tests {
 
     #[test]
     fn sanitize_redacts_credential_prefixes() {
-        let message = sanitize_procedure_log_message("Authorization Bearer secret Cookie: a=b");
+        let message =
+            sanitize_procedure_log_message("Authorization Bearer secret Cookie: a=b".into());
         assert!(!message.contains("Authorization"));
         assert!(!message.contains("Bearer "));
         assert!(!message.contains("Cookie:"));
         assert!(message.contains("[redacted]"));
+        assert_eq!(sanitize_procedure_log_message("plain".into()), "plain");
     }
 }

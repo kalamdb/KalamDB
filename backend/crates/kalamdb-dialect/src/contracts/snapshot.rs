@@ -12,13 +12,15 @@ use crate::ddl::ExecuteGrantee;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractField {
-    pub name:      String,
-    pub type_name: String,
-    pub type_id:   Option<TypeId>,
-    pub data_type: Option<KalamDataType>,
-    pub is_array:  bool,
-    pub not_null:  bool,
-    pub nonempty:  bool,
+    pub name:        String,
+    pub type_name:   String,
+    pub type_id:     Option<TypeId>,
+    pub data_type:   Option<KalamDataType>,
+    pub is_array:    bool,
+    pub not_null:    bool,
+    pub nonempty:    bool,
+    pub primary_key: bool,
+    pub has_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1819,6 +1819,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "croner"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a59ed87528b2ee2b6d2b14d6767f6dbe41867dfc581433fc23a7c0fae847467a"
+dependencies = [
+ "chrono",
+ "derive_builder",
+ "strum",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4960,6 +4971,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "datafusion-common",
+ "humantime",
  "kalamdb-commons",
  "kalamdb-session",
  "kalamdb-system",
@@ -5133,6 +5145,7 @@ dependencies = [
  "log",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -5578,6 +5591,8 @@ dependencies = [
  "arrow",
  "async-trait",
  "chrono",
+ "chrono-tz",
+ "croner",
  "dashmap 6.2.1",
  "datafusion",
  "kalamdb-commons",
@@ -9164,6 +9179,27 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "152a0b65a590ff6c3da95cabe2353ee04e6167c896b28e3b14478c2636c922fc"
 dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

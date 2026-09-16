@@ -2,7 +2,8 @@
 // contract_hash: 2a0016ab7fa26a4241e1220adf7a3ffbef93a88fe7f597dc7dbc31f69c7fcf7b
 
 import { kTable } from '@kalamdb/orm';
-import { integer, text, timestamp, boolean, jsonb, bigint } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { text, timestamp, bigint } from 'drizzle-orm/pg-core';
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -77,36 +78,36 @@ export type ChatDemoSendMessageResult = ChatDemoAiInbox | null;
 
 
 export const chatDemoAgentEvents = kTable.stream("chat_demo.agent_events", {
-  id: bigint("id", { mode: "bigint" }).primaryKey(),
+  id: bigint("id", { mode: "bigint" }).default(sql``).primaryKey(),
   response_id: text("response_id").notNull(),
-  room: text("room").notNull(),
-  scope: text("scope").notNull(),
+  room: text("room").default(sql``).notNull(),
+  scope: text("scope").default(sql``).notNull(),
   sender_username: text("sender_username").notNull(),
   stage: text("stage").notNull(),
-  preview: text("preview").notNull(),
-  message: text("message").notNull(),
-  created_at: timestamp("created_at", { mode: "date" }).notNull(),
+  preview: text("preview").default(sql``).notNull(),
+  message: text("message").default(sql``).notNull(),
+  created_at: timestamp("created_at", { mode: "date" }).default(sql``).notNull(),
 });
 
 export const chatDemoDirectMessages = kTable.user("chat_demo.direct_messages", {
-  id: bigint("id", { mode: "bigint" }).primaryKey(),
+  id: bigint("id", { mode: "bigint" }).default(sql``).primaryKey(),
   role: text("role").notNull(),
   author: text("author").notNull(),
   sender_username: text("sender_username").notNull(),
   content: text("content").notNull(),
   reply_to: bigint("reply_to", { mode: "bigint" }),
-  created_at: timestamp("created_at", { mode: "date" }).notNull(),
+  created_at: timestamp("created_at", { mode: "date" }).default(sql``).notNull(),
 });
 
 export const chatDemoMessages = kTable.shared("chat_demo.messages", {
-  id: bigint("id", { mode: "bigint" }).primaryKey(),
-  room: text("room").notNull(),
+  id: bigint("id", { mode: "bigint" }).default(sql``).primaryKey(),
+  room: text("room").default(sql``).notNull(),
   role: text("role").notNull(),
   author: text("author").notNull(),
   sender_username: text("sender_username").notNull(),
   content: text("content").notNull(),
   reply_to: bigint("reply_to", { mode: "bigint" }),
-  created_at: timestamp("created_at", { mode: "date" }).notNull(),
+  created_at: timestamp("created_at", { mode: "date" }).default(sql``).notNull(),
 });
 
 export const chatDemoRoomMembers = kTable.shared("chat_demo.room_members", {
@@ -118,6 +119,6 @@ export const chatDemoRoomMembers = kTable.shared("chat_demo.room_members", {
 export const chatDemoRooms = kTable.shared("chat_demo.rooms", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
-  created_at: timestamp("created_at", { mode: "date" }).notNull(),
+  created_at: timestamp("created_at", { mode: "date" }).default(sql``).notNull(),
 });
 

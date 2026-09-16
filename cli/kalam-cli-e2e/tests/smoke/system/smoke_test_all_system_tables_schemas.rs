@@ -50,6 +50,9 @@ fn smoke_test_all_system_tables_and_views_queryable() {
         "function_modules",
         "function_revisions",
         "function_artifacts",
+        "schedules",
+        "triggers",
+        "trigger_attempts",
     ];
 
     // Virtual system views (9)

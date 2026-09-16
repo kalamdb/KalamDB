@@ -48,6 +48,37 @@ pub(crate) fn store_test_dev_credentials(credentials_path: &std::path::Path) {
         .expect("store test credentials");
 }
 
+/// Mark a mock loopback server as this project's managed database.
+///
+/// `kalam dev` reuses a healthy port only when `.kalam/run/instance.json`
+/// matches a live PID. Tests plant the current process so the mock listener
+/// counts as owned without starting `kalamdb-server`.
+pub(crate) fn write_owned_instance(project_dir: &std::path::Path, server_url: &str) {
+    let parsed = url::Url::parse(server_url).expect("parse mock server url");
+    let port = parsed.port().expect("mock server url has a port");
+    let runtime = project_dir.join(".kalam");
+    fs::create_dir_all(runtime.join("run")).expect("create instance run dir");
+    let record = serde_json::json!({
+        "schema_version": 1,
+        "kind": "project_local",
+        "url": server_url,
+        "http_port": port,
+        "namespace": "app",
+        "pid": std::process::id(),
+        "data_dir": runtime.join("data"),
+        "log_path": runtime.join("logs").join("server.log"),
+        "config_path": runtime.join("server.toml"),
+        "project_root": project_dir,
+        "started_by": "up",
+        "keep_on_dev_exit": true,
+    });
+    fs::write(
+        runtime.join("run").join("instance.json"),
+        serde_json::to_vec_pretty(&record).expect("serialize instance.json"),
+    )
+    .expect("write instance.json");
+}
+
 fn scaffold_dev_project(
     temp: &TempDir,
     isolated_home: &std::path::Path,
@@ -589,7 +620,8 @@ fn test_project_workflow_dev_migration_recovery_abort_stops_dev_session() {
     );
     let first_stderr = String::from_utf8_lossy(&first_output.stderr);
     assert!(
-        first_stderr.contains("schema pipeline paused"),
+        first_stderr.contains("schema pipeline failed")
+            || first_stderr.contains("schema pipeline paused"),
         "expected first run to record a failed migration\nstderr: {first_stderr}"
     );
 
@@ -644,7 +676,6 @@ fn test_project_workflow_dev_help_surface() {
     assert!(stdout.contains("--force"));
     assert!(stdout.contains("--agent"));
     assert!(stdout.contains("AI coding agents"));
-    assert!(stdout.contains("--progress"));
     assert!(stdout.contains("start"));
     assert!(stdout.contains("status"));
     assert!(stdout.contains("logs"));
@@ -765,6 +796,7 @@ fn test_project_workflow_dev_stays_running_when_reusing_existing_local_server() 
         config.dev.apply_schema = false;
         config.dev.generate_types = false;
     });
+    write_owned_instance(&project_dir, &url);
 
     let mut cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);
     cmd.current_dir(&project_dir).arg("dev");

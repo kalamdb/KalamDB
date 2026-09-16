@@ -4,7 +4,7 @@ import test from 'node:test';
 
 test('React AI chat app uses @kalamdb/react live components and workflow tables', async () => {
   const app = await readFile(new URL('../src/app/App.tsx', import.meta.url), 'utf8');
-  const schema = await readFile(new URL('../src/app/schema.generated.ts', import.meta.url), 'utf8');
+  const schema = await readFile(new URL('../src/app/generated/schema.ts', import.meta.url), 'utf8');
   const demoClient = await readFile(new URL('../src/app/demo-client.ts', import.meta.url), 'utf8');
   const client = await readFile(new URL('../src/app/client.ts', import.meta.url), 'utf8');
   const conversation = await readFile(new URL('../src/app/components/Conversation.tsx', import.meta.url), 'utf8');
@@ -18,9 +18,9 @@ test('React AI chat app uses @kalamdb/react live components and workflow tables'
   assert.match(conversation, /approval_id/);
   assert.match(schema, /attachment: file\(["']attachment["']\)/);
   assert.match(schema, /client_id/);
-  assert.match(schema, /export const react_ai_chat_approvals/);
-  assert.match(schema, /export const react_ai_chat_messages/);
-  assert.match(schema, /export const react_ai_chat_typing_tokens/);
+  assert.match(schema, /export const reactAiChatApprovals/);
+  assert.match(schema, /export const reactAiChatMessages/);
+  assert.match(schema, /export const reactAiChatTypingTokens/);
   assert.match(agent, /agent_messages/);
   assert.match(agent, /agent_actions/);
   assert.match(demoClient, /localStorage/);
@@ -37,7 +37,7 @@ test('React AI chat example is driven by kalam dev project config', async () => 
 
   assert.match(kalamToml, /\[schema\]/);
   assert.match(kalamToml, /path = "kalam\/schema\.sql"/);
-  assert.match(kalamToml, /output = "src\/app\/schema\.generated\.ts"/);
+  assert.match(kalamToml, /output = "src\/app\/generated\/kalam\.ts"/);
   assert.match(kalamToml, /\[dev\.processes\]/);
   assert.match(kalamToml, /app = "npm run dev"/);
   assert.match(kalamToml, /agent = "npm run agent"/);

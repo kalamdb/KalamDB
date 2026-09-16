@@ -1,9 +1,12 @@
+use kalamdb_commons::ScheduleId;
+use kalamdb_sql::ddl::{AlterScheduleStatement, CreateScheduleStatement, DropScheduleStatement};
 pub mod catalog_type;
 pub mod comment;
 pub mod helpers;
 pub mod namespace;
 pub mod policy;
 pub mod procedure;
+mod schedule;
 pub mod storage;
 pub mod table;
 pub mod trigger;
@@ -325,6 +328,40 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         }),
         comment::CommentOnHandler::new(app_context.clone()),
         SqlStatementKind::CommentOn
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::CreateSchedule(CreateScheduleStatement {
+            schedule_id:  ScheduleId::new("_placeholder.schedule"),
+            namespace_id: NamespaceId::new("_placeholder"),
+            name:         String::new(),
+            routine_id:   RoutineId::new("_placeholder.proc"),
+            cron:         None,
+            interval_ms:  Some(1000),
+            timezone:     "UTC".into(),
+            principal:    String::new(),
+        }),
+        schedule::CreateScheduleHandler::new(app_context.clone()),
+        SqlStatementKind::CreateSchedule
+    );
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::AlterSchedule(AlterScheduleStatement {
+            schedule_id: ScheduleId::new("_placeholder.schedule"),
+            enabled:     true,
+        }),
+        schedule::AlterScheduleHandler::new(app_context.clone()),
+        SqlStatementKind::AlterSchedule
+    );
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::DropSchedule(DropScheduleStatement {
+            schedule_id: ScheduleId::new("_placeholder.schedule"),
+            if_exists:   false,
+        }),
+        schedule::DropScheduleHandler::new(app_context.clone()),
+        SqlStatementKind::DropSchedule
     );
 
     register_typed_handler!(

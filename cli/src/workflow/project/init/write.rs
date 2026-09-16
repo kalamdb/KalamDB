@@ -14,8 +14,9 @@ use crate::{
             connection_url::parse_server_port,
             scaffold,
             templates::{
-                find_scaffold_template_file, render_kalam_toml_scaffold, render_template,
-                EmbeddedTemplate, KalamTomlScaffoldInput,
+                find_scaffold_template_file, find_schema_gen_template_file,
+                render_kalam_toml_scaffold, render_scaffold_file, EmbeddedTemplate,
+                KalamTomlScaffoldInput, TYPESCRIPT_ORM_CODEGEN_PATH,
             },
             ts::apply_scaffold,
         },
@@ -70,15 +71,13 @@ pub(super) fn write_project_scaffold(
         && dart_template.is_none()
         && matches!(schema_mode, SchemaMode::Sql)
     {
-        let schema_path = root.join("schema.sql");
-        if !schema_path.exists() {
-            scaffold::io_with_guidance(
-                "write schema file",
-                &schema_path,
-                fs::write(&schema_path, "-- Add your schema here\n"),
-            )?;
-            output.detail(format!("created {}", display_project_path(root, &schema_path)));
-        }
+        write_scaffold_file_if_missing(
+            root,
+            &root.join("schema.sql"),
+            "schema.sql",
+            "write schema file",
+            output,
+        )?;
     }
 
     if matches!(server_mode, ServerMode::Local) {
@@ -97,15 +96,33 @@ pub(super) fn write_project_scaffold(
         &migrations_dir,
         fs::create_dir_all(&migrations_dir),
     )?;
-    let gitkeep = migrations_dir.join(".gitkeep");
-    if !gitkeep.exists() {
-        scaffold::io_with_guidance(
-            "write migrations placeholder",
-            &gitkeep,
-            fs::write(&gitkeep, ""),
+    write_scaffold_file_if_missing(
+        root,
+        &migrations_dir.join(".gitkeep"),
+        "kalam/migrations/.gitkeep",
+        "write migrations placeholder",
+        output,
+    )?;
+    output.detail(format!("created {}/", display_project_path(root, &migrations_dir)));
+
+    write_scaffold_file_if_missing(
+        root,
+        &config.seed_path(root),
+        "kalam/seed.sql",
+        "write development fixtures",
+        output,
+    )?;
+
+    if config.schema.languages.iter().any(|language| language == "typescript") {
+        write_schema_gen_file_if_missing(
+            root,
+            &root.join(TYPESCRIPT_ORM_CODEGEN_PATH),
+            "typescript",
+            TYPESCRIPT_ORM_CODEGEN_PATH,
+            "write TypeScript ORM codegen script",
+            output,
         )?;
     }
-    output.detail(format!("created {}/", display_project_path(root, &migrations_dir)));
 
     for language in &config.schema.languages {
         if let Some(target) = config.schema.targets.get(language) {
@@ -150,11 +167,10 @@ pub(super) fn write_project_scaffold(
         .get("dev")
         .map(|connection| connection.namespace.as_str())
         .unwrap_or("");
-    let env_template = find_scaffold_template_file(".env.example")?;
     let local_root_password =
         matches!(server_mode, ServerMode::Local).then_some(DEFAULT_LOCAL_DEV_ROOT_PASSWORD);
-    let env_contents = render_template(
-        env_template,
+    let env_contents = render_scaffold_file(
+        ".env.example",
         &json!({
             "default_profile": default_profile,
             "namespace": namespace,
@@ -191,9 +207,8 @@ fn write_default_gitignore(
         return Ok(());
     }
 
-    let template = find_scaffold_template_file(".gitignore")?;
-    let contents = render_template(
-        template,
+    let contents = render_scaffold_file(
+        ".gitignore",
         &json!({
             "typescript": languages.iter().any(|language| language == "typescript"),
             "dart": languages.iter().any(|language| language == "dart"),
@@ -214,7 +229,6 @@ fn write_kalam_toml_from_template(
     server_mode: ServerMode,
     server_url: &str,
 ) -> Result<()> {
-    let template = find_scaffold_template_file("kalam.toml")?;
     let schema_path = config.schema.path.as_deref().unwrap_or("schema.sql");
     let namespace = config
         .connection
@@ -222,20 +236,18 @@ fn write_kalam_toml_from_template(
         .map(|connection| connection.namespace.as_str())
         .unwrap_or("");
     let dev_process_command = config.dev.processes.get("app").cloned().unwrap_or_default();
-    let contents = render_kalam_toml_scaffold(
-        template,
-        &KalamTomlScaffoldInput {
-            project_name: &config.project.name,
-            namespace,
-            server_url,
-            schema_mode: schema_mode_label(config.schema.mode),
-            schema_path,
-            languages: &config.schema.languages,
-            auto_start_db: matches!(server_mode, ServerMode::Local),
-            package_manager: config.project.package_manager.as_deref(),
-            dev_process_command: &dev_process_command,
-        },
-    )?;
+    let contents = render_kalam_toml_scaffold(&KalamTomlScaffoldInput {
+        project_name: &config.project.name,
+        namespace,
+        server_url,
+        schema_mode: schema_mode_label(config.schema.mode),
+        schema_path,
+        languages: &config.schema.languages,
+        auto_start_db: matches!(server_mode, ServerMode::Local),
+        package_manager: config.project.package_manager.as_deref(),
+        server_version: config.project.server_version.as_deref().unwrap_or(crate::CLI_VERSION),
+        dev_process_command: &dev_process_command,
+    })?;
     let config_path = root.join(KALAM_TOML);
     scaffold::io_with_guidance(
         "write kalam.toml",
@@ -243,5 +255,50 @@ fn write_kalam_toml_from_template(
         fs::write(&config_path, contents),
     )?;
     KalamProjectConfig::load_from_path(&config_path)?;
+    Ok(())
+}
+
+fn write_scaffold_file_if_missing(
+    root: &Path,
+    dest: &Path,
+    project_path: &str,
+    operation: &str,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    write_file_if_missing(root, dest, find_scaffold_template_file(project_path)?, operation, output)
+}
+
+fn write_schema_gen_file_if_missing(
+    root: &Path,
+    dest: &Path,
+    id: &str,
+    project_path: &str,
+    operation: &str,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    write_file_if_missing(
+        root,
+        dest,
+        find_schema_gen_template_file(id, project_path)?,
+        operation,
+        output,
+    )
+}
+
+fn write_file_if_missing(
+    root: &Path,
+    dest: &Path,
+    contents: &str,
+    operation: &str,
+    output: &WorkflowOutput,
+) -> Result<()> {
+    if dest.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        scaffold::io_with_guidance("create parent directory", parent, fs::create_dir_all(parent))?;
+    }
+    scaffold::io_with_guidance(operation, dest, fs::write(dest, contents))?;
+    output.detail(format!("created {}", display_project_path(root, dest)));
     Ok(())
 }

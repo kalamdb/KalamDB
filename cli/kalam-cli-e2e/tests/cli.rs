@@ -29,6 +29,9 @@ mod test_cli_command_surface;
 #[path = "cli/test_project_workflow_init.rs"]
 mod test_project_workflow_init;
 
+#[path = "cli/test_project_workflow_init_templates.rs"]
+mod test_project_workflow_init_templates;
+
 #[path = "cli/test_project_workflow_schema.rs"]
 mod test_project_workflow_schema;
 

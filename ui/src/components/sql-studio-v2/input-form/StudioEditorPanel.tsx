@@ -91,7 +91,10 @@ export function StudioEditorPanel({
     const resolvedMode: ExecuteMode = mode === "auto"
       ? (hasSelection ? "selected" : "all")
       : mode;
-    const nextSql = resolvedMode === "selected" ? nextSelectedSql : sqlRef.current;
+    const editorValue = typeof editorRef.current?.getValue === "function"
+      ? editorRef.current.getValue()
+      : sqlRef.current;
+    const nextSql = resolvedMode === "selected" ? nextSelectedSql : editorValue;
 
     if (!nextSql.trim()) {
       return;

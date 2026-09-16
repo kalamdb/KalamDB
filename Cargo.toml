@@ -110,6 +110,8 @@ quinn-proto = { version = "0.11.17", default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false }
 
 # Time handling
+croner = "4.0"
+chrono-tz = "0.10"
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # Storage

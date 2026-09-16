@@ -9,43 +9,28 @@ development and production-like environments.
 The workflow commands covered here are:
 
 - `kalam init`
+- `kalam up` / `kalam down` / `kalam logs`
 - `kalam link`
 - `kalam schema gen`
-- `kalam schema pull`
-- `kalam migration create`
-- `kalam migration status`
-- `kalam db migrate`
-- `kalam db reset`
-- `kalam dev`
+- `kalam db migrate` / `kalam db reset` / `kalam db seed` / `kalam db migration`
+- `kalam dev` / `kalam dev --exec`
 - `kalam status`
 - `kalam deploy`
 
-These commands are project-scoped and expect a `kalam.toml` file at the project root.
+`kalam.toml` is required for project commands. `kalam up`/`down`/`status`/`logs` also work in an empty folder against `.kalam/` or `--global`.
+
+See `specs/035-cli-everyday-lifecycle/spec.md` and `cli/AGENTS.md` for the agent contract.
 
 ## Current Status
 
-The workflow surface exists and is usable, but some parts are intentionally v1-level:
+Everyday local lifecycle (`up`/`down`/`status`/`logs`/`dev`) shares one target resolver. A healthy port is not ownership; `instance.json` is.
 
-- `kalam init` scaffolds a project and now supports interactive selection menus for schema mode,
-  language targets, and server mode.
-- `kalam dev` can manage a local KalamDB server when `dev.auto_start_db = true`, or connect to
-  an existing server when it is `false`.
-- `kalam schema gen` delegates TypeScript generation to `@kalamdb/orm` against the resolved
-  KalamDB environment. Dart generation reads local `schema.sql` and writes `KalamTableSpec`
-  row codecs to `lib/generated/kalam.dart` (no live server required).
-- `kalam migration create` creates ordered SQL migration files using the current schema diff helper.
-- `kalam migration status` and `kalam db migrate` use local file-based migration state.
-- `kalam deploy` performs guardrails, applies pending local migrations, runs a lightweight rollout
-  step, and finishes with a health check.
-
-Important current limitations:
-
-- `kalam schema pull` is still a placeholder and currently returns a "start the server and retry"
-  style error instead of pulling live schema into local files.
-- `kalam db migrate` validates and tracks migration application locally; it does not yet apply
-  migrations to a live remote database.
-- `kalam deploy` does not yet perform provider-specific rollout automation. Today it is mainly a
-  guarded workflow wrapper around migration state checks plus a health check.
+- `kalam init` scaffolds a project, pins `project.server_version`, writes `kalam/seed.sql`, and gitignores `.kalam/`.
+- `kalam up` starts a managed local database in the background. `--global` uses `~/.kalam/servers/default/`.
+- `kalam dev` attaches to a database started by `up` and leaves it running. If `dev` started the database, it stops it on exit.
+- `kalam db reset` rebuilds the local target from migrations and fixtures. It does not drop remote namespaces.
+- `kalam deploy` generates types, builds procedures, applies migrations, and activates the module. It prints a plan; there is no fake cloud rollout.
+- `schema.mode = "remote"` is rejected; keep `schema.sql` as the source of truth.
 
 ## Mental Model
 
@@ -66,24 +51,21 @@ credential instances are resolved by environment name as:
 
 `kalam init` scaffolds a project into the current directory, or into `--project-dir` when provided.
 
-Typical scaffold:
-
 ```text
 my-app/
 ├── kalam.toml
 ├── schema.sql
 ├── .env.example
 ├── .kalam/
-│   └── server.toml        # local server mode only
+│   ├── data/
+│   ├── logs/
+│   └── run/instance.json
 ├── kalam/
-│   └── migrations/
-│       └── .gitkeep
-├── src/
-│   └── generated/
-│       └── kalam.ts       # when TypeScript is enabled
-└── lib/
-    └── generated/
-        └── kalam.dart     # when Dart is enabled
+│   ├── migrations/
+│   ├── seed.sql
+│   └── server/            # honored when it already exists
+├── src/generated/kalam.ts
+└── lib/generated/kalam.dart
 ```
 
 ## `kalam.toml`
@@ -161,7 +143,7 @@ The intended loop is:
 1. `kalam init`
 2. edit `schema.sql`
 3. `kalam schema gen`
-4. `kalam migration create <name>`
+4. `kalam db migration create <name>`
 5. `kalam db migrate`
 6. `kalam dev`
 7. repeat as the schema or local app processes change
@@ -215,7 +197,7 @@ Language targets are a multi-select menu:
 
 The project template menu includes two starter sources:
 
-- embedded templates compiled into the CLI from `cli/templates/typescript/*` and `cli/templates/dart/*`
+- embedded templates compiled into the CLI from `cli/templates/` (`typescript` and `dart` starters, `scaffold` project files, and `schema-gen` generate artifacts)
 - repository examples downloaded from `examples/*` in the KalamDB GitHub repository
 
 - `simple-live` (TypeScript) - live subscription starter with sample inserts
@@ -250,7 +232,7 @@ Server mode is a single-choice menu:
 #### Options
 
 - `--name <NAME>`: project name
-- `--schema-mode <sql|remote>`: active schema source mode
+- `--schema-mode sql`: schema source mode (SQL files)
 - `--languages <LIST>`: comma-separated language list (`typescript`, `dart`; `ts` and `flutter` are aliases)
 - `--template <ID>`: embedded template or repository example id
 - `--list-templates`: print embedded templates and repository examples, then exit
@@ -335,21 +317,7 @@ kalam schema gen --languages typescript
 kalam schema gen --languages dart
 ```
 
-### `kalam schema pull`
-
-Intended to sync remote schema into local project artifacts for remote mode.
-
-#### Options
-
-- `--project-dir <PATH>`
-- `--env <ENV>`
-
-#### Current behavior
-
-The command exists, but the live pull implementation is still incomplete. At the moment it
-returns an error telling you to start the server and retry.
-
-### `kalam migration create`
+### `kalam db migration create`
 
 Creates an ordered migration file in `kalam/migrations/`.
 
@@ -376,10 +344,10 @@ Each file contains:
 #### Example
 
 ```bash
-kalam migration create add_profile_table
+kalam db migration create add_profile_table
 ```
 
-### `kalam migration status`
+### `kalam db migration status`
 
 Shows each migration file and whether it is `pending` or `applied`, based on local state.
 
@@ -391,7 +359,7 @@ Shows each migration file and whether it is `pending` or `applied`, based on loc
 #### Example
 
 ```bash
-kalam migration status
+kalam db migration status
 ```
 
 ### `kalam db migrate`
@@ -422,51 +390,19 @@ kalam db migrate
 
 ### `kalam db reset`
 
-Clears local dev project state and, when appropriate, drops the linked namespace on the server so the next `kalam dev` can re-apply migrations cleanly.
+Rebuilds the **local** database from committed migrations and `kalam/seed.sql`.
 
-#### Options
-
-- `--project-dir <PATH>`
-- `--env <ENV>`
-- `--yes` — drop the namespace on a remote or non-project server without prompting
-
-#### Behavior
-
-**Local files removed** (when present):
-
-- `kalam/server/` — entire local server directory (data, logs, and `server.toml`)
-- `kalam/.schema-baseline.sql` — schema diff baseline
-
-**Kept:**
-
-- `kalam/migrations/` — migration SQL files on disk
-
-**Server namespace drop** (when the linked KalamDB server is reachable):
-
-| Server | Namespace drop |
-|--------|----------------|
-| This project's `kalam/server` on localhost (existed before reset) | Automatic |
-| Another KalamDB process on localhost (reused URL, no local `kalam/server`) | Prompt (default No); use `--yes` |
-| Remote URL (non-loopback) | Prompt (default No); use `--yes` |
-
-Dropping the namespace clears tables and server-side migration records for that namespace.
-
-If you decline the prompt, or run non-interactively without `--yes`, local files are still cleared but the server namespace is unchanged. The next `kalam dev` may report `migration failed previously` until you run `kalam db reset --yes` or repair manually.
-
-Stop `kalam dev` first if it is running, so RocksDB files are not locked.
-
-After reset, run `kalam dev` again. Pending migrations re-apply against a fresh server or dropped namespace.
-
-#### Example
+Stops the managed process, deletes data (keeps `server.toml` and logs), starts again, migrates, and seeds. Remote namespace drop is not part of this command.
 
 ```bash
 kalam db reset
-kalam dev
-
-# Non-interactive or reused localhost server
-kalam db reset --yes
-kalam dev
+kalam db seed
+kalam up
 ```
+
+### `kalam db seed`
+
+Reruns `kalam/seed.sql`. Keep the file idempotent. Production-purpose environments refuse automatic seeding.
 
 ### `kalam dev`
 
@@ -636,11 +572,14 @@ Runs guarded deployment flow for the selected environment.
 
 The deploy flow is:
 
-1. resolve environment
-2. validate deploy readiness
-3. apply pending local migrations
-4. run a lightweight rollout step
-5. perform `GET {url}/ui` health check
+1. resolve the shared target
+2. validate readiness using explicit `purpose` (name inference warns)
+3. generate types and build procedures
+4. print a plan (target, migrations, artifact; procedure rollback ≠ schema rollback)
+5. apply migrations and activate the procedure module
+6. health-check the URL
+
+`--dry-run` stops after generate/build/plan. There is no managed-cloud rollout.
 
 #### Guardrails
 
@@ -682,7 +621,7 @@ kalam init
 
 # edit schema.sql
 kalam schema gen
-kalam migration create init_schema
+kalam db migration create init_schema
 kalam db migrate
 
 # run the local loop
@@ -756,8 +695,8 @@ Example:
 kalam link --env prod --url https://db.example.com --namespace my-app
 
 # for each change
-kalam migration create add_billing_fields
-kalam migration status
+kalam db migration create add_billing_fields
+kalam db migration status
 kalam status --env prod
 kalam deploy --env prod
 ```
@@ -779,7 +718,7 @@ kalam dev
 ```bash
 # edit schema.sql
 kalam schema gen
-kalam migration create add_comments
+kalam db migration create add_comments
 kalam db migrate
 ```
 

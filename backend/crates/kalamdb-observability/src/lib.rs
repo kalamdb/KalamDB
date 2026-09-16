@@ -15,6 +15,7 @@ pub mod allocator_metrics;
 pub mod cpu;
 pub mod function_metrics;
 pub mod health_monitor;
+pub mod process_memory;
 pub mod pubsub_metrics;
 pub mod query_metrics;
 pub mod runtime_metrics;
@@ -35,6 +36,7 @@ pub use health_monitor::{
     decrement_websocket_sessions, get_websocket_session_count, get_websocket_session_peak_count,
     increment_websocket_sessions, HealthCounts, HealthMetrics, HealthMonitor,
 };
+pub use process_memory::{apply_process_memory_policy, reclaim_idle_process_memory};
 pub use pubsub_metrics::{
     heartbeat_pubsub_consumer, pubsub_metrics_snapshot, record_pubsub_messages_consumed,
     record_pubsub_messages_published, record_subscription_changes_delivered,

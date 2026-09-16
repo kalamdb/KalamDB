@@ -56,18 +56,6 @@ pub fn init_remote_schema_unavailable() -> String {
     )
 }
 
-pub fn init_repository_templates_unavailable() -> String {
-    format!(
-        "could not load a repository example.\n\nHow to fix:\n{}",
-        bullet_list(&[
-            "List templates: `kalam init --list-templates --json`",
-            "Retry with an explicit id: `kalam init --yes --template chat-with-ai --languages \
-             typescript --package-manager npm`",
-            "Or use the embedded starter: `kalam init --yes --template simple-live`",
-        ])
-    )
-}
-
 pub fn init_invalid_server_url(url: &str, parse_error: &str) -> String {
     format!(
         "server URL '{url}' is not valid ({parse_error}).\n\n\
@@ -128,17 +116,6 @@ pub fn init_scaffold_io_error(operation: &str, path: &Path, error: &std::io::Err
         "failed to {operation} '{}' ({error}).\n\nHow to fix:\n{}",
         path.display(),
         bullet_list(&hints)
-    )
-}
-
-pub fn init_missing_scaffold_template(project_path: &str, bundle: &str) -> String {
-    format!(
-        "missing scaffold template file '{project_path}' in '{bundle}'.\n\nHow to fix:\n{}",
-        bullet_list(&[
-            "Reinstall or upgrade the Kalam CLI — built-in templates ship with the binary",
-            "If you built from source, run `cargo build --release` in the cli workspace",
-            "Report an issue if the template bundle is missing after a clean install",
-        ])
     )
 }
 

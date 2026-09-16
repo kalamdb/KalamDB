@@ -62,7 +62,8 @@ impl ProceduresView {
                 nullable_text_col(13, "language", "Declared LANGUAGE, when set"),
                 nullable_text_col(14, "source", "Inline SQL/JS body when implementation is inline"),
             ],
-            "CALL-able procedures with signature, implementation kind, grants, comments, and inline source",
+            "CALL-able procedures with signature, implementation kind, grants, comments, and \
+             inline source",
         )
     }
 }
@@ -270,8 +271,11 @@ fn format_return_type(routine: &CatalogRoutine) -> String {
 const INLINE_MODULE_NAME: &str = "inline";
 
 fn revision_id_for_inline_artifact(artifact_id: &kalamdb_commons::models::ArtifactId) -> String {
-    FunctionRevisionId::from_module_artifact(&FunctionModuleId::new(INLINE_MODULE_NAME), artifact_id)
-        .into_string()
+    FunctionRevisionId::from_module_artifact(
+        &FunctionModuleId::new(INLINE_MODULE_NAME),
+        artifact_id,
+    )
+    .into_string()
 }
 
 fn format_grants(grants: &[CatalogRoutineGrant]) -> String {
@@ -313,7 +317,8 @@ mod tests {
     #[test]
     fn listed_export_is_module_backed() {
         let mut by_procedure = BTreeMap::new();
-        by_procedure.insert("api.health".to_string(), ("backend".to_string(), "backend:rev".to_string()));
+        by_procedure
+            .insert("api.health".to_string(), ("backend".to_string(), "backend:rev".to_string()));
         let exports = CurrentModuleExports { by_procedure };
         assert_eq!(exports.lookup("api.health"), Some(("backend", "backend:rev")));
         assert!(exports.lookup("api.plus_one").is_none());

@@ -138,3 +138,10 @@ pub struct DeleteStatement;
 impl crate::DdlAst for InsertStatement {}
 impl crate::DdlAst for UpdateStatement {}
 impl crate::DdlAst for DeleteStatement {}
+
+pub mod create_schedule;
+pub use create_schedule::CreateScheduleStatement;
+pub mod alter_schedule;
+pub use alter_schedule::AlterScheduleStatement;
+pub mod drop_schedule;
+pub use drop_schedule::DropScheduleStatement;

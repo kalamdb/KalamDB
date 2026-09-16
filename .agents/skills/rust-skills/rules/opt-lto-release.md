@@ -55,21 +55,26 @@ lto = "off"
 
 ## Evidence from Production
 
+Many production crates enable fat LTO and `codegen-units = 1` in their release
+profiles for maximum performance. For example, ripgrep ships a `release-lto`
+profile (see the Cargo Book for profile documentation:
+<https://doc.rust-lang.org/cargo/reference/profiles.html>):
+
 ```toml
-# From Anchor (Solana framework)
-# https://github.com/solana-foundation/anchor/blob/master/cli/src/rust_template.rs
+# A common pattern in performance-critical crates
 [profile.release]
 overflow-checks = true
 lto = "fat"
 codegen-units = 1
 
-# From sol-trade-sdk
-# https://github.com/0xfnzero/sol-trade-sdk
-[profile.release]
+# Named profile for explicit LTO builds (e.g. ripgrep's release-lto)
+[profile.release-lto]
+inherits = "release"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+strip = "symbols"
 ```
 
 ## Complete Optimized Profile

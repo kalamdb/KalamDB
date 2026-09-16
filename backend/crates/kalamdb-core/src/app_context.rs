@@ -1456,15 +1456,21 @@ impl AppContext {
 
     /// Staged function-runtime state (typed topic publishes).
     pub fn function_runtime(&self) -> Arc<crate::functions::FunctionRuntimeState> {
-        if let Some(state) = self.function_runtime.get() {
-            return Arc::clone(state);
+        if self.function_runtime.get().is_none() {
+            let _ = self.function_runtime.set(Arc::new(
+                crate::functions::FunctionRuntimeState::from_runtime_settings(
+                    &self.config.functions.runtime,
+                ),
+            ));
         }
-        let _ = self.function_runtime.set(Arc::new(
-            crate::functions::FunctionRuntimeState::from_runtime_settings(
-                &self.config.functions.runtime,
-            ),
-        ));
-        Arc::clone(self.function_runtime.get().expect("function runtime initialized"))
+        let state = Arc::clone(self.function_runtime.get().expect("function runtime initialized"));
+        state.ensure_lifecycle_observer(|| {
+            Arc::new(crate::functions::lifecycle::FunctionRuntimeLogObserver {
+                logger:  self.procedure_log_logger(),
+                node_id: Arc::from(self.node_id().as_ref().to_string()),
+            })
+        });
+        state
     }
 
     /// Get server uptime in seconds

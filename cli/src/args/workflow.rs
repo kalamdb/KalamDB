@@ -9,7 +9,7 @@ pub struct InitArgs {
     #[arg(long = "name")]
     pub name: Option<String>,
 
-    /// Active schema source mode
+    /// Schema source mode (SQL files)
     #[arg(long = "schema-mode", value_enum)]
     pub schema_mode: Option<SchemaModeArg>,
 
@@ -84,24 +84,18 @@ impl From<ServerModeArg> for kalam_cli::workflow::project::init::ServerMode {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum SchemaModeArg {
     Sql,
-    Remote,
 }
 
 impl From<SchemaModeArg> for SchemaMode {
     fn from(value: SchemaModeArg) -> Self {
         match value {
             SchemaModeArg::Sql => SchemaMode::Sql,
-            SchemaModeArg::Remote => SchemaMode::Remote,
         }
     }
 }
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct LinkArgs {
-    /// Environment name to link (e.g. dev, prod)
-    #[arg(long = "env")]
-    pub env: Option<String>,
-
     /// Namespace to associate with the linked environment
     #[arg(long = "namespace")]
     pub namespace: Option<String>,
@@ -124,26 +118,17 @@ pub struct DevArgs {
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
 
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
-
     /// Namespace override for the resolved environment
-    #[arg(long = "namespace", global = true)]
+    #[arg(long = "namespace")]
     pub namespace: Option<String>,
 
     /// Retry a paused schema pipeline on startup
     #[arg(long = "force", global = true)]
     pub force: bool,
 
-    /// Runs the local KalamDB development environment in deterministic, non-interactive mode
-    /// optimized for AI coding agents and automation
-    #[arg(long = "agent", global = true)]
-    pub agent: bool,
-
-    /// Deprecated; kalam dev now streams append-only logs and uses modal prompts
-    #[arg(long = "progress", conflicts_with = "verbose")]
-    pub progress: bool,
+    /// Run a command against an isolated temporary database, then exit with its status
+    #[arg(long = "exec")]
+    pub exec: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -170,17 +155,42 @@ pub struct DevLogsArgs {
 }
 
 #[derive(Args, Debug, Clone, Default)]
+pub struct UpArgs {
+    /// Project directory for a project-local database
+    #[arg(long = "project-dir", global = true)]
+    pub project_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct DownArgs {
+    /// Project directory for a project-local database
+    #[arg(long = "project-dir", global = true)]
+    pub project_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct LogsArgs {
+    /// Project directory for a project-local database
+    #[arg(long = "project-dir", global = true)]
+    pub project_dir: Option<PathBuf>,
+
+    /// Follow the log file until interrupted
+    #[arg(short = 'F', long = "follow")]
+    pub follow: bool,
+
+    /// Number of trailing lines to print (0 prints the full file)
+    #[arg(short = 'n', long = "lines", default_value_t = 200)]
+    pub lines: usize,
+}
+
+#[derive(Args, Debug, Clone, Default)]
 pub struct StatusArgs {
     /// Project directory containing kalam.toml
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
 
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
-
     /// Namespace override for the resolved environment
-    #[arg(long = "namespace", global = true)]
+    #[arg(long = "namespace")]
     pub namespace: Option<String>,
 }
 
@@ -190,11 +200,7 @@ pub struct DeployArgs {
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
 
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
-
-    /// Validate readiness without applying migrations or health checks
+    /// Validate readiness without applying migrations or activating procedures
     #[arg(long = "dry-run")]
     pub dry_run: bool,
 }
@@ -207,18 +213,12 @@ pub struct SchemaArgs {
     /// Project directory containing kalam.toml
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
-
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum SchemaCommand {
     /// Generate SDK and schema artifacts from the project schema source
     Gen(SchemaGenerateArgs),
-    /// Pull the active schema source from a linked environment
-    Pull(SchemaPullArgs),
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -226,23 +226,6 @@ pub struct SchemaGenerateArgs {
     /// Limit generation to specific language targets (typescript, dart/flutter)
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
-}
-
-#[derive(Args, Debug, Clone, Default)]
-pub struct SchemaPullArgs {}
-
-#[derive(Args, Debug, Clone)]
-pub struct MigrationArgs {
-    #[command(subcommand)]
-    pub command: MigrationCommand,
-
-    /// Project directory containing kalam.toml
-    #[arg(long = "project-dir", global = true)]
-    pub project_dir: Option<PathBuf>,
-
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -295,10 +278,6 @@ pub struct DbArgs {
     /// Project directory containing kalam.toml
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
-
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -306,13 +285,25 @@ pub enum DbCommand {
     /// Apply the committed migration history to the linked database
     Migrate(DbMigrateArgs),
 
-    /// Remove local dev server data so the next `kalam dev` starts with an empty database
+    /// Rebuild the local database from committed migrations and development fixtures
     Reset(DbResetArgs),
+
+    /// Rerun development fixtures from kalam/seed.sql
+    Seed,
+
+    /// Create and inspect schema migration history
+    Migration(DbMigrationArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DbMigrationArgs {
+    #[command(subcommand)]
+    pub command: MigrationCommand,
 }
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct DbResetArgs {
-    /// Confirm dropping namespace data on a remote or non-project server without prompting
+    /// Skip confirmation prompts (local reset does not drop remote namespaces)
     #[arg(long)]
     pub yes: bool,
 }
@@ -328,10 +319,6 @@ pub struct FunctionsArgs {
     /// Project directory containing kalam.toml
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
-
-    /// Target environment name
-    #[arg(long = "env", global = true)]
-    pub env: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]

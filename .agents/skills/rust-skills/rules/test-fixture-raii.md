@@ -58,7 +58,9 @@ struct EnvGuard {
 impl EnvGuard {
     fn set(key: &str, value: &str) -> Self {
         let original = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        // SAFETY: env::set_var is unsafe since the 2024 edition (env writes are
+        // not thread-safe); env-touching tests should run single-threaded.
+        unsafe { std::env::set_var(key, value) };
         EnvGuard {
             key: key.to_string(),
             original,
@@ -68,9 +70,10 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        // SAFETY: see EnvGuard::set — restored on the same single-threaded test
         match &self.original {
-            Some(v) => std::env::set_var(&self.key, v),
-            None => std::env::remove_var(&self.key),
+            Some(v) => unsafe { std::env::set_var(&self.key, v) },
+            None => unsafe { std::env::remove_var(&self.key) },
         }
     }
 }

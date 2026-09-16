@@ -24,10 +24,13 @@ const SCHEMA_TEMPLATE: &str = "src/generated/schema.ts";
 #[derive(Serialize)]
 struct SchemaContext {
     #[serde(flatten)]
-    file:      GeneratedHeader,
-    needs_orm: bool,
-    decls:     Vec<SchemaDecl>,
-    tables:    Vec<TableDecl>,
+    file:            GeneratedHeader,
+    needs_orm:       bool,
+    needs_file:      bool,
+    needs_sql:       bool,
+    drizzle_imports: String,
+    decls:           Vec<SchemaDecl>,
+    tables:          Vec<TableDecl>,
 }
 
 #[derive(Serialize, Default)]
@@ -94,10 +97,13 @@ pub(super) fn render_schema_source(
         "typescript",
         SCHEMA_TEMPLATE,
         &SchemaContext {
-            file:      GeneratedHeader::from_hash(hash),
-            needs_orm: !snapshot.tables.is_empty(),
-            decls:     schema_decls(snapshot, names, procedures),
-            tables:    table_decls(snapshot),
+            file:            GeneratedHeader::from_hash(hash),
+            needs_orm:       !snapshot.tables.is_empty(),
+            needs_file:      snapshot_has_file_column(snapshot),
+            needs_sql:       snapshot_has_default_column(snapshot),
+            drizzle_imports: drizzle_imports(snapshot),
+            decls:           schema_decls(snapshot, names, procedures),
+            tables:          table_decls(snapshot),
         },
     )
 }
@@ -282,27 +288,69 @@ fn table_decls(snapshot: &ContractSnapshot) -> Vec<TableDecl> {
         .collect()
 }
 
+const DRIZZLE_HELPER_ORDER: &[&str] =
+    &["integer", "text", "timestamp", "boolean", "jsonb", "bigint"];
+
+fn snapshot_has_file_column(snapshot: &ContractSnapshot) -> bool {
+    snapshot.tables.values().any(|table| table.fields.iter().any(is_file_column))
+}
+
+fn snapshot_has_default_column(snapshot: &ContractSnapshot) -> bool {
+    snapshot.tables.values().any(|table| table.fields.iter().any(|field| field.has_default))
+}
+
+fn is_file_column(field: &ContractField) -> bool {
+    field.type_id.is_none() && field.type_name.eq_ignore_ascii_case("FILE")
+}
+
+fn drizzle_imports(snapshot: &ContractSnapshot) -> String {
+    let mut used = std::collections::BTreeSet::new();
+    for table in snapshot.tables.values() {
+        for field in &table.fields {
+            let helper = drizzle_column_helper(field);
+            if helper != "file" {
+                used.insert(helper);
+            }
+        }
+    }
+    DRIZZLE_HELPER_ORDER
+        .iter()
+        .copied()
+        .filter(|name| used.contains(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn drizzle_column_helper(field: &ContractField) -> &'static str {
+    if is_file_column(field) {
+        return "file";
+    }
+    if field.type_id.is_some() {
+        return "jsonb";
+    }
+    match field.type_name.to_ascii_uppercase().as_str() {
+        "BOOLEAN" | "BOOL" => "boolean",
+        "INT" | "INTEGER" | "INT4" | "SERIAL" | "SMALLINT" | "INT2" => "integer",
+        "BIGINT" | "INT8" | "INT64" | "BIGSERIAL" => "bigint",
+        "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" => "timestamp",
+        "JSON" | "JSONB" => "jsonb",
+        _ => "text",
+    }
+}
+
 fn drizzle_column(field: &ContractField) -> String {
     let name = escape_double_quoted_string(&field.name);
-    let mut expr = if field.type_id.is_some() {
-        format!("jsonb(\"{name}\")")
-    } else {
-        match field.type_name.to_ascii_uppercase().as_str() {
-            "BOOLEAN" | "BOOL" => format!("boolean(\"{name}\")"),
-            "INT" | "INTEGER" | "INT4" | "SERIAL" | "SMALLINT" | "INT2" => {
-                format!("integer(\"{name}\")")
-            },
-            "BIGINT" | "INT8" | "INT64" | "BIGSERIAL" => {
-                format!("bigint(\"{name}\", {{ mode: \"bigint\" }})")
-            },
-            "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME" => {
-                format!("timestamp(\"{name}\", {{ mode: \"date\" }})")
-            },
-            "JSON" | "JSONB" | "FILE" => format!("jsonb(\"{name}\")"),
-            _ => format!("text(\"{name}\")"),
-        }
+    let helper = drizzle_column_helper(field);
+    let mut expr = match helper {
+        "file" => format!("file(\"{name}\")"),
+        "bigint" => format!("bigint(\"{name}\", {{ mode: \"bigint\" }})"),
+        "timestamp" => format!("timestamp(\"{name}\", {{ mode: \"date\" }})"),
+        _ => format!("{helper}(\"{name}\")"),
     };
-    if field.name == "id" {
+    if field.has_default {
+        expr.push_str(".default(sql``)");
+    }
+    if field.primary_key || field.name == "id" {
         expr.push_str(".primaryKey()");
     } else if field.not_null {
         expr.push_str(".notNull()");

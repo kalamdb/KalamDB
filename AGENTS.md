@@ -83,6 +83,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - Backend prod-like build: `cargo build -p kalamdb-server --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws`
 - CLI build: `cd cli && cargo build`
 - CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo nextest run -p kalam-cli-e2e --test e2e smoke`
+- Everyday CLI (`kalam dev`, `up`, `down`, `status`, `logs`): `specs/035-cli-everyday-lifecycle/spec.md` and `cli/src/workflow/target.rs`
 - Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
 - Rust SDK (fast iteration): `cargo check -p kalam-client --features native-sdk,consumer,healthcheck`.
 - Rust SDK e2e: `cargo nextest run -p kalam-client-e2e --test e2e` (requires running server).

@@ -633,6 +633,25 @@ impl MetaApplier for ProviderMetaApplier {
         .await
     }
 
+    async fn compare_exchange_schedule(
+        &self,
+        id: &kalamdb_commons::ScheduleId,
+        expected_version: Option<&str>,
+        replacement: Option<&kalamdb_system::CatalogSchedule>,
+    ) -> Result<bool, RaftError> {
+        let app = self.app_context.clone();
+        let id = id.clone();
+        let version = expected_version.map(str::to_owned);
+        let replacement = replacement.cloned();
+        run_blocking_raft(move || {
+            app.system_tables()
+                .catalog_stores()
+                .compare_exchange_schedule(&id, version.as_deref(), replacement.as_ref())
+                .map_err(|error| RaftError::Internal(error.to_string()))
+        })
+        .await
+    }
+
     async fn activate_function_revision(
         &self,
         module: &CatalogFunctionModule,

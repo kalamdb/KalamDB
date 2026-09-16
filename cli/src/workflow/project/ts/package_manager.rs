@@ -12,13 +12,15 @@ use crate::{
     error::{CLIError, Result},
     process::{resolve_program_on_path, run_path_tool},
     terminal_ui::SelectOption,
-    workflow::project::{
-        guidance::init_stage_context,
-        prompts::prompt_select,
-        ts::guidance::{
-            init_missing_package_managers, init_package_install_failed,
-            init_package_install_spawn_failed, init_package_manager_not_on_path,
+    workflow::{
+        project::{
+            guidance::init_stage_context,
+            ts::guidance::{
+                init_missing_package_managers, init_package_install_failed,
+                init_package_install_spawn_failed, init_package_manager_not_on_path,
+            },
         },
+        prompts::prompt_select,
     },
 };
 

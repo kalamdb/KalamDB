@@ -284,42 +284,11 @@ impl QueryParser {
         }
     }
 
-    /// Parse parameterized WHERE clause expression
-    ///
-    /// Converts expressions like "user_id = $1" into a structured format
-    /// for parameter substitution.
-    pub fn parse_parameterized_expr(
-        expr_str: &str,
-    ) -> Result<(String, Vec<String>), QueryParseError> {
-        let dialect = KalamDbDialect::default();
-        parse_sql_expression(expr_str, &dialect)
-            .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
-
-        // Extract parameters ($1, $2, etc.)
-        let mut params = Vec::new();
-        Self::extract_parameters_from_expr_str(expr_str, &mut params);
-
-        Ok((expr_str.to_string(), params))
-    }
-
     pub fn validate_row_filter_expr(expr_str: &str) -> Result<(), QueryParseError> {
         let dialect = KalamDbDialect::default();
         let expr = parse_sql_expression(expr_str, &dialect)
             .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
         Self::validate_row_filter_ast(&expr)
-    }
-
-    /// Extract parameter placeholders from expression string
-    fn extract_parameters_from_expr_str(expr_str: &str, params: &mut Vec<String>) {
-        let re = regex::Regex::new(r"\$\d+").unwrap();
-        for cap in re.captures_iter(expr_str) {
-            if let Some(param) = cap.get(0) {
-                let param_str = param.as_str().to_string();
-                if !params.contains(&param_str) {
-                    params.push(param_str);
-                }
-            }
-        }
     }
 
     pub(crate) fn analyze_subscription_query_ast(

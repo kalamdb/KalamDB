@@ -4749,6 +4749,9 @@ pub fn create_cli_command() -> assert_cmd::Command {
         .env_remove("https_proxy")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy");
+    // `KALAM_URL` / `KALAMDB_URL` win over stored credentials. Strip them so
+    // whoami and similar commands talk to the test server, not a leftover shell URL.
+    clear_workflow_url_env_overrides_assert_cmd(&mut cmd);
     cmd
 }
 

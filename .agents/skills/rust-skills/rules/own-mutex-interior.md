@@ -103,3 +103,4 @@ Benefits of `parking_lot`:
 - [own-rwlock-readers](./own-rwlock-readers.md) - When reads dominate writes
 - [own-refcell-interior](./own-refcell-interior.md) - Single-threaded alternative
 - [async-no-lock-await](./async-no-lock-await.md) - Avoiding locks across await points
+- [conc-atomic-ordering](./conc-atomic-ordering.md) - Lock-free alternative for simple state

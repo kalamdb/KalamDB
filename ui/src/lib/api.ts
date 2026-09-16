@@ -1,4 +1,4 @@
-import { KalamCellValue, type SchemaField } from "@kalamdb/client";
+import { KalamCellValue, type QueryResponse, type QueryResult as SdkQueryResult, type SchemaField } from "@kalamdb/client";
 import { executeQuery, getCurrentToken } from "./kalam-client";
 import { getApiBaseUrl } from "./backend-url";
 
@@ -143,22 +143,65 @@ function wrapSqlRows(rows: unknown[][] | undefined): SqlRow[] {
   return rows.map((row) => row.map((value) => KalamCellValue.from(value)));
 }
 
+function cellFromNamedRow(row: Record<string, unknown>, field: SchemaField): KalamCellValue {
+  return KalamCellValue.from(row[field.name] ?? null);
+}
+
+function positionalRowsFromResult(result: SdkQueryResult | undefined, schema: SchemaField[]): SqlRow[] {
+  if (!result) {
+    return [];
+  }
+
+  const namedRows = result.named_rows;
+  if (Array.isArray(namedRows) && namedRows.length > 0) {
+    return namedRows.map((row) => {
+      const record = row as Record<string, unknown>;
+      if (schema.length > 0) {
+        return schema.map((field) => cellFromNamedRow(record, field));
+      }
+      return Object.values(record).map((value) => KalamCellValue.from(value));
+    });
+  }
+
+  const rows = result.rows;
+  if (!rows || rows.length === 0) {
+    return [];
+  }
+
+  const first = rows[0];
+  if (first && !Array.isArray(first) && typeof first === "object") {
+    return (rows as Record<string, unknown>[]).map((row) =>
+      schema.map((field) => cellFromNamedRow(row, field)),
+    );
+  }
+
+  return wrapSqlRows(rows as unknown[][]);
+}
+
+export function sqlResponseFromQuery(response: QueryResponse): SqlResponse {
+  if (response.status === "error") {
+    throw new Error(response.error?.message ?? "Query failed");
+  }
+
+  const result = response.results?.[0];
+  const schema = (result?.schema ?? []) as SchemaField[];
+  const rows = positionalRowsFromResult(result, schema);
+  return {
+    schema,
+    rows,
+    row_count: result?.row_count ?? rows.length,
+    truncated: false,
+    execution_time_ms: response.took ?? 0,
+    as_user: (result as { as_user?: string } | undefined)?.as_user,
+  };
+}
+
 export async function executeSql(sql: string, namespace?: string): Promise<SqlResponse> {
   if (namespace && namespace.trim().length > 0) {
     console.warn("[api] executeSql namespace parameter is ignored; SQL execution now routes through @kalamdb/client");
   }
 
-  const response = await executeQuery(sql);
-  const result = response.results?.[0];
-
-  return {
-    schema: (result?.schema ?? []) as SchemaField[],
-    rows: wrapSqlRows(result?.rows as unknown[][] | undefined),
-    row_count: result?.row_count ?? 0,
-    truncated: false,
-    execution_time_ms: response.took ?? 0,
-    as_user: (result as { as_user?: string } | undefined)?.as_user,
-  };
+  return sqlResponseFromQuery(await executeQuery(sql));
 }
 
 // Auth API helpers

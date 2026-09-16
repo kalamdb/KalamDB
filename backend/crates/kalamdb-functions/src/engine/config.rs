@@ -46,7 +46,7 @@ impl Default for EngineConfig {
             max_value_bytes: 8 * 1024 * 1024,
             cache_bytes: 128 * 1024 * 1024,
             timeout: Duration::from_secs(5),
-            max_idle_per_lane: 1,
+            max_idle_per_lane: 8,
             idle_ttl: Duration::from_secs(30),
             max_instance_age: Duration::from_secs(300),
             max_invocations_per_instance: 10_000,
@@ -70,6 +70,7 @@ impl EngineConfig {
             || self.heap_soft_bytes == 0
             || self.heap_soft_bytes > self.max_heap_bytes
             || self.max_memory_bytes == 0
+            || self.max_memory_bytes < self.max_heap_bytes
             || self.max_artifact_bytes == 0
             || self.max_value_bytes == 0
             || self.timeout.is_zero()
@@ -77,5 +78,35 @@ impl EngineConfig {
             return Err(FunctionsError::Invalid("invalid function engine budgets".into()));
         }
         Ok(())
+    }
+
+    /// Resident charge while an isolate is executing, including ArrayBuffer budget.
+    pub fn active_session_bytes(&self, artifact_bytes: usize) -> usize {
+        artifact_bytes.saturating_add(self.max_heap_bytes)
+    }
+
+    /// Resident charge for a warm idle isolate. Recycle only happens when used
+    /// heap is at or below `heap_soft_bytes`.
+    pub fn idle_session_bytes(&self, artifact_bytes: usize) -> usize {
+        artifact_bytes.saturating_add(self.heap_soft_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_idle_pool_keeps_several_warm_isolates() {
+        assert_eq!(EngineConfig::default().max_idle_per_lane, 8);
+    }
+
+    #[test]
+    fn memory_budget_must_cover_one_hard_heap() {
+        let mut config = EngineConfig::default();
+        config.max_memory_bytes = config.max_heap_bytes.saturating_sub(1);
+        assert!(config.validate().is_err());
+        config.max_memory_bytes = config.max_heap_bytes;
+        assert!(config.validate().is_ok());
     }
 }

@@ -1,6 +1,31 @@
 import { describe, expect, it } from "vitest";
 import type { SystemModuleInstanceRow } from "@/lib/models";
-import { instancesForProcedure, summarizeModuleInstances, utf8ByteLength } from "./runtime";
+import {
+  instancesForProcedure,
+  memorySlices,
+  summarizeModuleInstances,
+  utf8ByteLength,
+  utilizationPercent,
+} from "./runtime";
+
+describe("memorySlices", () => {
+  it("splits a reservation into non-overlapping slices that sum to reserved", () => {
+    const slices = memorySlices({ usedHeapBytes: 100, peakHeapBytes: 250, reservedBytes: 1000 });
+    expect(slices.map((slice) => slice.value)).toEqual([100, 150, 750]);
+    expect(slices.reduce((sum, slice) => sum + slice.value, 0)).toBe(1000);
+  });
+
+  it("clamps inconsistent inputs instead of producing negative slices", () => {
+    const slices = memorySlices({ usedHeapBytes: 500, peakHeapBytes: 200, reservedBytes: 300 });
+    expect(slices.map((slice) => slice.value)).toEqual([500, 0, 0]);
+  });
+
+  it("reports utilization as a bounded percentage", () => {
+    expect(utilizationPercent(250, 1000)).toBe(25);
+    expect(utilizationPercent(2000, 1000)).toBe(100);
+    expect(utilizationPercent(10, 0)).toBeNull();
+  });
+});
 
 function instance(overrides: Partial<SystemModuleInstanceRow> = {}): SystemModuleInstanceRow {
   return {

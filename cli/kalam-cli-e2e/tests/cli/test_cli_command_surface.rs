@@ -14,8 +14,11 @@ fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
             &["--help"],
             &[
                 "KalamDB CLI for projects",
+                "EVERYDAY",
                 "init",
                 "dev",
+                "up",
+                "down",
                 "status",
                 "--watch-schema",
             ],
@@ -50,6 +53,9 @@ fn test_cli_top_level_and_subcommand_help_matrix_binary_style() {
                 "stop",
             ],
         ),
+        (&["up", "--help"], &["Start a local database", "--global"]),
+        (&["down", "--help"], &["Stop a managed local database"]),
+        (&["logs", "--help"], &["--follow"]),
     ];
 
     for (args, expected_snippets) in cases {

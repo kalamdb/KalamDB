@@ -17,7 +17,7 @@ import {
   asFileRef,
   sha256Hex,
 } from './lib/file-utils.js';
-import { context_files } from './models/schema.generated.js';
+import { okfSyncContextFiles as context_files } from './models/kalam.js';
 
 const TABLE_NAME = 'context_files';
 

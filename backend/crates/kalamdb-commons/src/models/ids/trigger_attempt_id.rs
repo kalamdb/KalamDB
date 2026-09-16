@@ -27,6 +27,11 @@ impl TriggerAttemptId {
         Ok(Self(format!("{}:{partition}:{offset}:{attempt}", trigger_id.as_str())))
     }
 
+    /// Key prefix shared by every attempt for one delivered offset (`trigger:partition:offset:`).
+    pub fn offset_prefix(trigger_id: &TriggerId, partition: u32, offset: u64) -> Self {
+        Self(format!("{}:{partition}:{offset}:", trigger_id.as_str()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

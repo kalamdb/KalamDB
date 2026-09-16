@@ -86,7 +86,7 @@ export default function FunctionDetail() {
             <FunctionOverview procedure={procedure} snapshot={catalog} />
           </TabsContent>
           <TabsContent value="logs">
-            <FunctionLogs procedureId={procedure.id} />
+            <FunctionLogs procedureId={procedure.id} moduleId={procedure.moduleId} />
           </TabsContent>
           <TabsContent value="revisions">
             <FunctionRevisions moduleId={procedure.moduleId} revisions={catalog.revisions} />

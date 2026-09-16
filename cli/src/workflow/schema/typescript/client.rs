@@ -23,6 +23,7 @@ struct ClientContext<'a> {
     #[serde(flatten)]
     file:             GeneratedHeader,
     has_type_imports: bool,
+    has_calls:        bool,
     type_imports:     String,
     namespaces:       Vec<NamespaceContext<'a>>,
 }
@@ -58,7 +59,7 @@ pub(super) fn render_client_source(
     procedures: &ProcedureCatalog<'_>,
 ) -> Result<String> {
     let type_imports = procedures.schema_type_imports(false);
-    let namespaces = procedures
+    let namespaces: Vec<NamespaceContext<'_>> = procedures
         .namespaces()
         .iter()
         .map(|namespace| NamespaceContext {
@@ -66,12 +67,14 @@ pub(super) fn render_client_source(
             procedures:   namespace.procedures.iter().map(procedure_context).collect(),
         })
         .collect();
+    let has_calls = namespaces.iter().any(|namespace| !namespace.procedures.is_empty());
     render_schema_gen_file(
         "typescript",
         CLIENT_TEMPLATE,
         &ClientContext {
             file: GeneratedHeader::from_hash(hash),
             has_type_imports: !type_imports.is_empty(),
+            has_calls,
             type_imports,
             namespaces,
         },

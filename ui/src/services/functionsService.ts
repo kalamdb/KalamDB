@@ -12,7 +12,7 @@ import {
   system_type_fields,
   system_types,
 } from "@/lib/schema";
-import { and, desc, eq, inArray, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, or, type SQL } from "drizzle-orm";
 import { catalogText, resolveProcedureCatalog } from "@/features/functions/catalog";
 import { isBuiltinSqlTypeName } from "@/features/functions/format";
 import { toProcedureListItem } from "@/features/functions/status";
@@ -21,9 +21,11 @@ import type { ProcedureCatalogSnapshot, ProcedureListItem } from "@/features/fun
 
 export interface ProcedureLogFilters {
   procedureId: string;
+  moduleId?: string;
   search?: string;
   level?: string;
   origin?: string;
+  channel?: string;
   executionId?: string;
   revisionId?: string;
   limit?: number;
@@ -229,13 +231,22 @@ export function listItemsFromCatalog(
 
 export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<SystemProcedureLogRow[]> {
   const db = getDb();
-  const conditions: SQL[] = [eq(system_procedure_logs.procedure_id, filters.procedureId)];
+  const identity = filters.moduleId
+    ? or(
+        eq(system_procedure_logs.procedure_id, filters.procedureId),
+        and(eq(system_procedure_logs.channel, "lifecycle"), eq(system_procedure_logs.module_id, filters.moduleId)),
+      )
+    : eq(system_procedure_logs.procedure_id, filters.procedureId);
+  const conditions: SQL[] = identity ? [identity] : [eq(system_procedure_logs.procedure_id, filters.procedureId)];
 
   if (filters.level && filters.level !== "all") {
     conditions.push(eq(system_procedure_logs.level, filters.level));
   }
   if (filters.origin && filters.origin !== "all") {
     conditions.push(eq(system_procedure_logs.origin, filters.origin));
+  }
+  if (filters.channel && filters.channel !== "all") {
+    conditions.push(eq(system_procedure_logs.channel, filters.channel));
   }
   if (filters.executionId?.trim()) {
     conditions.push(eq(system_procedure_logs.execution_id, filters.executionId.trim()));
@@ -263,7 +274,9 @@ export async function fetchProcedureLogs(filters: ProcedureLogFilters): Promise<
       log.revision_id?.toLowerCase().includes(search) ||
       log.error_code?.toLowerCase().includes(search) ||
       log.actor.toLowerCase().includes(search) ||
-      log.origin.toLowerCase().includes(search)
+      log.origin.toLowerCase().includes(search) ||
+      log.channel.toLowerCase().includes(search) ||
+      log.outcome.toLowerCase().includes(search)
     );
   });
 }

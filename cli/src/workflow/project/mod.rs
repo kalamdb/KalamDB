@@ -5,12 +5,10 @@ pub mod guidance;
 pub mod identifiers;
 pub mod init;
 pub mod link;
-pub mod prompts;
 pub mod repository_examples;
 pub mod resolve;
 pub mod scaffold;
 pub mod scaffold_input;
-pub mod status;
 pub mod templates;
 pub mod ts;
 
@@ -20,4 +18,3 @@ pub use identifiers::{
     parse_table_ref, parse_user_id, preferred_user_label, prompt_host_identity,
 };
 pub use link::{link_environment, LinkOptions};
-pub use status::{collect_status, show_status};

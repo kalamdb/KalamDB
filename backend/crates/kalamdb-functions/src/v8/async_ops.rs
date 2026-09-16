@@ -210,8 +210,19 @@ impl V8Session {
 
     async fn run_async(&mut self, invocation: &Invocation) -> Result<RoutineValue> {
         invocation.scope.check()?;
-        if invocation.scope.depth == 0 {
+        if invocation.scope.depth == 0 && !self.context_fresh {
             self.reset_context()?;
+        } else if invocation.scope.depth == 0 {
+            self.bind_root_host_frame();
+        }
+        if invocation.scope.depth == 0 {
+            self.context_fresh = false;
+        }
+        // `invoke_async` clears isolate slots before entering. Skipping
+        // `reset_context` on a freshly loaded or recycled realm still needs a
+        // live `Operations` slot so `kalamAsyncOp` can queue host work.
+        if self.isolate.get_slot::<Operations>().is_none() {
+            self.isolate.set_slot(Operations::default());
         }
         self.drive(invocation).await
     }

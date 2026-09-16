@@ -5,12 +5,12 @@ import { getExampleClient, isExampleDemoMode } from './client';
 import { Aside } from './components/Aside';
 import { Conversation } from './components/Conversation';
 import {
-  react_ai_chat_approval_actions as approvalActions,
-  react_ai_chat_conversations as conversations,
-  react_ai_chat_messages as messages,
-  react_ai_chat_typing_tokens as typingTokens,
-} from './schema.generated';
-import type { ReactAiChatConversations as ConversationRow } from './schema.generated';
+  reactAiChatApprovalActions as approvalActions,
+  reactAiChatConversations as conversations,
+  reactAiChatMessages as messages,
+  reactAiChatTypingTokens as typingTokens,
+} from './generated/kalam';
+import type { ReactAiChatConversations as ConversationRow } from './generated/kalam';
 
 const SELECTED_CONVERSATION_KEY = 'kalamdb-react-ai-chat-selected-v3';
 const DEFAULT_CONVERSATION_ID = 'project-alpha';
@@ -75,16 +75,17 @@ function ChatWorkspace({
   selectedConversationId: string;
   onSelectConversation: (conversationId: string) => void;
 }) {
+  const conversationRows = live.conversations.rows as ConversationRow[];
   const currentConversation = useMemo(
-    () => resolveConversation(live.conversations.rows, selectedConversationId),
-    [live.conversations.rows, selectedConversationId],
+    () => resolveConversation(conversationRows, selectedConversationId),
+    [conversationRows, selectedConversationId],
   );
 
   useEffect(() => {
-    if (!currentConversation && live.conversations.rows[0]) {
-      onSelectConversation(live.conversations.rows[0].id);
+    if (!currentConversation && conversationRows[0]) {
+      onSelectConversation(conversationRows[0].id);
     }
-  }, [currentConversation, live.conversations.rows, onSelectConversation]);
+  }, [currentConversation, conversationRows, onSelectConversation]);
 
   const createConversation = async () => {
     const id = createId('conversation');
@@ -101,7 +102,7 @@ function ChatWorkspace({
   return (
     <main className="workspace-shell">
       <Aside
-        conversations={live.conversations.rows}
+        conversations={conversationRows}
         selectedConversationId={currentConversation?.id ?? selectedConversationId}
         onCreate={() => void createConversation()}
         onSelect={onSelectConversation}

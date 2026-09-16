@@ -57,10 +57,12 @@ let world = data.slice(6..11); // Zero-copy!
 // Memory is freed when all references are dropped
 ```
 
-## Real-World Pattern from Deno
+## Common Pattern: Cow for Static Strings
+
+A common pattern — seen in HTTP servers and similar code — returns
+`Cow<'static, str>` to avoid allocating for well-known static values:
 
 ```rust
-// https://github.com/denoland/deno/blob/main/ext/http/lib.rs
 fn method_to_cow(method: &http::Method) -> Cow<'static, str> {
     match *method {
         Method::GET => Cow::Borrowed("GET"),      // Zero-copy

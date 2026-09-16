@@ -14,14 +14,14 @@ use v8::{self, ScriptOrigin};
 
 use super::{
     async_ops::Operations, buffer_allocator::BufferAllocator, compiled_scripts::CompiledScripts,
-    host_frame::HostFrame, host_frames::HostFrames,
+    host_frames::HostFrames,
 };
 use crate::{
     convert::{infer_v8_value, routine_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
     error::{FunctionErrorCode, FunctionsError, Result},
     host::InvocationSource,
-    limits::{RuntimeLimits, ABI_VERSION},
+    limits::{heap_limit_parts, raise_heap_limit, RuntimeLimits, ABI_VERSION},
     revision::ModuleRevision,
     value::RoutineValue,
 };
@@ -38,18 +38,21 @@ fn ensure_v8() {
 
 /// Pinned V8 session for one module revision.
 pub struct V8Session {
-    pub(crate) isolate:  v8::OwnedIsolate,
-    pub(crate) context:  v8::Global<v8::Context>,
-    pub(crate) revision: ModuleRevision,
-    pub(crate) limits:   RuntimeLimits,
-    heap_watch:          *mut HeapWatch,
-    pub(crate) detached: bool,
-    compiled:            CompiledScripts,
+    pub(crate) isolate:       v8::OwnedIsolate,
+    pub(crate) context:       v8::Global<v8::Context>,
+    pub(crate) revision:      ModuleRevision,
+    pub(crate) limits:        RuntimeLimits,
+    heap_watch:               *mut HeapWatch,
+    pub(crate) detached:      bool,
+    compiled:                 CompiledScripts,
+    pub(crate) context_fresh: bool,
 }
 
 struct HeapWatch {
-    handle: v8::IsolateHandle,
-    hit:    AtomicBool,
+    handle:      v8::IsolateHandle,
+    hit:         AtomicBool,
+    max_managed: usize,
+    unwind:      usize,
 }
 
 impl V8Session {
@@ -62,20 +65,21 @@ impl V8Session {
             });
         }
 
+        let parts = heap_limit_parts(limits.max_heap_bytes);
         let mut isolate = v8::Isolate::new(
             v8::CreateParams::default()
-                .array_buffer_allocator(
-                    BufferAllocator::create(limits.max_heap_bytes / 2).make_shared(),
-                )
-                .heap_limits(0, limits.max_heap_bytes / 2)
-                .set_max_old_generation_size_in_bytes(limits.max_heap_bytes / 2),
+                .array_buffer_allocator(BufferAllocator::create(parts.buffers).make_shared())
+                .heap_limits(0, parts.managed)
+                .set_max_old_generation_size_in_bytes(parts.managed),
         );
         isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
         isolate.set_allow_atomics_wait(false);
         isolate.set_promise_reject_callback(super::rejections::rejected);
         let heap_watch = Box::into_raw(Box::new(HeapWatch {
-            handle: isolate.thread_safe_handle(),
-            hit:    AtomicBool::new(false),
+            handle:      isolate.thread_safe_handle(),
+            hit:         AtomicBool::new(false),
+            max_managed: parts.max_managed,
+            unwind:      parts.unwind,
         }));
         isolate.add_near_heap_limit_callback(near_heap_limit, heap_watch.cast());
 
@@ -130,6 +134,7 @@ impl V8Session {
             heap_watch,
             detached: false,
             compiled,
+            context_fresh: true,
         })
     }
 
@@ -213,6 +218,27 @@ impl V8Session {
         crate::v8_async::install(&mut scope)?;
         run_compiled(&mut scope, &self.compiled.module)?;
         self.context = v8::Global::new(&scope, context);
+        Ok(())
+    }
+
+    /// Attach the current root host to this realm without rebuilding it.
+    ///
+    /// Needed when `reset_context` is skipped for a freshly loaded or recycled
+    /// isolate: `kalamAsyncOp` still has to resolve through the creation-time
+    /// permission frame, not whichever nested host is currently on `ActiveHost`.
+    pub(crate) fn bind_root_host_frame(&mut self) {
+        v8::scope!(let scope, &mut self.isolate);
+        let context = v8::Local::new(scope, &self.context);
+        let mut scope = v8::ContextScope::new(scope, context);
+        if let Some(host) = scope.get_slot::<ActiveHost>().and_then(|slot| slot.host.clone()) {
+            HostFrames::bind(&mut scope, host);
+        }
+    }
+
+    /// Rebuild a clean realm after a successful CALL so the next warm take skips reset.
+    pub(crate) fn prepare_reuse(&mut self) -> Result<()> {
+        self.reset_context()?;
+        self.context_fresh = true;
         Ok(())
     }
 
@@ -358,8 +384,8 @@ fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
         .ok_or_else(|| FunctionsError::Invalid("failed to restrict WebAssembly".into()))?;
     for name in kalamdb_functions_host::NATIVE_FNS {
         match *name {
-            "kalamHostSql" => bind_native(scope, name, host_sql)?,
-            "kalamHostCall" => bind_native(scope, name, host_call)?,
+            "kalamHostSql" => bind_native(scope, name, host_sql_removed)?,
+            "kalamHostCall" => bind_native(scope, name, host_call_removed)?,
             "kalamHostPublish" => bind_native(scope, name, host_publish)?,
             "kalamHostHttpHeader" => bind_native(scope, name, host_http_header)?,
             "kalamHostHttpSetStatus" => bind_native(scope, name, host_http_set_status)?,
@@ -403,7 +429,7 @@ pub(crate) fn current_host(scope: &v8::PinScope) -> Result<Arc<dyn crate::host::
     if let Some(host) = HostFrames::current(scope) {
         return Ok(host);
     }
-    if scope.get_current_context().get_slot::<HostFrame>().is_some() {
+    if HostFrames::has_expired_frame(scope) {
         return Err(FunctionsError::Invalid("expired function host frame".into()));
     }
     let slot = scope
@@ -490,89 +516,26 @@ pub(crate) fn arg_string(
         .unwrap_or_default()
 }
 
-fn host_sql(
+fn host_sql_removed(
     scope: &mut v8::PinScope,
-    args: v8::FunctionCallbackArguments,
-    mut rv: v8::ReturnValue<v8::Value>,
+    _: v8::FunctionCallbackArguments,
+    _: v8::ReturnValue<v8::Value>,
 ) {
-    let sql = arg_string(scope, &args, 0);
-    match read_sql_params(scope, &args)
-        .and_then(|params| current_host(scope).and_then(|host| host.sql(&sql, &params)))
-    {
-        Ok(value) => match routine_to_v8(scope, &value) {
-            Ok(js) => rv.set(js),
-            Err(error) => throw_host_error(scope, error),
-        },
-        Err(error) => throw_host_error(scope, error),
-    }
+    throw_host_error(
+        scope,
+        FunctionsError::Invalid("sync host sql is not supported; use ctx.db.query".into()),
+    );
 }
 
-fn read_sql_params(
+fn host_call_removed(
     scope: &mut v8::PinScope,
-    args: &v8::FunctionCallbackArguments,
-) -> Result<Vec<RoutineValue>> {
-    if args.length() <= 1 {
-        return Ok(Vec::new());
-    }
-    let raw = args.get(1);
-    if raw.is_null_or_undefined() {
-        return Ok(Vec::new());
-    }
-    let array = v8::Local::<v8::Array>::try_from(raw)
-        .map_err(|_| FunctionsError::Invalid("sql params must be an array".into()))?;
-    if array.length() > 1024 {
-        return Err(FunctionsError::ResourceLimit("sql params".into()));
-    }
-    let mut params = Vec::with_capacity(array.length() as usize);
-    for index in 0..array.length() {
-        let element = array
-            .get_index(scope, index)
-            .ok_or_else(|| FunctionsError::Invalid("missing sql param".into()))?;
-        params.push(RoutineValue::new(infer_v8_value(scope, element)?));
-    }
-    Ok(params)
-}
-
-fn host_call(
-    scope: &mut v8::PinScope,
-    args: v8::FunctionCallbackArguments,
-    mut rv: v8::ReturnValue<v8::Value>,
+    _: v8::FunctionCallbackArguments,
+    _: v8::ReturnValue<v8::Value>,
 ) {
-    let procedure = arg_string(scope, &args, 0);
-    let mut call_args = Vec::new();
-    if args.length() > 1 {
-        let raw = args.get(1);
-        if raw.is_array() {
-            if let Ok(array) = v8::Local::<v8::Array>::try_from(raw) {
-                for index in 0..array.length() {
-                    let element =
-                        array.get_index(scope, index).unwrap_or_else(|| v8::null(scope).into());
-                    match crate::convert::infer_v8_value(scope, element) {
-                        Ok(scalar) => call_args.push(RoutineValue::new(scalar)),
-                        Err(error) => {
-                            throw_host_error(scope, error);
-                            return;
-                        },
-                    }
-                }
-            }
-        } else if !raw.is_null_or_undefined() {
-            match crate::convert::infer_v8_value(scope, raw) {
-                Ok(scalar) => call_args.push(RoutineValue::new(scalar)),
-                Err(error) => {
-                    throw_host_error(scope, error);
-                    return;
-                },
-            }
-        }
-    }
-    match current_host(scope).and_then(|host| host.call(&procedure, &call_args)) {
-        Ok(value) => match routine_to_v8(scope, &value) {
-            Ok(js) => rv.set(js),
-            Err(error) => throw_host_error(scope, error),
-        },
-        Err(error) => throw_host_error(scope, error),
-    }
+    throw_host_error(
+        scope,
+        FunctionsError::Invalid("sync host call is not supported; use ctx.functions.call".into()),
+    );
 }
 
 fn host_publish(
@@ -582,7 +545,7 @@ fn host_publish(
 ) {
     let topic = arg_string(scope, &args, 0);
     let payload = if args.length() > 1 {
-        match crate::convert::infer_v8_value(scope, args.get(1)) {
+        match infer_v8_value(scope, args.get(1)) {
             Ok(scalar) => RoutineValue::new(scalar),
             Err(error) => {
                 throw_host_error(scope, error);
@@ -759,6 +722,16 @@ fn source_to_v8<'s, 'i>(
         InvocationSource::Call => {
             set_object_string(scope, &object, "kind", "call")?;
         },
+        InvocationSource::Schedule {
+            schedule_id,
+            run_id,
+            scheduled_at,
+        } => {
+            set_object_string(scope, &object, "kind", "schedule")?;
+            set_object_string(scope, &object, "scheduleId", schedule_id.as_str())?;
+            set_object_string(scope, &object, "runId", run_id)?;
+            set_object_number(scope, &object, "scheduledAt", *scheduled_at as f64)?;
+        },
         InvocationSource::Topic {
             topic_name,
             event_id,
@@ -914,17 +887,17 @@ unsafe extern "C" fn near_heap_limit(
     current_heap_limit: usize,
     _initial_heap_limit: usize,
 ) -> usize {
-    if !data.is_null() {
-        // SAFETY: `data` is the `HeapWatch` box registered in `V8Session::load`.
-        let watch = unsafe { &*data.cast::<HeapWatch>() };
-        watch.hit.store(true, Ordering::Relaxed);
-        watch.handle.terminate_execution();
+    if data.is_null() {
+        return current_heap_limit.saturating_add(1);
     }
+    // SAFETY: `data` is the `HeapWatch` box registered in `V8Session::load`.
+    let watch = unsafe { &*data.cast::<HeapWatch>() };
+    watch.hit.store(true, Ordering::Relaxed);
+    watch.handle.terminate_execution();
     // V8 fatals unless this callback raises the limit enough for the
-    // in-flight allocation to unwind after TerminateExecution.
-    current_heap_limit
-        .saturating_mul(2)
-        .max(current_heap_limit.saturating_add(8 * 1024 * 1024))
+    // in-flight allocation to unwind after TerminateExecution. Stay inside
+    // the isolate's max_heap_bytes budget.
+    raise_heap_limit(current_heap_limit, watch.max_managed, watch.unwind)
 }
 
 pub const FIXTURE_SOURCE: &str = include_str!("../../fixtures/module.js");

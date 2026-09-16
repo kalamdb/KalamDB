@@ -132,3 +132,4 @@ match map.entry(key) {
 - [perf-extend-batch](./perf-extend-batch.md) - Batch insertions
 - [mem-with-capacity](./mem-with-capacity.md) - Pre-allocate maps
 - [perf-drain-reuse](./perf-drain-reuse.md) - Reuse map allocations
+- [coll-map-choice](./coll-map-choice.md) - Pick the right map type

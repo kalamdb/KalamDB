@@ -128,24 +128,21 @@ async fn read_heavy(state: &RwLock<State>) {
 ## std::sync::Mutex vs tokio::sync::Mutex
 
 ```rust
-// std::sync::Mutex: Blocks the entire thread
-// - Use for quick, CPU-only operations
-// - NEVER use in async code with await inside
+// Prefer std::sync::Mutex for work that does NOT span an .await —
+// it is simpler, faster, and avoids the async overhead.
+// Only reach for tokio::sync::Mutex when you genuinely must hold
+// the lock across an .await point (rare; usually a sign to redesign).
 
-// tokio::sync::Mutex: Async-aware, yields to runtime
-// - Use in async code
-// - Still don't hold across await points!
-
-// std::sync::Mutex in async (quick operation, OK):
+// std::sync::Mutex in async (quick, non-awaiting operation — preferred):
 async fn quick_update(state: &std::sync::Mutex<State>) {
-    state.lock().unwrap().counter += 1;  // No await, OK
+    state.lock().unwrap().counter += 1;  // No await inside lock scope, OK
 }
 
-// tokio::sync::Mutex (must use if lock scope has await):
+// tokio::sync::Mutex (only when the lock scope must span an .await):
 async fn must_await_inside(state: &tokio::sync::Mutex<State>) {
     let mut guard = state.lock().await;
-    // Only if you REALLY need the lock during async op
-    // (usually you don't - redesign instead)
+    // Only justified if you truly need the lock held across an async op
+    // (usually you don't — extract data first, then release the lock)
 }
 ```
 

@@ -2,11 +2,24 @@
 // {{contract_hash_line}}
 
 {{#if needs_orm}}
+{{#if needs_file}}
+import type { FileRef } from '@kalamdb/client';
+import { kTable, file, type KalamFileUpload } from '@kalamdb/orm';
+{{else}}
 import { kTable } from '@kalamdb/orm';
-import { integer, text, timestamp, boolean, jsonb, bigint } from 'drizzle-orm/pg-core';
+{{/if}}
+{{#if needs_sql}}
+import { sql } from 'drizzle-orm';
+{{/if}}
+{{#if drizzle_imports}}
+import { {{{drizzle_imports}}} } from 'drizzle-orm/pg-core';
 
 {{/if}}
+{{/if}}
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+{{#if needs_file}}
+export type KalamFileColumn = FileRef | File | KalamFileUpload | Blob | null;
+{{/if}}
 
 {{#each decls}}
 {{{jsdoc}}}{{#if is_enum}}export type {{ident}} = {{{union}}};

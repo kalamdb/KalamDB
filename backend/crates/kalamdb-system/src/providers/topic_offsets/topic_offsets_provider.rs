@@ -194,12 +194,6 @@ impl TopicOffsetsTableProvider {
         Ok(count)
     }
 
-    /// List all topic offsets
-    pub fn list_offsets(&self) -> Result<Vec<TopicOffset>, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
-    }
-
     /// Load all topic offsets as a single RecordBatch for DataFusion
     fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
         let rows = self

@@ -1,4 +1,4 @@
-//! Remote schema watch command (legacy server polling).
+//! Watch `information_schema.tables` and run a command on change.
 //!
 //! File-based schema watch during local development lives in
 //! `workflow::dev::watch` and is orchestrated by `kalam dev`.

@@ -102,13 +102,8 @@ shared_shards: 1, // Single shard for standalone
 - Direct pass-through to RocksDB.
 - No duplicate "Hot Cache" in heap memory (avoids double-caching data already in RocksDB block cache).
 
-### ✅ Jemalloc Integration
-```rust
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-```
-*Effect*: Reduces memory fragmentation on Linux/macOS. (Enabled via `jemalloc` feature).
+### ✅ mimalloc + in-process reclaim
+Production/Docker builds use mimalloc (`--features mimalloc`) with process-level transparent-huge-page disable and idle `mi_collect`. Do not switch to jemalloc to "fix" idle RSS: host `transparent_hugepage=always` inflates any anonymous allocator the same way, and jemalloc previously retained hundreds of MiB of fragmentation. RSS may grow under load; unused pages are returned after idle trim.
 
 ### ✅ DataFusion Session Sharing
 ```rust

@@ -5,7 +5,8 @@
 //! `{logs_path}/procedures.jsonl` is still read when present. Records never
 //! include request bodies, arguments, results, tokens, or source. V8
 //! `console.*` / `ctx.log.*` lines use `outcome=log`; root CALL completion
-//! uses `outcome=ok` or `outcome=error`.
+//! uses `outcome=ok` or `outcome=error`; isolate and deploy events use
+//! `channel=lifecycle`.
 
 use std::{
     fs::{self, File},

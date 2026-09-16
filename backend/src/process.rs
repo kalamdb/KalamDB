@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::metrics::{BUILD_DATE, SERVER_VERSION};
-use kalamdb_observability::initialize_activity_now;
+use kalamdb_observability::{apply_process_memory_policy, initialize_activity_now};
 use kalamdb_postgres_wire::{http_port_conflict_message, rpc_port_conflict_message};
 use log::info;
 
@@ -54,6 +54,7 @@ where
         StartupCommand::Run { config_path } => config_path,
     };
 
+    apply_process_memory_policy();
     let config = load_server_config(&config_path)?;
     let worker_threads = resolve_tokio_worker_threads(&config);
     let max_blocking_threads =

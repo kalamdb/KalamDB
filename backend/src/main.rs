@@ -36,6 +36,8 @@ fn raise_fd_limit() {
 }
 
 fn main() -> Result<()> {
+    kalamdb_observability::apply_process_memory_policy();
+
     #[cfg(unix)]
     raise_fd_limit();
 

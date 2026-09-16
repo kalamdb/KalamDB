@@ -7,14 +7,14 @@ use kalamdb_commons::{
         ArtifactId, FunctionModuleId, FunctionRevisionId, NamespaceId, RoutineGrantId, RoutineId,
         RoutineParameterId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
     },
-    CatalogTypeKind, KSerializable, StorageKey, SystemTable,
+    CatalogTypeKind, KSerializable, ScheduleId, StorageKey, SystemTable,
 };
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
 use super::models::{
     CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-    CatalogRoutineGrant, CatalogRoutineParameter, CatalogTrigger, CatalogTriggerAttempt,
-    CatalogType, CatalogTypeField,
+    CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogTrigger,
+    CatalogTriggerAttempt, CatalogType, CatalogTypeField,
 };
 use crate::error::SystemError;
 
@@ -41,6 +41,7 @@ pub struct CatalogStores {
     pub function_modules:   FunctionModulesStore,
     pub function_revisions: FunctionRevisionsStore,
     pub function_artifacts: FunctionArtifactsStore,
+    pub schedules:          IndexedEntityStore<ScheduleId, CatalogSchedule>,
     pub triggers:           TriggersStore,
     pub trigger_attempts:   TriggerAttemptsStore,
 }
@@ -109,6 +110,11 @@ impl CatalogStores {
                 SystemTable::FunctionArtifacts
                     .column_family_name()
                     .expect("FunctionArtifacts is a table"),
+                Vec::new(),
+            ),
+            schedules:          IndexedEntityStore::new(
+                backend.clone(),
+                "system_schedules",
                 Vec::new(),
             ),
             triggers:           IndexedEntityStore::new(
@@ -424,11 +430,20 @@ impl CatalogStores {
         self.force_drop_type(type_id)
     }
 
-    /// Drop procedures, types, and triggers owned by `namespace_id`.
+    /// Drop procedures, types, triggers, and schedules owned by `namespace_id`.
     ///
     /// `DROP NAMESPACE` uses this so catalog objects cannot outlive the schema.
     /// Referential checks are skipped because the whole namespace is going away.
     pub fn drop_namespace_catalog(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
+        let schedule_ids: Vec<ScheduleId> = self
+            .list_schedules()?
+            .into_iter()
+            .filter(|row| row.namespace_id == *namespace_id)
+            .map(|row| row.schedule_id)
+            .collect();
+        if !schedule_ids.is_empty() {
+            self.schedules.delete_batch(&schedule_ids)?;
+        }
         let trigger_ids: Vec<TriggerId> = self
             .list_triggers()?
             .into_iter()
@@ -475,6 +490,11 @@ impl CatalogStores {
     }
 
     pub fn drop_routine(&self, routine_id: &RoutineId) -> Result<(), SystemError> {
+        if self.list_schedules()?.iter().any(|row| row.routine_id == *routine_id) {
+            return Err(SystemError::Conflict(
+                "Drop dependent schedules before dropping the procedure".into(),
+            ));
+        }
         if self.get_routine(routine_id)?.is_none() {
             return Err(SystemError::NotFound(format!("routine not found: {routine_id}")));
         }
@@ -499,6 +519,33 @@ impl CatalogStores {
 
         self.routines.delete(routine_id)?;
         Ok(())
+    }
+
+    pub fn get_schedule(&self, id: &ScheduleId) -> Result<Option<CatalogSchedule>, SystemError> {
+        get_model(&self.schedules, id)
+    }
+
+    pub fn list_schedules(&self) -> Result<Vec<CatalogSchedule>, SystemError> {
+        list_models(&self.schedules)
+    }
+
+    /// Called only by the serialized metadata applier (or the standalone mutation lock).
+    pub fn compare_exchange_schedule(
+        &self,
+        id: &ScheduleId,
+        expected_version: Option<&str>,
+        replacement: Option<&CatalogSchedule>,
+    ) -> Result<bool, SystemError> {
+        let current = self.get_schedule(id)?;
+        if current.as_ref().map(|row| row.version.as_str()) != expected_version {
+            return Ok(false);
+        }
+        if let Some(row) = replacement {
+            put_model(&self.schedules, id, row)?;
+        } else {
+            self.schedules.delete(id)?;
+        }
+        Ok(true)
     }
 
     pub fn upsert_trigger(&self, trigger: CatalogTrigger) -> Result<(), SystemError> {
@@ -559,15 +606,24 @@ impl CatalogStores {
         put_model(&self.trigger_attempts, &attempt.attempt_id, &attempt)
     }
 
-    pub fn get_trigger_attempt(
-        &self,
-        attempt_id: &TriggerAttemptId,
-    ) -> Result<Option<CatalogTriggerAttempt>, SystemError> {
-        get_model(&self.trigger_attempts, attempt_id)
-    }
-
     pub fn list_trigger_attempts(&self) -> Result<Vec<CatalogTriggerAttempt>, SystemError> {
         list_models(&self.trigger_attempts)
+    }
+
+    /// Attempts recorded for one `(trigger, partition, offset)`; a prefix scan, not a full scan.
+    pub fn list_trigger_attempts_for_offset(
+        &self,
+        trigger_id: &TriggerId,
+        partition: u32,
+        offset: u64,
+    ) -> Result<Vec<CatalogTriggerAttempt>, SystemError> {
+        let prefix = TriggerAttemptId::offset_prefix(trigger_id, partition, offset);
+        Ok(self
+            .trigger_attempts
+            .scan_all_typed(None, Some(&prefix), None)?
+            .into_iter()
+            .map(|(_, model)| model)
+            .collect())
     }
 }
 

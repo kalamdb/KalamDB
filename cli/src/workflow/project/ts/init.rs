@@ -9,10 +9,9 @@ use crate::{
     workflow::{
         display_project_path,
         project::{
-            prompts::prompt_select,
             repository_examples::{self, RepositoryExample},
             scaffold,
-            templates::{render_template_pairs_for_path, EmbeddedTemplate},
+            templates::{render_embedded_pairs_for_path, EmbeddedTemplate},
             ts::{
                 guidance::init_no_templates,
                 package_manager::{
@@ -21,6 +20,7 @@ use crate::{
                 templates::{self, DEFAULT_TEMPLATE},
             },
         },
+        prompts::prompt_select,
     },
 };
 
@@ -196,8 +196,12 @@ pub fn apply_scaffold(
             )?;
         }
 
-        let rendered =
-            render_template_pairs_for_path(file.project_path, file.content, &replacements)?;
+        let rendered = render_embedded_pairs_for_path(
+            template.language,
+            template.id,
+            file.project_path,
+            &replacements,
+        )?;
         scaffold::io_with_guidance(
             "write template file",
             &destination_path,
@@ -205,6 +209,7 @@ pub fn apply_scaffold(
         )?;
         output.detail(format!("created {}", display_project_path(root, &destination_path)));
     }
+    repository_examples::rewrite_sdk_dependencies(root)?;
     Ok(())
 }
 
@@ -307,6 +312,16 @@ mod tests {
             )
             .unwrap();
             assert_eq!(config.project.package_manager.as_deref(), Some(manager.as_str()));
+            let package_json = fs::read_to_string(temp.path().join("package.json")).unwrap();
+            if let Some(sdk_root) = repository_examples::discover_typescript_sdk_root() {
+                assert!(
+                    package_json.contains(&format!(
+                        "\"@kalamdb/client\": \"file:{}\"",
+                        sdk_root.join("client").display()
+                    )),
+                    "embedded simple-live should pin local TypeScript SDK\n{package_json}"
+                );
+            }
         });
     }
 

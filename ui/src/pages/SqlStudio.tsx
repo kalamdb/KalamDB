@@ -324,6 +324,7 @@ export default function SqlStudio() {
   const [liveBatchByTab, setLiveBatchByTab] = useState<Record<string, LiveBatchState>>({});
   const [selectedEditorSql, setSelectedEditorSql] = useState("");
   const [showSubscriptionOptions, setShowSubscriptionOptions] = useState(false);
+  const editorSqlRef = useRef("");
   const liveUnsubscribeRef = useRef<Record<string, Unsubscribe>>({});
   const liveRequestNextBatchRef = useRef<Record<string, () => Promise<void>>>({});
   const liveGenRef = useRef<Record<string, number>>({});
@@ -364,6 +365,7 @@ export default function SqlStudio() {
   useEffect(() => {
     setSelectedEditorSql("");
     setShowSubscriptionOptions(false);
+    editorSqlRef.current = activeTab?.sql ?? "";
   }, [activeTab?.id]);
 
   const applySyncedWorkspace = useCallback((workspace: SqlStudioSyncedWorkspaceState) => {
@@ -1209,7 +1211,8 @@ export default function SqlStudio() {
     const resolvedMode: ExecuteMode = mode === "auto"
       ? (hasSelectedSql ? "selected" : "all")
       : mode;
-    const sqlToRun = resolvedMode === "selected" ? selectedEditorSql : activeTab.sql;
+    const editorSql = editorSqlRef.current.trim() ? editorSqlRef.current : activeTab.sql;
+    const sqlToRun = resolvedMode === "selected" ? selectedEditorSql : editorSql;
     if (!sqlToRun.trim()) {
       return;
     }
@@ -1564,7 +1567,10 @@ export default function SqlStudio() {
                     schema={schema}
                     procedures={procedures}
                     sql={activeTab.sql}
-                    onSqlChange={(value) => updateActiveTab({ sql: value, isDirty: true })}
+                    onSqlChange={(value) => {
+                      editorSqlRef.current = value;
+                      updateActiveTab({ sql: value, isDirty: true });
+                    }}
                     onRun={(runSql) => runActiveQuery(runSql)}
                     onSelectedSqlChange={setSelectedEditorSql}
                   />

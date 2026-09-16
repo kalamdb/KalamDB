@@ -4,7 +4,9 @@
 
 ## Why It Matters
 
-`collect_into()` (stabilized in Rust 1.83) allows collecting iterator results into an existing collection, reusing its allocation. This avoids the allocation that `collect()` would make for a new collection.
+`collect_into()` allows collecting iterator results into an existing collection, reusing its allocation. This avoids the allocation that `collect()` would make for a new collection.
+
+> **Note:** `collect_into` is currently **nightly-only** (requires `#![feature(iter_collect_into)]`, tracking issue [#94780](https://github.com/rust-lang/rust/issues/94780)). On stable Rust, use `extend()` instead — see the Stable Alternative section below.
 
 ## Bad
 
@@ -32,11 +34,32 @@ fn filter_loop(data: &[Vec<i32>]) {
 }
 ```
 
-## Good
+## Good (Stable: extend)
 
 ```rust
-// Reuse buffer with collect_into
+// Stable approach: reuse buffer with extend
 fn filter_loop(data: &[Vec<i32>]) {
+    let mut buffer = Vec::new();
+    
+    for batch in data {
+        buffer.clear();  // Keep allocation
+        buffer.extend(
+            batch.iter()
+                .filter(|&&x| x > 0)
+                .copied()
+        );
+        process(&buffer);
+    }
+}
+```
+
+## Nightly: collect_into
+
+```rust
+#![feature(iter_collect_into)]
+
+// Reuse buffer with collect_into (nightly only)
+fn filter_loop_nightly(data: &[Vec<i32>]) {
     let mut buffer = Vec::new();
     
     for batch in data {
@@ -49,25 +72,11 @@ fn filter_loop(data: &[Vec<i32>]) {
     }
 }
 
-// Also works with extend pattern
-fn filter_loop_extend(data: &[Vec<i32>]) {
-    let mut buffer = Vec::new();
-    
-    for batch in data {
-        buffer.clear();
-        buffer.extend(
-            batch.iter()
-                .filter(|&&x| x > 0)
-                .copied()
-        );
-        process(&buffer);
-    }
-}
 ```
 
-## Pre-1.83 Alternative: extend
+## Stable Alternative: extend
 
-Before `collect_into()` was stabilized, use `extend()`:
+On stable Rust, `extend()` is equivalent and idiomatic:
 
 ```rust
 fn reuse_buffer(data: &[Vec<i32>]) {

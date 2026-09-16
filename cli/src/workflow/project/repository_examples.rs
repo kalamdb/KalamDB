@@ -14,7 +14,10 @@ use crate::{
 
 pub const EXAMPLES_ARCHIVE_URL_ENV: &str = "KALAM_EXAMPLES_ARCHIVE_URL";
 pub const EXAMPLES_REF_ENV: &str = "KALAM_EXAMPLES_REF";
+pub const EXAMPLES_DIR_ENV: &str = "KALAM_EXAMPLES_DIR";
+pub const WORKSPACE_ENV: &str = "KALAM_WORKSPACE";
 const DEFAULT_EXAMPLES_REF: &str = "main";
+const TYPESCRIPT_SDK_PACKAGES_DIR: &str = "link/sdks/typescript";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepositoryExample {
@@ -73,6 +76,10 @@ pub async fn download_repository_example(
         fs::create_dir_all(destination_root),
     )?;
 
+    if let Some(source) = local_example_source(example) {
+        return copy_example_from_dir(destination_root, example, &source);
+    }
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .user_agent(format!("kalam-cli/{}", env!("CARGO_PKG_VERSION")))
@@ -122,7 +129,7 @@ pub(crate) fn copy_example_from_zip_bytes(
         let Some(project_path) = example_project_path(&enclosed_name, example.source_path) else {
             continue;
         };
-        if project_path.as_os_str().is_empty() {
+        if project_path.as_os_str().is_empty() || should_skip_example_path(&project_path) {
             continue;
         }
 
@@ -173,7 +180,7 @@ pub(crate) fn copy_example_from_zip_bytes(
         )));
     }
 
-    rewrite_published_sdk_dependencies(destination_root, crate::CLI_VERSION)?;
+    rewrite_sdk_dependencies(destination_root)?;
     ensure_env_file(destination_root)?;
     Ok(())
 }
@@ -186,7 +193,34 @@ const LOCKFILE_NAMES: &[&str] = &[
     "bun.lockb",
 ];
 
-fn rewrite_published_sdk_dependencies(root: &Path, version: &str) -> Result<()> {
+const SKIP_EXAMPLE_DIR_NAMES: &[&str] = &[
+    "node_modules",
+    "dist",
+    "test-results",
+    "playwright-report",
+    "coverage",
+    ".git",
+    ".DS_Store",
+];
+
+/// Rewrite `@kalamdb/*` package.json specs so `kalam init` can install them.
+///
+/// A CLI built from this workspace points at `link/sdks/typescript/*` via `file:`
+/// so unpublished versions such as `0.7.0-dev.0` still install. A released CLI
+/// rewrites leftover `file:` specs to the CLI version published on npm.
+pub fn rewrite_sdk_dependencies(root: &Path) -> Result<()> {
+    rewrite_sdk_dependencies_with(
+        root,
+        crate::CLI_VERSION,
+        discover_typescript_sdk_root().as_deref(),
+    )
+}
+
+pub(crate) fn rewrite_sdk_dependencies_with(
+    root: &Path,
+    published_version: &str,
+    local_sdk_root: Option<&Path>,
+) -> Result<()> {
     let package_json_path = root.join("package.json");
     if !package_json_path.is_file() {
         return Ok(());
@@ -200,6 +234,7 @@ fn rewrite_published_sdk_dependencies(root: &Path, version: &str) -> Result<()> 
     })?;
 
     let mut changed = false;
+    let mut rewritten_file_spec = false;
     for key in [
         "dependencies",
         "devDependencies",
@@ -216,8 +251,10 @@ fn rewrite_published_sdk_dependencies(root: &Path, version: &str) -> Result<()> 
             let Some(current) = spec.as_str() else {
                 continue;
             };
-            if current.starts_with("file:") {
-                *spec = serde_json::Value::String(version.to_string());
+            let next = sdk_dependency_spec(name, current, published_version, local_sdk_root);
+            if next != current {
+                rewritten_file_spec |= current.starts_with("file:") || next.starts_with("file:");
+                *spec = serde_json::Value::String(next);
                 changed = true;
             }
         }
@@ -234,15 +271,208 @@ fn rewrite_published_sdk_dependencies(root: &Path, version: &str) -> Result<()> 
         CLIError::FileError(format!("failed to write '{}': {error}", package_json_path.display()))
     })?;
 
-    for lockfile in LOCKFILE_NAMES {
-        let path = root.join(lockfile);
-        if path.is_file() {
-            fs::remove_file(&path).map_err(|error| {
-                CLIError::FileError(format!("failed to remove '{}': {error}", path.display()))
-            })?;
+    if rewritten_file_spec {
+        for lockfile in LOCKFILE_NAMES {
+            let path = root.join(lockfile);
+            if path.is_file() {
+                fs::remove_file(&path).map_err(|error| {
+                    CLIError::FileError(format!("failed to remove '{}': {error}", path.display()))
+                })?;
+            }
         }
     }
     Ok(())
+}
+
+fn sdk_dependency_spec(
+    package_name: &str,
+    current: &str,
+    published_version: &str,
+    local_sdk_root: Option<&Path>,
+) -> String {
+    let short_name = package_name.strip_prefix("@kalamdb/").unwrap_or(package_name);
+    if let Some(local_root) = local_sdk_root {
+        let package_dir = local_root.join(short_name);
+        if package_dir.join("package.json").is_file() {
+            return format!("file:{}", package_dir.display());
+        }
+    }
+    if current.starts_with("file:") {
+        published_version.to_string()
+    } else {
+        current.to_string()
+    }
+}
+
+pub fn discover_kalam_workspace() -> Option<PathBuf> {
+    if let Some(explicit) = env_path(WORKSPACE_ENV) {
+        return Some(explicit);
+    }
+
+    let mut starts = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        starts.push(exe);
+    }
+    if let Ok(cwd) = env::current_dir() {
+        starts.push(cwd);
+    }
+
+    for start in starts {
+        let mut dir = start;
+        loop {
+            if is_kalam_workspace(&dir) {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+    None
+}
+
+pub fn discover_typescript_sdk_root() -> Option<PathBuf> {
+    let root = discover_kalam_workspace()?.join(TYPESCRIPT_SDK_PACKAGES_DIR);
+    root.join("client").join("package.json").is_file().then_some(root)
+}
+
+fn local_examples_dir() -> Option<PathBuf> {
+    if let Some(explicit) = env_path(EXAMPLES_DIR_ENV) {
+        return explicit.is_dir().then_some(explicit);
+    }
+    let examples = discover_kalam_workspace()?.join("examples");
+    examples.is_dir().then_some(examples)
+}
+
+fn local_example_source(example: &RepositoryExample) -> Option<PathBuf> {
+    let source = local_examples_dir()?.join(example.source_path);
+    source.is_dir().then_some(source)
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .map(|value| PathBuf::from(value.to_string_lossy().trim().to_string()))
+        .filter(|value| !value.as_os_str().is_empty())
+}
+
+fn is_kalam_workspace(dir: &Path) -> bool {
+    dir.join("cli").join("Cargo.toml").is_file()
+        && dir.join("examples").is_dir()
+        && dir
+            .join(TYPESCRIPT_SDK_PACKAGES_DIR)
+            .join("client")
+            .join("package.json")
+            .is_file()
+}
+
+pub(crate) fn copy_example_from_dir(
+    destination_root: &Path,
+    example: &RepositoryExample,
+    source_root: &Path,
+) -> Result<()> {
+    let mut copied_files = 0usize;
+    copy_example_tree(destination_root, source_root, Path::new(""), &mut copied_files)?;
+    if copied_files == 0 {
+        return Err(CLIError::ConfigurationError(format!(
+            "local examples directory did not contain examples/{}",
+            example.source_path
+        )));
+    }
+    rewrite_sdk_dependencies(destination_root)?;
+    ensure_env_file(destination_root)?;
+    Ok(())
+}
+
+fn copy_example_tree(
+    destination_root: &Path,
+    source_root: &Path,
+    relative: &Path,
+    copied_files: &mut usize,
+) -> Result<()> {
+    let source = source_root.join(relative);
+    let entries = fs::read_dir(&source).map_err(|error| {
+        CLIError::FileError(format!(
+            "failed to read example directory '{}': {error}",
+            source.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to read example directory '{}': {error}",
+                source.display()
+            ))
+        })?;
+        let name = entry.file_name();
+        let child_relative = relative.join(&name);
+        if should_skip_example_path(&child_relative) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to read example entry '{}': {error}",
+                entry.path().display()
+            ))
+        })?;
+        let destination = destination_root.join(&child_relative);
+        if file_type.is_dir() {
+            scaffold::io_with_guidance(
+                "create example directory",
+                &destination,
+                fs::create_dir_all(&destination),
+            )?;
+            copy_example_tree(destination_root, source_root, &child_relative, copied_files)?;
+            continue;
+        }
+        if destination.exists() {
+            return Err(CLIError::ConfigurationError(format!(
+                "cannot write example file '{}' because it already exists",
+                display_project_path(destination_root, &destination)
+            )));
+        }
+        if let Some(parent) = destination.parent() {
+            scaffold::io_with_guidance(
+                "create example parent directory",
+                parent,
+                fs::create_dir_all(parent),
+            )?;
+        }
+        fs::copy(entry.path(), &destination).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to copy example file '{}' to '{}': {error}",
+                entry.path().display(),
+                destination.display()
+            ))
+        })?;
+        *copied_files += 1;
+    }
+    Ok(())
+}
+
+fn should_skip_example_path(relative: &Path) -> bool {
+    let posix = relative.to_string_lossy().replace('\\', "/");
+    if posix.ends_with(".tsbuildinfo") || posix.ends_with(".env") {
+        return true;
+    }
+    if posix == "kalam/.schema-baseline.sql"
+        || posix.starts_with("kalam/cli/")
+        || posix == "kalam/cli"
+        || posix.starts_with("kalam/server/")
+        || posix == "kalam/server"
+        || posix.starts_with("functions/.kalam/")
+        || posix == "functions/.kalam"
+        || posix == "data"
+        || posix.starts_with("data/")
+    {
+        return true;
+    }
+    relative.components().any(|component| match component {
+        Component::Normal(name) => {
+            let name = name.to_string_lossy();
+            SKIP_EXAMPLE_DIR_NAMES.iter().any(|skip| *skip == name)
+        },
+        _ => false,
+    })
 }
 
 fn ensure_env_file(root: &Path) -> Result<()> {
@@ -363,9 +593,98 @@ mod tests {
 
         let package_json =
             fs::read_to_string(temp.path().join("package.json")).expect("read package.json");
-        assert!(package_json.contains(&format!("\"@kalamdb/client\": \"{}\"", crate::CLI_VERSION)));
-        assert!(!package_json.contains("file:"));
+        if let Some(sdk_root) = discover_typescript_sdk_root() {
+            let client = sdk_root.join("client");
+            assert!(
+                package_json
+                    .contains(&format!("\"@kalamdb/client\": \"file:{}\"", client.display())),
+                "expected local SDK rewrite\n{package_json}"
+            );
+        } else {
+            assert!(
+                package_json.contains(&format!("\"@kalamdb/client\": \"{}\"", crate::CLI_VERSION))
+            );
+            assert!(!package_json.contains("file:"));
+        }
         assert!(!temp.path().join("package-lock.json").exists());
         assert!(temp.path().join(".env").is_file());
+    }
+
+    #[test]
+    fn rewrite_sdk_dependencies_pins_file_specs_without_local_sdk() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "dependencies": {
+    "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "react": "^19.0.0"
+  }
+}
+"#,
+        )
+        .expect("write package.json");
+
+        rewrite_sdk_dependencies_with(temp.path(), "0.7.0-dev.0", None).expect("rewrite");
+
+        let package_json = fs::read_to_string(temp.path().join("package.json")).expect("read");
+        assert!(package_json.contains("\"@kalamdb/client\": \"0.7.0-dev.0\""));
+        assert!(!package_json.contains("file:"));
+        assert!(package_json.contains("\"react\": \"^19.0.0\""));
+    }
+
+    #[test]
+    fn rewrite_sdk_dependencies_rewrites_published_specs_to_local_file_sdk() {
+        let temp = TempDir::new().expect("tempdir");
+        let sdk_root = temp.path().join("sdk");
+        fs::create_dir_all(sdk_root.join("client")).expect("sdk client dir");
+        fs::write(sdk_root.join("client").join("package.json"), "{}\n").expect("sdk package.json");
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{
+  "dependencies": {
+    "@kalamdb/client": "0.7.0-dev.0"
+  }
+}
+"#,
+        )
+        .expect("write package.json");
+
+        rewrite_sdk_dependencies_with(temp.path(), "9.9.9", Some(&sdk_root)).expect("rewrite");
+
+        let package_json = fs::read_to_string(temp.path().join("package.json")).expect("read");
+        let expected =
+            format!("\"@kalamdb/client\": \"file:{}\"", sdk_root.join("client").display());
+        assert!(package_json.contains(&expected), "{package_json}");
+        assert!(!package_json.contains("0.7.0-dev.0"));
+        assert!(!package_json.contains("9.9.9"));
+    }
+
+    #[test]
+    fn copy_example_from_dir_skips_build_artifacts() {
+        let temp = TempDir::new().expect("tempdir");
+        let source = temp.path().join("source");
+        fs::create_dir_all(source.join("node_modules/left-pad")).expect("node_modules");
+        fs::create_dir_all(source.join("kalam/server")).expect("server dir");
+        fs::create_dir_all(source.join("src")).expect("src");
+        fs::write(source.join("kalam.toml"), "[project]\nname = \"demo\"\n").expect("kalam.toml");
+        fs::write(source.join("src/index.ts"), "export {}\n").expect("source file");
+        fs::write(source.join("kalam/server/server.toml"), "port = 2900\n").expect("server.toml");
+        fs::write(source.join("node_modules/left-pad/index.js"), "module.exports = {}\n")
+            .expect("nested node_modules file");
+
+        let destination = temp.path().join("destination");
+        fs::create_dir_all(&destination).expect("destination");
+        copy_example_from_dir(
+            &destination,
+            find("chat-with-ai").expect("chat-with-ai example"),
+            &source,
+        )
+        .expect("copy local example");
+
+        assert!(destination.join("kalam.toml").is_file());
+        assert!(destination.join("src/index.ts").is_file());
+        assert!(!destination.join("node_modules").exists());
+        assert!(!destination.join("kalam/server/server.toml").exists());
     }
 }

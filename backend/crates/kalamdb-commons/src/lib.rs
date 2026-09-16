@@ -142,6 +142,7 @@ pub use models::{
     RoutineParameterId,
     RoutineSecurityMode,
     ScalarPredicate,
+    ScheduleId,
     SchemaField,
     StorageId,
     TableId,

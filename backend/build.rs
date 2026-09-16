@@ -16,6 +16,7 @@ fn main() {
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
     build_isoc23_glibc_shim_if_needed(&repo_root);
+    build_early_memory_policy_if_needed(&repo_root, &package_name);
     emit_windows_msvc_duplicate_symbol_link_flags(&package_name);
 
     // Build UI for release builds FIRST (before rust-embed macro runs).
@@ -125,6 +126,25 @@ fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {
     println!("cargo:rerun-if-changed={}", shim_path.display());
 
     cc::Build::new().file(&shim_path).compile("kalamdb_isoc23_shim");
+}
+
+fn build_early_memory_policy_if_needed(repo_root: &Path, package_name: &str) {
+    if package_name != "kalamdb-server" {
+        return;
+    }
+
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "linux" && target_os != "android" {
+        return;
+    }
+
+    let source = repo_root.join("backend").join("build").join("early_memory.c");
+    if !source.exists() {
+        panic!("Expected early memory policy file at {} but it was not found", source.display());
+    }
+
+    println!("cargo:rerun-if-changed={}", source.display());
+    cc::Build::new().file(&source).compile("kalamdb_early_memory");
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {

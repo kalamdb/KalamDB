@@ -99,20 +99,24 @@ impl FunctionService {
             .expect("request id is present");
         request_state.sync(&coordinator);
         let owned_tx = !request_state.is_active();
-        if owned_tx {
-            request_state.begin(&coordinator).map_err(map_request_transaction_error)?;
-        }
+        let mut began_owned_tx = false;
 
         let actor = exec_ctx.user_id().clone();
-        let origin_kind = match &origin {
-            FunctionCallOrigin::Sql => "sql",
-            FunctionCallOrigin::Http { .. } => "http",
-            FunctionCallOrigin::Topic { .. } => "topic",
-        };
+        let origin_kind = origin.kind();
         kalamdb_observability::begin_function_run();
         let started = std::time::Instant::now();
-        let invoke_result =
-            invoke_root(Arc::clone(&app), exec_ctx, origin, routine_id.clone(), args).await;
+        let invoke_result = invoke_root(
+            Arc::clone(&app),
+            exec_ctx,
+            origin,
+            routine_id.clone(),
+            args,
+            &mut request_state,
+            &coordinator,
+            owned_tx,
+            &mut began_owned_tx,
+        )
+        .await;
         if let Err(error) = &invoke_result {
             if error.function_error_code()
                 == Some(kalamdb_functions::FunctionErrorCode::ProcedureTimeout)
@@ -145,7 +149,7 @@ impl FunctionService {
                         .unwrap_or_else(|| "INTERNAL_RUNTIME_ERROR".into()),
                 ),
                 Some(crate::procedure_log_logger::sanitize_procedure_log_message(
-                    &error.to_string(),
+                    error.to_string(),
                 )),
             ),
         };
@@ -156,9 +160,9 @@ impl FunctionService {
                 procedure_id: routine_id.to_string(),
                 module_id,
                 revision_id,
-                actor: actor.to_string(),
-                origin: origin_kind.to_string(),
-                outcome: outcome.to_string(),
+                actor: actor.to_string().into(),
+                origin: origin_kind.into(),
+                outcome: outcome.into(),
                 channel: "invocation".into(),
                 level: if outcome == "error" {
                     "error".into()
@@ -181,7 +185,7 @@ impl FunctionService {
 
         match invoke_result {
             Ok(result) => {
-                if owned_tx {
+                if began_owned_tx {
                     request_state
                         .commit(&coordinator)
                         .await
@@ -190,7 +194,7 @@ impl FunctionService {
                 Ok(result)
             },
             Err(error) => {
-                if owned_tx {
+                if began_owned_tx {
                     let _ = request_state.rollback(&coordinator);
                 }
                 Err(error)
@@ -205,6 +209,10 @@ async fn invoke_root(
     origin: FunctionCallOrigin,
     routine_id: RoutineId,
     args: Vec<RoutineValue>,
+    request_state: &mut RequestTransactionState<'_>,
+    coordinator: &AppContextRequestTransactionCoordinator<'_>,
+    owned_tx: bool,
+    began_owned_tx: &mut bool,
 ) -> Result<FunctionCallResult, KalamDbError> {
     if app.function_runtime().active_set().generation == 0 {
         rebuild_active_function_set(&app).await?;
@@ -230,11 +238,7 @@ async fn invoke_root(
         revision_id,
         actor: exec_ctx.user_id().to_string(),
         principal: exec_ctx.user_id().to_string(),
-        origin: match &origin {
-            FunctionCallOrigin::Sql => "sql".into(),
-            FunctionCallOrigin::Http { .. } => "http".into(),
-            FunctionCallOrigin::Topic { .. } => "topic".into(),
-        },
+        origin: origin.kind().into(),
         started_at: now_ms(),
         depth: 0,
     });
@@ -266,16 +270,35 @@ async fn invoke_root(
         },
         sql_gate: Arc::new(tokio::sync::Mutex::new(())),
     };
-    let value = invoke_on_host(&host, routine_id, &args).await?;
+    let value = {
+        let (invocation, child) = prepare_call(&host, routine_id.clone(), &args)?;
+        let engine = host.app.function_runtime().engine().map_err(map_functions)?;
+        let admission = engine.admit(&invocation).await.map_err(map_functions)?;
+        if owned_tx {
+            request_state.begin(coordinator).map_err(map_request_transaction_error)?;
+            *began_owned_tx = true;
+        }
+        let value = engine
+            .invoke_admitted(invocation, child, admission)
+            .await
+            .map_err(map_functions)?;
+        let stores = host.app.system_tables().catalog_stores();
+        if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
+        })? {
+            bind::validate_call_return(&stores, &routine, &value)?;
+        }
+        value
+    };
 
     let (http_status, http_headers) = match origin {
         FunctionCallOrigin::Http { response, .. } => {
             let overrides = response.lock().clone();
             (overrides.status, overrides.headers)
         },
-        FunctionCallOrigin::Sql | FunctionCallOrigin::Topic { .. } => {
-            (None, std::collections::HashMap::new())
-        },
+        FunctionCallOrigin::Sql
+        | FunctionCallOrigin::Topic { .. }
+        | FunctionCallOrigin::Schedule { .. } => (None, std::collections::HashMap::new()),
     };
     Ok(FunctionCallResult {
         value,
@@ -479,7 +502,26 @@ pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDb
         &module_exports,
         rows,
     );
+    let generation = set.generation;
+    let procedure_count = set.procedures.len();
+    let (module_id, revision_id, log_procedure_id) = match set.module_revision.as_ref() {
+        Some(revision) => {
+            let module = revision.module_id.as_str().to_string();
+            let revision_id = revision.revision_id.as_str().to_string();
+            (Some(module.clone()), Some(revision_id), module)
+        },
+        None => (None, None, "inline".to_string()),
+    };
     app.function_runtime().publish_active_set(set);
+    super::lifecycle::record_deployment(
+        app.procedure_log_logger().as_ref(),
+        app.node_id().as_ref().to_string(),
+        &log_procedure_id,
+        module_id,
+        revision_id,
+        generation,
+        procedure_count,
+    );
     Ok(())
 }
 

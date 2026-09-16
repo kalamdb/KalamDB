@@ -126,16 +126,23 @@ std::thread::spawn(|| -> ! {
 });
 ```
 
-## Current Limitations (Nightly)
+## Stability Notes
+
+`fn f() -> !` (never type as a return type) has been **stable since Rust 1.41** — no feature gate needed.
+
+Using `!` as an *arbitrary type argument* (e.g. `Result<(), !>`) still requires the nightly feature gate:
 
 ```rust
-// Full ! type is nightly
+// Nightly only — using ! as a type argument
 #![feature(never_type)]
 
-// Can use ! as type parameter
 type NeverResult = Result<(), !>;  // Can never be Err
+```
 
-// On stable, use std::convert::Infallible
+On stable Rust, use `std::convert::Infallible` as the conventional substitute:
+
+```rust
+// Stable: Infallible is the standard stand-in for !
 type StableNeverResult = Result<(), std::convert::Infallible>;
 ```
 

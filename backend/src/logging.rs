@@ -337,20 +337,6 @@ pub fn init_logging(
     Ok(())
 }
 
-#[allow(dead_code)]
-/// Initialize simple logging for development (console only)
-pub fn init_simple_logging() -> anyhow::Result<()> {
-    tracing_log::LogTracer::init().ok();
-
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(true)
-        .with_span_events(FmtSpan::CLOSE)
-        .init();
-
-    Ok(())
-}
-
 /// Flush and shutdown OTLP tracer provider, if installed.
 pub fn shutdown_telemetry() {
     #[cfg(feature = "otel")]

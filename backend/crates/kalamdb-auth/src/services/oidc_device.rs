@@ -252,7 +252,10 @@ async fn exchange_provider_device_token(
 }
 
 fn map_device_token_error(
-    error: RequestTokenError<HttpClientError<openidconnect::reqwest::Error>, DeviceCodeErrorResponse>,
+    error: RequestTokenError<
+        HttpClientError<openidconnect::reqwest::Error>,
+        DeviceCodeErrorResponse,
+    >,
 ) -> ProviderDevicePollResult {
     match error {
         RequestTokenError::ServerResponse(response) => match response.error() {

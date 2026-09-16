@@ -57,7 +57,7 @@ mod tests {
         let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
         let source = generate_client_source(&snapshot, &hash, &names).unwrap();
         assert!(source.contains(&format!("contract_hash: {hash}")));
-        assert!(source.contains("export * from './schema'"));
+        assert!(source.contains("export * from './schema.js'"));
         assert!(schema.contains("export type ChatAddress"));
         assert!(schema.contains("address: ChatAddress | null"));
         assert!(schema.contains("nickname: string | null"));
@@ -77,6 +77,112 @@ mod tests {
         assert!(source.contains("response.status === \"error\""));
         assert!(source.contains("throw new Error(kalamCallErrorMessage(response.error))"));
         assert!(source.contains("Array.isArray(first) ? first[0] : first"));
+    }
+
+    #[test]
+    fn client_omits_call_helpers_without_procedures() {
+        let snapshot = compile_contract_sql(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL);",
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_client_source(&snapshot, &hash, &names).unwrap();
+        assert!(
+            source.contains("export function createKalam(_client?: KalamQueryClient)"),
+            "{source}"
+        );
+        assert!(!source.contains("kalamCallErrorMessage"), "{source}");
+        assert!(!source.contains("kalamCallResult"), "{source}");
+    }
+
+    #[test]
+    fn schema_emits_file_columns_and_non_id_primary_keys() {
+        let snapshot = compile_contract_sql(
+            r#"
+CREATE SCHEMA okf_sync;
+CREATE USER TABLE okf_sync.context_files (
+  path TEXT PRIMARY KEY,
+  file_ref FILE NOT NULL,
+  created_at TIMESTAMP
+);
+CREATE USER TABLE okf_sync.notes (
+  id TEXT PRIMARY KEY,
+  body TEXT NOT NULL
+);
+"#,
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
+        assert!(
+            schema.contains("import { kTable, file, type KalamFileUpload } from '@kalamdb/orm';"),
+            "{schema}"
+        );
+        assert!(schema.contains("import type { FileRef } from '@kalamdb/client';"), "{schema}");
+        assert!(
+            schema.contains(
+                "export type KalamFileColumn = FileRef | File | KalamFileUpload | Blob | null;"
+            ),
+            "{schema}"
+        );
+        assert!(schema.contains("file_ref: KalamFileColumn;"), "{schema}");
+        assert!(
+            schema.contains("import { text, timestamp } from 'drizzle-orm/pg-core';"),
+            "{schema}"
+        );
+        assert!(!schema.contains("boolean("), "{schema}");
+        assert!(!schema.contains("integer("), "{schema}");
+        assert!(!schema.contains("jsonb("), "{schema}");
+        assert!(schema.contains("path: text(\"path\").primaryKey()"), "{schema}");
+        assert!(schema.contains("file_ref: file(\"file_ref\").notNull()"), "{schema}");
+        assert!(!schema.contains("jsonb(\"file_ref\")"), "{schema}");
+        assert!(schema.contains("export const okfSyncContextFiles"), "{schema}");
+        assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");
+    }
+
+    #[test]
+    fn schema_marks_defaulted_bigint_primary_keys_optional_on_insert() {
+        let snapshot = compile_contract_sql(
+            r#"
+CREATE SCHEMA react_ai_chat;
+CREATE USER TABLE react_ai_chat.messages (
+  id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+  body TEXT NOT NULL
+);
+"#,
+            "public",
+        )
+        .unwrap();
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
+        assert!(schema.contains("import { sql } from 'drizzle-orm';"), "{schema}");
+        assert!(
+            schema.contains("id: bigint(\"id\", { mode: \"bigint\" }).default(sql``).primaryKey()"),
+            "{schema}"
+        );
     }
 
     #[test]

@@ -1,21 +1,59 @@
 //! Durable topic trigger delivery.
 
-use std::sync::Arc;
+use std::{
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
+};
 
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    models::{ConsumerGroupId, TriggerAttemptId, UserId},
+    models::{ConsumerGroupId, TriggerAttemptId, TriggerId, UserId},
     Role,
 };
 use kalamdb_functions::{FunctionCallOrigin, RoutineValue};
-use kalamdb_system::CatalogTriggerAttempt;
+use kalamdb_system::{CatalogTrigger, CatalogTriggerAttempt};
 use serde_json::Value;
+use tokio::{sync::Semaphore, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use super::executor::FunctionService;
 use crate::{app_context::AppContext, error::KalamDbError, sql::context::ExecutionContext};
 
 const LEASE_MS: i64 = 30_000;
+const TRIGGER_DISPATCH_CONCURRENCY: usize = 8;
+const TRIGGER_CACHE_TTL: Duration = Duration::from_secs(1);
+
+struct TriggerListCache {
+    generation: u64,
+    fetched_at: Instant,
+    triggers:   Vec<CatalogTrigger>,
+}
+
+fn cached_enabled_triggers(
+    app: &Arc<AppContext>,
+    cache: &mut Option<TriggerListCache>,
+) -> Result<Vec<CatalogTrigger>, KalamDbError> {
+    let generation = app.function_runtime().active_set().generation;
+    if let Some(row) = cache.as_ref() {
+        if row.generation == generation && row.fetched_at.elapsed() < TRIGGER_CACHE_TTL {
+            return Ok(row.triggers.clone());
+        }
+    }
+    let triggers = app
+        .system_tables()
+        .catalog_stores()
+        .list_triggers()
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .into_iter()
+        .filter(|trigger| trigger.enabled)
+        .collect::<Vec<_>>();
+    *cache = Some(TriggerListCache {
+        generation,
+        fetched_at: Instant::now(),
+        triggers: triggers.clone(),
+    });
+    Ok(triggers)
+}
 
 pub struct TriggerDispatcherRuntime {
     cancel: CancellationToken,
@@ -51,11 +89,12 @@ pub fn start_trigger_dispatcher(
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut cache = None;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = interval.tick() => {
-                    if let Err(error) = dispatch_once(&app).await {
+                    if let Err(error) = dispatch_once_with_cache(&app, &mut cache).await {
                         tracing::warn!("trigger dispatcher: {error}");
                     }
                 }
@@ -64,15 +103,29 @@ pub fn start_trigger_dispatcher(
     })
 }
 
-pub async fn dispatch_once(app: &Arc<AppContext>) -> Result<usize, KalamDbError> {
-    let triggers = app
-        .system_tables()
-        .catalog_stores()
-        .list_triggers()
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+async fn dispatch_once_with_cache(
+    app: &Arc<AppContext>,
+    cache: &mut Option<TriggerListCache>,
+) -> Result<usize, KalamDbError> {
+    let triggers = cached_enabled_triggers(app, cache)?;
+    if triggers.is_empty() {
+        return Ok(0);
+    }
+    let cap = TRIGGER_DISPATCH_CONCURRENCY.min(triggers.len()).max(1);
+    let gate = Arc::new(Semaphore::new(cap));
+    let mut set = JoinSet::new();
+    for trigger in triggers {
+        let app = Arc::clone(app);
+        let gate = Arc::clone(&gate);
+        set.spawn(async move {
+            let _permit = gate.acquire_owned().await.ok();
+            dispatch_trigger(&app, &trigger).await
+        });
+    }
     let mut delivered = 0;
-    for trigger in triggers.into_iter().filter(|trigger| trigger.enabled) {
-        delivered += dispatch_trigger(app, &trigger).await?;
+    while let Some(joined) = set.join_next().await {
+        delivered += joined
+            .map_err(|error| KalamDbError::ExecutionError(format!("trigger task: {error}")))??;
     }
     Ok(delivered)
 }
@@ -116,11 +169,23 @@ pub(crate) fn delivery_action(
     }
 }
 
-fn lease_owner() -> String {
-    hostname::get()
-        .ok()
-        .and_then(|name| name.into_string().ok())
-        .unwrap_or_else(|| "local".to_string())
+fn trigger_still_enabled(app: &AppContext, trigger_id: &TriggerId) -> Result<bool, KalamDbError> {
+    Ok(app
+        .system_tables()
+        .catalog_stores()
+        .get_trigger(trigger_id)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .is_some_and(|row| row.enabled))
+}
+
+fn lease_owner() -> &'static str {
+    static OWNER: OnceLock<String> = OnceLock::new();
+    OWNER.get_or_init(|| {
+        hostname::get()
+            .ok()
+            .and_then(|name| name.into_string().ok())
+            .unwrap_or_else(|| "local".to_string())
+    })
 }
 
 pub(crate) fn trigger_group_id(trigger_id: &str) -> ConsumerGroupId {
@@ -131,6 +196,9 @@ async fn dispatch_trigger(
     app: &Arc<AppContext>,
     trigger: &kalamdb_system::CatalogTrigger,
 ) -> Result<usize, KalamDbError> {
+    if !trigger_still_enabled(app, &trigger.trigger_id)? {
+        return Ok(0);
+    }
     let topic = app
         .system_tables()
         .topics()
@@ -153,6 +221,9 @@ async fn process_partition(
     trigger: &kalamdb_system::CatalogTrigger,
     partition_id: u32,
 ) -> Result<bool, KalamDbError> {
+    if !trigger_still_enabled(app, &trigger.trigger_id)? {
+        return Ok(false);
+    }
     let publisher = app.topic_publisher();
     let group_id = trigger_group_id(trigger.trigger_id.as_str());
     let next_offset = next_offset_for(app, trigger, partition_id, &group_id)?;
@@ -178,19 +249,14 @@ async fn process_partition(
     let event_id = format!("{}:{partition_id}:{}", trigger.topic_id.as_str(), message.offset);
     let stores = app.system_tables().catalog_stores();
     let previous = stores
-        .list_trigger_attempts()
+        .list_trigger_attempts_for_offset(&trigger.trigger_id, partition_id, message.offset)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
         .into_iter()
-        .filter(|attempt| {
-            attempt.trigger_id == trigger.trigger_id
-                && attempt.partition_id == partition_id as i32
-                && attempt.offset == message.offset as i64
-        })
         .max_by_key(|attempt| attempt.attempt);
 
     let now = chrono::Utc::now().timestamp_millis();
     let owner = lease_owner();
-    match delivery_action(previous.as_ref(), now, trigger.retry_backoff_ms, &owner) {
+    match delivery_action(previous.as_ref(), now, trigger.retry_backoff_ms, owner) {
         DeliveryAction::Skip => return Ok(false),
         // Same trigger_id+offset after DROP/CREATE TOPIC must not take this
         // path: DROP TRIGGER/TOPIC clears attempts so reincarnated offsets
@@ -211,7 +277,7 @@ async fn process_partition(
                 &event_id,
                 next_attempt,
                 previous.as_ref().map(|row| row.created_at).unwrap_or(now),
-                &owner,
+                owner,
             )
             .await
         },
@@ -229,6 +295,9 @@ async fn deliver_attempt(
     created_at: i64,
     owner: &str,
 ) -> Result<bool, KalamDbError> {
+    if !trigger_still_enabled(app, &trigger.trigger_id)? {
+        return Ok(false);
+    }
     let publisher = app.topic_publisher();
     let group_id = trigger_group_id(trigger.trigger_id.as_str());
     let stores = app.system_tables().catalog_stores();

@@ -35,11 +35,11 @@ pub use base::{
 pub use catalog::{
     ActivateFunctionOutcome, CatalogFunctionArtifact, CatalogFunctionModule,
     CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,
-    CatalogStores, CatalogTrigger, CatalogTriggerAttempt, CatalogType, CatalogTypeField,
-    FunctionArtifactsTableProvider, FunctionModulesTableProvider, FunctionRevisionsTableProvider,
-    RoutineGrantsTableProvider, RoutineParametersTableProvider, RoutinesTableProvider,
-    TriggerAttemptsTableProvider, TriggersTableProvider, TypeFieldsTableProvider,
-    TypesTableProvider,
+    CatalogSchedule, CatalogStores, CatalogTrigger, CatalogTriggerAttempt, CatalogType,
+    CatalogTypeField, FunctionArtifactsTableProvider, FunctionModulesTableProvider,
+    FunctionRevisionsTableProvider, RoutineGrantsTableProvider, RoutineParametersTableProvider,
+    RoutinesTableProvider, SchedulesTableProvider, TriggerAttemptsTableProvider,
+    TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider,
 };
 pub use job_nodes::JobNodesTableProvider;
 pub use jobs::JobsTableProvider;

@@ -217,12 +217,14 @@ mod tests {
                     default_env:     "dev".into(),
                     package_manager: None,
                     kalam_dir:       "kalam".into(),
+                    server_version:  None,
                 },
                 connection: HashMap::from([(
                     "dev".into(),
                     ConnectionEnv {
                         url:       "http://localhost:2900".into(),
                         namespace: kalamdb_commons::NamespaceId::new("demo"),
+                        purpose:   None,
                     },
                 )]),
                 schema:     SchemaSection {
@@ -252,6 +254,10 @@ mod tests {
             env_override:       None,
             namespace_override: None,
             url_override:       None,
+            global:             false,
+            host:               None,
+            port:               None,
+            instance:           None,
         };
         let environment = ResolvedEnvironment {
             name:             "dev".into(),

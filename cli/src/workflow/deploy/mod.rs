@@ -10,8 +10,9 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     workflow::{
-        db::migrate::apply_migrations_for_db_command,
-        migration::{list_migration_files, read_migration_file},
+        migration::{
+            apply::apply_migrations_for_db_command, list_migration_files, read_migration_file,
+        },
         project::config::{KalamProjectConfig, SchemaMode},
         schema::gen::{generate_schema_artifacts, GenerateOptions},
         WorkflowContext,
@@ -31,7 +32,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
     let output = ctx.output();
     let env = ctx.resolved_environment()?;
     output.status(format!("deploying environment '{}'", env.name));
-    validate_deploy_readiness(&ctx.project_root, &ctx.config, &env.name, &output)?;
+    validate_deploy_readiness(&ctx, &env.name, &output)?;
 
     if options.dry_run {
         output.status("dry-run: parse, schema generate, functions build, and plan only");
@@ -45,8 +46,8 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
         if ctx.project_root.join(&ctx.config.functions.path).join("package.json").is_file() {
             crate::workflow::functions::build_functions(&ctx).await?;
         }
+        print_deploy_plan(&ctx, &env, &output);
         output.status("dry-run complete (no migrate, upload, catalog write, or activation)");
-        output.detail(format!("would apply migrations and check {}", env.url));
         return Ok(());
     }
 
@@ -54,6 +55,7 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
         generate_schema_artifacts(&ctx, &GenerateOptions { languages: None }, &output)?;
     }
     crate::workflow::functions::build_functions(&ctx).await?;
+    print_deploy_plan(&ctx, &env, &output);
     apply_migrations_for_db_command(&ctx, &output).await?;
     crate::workflow::functions::activate_function_module(&ctx).await?;
     run_rollout(&ctx.project_root, &ctx.config, &env.name, &output)?;
@@ -63,16 +65,52 @@ pub async fn run_deploy(ctx: &WorkflowContext, options: &DeployOptions) -> Resul
 }
 
 pub fn validate_deploy_readiness(
-    project_root: &Path,
-    config: &KalamProjectConfig,
+    ctx: &WorkflowContext,
     env_name: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    if is_production_like(env_name) {
-        enforce_committed_migrations(project_root, config, output)?;
+    let purpose = ctx.resolved_target().map(|target| target.purpose).unwrap_or_else(|_| {
+        crate::workflow::project::config::EnvironmentPurpose::from_env_name(env_name)
+    });
+    let explicit_purpose =
+        ctx.config.connection.get(env_name).and_then(|connection| connection.purpose);
+    if explicit_purpose.is_none() && is_production_like(env_name) {
+        output.warn(format!(
+            "environment purpose for '{env_name}' was inferred from the name; set \
+             connection.{env_name}.purpose explicitly"
+        ));
+    }
+    if matches!(
+        purpose,
+        crate::workflow::project::config::EnvironmentPurpose::Staging
+            | crate::workflow::project::config::EnvironmentPurpose::Production
+    ) {
+        enforce_committed_migrations(&ctx.project_root, &ctx.config, output)?;
     }
 
     Ok(())
+}
+
+fn print_deploy_plan(
+    ctx: &WorkflowContext,
+    env: &crate::workflow::project::resolve::ResolvedEnvironment,
+    output: &WorkflowOutput,
+) {
+    let purpose = ctx
+        .resolved_target()
+        .map(|target| target.purpose.as_str().to_string())
+        .unwrap_or_else(|_| "unknown".into());
+    output.detail(format!("plan: environment '{}' ({}) at {}", env.name, purpose, env.url));
+    output.detail(format!("plan: namespace {}", env.namespace));
+    match list_migration_files(&ctx.config.migrations_dir(&ctx.project_root)) {
+        Ok(files) => output.detail(format!("plan: {} committed migration file(s)", files.len())),
+        Err(_) => output.detail("plan: migration history unavailable"),
+    }
+    let artifact = ctx.project_root.join("functions/.kalam/build/module.js");
+    if artifact.is_file() {
+        output.detail(format!("plan: procedure artifact {}", artifact.display()));
+    }
+    output.detail("plan: procedure activation does not roll back schema changes");
 }
 
 fn is_production_like(env_name: &str) -> bool {
@@ -133,7 +171,7 @@ fn has_unapplied_migration_covering_diff(
         }
     }
 
-    Ok(!files.is_empty())
+    Ok(false)
 }
 
 #[cfg(test)]

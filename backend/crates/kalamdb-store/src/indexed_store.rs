@@ -395,14 +395,6 @@ where
         }
     }
 
-    /// Finds the best index for a given filter.
-    ///
-    /// Returns `Some((index_idx, prefix))` if an index can satisfy the filter.
-    #[cfg(feature = "datafusion")]
-    fn find_index_for_filter(&self, filter: &Expr) -> Option<(usize, Vec<u8>)> {
-        self.find_index_for_filter_scoped(None, filter)
-    }
-
     #[cfg(feature = "datafusion")]
     fn find_index_for_filter_scoped(
         &self,

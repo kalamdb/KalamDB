@@ -11,7 +11,10 @@ use kalamdb_views::{
     active_procedure_runs::ActiveProcedureRunSnapshot, module_instances::ModuleInstanceSnapshot,
 };
 
-use crate::{catalog::active_set::ActiveFunctionSet, EngineConfig, FunctionEngine, FunctionsError};
+use crate::{
+    catalog::active_set::ActiveFunctionSet, EngineConfig, FunctionEngine,
+    FunctionLifecycleObserver, FunctionsError,
+};
 
 #[derive(Debug, Clone)]
 pub struct StagedTopicPublish {
@@ -26,6 +29,7 @@ pub struct FunctionRuntimeState {
     active:        Arc<arc_swap::ArcSwap<ActiveFunctionSet>>,
     staged:        dashmap::DashMap<TransactionId, Vec<StagedTopicPublish>>,
     active_runs:   dashmap::DashMap<String, ActiveProcedureRunSnapshot>,
+    lifecycle:     crate::engine::lifecycle::LifecycleSlot,
 }
 
 impl Default for FunctionRuntimeState {
@@ -42,6 +46,7 @@ impl FunctionRuntimeState {
             active: Arc::new(arc_swap::ArcSwap::from_pointee(ActiveFunctionSet::empty())),
             staged: dashmap::DashMap::new(),
             active_runs: dashmap::DashMap::new(),
+            lifecycle: Arc::new(arc_swap::ArcSwapOption::empty()),
         }
     }
 
@@ -55,6 +60,12 @@ impl FunctionRuntimeState {
                 FunctionEngine::new(self.engine_config.clone())
                     .map(Arc::new)
                     .map_err(|e| e.to_string())
+                    .map(|engine| {
+                        if let Some(handle) = self.lifecycle.load_full() {
+                            engine.set_lifecycle_observer(Arc::clone(&handle.0));
+                        }
+                        engine
+                    })
             })
             .clone()
             .map_err(FunctionsError::Invalid)
@@ -66,6 +77,26 @@ impl FunctionRuntimeState {
 
     pub fn publish_active_set(&self, set: ActiveFunctionSet) {
         self.active.store(Arc::new(set));
+    }
+
+    pub fn set_lifecycle_observer(&self, observer: Arc<dyn FunctionLifecycleObserver>) {
+        if self.lifecycle.load_full().is_some() {
+            return;
+        }
+        crate::engine::lifecycle::store_observer(&self.lifecycle, Arc::clone(&observer));
+        if let Some(engine) = self.try_engine() {
+            engine.set_lifecycle_observer(observer);
+        }
+    }
+
+    pub fn ensure_lifecycle_observer<F>(&self, make: F)
+    where
+        F: FnOnce() -> Arc<dyn FunctionLifecycleObserver>,
+    {
+        if self.lifecycle.load_full().is_some() {
+            return;
+        }
+        self.set_lifecycle_observer(make());
     }
 
     pub fn stage(&self, transaction_id: TransactionId, publish: StagedTopicPublish) {
@@ -115,7 +146,7 @@ impl FunctionRuntimeState {
                 worker:          i64::try_from(row.worker).unwrap_or(i64::MAX),
                 module_id:       row.module_id,
                 revision_id:     row.revision_id,
-                state:           row.state,
+                state:           row.state.to_string(),
                 reserved_bytes:  i64::try_from(row.reserved_bytes).unwrap_or(i64::MAX),
                 used_heap_bytes: i64::try_from(row.used_heap_bytes).unwrap_or(i64::MAX),
                 peak_heap_bytes: i64::try_from(row.peak_heap_bytes).unwrap_or(i64::MAX),

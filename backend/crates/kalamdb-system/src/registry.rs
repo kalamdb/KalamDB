@@ -17,15 +17,15 @@ use kalamdb_commons::{
 use kalamdb_session_datafusion::secure_provider;
 use kalamdb_store::StorageBackend;
 use once_cell::sync::OnceCell;
-use parking_lot::RwLock;
 
 use super::providers::{
     catalog::{
         CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-        CatalogRoutineGrant, CatalogRoutineParameter, CatalogStores, CatalogTrigger,
-        CatalogTriggerAttempt, CatalogType, CatalogTypeField, FunctionArtifactsTableProvider,
-        FunctionModulesTableProvider, FunctionRevisionsTableProvider, RoutineGrantsTableProvider,
-        RoutineParametersTableProvider, RoutinesTableProvider, TriggerAttemptsTableProvider,
+        CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogStores,
+        CatalogTrigger, CatalogTriggerAttempt, CatalogType, CatalogTypeField,
+        FunctionArtifactsTableProvider, FunctionModulesTableProvider,
+        FunctionRevisionsTableProvider, RoutineGrantsTableProvider, RoutineParametersTableProvider,
+        RoutinesTableProvider, SchedulesTableProvider, TriggerAttemptsTableProvider,
         TriggersTableProvider, TypeFieldsTableProvider, TypesTableProvider,
     },
     job_nodes::models::JobNode,
@@ -74,19 +74,11 @@ pub struct SystemTablesRegistry {
     function_modules:   Arc<FunctionModulesTableProvider>,
     function_revisions: Arc<FunctionRevisionsTableProvider>,
     function_artifacts: Arc<FunctionArtifactsTableProvider>,
+    schedules:          Arc<SchedulesTableProvider>,
     triggers:           Arc<TriggersTableProvider>,
     trigger_attempts:   Arc<TriggerAttemptsTableProvider>,
     // ===== Manifest cache table =====
     manifest:           Arc<ManifestTableProvider>,
-
-    // ===== Virtual tables =====
-    stats:          RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    settings:       RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    server_logs:    RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    cluster:        RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    cluster_groups: RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    tables:         RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
-    columns:        RwLock<Option<Arc<dyn TableProvider + Send + Sync>>>,
 
     // Expected in-code system table definitions used only for startup reconciliation.
     expected_system_definitions: OnceCell<Vec<Arc<TableDefinition>>>,
@@ -115,6 +107,7 @@ impl SystemTablesRegistry {
             SystemTable::FunctionModules,
             SystemTable::FunctionRevisions,
             SystemTable::FunctionArtifacts,
+            SystemTable::Schedules,
             SystemTable::Triggers,
             SystemTable::TriggerAttempts,
         ]
@@ -174,6 +167,9 @@ impl SystemTablesRegistry {
             function_artifacts: Arc::new(FunctionArtifactsTableProvider::from_stores(
                 catalog_stores.clone(),
             )),
+            schedules:          Arc::new(SchedulesTableProvider::from_stores(
+                catalog_stores.clone(),
+            )),
             triggers:           Arc::new(TriggersTableProvider::from_stores(
                 catalog_stores.clone(),
             )),
@@ -181,15 +177,6 @@ impl SystemTablesRegistry {
 
             // Manifest cache provider
             manifest: Arc::new(ManifestTableProvider::new(storage_backend)),
-
-            // Virtual tables
-            stats:          RwLock::new(None), // Will be wired by kalamdb-core
-            settings:       RwLock::new(None), // Will be wired by kalamdb-core
-            server_logs:    RwLock::new(None), // Will be wired by kalamdb-core (dev only)
-            cluster:        RwLock::new(None), // Initialized via set_cluster_provider()
-            cluster_groups: RwLock::new(None), // Initialized via set_cluster_groups_provider()
-            tables:         RwLock::new(None), // Initialized via set_tables_view_provider()
-            columns:        RwLock::new(None), // Initialized via set_columns_view_provider()
 
             expected_system_definitions: OnceCell::new(),
         }
@@ -219,6 +206,7 @@ impl SystemTablesRegistry {
                     (SystemTable::FunctionModules, CatalogFunctionModule::definition()),
                     (SystemTable::FunctionRevisions, CatalogFunctionRevision::definition()),
                     (SystemTable::FunctionArtifacts, CatalogFunctionArtifact::definition()),
+                    (SystemTable::Schedules, CatalogSchedule::definition()),
                     (SystemTable::Triggers, CatalogTrigger::definition()),
                     (SystemTable::TriggerAttempts, CatalogTriggerAttempt::definition()),
                 ];
@@ -315,44 +303,9 @@ impl SystemTablesRegistry {
         self.types.stores().clone()
     }
 
-    /// Get the system.stats provider (virtual table)
-    pub fn stats(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.stats.read().clone()
-    }
-
-    /// Get the system.settings provider (virtual table)
-    pub fn settings(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.settings.read().clone()
-    }
-
-    /// Get the system.server_logs provider (virtual table reading JSON logs)
-    pub fn server_logs(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.server_logs.read().clone()
-    }
-
     /// Get the system.manifest provider
     pub fn manifest(&self) -> Arc<ManifestTableProvider> {
         self.manifest.clone()
-    }
-
-    /// Get the system.cluster provider (virtual table showing cluster status)
-    pub fn cluster(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.cluster.read().clone()
-    }
-
-    /// Get the system.cluster_groups provider (virtual table showing per-group status)
-    pub fn cluster_groups(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.cluster_groups.read().clone()
-    }
-
-    /// Deprecated. Use `information_schema.tables` (`kdb_*` columns).
-    pub fn tables_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.tables.read().clone()
-    }
-
-    /// Deprecated. Use `information_schema.columns` (`kdb_*` columns).
-    pub fn columns_view(&self) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        self.columns.read().clone()
     }
 
     /// Return persisted system tables that have concrete providers, without
@@ -420,6 +373,7 @@ impl SystemTablesRegistry {
             SystemTable::FunctionArtifacts => {
                 Some(self.function_artifacts.clone() as Arc<dyn TableProvider>)
             },
+            SystemTable::Schedules => Some(self.schedules.clone() as Arc<dyn TableProvider>),
             SystemTable::Triggers => Some(self.triggers.clone() as Arc<dyn TableProvider>),
             SystemTable::TriggerAttempts => {
                 Some(self.trigger_attempts.clone() as Arc<dyn TableProvider>)
@@ -473,6 +427,7 @@ impl SystemTablesRegistry {
             SystemTable::FunctionModules,
             SystemTable::FunctionRevisions,
             SystemTable::FunctionArtifacts,
+            SystemTable::Schedules,
             SystemTable::Triggers,
             SystemTable::TriggerAttempts,
         ]

@@ -25,6 +25,42 @@ impl Default for RuntimeLimits {
 /// Host ABI version accepted by this runtime.
 pub const ABI_VERSION: u32 = 2;
 
+/// Split `max_heap_bytes` into managed heap, ArrayBuffer, and unwind slack.
+///
+/// ArrayBuffers are not counted in V8's managed-heap limit. The near-heap
+/// callback must raise the managed limit a little so TerminateExecution can
+/// unwind, but that bump stays inside this budget so one isolate cannot
+/// reserve 1.5× `max_heap_bytes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeapLimitParts {
+    pub managed:     usize,
+    pub buffers:     usize,
+    pub unwind:      usize,
+    pub max_managed: usize,
+}
+
+pub fn heap_limit_parts(max_heap_bytes: usize) -> HeapLimitParts {
+    let unwind = (max_heap_bytes / 8).max(1);
+    let rest = max_heap_bytes.saturating_sub(unwind).max(2);
+    let managed = (rest / 2).max(1);
+    let buffers = rest.saturating_sub(managed).max(1);
+    HeapLimitParts {
+        managed,
+        buffers,
+        unwind,
+        max_managed: managed.saturating_add(unwind),
+    }
+}
+
+pub fn raise_heap_limit(current: usize, max_managed: usize, unwind: usize) -> usize {
+    let target = current.saturating_add(unwind.max(1)).min(max_managed);
+    if target > current {
+        target
+    } else {
+        current.saturating_add(1)
+    }
+}
+
 pub fn check_host_bytes(kind: &str, size: usize, max: usize) -> Result<()> {
     if size > max {
         Err(FunctionsError::ResourceLimit(kind.into()))
@@ -57,5 +93,15 @@ mod tests {
         assert!(check_host_bytes("query rows", 20_000, 10_000).is_err());
         assert!(check_host_bytes("query bytes", 9 * 1024 * 1024, 8 * 1024 * 1024).is_err());
         assert!(check_host_bytes("sql text", 16, 1024).is_ok());
+    }
+
+    #[test]
+    fn heap_parts_fit_inside_max_heap() {
+        let parts = heap_limit_parts(64 * 1024 * 1024);
+        assert_eq!(parts.managed + parts.buffers + parts.unwind, 64 * 1024 * 1024);
+        assert_eq!(parts.max_managed, parts.managed + parts.unwind);
+        assert!(
+            raise_heap_limit(parts.managed, parts.max_managed, parts.unwind) <= parts.max_managed
+        );
     }
 }

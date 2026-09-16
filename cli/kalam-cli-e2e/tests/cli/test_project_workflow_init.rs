@@ -106,6 +106,10 @@ fn test_project_workflow_init_scaffolds_project() {
     assert!(project_dir.join("kalam/server/server.toml").is_file(), "server config missing");
     assert!(project_dir.join("kalam/cli/logs").is_dir(), "CLI logs dir missing");
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
+    assert!(
+        project_dir.join("scripts/orm-codegen.mjs").is_file(),
+        "typescript ORM codegen script missing"
+    );
     assert!(project_dir.join("lib/generated").is_dir(), "dart output dir missing");
     assert!(project_dir.join("pubspec.yaml").is_file(), "dart pubspec missing");
     assert!(project_dir.join("lib/main.dart").is_file(), "flutter main missing");
@@ -172,6 +176,10 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
     assert!(!kalam_toml.contains("[schema.targets.dart]"));
     assert!(!kalam_toml.contains("&quot;"));
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
+    assert!(
+        project_dir.join("scripts/orm-codegen.mjs").is_file(),
+        "typescript ORM codegen script missing"
+    );
     assert!(
         !project_dir.join("lib/generated").exists(),
         "dart output dir should not be scaffolded by default"

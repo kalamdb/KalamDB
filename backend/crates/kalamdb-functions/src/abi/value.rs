@@ -40,11 +40,6 @@ impl RoutineValue {
         }
     }
 
-    pub fn with_type_id(mut self, type_id: TypeId) -> Self {
-        self.type_id = Some(type_id);
-        self
-    }
-
     pub fn with_transfer(mut self, bytes: Bytes, contract_hash: impl Into<String>) -> Self {
         self.transfer = Some(bytes);
         self.contract_hash = Some(contract_hash.into());

@@ -1,9 +1,9 @@
 {{header}}
 // {{contract_hash_line}}
 
-export * from './schema';
+export * from './schema.js';
 {{#if has_type_imports}}
-import type { {{type_imports}} } from './schema';
+import type { {{type_imports}} } from './schema.js';
 {{/if}}
 
 export type KalamQueryClient = {
@@ -17,6 +17,7 @@ export type KalamQueryClient = {
   }>;
 };
 
+{{#if has_calls}}
 function kalamCallErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error) {
     const message = (error as { message?: unknown }).message;
@@ -43,7 +44,8 @@ function kalamCallResult(response: Awaited<ReturnType<KalamQueryClient["query"]>
   return Array.isArray(first) ? first[0] : first;
 }
 
-export function createKalam(client: KalamQueryClient) {
+{{/if}}
+export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_client?: KalamQueryClient{{/if}}) {
   return {
 {{#each namespaces}}
     {{object_ident}}: {

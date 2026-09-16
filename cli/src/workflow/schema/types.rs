@@ -20,6 +20,10 @@ pub fn render_field_type(field: &ContractField, names: &AssignedNames, lang: Tar
             TargetLang::Rust => format!("Vec<{inner}>"),
         };
     }
+    // drizzle `file()` customType always includes `| null` in `data`.
+    if inner == "KalamFileColumn" || inner == "KalamFileColumn[]" {
+        return inner;
+    }
     if field.not_null {
         inner
     } else {
@@ -34,6 +38,9 @@ pub fn render_field_type(field: &ContractField, names: &AssignedNames, lang: Tar
 fn named_or_builtin(field: &ContractField, names: &AssignedNames, lang: TargetLang) -> String {
     if let Some(type_id) = &field.type_id {
         return names.type_ident(type_id.as_str()).to_string();
+    }
+    if field.type_name.eq_ignore_ascii_case("FILE") {
+        return builtin("FILE", lang).to_string();
     }
     let sql_name = field
         .data_type
@@ -55,6 +62,7 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
         (TargetLang::TypeScript, "BYTES" | "BYTEA" | "BLOB" | "BINARY") => "Uint8Array",
         (TargetLang::TypeScript, "JSON" | "JSONB") => "JsonValue",
         (TargetLang::TypeScript, "TIMESTAMP" | "TIMESTAMPTZ" | "DATETIME") => "Date",
+        (TargetLang::TypeScript, "FILE") => "KalamFileColumn",
         (TargetLang::TypeScript, _) => "string",
 
         (TargetLang::Dart, "BOOLEAN" | "BOOL") => "bool",
@@ -87,10 +95,6 @@ pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {
     }
 }
 
-pub fn is_named_composite(field: &ContractField) -> bool {
-    field.type_id.is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +105,6 @@ mod tests {
         assert_eq!(builtin("TIMESTAMPTZ", TargetLang::TypeScript), "Date");
         assert_eq!(builtin("DATETIME", TargetLang::TypeScript), "Date");
         assert_eq!(builtin("TEXT", TargetLang::TypeScript), "string");
+        assert_eq!(builtin("FILE", TargetLang::TypeScript), "KalamFileColumn");
     }
 }

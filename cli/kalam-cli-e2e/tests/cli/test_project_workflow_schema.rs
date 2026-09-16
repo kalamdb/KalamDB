@@ -15,8 +15,8 @@ struct RecordedSqlRequest {
     namespace_id: Option<String>,
 }
 
-fn start_recording_sql_server(
-) -> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
+fn start_recording_sql_server()
+-> (String, Arc<Mutex<Vec<RecordedSqlRequest>>>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind recording server");
     let addr = listener.local_addr().expect("recording server addr");
     let url = format!("http://{}", addr);
@@ -116,17 +116,18 @@ fn start_recording_sql_server(
 
 #[test]
 fn test_project_workflow_schema_command_help_surface() {
-    let cases = [
-        ("schema", "Generate"),
-        ("migration", "migration"),
-        ("db", "database"),
+    let cases: &[(&[&str], &str)] = &[
+        (&["schema"], "Generate"),
+        (&["db"], "database"),
+        (&["db", "migration"], "migration"),
     ];
 
-    for (command, expected_snippet) in cases {
+    for (args, expected_snippet) in cases {
         let mut cmd = create_cli_command();
-        cmd.args([command, "--help"]);
+        cmd.args(*args).arg("--help");
 
         let output = cmd.output().expect("run workflow schema help");
+        let command = args.join(" ");
         assert!(
             output.status.success(),
             "{} help should succeed\nstdout: {}\nstderr: {}",
@@ -207,7 +208,7 @@ fn test_project_workflow_schema_gen_from_sql() {
         "expected locally generated typescript"
     );
     assert!(ts.contains("contract_hash:"));
-    assert!(ts.contains("export * from './schema'"));
+    assert!(ts.contains("export * from './schema.js'"));
     assert!(schema.contains("import { kTable } from '@kalamdb/orm';"));
     assert!(schema.contains("export const users"), "expected users table export");
 
@@ -259,7 +260,7 @@ fn test_project_workflow_migration_create_and_status() {
     let mut create_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     create_cmd
         .current_dir(&project_dir)
-        .args(["migration", "create", "add_profile"]);
+        .args(["db", "migration", "create", "add_profile"]);
 
     let create_output = create_cmd.output().expect("migration create");
     assert!(
@@ -286,7 +287,7 @@ fn test_project_workflow_migration_create_and_status() {
     assert!(migration_sql.contains("CREATE TABLE users"));
 
     let mut status_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
-    status_cmd.current_dir(&project_dir).args(["migration", "status"]);
+    status_cmd.current_dir(&project_dir).args(["db", "migration", "status"]);
     let status_output = status_cmd.output().expect("migration status");
     assert!(
         status_output.status.success(),
@@ -331,10 +332,17 @@ fn test_project_workflow_db_migrate_local_state() {
     assert!(init_cmd.output().expect("init").status.success());
 
     let mut create_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
-    create_cmd.current_dir(&project_dir).args(["migration", "create", "initial"]);
+    create_cmd
+        .current_dir(&project_dir)
+        .args(["db", "migration", "create", "initial"]);
 
     let create_output = create_cmd.output().expect("migration create");
-    assert!(create_output.status.success());
+    assert!(
+        create_output.status.success(),
+        "migration create failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&create_output.stdout),
+        String::from_utf8_lossy(&create_output.stderr)
+    );
 
     let mut migrate_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     migrate_cmd.current_dir(&project_dir).args(["db", "migrate"]);
@@ -352,7 +360,7 @@ fn test_project_workflow_db_migrate_local_state() {
     );
 
     let mut status_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
-    status_cmd.current_dir(&project_dir).args(["migration", "status"]);
+    status_cmd.current_dir(&project_dir).args(["db", "migration", "status"]);
     let status_output = status_cmd.output().expect("migration status");
     let stderr = String::from_utf8_lossy(&status_output.stderr);
     assert!(
@@ -446,7 +454,7 @@ fn test_project_workflow_db_migrate_executes_pending_sql_against_server() {
 }
 
 #[test]
-fn test_project_workflow_schema_pull_requires_server() {
+fn test_project_workflow_rejects_remote_schema_mode() {
     let temp = TempDir::new().expect("temp dir");
     let project_dir = temp.path().join("remote-app");
     let isolated_home = temp.path().join("home");
@@ -473,7 +481,6 @@ fn test_project_workflow_schema_pull_requires_server() {
         String::from_utf8_lossy(&init_output.stderr)
     );
 
-    // Remote schema mode is not available during init yet; emulate a pull-based project.
     let kalam_toml_path = project_dir.join("kalam.toml");
     let kalam_toml = fs::read_to_string(&kalam_toml_path).expect("read kalam.toml");
     fs::write(&kalam_toml_path, kalam_toml.replace("mode = \"sql\"", "mode = \"remote\""))
@@ -482,11 +489,15 @@ fn test_project_workflow_schema_pull_requires_server() {
     let mut pull_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
     pull_cmd.current_dir(&project_dir).args(["schema", "pull"]);
     let pull_output = pull_cmd.output().expect("schema pull");
-    assert!(!pull_output.status.success(), "schema pull should fail without server");
+    assert!(!pull_output.status.success(), "schema pull should not be a command");
 
-    let stderr = String::from_utf8_lossy(&pull_output.stderr);
+    let mut gen_cmd = create_isolated_workflow_command(&isolated_home, &credentials_path);
+    gen_cmd.current_dir(&project_dir).args(["schema", "gen"]);
+    let gen_output = gen_cmd.output().expect("schema gen");
+    assert!(!gen_output.status.success(), "schema gen should reject remote mode");
+    let stderr = String::from_utf8_lossy(&gen_output.stderr);
     assert!(
-        stderr.to_lowercase().contains("server"),
-        "expected clear server error, got: {stderr}"
+        stderr.contains("schema.mode = \"remote\" is not supported"),
+        "schema gen should reject remote schema mode, got: {stderr}"
     );
 }

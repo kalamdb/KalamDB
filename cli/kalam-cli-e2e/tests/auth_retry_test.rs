@@ -113,7 +113,7 @@ fn test_interactive_credential_prompt() {
     println!("\n=== Manual Interactive Test ===");
     println!("\nSteps to test interactive credential prompt:");
     println!("1. Ensure you have invalid stored credentials:");
-    println!("   cargo run --release -- --delete-credentials");
+    println!("   cargo run -- logout");
     println!("   cargo run --release -- --user deleteduser --password test --save-credentials");
     println!("\n2. Delete that user from the server (or use a non-existent user)");
     println!("\n3. Run CLI without arguments in an interactive terminal:");
@@ -154,7 +154,7 @@ fn test_setup_wizard_direct_access() {
     println!("1. Start a fresh KalamDB server that requires setup:");
     println!("   cd backend && rm -rf data && cargo run");
     println!("\n2. Store any credentials (they will be invalid for setup-required server):");
-    println!("   cargo run --release -- --delete-credentials");
+    println!("   cargo run -- logout");
     println!("   cargo run --release -- --user anyuser --password anypass --save-credentials");
     println!("\n3. Run CLI without arguments:");
     println!("   cargo run --release");

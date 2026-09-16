@@ -117,9 +117,6 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `--token` – JWT bearer token
 - `--user` / `--password` – user/password login
 - `--save-credentials` – save JWT token after login
-- `--show-credentials` – show stored credentials for instance
-- `--update-credentials` – login and update stored credentials
-- `--delete-credentials` – delete stored credentials for instance
 - `--list-instances` – list stored credential instances
 - `--format` – `table` (default) | `json` | `csv`
 - `--json` / `--csv` – shorthand for `--format`
@@ -256,9 +253,9 @@ kalam --subscribe "SELECT * FROM app.messages WHERE user_id = 'alice';"
 
 ```bash
 # Setup credentials for different environments
-kalam --update-credentials --instance dev --user dev_user
-kalam --update-credentials --instance staging --user staging_user
-kalam --update-credentials --instance prod --user prod_admin
+kalam login --instance dev --user dev_user
+kalam login --instance staging --user staging_user
+kalam login --instance prod --user prod_admin
 
 # Switch between instances
 kalam --instance dev      # Connect to dev
@@ -540,11 +537,11 @@ kalam --verbose --url http://localhost:2900
 
 ```bash
 # Verify stored credentials
-kalam --show-credentials --instance local
+kalam whoami --instance local
 
 # Clear and re-enter credentials
-kalam --delete-credentials --instance local
-kalam --update-credentials --instance local
+kalam logout --instance local
+kalam login --instance local
 ```
 
 ### Performance Issues
@@ -594,9 +591,11 @@ kalam init --yes --name my-app --schema-mode sql --languages typescript,dart
 
 This creates:
 
-- `kalam.toml` — project configuration
+- `kalam.toml` — project configuration (`server_version` pinned, `purpose = "development"`)
 - `schema.sql` — file-based schema source (sql mode)
 - `kalam/migrations/` — ordered migration history
+- `kalam/seed.sql` — development fixtures
+- `.kalam/` — runtime identity (gitignored)
 - `src/generated/kalam.ts` and `lib/generated/kalam.dart` — generated output directories
 - `.env.example` — environment override template
 
@@ -610,18 +609,16 @@ kalam schema gen
 kalam schema gen --languages dart
 
 # Create a migration from the current schema
-kalam migration create add_profile
+kalam db migration create add_profile
 
 # Inspect local migration state
-kalam migration status
+kalam db migration status
 
 # Apply pending migrations (local state tracking in v1)
 kalam db migrate
 ```
 
-Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml` → default `dev`.
-
-`kalam schema pull` requires a connected KalamDB server when using remote schema mode.
+Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml`. `--global` / `-g` selects the shared local database. `schema.mode = "remote"` is rejected.
 
 ### Link environments
 
@@ -629,13 +626,18 @@ Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `K
 kalam link --env prod --url https://db.example.com --namespace app
 ```
 
-Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/`.
+Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/`. Does not change `project.default_env`.
 
 ### Local development orchestration
 
 ```bash
-kalam dev
-kalam dev --force   # retry a paused schema pipeline
+kalam up                 # database only, background
+kalam status
+kalam logs --follow
+kalam dev                # full loop; reuses `up` and leaves it running
+kalam dev --force        # retry a paused schema pipeline
+kalam dev --exec "npm test"
+kalam down               # stop the database; keep data
 ```
 
 `kalam dev`:

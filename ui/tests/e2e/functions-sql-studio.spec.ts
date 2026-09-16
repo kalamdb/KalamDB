@@ -231,7 +231,10 @@ test("SQL Studio deploys a typed booking function and Test UI can invoke it", as
       await page.getByTestId(`functions-row-${procedureId}`).click();
       await expect(page.getByRole("tab", { name: "Overview" })).toHaveAttribute("data-state", "active");
       await expect(page.getByText("Inline script")).toBeVisible();
-      await expect(page.getByTestId("function-inline-source")).toContainText("venue_id");
+      const inlineSource = page.getByTestId("function-inline-source");
+      await expect(inlineSource).toBeVisible();
+      await expect(inlineSource.locator(".monaco-editor")).toBeVisible({ timeout: 30_000 });
+      await expect(inlineSource.locator(".view-line")).toContainText("venue_id");
       await expect(page.getByTestId("function-runtime-memory")).toBeVisible();
     });
 
@@ -261,10 +264,13 @@ test("SQL Studio deploys a typed booking function and Test UI can invoke it", as
 
     await test.step("overview shows isolate memory after a successful invoke", async () => {
       await page.getByRole("tab", { name: "Overview" }).click();
-      await expect(page.getByTestId("function-runtime-memory")).toBeVisible();
-      await expect(page.getByText("Used heap")).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText("Peak heap")).toBeVisible();
-      await expect(page.getByText("Reserved")).toBeVisible();
+      const memory = page.getByTestId("function-runtime-memory");
+      await expect(memory).toBeVisible();
+      await expect(memory.getByText("Used heap", { exact: true })).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(memory.getByText("Peak heap", { exact: true })).toBeVisible();
+      await expect(memory.getByText("Reserved", { exact: true })).toBeVisible();
     });
   } finally {
     await openSqlStudio(page).catch(() => undefined);

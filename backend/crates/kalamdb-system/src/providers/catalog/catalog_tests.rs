@@ -4,8 +4,8 @@ use kalamdb_commons::{
     models::{
         ArtifactId, CatalogTypeKind, FunctionModuleId, FunctionRevisionId, FunctionRuntime,
         NamespaceId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId,
-        RoutineSecurityMode, TableId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
-        UserId,
+        RoutineSecurityMode, ScheduleId, TableId, TopicId, TriggerAttemptId, TriggerId,
+        TypeFieldId, TypeId, UserId,
     },
     StorageKey, SystemTable,
 };
@@ -15,8 +15,8 @@ use serde_json::Value;
 use super::{
     models::{
         CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-        CatalogRoutineGrant, CatalogRoutineParameter, CatalogTriggerAttempt, CatalogType,
-        CatalogTypeField,
+        CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogTriggerAttempt,
+        CatalogType, CatalogTypeField,
     },
     ActivateFunctionOutcome, CatalogStores, TypesTableProvider,
 };
@@ -284,7 +284,7 @@ fn inline_javascript_hash_and_artifact_persist() {
 }
 
 #[test]
-fn drop_namespace_catalog_removes_routines_types_and_spares_other_schemas() {
+fn drop_namespace_catalog_removes_routines_types_schedules_and_spares_other_schemas() {
     let stores = stores();
     stores.upsert_type(address_type()).unwrap();
     stores.upsert_type_field(street_field()).unwrap();
@@ -322,7 +322,33 @@ fn drop_namespace_catalog_removes_routines_types_and_spares_other_schemas() {
     };
     stores.upsert_type(other_type.clone()).unwrap();
 
+    let chat_schedule = CatalogSchedule {
+        schedule_id:       ScheduleId::from_parts(Some(&chat_ns()), "hourly"),
+        namespace_id:      chat_ns(),
+        name:              "hourly".into(),
+        routine_id:        RoutineId::from_parts(Some(&chat_ns()), "create_message"),
+        principal_user_id: UserId::new("root"),
+        cron:              None,
+        interval_ms:       Some(1000),
+        timezone:          "UTC".into(),
+        enabled:           true,
+        next_run_at:       1000,
+        run_id:            None,
+        owner:             None,
+        running_until:     None,
+        last_started_at:   None,
+        last_finished_at:  None,
+        last_error:        None,
+        run_count:         0,
+        skip_count:        0,
+        version:           "created".into(),
+    };
+    assert!(stores
+        .compare_exchange_schedule(&chat_schedule.schedule_id, None, Some(&chat_schedule))
+        .unwrap());
+
     stores.drop_namespace_catalog(&chat_ns()).unwrap();
+    assert!(stores.get_schedule(&chat_schedule.schedule_id).unwrap().is_none());
 
     assert!(stores
         .get_routine(&RoutineId::from_parts(Some(&chat_ns()), "create_message"))
@@ -409,6 +435,7 @@ fn system_table_names_are_registered() {
     assert_eq!(SystemTable::FunctionModules.table_name(), "function_modules");
     assert_eq!(SystemTable::FunctionRevisions.table_name(), "function_revisions");
     assert_eq!(SystemTable::FunctionArtifacts.table_name(), "function_artifacts");
+    assert_eq!(SystemTable::Schedules.table_name(), "schedules");
     assert!(SystemTable::Types.partition().is_some());
     provider.upsert_type(address_type()).unwrap();
     assert_eq!(provider.list_types().unwrap().len(), 1);

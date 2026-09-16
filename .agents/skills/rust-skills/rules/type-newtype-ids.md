@@ -158,3 +158,4 @@ define_id!(TeamId);
 - [api-newtype-safety](api-newtype-safety.md) - Newtypes for type safety
 - [type-newtype-validated](type-newtype-validated.md) - Newtypes for validated data
 - [api-parse-dont-validate](api-parse-dont-validate.md) - Parse into validated types
+- [num-nonzero](num-nonzero.md) - NonZero* for never-zero ids

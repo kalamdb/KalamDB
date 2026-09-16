@@ -161,3 +161,4 @@ v.push_if_unique(4);  // Adds 4
 - [api-sealed-trait](./api-sealed-trait.md) - Controlling trait implementations
 - [api-impl-into](./api-impl-into.md) - Using standard conversion traits
 - [name-as-free](./name-as-free.md) - Naming conventions for conversions
+- [trait-blanket-impl](./trait-blanket-impl.md) - Blanket impls for extension traits

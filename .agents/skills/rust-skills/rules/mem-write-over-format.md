@@ -149,14 +149,21 @@ if condition {
 
 ## Benchmark Difference
 
+Writing into a pre-allocated buffer avoids per-call heap allocation and is
+consistently faster than `format!()` in tight loops. The exact difference
+depends on string length, allocator, and hardware — measure with
+[criterion](https://crates.io/crates/criterion) in your own workload.
+
 ```rust
-// format! in loop: ~500ns per iteration (allocation heavy)
+use std::fmt::Write; // brings the write! target trait into scope
+
+// format! in loop: new heap allocation on every iteration
 for i in 0..1000 {
     let s = format!("item-{}", i);
     process(&s);
 }
 
-// write! with reuse: ~50ns per iteration (no allocation)
+// write! with reuse: no allocation after the first iteration
 let mut buf = String::with_capacity(32);
 for i in 0..1000 {
     buf.clear();

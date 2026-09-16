@@ -519,13 +519,17 @@ fn parse_table_column(input: &str, schema: &str) -> Result<ContractField, Contra
     let (mut type_ref, rest) =
         parse_type_reference(rest.trim_start()).map_err(ContractError::new)?;
     let leftover = rest.to_ascii_uppercase();
-    if leftover.contains("NOT NULL") || leftover.contains("PRIMARY KEY") {
+    let primary_key = leftover.contains("PRIMARY KEY");
+    if leftover.contains("NOT NULL") || primary_key {
         type_ref.not_null = true;
     }
     if leftover.contains("NONEMPTY") {
         type_ref.nonempty = true;
     }
-    Ok(field_from_ref(name, type_ref, schema))
+    let mut field = field_from_ref(name, type_ref, schema);
+    field.primary_key = primary_key;
+    field.has_default = leftover.contains("DEFAULT");
+    Ok(field)
 }
 
 fn strip_create_table_prefix(sql: &str) -> Option<&str> {
@@ -752,6 +756,8 @@ fn field_from_ref(name: String, type_ref: TypeReference, current_schema: &str) -
         is_array: type_ref.is_array,
         not_null: type_ref.not_null,
         nonempty: type_ref.nonempty,
+        primary_key: false,
+        has_default: false,
     }
 }
 

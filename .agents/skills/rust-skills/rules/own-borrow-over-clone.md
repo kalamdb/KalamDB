@@ -93,3 +93,4 @@ pub(crate) fn file_name<'a>(path: &Cow<'a, [u8]>) -> Option<Cow<'a, [u8]>> {
 - [own-slice-over-vec](own-slice-over-vec.md) - Accept slices instead of references to collections
 - [own-cow-conditional](own-cow-conditional.md) - Use Cow for conditional ownership
 - [mem-clone-from](mem-clone-from.md) - Reuse allocations when cloning
+- [mem-take-replace](mem-take-replace.md) - Move out of &mut without cloning

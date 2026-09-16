@@ -300,11 +300,10 @@ test-group = "stateful-heavy"
 # # Queries global system.jobs count — must not race with concurrent tests creating jobs.
 # test-group = "stateful-heavy"
 
-# Functions e2e share one V8 heap budget on the running server. Overlap
-# previously tripped "function memory" RESOURCE_LIMIT under default 15 threads.
 [[profile.default.overrides]]
-filter = 'test(kobj_functions_)'
+filter = 'test(test_project_workflow_init_templates_work_out_of_the_box)'
 test-group = "stateful-heavy"
+retries = 0
 
 # [[profile.default.overrides]]
 # filter = 'package(kalamdb-server)'

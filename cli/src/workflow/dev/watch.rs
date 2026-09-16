@@ -381,6 +381,10 @@ mod tests {
             env_override: None,
             namespace_override: None,
             url_override: None,
+            global: false,
+            host: None,
+            port: None,
+            instance: None,
         };
 
         let runtime = tokio::runtime::Runtime::new().unwrap();

@@ -51,6 +51,12 @@ vi.mock("@kalamdb/client", () => ({
   },
 }));
 
+vi.mock("@monaco-editor/react", () => ({
+  default: ({ value, language }: { value?: string; language?: string }) => (
+    <pre data-language={language}>{value}</pre>
+  ),
+}));
+
 vi.mock("@/store/apiSlice", () => ({
   useGetProcedureCatalogQuery: () => mockCatalogQuery(),
   useGetProcedureLogsQuery: (...args: unknown[]) => mockLogsQuery(...args),
@@ -402,7 +408,9 @@ describe("Function detail", () => {
     expect(screen.getByText("Inline script")).toBeTruthy();
     expect(screen.getByText("JAVASCRIPT")).toBeTruthy();
     expect(screen.getByTestId("function-inline-source")).toBeTruthy();
+    expect(screen.getByTestId("function-inline-source-editor")).toBeTruthy();
     expect(screen.getByText(/var venueId = input.venue_id/)).toBeTruthy();
+    expect(screen.getByTestId("function-inline-source-editor").querySelector("[data-language='typescript']")).toBeTruthy();
     expect(screen.getByTestId("function-runtime-memory")).toBeTruthy();
     expect(screen.getByText("Used heap")).toBeTruthy();
     expect(screen.getByText("1.0 KB")).toBeTruthy();

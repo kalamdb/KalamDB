@@ -173,6 +173,13 @@ const SYSTEM_TABLE_METADATA: &[SystemTableMetadata] = &[
         column_family_name: Some("system_function_artifacts"),
     },
     SystemTableMetadata {
+        table:              SystemTable::Schedules,
+        sql_name:           "schedules",
+        aliases:            &["schedules", "system_schedules"],
+        is_view:            false,
+        column_family_name: Some("system_schedules"),
+    },
+    SystemTableMetadata {
         table:              SystemTable::Triggers,
         sql_name:           "triggers",
         aliases:            &["triggers", "system_triggers"],
@@ -392,6 +399,7 @@ pub enum SystemTable {
     FunctionArtifacts,
     /// system.triggers - durable topic trigger catalog (persisted)
     Triggers,
+    Schedules,
     /// system.trigger_attempts - trigger delivery attempts, leases, and DLQ (persisted)
     TriggerAttempts,
 
@@ -508,6 +516,7 @@ impl SystemTable {
             SystemTable::FunctionRevisions,
             SystemTable::FunctionArtifacts,
             SystemTable::Triggers,
+            SystemTable::Schedules,
             SystemTable::TriggerAttempts,
         ]
     }
@@ -565,6 +574,7 @@ impl SystemTable {
             SystemTable::FunctionRevisions,
             SystemTable::FunctionArtifacts,
             SystemTable::Triggers,
+            SystemTable::Schedules,
             SystemTable::TriggerAttempts,
             // Views
             SystemTable::Stats,
@@ -630,6 +640,7 @@ impl SystemTable {
             Lazy::new(|| Partition::new("system_function_revisions"));
         static FUNCTION_ARTIFACTS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_function_artifacts"));
+        static SCHEDULES: Lazy<Partition> = Lazy::new(|| Partition::new("system_schedules"));
         static TRIGGERS: Lazy<Partition> = Lazy::new(|| Partition::new("system_triggers"));
         static TRIGGER_ATTEMPTS: Lazy<Partition> =
             Lazy::new(|| Partition::new("system_trigger_attempts"));
@@ -656,6 +667,7 @@ impl SystemTable {
             SystemTable::FunctionModules => Some(&FUNCTION_MODULES),
             SystemTable::FunctionRevisions => Some(&FUNCTION_REVISIONS),
             SystemTable::FunctionArtifacts => Some(&FUNCTION_ARTIFACTS),
+            SystemTable::Schedules => Some(&SCHEDULES),
             SystemTable::Triggers => Some(&TRIGGERS),
             SystemTable::TriggerAttempts => Some(&TRIGGER_ATTEMPTS),
             // Views have no partition
@@ -862,6 +874,7 @@ mod tests {
         assert_eq!(SystemTable::Namespaces.table_name(), "namespaces");
         assert_eq!(SystemTable::Jobs.table_name(), "jobs");
         assert_eq!(SystemTable::AuditLog.table_name(), "audit_log");
+        assert_eq!(SystemTable::Schedules.table_name(), "schedules");
         // Views
         assert_eq!(SystemTable::Stats.table_name(), "stats");
         assert_eq!(SystemTable::Sessions.table_name(), "sessions");
@@ -875,6 +888,7 @@ mod tests {
         assert!(!SystemTable::Users.is_view());
         assert!(!SystemTable::Jobs.is_view());
         assert!(!SystemTable::Manifest.is_view());
+        assert!(!SystemTable::Schedules.is_view());
         // Views are views
         assert!(SystemTable::Stats.is_view());
         assert!(SystemTable::Sessions.is_view());
@@ -893,6 +907,7 @@ mod tests {
         assert_eq!(SystemTable::Jobs.column_family_name(), Some("system_jobs"));
         assert_eq!(SystemTable::AuditLog.column_family_name(), Some("system_audit_log"));
         assert_eq!(SystemTable::Migrations.column_family_name(), Some("system_migrations"));
+        assert_eq!(SystemTable::Schedules.column_family_name(), Some("system_schedules"));
         // Views have no column family
         assert_eq!(SystemTable::Stats.column_family_name(), None);
         assert_eq!(SystemTable::Sessions.column_family_name(), None);
@@ -907,6 +922,8 @@ mod tests {
         assert_eq!(SystemTable::from_name("system_users").unwrap(), SystemTable::Users);
         assert_eq!(SystemTable::from_name("storages").unwrap(), SystemTable::Storages);
         assert_eq!(SystemTable::from_name("system.migrations").unwrap(), SystemTable::Migrations);
+        assert_eq!(SystemTable::from_name("schedules").unwrap(), SystemTable::Schedules);
+        assert_eq!(SystemTable::from_name("system.schedules").unwrap(), SystemTable::Schedules);
         // Views
         assert_eq!(SystemTable::from_name("stats").unwrap(), SystemTable::Stats);
         assert_eq!(SystemTable::from_name("sessions").unwrap(), SystemTable::Sessions);
@@ -981,6 +998,8 @@ mod tests {
         assert!(SystemTable::is_system_table("sessions"));
         assert!(SystemTable::is_system_table("system.cluster"));
         assert!(SystemTable::is_system_table("system.cluster_groups"));
+        assert!(SystemTable::is_system_table("schedules"));
+        assert!(SystemTable::is_system_table("system.schedules"));
         assert!(!SystemTable::is_system_table("my_custom_table"));
     }
 
@@ -995,7 +1014,8 @@ mod tests {
     #[test]
     fn test_all() {
         let all = SystemTable::all();
-        assert_eq!(all.len(), 42); // 23 tables + 19 views
+        assert_eq!(all.len(), SYSTEM_TABLE_METADATA.len());
+        assert_eq!(all.len(), SystemTable::all_tables().len() + SystemTable::all_views().len());
         assert!(all.contains(&SystemTable::Users));
         assert!(all.contains(&SystemTable::Storages));
         assert!(all.contains(&SystemTable::AuditLog));
@@ -1010,6 +1030,7 @@ mod tests {
         assert!(all.contains(&SystemTable::FunctionModules));
         assert!(all.contains(&SystemTable::FunctionRevisions));
         assert!(all.contains(&SystemTable::FunctionArtifacts));
+        assert!(all.contains(&SystemTable::Schedules));
         assert!(all.contains(&SystemTable::Triggers));
         assert!(all.contains(&SystemTable::TriggerAttempts));
         assert!(all.contains(&SystemTable::Stats));
@@ -1025,17 +1046,24 @@ mod tests {
     #[test]
     fn test_all_tables() {
         let tables = SystemTable::all_tables();
-        assert_eq!(tables.len(), 23);
+        assert_eq!(
+            tables.len(),
+            SYSTEM_TABLE_METADATA.iter().filter(|metadata| !metadata.is_view).count()
+        );
         assert!(tables.contains(&SystemTable::TablePolicies));
         assert!(tables.contains(&SystemTable::Types));
         assert!(tables.contains(&SystemTable::Routines));
+        assert!(tables.contains(&SystemTable::Schedules));
         assert!(tables.iter().all(|t| !t.is_view()));
     }
 
     #[test]
     fn test_all_views() {
         let views = SystemTable::all_views();
-        assert_eq!(views.len(), 19);
+        assert_eq!(
+            views.len(),
+            SYSTEM_TABLE_METADATA.iter().filter(|metadata| metadata.is_view).count()
+        );
         assert!(views.contains(&SystemTable::Procedures));
         assert!(views.contains(&SystemTable::Modules));
         assert!(views.contains(&SystemTable::ModuleRevisions));

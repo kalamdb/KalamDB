@@ -42,6 +42,33 @@ export function summarizeModuleInstances(rows: SystemModuleInstanceRow[]): Proce
   };
 }
 
+export interface MemorySlice {
+  key: "used" | "peak" | "headroom";
+  name: string;
+  value: number;
+  color: string;
+}
+
+/// Splits a reservation into live heap, the extra the isolate has needed before (peak - used),
+/// and what is reserved but never touched. Slices never overlap so they sum to `reservedBytes`.
+export function memorySlices(summary: Pick<ProcedureRuntimeSummary, "usedHeapBytes" | "peakHeapBytes" | "reservedBytes">): MemorySlice[] {
+  const used = Math.max(0, summary.usedHeapBytes);
+  const peak = Math.max(used, summary.peakHeapBytes);
+  const reserved = Math.max(peak, summary.reservedBytes);
+  return [
+    { key: "used", name: "Live heap", value: used, color: "#0f766e" },
+    { key: "peak", name: "Peak above live", value: peak - used, color: "#f59e0b" },
+    { key: "headroom", name: "Unused reservation", value: reserved - peak, color: "#cbd5e1" },
+  ];
+}
+
+export function utilizationPercent(usedBytes: number, reservedBytes: number): number | null {
+  if (reservedBytes <= 0) {
+    return null;
+  }
+  return Math.min(100, Math.round((Math.max(0, usedBytes) / reservedBytes) * 100));
+}
+
 export function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

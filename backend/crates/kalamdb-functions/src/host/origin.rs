@@ -36,6 +36,11 @@ pub enum FunctionCallOrigin {
         query:    Arc<Vec<(String, String)>>,
         response: Arc<Mutex<HttpResponseOverrides>>,
     },
+    Schedule {
+        schedule_id:  kalamdb_commons::ScheduleId,
+        run_id:       String,
+        scheduled_at: i64,
+    },
     Topic {
         topic_name: String,
         event_id:   String,
@@ -43,6 +48,17 @@ pub enum FunctionCallOrigin {
         offset:     u64,
         attempt:    u32,
     },
+}
+
+impl FunctionCallOrigin {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Sql => "sql",
+            Self::Http { .. } => "http",
+            Self::Topic { .. } => "topic",
+            Self::Schedule { .. } => "schedule",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

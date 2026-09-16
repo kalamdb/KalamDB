@@ -32,7 +32,7 @@ import {
   recordSyncedFile,
   removeLocalRecord,
 } from './local-cache.js';
-import { context_files, type ContextFiles } from './models/schema.generated.js';
+import { okfSyncContextFiles as context_files, type OkfSyncContextFiles as ContextFiles } from './models/kalam.js';
 import { toSyncFileRecord } from './models/schema.local.js';
 import {
   deleteRemoteFile,

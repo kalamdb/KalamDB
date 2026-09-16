@@ -56,11 +56,6 @@ impl MigrationsTableProvider {
         row.map(|value| Self::decode_migration_row(&value)).transpose()
     }
 
-    pub fn list_migrations(&self) -> Result<Vec<Migration>, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter().map(|(_, row)| Self::decode_migration_row(&row)).collect()
-    }
-
     pub fn delete_migrations_for_namespace(
         &self,
         namespace_id: &NamespaceId,

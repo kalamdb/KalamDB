@@ -107,6 +107,9 @@ pub fn write_procedure_artifacts(
     hash: &str,
     procedures: &ProcedureCatalog<'_>,
 ) -> Result<()> {
+    if procedures.is_empty() {
+        return Ok(());
+    }
     let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
     let schema_import = ts_relative_module(&generated_dir, schema_path);
     write_text(
@@ -118,9 +121,6 @@ pub fn write_procedure_artifacts(
     write_text(&generated_dir.join("runtime.js"), &generate_runtime_js()?)?;
     remove_if_exists(&generated_dir.join("runtime.ts"))?;
     remove_stale_dot_kalam_generated(project_root)?;
-    if procedures.is_empty() {
-        return Ok(());
-    }
     write_text(
         &generated_dir.join("procedure.d.ts"),
         &render_procedure_dts(procedures, &schema_import)?,

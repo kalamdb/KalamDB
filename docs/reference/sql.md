@@ -739,12 +739,21 @@ are stored under `{data_path}/functions/runtime/<procedure_id>/logs/` (default
 `./data/functions/runtime/<procedure_id>/logs/procedures.jsonl`). Compiled module bytes live under
 `{data_path}/functions/artifacts/`.
 
+`system.procedure_logs` is also the runtime audit trail (`channel = 'lifecycle'`,
+`actor = 'system'`): `deployed` when an active function set is published, and per
+isolate `created` (cold start), `dropped` (with the reason and total calls served),
+plus `reused`/`idle` at most once per minute per isolate so steady-state warm
+traffic does not flood the log.
+
 ```sql
 SELECT * FROM system.procedures;
 SELECT * FROM system.module_revisions WHERE is_current;
 SELECT * FROM system.module_instances;
 SELECT * FROM system.procedure_logs
 WHERE procedure_id = 'chat.send_message'
+ORDER BY timestamp DESC;
+SELECT timestamp, outcome, message FROM system.procedure_logs
+WHERE channel = 'lifecycle' AND module_id = 'backend'
 ORDER BY timestamp DESC;
 ```
 

@@ -25,6 +25,7 @@ kalamdb-functions = { path = "../../../kalamdb-functions" }
 
 arrow = { workspace = true }
 chrono = { workspace = true }
+uuid = { workspace = true }
 datafusion = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }

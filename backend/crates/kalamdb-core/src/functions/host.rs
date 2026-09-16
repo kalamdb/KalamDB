@@ -14,7 +14,34 @@ use kalamdb_functions::{
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use tokio::runtime::Handle;
+use tokio::{runtime::Handle, task::JoinHandle};
+
+/// `JoinHandle` that aborts its task when dropped. A bare `JoinHandle` detaches on drop, which
+/// would let host SQL keep running after the root has rolled back its transaction.
+struct AbortOnDropHandle<T>(JoinHandle<T>);
+
+impl<T> AbortOnDropHandle<T> {
+    fn new(handle: JoinHandle<T>) -> Self {
+        Self(handle)
+    }
+}
+
+impl<T> Drop for AbortOnDropHandle<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl<T> std::future::Future for AbortOnDropHandle<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll(cx)
+    }
+}
 
 use super::executor;
 use crate::{
@@ -86,14 +113,6 @@ impl CoreFunctionHost {
             .join(" -> ")
     }
 
-    fn origin_kind(&self) -> &'static str {
-        match &self.origin {
-            FunctionCallOrigin::Sql => "sql",
-            FunctionCallOrigin::Http { .. } => "http",
-            FunctionCallOrigin::Topic { .. } => "topic",
-        }
-    }
-
     fn append_v8_procedure_log(&self, record: &HostLogRecord) {
         let frame = self.session.stack.last();
         let procedure_id = frame
@@ -114,18 +133,18 @@ impl CoreFunctionHost {
         let meta = self.metadata();
         let request_id = meta.as_ref().map(|m| m.request_id.clone()).unwrap_or_default();
         let actor = meta.as_ref().map(|m| m.actor.id.as_str().to_string()).unwrap_or_default();
-        let message = sanitize_procedure_log_message(&format_host_log_message(record));
+        let message = sanitize_procedure_log_message(format_host_log_message(record));
         self.app.procedure_log_logger().record(ProcedureLogRecord {
             execution_id: request_id.clone(),
             request_id,
             procedure_id,
             module_id,
             revision_id,
-            actor,
-            origin: self.origin_kind().to_string(),
+            actor: actor.into(),
+            origin: self.origin.kind().into(),
             outcome: "log".into(),
-            channel: record.channel.as_str().to_string(),
-            level: record.level.clone(),
+            channel: record.channel.as_str().into(),
+            level: record.level.clone().into(),
             error_code: None,
             message: if message.is_empty() {
                 None
@@ -149,6 +168,8 @@ impl CoreFunctionHost {
         if sql.len() > engine.config().max_sql_text_bytes {
             return Err(FunctionsError::ResourceLimit("sql text".into()));
         }
+        // One request-owned transaction. Host SQL is serialized so concurrent
+        // Promise.all queries cannot interleave DataFusion work on the same tx.
         let _gate = self.sql_gate.lock().await;
         self.scope.check()?;
         let (sql, impersonate) = match kalamdb_sql::execute_as::parse_execute_as(&sql) {
@@ -205,16 +226,34 @@ impl CoreFunctionHost {
 }
 
 impl FunctionHost for CoreFunctionHost {
-    fn sql(&self, sql: &str, params: &[RoutineValue]) -> kalamdb_functions::Result<RoutineValue> {
-        self.handle.block_on(self.run_sql(sql.to_string(), params.to_vec(), false))
+    fn sql(&self, _sql: &str, _params: &[RoutineValue]) -> kalamdb_functions::Result<RoutineValue> {
+        Err(FunctionsError::Invalid(
+            "sync host sql is not supported; use ctx.db.query".into(),
+        ))
     }
 
     fn query(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
-        Box::pin(self.run_sql(sql, params, true))
+        let host = self.clone();
+        let handle = host.handle.clone();
+        Box::pin(async move {
+            AbortOnDropHandle::new(
+                handle.spawn(async move { host.run_sql(sql, params, true).await }),
+            )
+            .await
+            .map_err(map_join)?
+        })
     }
 
     fn execute(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
-        Box::pin(self.run_sql(sql, params, false))
+        let host = self.clone();
+        let handle = host.handle.clone();
+        Box::pin(async move {
+            AbortOnDropHandle::new(
+                handle.spawn(async move { host.run_sql(sql, params, false).await }),
+            )
+            .await
+            .map_err(map_join)?
+        })
     }
 
     fn call_async(
@@ -222,9 +261,17 @@ impl FunctionHost for CoreFunctionHost {
         procedure: String,
         args: Vec<RoutineValue>,
     ) -> HostFuture<'_, RoutineValue> {
+        let host = self.clone();
+        let handle = host.handle.clone();
         Box::pin(async move {
-            let id = resolve_routine_id(&procedure, &self.session.exec_ctx.default_namespace());
-            executor::invoke_nested(self, id, &args).await.map_err(map_core)
+            // Dropping a bare `JoinHandle` detaches the task; the root rolls back its
+            // transaction as soon as `drive` drops pending host work, so the task must abort.
+            AbortOnDropHandle::new(handle.spawn(async move {
+                let id = resolve_routine_id(&procedure, &host.session.exec_ctx.default_namespace());
+                executor::invoke_nested(&host, id, &args).await.map_err(map_core)
+            }))
+            .await
+            .map_err(map_join)?
         })
     }
 
@@ -301,18 +348,12 @@ impl FunctionHost for CoreFunctionHost {
 
     fn call(
         &self,
-        procedure: &str,
-        args: &[RoutineValue],
+        _procedure: &str,
+        _args: &[RoutineValue],
     ) -> kalamdb_functions::Result<RoutineValue> {
-        let default_ns = {
-            let session = self.session.as_ref();
-            session.exec_ctx.default_namespace()
-        };
-        let routine_id = resolve_routine_id(procedure, &default_ns);
-        match self.handle.block_on(executor::invoke_nested(self, routine_id, args)) {
-            Ok(value) => Ok(value),
-            Err(error) => Err(annotate(self.stack_label(), map_core(error))),
-        }
+        Err(FunctionsError::Invalid(
+            "sync host call is not supported; use ctx.functions.call".into(),
+        ))
     }
 
     fn publish(&self, topic: &str, payload: &RoutineValue) -> kalamdb_functions::Result<()> {
@@ -337,7 +378,9 @@ impl FunctionHost for CoreFunctionHost {
             FunctionCallOrigin::Http { headers, .. } => {
                 Ok(header_lookup(headers.as_slice(), name).cloned())
             },
-            FunctionCallOrigin::Sql | FunctionCallOrigin::Topic { .. } => Ok(None),
+            FunctionCallOrigin::Sql
+            | FunctionCallOrigin::Topic { .. }
+            | FunctionCallOrigin::Schedule { .. } => Ok(None),
         }
     }
 
@@ -422,6 +465,15 @@ impl FunctionHost for CoreFunctionHost {
 
     fn invocation_source(&self) -> kalamdb_functions::InvocationSource {
         match &self.origin {
+            FunctionCallOrigin::Schedule {
+                schedule_id,
+                run_id,
+                scheduled_at,
+            } => kalamdb_functions::InvocationSource::Schedule {
+                schedule_id:  schedule_id.clone(),
+                run_id:       run_id.clone(),
+                scheduled_at: *scheduled_at,
+            },
             FunctionCallOrigin::Topic {
                 topic_name,
                 event_id,
@@ -520,31 +572,20 @@ fn is_blocked_response_header(name: &str) -> bool {
     )
 }
 
+fn map_join(error: tokio::task::JoinError) -> FunctionsError {
+    if error.is_cancelled() {
+        FunctionsError::Cancelled
+    } else {
+        FunctionsError::Invalid("host task failed".into())
+    }
+}
+
 fn map_core(error: crate::error::KalamDbError) -> FunctionsError {
     match error {
         crate::error::KalamDbError::Function { code, message } => {
             FunctionsError::from_code(code, message)
         },
         other => FunctionsError::Invalid(other.to_string()),
-    }
-}
-
-fn annotate(stack: String, error: FunctionsError) -> FunctionsError {
-    if stack.is_empty() {
-        return error;
-    }
-    match error {
-        FunctionsError::Invalid(message) => FunctionsError::Invalid(format!("{stack}: {message}")),
-        FunctionsError::InvalidArguments(message) => {
-            FunctionsError::InvalidArguments(format!("{stack}: {message}"))
-        },
-        FunctionsError::Javascript(message) => {
-            FunctionsError::Javascript(format!("{stack}: {message}"))
-        },
-        FunctionsError::ResourceLimit(message) => {
-            FunctionsError::ResourceLimit(format!("{stack}: {message}"))
-        },
-        other => other,
     }
 }
 

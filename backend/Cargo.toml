@@ -12,7 +12,7 @@ build = "build.rs"
 
 [dependencies]
 # Memory optimization
-mimalloc = { version = "0.1", default-features = false, optional = true }
+mimalloc = { version = "0.1", default-features = false, optional = true, features = ["no_thp"] }
 
 # Optional test-only crates. Cargo forbids optional [dev-dependencies], so these
 # live here and are activated only by `e2e-tests` / `oidc`.

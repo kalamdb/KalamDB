@@ -12,6 +12,11 @@ pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvocationSource {
     Call,
+    Schedule {
+        schedule_id:  kalamdb_commons::ScheduleId,
+        run_id:       String,
+        scheduled_at: i64,
+    },
     Topic {
         topic_name: String,
         event_id:   String,
@@ -23,8 +28,8 @@ pub enum InvocationSource {
 
 /// Synchronous host surface used by `ctx.db` / `ctx.functions` / `ctx.topics` / `ctx.http`.
 ///
-/// Nested work must not re-enter the calling isolate. Core runs host methods
-/// via `Handle::block_on` from the V8 worker thread.
+/// ABI v2 host ops are async. `sql`/`call` remain on the trait for tests and
+/// must not `Handle::block_on` from a V8 worker thread.
 pub trait FunctionHost: Send + Sync {
     fn sql(&self, sql: &str, params: &[RoutineValue]) -> Result<RoutineValue>;
     fn call(&self, procedure: &str, args: &[RoutineValue]) -> Result<RoutineValue>;

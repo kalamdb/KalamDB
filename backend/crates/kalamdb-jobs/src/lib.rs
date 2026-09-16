@@ -11,6 +11,7 @@ pub mod executors;
 pub mod flush_scheduler;
 pub mod health_monitor;
 pub mod jobs_manager;
+pub(crate) mod procedure_schedules;
 pub(crate) mod scheduler_common;
 pub mod stream_eviction;
 pub mod topic_retention;

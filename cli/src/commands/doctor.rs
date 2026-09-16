@@ -2,7 +2,8 @@ use std::{env, fmt::Write as _, path::PathBuf, time::Duration};
 
 use colored::Colorize;
 use kalam_cli::{
-    config::expand_config_path, CLIConfiguration, CLIError, FileCredentialStore, Result,
+    config::expand_config_path, workflow::target::DEFAULT_LOCAL_URL, CLIConfiguration, CLIError,
+    FileCredentialStore, Result,
 };
 use kalam_client::{credentials::CredentialStore, KalamLinkClient};
 use serde::Serialize;
@@ -289,9 +290,9 @@ fn fallback_server_url(cli: &Cli) -> String {
         return url.clone();
     }
     if let Some(host) = &cli.host {
-        return format!("http://{}:{}", host, cli.port);
+        return format!("http://{}:{}", host, cli.listen_port());
     }
-    "http://localhost:2900".to_string()
+    DEFAULT_LOCAL_URL.to_string()
 }
 
 fn render_doctor_report(

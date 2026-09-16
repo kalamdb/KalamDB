@@ -306,6 +306,12 @@ impl JobsManager {
         } else {
             true
         };
+        // Own the schedule task so cancellation/error of this loop cannot detach it.
+        // A separate task also progresses while job capacity or maintenance is awaited.
+        let mut schedule_tasks = JoinSet::new();
+        let mut schedule_failure = None;
+        let schedule_manager = app_context.job_manager();
+        schedule_tasks.spawn(async move { schedule_manager.run_procedure_schedules().await });
         let mut was_leader = is_leader;
         let max_concurrent = max_concurrent.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -352,6 +358,13 @@ impl JobsManager {
                     Some(job_id) = awake_receiver.recv() => Some(job_id),
                     // Priority 2: fallback polling for crash recovery/retries
                     _ = poll_interval.tick() => None,
+                    result = schedule_tasks.join_next() => {
+                        if let Some(Err(error)) = result {
+                            log::error!("Procedure schedule task failed: {error}");
+                            schedule_failure = Some(error);
+                        }
+                        break;
+                    }
                     // Periodic leadership check
                     _ = async {
                         if leadership_enabled {
@@ -600,9 +613,41 @@ impl JobsManager {
 
         // Stop scheduling new work, then let already-started jobs finish. The owner of this run
         // loop enforces the shutdown deadline and aborts this task only if draining takes too long.
+        schedule_tasks.shutdown().await;
         drain_job_tasks(&mut join_set).await;
 
+        if let Some(error) = schedule_failure {
+            return Err(KalamDbError::Other(format!("Procedure schedule task failed: {error}")));
+        }
         Ok(())
+    }
+
+    async fn run_procedure_schedules(&self) {
+        let app = self.get_attached_app_context();
+        let mut schedules = crate::procedure_schedules::ProcedureSchedules::default();
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // Register before checking the flag so shutdown cannot be lost between them.
+            let shutdown = self.shutdown_notify.notified();
+            tokio::pin!(shutdown);
+            shutdown.as_mut().enable();
+            if self.is_shutting_down() {
+                break;
+            }
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => break,
+                _ = interval.tick() => {
+                    if self.is_shutting_down() {
+                        break;
+                    }
+                    if let Err(error) = schedules.tick(&app).await {
+                        log::warn!("Procedure schedules: {error}");
+                    }
+                }
+            }
+        }
     }
 
     /// Fetch an awakened job by ID for execution.

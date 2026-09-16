@@ -125,14 +125,8 @@ mod tests {
 
     #[test]
     fn missing_favicon_is_a_static_asset() {
-        assert!(is_missing_static_asset(
-            "functions/concerts_e2e.book_tickets/favicon.png"
-        ));
-        assert!(!is_missing_static_asset(
-            "functions/concerts_e2e.book_tickets"
-        ));
-        assert!(!is_missing_static_asset(
-            "functions/concerts_e2e.book_tickets/test"
-        ));
+        assert!(is_missing_static_asset("functions/concerts_e2e.book_tickets/favicon.png"));
+        assert!(!is_missing_static_asset("functions/concerts_e2e.book_tickets"));
+        assert!(!is_missing_static_asset("functions/concerts_e2e.book_tickets/test"));
     }
 }

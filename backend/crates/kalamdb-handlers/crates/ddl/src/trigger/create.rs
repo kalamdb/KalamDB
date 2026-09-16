@@ -134,7 +134,7 @@ fn seed_trigger_offsets(
     Ok(())
 }
 
-fn resolve_principal(
+pub(crate) fn resolve_principal(
     app: &AppContext,
     principal: &str,
     session_user: UserId,
@@ -154,5 +154,5 @@ fn resolve_principal(
     {
         return Ok(by_id);
     }
-    Err(KalamDbError::NotFound(format!("trigger principal '{principal}' not found")))
+    Err(KalamDbError::NotFound(format!("principal '{principal}' not found")))
 }

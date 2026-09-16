@@ -600,7 +600,7 @@ pub fn default_functions_heap_hard_mb() -> usize {
 }
 
 pub fn default_functions_max_idle_per_lane() -> usize {
-    1
+    8
 }
 
 pub fn default_functions_idle_ttl_secs() -> u64 {

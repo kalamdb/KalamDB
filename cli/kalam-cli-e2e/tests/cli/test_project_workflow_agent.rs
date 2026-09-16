@@ -10,7 +10,7 @@ use crate::{
     test_project_workflow_dev::{
         create_isolated_cli_std_command, start_migration_tracking_server,
         start_recording_sql_server, store_test_dev_credentials, update_dev_project,
-        wait_for_recorded_sql_contains,
+        wait_for_recorded_sql_contains, write_owned_instance,
     },
 };
 
@@ -202,6 +202,7 @@ fn test_project_workflow_agent_reuses_healthy_server_without_local_binary() {
         config.dev.apply_schema = false;
         config.dev.generate_types = false;
     });
+    write_owned_instance(&project_dir, &server_url);
 
     let missing_bin = temp.path().join("missing-kalamdb-server");
     let mut child = spawn_agent_dev(

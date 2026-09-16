@@ -13,7 +13,9 @@
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
     "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
-    "dotenv": "^17.4.2"
+    "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@types/node": "^25.7.0",

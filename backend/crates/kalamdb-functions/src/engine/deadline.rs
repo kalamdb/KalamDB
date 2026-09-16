@@ -1,7 +1,8 @@
 //! One process-wide deadline supervisor; registrations never outlive an invocation.
 
 use std::{
-    collections::HashMap,
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
     sync::{Arc, Condvar, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -15,12 +16,32 @@ use crate::{FunctionsError, Result};
 struct State {
     next_id: u64,
     entries: HashMap<u64, Entry>,
+    heap:    BinaryHeap<HeapItem>,
 }
 
 struct Entry {
-    handle:   v8::IsolateHandle,
+    handle:     v8::IsolateHandle,
+    deadline:   Instant,
+    cancel:     CancellationToken,
+    terminated: bool,
+}
+
+#[derive(Eq, PartialEq)]
+struct HeapItem {
     deadline: Instant,
-    cancel:   CancellationToken,
+    id:       u64,
+}
+
+impl Ord for HeapItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.deadline.cmp(&self.deadline).then(self.id.cmp(&other.id))
+    }
+}
+
+impl PartialOrd for HeapItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 struct Supervisor {
@@ -41,23 +62,46 @@ fn supervisor() -> &'static Arc<Supervisor> {
             .spawn(move || {
                 let mut state = worker.state.lock().expect("deadline state");
                 loop {
+                    let now = Instant::now();
+                    while let Some(item) = state.heap.peek() {
+                        let Some(entry) = state.entries.get(&item.id) else {
+                            state.heap.pop();
+                            continue;
+                        };
+                        if entry.terminated {
+                            state.heap.pop();
+                            continue;
+                        }
+                        if now >= entry.deadline || entry.cancel.is_cancelled() {
+                            let id = item.id;
+                            state.heap.pop();
+                            if let Some(entry) = state.entries.get_mut(&id) {
+                                if !entry.terminated {
+                                    entry.handle.terminate_execution();
+                                    entry.terminated = true;
+                                }
+                            }
+                            continue;
+                        }
+                        break;
+                    }
                     if state.entries.is_empty() {
                         state = worker.changed.wait(state).expect("deadline wakeup");
                         continue;
                     }
-                    let now = Instant::now();
-                    for entry in state.entries.values() {
-                        if now >= entry.deadline || entry.cancel.is_cancelled() {
-                            // Hold the lock through termination. Removing a registration
-                            // therefore acknowledges that no late interrupt can reach reuse.
-                            entry.handle.terminate_execution();
-                        }
-                    }
-                    state = worker
-                        .changed
-                        .wait_timeout(state, Duration::from_millis(1))
-                        .expect("deadline wakeup")
-                        .0;
+                    let wait = state
+                        .heap
+                        .peek()
+                        .and_then(|item| state.entries.get(&item.id))
+                        .filter(|entry| !entry.terminated)
+                        .map(|entry| {
+                            entry
+                                .deadline
+                                .saturating_duration_since(Instant::now())
+                                .min(Duration::from_millis(10))
+                        })
+                        .unwrap_or(Duration::from_millis(10));
+                    state = worker.changed.wait_timeout(state, wait).expect("deadline wakeup").0;
                 }
             })
             .expect("start function deadline supervisor");
@@ -81,12 +125,14 @@ impl DeadlineGuard {
         let mut state = supervisor.state.lock().expect("deadline state");
         state.next_id = state.next_id.checked_add(1).expect("deadline registration exhausted");
         let id = state.next_id;
+        state.heap.push(HeapItem { deadline, id });
         state.entries.insert(
             id,
             Entry {
                 handle,
                 deadline,
                 cancel: cancel.clone(),
+                terminated: false,
             },
         );
         supervisor.changed.notify_one();
@@ -110,7 +156,9 @@ impl DeadlineGuard {
 
 impl Drop for DeadlineGuard {
     fn drop(&mut self) {
-        supervisor().state.lock().expect("deadline state").entries.remove(&self.id);
+        let supervisor = supervisor();
+        supervisor.state.lock().expect("deadline state").entries.remove(&self.id);
+        supervisor.changed.notify_one();
     }
 }
 

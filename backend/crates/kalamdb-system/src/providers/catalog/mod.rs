@@ -6,6 +6,8 @@ mod routine_grants_provider;
 mod routine_parameters_provider;
 mod routines_provider;
 mod scan;
+pub mod schedule_timing;
+mod schedules_provider;
 mod stores;
 mod trigger_attempts_provider;
 mod triggers_provider;
@@ -17,12 +19,13 @@ pub use function_modules_provider::FunctionModulesTableProvider;
 pub use function_revisions_provider::FunctionRevisionsTableProvider;
 pub use models::{
     CatalogFunctionArtifact, CatalogFunctionModule, CatalogFunctionRevision, CatalogRoutine,
-    CatalogRoutineGrant, CatalogRoutineParameter, CatalogTrigger, CatalogTriggerAttempt,
-    CatalogType, CatalogTypeField,
+    CatalogRoutineGrant, CatalogRoutineParameter, CatalogSchedule, CatalogTrigger,
+    CatalogTriggerAttempt, CatalogType, CatalogTypeField,
 };
 pub use routine_grants_provider::RoutineGrantsTableProvider;
 pub use routine_parameters_provider::RoutineParametersTableProvider;
 pub use routines_provider::RoutinesTableProvider;
+pub use schedules_provider::SchedulesTableProvider;
 pub use stores::{ActivateFunctionOutcome, CatalogStores};
 pub use trigger_attempts_provider::TriggerAttemptsTableProvider;
 pub use triggers_provider::TriggersTableProvider;

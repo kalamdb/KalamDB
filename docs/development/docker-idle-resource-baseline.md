@@ -68,6 +68,8 @@ Even with an empty database, memory is used by:
 
 So `~20 MiB` idle memory in default container mode is normal for this architecture.
 
+Hosts with Linux `transparent_hugepage=always` can pin mimalloc arenas at hundreds of MiB even after load drops, because 2MiB pages cannot be partially returned. `kalamdb-server` disables THP for its own process (so host sysctl is not required), sets reclaim-friendly mimalloc defaults, and forces allocator collection after 60s idle. Hundreds of MiB of idle RSS on an empty instance is a bug, not the expected baseline.
+
 ## Tuning for lower idle usage
 
 If lower idle footprint is preferred over max local concurrency:

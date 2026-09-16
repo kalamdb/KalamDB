@@ -510,7 +510,6 @@ mod tests {
         )
     }
 
-    #[allow(dead_code)]
     fn create_test_table_def(pk_default: ColumnDefault) -> TableDefinition {
         TableDefinition {
             namespace_id:   NamespaceId::new("test"),

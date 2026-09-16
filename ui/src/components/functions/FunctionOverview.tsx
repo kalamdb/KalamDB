@@ -10,9 +10,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { CodeBlock } from "@/components/ui/code-block";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Spinner } from "@/components/ui/spinner";
+import { FunctionMemoryCard } from "@/components/functions/FunctionMemoryCard";
+import { FunctionSourceEditor } from "@/components/functions/FunctionSourceEditor";
 import { FunctionStatusBadge } from "@/components/functions/FunctionStatusBadge";
 import { RevisionIdDisplay } from "@/components/functions/RevisionIdDisplay";
 import {
@@ -32,11 +31,11 @@ import {
   logLevelClassName,
 } from "@/features/functions/display";
 import { functionDetailPath } from "@/features/functions/paths";
-import { instancesForProcedure, summarizeModuleInstances, utf8ByteLength } from "@/features/functions/runtime";
+import { utf8ByteLength } from "@/features/functions/runtime";
 import { currentRevisionForProcedure } from "@/features/functions/status";
 import { moduleRuntimeLabel } from "@/services/functionsService";
 import type { ProcedureCatalogSnapshot, ProcedureListItem, SystemProcedureLogRow } from "@/features/functions/types";
-import { useGetModuleInstancesQuery, useGetProcedureLogsQuery } from "@/store/apiSlice";
+import { useGetProcedureLogsQuery } from "@/store/apiSlice";
 
 function DetailItem({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -116,7 +115,7 @@ export function FunctionOverview({
         </CardContent>
       </Card>
 
-      <RuntimeMemoryCard procedure={procedure} />
+      <FunctionMemoryCard procedure={procedure} />
 
       {procedure.implementation === "inline" && procedure.source ? (
         <InlineSourceCard language={procedure.language} source={procedure.source} />
@@ -142,64 +141,17 @@ export function FunctionOverview({
   );
 }
 
-function RuntimeMemoryCard({ procedure }: { procedure: ProcedureListItem }) {
-  const { data: instances = [], isFetching, error } = useGetModuleInstancesQuery(undefined, {
-    pollingInterval: 5_000,
-  });
-  const matched = instancesForProcedure(instances, procedure);
-  const summary = summarizeModuleInstances(matched);
-
-  return (
-    <Card data-testid="function-runtime-memory">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm">Runtime memory</CardTitle>
-        <CardDescription>
-          Resident V8 isolate for this revision. Peak is the high-water heap while the isolate stays warm.
-        </CardDescription>
-        {isFetching ? (
-          <CardAction>
-            <Spinner />
-          </CardAction>
-        ) : null}
-      </CardHeader>
-      <CardContent>
-        {error ? (
-          <p className="text-sm text-destructive">Failed to load isolate memory.</p>
-        ) : matched.length === 0 ? (
-          <Empty className="border border-dashed py-8">
-            <EmptyHeader>
-              <EmptyTitle>No resident isolate</EmptyTitle>
-              <EmptyDescription>
-                Memory appears after the first invocation while the isolate is still warm.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <dl className="grid gap-4 sm:grid-cols-3">
-            <DetailItem label="Isolates">{formatCount(summary.isolateCount)}</DetailItem>
-            <DetailItem label="State">{summary.states.join(", ") || "—"}</DetailItem>
-            <DetailItem label="Isolate calls">{formatCount(summary.invocations)}</DetailItem>
-            <DetailItem label="Used heap">{formatBytes(summary.usedHeapBytes)}</DetailItem>
-            <DetailItem label="Peak heap">{formatBytes(summary.peakHeapBytes)}</DetailItem>
-            <DetailItem label="Reserved">{formatBytes(summary.reservedBytes)}</DetailItem>
-          </dl>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function InlineSourceCard({ language, source }: { language: string | null; source: string }) {
   return (
-    <Card data-testid="function-inline-source">
+    <Card data-testid="function-inline-source" className="min-w-0 overflow-visible">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm">Inline source</CardTitle>
         <CardDescription>
           {displayLanguage(language)} · {formatBytes(utf8ByteLength(source))}
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <CodeBlock value={source} jsonPreferred={false} maxHeightClassName="max-h-96" />
+      <CardContent className="min-w-0">
+        <FunctionSourceEditor source={source} />
       </CardContent>
     </Card>
   );

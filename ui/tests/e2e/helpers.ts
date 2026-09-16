@@ -91,7 +91,8 @@ export async function clickNav(page: Page, href: string): Promise<void> {
 
 export async function openSqlStudio(page: Page): Promise<void> {
   await clickNav(page, "/ui/sql");
-  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible({
+  await expect(page.getByText("Loading SQL workspace...")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByRole("button", { name: /^Run(?: selected)?$/ })).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -99,9 +100,13 @@ export async function openSqlStudio(page: Page): Promise<void> {
 export async function openFreshSqlTab(page: Page): Promise<void> {
   await openSqlStudio(page);
   const newTab = page.getByRole("button", { name: "New query tab" });
-  if (await newTab.isVisible().catch(() => false)) {
-    await newTab.click();
+  if (!(await newTab.isVisible().catch(() => false))) {
+    return;
   }
+  await newTab.click();
+  await expect(page.getByRole("button", { name: /^Run(?: selected)?$/ })).toBeVisible({
+    timeout: 10_000,
+  });
 }
 
 export async function fillMonaco(page: Page, sql: string): Promise<void> {
@@ -111,30 +116,49 @@ export async function fillMonaco(page: Page, sql: string): Promise<void> {
     return Boolean(monaco?.editor?.getEditors?.()?.length);
   }, undefined, { timeout: 30_000 });
 
+  await page.locator(".monaco-editor textarea").last().click({ force: true });
+
   await page.evaluate((nextSql) => {
     const monaco = (window as unknown as {
       monaco: {
         editor: {
           getEditors: () => Array<{
             setValue: (value: string) => void;
+            getValue: () => string;
             layout?: () => void;
-            hasTextFocus?: () => boolean;
+            focus?: () => void;
+            getDomNode?: () => HTMLElement | null;
           }>;
         };
       };
     }).monaco;
     const editors = monaco.editor.getEditors();
-    const editor = editors.find((item) => item.hasTextFocus?.()) ?? editors[editors.length - 1];
+    const editor = editors.find((item) => {
+      const node = item.getDomNode?.();
+      if (!node?.isConnected) {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }) ?? editors[editors.length - 1];
     editor.setValue(nextSql);
+    editor.focus?.();
     editor.layout?.();
   }, sql);
 
-  await expect(page.locator(".view-line").first()).not.toHaveText("", { timeout: 10_000 });
+  const marker = sql
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length >= 12) ?? sql.trim();
+  await expect(page.locator(".view-line").filter({ hasText: marker.slice(0, 72) }).first()).toBeVisible({
+    timeout: 10_000,
+  });
 }
 
 export async function runSql(page: Page, sql: string): Promise<void> {
   await fillMonaco(page, sql);
-  const runButton = page.getByRole("button", { name: "Run", exact: true });
+  const runButton = page.getByRole("button", { name: /^Run(?: selected)?$/ });
   await expect(runButton).toBeEnabled({ timeout: 10_000 });
   await runButton.click();
   await page.getByText("Running query...").waitFor({ state: "visible", timeout: 5_000 }).catch(() => undefined);

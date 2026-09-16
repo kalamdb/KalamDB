@@ -72,6 +72,13 @@ impl SqlStatement {
         // Admin users (DBA, System) can do anything - skip authorization checks
         let is_admin = is_admin_role(role);
         let can_manage_policy = is_admin || role == Role::Service;
+        if matches!(word_refs.as_slice(), ["CREATE" | "ALTER" | "DROP", "SCHEDULE", ..])
+            && !is_admin
+        {
+            return Err(StatementClassificationError::Unauthorized(
+                "Admin privileges required for schedules".into(),
+            ));
+        }
 
         // Hot path: Check SELECT/INSERT/DELETE first (99% of queries)
         // DML statements - create typed markers for handler pattern
@@ -203,6 +210,18 @@ impl SqlStatement {
             ["ALTER", "TRIGGER", ..] => Self::wrap(sql, || {
                 AlterTriggerStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::AlterTrigger)
+            }),
+            ["CREATE", "SCHEDULE", ..] => Self::wrap(sql, || {
+                CreateScheduleStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::CreateSchedule)
+            }),
+            ["DROP", "SCHEDULE", ..] => Self::wrap(sql, || {
+                DropScheduleStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::DropSchedule)
+            }),
+            ["ALTER", "SCHEDULE", ..] => Self::wrap(sql, || {
+                AlterScheduleStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::AlterSchedule)
             }),
             ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
@@ -962,8 +981,11 @@ impl SqlStatement {
             | SqlStatementKind::DropProcedure(_)
             | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::CreateTrigger(_)
+            | SqlStatementKind::CreateSchedule(_)
             | SqlStatementKind::DropTrigger(_)
+            | SqlStatementKind::DropSchedule(_)
             | SqlStatementKind::AlterTrigger(_)
+            | SqlStatementKind::AlterSchedule(_)
             | SqlStatementKind::GrantExecute(_)
             | SqlStatementKind::RevokeExecute(_)
             | SqlStatementKind::AlterTable(_)

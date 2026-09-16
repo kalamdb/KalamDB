@@ -202,6 +202,16 @@ pub trait MetaApplier: Send + Sync {
         cancelled_at: i64,
     ) -> Result<String, RaftError>;
 
+    /// Apply a replicated schedule mutation. Default rejects unsupported appliers.
+    async fn compare_exchange_schedule(
+        &self,
+        _id: &kalamdb_commons::ScheduleId,
+        _expected_version: Option<&str>,
+        _replacement: Option<&kalamdb_system::CatalogSchedule>,
+    ) -> Result<bool, RaftError> {
+        Err(RaftError::Internal("Schedule applier unavailable".into()))
+    }
+
     /// Stage artifact/revision rows then CAS-activate the module pointer.
     async fn activate_function_revision(
         &self,

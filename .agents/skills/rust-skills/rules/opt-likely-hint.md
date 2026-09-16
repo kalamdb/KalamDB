@@ -47,11 +47,12 @@ fn cold_empty_error() -> Result<(), Error> {
 }
 ```
 
-## Nightly: Intrinsics
+## Nightly: std::hint
 
 ```rust
-#![feature(core_intrinsics)]
-use std::intrinsics::{likely, unlikely};
+// Requires nightly; still unstable as of Rust 1.96
+#![feature(likely_unlikely)]
+use std::hint::{likely, unlikely};
 
 fn process(data: &Data) -> i32 {
     if unlikely(data.is_corrupted()) {
@@ -69,16 +70,17 @@ fn process(data: &Data) -> i32 {
 ## Boolean Likely Wrapper (Nightly)
 
 ```rust
-#![feature(core_intrinsics)]
+// Requires nightly; still unstable as of Rust 1.96
+#![feature(likely_unlikely)]
 
 #[inline(always)]
 fn likely(b: bool) -> bool {
-    std::intrinsics::likely(b)
+    std::hint::likely(b)
 }
 
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
-    std::intrinsics::unlikely(b)
+    std::hint::unlikely(b)
 }
 
 // Usage
@@ -86,6 +88,20 @@ if likely(x > 0) {
     hot_path(x)
 } else {
     cold_path(x)
+}
+```
+
+## Stable: std::hint::cold_path
+
+`std::hint::cold_path()` (stable since Rust 1.95) marks the enclosing code path as unlikely so the optimizer can deprioritize it — a stable substitute for nightly `unlikely`. Call it inside the rarely-taken branch:
+
+```rust
+fn process(data: &Data) -> i32 {
+    if data.is_corrupted() {
+        std::hint::cold_path(); // tell the optimizer this branch is rare
+        return handle_corruption(data);
+    }
+    fast_path(data)
 }
 ```
 

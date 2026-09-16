@@ -111,3 +111,4 @@ let sum: i64 = data.par_iter().map(|&x| x as i64).sum();
 - [perf-iter-lazy](./perf-iter-lazy.md) - Keep iterators lazy
 - [opt-bounds-check](./opt-bounds-check.md) - Bounds check elimination
 - [anti-index-over-iter](./anti-index-over-iter.md) - Anti-pattern
+- [conc-rayon-par-iter](./conc-rayon-par-iter.md) - Parallelize data-parallel loops

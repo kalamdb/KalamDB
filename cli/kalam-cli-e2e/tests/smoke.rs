@@ -139,6 +139,8 @@ pub(crate) mod kobj_helpers;
 mod kobj_indexes;
 #[path = "smoke/kobj/rows.rs"]
 mod kobj_rows;
+#[path = "smoke/kobj/schedules.rs"]
+mod kobj_schedules;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

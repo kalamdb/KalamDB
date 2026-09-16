@@ -30,12 +30,14 @@ import { useGetProcedureLogsQuery } from "@/store/apiSlice";
 import type { SystemProcedureLogRow } from "@/features/functions/types";
 
 const LEVELS = ["all", "debug", "info", "warn", "error"] as const;
-const ORIGINS = ["all", "sql", "http", "topic"] as const;
+const ORIGINS = ["all", "sql", "http", "topic", "schedule", "runtime"] as const;
+const CHANNELS = ["all", "invocation", "console", "lifecycle"] as const;
 
-export function FunctionLogs({ procedureId }: { procedureId: string }) {
+export function FunctionLogs({ procedureId, moduleId }: { procedureId: string; moduleId?: string | null }) {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<string>("all");
   const [origin, setOrigin] = useState<string>("all");
+  const [channel, setChannel] = useState<string>("all");
   const [executionId, setExecutionId] = useState("");
   const [revisionId, setRevisionId] = useState("");
   const [selected, setSelected] = useState<SystemProcedureLogRow | null>(null);
@@ -43,14 +45,16 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
   const filters = useMemo(
     () => ({
       procedureId,
+      moduleId: moduleId ?? undefined,
       search,
       level,
       origin,
+      channel,
       executionId,
       revisionId,
       limit: 200,
     }),
-    [procedureId, search, level, origin, executionId, revisionId],
+    [procedureId, moduleId, search, level, origin, channel, executionId, revisionId],
   );
 
   const { data: logs = [], isFetching, error } = useGetProcedureLogsQuery(filters);
@@ -60,7 +64,10 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
     <div className="flex flex-col gap-4">
       <div>
         <h2 className="text-sm font-semibold">Logs</h2>
-        <p className="text-xs text-muted-foreground">Filtered to this procedure from system.procedure_logs.</p>
+        <p className="text-xs text-muted-foreground">
+          Invocations, V8 console output, and isolate lifecycle (create, warm, idle, drop, deploy) from
+          system.procedure_logs.
+        </p>
       </div>
 
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -86,13 +93,25 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
           </SelectContent>
         </Select>
         <Select value={origin} onValueChange={setOrigin}>
-          <SelectTrigger className="w-full lg:w-36" size="sm">
+          <SelectTrigger className="w-full lg:w-36" size="sm" aria-label="Origin">
             <SelectValue placeholder="All origins" />
           </SelectTrigger>
           <SelectContent>
             {ORIGINS.map((item) => (
               <SelectItem key={item} value={item}>
-                {item === "all" ? "All origins" : item}
+                {item === "all" ? "All origins" : displayLogOrigin(item)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={channel} onValueChange={setChannel}>
+          <SelectTrigger className="w-full lg:w-40" size="sm">
+            <SelectValue placeholder="All channels" />
+          </SelectTrigger>
+          <SelectContent>
+            {CHANNELS.map((item) => (
+              <SelectItem key={item} value={item}>
+                {item === "all" ? "All channels" : item}
               </SelectItem>
             ))}
           </SelectContent>
@@ -122,6 +141,7 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
               <TableHead>Level</TableHead>
               <TableHead>Actor</TableHead>
               <TableHead>Origin</TableHead>
+              <TableHead>Channel</TableHead>
               <TableHead>Execution</TableHead>
               <TableHead>Message</TableHead>
             </TableRow>
@@ -129,13 +149,13 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
           <TableBody>
             {isFetching && logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   Loading logs…
                 </TableCell>
               </TableRow>
             ) : logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                   No logs for this procedure.
                 </TableCell>
               </TableRow>
@@ -152,6 +172,7 @@ export function FunctionLogs({ procedureId }: { procedureId: string }) {
                   <TableCell className={logLevelClassName(log.level)}>{displayLogLevel(log.level)}</TableCell>
                   <TableCell className="max-w-[8rem] truncate">{displayLogActor(log.actor)}</TableCell>
                   <TableCell className="text-muted-foreground">{displayLogOrigin(log.origin)}</TableCell>
+                  <TableCell className="text-muted-foreground">{log.channel || "—"}</TableCell>
                   <TableCell className="max-w-[10rem] truncate font-mono text-xs">{log.execution_id || "—"}</TableCell>
                   <TableCell className="max-w-xl truncate">{log.message || "—"}</TableCell>
                 </TableRow>

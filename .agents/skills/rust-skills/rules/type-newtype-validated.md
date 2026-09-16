@@ -157,3 +157,5 @@ let admin = email!("admin@example.com");  // Validated at compile time
 - [api-parse-dont-validate](./api-parse-dont-validate.md) - Parse at boundaries
 - [api-newtype-safety](./api-newtype-safety.md) - Type-safe distinctions
 - [type-newtype-ids](./type-newtype-ids.md) - ID newtypes
+- [conv-fromstr-parsing](./conv-fromstr-parsing.md) - FromStr for validated parsing
+- [serde-try-from-validate](./serde-try-from-validate.md) - Validate during deserialization

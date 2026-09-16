@@ -18,7 +18,6 @@ enum PreSessionCommand {
     Invite,
     Token,
     CredentialManagement,
-    CredentialLogin,
     WatchSchema,
     Subscriptions,
 }
@@ -48,19 +47,19 @@ fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
             | CliCommand::Init(_)
             | CliCommand::Link(_)
             | CliCommand::Schema(_)
-            | CliCommand::Migration(_)
             | CliCommand::Db(_)
             | CliCommand::Dev(_)
+            | CliCommand::Up(_)
+            | CliCommand::Down(_)
             | CliCommand::Status(_)
+            | CliCommand::Logs(_)
             | CliCommand::Deploy(_)
             | CliCommand::Functions(_) => None,
         };
     }
 
-    if cli.list_instances || cli.show_credentials || cli.delete_credentials {
+    if cli.list_instances {
         Some(PreSessionCommand::CredentialManagement)
-    } else if cli.update_credentials {
-        Some(PreSessionCommand::CredentialLogin)
     } else if cli.watch_schema {
         Some(PreSessionCommand::WatchSchema)
     } else if cli.list_subscriptions || cli.subscribe.is_some() {
@@ -134,15 +133,6 @@ async fn run_pre_session_command(
                 PreSessionResult::NotHandled
             })
         },
-        PreSessionCommand::CredentialLogin => Ok(
-            if credentials::login_and_store_credentials(context.cli, context.credential_store)
-                .await?
-            {
-                PreSessionResult::Exit
-            } else {
-                PreSessionResult::NotHandled
-            },
-        ),
         PreSessionCommand::WatchSchema => Ok(
             if watch_schema::handle_watch_schema(context.cli, context.credential_store).await? {
                 PreSessionResult::Exit
@@ -207,11 +197,7 @@ mod tests {
 
     #[test]
     fn credential_management_handler_matches_local_credential_modes() {
-        for flag in [
-            "--list-instances",
-            "--show-credentials",
-            "--delete-credentials",
-        ] {
+        for flag in ["--list-instances"] {
             let cli = parse_cli(&[flag]);
 
             assert_eq!(pre_session_command(&cli), Some(PreSessionCommand::CredentialManagement));
@@ -262,19 +248,6 @@ mod tests {
             "--no-spinner",
         ]);
         assert!(handle_early_commands(&update_cli).await.expect("update dry run"));
-    }
-
-    #[test]
-    fn credential_login_handler_matches_update_mode() {
-        let cli = parse_cli(&[
-            "--update-credentials",
-            "--user",
-            "root",
-            "--password",
-            "secret",
-        ]);
-
-        assert_eq!(pre_session_command(&cli), Some(PreSessionCommand::CredentialLogin));
     }
 
     #[test]

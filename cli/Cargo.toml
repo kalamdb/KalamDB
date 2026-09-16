@@ -83,9 +83,9 @@ zip = { workspace = true }
 
 # Base64 encoding for history preservation
 base64 = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 ntest = { workspace = true }
 
 [build-dependencies]

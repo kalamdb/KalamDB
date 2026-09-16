@@ -64,6 +64,8 @@ module = "backend"
 
 [functions.runtime]
 # SQL procedure runtime. Admission enforces both max_active and max_memory_mb.
+# Idle isolates are charged at heap_soft_mb; running ones at heap_hard_mb.
+# Extra root calls wait for memory instead of thrashing the warm pool.
 # workers = 0 means auto (currently cpus/2; later min(cpus, 4)).
 workers = 0
 max_active = 16
@@ -71,7 +73,7 @@ max_queued = 128
 max_memory_mb = 256
 heap_soft_mb = 16
 heap_hard_mb = 64
-max_idle_per_lane = 1
+max_idle_per_lane = 8
 idle_ttl_secs = 30
 max_instance_age_secs = 300
 max_invocations_per_instance = 10000

@@ -22,12 +22,7 @@ pub use batch_execution::{
     ExecutionBatchPrepareError, ParsedExecutionStatement, PreparedExecutionBatchStatement,
 };
 pub use classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
-pub use compatibility::{
-    format_mysql_column_not_found, format_mysql_error, format_mysql_syntax_error,
-    format_mysql_table_not_found, format_postgres_column_not_found, format_postgres_error,
-    format_postgres_syntax_error, format_postgres_table_not_found, map_sql_type_to_arrow,
-    map_sql_type_to_kalam, ErrorStyle,
-};
+pub use compatibility::map_sql_type_to_kalam;
 pub use contracts::{
     canonical_contract_hash, compile_contract, compile_contract_sql, diff_contracts, ContractDiff,
     ContractError, ContractSnapshot, ContractSource,

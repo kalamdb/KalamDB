@@ -93,6 +93,7 @@ println!("Debug: {:?}", value);
 
 ```rust
 use std::cell::RefCell;
+use std::fmt::Write; // for write! into the String buffer
 
 thread_local! {
     static BUFFER: RefCell<String> = RefCell::new(String::with_capacity(256));
@@ -111,6 +112,8 @@ fn format_event(event: &Event) -> String {
 ## Pattern: Display Implementation
 
 ```rust
+use std::fmt::Write; // for the caller's write! into a String
+
 struct Event {
     level: Level,
     message: String,

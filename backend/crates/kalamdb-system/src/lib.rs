@@ -68,7 +68,8 @@ pub use providers::{
     catalog::{
         ActivateFunctionOutcome, CatalogFunctionArtifact, CatalogFunctionModule,
         CatalogFunctionRevision, CatalogRoutine, CatalogRoutineGrant, CatalogRoutineParameter,
-        CatalogStores, CatalogTrigger, CatalogTriggerAttempt, CatalogType, CatalogTypeField,
+        CatalogSchedule, CatalogStores, CatalogTrigger, CatalogTriggerAttempt, CatalogType,
+        CatalogTypeField,
     },
     job_nodes::models::JobNode,
     manifest::models::{
@@ -89,9 +90,9 @@ pub use providers::{
     FunctionRevisionsTableProvider, InMemoryChecker, JobNodesTableProvider, JobsTableProvider,
     ManifestTableProvider, MigrationsTableProvider, NamespacesTableProvider,
     RoutineGrantsTableProvider, RoutineParametersTableProvider, RoutinesTableProvider,
-    SchemasTableProvider, StoragesTableProvider, TablePoliciesTableProvider,
-    TriggerAttemptsTableProvider, TriggersTableProvider, TypeFieldsTableProvider,
-    TypesTableProvider, UsersTableProvider,
+    SchedulesTableProvider, SchemasTableProvider, StoragesTableProvider,
+    TablePoliciesTableProvider, TriggerAttemptsTableProvider, TriggersTableProvider,
+    TypeFieldsTableProvider, TypesTableProvider, UsersTableProvider,
 };
 pub use registry::SystemTablesRegistry;
 pub use services::SystemColumnsService;

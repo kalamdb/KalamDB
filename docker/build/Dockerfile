@@ -267,8 +267,9 @@ RUN sed -i 's|format = "compact"|format = "json"|g' /config/server.toml
 USER kalamdb
 
 # mimalloc tuning for low idle RSS on Linux containers.
-# The default image favors minimal idle footprint; production deployments can
-# override worker/thread counts or allocator knobs through environment variables.
+# kalamdb-server also applies these defaults in-process (and disables
+# transparent huge pages for its own address space). Existing values here
+# still win as overrides.
 ENV MIMALLOC_PURGE_DELAY=0
 ENV MIMALLOC_PURGE_DECOMMITS=1
 ENV MIMALLOC_EAGER_COMMIT=0

@@ -112,7 +112,7 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     assert!(schema.contains("export type ChatUsers = ChatUser"));
     assert!(ts.contains("createMessage:"));
     assert!(ts.contains("chat: {"));
-    assert!(ts.contains("export * from './schema'"));
+    assert!(ts.contains("export * from './schema.js'"));
 
     assert!(dart.contains("final class ChatAddress {"));
     assert!(dart.contains("ChatAddress? address"));
@@ -365,6 +365,10 @@ fn generate_does_not_require_a_server_url() {
     let schema = fs::read_to_string(root.join("src/generated/schema.ts")).unwrap();
     assert!(schema.contains("export const users"));
     assert!(dart.contains("KalamTableSpec<Users>"));
+    assert!(
+        !root.join("functions").exists(),
+        "table-only schemas should not create a functions/ tree"
+    );
 }
 
 const TYPECHECK_SQL: &str = r#"

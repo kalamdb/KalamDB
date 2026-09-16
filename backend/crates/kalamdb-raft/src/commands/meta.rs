@@ -203,6 +203,14 @@ pub enum MetaCommand {
         artifact:             CatalogFunctionArtifact,
         expected_revision_id: Option<FunctionRevisionId>,
     },
+    /// Serialized CAS for schedule definitions, claims, and completion.
+    CompareExchangeSchedule {
+        schedule_id:      kalamdb_commons::ScheduleId,
+        expected_version: Option<String>,
+        replacement:      Option<kalamdb_system::CatalogSchedule>,
+    },
+    /// Independent CAS results, in input order. Appended for wire compatibility.
+    CompareExchangeSchedules { updates: Vec<super::ScheduleUpdate> },
 }
 
 impl MetaCommand {
@@ -230,6 +238,9 @@ impl MetaCommand {
             | Self::ReleaseJob { .. }
             | Self::CancelJob { .. } => "job",
             Self::ActivateFunctionRevision { .. } => "function",
+            Self::CompareExchangeSchedule { .. } | Self::CompareExchangeSchedules { .. } => {
+                "schedule"
+            },
         }
     }
 }
@@ -278,6 +289,9 @@ pub enum MetaResponse {
     Error {
         message: String,
     },
+    SchedulesUpdated {
+        applied: Vec<bool>,
+    },
 }
 
 impl MetaResponse {
@@ -304,6 +318,7 @@ impl MetaResponse {
     /// Get the message from any response variant
     pub fn get_message(&self) -> String {
         match self {
+            Self::SchedulesUpdated { .. } => "Schedule batch applied".into(),
             Self::Ok => "Operation completed successfully".to_string(),
             Self::Message { message } => message.clone(),
             Self::NamespaceCreated { message, .. } => message.clone(),

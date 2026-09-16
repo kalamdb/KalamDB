@@ -6,9 +6,11 @@ mod convert;
 mod dispatcher;
 mod executor;
 mod host;
+pub(crate) mod lifecycle;
+pub mod schedule_store;
 
 pub use convert::{bind_call_arguments, json_to_routine_value, routine_value_as_json};
-pub use dispatcher::{dispatch_once, start_trigger_dispatcher, TriggerDispatcherRuntime};
+pub use dispatcher::{start_trigger_dispatcher, TriggerDispatcherRuntime};
 pub use executor::{
     activate_module_artifact, function_storage, rebuild_active_function_set,
     rollback_module_revision, FunctionService,

@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{CLIError, Result},
     workflow::project::{
-        connection_url,
-        identifiers::serde_namespace,
-        templates::{find_template_file, resolve_scaffold_template},
+        connection_url, identifiers::serde_namespace, templates::find_scaffold_template_file,
     },
 };
 
@@ -66,6 +64,39 @@ pub struct ProjectSection {
         skip_serializing_if = "is_default_kalam_dir"
     )]
     pub kalam_dir:       String,
+    /// Compatible `kalamdb-server` version for this project. Defaults to the CLI version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version:  Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvironmentPurpose {
+    Development,
+    Staging,
+    Production,
+}
+
+impl EnvironmentPurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::Staging => "staging",
+            Self::Production => "production",
+        }
+    }
+
+    pub fn from_env_name(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "prod" | "production" => Self::Production,
+            "staging" => Self::Staging,
+            _ => Self::Development,
+        }
+    }
+
+    pub fn allows_dev_seed(self) -> bool {
+        matches!(self, Self::Development)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,6 +104,8 @@ pub struct ConnectionEnv {
     pub url:       String,
     #[serde(with = "serde_namespace")]
     pub namespace: NamespaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose:   Option<EnvironmentPurpose>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,7 +307,13 @@ impl KalamProjectConfig {
                     ));
                 }
             },
-            SchemaMode::Remote => {},
+            SchemaMode::Remote => {
+                return Err(CLIError::ConfigurationError(
+                    "schema.mode = \"remote\" is not supported; set schema.mode = \"sql\" and \
+                     keep schema.sql as the source of truth"
+                        .into(),
+                ));
+            },
         }
 
         let mut outputs = std::collections::HashSet::new();
@@ -337,15 +376,10 @@ impl KalamProjectConfig {
 
         let gitignore_path = kalam_dir.join(".gitignore");
         if !gitignore_path.exists() {
-            let template = resolve_scaffold_template().map_err(|error| {
+            let contents = find_scaffold_template_file("kalam/.gitignore").map_err(|error| {
                 CLIError::ConfigurationError(format!(
                     "failed to load scaffold template for kalam/.gitignore: {error}"
                 ))
-            })?;
-            let contents = find_template_file(template, "kalam/.gitignore").ok_or_else(|| {
-                CLIError::ConfigurationError(
-                    "missing scaffold template file 'kalam/.gitignore'".into(),
-                )
             })?;
             fs::write(&gitignore_path, contents).map_err(|error| {
                 CLIError::FileError(format!(
@@ -380,6 +414,20 @@ impl KalamProjectConfig {
     /// Baseline schema snapshot used as the "before" side of migration diffs.
     pub fn schema_baseline_path(&self, project_root: &Path) -> PathBuf {
         self.kalam_dir(project_root).join(".schema-baseline.sql")
+    }
+
+    pub fn seed_path(&self, project_root: &Path) -> PathBuf {
+        self.kalam_dir(project_root).join("seed.sql")
+    }
+
+    pub fn resolved_server_version(&self) -> String {
+        self.project
+            .server_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(crate::CLI_VERSION)
+            .to_string()
     }
 }
 
@@ -592,6 +640,19 @@ output = "src/generated/kalam.ts"
     }
 
     #[test]
+    fn parse_rejects_remote_schema_mode() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[schema]
+mode = "remote"
+"#;
+        let error = KalamProjectConfig::parse(toml).expect_err("remote schema mode");
+        assert!(error.to_string().contains("schema.mode = \"remote\" is not supported"));
+    }
+
+    #[test]
     fn project_paths_use_configured_kalam_dir() {
         let toml = r#"
 [project]
@@ -688,12 +749,14 @@ output = "src/generated/kalam.ts"
                 default_env:     "dev".into(),
                 package_manager: None,
                 kalam_dir:       "kalam".into(),
+                server_version:  None,
             },
             connection: HashMap::from([(
                 "dev".into(),
                 ConnectionEnv {
                     url:       "http://localhost:2900".into(),
                     namespace: NamespaceId::new("app"),
+                    purpose:   None,
                 },
             )]),
             schema:     SchemaSection {

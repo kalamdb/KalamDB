@@ -9,8 +9,9 @@ mod runner;
 mod shell;
 
 pub use lifecycle::{
-    configure_supervised_child, kill_child_process_tree, kill_process_tree_by_pid,
-    kill_supervised_child, kill_supervised_process_by_pid, SupervisedKillScope,
+    configure_supervised_child, kill_process_tree_by_pid, kill_supervised_child,
+    kill_supervised_process_by_pid, pid_is_running, process_command_line,
+    process_matches_executable, request_terminate, SupervisedKillScope,
 };
 pub use path::{
     program_needs_shell_launch, resolve_node_binary, resolve_program_on_path,

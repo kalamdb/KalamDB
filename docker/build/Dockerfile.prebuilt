@@ -77,8 +77,9 @@ RUN mkdir -p /data/.kalam && \
 ENV HOME=/data
 
 # mimalloc tuning for low idle RSS in the published container image.
-# Deployments that want higher concurrency can still override server config or
-# allocator knobs explicitly at runtime.
+# kalamdb-server also applies these defaults in-process (and disables
+# transparent huge pages for its own address space). Existing values here
+# still win as overrides.
 ENV MIMALLOC_PURGE_DELAY=0
 ENV MIMALLOC_PURGE_DECOMMITS=1
 ENV MIMALLOC_EAGER_COMMIT=0

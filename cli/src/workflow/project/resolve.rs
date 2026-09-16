@@ -1,18 +1,10 @@
-//! Environment resolution for workflow commands.
+//! Environment helpers for workflow commands.
 
 use std::{collections::HashMap, env, fs, path::Path};
 
-use kalam_client::CredentialStore;
 use kalamdb_commons::NamespaceId;
 
-use crate::{
-    credentials::FileCredentialStore,
-    error::{CLIError, Result},
-    workflow::project::{
-        config::{ConnectionEnv, KalamProjectConfig},
-        identifiers::parse_namespace_id,
-    },
-};
+use crate::error::{CLIError, Result};
 
 pub const ENV_VAR_KALAM_ENV: &str = "KALAM_ENV";
 pub const ENV_VAR_KALAM_URL: &str = "KALAM_URL";
@@ -20,11 +12,12 @@ pub const ENV_VAR_KALAM_NAMESPACE: &str = "KALAM_NAMESPACE";
 pub const ENV_VAR_KALAM_PROFILE: &str = "KALAM_PROFILE";
 const PROJECT_ENV_FILE: &str = ".env";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionSource {
     CliFlag,
     EnvironmentVariable,
     ProjectConfig,
+    InstanceState,
     DefaultDev,
 }
 
@@ -38,118 +31,9 @@ pub struct ResolvedEnvironment {
     pub namespace_source: ResolutionSource,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct EnvironmentOverrides<'a> {
-    pub env:       Option<&'a str>,
-    pub url:       Option<&'a str>,
-    pub namespace: Option<&'a str>,
-}
-
-pub fn resolve_environment(
-    config: &KalamProjectConfig,
-    overrides: &EnvironmentOverrides<'_>,
-) -> Result<ResolvedEnvironment> {
-    let (name, env_source) = resolve_env_name(config, overrides.env)?;
-    let connection = config.connection.get(&name).ok_or_else(|| {
-        CLIError::ConfigurationError(format!("no [connection.{name}] section in kalam.toml"))
-    })?;
-
-    let (url, url_source) = resolve_url(connection, overrides.url)?;
-    let (namespace, namespace_source) = resolve_namespace(connection, overrides.namespace)?;
-
-    Ok(ResolvedEnvironment {
-        name,
-        url,
-        namespace,
-        env_source,
-        url_source,
-        namespace_source,
-    })
-}
-
-fn resolve_env_name(
-    config: &KalamProjectConfig,
-    cli_env: Option<&str>,
-) -> Result<(String, ResolutionSource)> {
-    if let Some(env) = cli_env.map(str::trim).filter(|v| !v.is_empty()) {
-        return Ok((env.to_string(), ResolutionSource::CliFlag));
-    }
-    if let Ok(env) = env::var(ENV_VAR_KALAM_ENV) {
-        let trimmed = env.trim();
-        if !trimmed.is_empty() {
-            return Ok((trimmed.to_string(), ResolutionSource::EnvironmentVariable));
-        }
-    }
-    if !config.project.default_env.trim().is_empty() {
-        return Ok((config.project.default_env.clone(), ResolutionSource::ProjectConfig));
-    }
-    Ok(("dev".to_string(), ResolutionSource::DefaultDev))
-}
-
-fn resolve_url(
-    connection: &ConnectionEnv,
-    cli_url: Option<&str>,
-) -> Result<(String, ResolutionSource)> {
-    if let Some(url) = cli_url.map(str::trim).filter(|v| !v.is_empty()) {
-        return Ok((url.to_string(), ResolutionSource::CliFlag));
-    }
-    if let Ok(url) = env::var(ENV_VAR_KALAM_URL) {
-        let trimmed = url.trim();
-        if !trimmed.is_empty() {
-            return Ok((trimmed.to_string(), ResolutionSource::EnvironmentVariable));
-        }
-    }
-    Ok((connection.url.clone(), ResolutionSource::ProjectConfig))
-}
-
-fn resolve_namespace(
-    connection: &ConnectionEnv,
-    cli_namespace: Option<&str>,
-) -> Result<(NamespaceId, ResolutionSource)> {
-    if let Some(namespace) = cli_namespace.map(str::trim).filter(|value| !value.is_empty()) {
-        return Ok((parse_namespace_id(namespace)?, ResolutionSource::CliFlag));
-    }
-
-    if let Ok(namespace) = env::var(ENV_VAR_KALAM_NAMESPACE) {
-        let trimmed = namespace.trim();
-        if !trimmed.is_empty() {
-            return Ok((parse_namespace_id(trimmed)?, ResolutionSource::EnvironmentVariable));
-        }
-    }
-
-    Ok((connection.namespace.clone(), ResolutionSource::ProjectConfig))
-}
-
 /// Map a workflow environment name to a credential instance key.
 pub fn credential_instance_for_env(env_name: &str) -> String {
     format!("kalam-{env_name}")
-}
-
-/// Resolve a server URL from `kalam.toml` when `instance` matches `kalam-{env}`.
-pub fn resolve_project_server_url_for_instance(start: &Path, instance: &str) -> Option<String> {
-    let (_project_root, config) = KalamProjectConfig::discover(start, None).ok()?;
-    for env_name in config.connection.keys() {
-        if credential_instance_for_env(env_name) != instance {
-            continue;
-        }
-        let overrides = EnvironmentOverrides {
-            env: Some(env_name),
-            ..EnvironmentOverrides::default()
-        };
-        return resolve_environment(&config, &overrides).ok().map(|resolved| resolved.url);
-    }
-    None
-}
-
-/// Resolve stored credentials for a workflow environment without embedding secrets in kalam.toml.
-pub fn load_env_credentials(
-    store: &FileCredentialStore,
-    env_name: &str,
-) -> Result<Option<kalam_client::credentials::Credentials>> {
-    let instance = credential_instance_for_env(env_name);
-    store
-        .get_credentials(&instance)
-        .map_err(|e| CLIError::ConfigurationError(format!("failed to load credentials: {e}")))
 }
 
 /// Resolve the saved CLI credential profile selected for this project.
@@ -220,96 +104,9 @@ fn parse_dotenv(contents: &str) -> HashMap<String, String> {
 mod tests {
     use std::fs;
 
-    use kalamdb_commons::NamespaceId;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::workflow::test_support::multi_env_resolve_test_config;
-
-    struct EnvVarGuard {
-        key:      &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvVarGuard {
-        fn unset(key: &'static str) -> Self {
-            let previous = std::env::var(key).ok();
-            std::env::remove_var(key);
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
-
-    #[test]
-    fn cli_flag_overrides_config() {
-        let config = multi_env_resolve_test_config();
-        let resolved = resolve_environment(
-            &config,
-            &EnvironmentOverrides {
-                env:       Some("prod"),
-                url:       Some("https://override.example.com"),
-                namespace: Some("other"),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(resolved.name, "prod");
-        assert_eq!(resolved.url, "https://override.example.com");
-        assert_eq!(resolved.namespace, NamespaceId::new("other"));
-        assert_eq!(resolved.env_source, ResolutionSource::CliFlag);
-    }
-
-    #[test]
-    fn default_env_from_config() {
-        let _env_guard = EnvVarGuard::unset(ENV_VAR_KALAM_ENV);
-        let _url_guard = EnvVarGuard::unset(ENV_VAR_KALAM_URL);
-        let _namespace_guard = EnvVarGuard::unset(ENV_VAR_KALAM_NAMESPACE);
-        let config = multi_env_resolve_test_config();
-        let resolved = resolve_environment(&config, &EnvironmentOverrides::default()).unwrap();
-        assert_eq!(resolved.name, "dev");
-        assert_eq!(resolved.url, "http://localhost:2900");
-    }
-
-    #[test]
-    fn resolve_project_server_url_for_instance_reads_matching_env() {
-        let _url_guard = EnvVarGuard::unset(ENV_VAR_KALAM_URL);
-        let temp = TempDir::new().unwrap();
-        fs::write(
-            temp.path().join("kalam.toml"),
-            r#"
-[project]
-name = "demo"
-default_env = "dev"
-
-[connection.dev]
-url = "http://localhost:2900"
-namespace = "demo"
-
-[schema]
-mode = "sql"
-path = "schema.sql"
-languages = ["typescript"]
-
-[schema.targets.typescript]
-output = "src/generated/kalam.ts"
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            resolve_project_server_url_for_instance(temp.path(), "kalam-dev").as_deref(),
-            Some("http://localhost:2900")
-        );
-        assert_eq!(resolve_project_server_url_for_instance(temp.path(), "kalam-prod"), None);
-    }
 
     #[test]
     fn resolve_kalam_profile_reads_project_env_file() {

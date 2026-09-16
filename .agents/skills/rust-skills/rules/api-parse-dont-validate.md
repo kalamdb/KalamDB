@@ -182,3 +182,5 @@ impl AsRef<str> for Email {
 - [api-newtype-safety](api-newtype-safety.md) - Use newtypes for type safety
 - [type-newtype-validated](type-newtype-validated.md) - Newtypes for validated data
 - [api-typestate](api-typestate.md) - Compile-time state machines
+- [conv-tryfrom-fallible](conv-tryfrom-fallible.md) - Parse via TryFrom
+- [serde-try-from-validate](serde-try-from-validate.md) - Validate at the serde boundary

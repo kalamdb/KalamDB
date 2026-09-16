@@ -82,17 +82,23 @@ fn main() {
 ```rust
 use tokio::runtime::Builder;
 
+// std::thread::available_parallelism() is stable since Rust 1.59
+// and respects cgroup CPU quotas (unlike the unmaintained num_cpus crate)
+let parallelism = std::thread::available_parallelism()
+    .map(|n| n.get())
+    .unwrap_or(1);
+
 // IO-bound: more threads than cores can help
 let io_runtime = Builder::new_multi_thread()
-    .worker_threads(num_cpus::get() * 2)  // IO can benefit from oversubscription
-    .max_blocking_threads(32)              // For spawn_blocking calls
+    .worker_threads(parallelism * 2)  // IO can benefit from oversubscription
+    .max_blocking_threads(32)         // For spawn_blocking calls
     .enable_io()
     .enable_time()
     .build()?;
 
 // CPU-bound: match core count
 let cpu_runtime = Builder::new_multi_thread()
-    .worker_threads(num_cpus::get())       // No benefit from more than cores
+    .worker_threads(parallelism)      // No benefit from more than cores
     .build()?;
 ```
 

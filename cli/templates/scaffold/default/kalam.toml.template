@@ -1,6 +1,7 @@
 [project]
 name = "{{project_name}}"
 default_env = "dev"
+server_version = "{{server_version}}"
 {{#if package_manager}}
 package_manager = "{{package_manager}}"
 {{/if}}
@@ -8,6 +9,7 @@ package_manager = "{{package_manager}}"
 [connection.dev]
 url = "{{server_url}}"
 namespace = "{{namespace}}"
+purpose = "development"
 
 [schema]
 mode = "{{schema_mode}}"
