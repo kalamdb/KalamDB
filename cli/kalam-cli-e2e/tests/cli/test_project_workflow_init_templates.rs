@@ -399,6 +399,9 @@ fn ensure_local_typescript_sdks_built(workspace: &Path) {
         eprintln!(
             "building @kalamdb/{name} so kalam init can install unpublished local file: packages"
         );
+        if matches!(name, "client" | "consumer") {
+            ensure_wasm_pack_available();
+        }
         run_npm(&dir, &["install", "--no-audit", "--no-fund"], SDK_BUILD_TIMEOUT);
         run_npm(&dir, &["run", "build"], SDK_BUILD_TIMEOUT);
         assert!(
@@ -406,6 +409,22 @@ fn ensure_local_typescript_sdks_built(workspace: &Path) {
             "failed to build @kalamdb/{name}; expected {}",
             artifact_path.display()
         );
+    }
+}
+
+fn ensure_wasm_pack_available() {
+    let status = Command::new("wasm-pack")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    match status {
+        Ok(status) if status.success() => {},
+        _ => panic!(
+            "wasm-pack is required to build unpublished @kalamdb/client and \
+             @kalamdb/consumer for kalam init file: installs. Install wasm-pack \
+             0.15.0 and the wasm32-unknown-unknown Rust target."
+        ),
     }
 }
 
