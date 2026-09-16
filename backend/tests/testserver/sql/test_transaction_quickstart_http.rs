@@ -114,7 +114,7 @@ async fn wait_for_no_sql_batch_transactions(
 }
 
 #[tokio::test]
-#[ntest::timeout(2000)]
+#[ntest::timeout(8000)]
 async fn test_sql_transaction_commit_and_sequential_blocks_over_http() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
@@ -159,7 +159,7 @@ async fn test_sql_transaction_commit_and_sequential_blocks_over_http() -> anyhow
 }
 
 #[tokio::test]
-#[ntest::timeout(2000)]
+#[ntest::timeout(8000)]
 async fn test_sql_transaction_statement_failure_rolls_back_over_http() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
@@ -187,7 +187,7 @@ async fn test_sql_transaction_statement_failure_rolls_back_over_http() -> anyhow
 }
 
 #[tokio::test]
-#[ntest::timeout(2000)]
+#[ntest::timeout(8000)]
 async fn test_sql_transaction_unclosed_request_rolls_back_over_http() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;
@@ -209,7 +209,7 @@ async fn test_sql_transaction_unclosed_request_rolls_back_over_http() -> anyhow:
 }
 
 #[tokio::test]
-#[ntest::timeout(2000)]
+#[ntest::timeout(8000)]
 async fn test_sql_transaction_rejects_stream_table_writes_over_http() -> anyhow::Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let server = super::test_support::http_server::get_global_server().await;

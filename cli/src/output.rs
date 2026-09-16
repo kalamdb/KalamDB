@@ -185,7 +185,7 @@ impl WorkflowOutput {
     #[must_use]
     pub fn status_spinner(&self, message: impl AsRef<str>) -> StatusSpinnerGuard {
         let running = message.as_ref();
-        if self.should_animate_status() {
+        if self.emits_human_status() && self.should_animate_status() {
             let display = format_cli_line(&self.colorize_status(running));
             self.buffer_terminal_line(&display, TerminalLineKind::Cli);
             self.append_log(running);
@@ -269,6 +269,62 @@ impl WorkflowOutput {
             line.to_string()
         };
         self.emit_cli_line(&formatted, line);
+    }
+
+    /// Emit readable table content without dimming the primary row.
+    pub fn listing_line(&self, message: impl AsRef<str>) {
+        if self.emits_human_status() {
+            self.emit_cli_line(message.as_ref(), message.as_ref());
+        }
+    }
+
+    pub fn instance_row(&self, name: &str, kind: &str, state: &str, url: &str, width: usize) {
+        if !self.emits_human_status() {
+            return;
+        }
+        let name = format!("{name:<width$}");
+        let state_column = format!("{state:<11}");
+        let plain = format!("{name}  {kind:<5}  {state_column}  {url}");
+        let formatted = if self.use_color {
+            let state_column = match state {
+                "Running" | "Reachable" => state_column.green(),
+                "Unavailable" | "Unreachable" => state_column.yellow(),
+                _ => state_column.bright_black(),
+            };
+            format!("{}  {kind:<5}  {state_column}  {url}", name.cyan().bold())
+        } else {
+            plain.clone()
+        };
+        self.emit_cli_line(&formatted, &plain);
+    }
+
+    /// Render aligned, consistently colored fields using the shared CLI prefix.
+    pub fn fields(&self, fields: &[(&str, String)]) {
+        let width = fields.iter().map(|(label, _)| label.chars().count()).max().unwrap_or(0).max(8);
+        for (label, value) in fields {
+            let label = format!("{label:width$}");
+            let plain = format!("{label}  {value}");
+            if self.emits_human_status() {
+                let formatted = if self.use_color {
+                    format!("{}  {value}", label.cyan().bold())
+                } else {
+                    plain.clone()
+                };
+                self.emit_cli_line(&formatted, &plain);
+            }
+        }
+    }
+
+    /// Show a bootstrap secret without persisting it in logs or terminal history.
+    pub fn bootstrap_password(&self, password: &str) {
+        if self.emits_human_status() && !self.terminal_output_paused() {
+            let label = if self.use_color {
+                "Password".cyan().bold().to_string()
+            } else {
+                "Password".to_string()
+            };
+            eprintln!("[cli] {label}  {password}");
+        }
     }
 
     /// Emit a prefixed line from a managed dev service.
@@ -569,6 +625,26 @@ fn clear_terminal_error(error: io::Error) -> CLIError {
 mod tests {
     use super::*;
     use crate::workflow::dev::logs::{ServiceColor, ServiceLogSource};
+
+    #[test]
+    fn fields_align_labels_and_keep_machine_output_clean() {
+        let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+        output.fields(&[
+            ("URL", "http://localhost".into()),
+            ("Config", "/server.toml".into()),
+        ]);
+        assert_eq!(
+            output.buffered_terminal_lines(),
+            vec![
+                "[cli] URL       http://localhost",
+                "[cli] Config    /server.toml",
+            ]
+        );
+        let machine = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled()).with_json(true);
+        machine.fields(&[("User", "root".into())]);
+        machine.bootstrap_password("bootstrap-secret");
+        assert!(machine.buffered_terminal_lines().is_empty());
+    }
 
     #[test]
     fn redact_secrets_masks_sensitive_lines() {

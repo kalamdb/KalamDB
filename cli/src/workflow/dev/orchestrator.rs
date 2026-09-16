@@ -435,6 +435,7 @@ async fn run_dev_session_inner(
                 prepared.record.exe = Some(program.clone());
                 prepared.record.keep_on_dev_exit = false;
                 instance::save_instance(&prepared.layout, &prepared.record)?;
+                crate::workflow::lifecycle::track_server(&prepared.layout, output);
                 instance::register_dev_pid(&prepared.layout, std::process::id())?;
                 ensure_local_dev_authentication_ready(
                     &session_ctx,

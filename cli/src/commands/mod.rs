@@ -52,6 +52,7 @@ fn pre_session_command(cli: &Cli) -> Option<PreSessionCommand> {
             | CliCommand::Up(_)
             | CliCommand::Down(_)
             | CliCommand::Status(_)
+            | CliCommand::Instances(_)
             | CliCommand::Logs(_)
             | CliCommand::Deploy(_)
             | CliCommand::Functions(_) => None,
@@ -126,13 +127,13 @@ async fn run_pre_session_command(
                 },
             )
         },
-        PreSessionCommand::CredentialManagement => {
-            Ok(if credentials::handle_credentials(context.cli, context.credential_store)? {
+        PreSessionCommand::CredentialManagement => Ok(
+            if credentials::handle_credentials(context.cli, context.credential_store).await? {
                 PreSessionResult::Exit
             } else {
                 PreSessionResult::NotHandled
-            })
-        },
+            },
+        ),
         PreSessionCommand::WatchSchema => Ok(
             if watch_schema::handle_watch_schema(context.cli, context.credential_store).await? {
                 PreSessionResult::Exit

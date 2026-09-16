@@ -38,6 +38,10 @@ pub async fn handle_workflow_command(cli: &Cli) -> Result<bool> {
             dev::handle_dev(cli, args).await?;
             Ok(true)
         },
+        CliCommand::Instances(args) => {
+            lifecycle::handle_instances(cli, args).await?;
+            Ok(true)
+        },
         CliCommand::Up(args) => {
             lifecycle::handle_up(cli, args).await?;
             Ok(true)

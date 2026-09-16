@@ -149,10 +149,10 @@ pub fn dev_kalamdb_server_bin_missing(path: &Path) -> String {
 pub fn dev_kalamdb_server_not_found() -> String {
     format!(
         "kalamdb-server was not found (checked KALAMDB_SERVER_BIN, ~/.kalam/bin, and \
-         PATH).\n\nHow to fix:\n{}\n\nAfter the server is available, rerun:\nkalam dev",
+         PATH).\n\nHow to fix:\n{}\n\nAfter the server is available, rerun:\nkalam up",
         bullet_list(&[
-            "Run `kalam dev` in an interactive terminal — the CLI can download the server on \
-             first use",
+            "Run `kalam up` in an interactive terminal — the CLI can download the server on first \
+             use",
             "Or set KALAMDB_SERVER_BIN to the full path of kalamdb-server",
             "Or install kalamdb-server into ~/.kalam/bin (created automatically on download)",
             "On Windows, ensure kalamdb-server.exe is on PATH or use KALAMDB_SERVER_BIN",
@@ -165,9 +165,9 @@ pub fn dev_kalamdb_server_non_interactive_download(detail: &str) -> String {
     format!(
         "{detail}\n\nHow to fix:\n{}",
         bullet_list(&[
-            "Rerun `kalam dev` in a regular terminal (TTY) so the CLI can download the server",
+            "Rerun `kalam up` in a regular terminal (TTY) so the CLI can download the server",
             "Or download/install kalamdb-server manually and set KALAMDB_SERVER_BIN",
-            "For CI, preinstall the server binary before running kalam dev",
+            "For CI, preinstall the server binary before running kalam up",
         ])
     )
 }
@@ -290,6 +290,7 @@ mod tests {
     #[test]
     fn dev_kalamdb_server_not_found_lists_recovery_options() {
         let message = dev_kalamdb_server_not_found();
+        assert!(!message.contains("kalam dev"));
         assert!(message.contains("kalamdb-server was not found"));
         assert!(message.contains("KALAMDB_SERVER_BIN"));
         assert!(message.contains("How to fix:"));

@@ -116,7 +116,7 @@ pub async fn download_bytes(
     }
 
     if let Some(progress_bar) = progress_bar {
-        progress_bar.finish_with_message(format!("Downloaded {}", archive_name));
+        progress_bar.finish_and_clear();
     }
 
     Ok(downloaded)

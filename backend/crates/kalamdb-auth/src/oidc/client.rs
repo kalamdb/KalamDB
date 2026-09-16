@@ -221,7 +221,31 @@ impl OidcPublicMetadata {
 }
 
 pub(crate) fn oidc_client_cache(max_capacity: u64) -> OidcClientCache {
-    Cache::builder().max_capacity(max_capacity).build()
+    Cache::builder()
+        .max_capacity(max_capacity)
+        .time_to_live(Duration::from_secs(5 * 60))
+        .build()
+}
+
+pub(crate) async fn invalidate_oidc_client(
+    cache: &OidcClientCache,
+    settings: &kalamdb_configs::AuthOidcSettings,
+) {
+    if let Ok(cache_key) = settings_cache_key(settings) {
+        cache.invalidate(&cache_key).await;
+    }
+}
+
+pub(crate) fn oidc_jwks_may_be_stale(error: &OidcError) -> bool {
+    match error {
+        OidcError::JwtValidationFailed(message) => {
+            let message = message.to_lowercase();
+            message.contains("signature")
+                || message.contains("matching key")
+                || message.contains("jwk")
+        },
+        _ => false,
+    }
 }
 
 pub(crate) async fn get_or_discover_oidc_client(
@@ -343,6 +367,8 @@ fn accept_optional_nonce(_nonce: Option<&openidconnect::Nonce>) -> Result<(), St
 
 #[cfg(test)]
 mod tests {
+    use kalamdb_commons::UserId;
+
     use super::*;
 
     const TEST_RSA_PRIVATE_KEY_DER_BASE64: &str = "MIIEowIBAAKCAQEAwwphfTBE9LBOHdPUXacsmeuDad+rjh81B5MH/74eelEcs3Z+jUxFa7CqqMm7432It9joUO0mULUXfpUBnwFCgGIHEvTWHDOcR+Wgnc07LfYMGxqxlifCEK6RUdfSAVAj97a5DSuIpQ6iAvGp54iBRrf5vgmD/z38fisRa6YrBagWyMOFerPPQP94WhvNRN9Lt7NO+3jgf1N8reh0KMo2KynJDyZ3y/xQWcIrPc/g/FqqRkj8/WrOgpaPzW5Q/Nqcd5GIAEj6cDELk76XL9whbk6ixhnu2mkvIJ/cZenBd2AGM8BbU7XxIi6GzuS2v+PeKjRlGQx8TkGqtjZ4KibY+wIDAQABAoIBAA2qGwVpzdL0zSxCzISZM0M/YFAZFwxYfF8g+nT87Wa1axTZrukYWF7AnFxB8fNwtpTm0fPlgYMzBMfeCaSJso6LD6LQ23VTWlYhLN0RZV2FePinKJz0ASEpEc5RmAl2g2aV+yYEkEi8GzaolrY9do0tU4ZwZTqLLbbrLofDtwzox9K1LXZOdYK2+UZlKXKRJFu06wAd4Pvq3LUP4MmstfaKBklAsGf7hgwt+uREPd3YzLpaWn/5F4gI03sJA1oB+zHS3FAexo8Yxwuy10ATQ4ERdRPc7/86CS3n+XKpoj+IzBjDYDqtM2qcH2YAP3wcU1B8nRGpxJY0pqKPpdFz79kCgYEA++0JY3bFhCAClcwDMlyfzev/LVEV3JqoWNeH5ryQ4qJ2HiXwBcfTqtO4yoTCU7UpSXKI32aBlEhpn4rpZgM8trbivUHkagmoIaSJxGhpdLv35W456kvF7pLWckIziq0g9i+EGGhW0cpCmfFipfjgPUzeZKKovL6QhHiVEVOqnSkCgYEAxjHXSIsHsz30GqbwRmW/e0uQEwABcCActNVB3hj7Q1nePxfFB8sDe+s7FGFXsuhtemkHzA6j5UbzkMlrVSG98geZrlZniXdThS+jRvpEncqfUyO+POqhx6blWyldyo9PgMcvWsB4yuKG3lWKdR3kL8aQX9gcFsOPF4JxyyLFpYMCgYEAqJNu6t25QbZhxHcl1Hdif9rhgCN4K4xaBkkDKYUYtm7b90SPnm6e1vqh9vJrTrQ1Em7P5B2lq+Hgu9+qWpbj86fhhZ8oB0S6+vgtL/5mQrTdJuthWcSmiAQ992sRLkS3f8U/8U0we2WKt5Rs3H7zHlHnpxOpMdOaxOojZdrEmjECgYBKCNozdgPVV+I0hoGgumdRxkM2Zb0jxksS3cqyDUDmws47YUSviY1un8s87LPW1+31WQCZoCpm/h8Dycm3Tlhm7aHhttMMTa+8Q7RJUjmJe+QSKXrpxHfUXaq1Z/lqLihzoXQ2AUnd98qLiQakgxr3IcRSmSa89iYgkRCy4fVUwwKBgHBxSEFAcRyEGvgWVL1Ti8KoiMfTyj8HofGUGON9PmP5yyGabZrd4TdcRozoUYh9jrI3FvwepbAKxnyuGDKAsEIXnAvUgqGZF0AEy0CFrSTHW8WynGzDTEslzWG4Ha1xdGlwv+SpjwThP5Un9k1ei99y/rd0bS1zBKAEUC4gvWOP";
@@ -407,6 +433,23 @@ mod tests {
     fn client_cache_is_bounded() {
         let cache = oidc_client_cache(8);
         assert_eq!(cache.policy().max_capacity(), Some(8));
+        assert_eq!(
+            cache.policy().time_to_live(),
+            Some(std::time::Duration::from_secs(5 * 60))
+        );
+    }
+
+    #[test]
+    fn signature_and_key_errors_are_treated_as_stale_jwks() {
+        assert!(oidc_jwks_may_be_stale(&OidcError::JwtValidationFailed(
+            "Failed to verify claims signature: No matching key found".to_string()
+        )));
+        assert!(!oidc_jwks_may_be_stale(&OidcError::JwtValidationFailed(
+            "Invalid audiences: must contain `client`".to_string()
+        )));
+        assert!(!oidc_jwks_may_be_stale(&OidcError::DiscoveryFailed(
+            "connection refused".to_string()
+        )));
     }
 
     #[actix_web::test]
@@ -531,5 +574,73 @@ mod tests {
             .expect("test RSA key should decode");
         jsonwebtoken::encode(&header, &claims, &EncodingKey::from_rsa_der(&der))
             .expect("test ID token should sign")
+    }
+
+    #[actix_web::test]
+    async fn live_dex_id_token_validates_when_local_provider_is_up() {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .expect("HTTP client should build");
+        let discovery = http
+            .get("http://127.0.0.1:5556/.well-known/openid-configuration")
+            .send()
+            .await;
+        let Ok(discovery) = discovery else {
+            return;
+        };
+        if !discovery.status().is_success() {
+            return;
+        }
+
+        let token_response = http
+            .post("http://127.0.0.1:5556/token")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(
+                "grant_type=password&username=heidi%40example.org&password=kalamdb123&client_id=client&scope=openid%20email%20profile",
+            )
+            .send()
+            .await
+            .expect("Dex password grant should be reachable");
+        if !token_response.status().is_success() {
+            return;
+        }
+        let body: serde_json::Value =
+            token_response.json().await.expect("Dex token response should be JSON");
+        let id_token = body
+            .get("id_token")
+            .and_then(|value| value.as_str())
+            .expect("Dex password grant should return an ID token");
+
+        let oidc_http =
+            super::super::http::default_oidc_http_client().expect("OIDC HTTP client should build");
+        let settings = kalamdb_configs::AuthOidcSettings {
+            enabled: true,
+            display_name: "Dex".to_string(),
+            issuer: Some("http://127.0.0.1:5556".to_string()),
+            client_id: Some("client".to_string()),
+            client_secret: None,
+            scopes: vec![
+                "openid".to_string(),
+                "email".to_string(),
+                "profile".to_string(),
+            ],
+            device_authorization_endpoint: None,
+            broker_device_flow_enabled: false,
+            auto_provision: true,
+            default_role: "user".to_string(),
+            audience: None,
+        };
+        let handle = OidcClientHandle::discover(&settings, &oidc_http)
+            .await
+            .expect("Dex discovery should succeed");
+        let claims = handle
+            .validate_id_token(id_token)
+            .unwrap_or_else(|error| panic!("Dex ID token should verify: {error}"));
+        assert_eq!(claims.iss, "http://127.0.0.1:5556");
+        assert_eq!(claims.email.as_deref(), Some("heidi@example.org"));
+        assert_eq!(claims.email_verified, Some(true));
+        assert!(claims.role.is_none());
+        UserId::try_new(claims.sub.clone()).expect("Dex subject should be a valid user id");
     }
 }

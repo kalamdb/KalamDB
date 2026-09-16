@@ -503,17 +503,17 @@ fn test_cli_list_instances_command() {
         .expect("Failed to create credential store");
 
     let instances = vec![
-        ("local", "user1", "token_local"),
-        ("cloud", "user2", "token_cloud"),
+        ("local", "user1", "token_local", server_url().to_string()),
+        ("cloud", "user2", "token_cloud", "https://cloud.example.com".to_string()),
     ];
 
-    for (instance, username, token) in &instances {
+    for (instance, username, token, url) in &instances {
         let creds = Credentials::with_details(
             instance.to_string(),
             token.to_string(),
             username.to_string(),
             "2099-12-31T23:59:59Z".to_string(),
-            Some(server_url().to_string()),
+            Some(url.clone()),
         );
         store.set_credentials(&creds).expect("Failed to store credentials");
     }
@@ -523,8 +523,20 @@ fn test_cli_list_instances_command() {
     let output = cmd.arg("--list-instances").output().expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("local"), "Should list local instance. stdout: {}", stdout);
-    assert!(stdout.contains("cloud"), "Should list cloud instance. stdout: {}", stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        output.status.success(),
+        "list-instances should succeed. stdout: {stdout} stderr: {stderr}"
+    );
+    assert!(
+        combined.contains("https://cloud.example.com"),
+        "Should list cloud instance. stdout: {stdout} stderr: {stderr}"
+    );
+    assert!(
+        combined.contains("Also    local") || combined.contains("local-"),
+        "Should keep historical local name visible. stdout: {stdout} stderr: {stderr}"
+    );
 }
 
 /// Test whoami with missing instance

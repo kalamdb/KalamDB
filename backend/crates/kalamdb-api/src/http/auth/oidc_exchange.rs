@@ -137,7 +137,10 @@ async fn complete_oidc_login(
     .await
     {
         Ok(result) => result,
-        Err(error) => return map_auth_error_to_response(error),
+        Err(error) => {
+            log::warn!("OIDC login authentication failed: {}", error);
+            return map_auth_error_to_response(error);
+        },
     };
 
     let user = auth_result.user;

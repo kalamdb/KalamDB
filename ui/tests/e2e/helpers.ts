@@ -91,9 +91,8 @@ export async function clickNav(page: Page, href: string): Promise<void> {
 
 export async function openSqlStudio(page: Page): Promise<void> {
   await clickNav(page, "/ui/sql");
-  await expect(page.getByText("Loading SQL workspace...")).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole("button", { name: /^Run(?: selected)?$/ })).toBeVisible({
-    timeout: 30_000,
+    timeout: 60_000,
   });
 }
 

@@ -124,6 +124,7 @@ pub async fn attach_or_start_managed_server(
         Some(version.clone()),
     )?;
     if prepared.already_running {
+        super::track_server(&prepared.layout, output);
         output.status(format!("database already running at {}", prepared.record.url));
         output.agent_event("KALAM_SERVER_REUSED", &[("url", &prepared.record.url)]);
         return Ok(prepared);
@@ -143,12 +144,15 @@ pub async fn attach_or_start_managed_server(
     .await?;
     prepared.program = program.clone();
 
+    let spinner = output.status_spinner("Starting KalamDB server");
     crate::workflow::dev::server::write_managed_server_config(
         &prepared.layout,
         prepared.record.http_port,
         prepared.record.postgres_port,
     )?;
 
+    prepared.record.data_dir =
+        super::server_details::ServerDetails::read(&prepared.layout)?.data_path;
     let pid = spawn_detached_server(
         &program,
         &prepared.layout.config_path,
@@ -166,7 +170,9 @@ pub async fn attach_or_start_managed_server(
             stop_recorded_processes(&prepared.record);
             error
         })?;
-    output.status(format!("database started at {}", prepared.record.url));
+    drop(spinner);
+    super::track_server(&prepared.layout, output);
+    output.status(format!("Server started at {}", prepared.record.url));
     output.agent_event("KALAM_SERVER_STARTED", &[("url", &prepared.record.url)]);
     Ok(prepared)
 }
@@ -193,6 +199,7 @@ pub fn spawn_detached_server(
     let mut command = Command::new(program);
     command
         .arg(config_path)
+        .env("KALAMDB_LOG_TO_CONSOLE", "true")
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(log_err)

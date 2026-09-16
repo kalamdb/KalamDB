@@ -11,7 +11,8 @@ use once_cell::sync::Lazy;
 use crate::{
     errors::error::{AuthError, AuthResult},
     oidc::{
-        default_oidc_http_client, get_or_discover_oidc_client, oidc_client_cache, OidcClientCache,
+        default_oidc_http_client, get_or_discover_oidc_client, invalidate_oidc_client,
+        oidc_client_cache, oidc_jwks_may_be_stale, OidcClientCache,
         OidcClientHandle, OidcError,
     },
     providers::jwt_auth,
@@ -146,7 +147,25 @@ impl JwtConfig {
         token: &str,
     ) -> AuthResult<jwt_auth::JwtClaims> {
         let client = self.get_oidc_client(issuer).await?;
-        client.validate_id_token(token).map_err(map_oidc_error)
+        match client.validate_id_token(token) {
+            Ok(claims) => Ok(claims),
+            Err(error) if oidc_jwks_may_be_stale(&error) => {
+                log::warn!(
+                    "OIDC token verification failed for issuer={issuer}; rediscovering JWKS: {error}"
+                );
+                self.forget_oidc_client(issuer).await;
+                let client = self.get_oidc_client(issuer).await?;
+                client.validate_id_token(token).map_err(map_oidc_error)
+            },
+            Err(error) => Err(map_oidc_error(error)),
+        }
+    }
+
+    async fn forget_oidc_client(&self, issuer: &str) {
+        let Some(settings) = self.oidc_configs.get(issuer) else {
+            return;
+        };
+        invalidate_oidc_client(&self.oidc_clients, settings).await;
     }
 }
 

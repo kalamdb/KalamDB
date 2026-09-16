@@ -146,7 +146,7 @@ pub enum DevCommand {
 #[derive(Args, Debug, Clone, Default)]
 pub struct DevLogsArgs {
     /// Follow the log file until interrupted
-    #[arg(short = 'F', long = "follow")]
+    #[arg(short = 'F', long = "follow", visible_alias = "tail")]
     pub follow: bool,
 
     /// Number of trailing lines to print (0 prints the full file)
@@ -170,12 +170,16 @@ pub struct DownArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct LogsArgs {
+    /// Read the local capture file instead of querying authenticated SQL logs
+    #[arg(long)]
+    pub local_file: bool,
+
     /// Project directory for a project-local database
     #[arg(long = "project-dir", global = true)]
     pub project_dir: Option<PathBuf>,
 
     /// Follow the log file until interrupted
-    #[arg(short = 'F', long = "follow")]
+    #[arg(short = 'F', long = "follow", visible_alias = "tail")]
     pub follow: bool,
 
     /// Number of trailing lines to print (0 prints the full file)
@@ -353,4 +357,17 @@ pub struct FunctionsLogsArgs {
 pub struct FunctionsOverrideArgs {
     /// Procedure to scaffold, as `schema.name`
     pub procedure: String,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct InstancesArgs {
+    /// Show only managed local servers
+    #[arg(long, conflicts_with = "cloud")]
+    pub local: bool,
+    /// Show only saved cloud connections
+    #[arg(long)]
+    pub cloud: bool,
+    /// Check cloud endpoint reachability without sending credentials
+    #[arg(long)]
+    pub check: bool,
 }

@@ -198,10 +198,9 @@ pub fn init_logging(
 ) -> anyhow::Result<()> {
     let log_format = LogFormat::from_str(format);
 
-    // Bridge `log` crate -> tracing as early as possible so existing subscribers
-    // in tests still receive `log::*` records, and so later `try_init()` failure
-    // does not silently disable the bridge.
-    tracing_log::LogTracer::init().ok();
+    // SubscriberInitExt::try_init installs the log bridge after the subscriber.
+    // Installing it here first makes try_init report a logger conflict even
+    // though the subscriber was successfully installed.
 
     // Create logs directory if it doesn't exist
     if let Some(parent) = Path::new(file_path).parent() {

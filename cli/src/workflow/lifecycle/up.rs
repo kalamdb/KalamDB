@@ -52,13 +52,25 @@ pub async fn start_database(
         ],
     );
     if !output.is_agent() {
-        output.status(format!(
-            "Environment   {}\nDatabase      {}\nNamespace     {}",
-            target.display_kind(),
-            prepared.record.url,
-            target.namespace.as_str()
-        ));
-        output.detail("View logs: kalam logs --follow");
+        let details = super::server_details::ServerDetails::read(&prepared.layout)?;
+        output.fields(&[
+            ("Server", prepared.record.url.clone()),
+            ("Config", prepared.layout.config_path.display().to_string()),
+            ("Data", prepared.record.data_dir.display().to_string()),
+            ("Logs", prepared.record.log_path.display().to_string()),
+            ("User", "root".into()),
+        ]);
+        output.bootstrap_password(
+            details
+                .bootstrap_password
+                .as_deref()
+                .unwrap_or("(not configured; use the server's initial login instructions)"),
+        );
+        output
+            .detail("Initial login credentials; an existing database keeps its current password.");
+        let scope = if selector.global { " -g" } else { "" };
+        output.detail(format!("View logs: kalam logs{scope} --follow"));
+        output.detail(format!("Stop server: kalam down{scope}"));
     }
     Ok(())
 }

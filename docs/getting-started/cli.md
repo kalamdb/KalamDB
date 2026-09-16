@@ -633,12 +633,22 @@ Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/
 ```bash
 kalam up                 # database only, background
 kalam status
-kalam logs --follow
+kalam servers            # list tracked local and global servers
+kalam logs --follow      # --tail is an alias
 kalam dev                # full loop; reuses `up` and leaves it running
 kalam dev --force        # retry a paused schema pipeline
 kalam dev --exec "npm test"
 kalam down               # stop the database; keep data
 ```
+
+`kalam up` prints the server URL, server.toml path, data folder, log file, and
+initial root login credentials. Existing databases retain their current password.
+Passwords are omitted from JSON/agent output and saved workflow logs.
+`kalam logs` prints the selected log file before reading it; `--follow` and
+`--tail` follow new lines until Ctrl+C. Managed console output is captured in
+`console.log`, separately from the server's structured `server.log`.
+`kalam down` distinguishes a stopped server from one that was already stopped
+and preserves its data. Add `-g` to these commands for the shared server.
 
 `kalam dev`:
 
@@ -647,6 +657,52 @@ kalam down               # stop the database; keep data
 - supervises `[dev.processes]` child commands with prefixed, color-coded stderr logs
 - pauses only the schema pipeline on migration/apply failure while keeping processes running
 
+### List and select instances
+
+`kalam instances`, `kalam servers`, and `kalam list` show the same inventory:
+managed local servers and saved cloud connections. The legacy `--list-instances`
+flag uses this view too. Rows show name, local/cloud type, status, and URL.
+Indented local details show the folder and global scope; cloud details show
+the saved user and authentication expiry, never tokens.
+
+Use `--local` or `--cloud` to filter, `--check` to probe cloud reachability,
+and `--json` for an `instances` array. Cloud endpoints are not contacted
+unless requested; saved authentication and reachability are separate.
+
+Names shown in the list can target lifecycle commands from any folder:
+
+```bash
+kalam status --instance analytics
+kalam logs --instance analytics --follow
+kalam down --instance analytics
+kalam up --instance analytics
+```
+
+Local names normally use their folder basename; the shared server uses `global`.
+Conflicting names receive a suffix. Ambiguous short names fail with suggested
+unique names. Named selection cannot be combined with `--global`, `--env`,
+`--url`, `--host`, or `--project-dir`. Cloud names support authenticated `status` and `logs`; `up` and `down`
+manage local processes only.
+
+`status` queries `system.cluster` with saved authentication. `logs` queries
+`system.server_logs`, including `--follow` / `--tail` and `-n`. Running local
+instances use the same SQL diagnostics when matching credentials are saved;
+otherwise local process status and capture files remain available.
+Use `kalam logs --instance analytics --local-file` to explicitly inspect the
+local capture file, including startup failures.
+
+SQL diagnostics retain the server's system-table authorization requirements.
+SQL log entries require `[logging] format = "json"` on the server. Following
+polls once per second and reads the logs of the node answering the query, not a
+durable cluster-wide stream. Expired credentials use the existing refresh flow
+when a refresh token is available; otherwise login is required.
+
+Starts through `up` and `dev` register under `~/.kalam/server-registry/`.
+Older instances are discovered by `status` in their folder or listing from
+that folder; the default global instance is discovered automatically.
+Missing/unreadable records appear unavailable. Manually launched processes
+are not scanned. Saved credentials matching one local URL merge into that row.
+
 ### Inspect project state
 
 ```bash
@@ -654,7 +710,17 @@ kalam status
 kalam status --env prod
 ```
 
-Reports project name, resolved environment (with precedence source), schema mode, generated targets, and migration counts.
+In a folder with no managed instance or server configuration, status says
+"No local server is configured in this folder" and suggests `kalam up`,
+`kalam status -g`, or `kalam servers`. It does not probe the default port and
+report an unrelated server as belonging to that folder.
+
+For a server started with `kalam up`, reports server state, URL, server.toml,
+data folder, and log file. Development sessions retain project, environment,
+namespace migration details alongside the server paths. The human label is
+`namespace migrations`; `schema` is retained only as a legacy JSON field. A
+reachable server without a matching local process record is labeled
+`running (not managed from this folder)`.
 
 ### Deploy with migration guardrails
 

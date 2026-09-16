@@ -234,7 +234,9 @@ test("SQL Studio deploys a typed booking function and Test UI can invoke it", as
       const inlineSource = page.getByTestId("function-inline-source");
       await expect(inlineSource).toBeVisible();
       await expect(inlineSource.locator(".monaco-editor")).toBeVisible({ timeout: 30_000 });
-      await expect(inlineSource.locator(".view-line")).toContainText("venue_id");
+      await expect(
+        inlineSource.locator(".view-line").filter({ hasText: "venue_id" }).first(),
+      ).toBeVisible();
       await expect(page.getByTestId("function-runtime-memory")).toBeVisible();
     });
 

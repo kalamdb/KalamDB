@@ -48,7 +48,15 @@ pub(super) async fn authenticate_bearer(
             "Bearer JWT issuer accepted"
         );
 
-        let claims = validate_bearer_token(token, &alg, &issuer, &config).await?;
+        let claims = match validate_bearer_token(token, &alg, &issuer, &config).await {
+            Ok(claims) => claims,
+            Err(error) => {
+                log::warn!(
+                    "Bearer token validation failed for issuer={issuer}: {error}"
+                );
+                return Err(error);
+            },
+        };
 
         let is_internal = jwt_auth::is_internal_issuer(&claims.iss);
 

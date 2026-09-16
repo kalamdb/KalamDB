@@ -6,7 +6,8 @@ mod error;
 mod http;
 
 pub(crate) use client::{
-    get_or_discover_oidc_client, oidc_client_cache, OidcClientCache, OidcClientHandle,
+    get_or_discover_oidc_client, invalidate_oidc_client, oidc_client_cache, oidc_jwks_may_be_stale,
+    OidcClientCache, OidcClientHandle,
 };
 pub(crate) use device::{DeviceBrokerSession, DeviceBrokerState, DeviceBrokerStatus};
 pub(crate) use error::OidcError;

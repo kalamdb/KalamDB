@@ -120,7 +120,7 @@ pub fn project_layout(project_root: &Path) -> ManagedLayout {
             logs_dir:      legacy.join("logs"),
             run_dir:       run_dir.clone(),
             config_path:   legacy.join("server.toml"),
-            log_file:      legacy.join("logs").join("server.log"),
+            log_file:      legacy.join("logs").join("console.log"),
             instance_path: run_dir.join("instance.json"),
         };
     }
@@ -137,7 +137,7 @@ pub fn project_layout(project_root: &Path) -> ManagedLayout {
         } else {
             runtime.join("server.toml")
         },
-        log_file:      runtime.join("logs").join("server.log"),
+        log_file:      runtime.join("logs").join("console.log"),
         instance_path: run_dir.join("instance.json"),
     }
 }
@@ -152,7 +152,7 @@ pub fn shared_layout() -> ManagedLayout {
         logs_dir:      root.join("logs"),
         run_dir:       run_dir.clone(),
         config_path:   root.join("server.toml"),
-        log_file:      root.join("logs").join("server.log"),
+        log_file:      root.join("logs").join("console.log"),
         instance_path: run_dir.join("instance.json"),
     }
 }
@@ -438,6 +438,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let layout = project_layout(temp.path());
         assert_eq!(layout.root, temp.path().join(".kalam"));
+        assert_ne!(layout.log_file, layout.logs_dir.join("server.log"));
         assert_eq!(layout.data_dir, temp.path().join(".kalam/data"));
         assert_eq!(layout.config_path, temp.path().join(".kalam/server.toml"));
     }

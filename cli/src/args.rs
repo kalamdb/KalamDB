@@ -11,7 +11,8 @@ mod workflow;
 use parsers::parse_watch_interval;
 pub use workflow::{
     DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, DownArgs, FunctionsArgs, FunctionsCommand,
-    InitArgs, LinkArgs, LogsArgs, MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs, UpArgs,
+    InitArgs, InstancesArgs, LinkArgs, LogsArgs, MigrationCommand, SchemaArgs, SchemaCommand,
+    StatusArgs, UpArgs,
 };
 
 // Build information - Create a static version string at compile time
@@ -36,7 +37,8 @@ EVERYDAY
   dev        Develop your application with schema and procedure watching
   up         Start a local database
   down       Stop a local database; keep its data
-  status     Show the selected environment and development state
+  status     Show server status for this folder or selected target
+  instances  List local servers and saved cloud connections
   logs       View database logs
 
 GET STARTED
@@ -117,7 +119,7 @@ pub struct Cli {
     #[arg(long = "password", num_args = 0..=1, default_missing_value = "", global = true)]
     pub password: Option<String>,
 
-    /// Database instance name (for credential storage)
+    /// Instance name for saved credentials or a named local server
     #[arg(long = "instance", default_value = "local", global = true)]
     pub instance: String,
 
@@ -206,7 +208,7 @@ pub struct Cli {
     #[arg(long = "save-credentials")]
     pub save_credentials: bool,
 
-    /// List all stored credential instances
+    /// List local servers and saved cloud connections (alias for instances)
     #[arg(long = "list-instances")]
     pub list_instances: bool,
 
@@ -358,7 +360,11 @@ pub enum CliCommand {
     /// Stop a managed local database and keep its data
     Down(DownArgs),
 
-    /// Show the selected environment, database, and development state
+    /// List local servers and saved cloud connections
+    #[command(visible_aliases = ["servers", "list"])]
+    Instances(InstancesArgs),
+
+    /// Show server status for this folder or selected project environment
     Status(StatusArgs),
 
     /// View managed database logs
@@ -715,6 +721,13 @@ mod tests {
 
     #[test]
     fn lifecycle_commands_and_global_flag_parse() {
+        for alias in ["instances", "servers", "list"] {
+            assert!(Cli::try_parse_from(["kalam", alias, "--local"]).is_ok());
+            assert!(Cli::try_parse_from(["kalam", alias, "--cloud", "--check"]).is_ok());
+        }
+        assert!(Cli::try_parse_from(["kalam", "instances", "--local", "--cloud"]).is_err());
+
+        assert!(Cli::try_parse_from(["kalam", "servers"]).is_ok());
         let up = Cli::try_parse_from(["kalam", "up", "-g"]).expect("up -g should parse");
         assert!(up.global);
         assert!(matches!(up.subcommand, Some(CliCommand::Up(_))));
@@ -724,7 +737,7 @@ mod tests {
         assert!(matches!(down.subcommand, Some(CliCommand::Down(_))));
 
         let logs =
-            Cli::try_parse_from(["kalam", "logs", "--follow"]).expect("logs --follow should parse");
+            Cli::try_parse_from(["kalam", "logs", "--tail"]).expect("logs --tail should parse");
         let Some(CliCommand::Logs(args)) = logs.subcommand else {
             panic!("expected logs command");
         };

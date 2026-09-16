@@ -212,7 +212,7 @@ pub async fn ensure_local_server_binary_version(
     match resolve_kalamdb_server_bin_for_version(version) {
         Ok(path) => Ok(path),
         Err(error) => {
-            output.status(format!("precheck: {error}"));
+            output.detail("KalamDB server is not installed; checking installation options");
             if auto_install {
                 output.status(format!("precheck: downloading kalamdb-server {version}"));
                 return download_and_install_managed_server_version(output, server_source, version)
@@ -305,7 +305,7 @@ async fn download_and_install_managed_server_version(
     _server_source: &ServiceLogSource,
     version: &str,
 ) -> Result<PathBuf> {
-    let show_progress = !output.is_agent() && !output.json;
+    let show_progress = output.animations && !output.is_agent() && !output.json;
     let path = install_managed_server_version(version, show_progress).await?;
     output.status(format!("precheck: downloaded and verified kalamdb-server {version}"));
     output.agent_event("KALAM_SERVER_INSTALLED", &[("version", version)]);
