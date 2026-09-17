@@ -372,6 +372,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      NPM_CONFIG_PROVENANCE: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -381,6 +383,16 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      - name: Use npm Trusted Publisher OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          # setup-node writes `_authToken=${NODE_AUTH_TOKEN}`. An empty or
+          # 2FA-gated token intercepts OIDC and fails with EOTP on dist-tag.
+          unset NODE_AUTH_TOKEN || true
+          npm config delete "//registry.npmjs.org/:_authToken" || true
+          npm --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -404,14 +416,9 @@ jobs:
       - name: Publish @kalamdb/client to npm
         shell: bash
         working-directory: link/sdks/typescript/client
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish"
-            exit 0
-          fi
+          unset NODE_AUTH_TOKEN || true
           VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
           FORCE_FLAG=""
           if [[ "${{ github.event.inputs.force_publish }}" == "true" ]]; then
@@ -423,14 +430,9 @@ jobs:
       - name: Publish @kalamdb/consumer to npm
         shell: bash
         working-directory: link/sdks/typescript/consumer
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish"
-            exit 0
-          fi
+          unset NODE_AUTH_TOKEN || true
           VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
           FORCE_FLAG=""
           if [[ "${{ github.event.inputs.force_publish }}" == "true" ]]; then
@@ -442,14 +444,9 @@ jobs:
       - name: Publish @kalamdb/orm to npm
         shell: bash
         working-directory: link/sdks/typescript/orm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish"
-            exit 0
-          fi
+          unset NODE_AUTH_TOKEN || true
           VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
           FORCE_FLAG=""
           if [[ "${{ github.event.inputs.force_publish }}" == "true" ]]; then
@@ -461,14 +458,9 @@ jobs:
       - name: Publish @kalamdb/react to npm
         shell: bash
         working-directory: link/sdks/typescript/react
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN is not configured; skipping npm publish"
-            exit 0
-          fi
+          unset NODE_AUTH_TOKEN || true
           VERSION="${{ needs.resolve_versions.outputs.typescript_version }}"
           FORCE_FLAG=""
           if [[ "${{ github.event.inputs.force_publish }}" == "true" ]]; then

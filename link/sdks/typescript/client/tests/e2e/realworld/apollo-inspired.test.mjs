@@ -152,7 +152,10 @@ describe('Apollo-inspired real-world app flows', { timeout: 180_000 }, () => {
         await insertFeedRow(writer, table, row);
       }
 
-      await waitFor(() => controllerSnapshotRows(snapshots).length === 3);
+      await waitFor(() => {
+        const ids = controllerSnapshotRows(snapshots).map((row) => row.id);
+        return ids.length === 3 && ids[0] === 61004 && ids[1] === 61003 && ids[2] === 61002;
+      });
       assert.deepEqual(
         controllerSnapshotRows(snapshots).map((row) => row.id),
         [61004, 61003, 61002],

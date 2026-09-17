@@ -12,7 +12,8 @@
 #   --otp CODE         One-time password for 2FA-protected accounts
 #
 # Environment:
-#   NODE_AUTH_TOKEN    npm auth token (required for publishing; skipped in --dry-run)
+#   NODE_AUTH_TOKEN    npm auth token for local or GitHub Packages publishes.
+#                      On GitHub Actions, omit this and use npm Trusted Publisher OIDC.
 #
 # Example (local):
 #   NPM_TOKEN=npm_xxx NODE_AUTH_TOKEN=$NPM_TOKEN ./publish.sh
@@ -34,7 +35,7 @@ if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
     [[ -n "$NODE_AUTH_TOKEN" ]] && echo "🔑 Loaded NODE_AUTH_TOKEN from .env"
   fi
 fi
-export NODE_AUTH_TOKEN
+export NODE_AUTH_TOKEN="${NODE_AUTH_TOKEN:-}"
 
 PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL:-https://registry.npmjs.org}"
 PUBLISH_REGISTRY_URL="${PUBLISH_REGISTRY_URL%/}"
@@ -236,13 +237,18 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-# ─── Validate auth token ─────────────────────────────────────────────────────
+# ─── Auth: npm token, or GitHub OIDC Trusted Publisher on npmjs ──────────────
 if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-  echo ""
-  echo "❌ NODE_AUTH_TOKEN is not set."
-  echo "   Either export it or add it to $SDK_DIR/.env:"
-  echo "     NODE_AUTH_TOKEN=npm_xxxxxxxx"
-  exit 1
+  if [[ "$PUBLISH_REGISTRY_URL" == "https://registry.npmjs.org" && -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+    echo "No NODE_AUTH_TOKEN; using GitHub OIDC trusted publisher for npm."
+  else
+    echo ""
+    echo "❌ NODE_AUTH_TOKEN is not set."
+    echo "   Either export it or add it to $SDK_DIR/.env:"
+    echo "     NODE_AUTH_TOKEN=npm_xxxxxxxx"
+    echo "   On GitHub Actions, omit NODE_AUTH_TOKEN and use npm Trusted Publisher."
+    exit 1
+  fi
 fi
 
 # ─── Write a local .npmrc with the auth token ────────────────────────────────
@@ -260,18 +266,26 @@ if [[ -n "$OTP_CODE" ]]; then
   OTP_FLAG="--otp $OTP_CODE"
 fi
 
-add_prerelease_dist_tag() {
-  if [[ -n "$PRERELEASE_TAG" ]]; then
-    # shellcheck disable=SC2086
-    npm dist-tag add "$PACKAGE_NAME@$VERSION" "$PRERELEASE_TAG" $OTP_FLAG $REGISTRY_FLAG
-    echo "✅ Added dist-tag '$PRERELEASE_TAG' for $PACKAGE_NAME@$VERSION"
+try_add_dist_tag() {
+  local tag="$1"
+  if [[ -z "$tag" ]]; then
+    return 0
   fi
+  # shellcheck disable=SC2086
+  if npm dist-tag add "$PACKAGE_NAME@$VERSION" "$tag" $OTP_FLAG $REGISTRY_FLAG; then
+    echo "✅ Set dist-tag '$tag' for $PACKAGE_NAME@$VERSION"
+    return 0
+  fi
+  echo "⚠️  Could not set dist-tag '$tag' for $PACKAGE_NAME@$VERSION."
+  echo "    npm Trusted Publisher does not authorize dist-tag; publish itself is unaffected."
+}
+
+add_prerelease_dist_tag() {
+  try_add_dist_tag "$PRERELEASE_TAG"
 }
 
 add_latest_dist_tag() {
-  # shellcheck disable=SC2086
-  npm dist-tag add "$PACKAGE_NAME@$VERSION" latest $OTP_FLAG $REGISTRY_FLAG
-  echo "✅ Set dist-tag 'latest' for $PACKAGE_NAME@$VERSION"
+  try_add_dist_tag latest
 }
 
 if npm view "$PACKAGE_NAME@$VERSION" version --silent $REGISTRY_FLAG >/dev/null 2>&1; then
