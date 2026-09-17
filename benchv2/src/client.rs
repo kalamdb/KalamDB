@@ -25,7 +25,6 @@ pub struct KalamClient {
 #[derive(Clone)]
 struct EndpointClient {
     base_url: String,
-    auth: AuthProvider,
     link: KalamLinkClient,
 }
 
@@ -186,7 +185,7 @@ impl KalamClient {
         let connection_options = benchmark_connection_options(ws_local_bind_addresses);
         let link_builder = KalamLinkClient::builder()
             .base_url(base_url)
-            .auth(auth.clone())
+            .auth(auth)
             // Preserve enough keep-alive sockets for bursty load tests so
             // repeated iterations do not churn through local ephemeral ports.
             .http_pool_max_idle_per_host(BENCH_HTTP_POOL_MAX_IDLE_PER_HOST)
@@ -200,7 +199,6 @@ impl KalamClient {
 
         Ok(EndpointClient {
             base_url: base_url.to_string(),
-            auth,
             link,
         })
     }
@@ -373,16 +371,7 @@ impl KalamClient {
             .unwrap_or_else(|| self.ws_local_bind_addresses.as_ref().clone());
         let connection_options = benchmark_connection_options(&ws_local_bind_addresses);
 
-        KalamLinkClient::builder()
-            .base_url(endpoint.base_url)
-            .auth(endpoint.auth)
-            .http_pool_max_idle_per_host(BENCH_HTTP_POOL_MAX_IDLE_PER_HOST)
-            .max_retries(BENCH_HTTP_MAX_RETRIES)
-            .timeout(Duration::from_secs(60))
-            .timeouts(endpoint.link.timeouts().clone())
-            .connection_options(connection_options)
-            .build()
-            .map_err(|e| format!("failed to build isolated kalam-link client: {}", e))
+        Ok(endpoint.link.with_isolated_websocket(connection_options))
     }
 
     pub fn new_isolated_link_for_ws_url(

@@ -198,6 +198,7 @@ pub async fn prepare_components(
         users_provider_for_init.clone(),
         config.auth.root_password.clone(),
         use_root_password_env,
+        config.auth.local.bcrypt_cost,
     )
     .await?;
 
@@ -704,6 +705,7 @@ async fn create_default_system_user(
     users_provider: Arc<kalamdb_system::UsersTableProvider>,
     config_root_password: Option<String>,
     use_root_password_env: bool,
+    bcrypt_cost: u32,
 ) -> Result<()> {
     use kalamdb_commons::constants::AuthConstants;
     use kalamdb_system::User;
@@ -741,9 +743,9 @@ async fn create_default_system_user(
 
             let password_hash = match root_password {
                 Some(password) => {
-                    // Hash the provided password for remote access
-                    bcrypt::hash(&password, bcrypt::DEFAULT_COST)
-                        .map_err(|e| anyhow::anyhow!("Failed to hash root password: {}", e))?
+                    kalamdb_auth::security::password::hash_password(&password, Some(bcrypt_cost))
+                        .await
+                        .map_err(|e| anyhow::anyhow!("failed to hash root password: {e}"))?
                 },
                 None => {
                     // T126: Create with EMPTY password hash for localhost-only access

@@ -106,26 +106,30 @@ describe('bug regressions', () => {
   });
 
   describe('B7: error does not wipe in-flight updating/deleting sets', () => {
-    function Probe() {
-      const client = React.useMemo(() => ({
-        async insert() { throw new Error('boom'); },
-        async update() { await new Promise((r) => setTimeout(r, 60)); return undefined as never; },
-        async delete() { return undefined as never; },
-        async live() { return async () => undefined; },
-        createLiveQueryController() { return null as never; },
-      }), []);
-      const m = useMutationActions(client as never);
-      return (
-        <div>
-          <span data-testid="updating-count">{m.updating.size}</span>
-          <span data-testid="error">{m.error?.message ?? ''}</span>
-          <button onClick={() => { void m.update('t', '1', { v: 1 }); }}>upd</button>
-          <button onClick={() => { void m.insert('t', { v: 1 }).catch(() => undefined); }}>ins</button>
-        </div>
-      );
-    }
-
     it('insert error keeps update tracking alive', async () => {
+      let finishUpdate: (() => void) | undefined;
+      function Probe() {
+        const client = React.useMemo(() => ({
+          async insert() { throw new Error('boom'); },
+          async update() {
+            await new Promise<void>((resolve) => { finishUpdate = resolve; });
+            return undefined as never;
+          },
+          async delete() { return undefined as never; },
+          async live() { return async () => undefined; },
+          createLiveQueryController() { return null as never; },
+        }), []);
+        const m = useMutationActions(client as never);
+        return (
+          <div>
+            <span data-testid="updating-count">{m.updating.size}</span>
+            <span data-testid="error">{m.error?.message ?? ''}</span>
+            <button onClick={() => { void m.update('t', '1', { v: 1 }); }}>upd</button>
+            <button onClick={() => { void m.insert('t', { v: 1 }).catch(() => undefined); }}>ins</button>
+          </div>
+        );
+      }
+
       renderWithKalam(<Probe />, undefined as never);
       await act(async () => {
         screen.getByRole('button', { name: 'upd' }).click();
@@ -134,11 +138,14 @@ describe('bug regressions', () => {
 
       await act(async () => {
         screen.getByRole('button', { name: 'ins' }).click();
-        await new Promise((r) => setTimeout(r, 5));
       });
 
-      await waitFor(() => expect(screen.getByTestId('error').textContent).toBe('boom'));
-      expect(screen.getByTestId('updating-count').textContent).toBe('1');
+      await waitFor(() => {
+        expect(screen.getByTestId('error').textContent).toBe('boom');
+        expect(screen.getByTestId('updating-count').textContent).toBe('1');
+      });
+
+      await act(async () => { finishUpdate?.(); });
     });
   });
 

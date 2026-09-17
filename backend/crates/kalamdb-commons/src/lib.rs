@@ -99,7 +99,7 @@ pub use helpers::{
         normalize_sql_identifier, validate_namespace_reference, validate_sql_identifier,
         validate_user_namespace_name, SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
     },
-    security,
+    process_shutdown, security,
 };
 pub use models::{
     // Phase 15 (008-schema-consolidation): Re-export schema types

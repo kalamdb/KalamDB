@@ -3,6 +3,10 @@
 //! Index keys are storekey tuples of optional `user_id`, column bytes (from
 //! `scalar_value_to_bytes`), and `seq`. PK indexes are this adapter with a
 //! single column. User-scoped keys include `user_id` once.
+//!
+//! With DataFusion, composite equalities become a longer prefix. A trailing
+//! UTF-8 range can use byte bounds; numeric ranges stay prefix scans with
+//! residual key filters so decimal encoding is not treated as sort order.
 
 use std::marker::PhantomData;
 
@@ -65,24 +69,9 @@ impl<K, V> PrefixIndex<K, V> {
         encode_prefix_parts(user_id.map(UserId::as_str), column_bytes)
     }
 
-    /// Encode a full index key including `seq`.
-    pub fn encode_index_key(
-        &self,
-        user_id: Option<&UserId>,
-        column_bytes: &[Vec<u8>],
-        seq: i64,
-    ) -> Vec<u8> {
-        encode_key_parts(user_id.map(UserId::as_str), column_bytes, seq)
-    }
-
     /// Prefix for all index entries for one user (USER tables).
     pub fn encode_user_prefix(&self, user_id: &UserId) -> Vec<u8> {
         encode_prefix(&(user_id.as_str(),))
-    }
-
-    /// Whether keys include a leading `user_id`.
-    pub fn is_user_scoped(&self) -> bool {
-        self.user_scoped
     }
 
     #[cfg(feature = "datafusion")]
@@ -110,6 +99,23 @@ impl<K, V> PrefixIndex<K, V> {
         } else {
             Some(encode_prefix_parts(None, &column_bytes))
         }
+    }
+
+    /// Composite equality prefix plus a safe range on the next column.
+    #[cfg(feature = "datafusion")]
+    pub fn plan_scan(
+        &self,
+        user_id: Option<&UserId>,
+        conjuncts: &[datafusion::logical_expr::Expr],
+    ) -> Option<crate::index::seek::IndexScanPlan> {
+        crate::index::seek::plan_prefix_index_scan(
+            &self.columns,
+            self.user_scoped,
+            user_id,
+            conjuncts,
+            |uid, cols| self.encode_column_prefix(uid, cols),
+            |uid| self.encode_user_prefix(uid),
+        )
     }
 }
 
@@ -153,6 +159,15 @@ where
         filter: &datafusion::logical_expr::Expr,
     ) -> Option<Vec<u8>> {
         self.filter_prefix_with_scope(user_id, filter)
+    }
+
+    #[cfg(feature = "datafusion")]
+    fn plan_scan(
+        &self,
+        user_id: Option<&UserId>,
+        conjuncts: &[datafusion::logical_expr::Expr],
+    ) -> Option<crate::index::seek::IndexScanPlan> {
+        PrefixIndex::plan_scan(self, user_id, conjuncts)
     }
 }
 
@@ -322,5 +337,28 @@ mod tests {
             index.encode_column_prefix(Some(&UserId::new("alice")), &[b"42".to_vec()]);
         assert!(alice_key.starts_with(&alice_prefix));
         assert!(!bob_key.starts_with(&alice_prefix));
+    }
+
+    #[cfg(feature = "datafusion")]
+    #[test]
+    fn composite_index_first_column_equality_prefixes_full_keys() {
+        use datafusion::logical_expr::{col, lit};
+
+        let index = PrefixIndex::<SeqId, TestRow>::new(
+            "shared_chat:messages_idx_conversation",
+            vec!["conversation_id".to_string(), "created_at_ms".to_string()],
+            false,
+        );
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("conversation_id".to_string(), b"42".to_vec());
+        fields.insert("created_at_ms".to_string(), b"1000".to_vec());
+        let key = index.extract_key(&SeqId::new(100), &TestRow { fields }).unwrap();
+        let prefix = index.filter_to_prefix(&col("conversation_id").eq(lit("42"))).unwrap();
+        assert!(key.starts_with(&prefix));
+        assert!(index
+            .filter_to_prefix(
+                &col("conversation_id").eq(lit("42")).and(col("created_at_ms").lt(lit("5000")))
+            )
+            .is_none());
     }
 }

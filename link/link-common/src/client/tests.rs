@@ -34,6 +34,39 @@ fn test_builder_installs_rustls_provider_idempotently() {
 }
 
 #[test]
+fn test_builder_reuses_native_tls_roots_across_builds() {
+    KalamLinkClient::builder()
+        .base_url("http://127.0.0.1:1")
+        .build()
+        .expect("warm native TLS cache");
+
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        KalamLinkClient::builder()
+            .base_url("http://127.0.0.1:1")
+            .build()
+            .expect("cached TLS client build");
+    }
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "20 cached rustls client builds took {elapsed:?}; native-root reloads are ~80ms each"
+    );
+}
+
+#[test]
+fn test_isolated_websocket_uses_a_fresh_connection_slot() {
+    let client = KalamLinkClient::builder()
+        .base_url("http://localhost:3000")
+        .jwt_token("test_token")
+        .build()
+        .expect("build should succeed");
+    let isolated = client.with_isolated_websocket(ConnectionOptions::default());
+
+    assert!(!std::sync::Arc::ptr_eq(&client.connection, &isolated.connection));
+}
+
+#[test]
 fn test_builder_missing_url() {
     let result = KalamLinkClient::builder().build();
     assert!(result.is_err());

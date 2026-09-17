@@ -20,6 +20,10 @@ cli-auth-running = { max-threads = 1 }
 # to start in ~5-10 s instead of ~25-30 s, dropping per-test time well below
 # the 60-second SLOW threshold.
 oidc-fresh-server = { max-threads = 2 }
+# Each template boot test starts an isolated debug server. Two at a time keeps
+# startup from starving the rest of the suite the way one 4-minute sequential
+# loop did when it occupied stateful-heavy.
+cli-template-boot = { max-threads = 2 }
 
 [[profile.default.overrides]]
 filter = 'test(oidc_cli_dex_bearer_token_works_with_fresh_server)'
@@ -301,8 +305,8 @@ test-group = "stateful-heavy"
 # test-group = "stateful-heavy"
 
 [[profile.default.overrides]]
-filter = 'test(test_project_workflow_init_templates_work_out_of_the_box)'
-test-group = "stateful-heavy"
+filter = 'test(test_project_workflow_init_template_)'
+test-group = "cli-template-boot"
 retries = 0
 
 # [[profile.default.overrides]]

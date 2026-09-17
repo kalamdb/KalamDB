@@ -1,6 +1,7 @@
 //! Fresh `kalam init --template` + `kalam dev start` coverage for every starter.
 
 use std::{
+    collections::BTreeSet,
     fs,
     io::Read,
     net::TcpListener,
@@ -22,6 +23,16 @@ const DEV_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SCHEMA_GEN_TIMEOUT: Duration = Duration::from_secs(120);
 const TSC_TIMEOUT: Duration = Duration::from_secs(120);
 const SDK_BUILD_TIMEOUT: Duration = Duration::from_secs(900);
+
+const EXPECTED_BOOT_CASES: &[(&str, &str)] = &[
+    ("simple-live", "typescript"),
+    ("simple-live", "dart"),
+    ("live-okf-context-sync", "typescript"),
+    ("realtime-ops-feed", "typescript"),
+    ("chat-with-ai", "typescript"),
+    ("react-ai-chat", "typescript"),
+    ("summarizer-agent", "typescript"),
+];
 
 #[derive(Debug, Clone)]
 struct ListedTemplate {
@@ -53,47 +64,89 @@ impl Drop for StopOnDrop {
 }
 
 #[test]
-#[ntest::timeout(2_160_000)]
-fn test_project_workflow_init_templates_work_out_of_the_box() {
+fn test_project_workflow_init_templates_catalog_matches_boot_cases() {
+    let listed: BTreeSet<(String, String)> = list_init_templates()
+        .into_iter()
+        .map(|template| (template.id, template.language))
+        .collect();
+    let expected: BTreeSet<(String, String)> = EXPECTED_BOOT_CASES
+        .iter()
+        .map(|(id, language)| ((*id).to_string(), (*language).to_string()))
+        .collect();
+    assert_eq!(
+        listed, expected,
+        "add or remove a test_project_workflow_init_template_* case when the init catalog changes"
+    );
+}
+
+macro_rules! template_boot_test {
+    ($name:ident, $id:expr, $language:expr) => {
+        #[test]
+        #[ntest::timeout(180_000)]
+        fn $name() {
+            boot_listed_template($id, $language);
+        }
+    };
+}
+
+template_boot_test!(
+    test_project_workflow_init_template_simple_live_typescript,
+    "simple-live",
+    "typescript"
+);
+template_boot_test!(test_project_workflow_init_template_simple_live_dart, "simple-live", "dart");
+template_boot_test!(
+    test_project_workflow_init_template_live_okf_context_sync,
+    "live-okf-context-sync",
+    "typescript"
+);
+template_boot_test!(
+    test_project_workflow_init_template_realtime_ops_feed,
+    "realtime-ops-feed",
+    "typescript"
+);
+template_boot_test!(test_project_workflow_init_template_chat_with_ai, "chat-with-ai", "typescript");
+template_boot_test!(
+    test_project_workflow_init_template_react_ai_chat,
+    "react-ai-chat",
+    "typescript"
+);
+template_boot_test!(
+    test_project_workflow_init_template_summarizer_agent,
+    "summarizer-agent",
+    "typescript"
+);
+
+fn boot_listed_template(template_id: &str, language: &str) {
+    if !template_filter_allows(template_id, language) {
+        eprintln!("skipping {template_id}/{language} (KALAM_E2E_TEMPLATE / KALAM_E2E_LANGUAGE)");
+        return;
+    }
     let server_bin = kalamdb_server_bin().expect("kalamdb-server binary");
     let workspace = workspace_root();
-    ensure_local_typescript_sdks_built(&workspace);
-    let templates = list_init_templates();
-    assert!(
-        templates.iter().any(|template| template.id == "simple-live"),
-        "expected embedded simple-live template"
+    if language == "typescript" {
+        ensure_local_typescript_sdks_built(&workspace);
+    }
+    let template = list_init_templates()
+        .into_iter()
+        .find(|template| template.id == template_id && template.language == language)
+        .unwrap_or_else(|| panic!("missing listed template {template_id}/{language}"));
+    eprintln!(
+        "=== kalam init template {} ({}/{}) ===",
+        template.id, template.kind, template.language
     );
-    assert!(
-        templates.iter().any(|template| template.id == "chat-with-ai"),
-        "expected chat-with-ai repository template"
-    );
+    verify_template(&template, &server_bin, &workspace);
+}
 
+fn template_filter_allows(template_id: &str, language: &str) -> bool {
     let filter = std::env::var("KALAM_E2E_TEMPLATE")
         .ok()
         .filter(|value| !value.trim().is_empty());
     let language_filter = std::env::var("KALAM_E2E_LANGUAGE")
         .ok()
         .filter(|value| !value.trim().is_empty());
-    let selected: Vec<&ListedTemplate> = templates
-        .iter()
-        .filter(|template| filter.as_ref().is_none_or(|id| template.id == *id))
-        .filter(|template| {
-            language_filter.as_ref().is_none_or(|language| template.language == *language)
-        })
-        .collect();
-    assert!(
-        !selected.is_empty(),
-        "no templates selected (KALAM_E2E_TEMPLATE={filter:?} \
-         KALAM_E2E_LANGUAGE={language_filter:?})"
-    );
-
-    for template in selected {
-        eprintln!(
-            "=== kalam init template {} ({}/{}) ===",
-            template.id, template.kind, template.language
-        );
-        verify_template(template, &server_bin, &workspace);
-    }
+    filter.as_ref().is_none_or(|id| template_id == *id)
+        && language_filter.as_ref().is_none_or(|value| language == *value)
 }
 
 fn list_init_templates() -> Vec<ListedTemplate> {
@@ -168,6 +221,8 @@ fn verify_template(template: &ListedTemplate, server_bin: &Path, workspace: &Pat
             project_dir.join("lib/generated/kalam.dart").is_file(),
             "dart schema gen should write lib/generated/kalam.dart"
         );
+    }
+    if !starts_app_processes(template) {
         clear_dev_processes(&project_dir);
     }
 
@@ -443,6 +498,10 @@ fn run_npm(dir: &Path, args: &[&str], timeout: Duration) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn starts_app_processes(template: &ListedTemplate) -> bool {
+    template.id == "simple-live" && template.language == "typescript"
 }
 
 fn unique_server_url() -> (String, u16) {

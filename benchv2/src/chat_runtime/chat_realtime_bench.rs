@@ -481,6 +481,7 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
         ),
     )
     .await?;
+    assert_chat_indexes(client, namespace).await?;
 
     run_sql_with_retry(
         client,
@@ -568,4 +569,48 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     .await?;
     wait_for_topic_ready(client, &ai_inbox).await?;
     Ok(())
+}
+
+async fn assert_chat_indexes(client: &KalamClient, namespace: &str) -> Result<(), String> {
+    let expected = [
+        ("messages_ai", "idx_messages_ai_conversation"),
+        ("messages", "idx_messages_conversation"),
+        ("conversation_members", "idx_conversation_members_user"),
+    ];
+    for (table, index_name) in expected {
+        let response = run_sql_with_retry(
+            client,
+            &format!(
+                "SELECT indexes FROM system.schemas WHERE namespace_id = {} AND table_name = {} \
+                 AND is_latest = true",
+                sql_literal(namespace),
+                sql_literal(table)
+            ),
+        )
+        .await?;
+        let indexes = catalog_indexes_json(&response);
+        if !indexes.contains(index_name) {
+            return Err(format!(
+                "expected index {index_name} on {namespace}.{table}, catalog indexes: {indexes}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn catalog_indexes_json(response: &crate::client::SqlResponse) -> String {
+    let Some(cell) = response
+        .results
+        .first()
+        .and_then(|result| result.rows.as_ref())
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.first())
+    else {
+        return "[]".to_string();
+    };
+    match cell {
+        serde_json::Value::Null => "[]".to_string(),
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }

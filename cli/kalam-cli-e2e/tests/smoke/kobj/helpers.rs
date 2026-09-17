@@ -205,3 +205,55 @@ pub fn assert_index_absent(indexes_json: &str, name: &str) {
         "catalog indexes should not contain {name}: {indexes_json}"
     );
 }
+
+/// Largest `hot_rows_scanned=` counter in EXPLAIN ANALYZE text.
+///
+/// Catalog presence and `COUNT(*)` correctness do not prove SQL used a seek.
+pub fn hot_rows_scanned(plan_text: &str) -> Option<u64> {
+    let needle = "hot_rows_scanned=";
+    let mut found = None;
+    let mut rest = plan_text;
+    while let Some(idx) = rest.find(needle) {
+        let after = &rest[idx + needle.len()..];
+        let digits: String = after.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if let Ok(value) = digits.parse::<u64>() {
+            found = Some(found.map_or(value, |previous: u64| previous.max(value)));
+        }
+        rest = after;
+    }
+    found
+}
+
+/// Fail unless EXPLAIN ANALYZE scanned only the matching indexed rows.
+pub fn assert_hot_index_seek(
+    plan_text: &str,
+    expected_hot_rows: u64,
+    table_rows: u64,
+    context: &str,
+) {
+    let scanned = hot_rows_scanned(plan_text).unwrap_or_else(|| {
+        panic!("{context}: EXPLAIN ANALYZE missing hot_rows_scanned:\n{plan_text}")
+    });
+    assert!(
+        expected_hot_rows < table_rows,
+        "{context}: seek assertion needs a selective predicate ({expected_hot_rows} matching of \
+         {table_rows} table rows)"
+    );
+    assert_eq!(
+        scanned, expected_hot_rows,
+        "{context}: expected hot_rows_scanned={expected_hot_rows} (index seek), not {scanned} \
+         (full table is {table_rows}):\n{plan_text}"
+    );
+}
+
+/// Fail unless EXPLAIN ANALYZE walked every hot row (no scalar seek).
+pub fn assert_hot_full_scan(plan_text: &str, table_rows: u64, context: &str) {
+    let scanned = hot_rows_scanned(plan_text).unwrap_or_else(|| {
+        panic!("{context}: EXPLAIN ANALYZE missing hot_rows_scanned:\n{plan_text}")
+    });
+    assert_eq!(
+        scanned, table_rows,
+        "{context}: expected a full hot scan of {table_rows} rows, got \
+         hot_rows_scanned={scanned}:\n{plan_text}"
+    );
+}

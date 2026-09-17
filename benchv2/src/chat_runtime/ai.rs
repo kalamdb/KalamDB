@@ -448,7 +448,7 @@ async fn run_ai_cycles(
         stats.sessions_started.fetch_add(1, Ordering::Relaxed);
         cycle_ordinal += 1;
 
-        if should_run_history(cycle_ordinal) {
+        if should_run_history(cycle_ordinal, worker_id) {
             query_conversation_history(
                 client,
                 namespace,
@@ -462,7 +462,7 @@ async fn run_ai_cycles(
 
         let typing_before = delivery_tracker.typing_events.load(Ordering::Relaxed);
         let incoming_before = delivery_tracker.incoming_messages.load(Ordering::Relaxed);
-        let reconnecting = should_reconnect(cycle_ordinal);
+        let reconnecting = should_reconnect(cycle_ordinal, worker_id);
 
         let emitted_message_id = if reconnecting {
             let reconnect_started = Instant::now();

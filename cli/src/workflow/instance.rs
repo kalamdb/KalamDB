@@ -320,27 +320,25 @@ pub fn clear_live_pids(record: &mut InstanceRecord) {
 pub fn stop_recorded_processes(record: &InstanceRecord) {
     if let Some(dev_pid) = record.dev_pid {
         if pid_is_running(dev_pid) {
-            request_terminate(dev_pid);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while pid_is_running(dev_pid) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            if pid_is_running(dev_pid) {
-                crate::process::kill_supervised_process_by_pid(dev_pid, SupervisedKillScope::Tree);
-            }
+            wait_for_cooperative_exit(dev_pid, SupervisedKillScope::Tree);
         }
     }
     if let Some(pid) = record.pid {
         if pid_is_running(pid) {
-            request_terminate(pid);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while pid_is_running(pid) && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            if pid_is_running(pid) {
-                crate::process::kill_supervised_process_by_pid(pid, SupervisedKillScope::Process);
-            }
+            wait_for_cooperative_exit(pid, SupervisedKillScope::Process);
         }
+    }
+}
+
+fn wait_for_cooperative_exit(pid: u32, scope: SupervisedKillScope) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    request_terminate(pid);
+    while pid_is_running(pid) && std::time::Instant::now() < deadline {
+        request_terminate(pid);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if pid_is_running(pid) {
+        crate::process::kill_supervised_process_by_pid(pid, scope);
     }
 }
 

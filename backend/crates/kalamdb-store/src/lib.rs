@@ -37,6 +37,8 @@ pub use entity_store::{
     EntityStore,
     EntityStoreAsync, // Async versions using spawn_blocking internally
 };
+#[cfg(feature = "datafusion")]
+pub use index::IndexScanPlan;
 // Export index types
 pub use index::{
     FunctionExtractor, IndexKeyExtractor, PrefixIndex, PrefixIndexedKey, PrefixIndexedValue,

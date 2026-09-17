@@ -778,30 +778,30 @@ pub struct ChatManagedServerMemorySummary {
 
 #[derive(Debug, Clone)]
 struct ChatStabilityWindow {
-    elapsed_secs:          f64,
-    duration_secs:         f64,
-    sql_ops:               u64,
-    sql_latency_us:        u64,
-    selects:               u64,
-    inserts:               u64,
-    updates:               u64,
-    deletes:               u64,
-    live_changes:          u64,
-    historic_selects:      u64,
-    reconnects:            u64,
-    sql_ops_per_sec:       f64,
-    avg_sql_latency_ms:    f64,
-    live_changes_per_sec:  f64,
-    select_per_sec:        f64,
-    insert_per_sec:        f64,
-    update_per_sec:        f64,
-    delete_per_sec:        f64,
-    historic_per_sec:      f64,
-    timeout_delta:         u64,
-    active_sessions:       u64,
-    active_subscriptions:  u64,
-    ai_reply_gap:          u64,
-    rss_bytes:             Option<u64>,
+    elapsed_secs:         f64,
+    duration_secs:        f64,
+    sql_ops:              u64,
+    sql_latency_us:       u64,
+    selects:              u64,
+    inserts:              u64,
+    updates:              u64,
+    deletes:              u64,
+    live_changes:         u64,
+    historic_selects:     u64,
+    reconnects:           u64,
+    sql_ops_per_sec:      f64,
+    avg_sql_latency_ms:   f64,
+    live_changes_per_sec: f64,
+    select_per_sec:       f64,
+    insert_per_sec:       f64,
+    update_per_sec:       f64,
+    delete_per_sec:       f64,
+    historic_per_sec:     f64,
+    timeout_delta:        u64,
+    active_sessions:      u64,
+    active_subscriptions: u64,
+    ai_reply_gap:         u64,
+    rss_bytes:            Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1149,10 +1149,7 @@ fn aggregate_windows(windows: &[&ChatStabilityWindow]) -> ChatStabilityWindow {
             reconnects: 0,
             sql_ops_per_sec: windows.iter().map(|window| window.sql_ops_per_sec).sum::<f64>()
                 / count,
-            avg_sql_latency_ms: windows
-                .iter()
-                .map(|window| window.avg_sql_latency_ms)
-                .sum::<f64>()
+            avg_sql_latency_ms: windows.iter().map(|window| window.avg_sql_latency_ms).sum::<f64>()
                 / count,
             live_changes_per_sec: windows
                 .iter()
@@ -1220,15 +1217,17 @@ fn assess_folded_windows(windows: &[&ChatStabilityWindow]) -> ChatStabilityAsses
         .and_then(|(first, last)| {
             (first > 0).then_some((last as f64 - first as f64) / first as f64)
         });
-    let first_gap = steady.first().map(|window| window.ai_reply_gap).unwrap_or(0);
-    let last_gap = steady.last().map(|window| window.ai_reply_gap).unwrap_or(first_gap);
-    let ai_reply_gap_growth = last_gap as i64 - first_gap as i64;
+    let first_gap = average_ai_reply_gap(early);
+    let last_gap = average_ai_reply_gap(late);
+    let ai_reply_gap_growth = (last_gap - first_gap).round() as i64;
+    let late_gap_elevated =
+        late.iter().filter(|window| window.ai_reply_gap > 10).count() * 2 > late.len();
 
     let rising = throughput_ratio.is_some_and(|ratio| !(0.65..=1.50).contains(&ratio))
         || (latency_ratio.is_some_and(|ratio| ratio > 1.75)
             && latency_end_ratio.is_some_and(|ratio| ratio > 1.75))
         || steady_rss_growth.is_some_and(|growth| growth > 0.50)
-        || ai_reply_gap_growth > 10;
+        || (ai_reply_gap_growth > 10 && late_gap_elevated);
 
     ChatStabilityAssessment {
         verdict: if rising {
@@ -1255,6 +1254,14 @@ fn ratio_of_window_averages(
     let early_average = early.iter().map(|window| value(window)).sum::<f64>() / early.len() as f64;
     let late_average = late.iter().map(|window| value(window)).sum::<f64>() / late.len() as f64;
     (early_average > f64::EPSILON).then_some(late_average / early_average)
+}
+
+fn average_ai_reply_gap(windows: &[&ChatStabilityWindow]) -> f64 {
+    if windows.is_empty() {
+        0.0
+    } else {
+        windows.iter().map(|window| window.ai_reply_gap as f64).sum::<f64>() / windows.len() as f64
+    }
 }
 
 struct ManagedServerMemoryTracker {
@@ -1753,10 +1760,7 @@ fn print_stability_summary(memory: &ChatManagedServerMemorySummary) {
 
     let stages = fold_windows_into_stages(&memory.windows, CHAT_STAGE_COUNT);
     let peak_sessions = stages.iter().map(|stage| stage.window.active_sessions).max().unwrap_or(0);
-    println!(
-        "  Run stages ({} equal slices; stage 1 is warm-up):",
-        CHAT_STAGE_COUNT
-    );
+    println!("  Run stages ({} equal slices; stage 1 is warm-up):", CHAT_STAGE_COUNT);
     for (index, stage) in stages.iter().enumerate() {
         let previous = index.checked_sub(1).and_then(|prev| stages.get(prev));
         print_run_stage(stage, previous.map(|stage| &stage.window), peak_sessions);
@@ -1769,8 +1773,8 @@ fn print_stability_summary(memory: &ChatManagedServerMemorySummary) {
         StabilityVerdict::InsufficientData => "insufficient data",
     };
     println!(
-        "  Stability assessment: {} | late/early sql={} | late/early avg_sql={} | \
-         end/start avg_sql={} | steady_rss_change={} | ai_gap_change={:+}",
+        "  Stability assessment: {} | late/early sql={} | late/early avg_sql={} | end/start \
+         avg_sql={} | steady_rss_change={} | ai_gap_change={:+}",
         verdict,
         format_optional_ratio(assessment.throughput_ratio),
         format_optional_ratio(assessment.latency_ratio),
@@ -1839,12 +1843,7 @@ fn format_stage_vs_previous(
     format!(
         "{}  {}  {}  {}  | {}",
         format_trend_part("sql", previous.sql_ops_per_sec, current.sql_ops_per_sec, 0.15),
-        format_trend_part(
-            "lat",
-            previous.avg_sql_latency_ms,
-            current.avg_sql_latency_ms,
-            0.15
-        ),
+        format_trend_part("lat", previous.avg_sql_latency_ms, current.avg_sql_latency_ms, 0.15),
         format_trend_part(
             "live",
             previous.live_changes_per_sec,
@@ -2315,12 +2314,20 @@ pub fn maybe_log_delivery_timeout(
     );
 }
 
-pub fn should_run_history(cycle_ordinal: u64) -> bool {
-    cycle_ordinal > 0 && cycle_ordinal.is_multiple_of(CHAT_HISTORY_EVERY_CYCLES)
+pub fn should_run_history(cycle_ordinal: u64, worker_id: u32) -> bool {
+    phased_every(cycle_ordinal, worker_id, CHAT_HISTORY_EVERY_CYCLES)
 }
 
-pub fn should_reconnect(cycle_ordinal: u64) -> bool {
-    cycle_ordinal > 0 && cycle_ordinal.is_multiple_of(CHAT_RECONNECT_EVERY_CYCLES)
+pub fn should_reconnect(cycle_ordinal: u64, worker_id: u32) -> bool {
+    phased_every(cycle_ordinal, worker_id, CHAT_RECONNECT_EVERY_CYCLES)
+}
+
+fn phased_every(cycle_ordinal: u64, worker_id: u32, every: u64) -> bool {
+    if every == 0 {
+        return false;
+    }
+    let phase = u64::from(worker_id) % every;
+    cycle_ordinal > phase && (cycle_ordinal - phase).is_multiple_of(every)
 }
 
 #[cfg(test)]
@@ -2352,6 +2359,18 @@ mod tests {
     #[test]
     fn zero_mutation_interval_disables_message_mutation() {
         assert_eq!(message_mutation(10, 0), None);
+    }
+
+    #[test]
+    fn reconnects_and_history_are_phased_by_worker_id() {
+        assert!(should_reconnect(6, 0));
+        assert!(!should_reconnect(6, 1));
+        assert!(should_reconnect(7, 1));
+        assert!(!should_reconnect(1, 5));
+        assert!(should_reconnect(11, 5));
+        assert!(should_run_history(4, 0));
+        assert!(!should_run_history(4, 1));
+        assert!(should_run_history(5, 1));
     }
 
     #[test]
@@ -2415,6 +2434,44 @@ mod tests {
         }
 
         assert_eq!(assess_stability(&windows).verdict, StabilityVerdict::Flat);
+    }
+
+    #[test]
+    fn stability_assessment_ignores_a_single_ai_gap_snapshot() {
+        let mut windows = vec![
+            stability_window(100.0, 5.0, 200 * 1024 * 1024),
+            stability_window(100.0, 5.0, 201 * 1024 * 1024),
+            stability_window(100.0, 5.0, 202 * 1024 * 1024),
+            stability_window(100.0, 5.0, 203 * 1024 * 1024),
+            stability_window(100.0, 5.0, 204 * 1024 * 1024),
+            stability_window(100.0, 5.0, 205 * 1024 * 1024),
+        ];
+        for window in &mut windows {
+            window.active_sessions = 100;
+        }
+        windows.last_mut().expect("last window").ai_reply_gap = 48;
+
+        assert_eq!(assess_stability(&windows).verdict, StabilityVerdict::Flat);
+    }
+
+    #[test]
+    fn stability_assessment_flags_a_sustained_ai_gap() {
+        let mut windows = vec![
+            stability_window(100.0, 5.0, 200 * 1024 * 1024),
+            stability_window(100.0, 5.0, 201 * 1024 * 1024),
+            stability_window(100.0, 5.0, 202 * 1024 * 1024),
+            stability_window(100.0, 5.0, 203 * 1024 * 1024),
+            stability_window(100.0, 5.0, 204 * 1024 * 1024),
+            stability_window(100.0, 5.0, 205 * 1024 * 1024),
+        ];
+        for window in &mut windows {
+            window.active_sessions = 100;
+        }
+        windows[3].ai_reply_gap = 20;
+        windows[4].ai_reply_gap = 24;
+        windows[5].ai_reply_gap = 28;
+
+        assert_eq!(assess_stability(&windows).verdict, StabilityVerdict::Rising);
     }
 
     #[test]
@@ -2500,10 +2557,7 @@ mod tests {
         let mut current = stability_window(102.0, 5.1, 205 * 1024 * 1024);
         previous.active_sessions = 100;
         current.active_sessions = 100;
-        assert_eq!(
-            classify_stage(2, Some(&previous), &current, 100),
-            StageShape::Stable
-        );
+        assert_eq!(classify_stage(2, Some(&previous), &current, 100), StageShape::Stable);
     }
 
     fn stability_window(

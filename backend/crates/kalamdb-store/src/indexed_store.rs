@@ -200,6 +200,25 @@ where
         self.filter_to_prefix(filter)
     }
 
+    /// Plan a prefix seek from all AND conjuncts together.
+    ///
+    /// Default uses the first conjunct that [`filter_to_prefix_with_scope`]
+    /// understands. Prefix indexes override this to consume composite
+    /// equalities and a trailing range.
+    #[cfg(feature = "datafusion")]
+    fn plan_scan(
+        &self,
+        user_id: Option<&UserId>,
+        conjuncts: &[Expr],
+    ) -> Option<crate::index::seek::IndexScanPlan> {
+        for filter in conjuncts {
+            if let Some(prefix) = self.filter_to_prefix_with_scope(user_id, filter) {
+                return Some(crate::index::seek::IndexScanPlan::equality_prefix(prefix));
+            }
+        }
+        None
+    }
+
     /// Checks if this index can satisfy the given filter.
     ///
     /// Used by DataFusion's `supports_filters_pushdown()`.
@@ -395,23 +414,44 @@ where
         }
     }
 
+    /// Pick the index with the most constrained leading equality columns.
+    ///
+    /// A full PK equality outranks a single secondary equality. A trailing
+    /// range is a tie-breaker after that, not encoded prefix length.
     #[cfg(feature = "datafusion")]
-    fn find_index_for_filter_scoped(
+    pub fn plan_index_scan(
         &self,
         user_id: Option<&UserId>,
         filter: &Expr,
-    ) -> Option<(usize, Vec<u8>)> {
+    ) -> Option<crate::index::seek::IndexScanPlan> {
+        let mut conjuncts = Vec::new();
+        crate::index::seek::flatten_conjuncts(filter, &mut conjuncts);
+        self.plan_index_scan_from_conjuncts(user_id, &conjuncts)
+    }
+
+    #[cfg(feature = "datafusion")]
+    pub fn plan_index_scan_from_conjuncts(
+        &self,
+        user_id: Option<&UserId>,
+        conjuncts: &[Expr],
+    ) -> Option<crate::index::seek::IndexScanPlan> {
+        let mut best: Option<crate::index::seek::IndexScanPlan> = None;
+        let mut best_score = (0u8, 0u8, 0u8);
         for (idx, index) in self.indexes.iter().enumerate() {
-            if let Some(prefix) = index.filter_to_prefix_with_scope(user_id, filter) {
-                return Some((idx, prefix));
+            let Some(mut plan) = index.plan_scan(user_id, conjuncts) else {
+                continue;
+            };
+            plan.index_idx = idx;
+            let score = plan.score(idx == 0);
+            if score > best_score {
+                best_score = score;
+                best = Some(plan);
             }
         }
-        None
+        best
     }
 
     /// Finds the "best" index for a set of DataFusion filters.
-    ///
-    /// Strategy: pick the index that yields the longest prefix (more selective).
     #[cfg(feature = "datafusion")]
     pub fn find_best_index_for_filters(&self, filters: &[Expr]) -> Option<(usize, Vec<u8>)> {
         self.find_best_index_for_filters_scoped(None, filters)
@@ -424,30 +464,18 @@ where
         user_id: Option<&UserId>,
         filters: &[Expr],
     ) -> Option<(usize, Vec<u8>)> {
-        let mut best: Option<(usize, Vec<u8>)> = None;
-
-        for filter in filters {
-            if let Some((idx, prefix)) = self.find_index_for_filter_scoped(user_id, filter) {
-                match &best {
-                    Some((_best_idx, best_prefix)) if best_prefix.len() >= prefix.len() => {},
-                    _ => best = Some((idx, prefix)),
-                }
-            }
-        }
-
-        best
+        self.plan_index_scan_from_conjuncts(user_id, filters)
+            .map(|plan| (plan.index_idx, plan.prefix))
     }
 
-    /// Flatten `AND` trees then pick the longest matching index prefix.
+    /// Flatten `AND` trees then pick the most selective matching index.
     #[cfg(feature = "datafusion")]
     pub fn find_best_index_for_filter_expr(
         &self,
         user_id: Option<&UserId>,
         filter: &Expr,
     ) -> Option<(usize, Vec<u8>)> {
-        let mut conjuncts = Vec::new();
-        flatten_conjuncts(filter, &mut conjuncts);
-        self.find_best_index_for_filters_scoped(user_id, &conjuncts)
+        self.plan_index_scan(user_id, filter).map(|plan| (plan.index_idx, plan.prefix))
     }
 
     // ========================================================================
@@ -883,6 +911,66 @@ where
         Ok(Box::new(mapped))
     }
 
+    /// Scan an index using a planned prefix, optional UTF-8 bounds, and residual key filters.
+    #[cfg(feature = "datafusion")]
+    pub fn scan_by_index_plan_iter(
+        &self,
+        plan: &crate::index::seek::IndexScanPlan,
+        limit: Option<usize>,
+    ) -> Result<EntityIterator<'_, K, V>> {
+        let index_partition = self
+            .index_partitions
+            .get(plan.index_idx)
+            .ok_or_else(|| StorageError::Other(format!("Index {} not found", plan.index_idx)))?
+            .clone();
+        let prefix = plan.prefix.clone();
+        let start_key = plan.start_key.clone();
+        let backend_limit = if plan.key_predicates().is_empty() {
+            limit
+        } else {
+            None
+        };
+        let mut iter = self.backend.scan(
+            &index_partition,
+            Some(&prefix),
+            start_key.as_deref(),
+            backend_limit,
+        )?;
+        let plan = plan.clone();
+        let mut remaining = limit.unwrap_or(usize::MAX);
+
+        let mapped = std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+
+            loop {
+                let (index_key, primary_key_bytes) = iter.next()?;
+                if plan.is_past_end(&index_key) {
+                    return None;
+                }
+                if !plan.matches_key_predicates(&index_key) {
+                    continue;
+                }
+                let primary_key = match K::from_storage_key(&primary_key_bytes) {
+                    Ok(key) => key,
+                    Err(e) => return Some(Err(StorageError::SerializationError(e))),
+                };
+
+                match self.get(&primary_key) {
+                    Ok(Some(entity)) => {
+                        remaining -= 1;
+                        return Some(Ok((primary_key, entity)));
+                    },
+                    Ok(None) => continue,
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+        });
+
+        Ok(Box::new(mapped))
+    }
+
     /// Returns the newest entity matching an index prefix.
     ///
     /// This uses reverse index iteration so hot-path PK lookups can fetch the
@@ -1210,17 +1298,6 @@ where
 // ============================================================================
 // Helper: Extract equality filters for DataFusion integration
 // ============================================================================
-
-#[cfg(feature = "datafusion")]
-fn flatten_conjuncts(expr: &Expr, out: &mut Vec<Expr>) {
-    match expr {
-        Expr::BinaryExpr(binary) if binary.op == Operator::And => {
-            flatten_conjuncts(binary.left.as_ref(), out);
-            flatten_conjuncts(binary.right.as_ref(), out);
-        },
-        other => out.push(other.clone()),
-    }
-}
 
 /// Helper function to extract column equality from a DataFusion Expr.
 ///

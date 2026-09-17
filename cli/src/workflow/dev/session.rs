@@ -16,7 +16,7 @@ use crate::{
     agent_error::AgentError,
     error::{CLIError, Result},
     fs_atomic::{write_atomic, FileReadPolicy, FileWriteOptions},
-    process::{kill_supervised_process_by_pid, SupervisedKillScope},
+    process::{kill_supervised_process_by_pid, request_terminate, SupervisedKillScope},
     workflow::WorkflowContext,
 };
 
@@ -190,6 +190,7 @@ pub async fn stop_background_session(ctx: &WorkflowContext) -> Result<()> {
     request_terminate(pid);
     let deadline = Instant::now() + STOP_WAIT;
     while pid_is_running(pid) && Instant::now() < deadline {
+        request_terminate(pid);
         time::sleep(STOP_POLL).await;
     }
     if pid_is_running(pid) {
@@ -223,7 +224,18 @@ pub(crate) async fn wait_for_dev_shutdown_signal() -> Result<()> {
             _ = sigterm.recv() => Ok(()),
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result.map_err(|error| {
+                    CLIError::ConfigurationError(format!("ctrl-c handler failed: {error}"))
+                })
+            }
+            _ = crate::process::wait_for_windows_shutdown_event() => Ok(()),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         tokio::signal::ctrl_c().await.map_err(|error| {
             CLIError::ConfigurationError(format!("ctrl-c handler failed: {error}"))
@@ -527,17 +539,6 @@ fn process_command_line(pid: u32) -> Option<String> {
         } else {
             Some(text.trim().to_string())
         }
-    }
-}
-
-fn request_terminate(pid: u32) {
-    #[cfg(unix)]
-    unsafe {
-        let _ = libc::kill(pid as i32, libc::SIGTERM);
-    }
-    #[cfg(windows)]
-    {
-        kill_supervised_process_by_pid(pid, SupervisedKillScope::Tree);
     }
 }
 

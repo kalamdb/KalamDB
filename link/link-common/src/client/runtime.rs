@@ -8,7 +8,7 @@ use crate::{
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
     models::{
-        file_upload::uploads_to_owned, FileUpload, LoginResponse, QueryResponse,
+        file_upload::uploads_to_owned, ConnectionOptions, FileUpload, LoginResponse, QueryResponse,
         SubscriptionConfig, SubscriptionInfo,
     },
     query::{
@@ -23,6 +23,29 @@ impl KalamLinkClient {
     /// Create a new builder for configuring the client
     pub fn builder() -> KalamLinkClientBuilder {
         KalamLinkClientBuilder::new()
+    }
+
+    /// Clone this client onto a fresh WebSocket slot while reusing the HTTP client.
+    ///
+    /// [`Clone`] shares the live WebSocket connection. Isolated slots are needed
+    /// when many concurrent subscriptions must each own a connection without
+    /// rebuilding TLS state or a new connection pool.
+    #[must_use]
+    pub fn with_isolated_websocket(&self, connection_options: ConnectionOptions) -> Self {
+        Self {
+            base_url: self.base_url.clone(),
+            http_client: self.http_client.clone(),
+            resolved_auth: self.resolved_auth.clone(),
+            auth: self.auth.clone(),
+            query_executor: self.query_executor.clone(),
+            #[cfg(feature = "healthcheck")]
+            health_cache: Arc::clone(&self.health_cache),
+            timeouts: self.timeouts.clone(),
+            connection_options,
+            event_handlers: self.event_handlers.clone(),
+            shared_resolved_auth: Arc::clone(&self.shared_resolved_auth),
+            connection: Arc::new(tokio::sync::Mutex::new(None)),
+        }
     }
 
     /// Execute a SQL query with optional files, parameters, and namespace context

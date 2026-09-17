@@ -22,6 +22,7 @@ mod test_edge_cases;
 mod test_explain_index_usage;
 mod test_pk_index_efficiency;
 mod test_row_count_behavior;
+mod test_scalar_index_seek;
 mod test_shared_access;
 mod test_sql_error_redaction;
 mod test_system_table_index_usage;

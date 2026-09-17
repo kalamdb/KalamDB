@@ -15,6 +15,7 @@ use crate::http_server::HttpServerRuntime;
 pub(crate) enum ShutdownSignal {
     CtrlC,
     SigTerm,
+    Requested,
 }
 
 pub(crate) enum TerminationReason {
@@ -33,6 +34,9 @@ impl TerminationReason {
             },
             Self::Signal(ShutdownSignal::SigTerm) => {
                 info!("Received SIGTERM, initiating graceful shutdown...");
+            },
+            Self::Signal(ShutdownSignal::Requested) => {
+                info!("Received shutdown request, initiating graceful shutdown...");
             },
             Self::SignalHandlerFailed(error) => {
                 warn!(
@@ -187,22 +191,23 @@ pub(crate) async fn shutdown_background_services(
     }
 }
 
-async fn select_shutdown_signal<CtrlCFut, SigTermFut>(
+async fn select_shutdown_signal<CtrlCFut, TerminateFut>(
     ctrl_c: CtrlCFut,
-    sigterm: SigTermFut,
+    terminate: TerminateFut,
+    on_terminate: ShutdownSignal,
 ) -> std::io::Result<ShutdownSignal>
 where
     CtrlCFut: Future<Output = std::io::Result<()>>,
-    SigTermFut: Future<Output = std::io::Result<()>>,
+    TerminateFut: Future<Output = std::io::Result<()>>,
 {
     tokio::select! {
         result = ctrl_c => {
             result?;
             Ok(ShutdownSignal::CtrlC)
         },
-        result = sigterm => {
+        result = terminate => {
             result?;
-            Ok(ShutdownSignal::SigTerm)
+            Ok(on_terminate)
         },
     }
 }
@@ -217,24 +222,74 @@ fn shutdown_signal_listener() -> std::io::Result<ShutdownSignalFuture> {
         let ctrl_c = tokio::signal::ctrl_c();
         let mut sigterm = signal(SignalKind::terminate())?;
         Ok(Box::pin(async move {
-            select_shutdown_signal(ctrl_c, async move {
-                sigterm.recv().await.ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "SIGTERM signal stream closed unexpectedly",
-                    )
-                })
-            })
+            select_shutdown_signal(
+                ctrl_c,
+                async move {
+                    sigterm.recv().await.ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::BrokenPipe,
+                            "SIGTERM signal stream closed unexpectedly",
+                        )
+                    })
+                },
+                ShutdownSignal::SigTerm,
+            )
             .await
         }))
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
         let ctrl_c = tokio::signal::ctrl_c();
+        let requested = windows_shutdown_request();
         Ok(Box::pin(async move {
-            select_shutdown_signal(ctrl_c, std::future::pending::<std::io::Result<()>>()).await
+            select_shutdown_signal(ctrl_c, requested, ShutdownSignal::Requested).await
         }))
+    }
+}
+
+/// Wait for `kalam down` (or an equivalent) to signal this process.
+///
+/// The waiter is a dedicated OS thread parked on a kernel event, not a Tokio
+/// blocking-pool thread, so it does not steal RocksDB/flush capacity.
+#[cfg(windows)]
+fn windows_shutdown_request() -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>> {
+    use kalamdb_commons::helpers::process_shutdown::ShutdownEvent;
+
+    let event = match ShutdownEvent::create_for_current_process() {
+        Ok(event) => event,
+        Err(error) => {
+            warn!(
+                "failed to create Windows shutdown event ({error}); cooperative stop is \
+                 unavailable"
+            );
+            return Box::pin(std::future::pending());
+        },
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    match std::thread::Builder::new()
+        .name("kalamdb-shutdown-event".into())
+        .spawn(move || {
+            if event.wait().is_ok() {
+                let _ = tx.send(());
+            }
+        }) {
+        Ok(_) => Box::pin(async move {
+            match rx.await {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    std::future::pending::<()>().await;
+                    Ok(())
+                },
+            }
+        }),
+        Err(error) => {
+            warn!(
+                "failed to start Windows shutdown waiter ({error}); cooperative stop is \
+                 unavailable"
+            );
+            Box::pin(std::future::pending())
+        },
     }
 }
 
@@ -250,6 +305,7 @@ mod tests {
         let signal = select_shutdown_signal(
             ready::<std::io::Result<()>>(Ok(())),
             pending::<std::io::Result<()>>(),
+            ShutdownSignal::SigTerm,
         )
         .await
         .expect("ctrl+c future should succeed");
@@ -263,11 +319,26 @@ mod tests {
         let signal = select_shutdown_signal(
             pending::<std::io::Result<()>>(),
             ready::<std::io::Result<()>>(Ok(())),
+            ShutdownSignal::SigTerm,
         )
         .await
         .expect("sigterm future should succeed");
 
         assert_eq!(signal, ShutdownSignal::SigTerm);
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn select_shutdown_signal_returns_requested_when_cooperative_stop_resolves_first() {
+        let signal = select_shutdown_signal(
+            pending::<std::io::Result<()>>(),
+            ready::<std::io::Result<()>>(Ok(())),
+            ShutdownSignal::Requested,
+        )
+        .await
+        .expect("cooperative stop future should succeed");
+
+        assert_eq!(signal, ShutdownSignal::Requested);
     }
 
     #[test]

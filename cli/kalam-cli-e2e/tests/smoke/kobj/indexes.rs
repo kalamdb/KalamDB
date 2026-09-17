@@ -1,7 +1,10 @@
-//! 0.7 scalar-index e2e: catalog, maintenance, hot/cold merge, failed writes.
+//! 0.7 scalar-index e2e: catalog, maintenance, hot/cold merge, failed writes,
+//! and SQL seek size (`hot_rows_scanned`).
 //!
-//! Scenarios 14–31 and 38–40. Scalar indexes are a hot-path feature; after
-//! flush, SQL equality must still be correct even if the seek uses cold scan.
+//! Catalog JSON and `COUNT(*)` are result-correctness checks. They pass on a
+//! full hot scan. Equality/history queries must also prove a seek via
+//! `EXPLAIN ANALYZE` `hot_rows_scanned`. After flush, SQL equality must still
+//! be correct even if the remaining rows come from cold scan.
 
 use crate::{common::*, kobj_helpers::*};
 
@@ -115,6 +118,11 @@ fn kobj_index_equality_duplicates_update_delete() {
         count_sql(&format!("SELECT COUNT(*) FROM {full} WHERE conversation_id = 'other'")),
         180
     );
+    // COUNT(*) would still be 20 on a full scan. The seek metric is the gate.
+    let equality_plan = exec(&format!(
+        "EXPLAIN ANALYZE SELECT id FROM {full} WHERE conversation_id = 'target'"
+    ));
+    assert_hot_index_seek(&equality_plan, 20, 200, "shared TEXT conversation_id equality");
 
     exec(&format!(
         "INSERT INTO {full} (id, conversation_id, status) VALUES (201, 'dup', 'active'), (202, \
@@ -366,4 +374,81 @@ fn kobj_failed_writes_leave_row_index_catalog_consistent() {
 
     exec(&format!("INSERT INTO {full} (id, status) VALUES (9, 'healthy')"));
     assert_eq!(count_sql(&format!("SELECT COUNT(*) FROM {full} WHERE status = 'healthy'")), 1);
+}
+
+#[ntest::timeout(180000)]
+#[test]
+fn kobj_index_sql_must_seek_not_full_scan() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_idxseek");
+    let table = generate_unique_table("messages");
+    let full = create_indexed_shared(
+        &ns,
+        &table,
+        "conversation_id BIGINT NOT NULL, created_at_ms BIGINT NOT NULL",
+    );
+
+    let mut values = String::new();
+    for i in 1..=200 {
+        if i > 1 {
+            values.push_str(", ");
+        }
+        let conversation_id = if i <= 20 { 1 } else { 2 };
+        values.push_str(&format!("({i}, {conversation_id}, {})", 1_000 + i));
+    }
+    exec(&format!(
+        "INSERT INTO {full} (id, conversation_id, created_at_ms) VALUES {values}"
+    ));
+
+    let equality = format!("SELECT id FROM {full} WHERE conversation_id = 1");
+    let history = format!(
+        "SELECT id FROM {full} WHERE conversation_id = 1 AND created_at_ms < 100000 ORDER BY \
+         created_at_ms DESC LIMIT 50"
+    );
+    assert_hot_full_scan(
+        &exec(&format!("EXPLAIN ANALYZE {equality}")),
+        200,
+        "shared chat rows without index",
+    );
+
+    exec(&format!(
+        "CREATE INDEX idx_messages_conversation ON {full} (conversation_id, created_at_ms)"
+    ));
+    assert_hot_index_seek(
+        &exec(&format!("EXPLAIN ANALYZE {equality}")),
+        20,
+        200,
+        "shared conversation_id equality",
+    );
+    assert_hot_index_seek(
+        &exec(&format!("EXPLAIN ANALYZE {history}")),
+        20,
+        200,
+        "shared historic conversation_id + created_at_ms",
+    );
+
+    let user_table = generate_unique_table("messages_ai");
+    let user_full = format!("{ns}.{user_table}");
+    exec(&format!(
+        "CREATE TABLE {user_full} (id BIGINT PRIMARY KEY, conversation_id BIGINT NOT NULL, \
+         created_at_ms BIGINT NOT NULL) WITH (TYPE = 'USER')"
+    ));
+    ready(&user_full);
+    let (username, _) = create_login_user("idxseek");
+    exec(&format!(
+        "EXECUTE AS USER '{username}' (INSERT INTO {user_full} (id, conversation_id, \
+         created_at_ms) VALUES {values})"
+    ));
+    exec(&format!(
+        "CREATE INDEX idx_messages_ai_conversation ON {user_full} (conversation_id, created_at_ms)"
+    ));
+    let user_eq = format!("SELECT id FROM {user_full} WHERE conversation_id = 1");
+    assert_hot_index_seek(
+        &exec(&format!("EXECUTE AS USER '{username}' (EXPLAIN ANALYZE {user_eq})")),
+        20,
+        200,
+        "user-table conversation_id equality",
+    );
 }

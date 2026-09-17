@@ -16,6 +16,16 @@ The important design rule is that explicit transactions do not create a separate
 
 Autocommit requests are different: they bypass transaction staging and go directly to the unified applier/provider path.
 
+The DataFusion user/shared-table DML callbacks compile UPDATE assignments once per
+statement and evaluate them against original row values in batches bounded by the
+session's batch size. Direct UPDATE/DELETE callbacks pass the statement commit
+sequence into the initial version or tombstone write. Each row and its indexes
+are persisted in one atomic store batch before notifications; there is no second
+commit-sequence patch. Explicit transactions still stage mutations for the
+transaction coordinator. This does not introduce statement-wide atomicity for
+the direct callbacks or change the applier's existing deferred write path.
+
+
 ## Core Components
 
 ### Server-side transaction authority
