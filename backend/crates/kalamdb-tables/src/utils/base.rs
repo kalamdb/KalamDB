@@ -66,7 +66,7 @@
 //! ```
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     sync::Arc,
 };
@@ -82,7 +82,7 @@ use datafusion::{
     common::DFSchema,
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{utils::expr_to_columns, Expr, TableProviderFilterPushDown},
+    logical_expr::{col, utils::expr_to_columns, Expr, TableProviderFilterPushDown},
     physical_expr::PhysicalExpr,
     physical_plan::{ExecutionPlan, Statistics},
     scalar::ScalarValue,
@@ -113,7 +113,7 @@ use kalamdb_datafusion_sources::{
 };
 use kalamdb_filestore::registry::{ListResult, StorageCached};
 use kalamdb_session_datafusion::ScanDiagnosticsContext;
-use kalamdb_store::IndexedEntityStore;
+use kalamdb_store::{IndexScanPlan, IndexedEntityStore, StorageError};
 use kalamdb_system::{
     ClusterCoordinator as ClusterCoordinatorTrait, Manifest, ManifestCacheEntry,
     SchemaRegistry as SchemaRegistryTrait,
@@ -517,6 +517,10 @@ where
     K: StorageKey + Clone + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
+    fn storage_scan_filter(&self) -> Option<&Expr> {
+        self.authorization_filter.as_ref().or(self.filter.as_ref())
+    }
+
     async fn produce_output(
         &self,
         include_diagnostics: bool,
@@ -526,12 +530,16 @@ where
         } else {
             None
         };
+        // `self.filter` is the MVCC source-pruning subset (PK / `_seq` /
+        // `_deleted`). Scalar indexes match remaining equalities such as
+        // `conversation_id = $1 AND created_at_ms < $2`, so storage must see
+        // the full predicate list or every SQL scan becomes a growing hot scan.
         let output = self
             .provider
             .scan_rows_output(
                 &self.scan_context,
                 self.projection.as_ref(),
-                self.filter.as_ref(),
+                self.storage_scan_filter(),
                 self.authorization_filter.as_ref(),
                 source_limit,
                 include_diagnostics,
@@ -618,7 +626,7 @@ where
             .scan_materialized_output(
                 &self.scan_context,
                 self.projection.as_ref(),
-                self.filter.as_ref(),
+                self.storage_scan_filter(),
                 self.authorization_filter.as_ref(),
                 self.limit,
                 false,
@@ -1009,7 +1017,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                 .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
             None => Arc::clone(&descriptor.schema),
         };
-        let physical_filter = if let Some(filter) = exact_filter.clone() {
+        let physical_filter = if let Some(filter) = exact_filter {
             let df_schema = DFSchema::try_from(Arc::clone(&merged_schema))?;
             Some(state.create_physical_expr(filter, &df_schema)?)
         } else {
@@ -2140,26 +2148,6 @@ where
 /// Log a warning when scanning version resolution without filter or limit.
 ///
 /// This helps identify potential performance issues where full table scans are happening.
-/// If `filter` matches a prefix index, return `(index_idx, prefix)` for `scan_by_index`.
-pub(crate) fn hot_index_seek<K, V>(
-    store: &IndexedEntityStore<K, V>,
-    filter: Option<&Expr>,
-    user_id: Option<&UserId>,
-) -> Option<(usize, Vec<u8>)>
-where
-    K: StorageKey + Clone + Send + Sync + 'static,
-    V: kalamdb_commons::KSerializable + Clone + Send + Sync + 'static,
-{
-    store.find_best_index_for_filter_expr(user_id, filter?)
-}
-
-/// Called by provider-side MVCC scan implementations.
-///
-/// # Arguments
-/// * `table_id` - Table identifier for logging
-/// * `filter` - Optional filter expression
-/// * `limit` - Optional limit
-/// * `table_type` - Type of table (User, Shared, Stream)
 pub fn warn_if_unfiltered_scan(
     _table_id: &TableId,
     _filter: Option<&Expr>,
@@ -2174,6 +2162,95 @@ pub fn warn_if_unfiltered_scan(
     //         table_type.as_str()
     //     );
     // }
+}
+
+/// If `filter` matches a prefix index, return a seek plan for `scan_by_index_plan_iter`.
+pub(crate) fn hot_index_seek<K, V>(
+    store: &IndexedEntityStore<K, V>,
+    filter: Option<&Expr>,
+    user_id: Option<&UserId>,
+) -> Option<IndexScanPlan>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: kalamdb_commons::KSerializable + Clone + Send + Sync + 'static,
+{
+    store.plan_index_scan(user_id, filter?)
+}
+
+/// PK index is always slot 0 (`table_prefix_indexes`).
+const PK_INDEX: usize = 0;
+
+/// Scan a hot prefix index, then follow scalar hits through the PK version chain.
+///
+/// MVCC UPDATE/DELETE `insert()` a new seq. Secondary index keys include that
+/// seq, so the previous value's key is left in place. Seeking `status = 'A'`
+/// after `status` changed to `'B'` would otherwise return the superseded row
+/// and version resolution would never see the later seq.
+pub(crate) async fn scan_hot_index_resolved<K, V>(
+    store: &Arc<IndexedEntityStore<K, V>>,
+    plan: IndexScanPlan,
+    scan_limit: usize,
+    pk_name: &str,
+    user_id: Option<&UserId>,
+) -> Result<Vec<(K, V)>, KalamDbError>
+where
+    K: StorageKey + Clone + Send + Sync + 'static,
+    V: kalamdb_commons::KSerializable + Clone + ScanRow + Send + Sync + 'static,
+{
+    let store = Arc::clone(store);
+    let pk_name = pk_name.to_owned();
+    let user_id = user_id.cloned();
+    tokio::task::spawn_blocking(move || -> Result<Vec<(K, V)>, StorageError> {
+        let index_idx = plan.index_idx;
+        let hits = store.scan_by_index_plan_iter(&plan, Some(scan_limit))?;
+        if index_idx == PK_INDEX {
+            return hits.collect();
+        }
+        let pk_index = store.indexes().get(PK_INDEX).ok_or_else(|| {
+            StorageError::Other("table is missing its primary key index".to_string())
+        })?;
+
+        // Retain only lookup outcomes per PK, not a second copy of its row history.
+        // An unsupported/missing lookup preserves every original hit as a fallback.
+        let mut followed = HashMap::<ScalarValue, bool>::new();
+        let mut versions = Vec::new();
+        for hit in hits {
+            let (key, row) = hit?;
+            let Some(pk) = row.row().get(&pk_name).filter(|pk| !pk.is_null()) else {
+                versions.push((key, row));
+                continue;
+            };
+            let recovered = if let Some(recovered) = followed.get(pk) {
+                *recovered
+            } else {
+                let pk_eq = col(&pk_name).eq(Expr::Literal(pk.clone(), None));
+                let before = versions.len();
+                if let Some(pk_prefix) =
+                    pk_index.filter_to_prefix_with_scope(user_id.as_ref(), &pk_eq)
+                {
+                    // Keep all versions, including tombstones, for DataFusion's
+                    // snapshot-aware winner selection after the hot/cold merge.
+                    for version in store.scan_by_index_iter(PK_INDEX, Some(&pk_prefix), None)? {
+                        versions.push(version?);
+                    }
+                }
+                let recovered = versions.len() > before;
+                followed.insert(pk.clone(), recovered);
+                recovered
+            };
+            if !recovered {
+                versions.push((key, row));
+            }
+        }
+        Ok(versions)
+    })
+    .await
+    .map_err(|error| {
+        KalamDbError::InvalidOperation(format!("Failed to run table hot index scan: {error}"))
+    })?
+    .map_err(|error| {
+        KalamDbError::InvalidOperation(format!("Failed to scan table hot index: {error}"))
+    })
 }
 
 /// Compute the minimal set of column names needed from the Parquet cold path.

@@ -11,6 +11,7 @@ use datafusion::{
     arrow::{array::StringArray, datatypes::SchemaRef, record_batch::RecordBatch},
     datasource::TableProvider,
     execution::context::SessionContext,
+    logical_expr::{col, lit},
     physical_plan::{collect, displayable},
     scalar::ScalarValue,
 };
@@ -18,8 +19,8 @@ use kalamdb_commons::{
     models::{
         datatypes::KalamDataType,
         rows::Row,
-        schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, ReadContext, Role, StorageId, TableId, TableName,
+        schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition, TableOptions},
+        ColumnId, NamespaceId, ReadContext, Role, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,
@@ -49,6 +50,10 @@ use kalamdb_transactions::{
 use tempfile::TempDir;
 
 mod explain_scan_helpers;
+
+#[allow(dead_code)]
+#[path = "../src/utils/test_backend.rs"]
+mod recording_backend;
 
 use explain_scan_helpers::assert_explain_analyze_scan_targets;
 
@@ -1048,4 +1053,640 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
 
     let batches = collect(plan, state.task_ctx()).await.expect("collect shared plan");
     assert_eq!(total_rows(&batches), 2);
+}
+
+#[tokio::test]
+async fn shared_provider_conversation_filter_seeks_scalar_index() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_indexed_messages"));
+    let table_def = build_indexed_shared_messages_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        Arc::clone(&backend),
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = Arc::new(SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    ));
+
+    for seq in 1_i64..=40 {
+        let conversation_id = if seq <= 20 { 1_i64 } else { 2_i64 };
+        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        store
+            .insert(
+                &row_id,
+                &SharedTableRow {
+                    _seq:        row_id,
+                    _commit_seq: seq as u64,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
+                        ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
+                    ]),
+                },
+            )
+            .expect("seed indexed shared row");
+    }
+
+    let user_id = UserId::new("shared-reader");
+    let ctx = session_with_scan_diagnostics(&user_id);
+    let state = ctx.state();
+    let filter = col("conversation_id")
+        .eq(lit(1_i64))
+        .and(col("created_at_ms").lt(lit(10_000_i64)));
+    let plan = provider
+        .scan(&state, None, &[filter], None)
+        .await
+        .expect("build indexed shared plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx())
+        .await
+        .expect("collect indexed shared plan");
+    let metrics = plan.metrics().expect("indexed shared scan metrics").to_string();
+
+    assert_eq!(total_rows(&batches), 20);
+    assert_metric(&metrics, "output_rows=20");
+    assert_metric(&metrics, "hot_rows_scanned=20");
+}
+
+#[tokio::test]
+#[ntest::timeout(1500)]
+async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_numeric_range"));
+    let table_def = build_indexed_shared_messages_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        Arc::clone(&backend),
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = Arc::new(SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    ));
+
+    for seq in [2_i64, 10, 20, 30] {
+        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        store
+            .insert(
+                &row_id,
+                &SharedTableRow {
+                    _seq:        row_id,
+                    _commit_seq: seq as u64,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(1))),
+                        ("created_at_ms", ScalarValue::Int64(Some(seq))),
+                    ]),
+                },
+            )
+            .expect("seed digit-boundary created_at values");
+    }
+
+    let user_id = UserId::new("shared-reader");
+    let ctx = session_with_scan_diagnostics(&user_id);
+    let state = ctx.state();
+    let filter = col("conversation_id").eq(lit(1_i64)).and(col("created_at_ms").lt(lit(15_i64)));
+    let plan = provider
+        .scan(&state, None, &[filter], None)
+        .await
+        .expect("build numeric range plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx())
+        .await
+        .expect("collect numeric range plan");
+    let metrics = plan.metrics().expect("numeric range metrics").to_string();
+
+    assert_eq!(total_rows(&batches), 2, "2 and 10 match created_at < 15; 20 and 30 do not");
+    assert_metric(&metrics, "output_rows=2");
+    assert_metric(&metrics, "hot_rows_scanned=2");
+}
+
+#[tokio::test]
+async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_indexed_update"));
+    let table_def = build_indexed_shared_messages_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        Arc::clone(&backend),
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("shared storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = Arc::new(SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    ));
+
+    for seq in 1_i64..=20 {
+        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        store
+            .insert(
+                &row_id,
+                &SharedTableRow {
+                    _seq:        row_id,
+                    _commit_seq: seq as u64,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(1))),
+                        ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
+                    ]),
+                },
+            )
+            .expect("seed indexed shared row");
+    }
+
+    // Repeated scalar hits for one PK must expand its history only once.
+    // Include a tombstone so winner selection must also suppress a deleted PK.
+    for (seq, id, deleted) in [(21_i64, 1_i64, false), (22, 1, false), (23, 2, true)] {
+        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        store
+            .insert(
+                &row_id,
+                &SharedTableRow {
+                    _seq:        row_id,
+                    _commit_seq: seq as u64,
+                    _deleted:    deleted,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(id))),
+                        ("conversation_id", ScalarValue::Int64(Some(1))),
+                        ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
+                    ]),
+                },
+            )
+            .expect("append repeated version or tombstone");
+    }
+
+    // MVCC UPDATE appends a new seq. The old conversation_id index key remains.
+    let updated_seq = kalamdb_commons::ids::SeqId::from_i64(24);
+    store
+        .insert(
+            &updated_seq,
+            &SharedTableRow {
+                _seq:        updated_seq,
+                _commit_seq: 24,
+                _deleted:    false,
+                fields:      row(vec![
+                    ("id", ScalarValue::Int64(Some(1))),
+                    ("conversation_id", ScalarValue::Int64(Some(2))),
+                    ("created_at_ms", ScalarValue::Int64(Some(9_000))),
+                ]),
+            },
+        )
+        .expect("append updated version");
+
+    let user_id = UserId::new("shared-reader");
+    let ctx = session_with_scan_diagnostics(&user_id);
+    let state = ctx.state();
+    let filter = col("conversation_id").eq(lit(1_i64));
+    let plan = provider
+        .scan(&state, None, &[filter], None)
+        .await
+        .expect("build indexed shared plan after update");
+    let batches = collect(Arc::clone(&plan), state.task_ctx())
+        .await
+        .expect("collect indexed shared plan after update");
+
+    assert_eq!(
+        total_rows(&batches),
+        18,
+        "scalar index seek must hide superseded versions and tombstones"
+    );
+    let metrics = plan.metrics().expect("indexed shared scan metrics").to_string();
+    assert_metric(&metrics, "hot_rows_scanned=24");
+}
+
+#[tokio::test]
+async fn user_provider_conversation_filter_seeks_scalar_index() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("user_indexed_messages"));
+    let table_def = build_indexed_user_messages_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(
+        Arc::clone(&backend),
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).expect("user storage schema"),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = Arc::new(UserTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    ));
+
+    let user_id = UserId::new("user-owner");
+    for seq in 1_i64..=40 {
+        let conversation_id = if seq <= 20 { 1_i64 } else { 2_i64 };
+        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        store
+            .insert(
+                &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), row_id),
+                &UserTableRow {
+                    user_id:     user_id.clone(),
+                    _seq:        row_id,
+                    _commit_seq: seq as u64,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
+                        ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
+                    ]),
+                },
+            )
+            .expect("seed indexed user row");
+    }
+
+    let ctx = session_with_scan_diagnostics(&user_id);
+    let state = ctx.state();
+    let filter = col("conversation_id")
+        .eq(lit(1_i64))
+        .and(col("created_at_ms").lt(lit(10_000_i64)));
+    let plan = provider
+        .scan(&state, None, &[filter], None)
+        .await
+        .expect("build indexed user plan");
+    let batches = collect(Arc::clone(&plan), state.task_ctx())
+        .await
+        .expect("collect indexed user plan");
+    let metrics = plan.metrics().expect("indexed user scan metrics").to_string();
+
+    assert_eq!(total_rows(&batches), 20);
+    assert_metric(&metrics, "output_rows=20");
+    assert_metric(&metrics, "hot_rows_scanned=20");
+}
+
+fn build_indexed_shared_messages_definition(table_id: &TableId) -> Arc<TableDefinition> {
+    let mut table_options = TableOptions::shared();
+    if let TableOptions::Shared(options) = &mut table_options {
+        options.access_level = Some(TableAccess::Public);
+    }
+
+    let mut table_def = TableDefinition::new(
+        table_id.namespace_id().clone(),
+        table_id.table_name().clone(),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::new(
+                1,
+                "id".to_string(),
+                1,
+                KalamDataType::BigInt,
+                false,
+                true,
+                false,
+                ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::simple(2, "conversation_id", 2, KalamDataType::BigInt),
+            ColumnDefinition::simple(3, "created_at_ms", 3, KalamDataType::BigInt),
+        ],
+        table_options,
+        None,
+    )
+    .expect("build indexed shared table definition");
+    SystemColumnsService::new(1)
+        .add_system_columns(&mut table_def)
+        .expect("add shared system columns");
+    table_def.scalar_indexes = vec![ScalarIndexDefinition::new(
+        "idx_messages_conversation",
+        vec![ColumnId::new(2), ColumnId::new(3)],
+        false,
+    )];
+    Arc::new(table_def)
+}
+
+fn build_indexed_user_messages_definition(table_id: &TableId) -> Arc<TableDefinition> {
+    let mut table_def = TableDefinition::new(
+        table_id.namespace_id().clone(),
+        table_id.table_name().clone(),
+        TableType::User,
+        vec![
+            ColumnDefinition::new(
+                1,
+                "id".to_string(),
+                1,
+                KalamDataType::BigInt,
+                false,
+                true,
+                false,
+                ColumnDefault::None,
+                None,
+            ),
+            ColumnDefinition::simple(2, "conversation_id", 2, KalamDataType::BigInt),
+            ColumnDefinition::simple(3, "created_at_ms", 3, KalamDataType::BigInt),
+        ],
+        TableOptions::user(),
+        None,
+    )
+    .expect("build indexed user table definition");
+    SystemColumnsService::new(1)
+        .add_system_columns(&mut table_def)
+        .expect("add user system columns");
+    table_def.scalar_indexes = vec![ScalarIndexDefinition::new(
+        "idx_messages_ai_conversation",
+        vec![ColumnId::new(2), ColumnId::new(3)],
+        false,
+    )];
+    Arc::new(table_def)
+}
+
+#[tokio::test]
+#[ntest::timeout(1500)]
+async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
+    let recording = Arc::new(recording_backend::RecordingBackend::new());
+    let backend: Arc<dyn StorageBackend> = recording.clone();
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("user_dml_once"));
+    let table_def = build_user_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_user_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).unwrap(),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = UserTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+    let user_id = UserId::new("root");
+    for seq in 1_i64..=2 {
+        store
+            .insert(
+                &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq.into()),
+                &UserTableRow {
+                    user_id:     user_id.clone(),
+                    _seq:        seq.into(),
+                    _commit_seq: 1,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("name", ScalarValue::Utf8(Some("before".to_string()))),
+                    ]),
+                },
+            )
+            .unwrap();
+    }
+    let ctx = session_with_role(&user_id, Role::Dba);
+    let mut state = ctx.state();
+    let config = state.config().clone().with_batch_size(1);
+    *state.config_mut() = config;
+    let tx_ctx = session_with_transaction(
+        &user_id,
+        overlay_context(
+            TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8f"),
+            table_id.clone(),
+            TableType::User,
+            Some(user_id.clone()),
+            "3",
+            row(vec![
+                ("id", ScalarValue::Int64(Some(3))),
+                ("name", ScalarValue::Utf8(Some("staged".into()))),
+            ]),
+        ),
+    );
+    let tx_state = tx_ctx.state();
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &tx_state,
+        vec![("name".into(), lit("transactional"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, tx_state.task_ctx()).await.unwrap();
+    let plan = provider.delete_from(&tx_state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
+    collect(plan, tx_state.task_ctx()).await.unwrap();
+    assert_eq!(
+        recording.batch_calls(),
+        before,
+        "explicit transactions stage without writing storage"
+    );
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &state,
+        vec![("name".to_string(), lit("after"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(
+        recording.batch_calls() - before,
+        2,
+        "one atomic row/index write per updated row"
+    );
+    let mut update_commit = None;
+    for id in 1_i64..=2 {
+        let (_, prefix) = store
+            .find_best_index_for_filter_expr(Some(&user_id), &col("id").eq(lit(id)))
+            .unwrap();
+        let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
+        assert!(!latest._deleted);
+        assert!(latest._commit_seq > 0);
+        assert_eq!(latest.fields.get("name"), Some(&ScalarValue::Utf8(Some("after".to_string()))));
+        assert_eq!(*update_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+    }
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &state,
+        vec![("name".to_string(), lit("after"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(recording.batch_calls(), before, "no-op UPDATE must not write a version");
+    let before = recording.batch_calls();
+    let plan = provider.delete_from(&state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(recording.batch_calls() - before, 2, "one atomic row/index write per tombstone");
+    let mut delete_commit = None;
+    for id in 1_i64..=2 {
+        let (_, prefix) = store
+            .find_best_index_for_filter_expr(Some(&user_id), &col("id").eq(lit(id)))
+            .unwrap();
+        let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
+        assert!(latest._deleted);
+        assert!(latest._commit_seq > update_commit.unwrap());
+        assert_eq!(*delete_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+    }
+}
+
+#[tokio::test]
+#[ntest::timeout(1500)]
+async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
+    let recording = Arc::new(recording_backend::RecordingBackend::new());
+    let backend: Arc<dyn StorageBackend> = recording.clone();
+    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_dml_once"));
+    let table_def = build_shared_table_definition(&table_id);
+    let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
+    let store = Arc::new(new_indexed_shared_table_store(
+        backend,
+        &table_id,
+        "id",
+        storage_schema_for_table(&table_def).unwrap(),
+        &table_def.scalar_indexes,
+        &table_def.columns,
+    ));
+    let provider = SharedTableProvider::new(
+        Arc::new(TableProviderCore::new(
+            table_def,
+            Arc::clone(&services.services),
+            "id".to_string(),
+            Arc::clone(&services.schema),
+            HashMap::new(),
+        )),
+        Arc::clone(&store),
+    );
+    let user_id = UserId::new("root");
+    for seq in 1_i64..=2 {
+        store
+            .insert(
+                &seq.into(),
+                &SharedTableRow {
+                    _seq:        seq.into(),
+                    _commit_seq: 1,
+                    _deleted:    false,
+                    fields:      row(vec![
+                        ("id", ScalarValue::Int64(Some(seq))),
+                        ("name", ScalarValue::Utf8(Some("before".to_string()))),
+                    ]),
+                },
+            )
+            .unwrap();
+    }
+    let ctx = session_with_role(&user_id, Role::Dba);
+    let mut state = ctx.state();
+    let config = state.config().clone().with_batch_size(1);
+    *state.config_mut() = config;
+    let tx_ctx = session_with_transaction(
+        &user_id,
+        overlay_context(
+            TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8f"),
+            table_id.clone(),
+            TableType::Shared,
+            None,
+            "3",
+            row(vec![
+                ("id", ScalarValue::Int64(Some(3))),
+                ("name", ScalarValue::Utf8(Some("staged".into()))),
+            ]),
+        ),
+    );
+    let tx_state = tx_ctx.state();
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &tx_state,
+        vec![("name".into(), lit("transactional"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, tx_state.task_ctx()).await.unwrap();
+    let plan = provider.delete_from(&tx_state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
+    collect(plan, tx_state.task_ctx()).await.unwrap();
+    assert_eq!(
+        recording.batch_calls(),
+        before,
+        "explicit transactions stage without writing storage"
+    );
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &state,
+        vec![("name".to_string(), lit("after"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(
+        recording.batch_calls() - before,
+        2,
+        "one atomic row/index write per updated row"
+    );
+    let mut update_commit = None;
+    for id in 1_i64..=2 {
+        let (_, prefix) =
+            store.find_best_index_for_filter_expr(None, &col("id").eq(lit(id))).unwrap();
+        let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
+        assert!(!latest._deleted);
+        assert!(latest._commit_seq > 0);
+        assert_eq!(latest.fields.get("name"), Some(&ScalarValue::Utf8(Some("after".to_string()))));
+        assert_eq!(*update_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+    }
+    let before = recording.batch_calls();
+    let plan = TableProvider::update(
+        &provider,
+        &state,
+        vec![("name".to_string(), lit("after"))],
+        vec![col("id").gt(lit(0_i64))],
+    )
+    .await
+    .unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(recording.batch_calls(), before, "no-op UPDATE must not write a version");
+    let before = recording.batch_calls();
+    let plan = provider.delete_from(&state, vec![col("id").gt(lit(0_i64))]).await.unwrap();
+    collect(plan, state.task_ctx()).await.unwrap();
+    assert_eq!(recording.batch_calls() - before, 2, "one atomic row/index write per tombstone");
+    let mut delete_commit = None;
+    for id in 1_i64..=2 {
+        let (_, prefix) =
+            store.find_best_index_for_filter_expr(None, &col("id").eq(lit(id))).unwrap();
+        let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
+        assert!(latest._deleted);
+        assert!(latest._commit_seq > update_commit.unwrap());
+        assert_eq!(*delete_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+    }
 }

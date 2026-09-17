@@ -197,7 +197,7 @@ async fn run_shared_cycles(
         stats.sessions_started.fetch_add(1, Ordering::Relaxed);
         cycle_ordinal += 1;
 
-        if should_run_history(cycle_ordinal) {
+        if should_run_history(cycle_ordinal, worker_id) {
             query_conversation_history(
                 &members[0].client,
                 namespace,
@@ -209,7 +209,7 @@ async fn run_shared_cycles(
             .await?;
         }
 
-        let reconnect_cycle = should_reconnect(cycle_ordinal) && members.len() > 1;
+        let reconnect_cycle = should_reconnect(cycle_ordinal, worker_id) && members.len() > 1;
         if reconnect_cycle {
             run_shared_reconnect_cycle(
                 worker_id,

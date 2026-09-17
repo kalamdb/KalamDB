@@ -4,6 +4,7 @@
 pub mod arrow_utils;
 pub mod file_helpers;
 pub mod naming;
+pub mod process_shutdown;
 pub mod security;
 #[cfg(feature = "storage")]
 pub mod string_interner;

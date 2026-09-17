@@ -8,6 +8,8 @@ mod path;
 mod runner;
 mod shell;
 
+#[cfg(windows)]
+pub use lifecycle::wait_for_windows_shutdown_event;
 pub use lifecycle::{
     configure_supervised_child, kill_process_tree_by_pid, kill_supervised_child,
     kill_supervised_process_by_pid, pid_is_running, process_command_line,

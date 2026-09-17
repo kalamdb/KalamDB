@@ -620,6 +620,97 @@ mod tests {
     }
 
     #[test]
+    fn prepared_assignments_match_row_evaluation_across_batches() {
+        let ctx = SessionContext::new();
+        let state = ctx.state();
+        let schema = test_schema();
+        let assignments = vec![
+            ("value".to_string(), col("value") + lit(5_i64)),
+            ("name".to_string(), lit("updated")),
+        ];
+        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
+            &state,
+            &schema,
+            &assignments,
+        )
+        .unwrap();
+        let mut second = test_row();
+        second.values.insert("value".to_string(), ScalarValue::Int64(Some(20)));
+        let rows = vec![test_row(), second];
+        let expected = rows
+            .iter()
+            .map(|row| evaluate_assignment_values(&state, &schema, row, &assignments).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(evaluator.evaluate(&rows).unwrap(), expected);
+        assert_eq!(evaluator.evaluate(&rows[1..]).unwrap(), expected[1..]);
+        assert!(evaluator.evaluate(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepared_assignments_use_original_values_and_preserve_nulls() {
+        let ctx = SessionContext::new();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Int64, true),
+            Field::new("b", DataType::Int64, true),
+        ]));
+        let rows = vec![
+            Row::from_vec(vec![
+                ("a".into(), ScalarValue::Int64(Some(1))),
+                ("b".into(), ScalarValue::Int64(Some(2))),
+            ]),
+            Row::from_vec(vec![
+                ("a".into(), ScalarValue::Int64(None)),
+                ("b".into(), ScalarValue::Int64(Some(3))),
+            ]),
+        ];
+        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
+            &ctx.state(),
+            &schema,
+            &[("a".into(), col("b")), ("b".into(), col("a"))],
+        )
+        .unwrap();
+        let updates = evaluator.evaluate(&rows).unwrap();
+        assert_eq!(updates[0].get("a"), rows[0].get("b"));
+        assert_eq!(updates[0].get("b"), rows[0].get("a"));
+        assert_eq!(updates[1].get("b"), Some(&ScalarValue::Int64(None)));
+    }
+
+    #[test]
+    #[ignore = "manual dev-profile assignment evaluation benchmark"]
+    fn benchmark_prepared_assignment_batches() {
+        let ctx = SessionContext::new();
+        let state = ctx.state();
+        let schema = test_schema();
+        let rows = vec![test_row(); 8192];
+        let assignments = vec![
+            ("value".into(), col("value") + lit(5_i64)),
+            ("name".into(), lit("updated")),
+        ];
+        let start = std::time::Instant::now();
+        let baseline = rows
+            .iter()
+            .map(|row| evaluate_assignment_values(&state, &schema, row, &assignments).unwrap())
+            .collect::<Vec<_>>();
+        let baseline_seconds = start.elapsed().as_secs_f64();
+        let start = std::time::Instant::now();
+        let evaluator = crate::utils::prepared_update_assignments::PreparedUpdateAssignments::new(
+            &state,
+            &schema,
+            &assignments,
+        )
+        .unwrap();
+        let mut batched = Vec::new();
+        for chunk in rows.chunks(1024) {
+            batched.extend(evaluator.evaluate(chunk).unwrap());
+        }
+        let batched_seconds = start.elapsed().as_secs_f64();
+        assert_eq!(baseline, batched);
+        println!(
+            "8192 rows, dev profile: per-row={baseline_seconds:.6}s, batched={batched_seconds:.6}s"
+        );
+    }
+
+    #[test]
     fn row_matches_filters_evaluates_multiple_predicates_for_one_row() {
         let ctx = SessionContext::new();
         let schema = test_schema();

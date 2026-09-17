@@ -105,9 +105,9 @@ tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"]
 
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
 aws-lc-rs = { version = "1.18.1", default-features = false }
-rustls = { version = "0.23.44", default-features = false }
+rustls = { version = "0.23.45", default-features = false }
 rustls-native-certs = "0.8.3"
-quinn-proto = { version = "0.11.17", default-features = false }
+quinn-proto = { version = "0.11.18", default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false }
 
 # Time handling
@@ -140,7 +140,10 @@ parquet = { version = "59.2.0", default-features = false, features = ["snap", "z
 actix-web = { version = "4.15.0", features = ["http2"] }
 actix-ws = "0.4.0"
 actix-cors = "0.7.2"
-actix-rt = "2.13.0"
+# actix-web / actix-server depend on actix-rt with default-features = false.
+# Pin net+signal here and depend on this crate from kalamdb-api so unification
+# enables TcpStream and Unix signal handlers.
+actix-rt = { version = "2.15.0", features = ["macros", "net", "signal"] }
 actix-files = "0.7.0"
 actix-multipart = "0.8.1"
 
@@ -154,7 +157,7 @@ nanoid = "0.5.0"
 ulid = "3.0.0"
 
 # JWT authentication
-jsonwebtoken = { version = "11.0.0", default-features = false, features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 # rustls-tls would enable reqwest/rustls-tls (webpki-roots). TLS comes from workspace reqwest.
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest"] }
 
@@ -163,7 +166,7 @@ toml = "1.1.2"
 dotenv = "0.15"
 
 # CLI tools
-clap = { version = "4.6.6", features = ["derive", "color"] }
+clap = { version = "4.6.7", features = ["derive", "color"] }
 console = { version = "0.16.6", default-features = false, features = ["unicode-width"] }
 humantime = "2.4.0"
 rustyline = { version = "18.0.1" }
@@ -238,10 +241,10 @@ pgwire = { version = "0.41.0", default-features = false, features = ["server-api
 bytes = "1.12.1"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
-cc = "1.4.5"
+cc = "1.4.6"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
-syn = { version = "3.0.5", features = ["full", "extra-traits"] }
+syn = { version = "3.0.6", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 object_store = { version = "0.13.2" }

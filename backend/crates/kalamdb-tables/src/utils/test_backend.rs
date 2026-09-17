@@ -21,18 +21,24 @@ pub struct ScanArgs {
 
 /// StorageBackend wrapper that records the last scan call.
 pub struct RecordingBackend {
-    inner:      InMemoryBackend,
-    last_scan:  Mutex<Option<ScanArgs>>,
-    scan_calls: AtomicUsize,
+    inner:       InMemoryBackend,
+    last_scan:   Mutex<Option<ScanArgs>>,
+    scan_calls:  AtomicUsize,
+    batch_calls: AtomicUsize,
 }
 
 impl RecordingBackend {
     pub fn new() -> Self {
         Self {
-            inner:      InMemoryBackend::new(),
-            last_scan:  Mutex::new(None),
-            scan_calls: AtomicUsize::new(0),
+            inner:       InMemoryBackend::new(),
+            last_scan:   Mutex::new(None),
+            scan_calls:  AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
         }
+    }
+
+    pub fn batch_calls(&self) -> usize {
+        self.batch_calls.load(Ordering::SeqCst)
     }
 
     pub fn last_scan(&self) -> Option<ScanArgs> {
@@ -77,6 +83,7 @@ impl StorageBackend for RecordingBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+        self.batch_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.batch(operations)
     }
 

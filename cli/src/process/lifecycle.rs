@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use tokio::process::Child;
 
+const COOPERATIVE_STOP_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How aggressively to terminate a supervised child.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupervisedKillScope {
@@ -33,6 +35,12 @@ pub fn configure_supervised_child(command: &mut tokio::process::Command) {
 /// Terminate a supervised child using the configured kill scope.
 pub async fn kill_supervised_child(child: &mut Child, scope: SupervisedKillScope) {
     if let Some(pid) = child.id() {
+        if scope == SupervisedKillScope::Process {
+            request_terminate(pid);
+            if tokio::time::timeout(COOPERATIVE_STOP_TIMEOUT, child.wait()).await.is_ok() {
+                return;
+            }
+        }
         kill_supervised_process_by_pid(pid, scope);
     }
     let _ = child.start_kill();
@@ -191,7 +199,10 @@ pub fn process_matches_executable(pid: u32, exe: &std::path::Path) -> bool {
     cmdline.contains(exe_str.as_ref()) || (!exe_name.is_empty() && cmdline.contains(exe_name))
 }
 
-/// Send SIGTERM (Unix) or equivalent without waiting.
+/// Ask a managed process to stop cooperatively without waiting.
+///
+/// Unix sends SIGTERM. Windows signals a named kernel event the server waits
+/// on; this is not `taskkill /F`. Force-kill remains the caller's fallback.
 pub fn request_terminate(pid: u32) {
     #[cfg(unix)]
     unsafe {
@@ -199,7 +210,42 @@ pub fn request_terminate(pid: u32) {
     }
     #[cfg(windows)]
     {
-        kill_single_process(pid);
+        signal_windows_shutdown_event(pid);
+    }
+}
+
+#[cfg(windows)]
+fn signal_windows_shutdown_event(pid: u32) {
+    let _ = kalamdb_commons::helpers::process_shutdown::signal_shutdown_event(pid);
+}
+
+/// Wait until this process's cooperative shutdown event is signaled.
+///
+/// Parks a dedicated OS thread on the kernel event. If the event cannot be
+/// created, the future never resolves and Ctrl+C remains the stop path.
+#[cfg(windows)]
+pub async fn wait_for_windows_shutdown_event() {
+    use kalamdb_commons::helpers::process_shutdown::ShutdownEvent;
+
+    let Ok(event) = ShutdownEvent::create_for_current_process() else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if std::thread::Builder::new()
+        .name("kalam-shutdown-event".into())
+        .spawn(move || {
+            if event.wait().is_ok() {
+                let _ = tx.send(());
+            }
+        })
+        .is_err()
+    {
+        std::future::pending::<()>().await;
+        return;
+    }
+    if rx.await.is_err() {
+        std::future::pending::<()>().await;
     }
 }
 
@@ -210,6 +256,19 @@ mod tests {
     #[test]
     fn supervised_kill_scope_variants_are_distinct() {
         assert_ne!(SupervisedKillScope::Process, SupervisedKillScope::Tree);
+    }
+
+    #[test]
+    fn cooperative_stop_timeout_is_short_of_a_hung_server() {
+        assert_eq!(COOPERATIVE_STOP_TIMEOUT, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn windows_shutdown_event_name_matches_server_contract() {
+        assert_eq!(
+            kalamdb_commons::helpers::process_shutdown::shutdown_event_name(99),
+            r"Local\kalamdb-shutdown-99"
+        );
     }
 
     #[cfg(unix)]
