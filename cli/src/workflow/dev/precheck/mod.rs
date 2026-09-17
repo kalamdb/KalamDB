@@ -12,10 +12,10 @@ use crate::{
     workflow::{
         dev::{
             logs::ServiceLogSource,
-            server::{ensure_local_server_binary, server_already_ready},
+            server::{ensure_local_server_binary_version, server_already_ready},
             watch::schema_watch_path,
         },
-        display_project_path,
+        display_project_path, instance,
         project::{connection_url::validate_dev_environment_url, resolve::ResolvedEnvironment},
         WorkflowContext,
     },
@@ -32,7 +32,8 @@ pub async fn run_dev_prechecks(
     output: &WorkflowOutput,
     server_source: &ServiceLogSource,
 ) -> Result<DevPrecheckReport> {
-    let environment = ctx.resolved_environment()?;
+    let target = ctx.resolved_target()?;
+    let environment = target.to_environment();
     validate_dev_environment_url(&environment.url, ctx.config.dev.auto_start_db).map_err(
         |error| {
             CLIError::ConfigurationError(format!(
@@ -57,17 +58,33 @@ pub async fn run_dev_prechecks(
     }
 
     let local_server_reused = if ctx.config.dev.auto_start_db {
-        if server_already_ready(&environment.url).await {
+        let owned = target
+            .layout
+            .as_ref()
+            .and_then(|layout| instance::live_instance(layout).ok().flatten());
+        if let Some(record) = owned {
             output.warn(format!(
-                "precheck: local server already running at {} — kalam will reuse it instead of \
-                 starting this project's local server",
-                environment.url
+                "precheck: reusing this project's managed database at {}",
+                record.url
             ));
-            output.agent_event("KALAM_SERVER_REUSED", &[("url", &environment.url)]);
+            output.agent_event("KALAM_SERVER_REUSED", &[("url", &record.url)]);
             true
+        } else if server_already_ready(&environment.url).await {
+            return Err(CLIError::ConfigurationError(format!(
+                "precheck failed: {} is in use by a database this project does not own. Stop that \
+                 process, choose another port, or link the environment with `kalam link`",
+                environment.url
+            )));
         } else {
-            let binary =
-                ensure_local_server_binary(ctx.use_color, ctx.agent, output, server_source).await?;
+            let version = ctx.config.resolved_server_version();
+            let binary = ensure_local_server_binary_version(
+                ctx.use_color,
+                ctx.agent,
+                output,
+                server_source,
+                &version,
+            )
+            .await?;
             output.status(format!("precheck: local server binary ready at {}", binary.display()));
             false
         }

@@ -27,7 +27,7 @@ use compact_str::CompactString;
 
 struct User {
     id: u64,
-    // CompactString: 24 bytes, but strings ≤ 24 chars are inline (no heap)
+    // CompactString: 24 bytes, but strings ≤ 23 bytes are inline (no heap)
     username: CompactString,
     email: CompactString,
 }
@@ -43,7 +43,7 @@ struct User {
 ```rust
 use compact_str::CompactString;
 
-// Inline storage for strings ≤ 24 bytes
+// Inline storage for strings ≤ 23 bytes
 let small: CompactString = "hello".into();  // No heap allocation
 
 // Automatic heap fallback for larger strings
@@ -103,9 +103,11 @@ assert_eq!(size_of::<ecow::EcoString>(), 16);  // Even smaller!
 | Type | Size | Inline Capacity |
 |------|------|-----------------|
 | `String` | 24 | 0 (always heap) |
-| `CompactString` | 24 | 24 bytes |
+| `CompactString` | 24 | 23 bytes [^1] |
 | `SmartString<LazyCompact>` | 24 | 23 bytes |
 | `EcoString` | 16 | 15 bytes |
+
+[^1]: CompactString reserves the final byte of its 24-byte representation for a length tag, so the maximum inline string length is 23 bytes.
 
 ## When to Use
 
@@ -135,7 +137,7 @@ pub fn public_api(input: impl Into<String>) { }  // Better
 
 ```toml
 [dependencies]
-compact_str = "0.7"
+compact_str = "0.9"
 # or
 smartstring = "1.0"
 # or

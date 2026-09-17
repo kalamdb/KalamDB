@@ -1,11 +1,14 @@
-use std::{io::IsTerminal, net::IpAddr, time::Duration};
+use std::{io::IsTerminal, net::IpAddr, path::PathBuf, time::Duration};
 
 use colored::Colorize;
 use indicatif::ProgressBar;
+#[cfg(test)]
+use kalam_cli::workflow::target::DEFAULT_LOCAL_URL as DEFAULT_LOCAL_SERVER_URL;
 use kalam_cli::{
     terminal_ui,
-    workflow::project::{
-        identifiers::preferred_user_label, resolve::resolve_project_server_url_for_instance,
+    workflow::{
+        project::identifiers::preferred_user_label,
+        target::{resolve_target, ResolutionSource, TargetSelector},
     },
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
 };
@@ -21,13 +24,12 @@ use crate::{
     terminal_input::{prompt_line, prompt_password},
 };
 
-const DEFAULT_LOCAL_SERVER_URL: &str = "http://localhost:2900";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ServerUrlSource {
     CliUrl,
     HostPort,
     ProjectConfig,
+    InstanceState,
     StoredCredentials,
     DefaultLocalFallback,
 }
@@ -181,53 +183,77 @@ pub(crate) fn resolve_server_url(
     Ok(resolve_server_target(cli, credential_store)?.value)
 }
 
-/// Resolve server URL using workflow precedence when a project config is available.
-#[allow(dead_code)]
-pub(crate) fn resolve_workflow_server_url(
-    cli: &Cli,
-    credential_store: &FileCredentialStore,
-    workflow_url: Option<&str>,
-) -> Result<String> {
-    if let Some(url) = workflow_url.map(str::trim).filter(|v| !v.is_empty()) {
-        return normalize_and_validate_server_url(url);
-    }
-    resolve_server_url(cli, credential_store)
-}
-
 fn resolve_server_target(
     cli: &Cli,
     credential_store: &FileCredentialStore,
 ) -> Result<ResolvedServerUrl> {
-    let (server_url, source) = match (cli.url.clone(), cli.host.clone()) {
-        (Some(url), _) => (url, ServerUrlSource::CliUrl),
-        (None, Some(host)) => (format!("http://{}:{}", host, cli.port), ServerUrlSource::HostPort),
-        (None, None) => {
-            if let Some(url) = resolve_project_server_url_for_instance(
-                std::env::current_dir().unwrap_or_default().as_path(),
-                &cli.instance,
-            ) {
-                (url, ServerUrlSource::ProjectConfig)
-            } else if let Some(creds) =
-                credential_store.get_credentials(&cli.instance).map_err(|e| {
-                    CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
-                })?
-            {
-                let creds_url = creds.get_server_url();
-                if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
-                    (creds_url.to_string(), ServerUrlSource::StoredCredentials)
-                } else {
-                    (DEFAULT_LOCAL_SERVER_URL.to_string(), ServerUrlSource::DefaultLocalFallback)
-                }
-            } else {
-                (DEFAULT_LOCAL_SERVER_URL.to_string(), ServerUrlSource::DefaultLocalFallback)
-            }
-        },
+    resolve_server_target_from(cli, credential_store, std::env::current_dir().unwrap_or_default())
+}
+
+fn resolve_server_target_from(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+    start_dir: PathBuf,
+) -> Result<ResolvedServerUrl> {
+    let selector = TargetSelector {
+        start_dir,
+        project_dir: None,
+        global: cli.global,
+        env: cli.env.clone(),
+        url: cli.url.clone(),
+        host: cli.host.clone(),
+        port: cli.port,
+        namespace: None,
+        instance: cli.explicit_instance().map(str::to_string),
     };
+    let target = resolve_target(&selector)?;
+    let mut server_url = target.url.clone();
+    let mut source = map_resolution_source(target.url_source, cli);
+
+    if matches!(source, ServerUrlSource::DefaultLocalFallback) {
+        if let Some(url) =
+            stored_credential_url(credential_store, cli, &target.credential_instance)?
+        {
+            server_url = url;
+            source = ServerUrlSource::StoredCredentials;
+        }
+    }
 
     Ok(ResolvedServerUrl {
         value: normalize_and_validate_server_url(&server_url)?,
         source,
     })
+}
+
+fn map_resolution_source(source: ResolutionSource, cli: &Cli) -> ServerUrlSource {
+    match source {
+        ResolutionSource::CliFlag if cli.url.is_some() => ServerUrlSource::CliUrl,
+        ResolutionSource::CliFlag if cli.host.is_some() => ServerUrlSource::HostPort,
+        ResolutionSource::CliFlag => ServerUrlSource::CliUrl,
+        ResolutionSource::EnvironmentVariable => ServerUrlSource::ProjectConfig,
+        ResolutionSource::ProjectConfig => ServerUrlSource::ProjectConfig,
+        ResolutionSource::InstanceState => ServerUrlSource::InstanceState,
+        ResolutionSource::DefaultDev => ServerUrlSource::DefaultLocalFallback,
+    }
+}
+
+fn stored_credential_url(
+    credential_store: &FileCredentialStore,
+    cli: &Cli,
+    credential_instance: &str,
+) -> Result<Option<String>> {
+    let names = [cli.instance.as_str(), credential_instance];
+    for name in names {
+        if let Some(creds) = credential_store.get_credentials(name).map_err(|e| {
+            CLIError::ConfigurationError(format!("Failed to load credentials: {}", e))
+        })? {
+            let creds_url = creds.get_server_url();
+            if creds_url.starts_with("http://") || creds_url.starts_with("https://") {
+                return Ok(Some(creds_url.to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: bool) -> Vec<String> {
@@ -240,6 +266,9 @@ fn render_login_banner(server_url: &str, source: ServerUrlSource, use_color: boo
         ServerUrlSource::StoredCredentials => "Using the server URL stored for this instance.",
         ServerUrlSource::ProjectConfig => {
             "Using the server URL from kalam.toml for this credential instance."
+        },
+        ServerUrlSource::InstanceState => {
+            "Using the server URL from this project's managed database."
         },
         ServerUrlSource::CliUrl => "Using the server URL you provided.",
         ServerUrlSource::HostPort => "Using the host and port you provided.",
@@ -1311,13 +1340,15 @@ pub async fn create_session(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        env,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::env;
 
     use clap::Parser;
-    use kalam_cli::FileCredentialStore;
+    use kalam_cli::{
+        workflow::project::resolve::{
+            ENV_VAR_KALAM_ENV, ENV_VAR_KALAM_NAMESPACE, ENV_VAR_KALAM_URL,
+        },
+        FileCredentialStore,
+    };
     use kalam_client::KalamLinkTimeouts;
 
     use super::*;
@@ -1378,19 +1409,40 @@ mod tests {
 
     #[test]
     fn test_resolve_server_target_defaults_to_localhost_when_unconfigured() {
-        let cli = Cli::parse_from(["kalam"]);
-        let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let temp_path = env::temp_dir().join(format!(
-            "kalam-connect-test-{}-{}.toml",
-            std::process::id(),
-            unique_suffix
-        ));
-        let store = FileCredentialStore::with_path(temp_path).unwrap();
+        let _url = UnsetEnv::new(ENV_VAR_KALAM_URL);
+        let _env = UnsetEnv::new(ENV_VAR_KALAM_ENV);
+        let _namespace = UnsetEnv::new(ENV_VAR_KALAM_NAMESPACE);
 
-        let resolved = resolve_server_target(&cli, &store).unwrap();
+        let cli = Cli::parse_from(["kalam"]);
+        let temp = tempfile::TempDir::new().unwrap();
+        let store = FileCredentialStore::with_path(temp.path().join("credentials.toml")).unwrap();
+
+        let resolved = resolve_server_target_from(&cli, &store, temp.path().to_path_buf()).unwrap();
 
         assert_eq!(resolved.value, DEFAULT_LOCAL_SERVER_URL);
         assert_eq!(resolved.source, ServerUrlSource::DefaultLocalFallback);
+    }
+
+    struct UnsetEnv {
+        key:      &'static str,
+        previous: Option<String>,
+    }
+
+    impl UnsetEnv {
+        fn new(key: &'static str) -> Self {
+            let previous = env::var(key).ok();
+            env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for UnsetEnv {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
     }
 
     #[test]

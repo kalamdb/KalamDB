@@ -49,7 +49,9 @@ fn sum_optimized(data: &[i32]) -> i32 {
     // we measured that manual SIMD gives 3x speedup
     #[cfg(target_arch = "x86_64")]
     {
-        // SIMD implementation with benchmark data
+        // a hand-written SIMD path would go here (measured ~3x faster);
+        // fall back to the iterator version as a placeholder
+        data.iter().sum()
     }
     #[cfg(not(target_arch = "x86_64"))]
     {

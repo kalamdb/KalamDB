@@ -118,6 +118,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --server-type <TYPE>     Server mode: fresh | running (default) | cluster"
     echo "                           fresh: auto-starts wire-enabled server for pgwire e2e"
     echo "                           running: reuse server; enable [postgres_wire] or use fresh"
+    echo "                           Full runs execute live pgwire catalog + JDBC e2e against that listener"
     echo "  -j, --jobs <N>           Override nextest process concurrency"
         echo "                           Cluster mode defaults to KALAMDB_CLUSTER_TEST_JOBS or 4"
     echo "  -P, --package <CRATE>    Limit the run to one package (repeatable)"
@@ -129,9 +130,13 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  -h, --help               Show this help message"
     echo ""
     echo "Docker helpers (full runs start Dex/MinIO via docker/utils):"
-    echo "  KALAMDB_SKIP_DOCKER_DEX=true     Skip Dex; OIDC tests may skip"
+    echo "  KALAMDB_SKIP_DOCKER_DEX=true     Skip Dex; OIDC tests are not compiled"
     echo "  KALAMDB_SKIP_DOCKER_MINIO=true   Skip MinIO; S3 storage tests may fail"
+    echo "  KALAMDB_SERVER_FEATURES=cloud-aws Enable MinIO/S3 tests (kalam-cli-e2e/cloud-aws)"
+    echo "  Dex OIDC tests compile only with kalam-cli-e2e/oidc;"
+    echo "  this script enables that when Dex is started. Server Dex tests need kalamdb-server/oidc."
     echo "  KALAMDB_SKIP_PG_EXTENSION_E2E=true Skip native pg_kalam e2e (needs pgrx)"
+    echo "  KALAMDB_SKIP_JDBC_E2E=true         Skip JDBC/Hikari catalog e2e (needs JDK)"
     echo "  KALAMDB_DOCKER_PROBE_TIMEOUT_SECS=5"
     echo "  KALAMDB_DOCKER_UP_TIMEOUT_SECS=45"
     echo ""
@@ -140,7 +145,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  $0 --url http://localhost:3000 --password mypass"
     echo "  $0 --cluster-urls http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903 --server-type cluster"
     echo "  $0 --package kalam-cli-e2e --test-target cluster"
-    echo "  $0 --package kalamdb-server --test-target test_scenarios_realtime"
+    echo "  $0 --package kalamdb-server --test-target e2e"
     echo "  $0 --package kalam-cli --package kalam-link"
     echo "  $0 --package kalam-pg-extension"
     echo "  $0 --test-list failed-tests.txt"
@@ -552,12 +557,13 @@ if [ -n "$TEST_JOBS" ]; then
 fi
     echo "Mode:            $FEATURE_MODE"
     echo "Supplementary:   $SUPPLEMENTARY_MODE"
-    echo "PgWire E2E:      included in full runs (smoke, transactions, client catalog)"
+    echo "PgWire E2E:      live catalog + JDBC included in full runs (requires [postgres_wire] + JDK)"
     echo "PG Extension:    native e2e included in full runs (release-parity ddl/dml/scenarios)"
     echo "Schema Diff:     included in full runs and as a fast companion for targeted runs"
     if [ "$SERVER_TYPE" = "running" ] || [ "$SERVER_TYPE" = "cluster" ]; then
-        echo "S3/MinIO tests:  use running server (build with cloud-aws for object storage)"
+        echo "S3/MinIO tests:  set KALAMDB_SERVER_FEATURES=cloud-aws (and nextest --features kalam-cli-e2e/cloud-aws)"
     fi
+    echo "OIDC/Dex tests:  compiled when Dex is started (--features kalam-cli-e2e/oidc)"
     echo "================================================"
 echo ""
 
@@ -787,10 +793,14 @@ prebuild_kalamdb_server_binary_if_needed() {
         return 0
     fi
 
-    step "Prebuilding kalamdb-server with cloud-aws for integration tests"
+    step "Prebuilding kalamdb-server for integration tests"
     (
         cd "$REPO_ROOT"
-        cargo build -p kalamdb-server --bin kalamdb-server --features cloud-aws
+        if [ -n "${KALAMDB_SERVER_FEATURES:-}" ]; then
+            cargo build -p kalamdb-server --bin kalamdb-server --features "$KALAMDB_SERVER_FEATURES"
+        else
+            cargo build -p kalamdb-server --bin kalamdb-server
+        fi
     )
     export KALAMDB_SERVER_BIN="$REPO_ROOT/target/debug/kalamdb-server"
 }
@@ -1144,7 +1154,7 @@ pgwire_e2e_should_run() {
 
     if [ -n "$TEST_TARGET" ]; then
         case "$TEST_TARGET" in
-            wire_*|pgwire_*|pgwire_catalog)
+            wire_*|pgwire_*|pgwire_catalog|e2e|test_testserver|test_scenarios)
                 return 0
                 ;;
         esac
@@ -1176,8 +1186,19 @@ pgwire_catalog_tests_should_run() {
         esac
     fi
 
-    if [ -n "$TEST_TARGET" ] && [ "$TEST_TARGET" != "pgwire_catalog" ]; then
-        return 1
+    # `--test-target pgwire_catalog` already runs these in the main nextest invocation.
+    if [ -n "$TEST_TARGET" ]; then
+        case "$TEST_TARGET" in
+            pgwire_catalog)
+                return 1
+                ;;
+            e2e|test_testserver|test_scenarios)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
     fi
 
     if [ ${#PACKAGE_FILTERS[@]} -eq 1 ] && package_filters_include "kalamdb-postgres-wire"; then
@@ -1185,6 +1206,29 @@ pgwire_catalog_tests_should_run() {
     fi
 
     return 0
+}
+
+pgwire_live_catalog_filter_expr() {
+    local expr='test(/pgwire_catalog::/) and not test(wire_client_catalog_disabled)'
+    if [ "${KALAMDB_SKIP_JDBC_E2E:-false}" = "true" ]; then
+        expr="$expr and not test(jdbc_hikari)"
+    fi
+    printf '%s\n' "$expr"
+}
+
+prepare_pgwire_jdbc_e2e() {
+    if [ "${KALAMDB_SKIP_JDBC_E2E:-false}" = "true" ]; then
+        echo "Skipping JDBC/Hikari catalog e2e (KALAMDB_SKIP_JDBC_E2E=true)."
+        return 0
+    fi
+
+    if ! command -v java >/dev/null 2>&1; then
+        echo "Error: JDBC catalog e2e requires a JDK (\`java\` on PATH)." >&2
+        echo "Install a JDK, or set KALAMDB_SKIP_JDBC_E2E=true to skip only the Java smoke." >&2
+        exit 1
+    fi
+
+    export KALAMDB_PGWIRE_REQUIRE_JDBC=1
 }
 
 resolve_pgwire_host() {
@@ -1212,7 +1256,7 @@ start_pgwire_test_server() {
         step "Prebuilding kalamdb-server for PostgreSQL wire e2e"
         (
             cd "$REPO_ROOT"
-            cargo build -p kalamdb-server --bin kalamdb-server --features cloud-aws
+            cargo build -p kalamdb-server --bin kalamdb-server ${KALAMDB_SERVER_FEATURES:+--features "$KALAMDB_SERVER_FEATURES"}
         )
     fi
     export KALAMDB_SERVER_BIN="$server_bin"
@@ -1256,6 +1300,9 @@ start_pgwire_test_server() {
     export KALAMDB_SERVER_URL="$PGWIRE_SERVER_URL"
     export KALAMDB_URL="$PGWIRE_SERVER_URL"
     setup_supplementary_auth_if_needed
+    if [ "$SERVER_TYPE" = "fresh" ]; then
+        return 0
+    fi
     if [ -n "$previous_server_url" ]; then
         export KALAMDB_SERVER_URL="$previous_server_url"
         export KALAMDB_URL="$previous_server_url"
@@ -1303,15 +1350,18 @@ run_pgwire_catalog_companion_tests_if_needed() {
     fi
 
     ensure_pgwire_e2e_env
+    prepare_pgwire_jdbc_e2e
+
+    local filter_expr
+    filter_expr="$(pgwire_live_catalog_filter_expr)"
 
     step "Running PostgreSQL wire client catalog e2e tests"
     cargo nextest run \
         -p kalamdb-server \
         --features e2e-tests \
-        --test pgwire_catalog \
-        --run-ignored all \
-        wire_client_catalog_returns_data \
-        jdbc_hikari_pool_connects_and_queries
+        --test e2e \
+        --run-ignored ignored-only \
+        --filter-expr "$filter_expr"
 }
 
 infer_kalamdb_grpc_target() {
@@ -1816,10 +1866,10 @@ build_test_cmd() {
         filter_targets_smoke=true
     fi
 
-    # Custom `harness = false` benches (e.g. kalamdb-backend) do not implement
-    # libtest --list; exclude them when widening discovery beyond default tests.
+    # Tests only. `--all-targets` also compiles examples, bins, and benches
+    # (then `--filter-expr` skips running benches), which dominates local compile.
     if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = false ]; then
-        TEST_CMD+=(--all-targets --filter-expr 'not kind(bench)')
+        TEST_CMD+=(--filter-expr 'not kind(bench)')
     fi
 
     local e2e_features=()
@@ -1835,6 +1885,17 @@ build_test_cmd() {
             case "$package" in
                 kalamdb-server)
                     e2e_features+=("e2e-tests")
+                    if should_start_dex_for_oidc_tests; then
+                        e2e_features+=("oidc")
+                    fi
+                    ;;
+                kalam-cli-e2e)
+                    if [[ "${KALAMDB_SERVER_FEATURES:-}" == *cloud-aws* ]]; then
+                        e2e_features+=("cloud-aws")
+                    fi
+                    if should_start_dex_for_oidc_tests; then
+                        e2e_features+=("oidc")
+                    fi
                     ;;
             esac
         done
@@ -1845,17 +1906,61 @@ build_test_cmd() {
     else
         TEST_CMD+=(--workspace)
         # The PostgreSQL extension crate is tested via the dedicated pgrx workflow,
-        # not through generic cargo test/nextest targets.
+        # not through generic cargo test/nextest targets. SDK/wasm/python crates
+        # have their own workflows and pull heavy toolchains (pyo3, FRB, wasm-bindgen).
         TEST_CMD+=(--exclude "kalam-pg-extension")
-        TEST_CMD+=(--features "kalamdb-server/e2e-tests")
+        TEST_CMD+=(--exclude "kalam-link-wasm")
+        TEST_CMD+=(--exclude "kalam-consumer-wasm")
+        TEST_CMD+=(--exclude "kalam-link-dart")
+        TEST_CMD+=(--exclude "kalamdb-python")
+        TEST_CMD+=(--exclude "quickstart")
+        local workspace_features=("kalamdb-server/e2e-tests")
+        if [[ "${KALAMDB_SERVER_FEATURES:-}" == *cloud-aws* ]]; then
+            workspace_features+=("kalam-cli-e2e/cloud-aws")
+        fi
+        if should_start_dex_for_oidc_tests; then
+            workspace_features+=("kalam-cli-e2e/oidc")
+        fi
+        local IFS=,
+        TEST_CMD+=(--features "${workspace_features[*]}")
+        unset IFS
     fi
 
     if [ -n "$TEST_TARGET" ]; then
-        TEST_CMD+=(--test "$TEST_TARGET")
+        case "$TEST_TARGET" in
+            test_scenarios_realtime)
+                TEST_CMD+=(--test e2e)
+                if [ -z "$test_filter" ]; then
+                    TEST_CMD+=(realtime)
+                fi
+                ;;
+            test_scenarios_lifecycle)
+                TEST_CMD+=(--test e2e)
+                if [ -z "$test_filter" ]; then
+                    TEST_CMD+=(lifecycle)
+                fi
+                ;;
+            test_scenarios_scale)
+                TEST_CMD+=(--test e2e)
+                if [ -z "$test_filter" ]; then
+                    TEST_CMD+=(scale)
+                fi
+                ;;
+            test_scenarios|test_testserver|test_cluster|endurance_test|pgwire_catalog)
+                TEST_CMD+=(--test e2e)
+                ;;
+            cluster|connection|smoke|auth|auth_retry_test|cli|flushing|repro_issue|storage|vector|subscription|tables|usecases|users|performance)
+                TEST_CMD+=(--test e2e)
+                ;;
+            *)
+                TEST_CMD+=(--test "$TEST_TARGET")
+                ;;
+        esac
         if [ "$TEST_TARGET" = "pgwire_catalog" ]; then
-            TEST_CMD+=(--run-ignored all)
+            prepare_pgwire_jdbc_e2e
+            TEST_CMD+=(--run-ignored ignored-only)
             if [ -z "$test_filter" ]; then
-                TEST_CMD+=(wire_client_catalog_returns_data jdbc_hikari_pool_connects_and_queries)
+                TEST_CMD+=(--filter-expr "$(pgwire_live_catalog_filter_expr)")
             fi
         fi
     fi
@@ -1869,7 +1974,7 @@ build_test_cmd() {
 
     if [ -n "$test_filter" ]; then
         if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = true ]; then
-            TEST_CMD+=(--test smoke)
+            TEST_CMD+=(--test e2e)
             if [[ "$test_filter" != "smoke" ]]; then
                 TEST_CMD+=("$test_filter")
             fi

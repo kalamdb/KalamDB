@@ -1,4 +1,5 @@
-import { Loader2, Wifi, WifiOff } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { useBackendStatus } from "@/lib/backend-status";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,7 @@ export default function BackendStatusIndicator() {
       <span className="hidden text-muted-foreground md:inline">{statusLabel}</span>
       <span className="hidden max-w-[160px] truncate text-muted-foreground xl:inline">{targetLabel}</span>
       {isChecking ? (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+        <Spinner className="size-3.5 shrink-0 text-muted-foreground" />
       ) : isOnline ? (
         <Wifi className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
       ) : (

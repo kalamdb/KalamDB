@@ -1,0 +1,3 @@
+description = "Handlebars sources for kalam schema gen Dart clients and codecs"
+version = "1.0.0"
+author = "KalamDB"

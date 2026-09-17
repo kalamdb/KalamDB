@@ -66,7 +66,7 @@ impl ServerConfig {
     /// - KALAMDB_OTLP_SERVICE_NAME: Override logging.otlp.service_name
     /// - KALAMDB_OTLP_TIMEOUT_MS: Override logging.otlp.timeout_ms
     /// - KALAMDB_DATA_DIR: Override storage.data_path (base directory for rocksdb, storage,
-    ///   snapshots)
+    ///   snapshots, functions)
     /// - KALAMDB_CLUSTER_ID: Override cluster.cluster_id
     /// - KALAMDB_NODE_ID: Override cluster.node_id (alias: KALAMDB_CLUSTER_NODE_ID)
     /// - KALAMDB_CLUSTER_RPC_ADDR: Override cluster.rpc_addr

@@ -20,6 +20,11 @@ pub struct LinkOptions {
     pub namespace: Option<String>,
 }
 
+pub fn link_project(ctx: &WorkflowContext, options: LinkOptions) -> Result<()> {
+    let output = ctx.output();
+    link_environment(ctx, &options, &output)
+}
+
 pub fn link_environment(
     ctx: &WorkflowContext,
     options: &LinkOptions,
@@ -56,6 +61,9 @@ pub fn link_environment(
         ConnectionEnv {
             url,
             namespace: parse_namespace_id(&namespace)?,
+            purpose: Some(crate::workflow::project::config::EnvironmentPurpose::from_env_name(
+                &env_name,
+            )),
         },
     );
 
@@ -81,8 +89,8 @@ mod tests {
     use crate::{
         config::{CLIConfiguration, WorkflowLoggingPolicy},
         workflow::project::config::{
-            DevSection, LoggingSection, MigrationsSection, ProjectSection, SchemaMode,
-            SchemaSection, SchemaTarget,
+            DevSection, FunctionsSection, LoggingSection, MigrationsSection, ProjectSection,
+            SchemaMode, SchemaSection, SchemaTarget,
         },
     };
 
@@ -96,6 +104,7 @@ mod tests {
                 default_env:     "dev".into(),
                 package_manager: None,
                 kalam_dir:       "kalam".into(),
+                server_version:  None,
             },
             connection: HashMap::new(),
             schema:     SchemaSection {
@@ -106,13 +115,15 @@ mod tests {
                 targets:   HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
+                        output:            "src/generated/kalam.ts".into(),
+                        unqualified_names: false,
                     },
                 )]),
             },
             migrations: MigrationsSection::default(),
             dev:        DevSection::default(),
             logging:    LoggingSection::default(),
+            functions:  FunctionsSection::default(),
         };
         config.save_to_path(&root.join(KALAM_TOML)).unwrap();
 
@@ -128,6 +139,10 @@ mod tests {
             env_override: None,
             namespace_override: None,
             url_override: None,
+            global: false,
+            host: None,
+            port: None,
+            instance: None,
         };
         let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
 
@@ -146,5 +161,10 @@ mod tests {
         let prod = loaded.connection.get("prod").expect("prod link");
         assert_eq!(prod.url, "https://db.example.com");
         assert_eq!(prod.namespace, kalamdb_commons::NamespaceId::new("app"));
+        assert_eq!(loaded.project.default_env, "dev");
+        assert_eq!(
+            prod.purpose,
+            Some(crate::workflow::project::config::EnvironmentPurpose::Production)
+        );
     }
 }

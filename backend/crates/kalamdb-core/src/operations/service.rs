@@ -677,6 +677,8 @@ impl OperationExecutor for OperationService {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
+        let result = result.into_arrow_rows().map_err(Status::internal)?;
+
         match result {
             crate::sql::ExecutionResult::Rows {
                 batches, row_count, ..

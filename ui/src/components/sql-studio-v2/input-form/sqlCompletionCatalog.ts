@@ -1,4 +1,6 @@
 import type { StudioNamespace } from "../shared/types";
+import type { ProcedureMetadata } from "@/features/functions/types";
+import { procedureCompletionEntries } from "@/features/functions/sqlCompletions";
 
 type CompletionCategory = "function" | "keyword" | "operator" | "snippet" | "type";
 
@@ -20,6 +22,8 @@ export interface SqlCompletionData {
   snippets: readonly SqlCompletionEntry[];
   types: readonly SqlCompletionEntry[];
   operators: readonly SqlCompletionEntry[];
+  procedures: ProcedureMetadata[];
+  procedureEntries: readonly SqlCompletionEntry[];
 }
 
 export interface SqlContextualCompletionMatch {
@@ -65,6 +69,7 @@ const SQL_KEYWORDS = [
   "BEGIN",
   "BETWEEN",
   "BY",
+  "CALL",
   "CASE",
   "CHECK",
   "CLEAR",
@@ -504,6 +509,7 @@ const SQL_SYNTAX_COMPLETIONS = [
   syntaxEntry("SET", "DataFusion session setting", "SET ${1:key} = ${2:value};"),
   syntaxEntry("EXECUTE AS USER", "KalamDB impersonation wrapper", "EXECUTE AS USER '${1:username}' (\n  ${2:SELECT * FROM table}\n);"),
   syntaxEntry("BEGIN", "KalamDB transaction control", "BEGIN;"),
+  syntaxEntry("CALL", "Call a KalamDB procedure", "CALL ${1:schema.procedure}(${2:});"),
   syntaxEntry("START TRANSACTION", "KalamDB transaction control", "START TRANSACTION;"),
   syntaxEntry("COMMIT", "KalamDB transaction control", "COMMIT;"),
   syntaxEntry("ROLLBACK", "KalamDB transaction control", "ROLLBACK;"),
@@ -566,6 +572,8 @@ const EMPTY_COMPLETION_DATA: SqlCompletionData = {
   snippets: SQL_SYNTAX_COMPLETIONS,
   types: SQL_TYPE_COMPLETIONS,
   operators: SQL_OPERATOR_COMPLETIONS,
+  procedures: [],
+  procedureEntries: [],
 };
 
 function pushUnique(values: string[], value: string) {
@@ -596,12 +604,17 @@ function addTable(
   columns.forEach((column) => pushUnique(data.columnsByTable[qualifiedTable], column));
 }
 
-export function buildSqlCompletionData(schema: StudioNamespace[]): SqlCompletionData {
+export function buildSqlCompletionData(
+  schema: StudioNamespace[],
+  procedures: ProcedureMetadata[] = [],
+): SqlCompletionData {
   const data: SqlCompletionData = {
     ...EMPTY_COMPLETION_DATA,
     namespaces: [],
     tablesByNamespace: {},
     columnsByTable: {},
+    procedures,
+    procedureEntries: procedureCompletionEntries(procedures),
   };
 
   schema.forEach((namespace) => {

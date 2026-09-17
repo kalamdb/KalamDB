@@ -7,9 +7,6 @@
 //! - `KALAMDB_ENDURANCE_SUBSCRIBER_COUNT`
 //! - `KALAMDB_ENDURANCE_ROOM_COUNT`
 
-#[path = "common/testserver/mod.rs"]
-mod test_support;
-
 use std::{
     collections::VecDeque,
     env,
@@ -29,6 +26,8 @@ use test_support::{
     http_server::get_global_server,
 };
 use tokio::time::sleep;
+
+use crate::test_support;
 
 const DEFAULT_DURATION_SECS: u64 = 60 * 60;
 const DEFAULT_USER_COUNT: usize = 100;

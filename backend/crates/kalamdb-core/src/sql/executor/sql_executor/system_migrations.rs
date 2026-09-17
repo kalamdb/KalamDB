@@ -43,7 +43,7 @@ impl SqlExecutor {
 
         match dml_kind {
             DmlKind::Insert => {
-                let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
+                let statement = metadata.parsed_dml.as_deref().ok_or_else(|| {
                     KalamDbError::InvalidSql(
                         "Missing prepared DML metadata for system.migrations INSERT".to_string(),
                     )
@@ -113,7 +113,7 @@ impl SqlExecutor {
                 Ok(Some(ExecutionResult::Inserted { rows_affected: 1 }))
             },
             DmlKind::Update => {
-                let statement = metadata.parsed_dml.as_ref().ok_or_else(|| {
+                let statement = metadata.parsed_dml.as_deref().ok_or_else(|| {
                     KalamDbError::InvalidSql(
                         "Missing prepared DML metadata for system.migrations UPDATE".to_string(),
                     )

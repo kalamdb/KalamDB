@@ -13,6 +13,8 @@ build = "../../build.rs"
 kalamdb-commons = { path = "../kalamdb-commons" }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-functions = { path = "../kalamdb-functions" }
+kalamdb-serialization = { path = "../kalamdb-serialization" }
 kalamdb-jobs = { path = "../kalamdb-jobs" }
 kalamdb-live = { path = "../kalamdb-live" }
 kalamdb-observability = { path = "../kalamdb-observability" }
@@ -75,7 +77,7 @@ moka = { workspace = true }
 parking_lot = { workspace = true }
 
 [features]
-default = ["embedded-ui"]
+default = []
 embedded-ui = ["rust-embed"]
 
 [build-dependencies]

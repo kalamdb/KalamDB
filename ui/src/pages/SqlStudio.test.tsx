@@ -70,6 +70,12 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/store/apiSlice", () => ({
   useGetSqlStudioSchemaTreeQuery: () => mockSchemaTreeQuery(),
+  useGetProcedureCatalogQuery: () => ({
+    data: { procedures: [], types: [], typeFields: [], parameters: [], modules: [], revisions: [], logs: [] },
+    isFetching: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
 }));
 
 vi.mock("@/services/sqlStudioService", async () => {
@@ -170,7 +176,10 @@ vi.mock("@monaco-editor/react", () => ({
       KeyCode: { Enter: number };
       languages: {
         CompletionItemKind: Record<string, number>;
+        CompletionItemInsertTextRule: Record<string, number>;
         registerCompletionItemProvider: () => { dispose: () => void };
+        registerSignatureHelpProvider: () => { dispose: () => void };
+        registerHoverProvider: () => { dispose: () => void };
       };
     }) => void;
   }) => {
@@ -222,8 +231,15 @@ vi.mock("@monaco-editor/react", () => ({
               Class: 2,
               Module: 3,
               Keyword: 4,
+              Function: 5,
+              Operator: 6,
+              Snippet: 7,
+              TypeParameter: 8,
             },
+            CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
             registerCompletionItemProvider: () => ({ dispose: () => {} }),
+            registerSignatureHelpProvider: () => ({ dispose: () => {} }),
+            registerHoverProvider: () => ({ dispose: () => {} }),
           },
         },
       );
@@ -482,7 +498,8 @@ describe("SqlStudio page", () => {
 
     await renderSqlStudio();
 
-    fireEvent.change(getSqlEditor(), {
+    const editor = await screen.findByLabelText(/sql editor/i);
+    fireEvent.change(editor, {
       target: { value: "SELECT id, name FROM default.events WHERE id = 42" },
     });
 

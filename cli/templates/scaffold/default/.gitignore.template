@@ -1,5 +1,6 @@
 # KalamDB project state
 .env
+.kalam/
 kalam/cli/logs/
 kalam/cli/dev.session.json
 kalam/server/

@@ -456,11 +456,11 @@ cargo build -p kalamdb-core
 cargo build -p kalamdb-api
 cargo build -p kalamdb-server
 
-# Run the server
+# Run the server (API-only; add `--features embedded-ui` for the admin UI)
 cargo run
 
 # Run with logging
-RUST_LOG=debug cargo run
+RUST_LOG=debug cargo run --features embedded-ui
 ```
 
 ### Release Build
@@ -721,7 +721,8 @@ cargo build --release          # Release build
 cargo check                    # Fast error checking
 
 # Run
-cargo run                      # Run server
+cargo run                      # API-only server (faster compile)
+cargo run --features embedded-ui  # Serve the admin UI
 RUST_LOG=debug cargo run      # Run with logging
 
 # Test

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertCircle, Check, Eye, EyeOff, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Eye, EyeOff } from "lucide-react";
 import AuthSplitLayout from "@/components/auth/AuthSplitLayout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { clearSetupError, submitSetup } from "@/store/setupSlice";
@@ -373,7 +374,7 @@ export default function SetupWizard() {
             <Button type="submit" className="flex-1" disabled={isSubmitting}>
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner data-icon="inline-start" />
                   Setting up...
                 </>
               ) : (

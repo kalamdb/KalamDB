@@ -462,9 +462,9 @@ fn test_cli_uses_jwt_for_requests() {
     }
 }
 
-/// Test show-credentials CLI flag
+/// Test whoami after saving credentials
 #[test]
-fn test_cli_show_credentials_command() {
+fn test_cli_whoami_command() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -472,30 +472,27 @@ fn test_cli_show_credentials_command() {
 
     let (_temp_dir, creds_path) = create_temp_credentials_path();
 
-    // First ensure we have credentials saved
-    // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
     with_credentials_path(&mut cmd, &creds_path);
     let _ = cmd.arg("--save-credentials").arg("--command").arg("SELECT 1").output();
 
-    // Now test --show-credentials
     let mut cmd = create_cli_command();
     with_credentials_path(&mut cmd, &creds_path);
-    let output = cmd.arg("--show-credentials").output().expect("Failed to run CLI");
+    let output = cmd.arg("whoami").output().expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
 
-    // Should show credential info
     assert!(
-        stdout.contains("Stored Credentials")
-            || stdout.contains("Instance:")
-            || stdout.contains("JWT Token:")
-            || stdout.contains("local"),
-        "Should display stored credentials. stdout: {}",
-        stdout
+        combined.contains("user")
+            || combined.contains("User")
+            || combined.contains("root")
+            || combined.contains("authenticated"),
+        "Should display the current user. stdout: {stdout} stderr: {stderr}"
     );
 
-    println!("✓ Show credentials command works");
+    println!("✓ Whoami command works");
 }
 
 /// Test list-instances CLI flag
@@ -506,17 +503,17 @@ fn test_cli_list_instances_command() {
         .expect("Failed to create credential store");
 
     let instances = vec![
-        ("local", "user1", "token_local"),
-        ("cloud", "user2", "token_cloud"),
+        ("local", "user1", "token_local", server_url().to_string()),
+        ("cloud", "user2", "token_cloud", "https://cloud.example.com".to_string()),
     ];
 
-    for (instance, username, token) in &instances {
+    for (instance, username, token, url) in &instances {
         let creds = Credentials::with_details(
             instance.to_string(),
             token.to_string(),
             username.to_string(),
             "2099-12-31T23:59:59Z".to_string(),
-            Some(server_url().to_string()),
+            Some(url.clone()),
         );
         store.set_credentials(&creds).expect("Failed to store credentials");
     }
@@ -526,13 +523,25 @@ fn test_cli_list_instances_command() {
     let output = cmd.arg("--list-instances").output().expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("local"), "Should list local instance. stdout: {}", stdout);
-    assert!(stdout.contains("cloud"), "Should list cloud instance. stdout: {}", stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        output.status.success(),
+        "list-instances should succeed. stdout: {stdout} stderr: {stderr}"
+    );
+    assert!(
+        combined.contains("https://cloud.example.com"),
+        "Should list cloud instance. stdout: {stdout} stderr: {stderr}"
+    );
+    assert!(
+        combined.contains("Also    local") || combined.contains("local-"),
+        "Should keep historical local name visible. stdout: {stdout} stderr: {stderr}"
+    );
 }
 
-/// Test show-credentials with missing instance
+/// Test whoami with missing instance
 #[test]
-fn test_cli_show_credentials_missing_instance() {
+fn test_cli_whoami_missing_instance() {
     let (_temp_dir, creds_path) = create_temp_credentials_path();
 
     let mut cmd = create_cli_command();
@@ -540,21 +549,24 @@ fn test_cli_show_credentials_missing_instance() {
     let output = cmd
         .arg("--instance")
         .arg("missing_instance")
-        .arg("--show-credentials")
+        .arg("whoami")
         .output()
         .expect("Failed to run CLI");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
     assert!(
-        stdout.contains("No credentials") || stdout.contains("not found"),
-        "Should report missing credentials. stdout: {}",
-        stdout
+        combined.contains("No authentication")
+            || combined.contains("login")
+            || combined.contains("credentials"),
+        "Should report missing credentials. stdout: {stdout} stderr: {stderr}"
     );
 }
 
-/// Test delete-credentials CLI flag
+/// Test logout CLI command
 #[test]
-fn test_cli_delete_credentials_command() {
+fn test_cli_logout_command() {
     if !is_server_running() {
         eprintln!("⚠️  Server not running. Skipping test.");
         return;
@@ -571,8 +583,6 @@ fn test_cli_delete_credentials_command() {
             .as_nanos()
     );
 
-    // First save credentials
-    // Note: Uses empty password for root (default test configuration)
     let mut cmd = create_cli_command_with_root_auth();
     with_credentials_path(&mut cmd, &creds_path);
     let _ = cmd
@@ -583,13 +593,12 @@ fn test_cli_delete_credentials_command() {
         .arg("SELECT 1")
         .output();
 
-    // Delete credentials
     let mut cmd = create_cli_command();
     with_credentials_path(&mut cmd, &creds_path);
     let delete_output = cmd
         .arg("--instance")
         .arg(&instance)
-        .arg("--delete-credentials")
+        .arg("logout")
         .output()
         .expect("Failed to run CLI");
 
@@ -601,27 +610,27 @@ fn test_cli_delete_credentials_command() {
         stdout
     );
 
-    // Verify credentials are gone
     let mut cmd = create_cli_command();
     with_credentials_path(&mut cmd, &creds_path);
     let show_output = cmd
         .arg("--instance")
         .arg(&instance)
-        .arg("--show-credentials")
+        .arg("whoami")
         .output()
         .expect("Failed to run CLI");
 
     let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+    let show_stderr = String::from_utf8_lossy(&show_output.stderr);
+    let combined = format!("{show_stdout}{show_stderr}");
 
     assert!(
-        show_stdout.contains("No credentials")
-            || show_stdout.contains("not found")
-            || !show_stdout.contains("JWT Token:"),
-        "Should show no credentials after deletion. stdout: {}",
-        show_stdout
+        combined.contains("No authentication")
+            || combined.contains("login")
+            || combined.contains("credentials"),
+        "Should report no credentials after logout. stdout: {show_stdout} stderr: {show_stderr}"
     );
 
-    println!("✓ Delete credentials command works");
+    println!("✓ Logout command works");
 }
 
 /// Test multiple instances with different servers

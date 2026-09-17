@@ -95,13 +95,32 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
     seed_shared_catalog_rows(server, &format!("{}.feature_flags", global), &flag_insert_refs)
         .await?;
 
+    for tenant in [&tenant_a, &tenant_b] {
+        create_enum_type(server, &format!("{tenant}.order_status"), &["placed", "paid"]).await?;
+        create_js_procedure(
+            server,
+            &format!("{tenant}.place_order"),
+            &format!(
+                "id BIGINT NOT NULL, customer_name TEXT NOT NULL, amount DOUBLE, status \
+                 {tenant}.order_status NOT NULL"
+            ),
+            &format!(
+                "return ctx.db.execute('INSERT INTO {tenant}.orders (id, customer_name, amount) \
+                 VALUES ($1, $2, $3)', [input.id, input.customer_name, \
+                 input.amount]).then(function () {{ return 1; }});"
+            ),
+        )
+        .await?;
+        grant_execute_to_user(server, &format!("{tenant}.place_order")).await?;
+    }
+
     // =========================================================
     // Step 4: Tenant A inserts their data
     // =========================================================
     let tenant_a_user = format!("{}_tenant_a_user", tenant_a);
     let tenant_b_user = format!("{}_tenant_b_user", tenant_b);
     let tenant_a_client = create_user_and_client(server, &tenant_a_user, &Role::User).await?;
-    for i in 1..=5 {
+    for i in 1..=4 {
         let resp = tenant_a_client
             .execute_query(
                 &format!(
@@ -119,12 +138,21 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
             .await?;
         assert!(resp.success(), "Tenant A insert order {}", i);
     }
+    let resp = tenant_a_client
+        .execute_query(
+            &format!("CALL {tenant_a}.place_order(5, 'A Customer 5', 500.0, 'placed')"),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "Tenant A place_order: {:?}", resp.error);
 
     // =========================================================
     // Step 5: Tenant B inserts their data
     // =========================================================
     let tenant_b_client = create_user_and_client(server, &tenant_b_user, &Role::User).await?;
-    for i in 101..=105 {
+    for i in 101..=104 {
         let resp = tenant_b_client
             .execute_query(
                 &format!(
@@ -142,6 +170,15 @@ async fn test_scenario_10_multi_tenant_isolation() -> anyhow::Result<()> {
             .await?;
         assert!(resp.success(), "Tenant B insert order {}", i);
     }
+    let resp = tenant_b_client
+        .execute_query(
+            &format!("CALL {tenant_b}.place_order(105, 'B Customer 105', 5250.0, 'placed')"),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "Tenant B place_order: {:?}", resp.error);
 
     // =========================================================
     // Step 6: Verify tenant isolation (A cannot see B's data)

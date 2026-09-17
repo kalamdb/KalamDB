@@ -122,9 +122,9 @@ async fn explicit_transaction_rejects_stream_table_writes_with_missing_prepared_
         prepared.sql.clone(),
         prepared.table_id.clone(),
         None,
-        prepared.classified_statement.clone(),
+        prepared.classified_statement.as_deref().cloned(),
         prepared.track_slow_query,
-        prepared.parsed_dml.clone(),
+        prepared.parsed_dml.as_deref().cloned(),
     );
 
     let error = executor

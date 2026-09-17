@@ -30,8 +30,8 @@ export function UserMenu({ username, role, onLogout }: UserMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-8 rounded-full p-0">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+        <Button variant="ghost" size="icon-lg" className="rounded-full">
+          <span className="inline-flex size-full items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
             {getInitials(username)}
           </span>
         </Button>
@@ -42,17 +42,17 @@ export function UserMenu({ username, role, onLogout }: UserMenuProps) {
           <p className="text-xs font-normal text-muted-foreground">{role}</p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => navigate("/settings")}> 
-          <UserCircle2 className="mr-2 h-4 w-4" />
+        <DropdownMenuItem onClick={() => navigate("/settings")}>
+          <UserCircle2 />
           Profile
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate("/settings")}> 
-          <Settings className="mr-2 h-4 w-4" />
+        <DropdownMenuItem onClick={() => navigate("/settings")}>
+          <Settings />
           Settings
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-destructive" onClick={() => onLogout().catch(console.error)}>
-          <LogOut className="mr-2 h-4 w-4" />
+        <DropdownMenuItem variant="destructive" onClick={() => onLogout().catch(console.error)}>
+          <LogOut />
           Logout
         </DropdownMenuItem>
       </DropdownMenuContent>

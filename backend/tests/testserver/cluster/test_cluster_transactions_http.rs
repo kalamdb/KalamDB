@@ -125,7 +125,7 @@ async fn wait_for_table_visible(
 }
 
 #[tokio::test]
-#[ntest::timeout(3600)]
+#[ntest::timeout(60000)]
 async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging() -> Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let cluster = super::test_support::http_server::get_cluster_server().await;
@@ -248,7 +248,7 @@ async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging()
 }
 
 #[tokio::test]
-#[ntest::timeout(3600)]
+#[ntest::timeout(60000)]
 async fn test_sql_transaction_forwarded_from_follower_rejects_stream_table_writes() -> Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let cluster = super::test_support::http_server::get_cluster_server().await;
@@ -336,7 +336,7 @@ async fn test_sql_transaction_forwarded_from_follower_rejects_stream_table_write
 }
 
 #[tokio::test]
-#[ntest::timeout(3600)]
+#[ntest::timeout(60000)]
 async fn test_sql_transaction_forwarded_from_follower_unclosed_request_rolls_back() -> Result<()> {
     let _guard = super::test_support::http_server::acquire_test_lock().await;
     let cluster = super::test_support::http_server::get_cluster_server().await;

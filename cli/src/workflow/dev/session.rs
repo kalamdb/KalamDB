@@ -20,7 +20,7 @@ use crate::{
     workflow::WorkflowContext,
 };
 
-const START_TIMEOUT: Duration = Duration::from_secs(60);
+const START_TIMEOUT: Duration = Duration::from_secs(180);
 const START_POLL: Duration = Duration::from_millis(50);
 const STOP_WAIT: Duration = Duration::from_secs(8);
 const STOP_POLL: Duration = Duration::from_millis(100);
@@ -351,6 +351,10 @@ async fn wait_for_ready(
         }
         time::sleep(START_POLL).await;
     }
+}
+
+pub fn live_session_exists(path: &Path) -> bool {
+    live_session(path).ok().flatten().is_some()
 }
 
 fn live_session(path: &Path) -> Result<Option<DevSession>> {

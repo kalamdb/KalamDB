@@ -4,20 +4,24 @@
 //! - [`RaftLogStorage`] for the Raft log, vote, and committed index
 //! - [`RaftStateMachine`] for apply and snapshots
 //!
-//! Native v2 traits let OpenRaft run log IO and state-machine apply in
-//! parallel. Unit tests call inherent helpers such as `append_to_log`.
+//! OpenRaft 0.9 still awaits `LogFlushed` on the core task, so an extra log-IO
+//! thread cannot overlap the next `append()`. Apply runs on a separate worker
+//! and can overlap the *next* append. Unit tests call inherent helpers such as
+//! `append_to_log`.
 //!
-//! This module supports both in-memory storage (for testing) and persistent
-//! storage via `kalamdb-store::RaftPartitionStore` (for production).
+//! Persistent mode stores logs and SM progress via `RaftPartitionStore`.
+//! In-memory mode is for tests. Production standalone still uses persistent
+//! storage; it only skips flushing the log in `append()` and folds log +
+//! `last_applied` into the apply batch.
 
 use std::{
     collections::BTreeMap,
     fmt::Debug,
-    io::Cursor,
+    io::{Cursor, Write},
     ops::RangeBounds,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
 };
@@ -37,6 +41,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    error::RaftError,
     state_machine::{decode, encode, KalamStateMachine},
     storage::types::{KalamNode, KalamTypeConfig},
     GroupId,
@@ -102,7 +107,11 @@ fn write_snapshot_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     }
 
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+    }
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
@@ -111,7 +120,89 @@ fn read_snapshot_file(path: &Path) -> std::io::Result<Vec<u8>> {
     std::fs::read(path)
 }
 
-/// Maximum number of log entries to keep in memory cache
+fn stored_log_id(term: u64, index: u64) -> LogId<u64> {
+    LogId::new(openraft::CommittedLeaderId::new(term, 0), index)
+}
+
+const PAYLOAD_BLANK: u8 = 0;
+const PAYLOAD_NORMAL: u8 = 1;
+const PAYLOAD_MEMBERSHIP: u8 = 2;
+
+fn encode_stored_entry(entry: Entry<KalamTypeConfig>) -> Result<Vec<u8>, RaftError> {
+    let index = entry.log_id.index;
+    let term = entry.log_id.leader_id.term;
+    match entry.payload {
+        EntryPayload::Blank => Ok(RaftLogEntry::encode_record_parts(index, term, &[PAYLOAD_BLANK])),
+        EntryPayload::Normal(data) => {
+            let mut buf = Vec::with_capacity(RaftLogEntry::RECORD_HEADER_LEN + 1 + data.len());
+            buf.push(RaftLogEntry::RECORD_VERSION);
+            buf.extend_from_slice(&index.to_le_bytes());
+            buf.extend_from_slice(&term.to_le_bytes());
+            buf.push(PAYLOAD_NORMAL);
+            buf.extend(data);
+            Ok(buf)
+        },
+        EntryPayload::Membership(membership) => {
+            let encoded = encode(&membership)?;
+            let mut tagged = Vec::with_capacity(1 + encoded.len());
+            tagged.push(PAYLOAD_MEMBERSHIP);
+            tagged.extend(encoded);
+            Ok(RaftLogEntry::encode_record_parts(index, term, &tagged))
+        },
+    }
+}
+
+#[cfg(test)]
+fn encode_log_payload(payload: &EntryPayload<KalamTypeConfig>) -> Result<Vec<u8>, RaftError> {
+    match payload {
+        EntryPayload::Blank => Ok(vec![PAYLOAD_BLANK]),
+        EntryPayload::Normal(data) => {
+            let mut buf = Vec::with_capacity(1 + data.len());
+            buf.push(PAYLOAD_NORMAL);
+            buf.extend_from_slice(data);
+            Ok(buf)
+        },
+        EntryPayload::Membership(membership) => {
+            let encoded = encode(membership)?;
+            let mut buf = Vec::with_capacity(1 + encoded.len());
+            buf.push(PAYLOAD_MEMBERSHIP);
+            buf.extend_from_slice(&encoded);
+            Ok(buf)
+        },
+    }
+}
+
+fn decode_log_payload(bytes: &[u8]) -> Result<EntryPayload<KalamTypeConfig>, RaftError> {
+    if kalamdb_serialization::has_object_magic(bytes) {
+        return decode(bytes);
+    }
+
+    let (tag, rest) = bytes
+        .split_first()
+        .ok_or_else(|| RaftError::Serialization("empty raft log payload".to_string()))?;
+    match *tag {
+        PAYLOAD_BLANK if rest.is_empty() => Ok(EntryPayload::Blank),
+        PAYLOAD_NORMAL => Ok(EntryPayload::Normal(rest.to_vec())),
+        PAYLOAD_MEMBERSHIP => Ok(EntryPayload::Membership(decode(rest)?)),
+        tag => Err(RaftError::Serialization(format!("unknown raft log payload tag {tag}"))),
+    }
+}
+
+fn entry_from_payload(log_id: LogId<u64>, payload: &[u8]) -> Option<Entry<KalamTypeConfig>> {
+    match decode_log_payload(payload) {
+        Ok(payload) => Some(Entry { log_id, payload }),
+        Err(e) => {
+            log::warn!(
+                "Failed to decode log entry at index={} term={}: {e:?} (payload_len={})",
+                log_id.index,
+                log_id.leader_id.term,
+                payload.len()
+            );
+            None
+        },
+    }
+}
+
 const LOG_CACHE_SIZE: usize = 1000;
 
 /// Maximum bytes of log entry payloads to keep in memory cache (16 MB)
@@ -119,24 +210,26 @@ const LOG_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
 /// Combined Raft storage implementing both log and state machine storage
 ///
-/// Native `RaftLogStorage` + `RaftStateMachine` implementations let OpenRaft
-/// run log IO and apply concurrently instead of serializing them behind
-/// OpenRaft's v1 Adaptor `RwLock`.
+/// Native `RaftLogStorage` + `RaftStateMachine` implementations. OpenRaft 0.9
+/// still awaits `LogFlushed` on the core task; apply runs on a separate worker.
 ///
 /// ## Storage Modes
 ///
-/// - **In-memory only**: When created with `new()`, all data is stored in memory. Suitable for
-///   testing or single-node deployments where durability isn't critical.
+/// - **In-memory only**: When created with `new()`, all data is stored in memory. Tests only.
 ///
 /// - **Persistent**: When created with `new_persistent()`, log entries, votes, and metadata are
 ///   durably stored via `RaftPartitionStore`. A bounded in-memory cache keeps recent entries for
-///   fast access.
+///   fast access. Single-node defers log durability until apply.
 pub struct KalamRaftStorage<SM: KalamStateMachine + Send + Sync + 'static> {
     /// Which Raft group this storage belongs to
     group_id: GroupId,
 
     /// Optional persistent store (None = in-memory only mode)
     persistent_store: Option<RaftPartitionStore>,
+
+    /// When true (cluster), `append()` flushes the log before `LogFlushed`.
+    /// Single-node defers log+last_applied into the apply batch.
+    flush_log_on_append: AtomicBool,
 
     /// In-memory log entries (index -> entry)
     /// In persistent mode, this is a bounded cache of recent entries.
@@ -192,6 +285,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         Self {
             group_id,
             persistent_store: None,
+            flush_log_on_append: AtomicBool::new(true),
             log: RwLock::new(BTreeMap::new()),
             log_cache_bytes: AtomicU64::new(0),
             vote: RwLock::new(None),
@@ -222,7 +316,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         std::fs::create_dir_all(&snapshots_dir)
             .map_err(|e| kalamdb_store::StorageError::IoError(e.to_string()))?;
 
-        // Recover state from persistent storage
         let vote = store.read_vote()?.map(|v| {
             let mut vote = Vote::new(v.term, v.voted_for.unwrap_or(0));
             if v.committed {
@@ -231,19 +324,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             vote
         });
 
-        let committed = store
-            .read_commit()?
-            .map(|id| LogId::new(openraft::CommittedLeaderId::new(id.term, 0), id.index));
-
-        let last_purged = store
-            .read_purge()?
-            .map(|id| LogId::new(openraft::CommittedLeaderId::new(id.term, 0), id.index));
+        let last_purged = store.read_purge()?.map(|id| stored_log_id(id.term, id.index));
 
         // Recover last_applied from persistent storage
         // This is CRITICAL for avoiding log replay on restart
-        let persisted_last_applied = store
-            .read_last_applied()?
-            .map(|id| LogId::new(openraft::CommittedLeaderId::new(id.term, 0), id.index));
+        let persisted_last_applied =
+            store.read_last_applied()?.map(|id| stored_log_id(id.term, id.index));
 
         // Recover last_membership from persistent storage
         let persisted_membership: Option<StoredMembership<u64, KalamNode>> =
@@ -254,22 +340,21 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let mut initial_cache_bytes: u64 = 0;
         let mut recovered_last_log_id: Option<LogId<u64>> = None;
         if let Some(last_idx) = store.last_log_index()? {
-            recovered_last_log_id = store.get_log(last_idx)?.map(|entry| {
-                LogId::new(openraft::CommittedLeaderId::new(entry.term, 0), entry.index)
-            });
+            recovered_last_log_id =
+                store.get_log(last_idx)?.map(|entry| stored_log_id(entry.term, entry.index));
             let start_idx = last_idx.saturating_sub(LOG_CACHE_SIZE as u64 - 1);
             let entries = store.scan_logs(start_idx, last_idx + 1)?;
             for entry in entries {
-                if decode::<EntryPayload<KalamTypeConfig>>(&entry.payload).is_ok() {
-                    initial_cache_bytes += entry.payload.len() as u64;
-                    let log_id =
-                        LogId::new(openraft::CommittedLeaderId::new(entry.term, 0), entry.index);
+                if decode_log_payload(&entry.payload).is_ok() {
+                    let record = entry.encode_record();
+                    initial_cache_bytes += record.len() as u64;
+                    let log_id = stored_log_id(entry.term, entry.index);
                     recovered_last_log_id = Some(log_id);
                     log_cache.insert(
                         entry.index,
                         LogEntryData {
                             log_id,
-                            payload: entry.payload,
+                            payload: record,
                         },
                     );
                 }
@@ -282,9 +367,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let (current_snapshot, snapshot_last_applied, snapshot_membership) =
             match (snapshot_meta, snapshot_data) {
                 (Some(meta), Some(snapshot_data)) => {
-                    let last_log_id = meta.last_log_id.map(|id| {
-                        LogId::new(openraft::CommittedLeaderId::new(id.term, 0), id.index)
-                    });
+                    let last_log_id = meta.last_log_id.map(|id| stored_log_id(id.term, id.index));
 
                     let bytes = match snapshot_data {
                         RaftSnapshotData::FilePath(path) => {
@@ -317,6 +400,16 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         // Determine final last_applied: prefer persisted value, fall back to snapshot
         let last_applied = persisted_last_applied.or(snapshot_last_applied);
 
+        // OpenRaft's save_committed is optional when apply flushes SM state.
+        // Keep a leftover disk commit from older builds only if it is not behind
+        // last_applied (applied <= committed). Otherwise seed from last_applied.
+        let disk_commit = store.read_commit()?.map(|id| stored_log_id(id.term, id.index));
+        let committed = match (disk_commit, last_applied) {
+            (Some(commit), Some(applied)) if commit.index >= applied.index => Some(commit),
+            (Some(commit), None) => Some(commit),
+            (_, applied) => applied,
+        };
+
         // Determine final last_membership: prefer persisted value, fall back to snapshot
         let last_membership = persisted_membership.or(snapshot_membership).unwrap_or_default();
 
@@ -338,6 +431,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         Ok(Self {
             group_id,
             persistent_store: Some(store),
+            flush_log_on_append: AtomicBool::new(true),
             log: RwLock::new(log_cache),
             log_cache_bytes: AtomicU64::new(initial_cache_bytes),
             vote: RwLock::new(vote),
@@ -356,6 +450,12 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     /// Check if this storage is using persistent mode
     pub fn is_persistent(&self) -> bool {
         self.persistent_store.is_some()
+    }
+
+    /// Cluster mode flushes the log in `append()`. Single-node defers log+last_applied
+    /// into the apply WriteBatch (OpenRaft 0.9 still awaits `LogFlushed` either way).
+    pub fn set_flush_log_on_append(&self, flush: bool) {
+        self.flush_log_on_append.store(flush, Ordering::Relaxed);
     }
 
     /// Get the partition name for persistence
@@ -541,50 +641,22 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         let cache_has_all = Self::cache_covers_range(&log, start, end);
 
         if cache_has_all || self.persistent_store.is_none() {
-            // Read from cache only
             return log
                 .range(range)
-                .map(|(_, entry)| match decode::<EntryPayload<KalamTypeConfig>>(&entry.payload) {
-                    Ok(payload) => Entry {
-                        log_id: entry.log_id,
-                        payload,
-                    },
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to decode log entry at index={} term={}: {:?} (payload_len={})",
-                            entry.log_id.index,
-                            entry.log_id.leader_id.term,
-                            e,
-                            entry.payload.len()
-                        );
-                        Entry {
-                            log_id:  entry.log_id,
-                            payload: EntryPayload::Blank,
-                        }
-                    },
+                .filter_map(|(_, entry)| {
+                    entry_from_payload(entry.log_id, RaftLogEntry::tagged_payload(&entry.payload))
                 })
                 .collect();
         }
 
-        // Need to read from persistent storage
-        drop(log); // Release lock before I/O
+        drop(log);
 
         let store = self.persistent_store.as_ref().unwrap();
         match store.scan_logs(start, end) {
             Ok(entries) => entries
                 .into_iter()
-                .filter_map(|entry| match decode::<EntryPayload<KalamTypeConfig>>(&entry.payload) {
-                    Ok(payload) => Some(Entry {
-                        log_id: LogId::new(
-                            openraft::CommittedLeaderId::new(entry.term, 0),
-                            entry.index,
-                        ),
-                        payload,
-                    }),
-                    Err(e) => {
-                        log::warn!("Failed to decode log entry from storage: {:?}", e);
-                        None
-                    },
+                .filter_map(|entry| {
+                    entry_from_payload(stored_log_id(entry.term, entry.index), &entry.payload)
                 })
                 .collect(),
             Err(e) => {
@@ -607,7 +679,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             return Ok(None);
         };
 
-        Ok(Some(LogId::new(openraft::CommittedLeaderId::new(entry.term, 0), entry.index)))
+        Ok(Some(stored_log_id(entry.term, entry.index)))
     }
 
     fn set_last_log_id_after_deletion(
@@ -631,26 +703,9 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         }
     }
 
-    fn persist_last_applied_log_id(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        if let Some(store) = &self.persistent_store {
-            store
-                .save_last_applied(Some(RaftLogId {
-                    term:  log_id.leader_id.term,
-                    index: log_id.index,
-                }))
-                .map_err(|e| StorageIOError::write(&e))?;
-        }
-
-        Ok(())
-    }
-
-    fn commit_last_applied_log_id(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        {
-            let mut last = self.last_applied.write();
-            *last = Some(log_id);
-        }
-
-        self.persist_last_applied_log_id(log_id)
+    fn commit_last_applied_log_id(&self, log_id: LogId<u64>) {
+        let mut last = self.last_applied.write();
+        *last = Some(log_id);
     }
 }
 
@@ -782,7 +837,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     // --- Vote operations ---
 
     async fn save_vote(&self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
-        // Persist to storage if available
         if let Some(store) = &self.persistent_store {
             let raft_vote = RaftVote {
                 term:      vote.leader_id().term,
@@ -792,7 +846,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             store.save_vote(&raft_vote).map_err(|e| StorageIOError::write_vote(&e))?;
         }
 
-        // Update in-memory cache
         let mut current = self.vote.write();
         *current = Some(*vote);
         Ok(())
@@ -803,15 +856,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     }
 
     async fn save_committed(&self, committed: Option<LogId<u64>>) -> Result<(), StorageError<u64>> {
-        // Persist to storage if available
-        if let Some(store) = &self.persistent_store {
-            let log_id = committed.map(|id| RaftLogId {
-                term:  id.leader_id.term,
-                index: id.index,
-            });
-            store.save_commit(log_id).map_err(|e| StorageIOError::write(&e))?;
-        }
-
         let mut c = self.committed.write();
         *c = committed;
         Ok(())
@@ -833,82 +877,131 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         })
     }
 
+    fn persist_applied_progress(
+        &self,
+        entries: &[Entry<KalamTypeConfig>],
+        last_applied: LogId<u64>,
+    ) -> Result<(), StorageError<u64>> {
+        let Some(store) = &self.persistent_store else {
+            return Ok(());
+        };
+
+        let applied = RaftLogId {
+            term:  last_applied.leader_id.term,
+            index: last_applied.index,
+        };
+
+        if self.flush_log_on_append.load(Ordering::Relaxed) {
+            return store
+                .save_last_applied(Some(applied))
+                .map_err(|e| StorageIOError::write(&e).into());
+        }
+
+        let log = self.log.read();
+        let mut records = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let index = entry.log_id.index;
+            if let Some(data) = log.get(&index) {
+                records.push((index, data.payload.clone()));
+            } else {
+                let record = encode_stored_entry(entry.clone())
+                    .map_err(|e| StorageIOError::write_logs(&e))?;
+                records.push((index, record));
+            }
+        }
+        drop(log);
+
+        store
+            .append_encoded_with(records, Some(applied))
+            .map_err(|e| StorageIOError::write_logs(&e))?;
+
+        let mut log = self.log.write();
+        self.trim_log_cache(&mut log);
+        Ok(())
+    }
+
+    fn persist_applied_prefix(
+        &self,
+        entries: &[Entry<KalamTypeConfig>],
+        applied: &[Vec<u8>],
+    ) -> Result<(), StorageError<u64>> {
+        let count = applied.len();
+        if count == 0 {
+            return Ok(());
+        }
+        let applied_entries = &entries[..count];
+        self.persist_applied_progress(applied_entries, applied_entries[count - 1].log_id)
+    }
+
+    fn trim_log_cache(&self, log: &mut BTreeMap<u64, LogEntryData>) {
+        let max_bytes = LOG_CACHE_MAX_BYTES as u64;
+        while log.len() > LOG_CACHE_SIZE || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
+        {
+            let Some((&first_key, entry)) = log.iter().next() else {
+                break;
+            };
+            let removed_bytes = entry.payload.len() as u64;
+            log.remove(&first_key);
+            self.subtract_log_cache_bytes(removed_bytes);
+        }
+    }
+
+    fn stage_log_entries(
+        &self,
+        entries: impl IntoIterator<Item = Entry<KalamTypeConfig>>,
+    ) -> Result<Vec<(u64, Vec<u8>)>, StorageError<u64>> {
+        let persist_now =
+            self.persistent_store.is_some() && self.flush_log_on_append.load(Ordering::Relaxed);
+        let entries = entries.into_iter();
+        let (lower, _) = entries.size_hint();
+        let mut staged = Vec::with_capacity(if persist_now { lower } else { 0 });
+        let mut added_bytes = 0u64;
+        let mut newest_log_id = None;
+
+        let mut log = self.log.write();
+        for entry in entries {
+            let log_id = entry.log_id;
+            let index = log_id.index;
+            let record = encode_stored_entry(entry).map_err(|e| StorageIOError::write_logs(&e))?;
+            added_bytes += record.len() as u64;
+            newest_log_id = Some(log_id);
+            if persist_now {
+                staged.push((index, record.clone()));
+            }
+            log.insert(
+                index,
+                LogEntryData {
+                    log_id,
+                    payload: record,
+                },
+            );
+        }
+        self.log_cache_bytes.fetch_add(added_bytes, Ordering::Relaxed);
+        if persist_now {
+            self.trim_log_cache(&mut log);
+        }
+
+        let cache_last = log.iter().next_back().map(|(_, entry)| entry.log_id);
+        drop(log);
+
+        let mut last_log_id = self.last_log_id.write();
+        *last_log_id = cache_last.or(newest_log_id).or(*last_log_id);
+        Ok(staged)
+    }
+
+    #[cfg(test)]
     async fn append_to_log<I>(&self, entries: I) -> Result<(), StorageError<u64>>
     where
         I: IntoIterator<Item = Entry<KalamTypeConfig>> + OptionalSend,
     {
-        let has_persistent_store = self.persistent_store.is_some();
-        let entries = entries.into_iter();
-        let (lower, _) = entries.size_hint();
-        let mut encoded_entries: Vec<(LogId<u64>, Vec<u8>)> = Vec::with_capacity(lower);
-
-        for entry in entries {
-            let payload = encode(&entry.payload).map_err(|e| StorageIOError::write_logs(&e))?;
-            log::debug!(
-                "[RAFT] Appending log entry: index={} term={} payload_type={:?} payload_len={}",
-                entry.log_id.index,
-                entry.log_id.leader_id.term,
-                match &entry.payload {
-                    openraft::EntryPayload::Blank => "Blank",
-                    openraft::EntryPayload::Normal(_) => "Normal",
-                    openraft::EntryPayload::Membership(_) => "Membership",
-                },
-                payload.len()
-            );
-            encoded_entries.push((entry.log_id, payload));
-        }
-
-        if let Some(store) = &self.persistent_store {
-            let mut log_ids = Vec::with_capacity(encoded_entries.len());
-            let mut raft_entries = Vec::with_capacity(encoded_entries.len());
-            for (log_id, payload) in encoded_entries {
-                raft_entries.push(RaftLogEntry {
-                    index: log_id.index,
-                    term: log_id.leader_id.term,
-                    payload,
-                });
-                log_ids.push(log_id);
-            }
-            store.append_logs(&raft_entries).map_err(|e| StorageIOError::write_logs(&e))?;
-            encoded_entries = log_ids
-                .into_iter()
-                .zip(raft_entries.into_iter().map(|entry| entry.payload))
-                .collect();
-        }
-
-        // Update in-memory cache
-        let mut log = self.log.write();
-        let mut added_bytes: u64 = 0;
-        let mut newest_log_id: Option<LogId<u64>> = None;
-        for (log_id, payload) in encoded_entries {
-            added_bytes += payload.len() as u64;
-            newest_log_id = Some(log_id);
-            log.insert(log_id.index, LogEntryData { log_id, payload });
-        }
-        self.log_cache_bytes.fetch_add(added_bytes, Ordering::Relaxed);
-
-        // In persistent mode the map is only a cache, so it can be bounded.
-        // In memory-only mode it is the authoritative log and must retain
-        // entries until OpenRaft purges them.
-        if has_persistent_store {
-            let max_bytes = LOG_CACHE_MAX_BYTES as u64;
-            while log.len() > LOG_CACHE_SIZE
-                || self.log_cache_bytes.load(Ordering::Relaxed) > max_bytes
-            {
-                if let Some((&first_key, entry)) = log.iter().next() {
-                    let removed_bytes = entry.payload.len() as u64;
-                    log.remove(&first_key);
-                    self.subtract_log_cache_bytes(removed_bytes);
-                } else {
-                    break;
+        let staged = self.stage_log_entries(entries)?;
+        if self.flush_log_on_append.load(Ordering::Relaxed) {
+            if let Some(store) = &self.persistent_store {
+                if !staged.is_empty() {
+                    store.append_encoded(staged).map_err(|e| StorageIOError::write_logs(&e))?;
                 }
             }
         }
-
-        let mut last_log_id = self.last_log_id.write();
-        let cache_last = log.iter().next_back().map(|(_, entry)| entry.log_id);
-        *last_log_id = cache_last.or(newest_log_id).or(*last_log_id);
-
         Ok(())
     }
 
@@ -941,7 +1034,6 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
     }
 
     async fn purge_logs_upto(&self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
-        // Persist purge to storage if available
         if let Some(store) = &self.persistent_store {
             store
                 .delete_logs_before(log_id.index + 1)
@@ -1000,7 +1092,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
             match &entry.payload {
                 EntryPayload::Blank => {
                     self.state_machine.mark_applied_index(index, term);
-                    self.commit_last_applied_log_id(log_id)?;
+                    self.commit_last_applied_log_id(log_id);
                     results.push(Vec::new());
                 },
                 EntryPayload::Normal(data) => {
@@ -1010,17 +1102,18 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                     match self.state_machine.apply(index, term, data).await {
                         Ok(apply_result) => match apply_result {
                             crate::state_machine::ApplyResult::Ok(response_data) => {
-                                self.commit_last_applied_log_id(log_id)?;
+                                self.commit_last_applied_log_id(log_id);
                                 results.push(response_data);
                             },
                             crate::state_machine::ApplyResult::NoOp => {
-                                self.commit_last_applied_log_id(log_id)?;
+                                self.commit_last_applied_log_id(log_id);
                                 results.push(Vec::new());
                             },
                             crate::state_machine::ApplyResult::Error(e) => {
                                 let message =
                                     format!("state machine apply error at index {}: {}", index, e);
                                 log::error!("{}", message);
+                                self.persist_applied_prefix(entries, &results)?;
                                 return Err(
                                     StorageIOError::write(&std::io::Error::other(message)).into()
                                 );
@@ -1030,6 +1123,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                             let message =
                                 format!("state machine apply failed at index {}: {:?}", index, e);
                             log::error!("{}", message);
+                            self.persist_applied_prefix(entries, &results)?;
                             return Err(
                                 StorageIOError::write(&std::io::Error::other(message)).into()
                             );
@@ -1049,12 +1143,13 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                         }
                     }
                     self.state_machine.mark_applied_index(index, term);
-                    self.commit_last_applied_log_id(log_id)?;
+                    self.commit_last_applied_log_id(log_id);
                     results.push(Vec::new());
                 },
             }
         }
 
+        self.persist_applied_prefix(entries, &results)?;
         Ok(results)
     }
 
@@ -1259,11 +1354,14 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftLogStorage<KalamTypeConf
         I: IntoIterator<Item = Entry<KalamTypeConfig>> + OptionalSend,
         I::IntoIter: OptionalSend,
     {
-        KalamRaftStorage::append_to_log(self, entries).await?;
-        // OpenRaft 0.9 allows returning from append() after the in-memory save
-        // and completing `callback` later, so replication can overlap disk IO.
-        // We still persist first (inside append_to_log) so a crash cannot lose
-        // entries the engine already treated as locally durable.
+        let staged = self.stage_log_entries(entries)?;
+        if self.flush_log_on_append.load(Ordering::Relaxed) {
+            if let Some(store) = &self.persistent_store {
+                if !staged.is_empty() {
+                    store.append_encoded(staged).map_err(|e| StorageIOError::write_logs(&e))?;
+                }
+            }
+        }
         callback.log_io_completed(Ok(()));
         Ok(())
     }
@@ -1334,14 +1432,20 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_store::{
-        raft_storage::RAFT_PARTITION_NAME, storage_trait::Result as StoreResult,
-        test_utils::InMemoryBackend, Operation, Partition, StorageBackend,
+        raft_storage::{RaftLogEntry, RAFT_PARTITION_NAME},
+        storage_trait::Result as StoreResult,
+        test_utils::InMemoryBackend,
+        Operation, Partition, StorageBackend,
     };
     use openraft::EntryPayload;
 
-    use super::*;
+    use super::{
+        decode_log_payload, encode, encode_log_payload, encode_stored_entry, PAYLOAD_BLANK,
+        PAYLOAD_MEMBERSHIP, PAYLOAD_NORMAL, *,
+    };
     use crate::{
         state_machine::{ApplyResult, KalamStateMachine, MetaStateMachine, StateMachineSnapshot},
+        storage::{KalamNode, KalamTypeConfig},
         RaftError,
     };
 
@@ -1400,6 +1504,47 @@ mod tests {
 
         let state = storage.get_log_state().await.unwrap();
         assert!(state.last_log_id.is_some());
+    }
+
+    #[test]
+    fn packed_log_payload_roundtrips_and_reads_legacy_kobj() {
+        let blank = encode_log_payload(&EntryPayload::Blank).unwrap();
+        assert_eq!(blank.as_slice(), &[PAYLOAD_BLANK]);
+        assert!(matches!(decode_log_payload(&blank).unwrap(), EntryPayload::Blank));
+
+        let cmd = b"hello-cmd".to_vec();
+        let normal = encode_log_payload(&EntryPayload::Normal(cmd.clone())).unwrap();
+        assert_eq!(normal[0], PAYLOAD_NORMAL);
+        assert!(!kalamdb_serialization::has_object_magic(&normal));
+        match decode_log_payload(&normal).unwrap() {
+            EntryPayload::Normal(data) => assert_eq!(data, cmd),
+            other => panic!("expected Normal, got {other:?}"),
+        }
+
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(1u64, KalamNode::new("127.0.0.1:2911", "http://127.0.0.1:2901"));
+        let membership = encode_log_payload(&EntryPayload::Membership(nodes.into())).unwrap();
+        assert_eq!(membership[0], PAYLOAD_MEMBERSHIP);
+        assert!(matches!(decode_log_payload(&membership).unwrap(), EntryPayload::Membership(_)));
+
+        let legacy = encode(&EntryPayload::<KalamTypeConfig>::Normal(cmd.clone())).unwrap();
+        assert!(kalamdb_serialization::has_object_magic(&legacy));
+        match decode_log_payload(&legacy).unwrap() {
+            EntryPayload::Normal(data) => assert_eq!(data, cmd),
+            other => panic!("expected legacy Normal, got {other:?}"),
+        }
+
+        let stored = encode_stored_entry(Entry {
+            log_id:  LogId::new(openraft::CommittedLeaderId::new(3, 0), 7),
+            payload: EntryPayload::Normal(cmd.clone()),
+        })
+        .unwrap();
+        assert_eq!(stored[0], RaftLogEntry::RECORD_VERSION);
+        assert!(!kalamdb_serialization::has_object_magic(&stored));
+        match decode_log_payload(RaftLogEntry::tagged_payload(&stored)).unwrap() {
+            EntryPayload::Normal(data) => assert_eq!(data, cmd),
+            other => panic!("expected stored Normal, got {other:?}"),
+        }
     }
 
     #[derive(Debug)]
@@ -1876,7 +2021,7 @@ mod tests {
                 },
                 Entry {
                     log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 2),
-                    payload: EntryPayload::Blank,
+                    payload: EntryPayload::Normal(b"cmd".to_vec()),
                 },
                 Entry {
                     log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), 3),
@@ -1902,10 +2047,14 @@ mod tests {
             assert!(state.last_log_id.is_some());
             assert_eq!(state.last_log_id.unwrap().index, 3);
 
-            // Read logs back
             let mut reader = storage.get_log_reader().await;
             let logs = reader.try_get_log_entries(1..4).await.unwrap();
             assert_eq!(logs.len(), 3);
+            assert!(matches!(logs[0].payload, EntryPayload::Blank));
+            match &logs[1].payload {
+                EntryPayload::Normal(data) => assert_eq!(data, b"cmd"),
+                other => panic!("expected Normal, got {other:?}"),
+            }
         }
     }
 
@@ -1983,7 +2132,6 @@ mod tests {
     async fn test_persistent_commit_survives_restart() {
         let backend = create_test_backend();
 
-        // First instance: save committed
         {
             let sm = MetaStateMachine::new();
             let storage = KalamRaftStorage::new_persistent(
@@ -1993,13 +2141,16 @@ mod tests {
                 test_snapshots_dir(),
             )
             .unwrap();
-            let mut storage = Arc::new(storage);
+            let storage = Arc::new(storage);
 
-            let committed = Some(LogId::new(openraft::CommittedLeaderId::new(3, 1), 42));
-            storage.save_committed(committed).await.unwrap();
+            let entry = Entry {
+                log_id:  LogId::new(openraft::CommittedLeaderId::new(3, 1), 42),
+                payload: EntryPayload::Blank,
+            };
+            storage.append_to_log(vec![entry.clone()]).await.unwrap();
+            storage.apply_to_state_machine(&[entry]).await.unwrap();
         }
 
-        // Second instance: verify committed is recovered
         {
             let sm = MetaStateMachine::new();
             let storage = KalamRaftStorage::new_persistent(
@@ -2014,6 +2165,96 @@ mod tests {
             let recovered = storage.read_committed().await.unwrap();
             assert!(recovered.is_some());
             assert_eq!(recovered.unwrap().index, 42);
+            assert_eq!(storage.get_last_applied().unwrap().index, 42);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_deferred_append_does_not_persist_until_apply() {
+        let backend = create_test_backend();
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            storage.set_flush_log_on_append(false);
+            let storage = Arc::new(storage);
+
+            let entries: Vec<_> = (1..=3)
+                .map(|i| Entry {
+                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
+                    payload: EntryPayload::Blank,
+                })
+                .collect();
+            storage.append_to_log(entries).await.unwrap();
+        }
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            let mut storage = Arc::new(storage);
+            let state = storage.get_log_state().await.unwrap();
+            assert!(state.last_log_id.is_none());
+            assert!(storage.read_committed().await.unwrap().is_none());
+            assert!(storage.get_last_applied().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_deferred_apply_persists_log_and_last_applied_together() {
+        let backend = create_test_backend();
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            storage.set_flush_log_on_append(false);
+            let storage = Arc::new(storage);
+
+            let entries: Vec<_> = (1..=3)
+                .map(|i| Entry {
+                    log_id:  LogId::new(openraft::CommittedLeaderId::new(1, 1), i),
+                    payload: EntryPayload::Blank,
+                })
+                .collect();
+            storage.append_to_log(entries.clone()).await.unwrap();
+            storage.apply_to_state_machine(&entries).await.unwrap();
+        }
+
+        {
+            let sm = MetaStateMachine::new();
+            let storage = KalamRaftStorage::new_persistent(
+                GroupId::Meta,
+                sm,
+                backend.clone(),
+                test_snapshots_dir(),
+            )
+            .unwrap();
+            let mut storage = Arc::new(storage);
+            let state = storage.get_log_state().await.unwrap();
+            assert_eq!(state.last_log_id.map(|id| id.index), Some(3));
+            assert_eq!(storage.get_last_applied().unwrap().index, 3);
+            assert_eq!(storage.read_committed().await.unwrap().map(|id| id.index), Some(3));
+
+            let mut reader = storage.get_log_reader().await;
+            let logs = reader.try_get_log_entries(1..4).await.unwrap();
+            assert_eq!(logs.len(), 3);
         }
     }
 

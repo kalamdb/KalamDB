@@ -39,6 +39,7 @@ cp server.example.toml server.toml
 ### Run
 
 ```bash
+# API-only (faster compile). Add `--features embedded-ui` to serve the admin UI.
 cargo run
 ```
 

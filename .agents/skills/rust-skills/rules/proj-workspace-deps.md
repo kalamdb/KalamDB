@@ -132,7 +132,7 @@ serde = ["dep:serde"]
 # Root Cargo.toml
 [workspace]
 members = ["crates/*"]
-resolver = "2"
+resolver = "3"  # default for the 2024 edition; use "2" for 2021
 
 [workspace.package]
 version = "0.1.0"

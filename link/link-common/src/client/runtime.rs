@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{KalamLinkClient, KalamLinkClientBuilder, QueryUploadFile};
+use super::{KalamLinkClient, KalamLinkClientBuilder};
 #[cfg(feature = "consumer")]
 use crate::consumer::ConsumerBuilder;
 use crate::{
@@ -77,29 +77,6 @@ impl KalamLinkClient {
                 progress,
             )
             .await
-    }
-
-    /// Execute a SQL query with legacy borrowed upload tuples.
-    pub async fn execute_query_with_tuples(
-        &self,
-        sql: &str,
-        files: Option<Vec<QueryUploadFile<'_>>>,
-        params: Option<Vec<QueryParam>>,
-        namespace_id: Option<&str>,
-    ) -> Result<QueryResponse> {
-        let files = files.map(|items| {
-            items
-                .into_iter()
-                .map(|(placeholder, filename, data, mime)| {
-                    let mut upload = FileUpload::new(placeholder, filename, data);
-                    if let Some(mime) = mime {
-                        upload = upload.with_mime(mime);
-                    }
-                    upload
-                })
-                .collect()
-        });
-        self.execute_query(sql, files, params, namespace_id).await
     }
 
     /// Execute a SQL query with file uploads (FILE datatype support).

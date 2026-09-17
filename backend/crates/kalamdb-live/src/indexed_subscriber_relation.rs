@@ -68,6 +68,9 @@ impl IndexedSubscriberRelation {
         let Some((_, subscriber)) = self.subscribers.remove(live_id) else {
             return;
         };
+        if let Some(flow_control) = subscriber.handle.flow_control.as_ref() {
+            flow_control.release_buffer();
+        }
         match &subscriber.route {
             LiveRoute::Broadcast => {
                 if let Some(bucket) = self.broadcast.get(&subscriber.table_id) {
@@ -150,6 +153,12 @@ impl IndexedSubscriberRelation {
         self.keyed.shrink_to_fit();
     }
 
+    pub fn shrink_if_sparse(&self) {
+        shrink_dashmap_if_sparse(&self.subscribers);
+        shrink_dashmap_if_sparse(&self.broadcast);
+        shrink_dashmap_if_sparse(&self.keyed);
+    }
+
     fn resolve_candidates(&self, candidates: HashSet<LiveQueryId>) -> Vec<SubscriptionHandle> {
         let mut handles = Vec::with_capacity(candidates.len());
         for live_id in candidates {
@@ -177,6 +186,16 @@ impl IndexedSubscriberRelation {
             .and_then(|columns| columns.get(column).map(|entry| Arc::clone(entry.value())))
             .and_then(|values| values.get(value).map(|bucket| bucket.len()))
             .unwrap_or(0)
+    }
+}
+
+fn shrink_dashmap_if_sparse<K, V>(map: &DashMap<K, V>)
+where
+    K: Eq + std::hash::Hash,
+{
+    let len = map.len();
+    if map.capacity() > len.saturating_mul(4).max(64) {
+        map.shrink_to_fit();
     }
 }
 

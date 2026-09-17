@@ -7,7 +7,7 @@ use crate::{
     common::*,
     test_project_workflow_dev::{
         create_isolated_cli_std_command, start_recording_sql_server, store_test_dev_credentials,
-        update_dev_project,
+        update_dev_project, write_owned_instance,
     },
 };
 
@@ -53,6 +53,7 @@ fn scaffold_lifecycle_project(
         config.dev.generate_types = false;
         config.connection.get_mut("dev").expect("dev env").url = server_url.to_string();
     });
+    write_owned_instance(&project_dir, server_url);
     project_dir
 }
 

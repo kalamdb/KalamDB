@@ -47,7 +47,7 @@ my-app/
 ```toml
 # Root Cargo.toml
 [workspace]
-resolver = "2"  # Use the new resolver
+resolver = "3"  # default for the 2024 edition; use "2" for 2021
 members = [
     "crates/core",
     "crates/cli",

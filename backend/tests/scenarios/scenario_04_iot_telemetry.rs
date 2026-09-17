@@ -58,6 +58,16 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     assert_success(&resp, "CREATE telemetry table");
     grant_shared_telemetry_policies(server, &format!("{}.telemetry", ns)).await?;
 
+    create_enum_type(server, &format!("{ns}.severity"), &["info", "warn", "critical"]).await?;
+    let resp = server
+        .execute_sql(&format!(
+            "CREATE OR REPLACE PROCEDURE {ns}.classify_reading(temp DOUBLE NOT NULL) RETURNS \
+             {ns}.severity LANGUAGE JAVASCRIPT AS $$\nvar t = Number(input.temp);\nreturn t >= 40 \
+             ? 'critical' : (t >= 30 ? 'warn' : 'info');\n$$"
+        ))
+        .await?;
+    assert_success(&resp, "CREATE PROCEDURE classify_reading");
+
     // =========================================================
     // Step 2: Insert 5000 rows (batch insert for performance)
     // =========================================================
@@ -119,6 +129,13 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
         ROW_COUNT,
         total_count
     );
+
+    for temp in [22.0, 33.0, 41.0] {
+        let resp = client
+            .execute_query(&format!("CALL {ns}.classify_reading({temp})"), None, None, None)
+            .await?;
+        assert!(resp.success(), "classify_reading({temp}) failed: {:?}", resp.error);
+    }
 
     // Operators can read fleet telemetry; devices ingest as Service; User cannot write.
     let operator = format!("{}_operator", ns);

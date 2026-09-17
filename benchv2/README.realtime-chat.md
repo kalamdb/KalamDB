@@ -46,6 +46,14 @@ STREAM  typing_events        short-lived AI typing (TTL 30s)
 TOPIC   chat_ai_inbox        every INSERT into messages_ai
 ```
 
+Scalar indexes (so shared-room history, reconnect snapshots, and RLS bind do not full-scan):
+
+```text
+messages_ai              (conversation_id, created_at_ms)
+messages                 (conversation_id, created_at_ms)
+conversation_members     (user_id)
+```
+
 Shared-table policies (the interesting part for human rooms):
 
 - Anyone signed in can create a room.
@@ -172,7 +180,7 @@ The printed summary is the useful result:
 - **Timing percentiles** — subscribe open, create conversation, insert/update/delete message, insert typing, historic select, reconnect
 - **Managed server RSS** — only when the runner started the server (`KALAMDB_BENCH_MANAGED_SERVER=1`)
 
-A healthy AI path has a small reply gap. A healthy shared path delivers peer messages without a topic mirror. Historic and reconnect counters should be non-zero on a multi-minute run.
+A healthy AI path has a small reply gap. A healthy shared path delivers peer messages without a topic mirror. Historic `SELECT` and reconnect snapshot latency should stay closer to insert latency once the conversation_id indexes are in use. Historic and reconnect counters should be non-zero on a multi-minute run.
 
 ## Code map
 

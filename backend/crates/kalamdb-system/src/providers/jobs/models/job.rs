@@ -342,14 +342,6 @@ impl Job {
             .as_ref()
             .and_then(|p| p.get("table_name")?.as_str().map(TableName::new))
     }
-
-    /// get the parameters as T if possible
-    pub fn get_parameters_as<T: for<'de> Deserialize<'de>>(&self) -> Option<T> {
-        match &self.parameters {
-            Some(params) => serde_json::from_value(params.clone()).ok(),
-            None => None,
-        }
-    }
 }
 
 /// Options for job creation

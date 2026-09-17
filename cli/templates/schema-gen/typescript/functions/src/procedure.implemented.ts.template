@@ -1,0 +1,7 @@
+import { procedure } from "../generated/contracts";
+
+export const {{method}} = procedure.{{ns}}.{{method}}({{#if has_body}}async (ctx, input) => {
+{{{body}}}
+}{{else}}async (ctx, input) => {
+  return input;
+}{{/if}});

@@ -1,5 +1,5 @@
 use kalamdb_commons::system_tables::{classify_column_family_name, ColumnFamilyProfile};
-use kalamdb_configs::{RocksDbCfProfileSettings, RocksDbMemoryMode, RocksDbSettings};
+use kalamdb_configs::{RocksDbCfProfileSettings, RocksDbSettings};
 use rocksdb::{CompactionPri, DBCompressionType, Options, SliceTransform};
 
 use super::keyspace::{physical_key_prefix_in_domain, physical_key_prefix_transform};
@@ -15,16 +15,10 @@ pub(crate) fn apply_db_settings(db_opts: &mut Options, settings: &RocksDbSetting
     db_opts.set_max_background_jobs(settings.max_background_jobs);
     db_opts.increase_parallelism(settings.max_background_jobs);
     db_opts.set_max_open_files(settings.max_open_files);
-    match settings.memory_mode {
-        RocksDbMemoryMode::Compact => {
-            db_opts.set_max_subcompactions(1);
-            db_opts.set_max_file_opening_threads(2);
-        },
-        RocksDbMemoryMode::Auto => {
-            db_opts.set_max_subcompactions(2);
-            db_opts.set_max_file_opening_threads(8);
-        },
-    }
+    let (max_subcompactions, max_file_opening_threads) =
+        settings.memory_mode.rocksdb_io_parallelism();
+    db_opts.set_max_subcompactions(max_subcompactions);
+    db_opts.set_max_file_opening_threads(max_file_opening_threads);
     db_opts.set_enable_pipelined_write(true);
     db_opts.set_avoid_unnecessary_blocking_io(true);
     db_opts.set_bytes_per_sync(BYTES_PER_SYNC);
@@ -36,7 +30,7 @@ pub(crate) fn apply_cf_settings(cf_opts: &mut Options, settings: &RocksDbSetting
     let profile_settings = profile_settings(settings, profile);
     cf_opts.set_write_buffer_size(profile_settings.write_buffer_size);
     cf_opts.set_max_write_buffer_number(profile_settings.max_write_buffers);
-    cf_opts.set_compression_type(DBCompressionType::Lz4);
+    cf_opts.set_compression_type(DBCompressionType::Zstd);
     cf_opts.set_bottommost_compression_type(DBCompressionType::Zstd);
     cf_opts.set_level_compaction_dynamic_level_bytes(true);
     cf_opts.set_compaction_pri(CompactionPri::MinOverlappingRatio);

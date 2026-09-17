@@ -38,6 +38,11 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
         let topic = topics_provider.get_topic_by_id_async(&topic_id).await?;
 
         if topic.is_none() {
+            if statement.if_exists {
+                return Ok(ExecutionResult::Success {
+                    message: format!("Topic '{}' does not exist, skipping", resolved_topic_name),
+                });
+            }
             return Err(KalamDbError::NotFound(format!(
                 "Topic '{}' does not exist",
                 resolved_topic_name
@@ -46,10 +51,28 @@ impl TypedStatementHandler<DropTopicStatement> for DropTopicHandler {
 
         let topic_name = topic.expect("checked is_some").name;
 
+        self.app_context
+            .system_tables()
+            .catalog_stores()
+            .drop_implicit_topic_payload_type(&topic_id)
+            .map_err(super::catalog_error)?;
+
         let (offsets_deleted, messages_deleted) = clear_topic_data(&self.app_context, &topic_id)
             .map_err(|e| {
                 KalamDbError::ExecutionError(format!(
                     "Failed to clean up dropped topic '{}' ({}): {}",
+                    topic_name,
+                    topic_id.as_str(),
+                    e
+                ))
+            })?;
+        self.app_context
+            .system_tables()
+            .catalog_stores()
+            .drop_trigger_attempts_for_topic(&topic_id)
+            .map_err(|e| {
+                KalamDbError::ExecutionError(format!(
+                    "Failed to clear trigger attempts for dropped topic '{}' ({}): {}",
                     topic_name,
                     topic_id.as_str(),
                     e

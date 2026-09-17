@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{CLIError, Result},
     workflow::project::{
-        connection_url,
-        identifiers::serde_namespace,
-        templates::{find_template_file, resolve_scaffold_template},
+        connection_url, identifiers::serde_namespace, templates::find_scaffold_template_file,
     },
 };
 
@@ -49,6 +47,8 @@ pub struct KalamProjectConfig {
     pub dev:        DevSection,
     #[serde(default)]
     pub logging:    LoggingSection,
+    #[serde(default)]
+    pub functions:  FunctionsSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,6 +64,39 @@ pub struct ProjectSection {
         skip_serializing_if = "is_default_kalam_dir"
     )]
     pub kalam_dir:       String,
+    /// Compatible `kalamdb-server` version for this project. Defaults to the CLI version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version:  Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvironmentPurpose {
+    Development,
+    Staging,
+    Production,
+}
+
+impl EnvironmentPurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::Staging => "staging",
+            Self::Production => "production",
+        }
+    }
+
+    pub fn from_env_name(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "prod" | "production" => Self::Production,
+            "staging" => Self::Staging,
+            _ => Self::Development,
+        }
+    }
+
+    pub fn allows_dev_seed(self) -> bool {
+        matches!(self, Self::Development)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,6 +104,8 @@ pub struct ConnectionEnv {
     pub url:       String,
     #[serde(with = "serde_namespace")]
     pub namespace: NamespaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose:   Option<EnvironmentPurpose>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,7 +130,11 @@ pub enum SchemaMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaTarget {
-    pub output: String,
+    pub output:            String,
+    /// Drop schema prefixes from generated type names (`User` instead of `ChatUser`).
+    /// Call paths stay nested. Generate fails if short names collide.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unqualified_names: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,6 +169,16 @@ pub struct LoggingSection {
     pub capture_process_output: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FunctionsSection {
+    #[serde(default = "default_functions_path")]
+    pub path:    String,
+    #[serde(default = "default_functions_runtime")]
+    pub runtime: String,
+    #[serde(default = "default_functions_module")]
+    pub module:  String,
+}
+
 fn default_env_name() -> String {
     "dev".to_string()
 }
@@ -156,6 +205,18 @@ fn default_migrations_dir() -> String {
 
 fn default_log_path() -> String {
     "kalam/cli/logs/kalam.log".to_string()
+}
+
+fn default_functions_path() -> String {
+    "functions".to_string()
+}
+
+fn default_functions_runtime() -> String {
+    "typescript".to_string()
+}
+
+fn default_functions_module() -> String {
+    "backend".to_string()
 }
 
 impl KalamProjectConfig {
@@ -246,7 +307,13 @@ impl KalamProjectConfig {
                     ));
                 }
             },
-            SchemaMode::Remote => {},
+            SchemaMode::Remote => {
+                return Err(CLIError::ConfigurationError(
+                    "schema.mode = \"remote\" is not supported; set schema.mode = \"sql\" and \
+                     keep schema.sql as the source of truth"
+                        .into(),
+                ));
+            },
         }
 
         let mut outputs = std::collections::HashSet::new();
@@ -309,15 +376,10 @@ impl KalamProjectConfig {
 
         let gitignore_path = kalam_dir.join(".gitignore");
         if !gitignore_path.exists() {
-            let template = resolve_scaffold_template().map_err(|error| {
+            let contents = find_scaffold_template_file("kalam/.gitignore").map_err(|error| {
                 CLIError::ConfigurationError(format!(
                     "failed to load scaffold template for kalam/.gitignore: {error}"
                 ))
-            })?;
-            let contents = find_template_file(template, "kalam/.gitignore").ok_or_else(|| {
-                CLIError::ConfigurationError(
-                    "missing scaffold template file 'kalam/.gitignore'".into(),
-                )
             })?;
             fs::write(&gitignore_path, contents).map_err(|error| {
                 CLIError::FileError(format!(
@@ -352,6 +414,20 @@ impl KalamProjectConfig {
     /// Baseline schema snapshot used as the "before" side of migration diffs.
     pub fn schema_baseline_path(&self, project_root: &Path) -> PathBuf {
         self.kalam_dir(project_root).join(".schema-baseline.sql")
+    }
+
+    pub fn seed_path(&self, project_root: &Path) -> PathBuf {
+        self.kalam_dir(project_root).join("seed.sql")
+    }
+
+    pub fn resolved_server_version(&self) -> String {
+        self.project
+            .server_version
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(crate::CLI_VERSION)
+            .to_string()
     }
 }
 
@@ -438,6 +514,32 @@ output = "src/generated/kalam.ts"
 "#;
         let config = KalamProjectConfig::parse(toml).expect("parse");
         assert_eq!(config.project.package_manager.as_deref(), Some("pnpm"));
+        assert_eq!(config.functions.module, "backend");
+    }
+
+    #[test]
+    fn parse_functions_section_defaults_and_overrides() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[schema]
+mode = "sql"
+path = "schema.sql"
+languages = ["typescript"]
+
+[schema.targets.typescript]
+output = "src/generated/kalam.ts"
+
+[functions]
+path = "procs"
+runtime = "javascript"
+module = "api"
+"#;
+        let config = KalamProjectConfig::parse(toml).expect("parse");
+        assert_eq!(config.functions.path, "procs");
+        assert_eq!(config.functions.runtime, "javascript");
+        assert_eq!(config.functions.module, "api");
     }
 
     #[test]
@@ -538,6 +640,19 @@ output = "src/generated/kalam.ts"
     }
 
     #[test]
+    fn parse_rejects_remote_schema_mode() {
+        let toml = r#"
+[project]
+name = "demo"
+
+[schema]
+mode = "remote"
+"#;
+        let error = KalamProjectConfig::parse(toml).expect_err("remote schema mode");
+        assert!(error.to_string().contains("schema.mode = \"remote\" is not supported"));
+    }
+
+    #[test]
     fn project_paths_use_configured_kalam_dir() {
         let toml = r#"
 [project]
@@ -634,12 +749,14 @@ output = "src/generated/kalam.ts"
                 default_env:     "dev".into(),
                 package_manager: None,
                 kalam_dir:       "kalam".into(),
+                server_version:  None,
             },
             connection: HashMap::from([(
                 "dev".into(),
                 ConnectionEnv {
                     url:       "http://localhost:2900".into(),
                     namespace: NamespaceId::new("app"),
+                    purpose:   None,
                 },
             )]),
             schema:     SchemaSection {
@@ -650,13 +767,15 @@ output = "src/generated/kalam.ts"
                 targets:   HashMap::from([(
                     "typescript".into(),
                     SchemaTarget {
-                        output: "src/generated/kalam.ts".into(),
+                        output:            "src/generated/kalam.ts".into(),
+                        unqualified_names: false,
                     },
                 )]),
             },
             migrations: MigrationsSection::default(),
             dev:        DevSection::default(),
             logging:    LoggingSection::default(),
+            functions:  FunctionsSection::default(),
         }
         .save_to_path(&root.join(KALAM_TOML))
         .unwrap();
@@ -694,6 +813,16 @@ impl Default for LoggingSection {
             file:                   true,
             path:                   default_log_path(),
             capture_process_output: true,
+        }
+    }
+}
+
+impl Default for FunctionsSection {
+    fn default() -> Self {
+        Self {
+            path:    default_functions_path(),
+            runtime: default_functions_runtime(),
+            module:  default_functions_module(),
         }
     }
 }

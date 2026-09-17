@@ -1,0 +1,8 @@
+# Local runtime artifacts
+target/
+setups/kalamdb/data/
+setups/kalamdb/logs/
+setups/postgres/data/
+setups/postgres/logs/
+*.log
+results/*.txt

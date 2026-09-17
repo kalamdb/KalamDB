@@ -15,6 +15,7 @@ kalamdb-pg = { path = "../kalamdb-pg" }
 kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-system = { path = "../kalamdb-system" }
 kalamdb-store = { path = "../kalamdb-store" }
+kalamdb-serialization = { workspace = true }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 kalamdb-transactions = { path = "../kalamdb-transactions" }
 
@@ -22,14 +23,12 @@ kalamdb-transactions = { path = "../kalamdb-transactions" }
 openraft = { workspace = true }
 
 # gRPC network layer
-tonic = { workspace = true, features = ["tls-webpki-roots", "tls-ring"] }
+tonic = { workspace = true, features = ["tls-native-roots", "tls-aws-lc"] }
 tonic-prost = { workspace = true }
 prost = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-flexbuffers = { workspace = true }
-rmp-serde = { workspace = true }
 
 # Async
 tokio = { workspace = true }

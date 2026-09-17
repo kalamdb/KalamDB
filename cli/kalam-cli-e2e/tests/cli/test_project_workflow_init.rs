@@ -56,15 +56,16 @@ fn test_project_workflow_init_lists_templates_json() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let payload: serde_json::Value = serde_json::from_str(&stdout).expect("parse list-templates json");
+    let payload: serde_json::Value =
+        serde_json::from_str(&stdout).expect("parse list-templates json");
     assert_eq!(payload["ok"], true);
     assert_eq!(payload["default_template"], "simple-live");
-    assert!(payload["next"].as_str().unwrap_or_default().contains("kalam init --yes --template"));
+    assert!(payload["next"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("kalam init --yes --template"));
     let templates = payload["templates"].as_array().expect("templates array");
-    let ids: Vec<&str> = templates
-        .iter()
-        .filter_map(|template| template["id"].as_str())
-        .collect();
+    let ids: Vec<&str> = templates.iter().filter_map(|template| template["id"].as_str()).collect();
     assert!(ids.contains(&"simple-live"));
     assert!(ids.contains(&"chat-with-ai"));
     assert!(ids.contains(&"react-ai-chat"));
@@ -105,6 +106,10 @@ fn test_project_workflow_init_scaffolds_project() {
     assert!(project_dir.join("kalam/server/server.toml").is_file(), "server config missing");
     assert!(project_dir.join("kalam/cli/logs").is_dir(), "CLI logs dir missing");
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
+    assert!(
+        project_dir.join("scripts/orm-codegen.mjs").is_file(),
+        "typescript ORM codegen script missing"
+    );
     assert!(project_dir.join("lib/generated").is_dir(), "dart output dir missing");
     assert!(project_dir.join("pubspec.yaml").is_file(), "dart pubspec missing");
     assert!(project_dir.join("lib/main.dart").is_file(), "flutter main missing");
@@ -171,6 +176,10 @@ fn test_project_workflow_init_defaults_to_typescript_and_scaffolds_starter() {
     assert!(!kalam_toml.contains("[schema.targets.dart]"));
     assert!(!kalam_toml.contains("&quot;"));
     assert!(project_dir.join("src/generated").is_dir(), "typescript output dir missing");
+    assert!(
+        project_dir.join("scripts/orm-codegen.mjs").is_file(),
+        "typescript ORM codegen script missing"
+    );
     assert!(
         !project_dir.join("lib/generated").exists(),
         "dart output dir should not be scaffolded by default"

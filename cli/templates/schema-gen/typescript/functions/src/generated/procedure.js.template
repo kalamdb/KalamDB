@@ -1,0 +1,24 @@
+{{header}}
+import { wrapProcedure } from "./runtime.js";
+
+function procedureBuilder() {
+  const builder = (handler) => wrapProcedure(handler);
+  builder.unimplemented = () => wrapProcedure(() => {
+    throw new Error("not implemented");
+  });
+  return builder;
+}
+
+{{#if has_namespaces}}
+export const procedure = {
+{{#each namespaces}}
+  {{object_ident}}: {
+{{#each procedures}}
+    {{method_ident}}: procedureBuilder(),
+{{/each}}
+  },
+{{/each}}
+};
+{{else}}
+export const procedure = {};
+{{/if}}

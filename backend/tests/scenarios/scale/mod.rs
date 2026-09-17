@@ -4,7 +4,7 @@
 //! baselines, and longer-running soak-style workloads.
 
 pub(super) mod helpers {
-    pub use crate::helpers::*;
+    pub use super::super::helpers::*;
 }
 
 #[path = "../scenario_04_iot_telemetry.rs"]

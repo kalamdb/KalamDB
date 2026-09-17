@@ -152,3 +152,5 @@ struct Task {
 - [api-typestate](./api-typestate.md) - Type-level state machines
 - [api-non-exhaustive](./api-non-exhaustive.md) - Forward-compatible enums
 - [type-option-nullable](./type-option-nullable.md) - Option for optional values
+- [pat-exhaustive-enum](./pat-exhaustive-enum.md) - Match owned enums exhaustively
+- [serde-enum-representation](./serde-enum-representation.md) - Choose enum wire tagging

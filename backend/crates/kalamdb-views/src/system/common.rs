@@ -4,7 +4,8 @@ use std::sync::{Arc, OnceLock};
 
 use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
-    schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
+    datatypes::KalamDataType,
+    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
     NamespaceId, TableName,
 };
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
@@ -69,4 +70,40 @@ where
     V: VirtualView + 'static,
 {
     SystemViewProvider::new(Arc::new(constructor(system_registry)))
+}
+
+pub fn text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
+    column(ordinal, name, KalamDataType::Text, false, comment)
+}
+
+pub fn nullable_text_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
+    column(ordinal, name, KalamDataType::Text, true, comment)
+}
+
+pub fn int_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
+    column(ordinal, name, KalamDataType::BigInt, false, comment)
+}
+
+pub fn bool_col(ordinal: u32, name: &str, comment: &str) -> ColumnDefinition {
+    column(ordinal, name, KalamDataType::Boolean, false, comment)
+}
+
+fn column(
+    ordinal: u32,
+    name: &str,
+    data_type: KalamDataType,
+    nullable: bool,
+    comment: &str,
+) -> ColumnDefinition {
+    ColumnDefinition::new(
+        u64::from(ordinal),
+        name,
+        ordinal,
+        data_type,
+        nullable,
+        false,
+        false,
+        ColumnDefault::None,
+        Some(comment.to_string()),
+    )
 }

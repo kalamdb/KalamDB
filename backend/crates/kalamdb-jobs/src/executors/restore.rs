@@ -86,7 +86,7 @@ impl JobExecutor for RestoreExecutor {
         let params = ctx.params();
         let backup_source = std::path::PathBuf::from(&params.backup_path);
 
-        let _transfer_guard = acquire_database_transfer_lock().await;
+        let _transfer_guard = acquire_database_transfer_lock().await?;
         wait_for_storage_quiescence(ctx).await?;
 
         let config = ctx.app_ctx.config();

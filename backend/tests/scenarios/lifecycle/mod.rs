@@ -4,7 +4,7 @@
 //! storage routing, and advanced document workflows.
 
 pub(super) mod helpers {
-    pub use crate::helpers::*;
+    pub use super::super::helpers::*;
 }
 
 #[path = "../scenario_05_dashboards.rs"]

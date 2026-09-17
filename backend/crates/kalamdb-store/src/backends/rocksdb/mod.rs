@@ -2,6 +2,7 @@
 
 mod backend;
 mod cf_tuning;
+mod group_commit;
 mod init;
 mod keyspace;
 mod restore;

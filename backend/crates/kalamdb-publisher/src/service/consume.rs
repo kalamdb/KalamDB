@@ -1,6 +1,13 @@
 use super::*;
 
 impl TopicPublisherService {
+    fn group_partition_fetch_lock(&self, cursor_key: &GroupPartitionKey) -> Arc<Mutex<()>> {
+        self.group_fetch_locks
+            .entry(cursor_key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     pub fn fetch_messages(
         &self,
         topic_id: &TopicId,
@@ -48,70 +55,155 @@ impl TopicPublisherService {
             return Ok(Vec::new());
         }
 
-        self.register_consumer_group(topic_id, group_id);
-
         let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+        let fetch_lock = self.group_partition_fetch_lock(&cursor_key);
+        let _fetch_guard = fetch_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         loop {
-            let (effective_start, effective_limit) = {
+            let earliest = self.earliest_available_offset(topic_id, partition_id)?;
+            let (fetch_start, fetch_limit, reservation_id) = {
+                let initial_start =
+                    self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
                 let mut state = self
                     .group_claim_state
                     .entry(cursor_key.clone())
-                    .or_insert_with(|| ClaimState::new(start_offset));
+                    .or_insert_with(|| ClaimState::new(initial_start));
 
                 state.expire_stale_claims(Instant::now(), self.visibility_timeout);
-                state.next_available_window(limit)
+                if let Some(last_acked) =
+                    self.durable_last_acked(topic_id, group_id, partition_id)?
+                {
+                    state.ack_up_to(last_acked);
+                }
+
+                let (current_start, window_limit) = state.next_available_window(limit);
+                if window_limit == 0 {
+                    return Ok(Vec::new());
+                }
+
+                if current_start < earliest {
+                    state.cursor = earliest;
+                    continue;
+                }
+
+                let high_watermark = self.log_high_watermark(topic_id, partition_id, earliest)?;
+                let fetchable = high_watermark.saturating_sub(current_start);
+                let available_limit =
+                    window_limit.min(usize::try_from(fetchable).unwrap_or(usize::MAX));
+                if available_limit == 0 {
+                    // At the true log tail. Pin FROM LATEST so the next poll
+                    // does not replay backlog. Do not reserve phantom ranges
+                    // past the high watermark — concurrent empty polls would
+                    // otherwise stack windows at 100, 200, … and skip later
+                    // messages written at offset 0.
+                    if current_start > earliest {
+                        state.cursor = current_start;
+                        self.register_consumer_group(topic_id, group_id);
+                    } else if state.pending.is_empty() {
+                        drop(state);
+                        self.group_claim_state.remove(&cursor_key);
+                        self.unregister_consumer_group_if_idle(topic_id, group_id);
+                        self.trim_consumer_runtime_maps();
+                    }
+                    return Ok(Vec::new());
+                }
+
+                let claimed_at = Instant::now();
+                let reservation_id =
+                    state.reserve_window(current_start, available_limit, claimed_at);
+                self.register_consumer_group(topic_id, group_id);
+                (current_start, available_limit, reservation_id)
             };
-
-            if effective_limit == 0 {
-                return Ok(Vec::new());
-            }
-
-            let earliest = self.earliest_available_offset(topic_id, partition_id)?;
-            if effective_start < earliest {
-                let latest =
-                    self.latest_offset(topic_id, partition_id)?.map(|last| last + 1).unwrap_or(0);
-                return Err(CommonError::InvalidInput(format!(
-                    "OffsetOutOfRange: requested offset {} is before earliest available offset {} \
-                     for topic {} partition {} (latest next offset {})",
-                    effective_start,
-                    earliest,
-                    topic_id.as_str(),
-                    partition_id,
-                    latest
-                )));
-            }
 
             let messages = self
                 .message_store
-                .fetch_messages(topic_id, partition_id, effective_start, effective_limit)
+                .fetch_messages(topic_id, partition_id, fetch_start, fetch_limit)
                 .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
 
-            let Some(last_message) = messages.last() else {
+            if messages.is_empty() {
+                let high_watermark = self.log_high_watermark(topic_id, partition_id, earliest)?;
+                let pin_tail = fetch_start >= high_watermark && fetch_start > earliest;
+                if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+                    state.cancel_reservation(reservation_id);
+                    if pin_tail {
+                        state.cursor = fetch_start;
+                    } else if state.pending.is_empty() {
+                        drop(state);
+                        self.group_claim_state.remove(&cursor_key);
+                        self.unregister_consumer_group_if_idle(topic_id, group_id);
+                        self.trim_consumer_runtime_maps();
+                    }
+                }
                 return Ok(messages);
+            }
+
+            let last_acked = self.durable_last_acked(topic_id, group_id, partition_id)?;
+            let reserved_end = fetch_start.saturating_add(fetch_limit as u64);
+            let messages: Vec<_> = {
+                let state = self.group_claim_state.get(&cursor_key);
+                let deliver_from =
+                    state.as_ref().map(|state| state.deliver_from(last_acked)).unwrap_or_else(
+                        || last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0),
+                    );
+                let window_start = fetch_start.max(deliver_from);
+                messages
+                    .into_iter()
+                    .filter(|message| {
+                        message.offset >= window_start && message.offset < reserved_end
+                    })
+                    .collect()
             };
-
-            let claim_start =
-                messages.first().map(|message| message.offset).unwrap_or(effective_start);
-            let end_exclusive = last_message.offset + 1;
-            let claimed_at = Instant::now();
-            let mut state = self
-                .group_claim_state
-                .entry(cursor_key.clone())
-                .or_insert_with(|| ClaimState::new(start_offset));
-
-            state.expire_stale_claims(claimed_at, self.visibility_timeout);
-            let (current_start, _) = state.next_available_window(limit);
-            if current_start != effective_start {
+            if messages.is_empty() {
+                if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
+                    state.cancel_reservation(reservation_id);
+                }
                 continue;
             }
 
-            state.cursor = end_exclusive;
-            state.pending.push(PendingClaim {
-                start: claim_start,
-                end_exclusive,
-                claimed_at,
-            });
+            let claimed_at = Instant::now();
+
+            let initial_start =
+                self.group_fetch_start(topic_id, group_id, partition_id, start_offset)?;
+            let durable_deliver_from =
+                last_acked.map(|offset| offset.saturating_add(1)).unwrap_or(0);
+            let mut state = self
+                .group_claim_state
+                .entry(cursor_key.clone())
+                .or_insert_with(|| ClaimState::new(initial_start.max(durable_deliver_from)));
+
+            state.expire_stale_claims(claimed_at, self.visibility_timeout);
+            let deliver_from = state.deliver_from(last_acked);
+            let messages: Vec<_> = messages
+                .into_iter()
+                .filter(|message| {
+                    message.offset >= deliver_from
+                        && !state.pending.iter().any(|claim| {
+                            claim.reservation_id != reservation_id
+                                && claim.start <= message.offset
+                                && message.offset < claim.end_exclusive
+                        })
+                })
+                .collect();
+            if messages.is_empty() {
+                state.cancel_reservation(reservation_id);
+                continue;
+            }
+
+            let claim_start =
+                messages.iter().map(|message| message.offset).min().unwrap_or(fetch_start);
+            let end_exclusive = messages
+                .iter()
+                .map(|message| message.offset.saturating_add(1))
+                .max()
+                .unwrap_or(fetch_start);
+
+            if state.has_reservation(reservation_id) {
+                state.finalize_reservation(reservation_id, claim_start, end_exclusive);
+            } else if state.overlaps_pending(claim_start, end_exclusive) {
+                continue;
+            } else {
+                state.register_delivered_claim(claim_start, end_exclusive, claimed_at);
+            }
 
             let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
             record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);
@@ -141,7 +233,37 @@ impl TopicPublisherService {
             return Ok(offset);
         }
 
-        Ok(self.offset_allocator.peek_next_offset(topic_id, partition_id).unwrap_or(0))
+        Ok(self.log_start_offset(topic_id, partition_id))
+    }
+
+    fn log_high_watermark(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        earliest: u64,
+    ) -> Result<u64> {
+        Ok(self
+            .latest_offset(topic_id, partition_id)?
+            .map(|last| last.saturating_add(1))
+            .unwrap_or(earliest))
+    }
+
+    pub(crate) fn log_start_offset(&self, topic_id: &TopicId, partition_id: u32) -> u64 {
+        self.log_start_offsets
+            .get(&TopicPartitionKey::new(topic_id, partition_id))
+            .map(|offset| *offset)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn set_log_start_offset(&self, topic_id: &TopicId, partition_id: u32, offset: u64) {
+        self.log_start_offsets
+            .entry(TopicPartitionKey::new(topic_id, partition_id))
+            .and_modify(|current| {
+                if offset > *current {
+                    *current = offset;
+                }
+            })
+            .or_insert(offset);
     }
 
     pub fn ack_offset(
@@ -151,20 +273,66 @@ impl TopicPublisherService {
         partition_id: u32,
         offset: u64,
     ) -> Result<()> {
-        self.register_consumer_group(topic_id, group_id);
+        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
+        let fetch_lock = self.group_partition_fetch_lock(&cursor_key);
+        let _fetch_guard = fetch_lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
         self.offset_store
             .ack_offset(topic_id, group_id, partition_id, offset)
             .map_err(|e| CommonError::Internal(format!("Failed to ack offset: {}", e)))?;
 
-        let cursor_key = GroupPartitionKey::new(topic_id, group_id, partition_id);
         if let Some(mut state) = self.group_claim_state.get_mut(&cursor_key) {
             state.ack_up_to(offset);
         } else {
-            self.group_claim_state.insert(cursor_key, ClaimState::new(offset + 1));
+            let mut state = ClaimState::new(offset.saturating_add(1));
+            state.ack_up_to(offset);
+            self.group_claim_state.insert(cursor_key, state);
+            self.register_consumer_group(topic_id, group_id);
         }
 
         Ok(())
+    }
+
+    fn durable_last_acked(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+    ) -> Result<Option<u64>> {
+        match self.offset_store.get_offset(topic_id, group_id, partition_id) {
+            Ok(Some(offset)) => Ok(Some(offset.last_acked_offset)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(CommonError::Internal(format!("Failed to read group offset: {}", e))),
+        }
+    }
+
+    fn group_fetch_start(
+        &self,
+        topic_id: &TopicId,
+        group_id: &ConsumerGroupId,
+        partition_id: u32,
+        start_offset: u64,
+    ) -> Result<u64> {
+        match self.durable_last_acked(topic_id, group_id, partition_id)? {
+            Some(last_acked) => Ok(last_acked.saturating_add(1)),
+            None => Ok(start_offset),
+        }
+    }
+
+    fn unregister_consumer_group_if_idle(&self, topic_id: &TopicId, group_id: &ConsumerGroupId) {
+        let still_claimed = self
+            .group_claim_state
+            .iter()
+            .any(|entry| entry.key().topic_id == *topic_id && entry.key().group_id == *group_id);
+        if !still_claimed {
+            self.consumer_groups.remove(&ConsumerGroupKey::new(topic_id, group_id));
+        }
+    }
+
+    fn trim_consumer_runtime_maps(&self) {
+        shrink_dashmap_if_sparse(&self.group_claim_state);
+        shrink_dashmap_if_sparse(&self.group_fetch_locks);
+        shrink_dashmap_if_sparse(&self.consumer_groups);
     }
 
     pub fn reset_group_offset(

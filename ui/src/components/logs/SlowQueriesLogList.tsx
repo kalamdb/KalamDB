@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGetSlowQueriesQuery } from '@/store/apiSlice';
 import { formatTimestamp } from '@/lib/formatters';
@@ -11,10 +11,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw } from 'lucide-react';
 import { PAGE_SIZE_OPTIONS } from '@/lib/config';
+import { compileSlowQueriesSql } from '@/services/systemTableService';
 
 function formatDuration(durationMs: unknown): string {
   const value = typeof durationMs === 'number' ? durationMs : Number(durationMs ?? 0);
@@ -43,19 +45,10 @@ export function SlowQueriesLogList() {
       ? 'Failed to fetch slow queries'
       : null;
 
-  const pageSql = useMemo(() => {
-    return [
-      'SELECT timestamp, timestamp_ms, duration_ms, user_id, table_type, table_name, row_count, query',
-      'FROM system.slow_queries',
-      'ORDER BY timestamp_ms DESC',
-      `LIMIT ${limit};`,
-    ].join('\n');
-  }, [limit]);
-
   const openSqlStudio = () => {
     navigate('/sql', {
       state: {
-        prefillSql: pageSql,
+        prefillSql: compileSlowQueriesSql(limit),
         prefillTitle: 'Slow Queries',
       },
     });
@@ -100,7 +93,7 @@ export function SlowQueriesLogList() {
           </div>
         ) : isLoading && queries.length === 0 ? (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : queries.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

@@ -165,6 +165,12 @@ Future<DartLoginResponse> dartRefreshToken(
     RustLib.instance.api
         .crateApiDartRefreshToken(client: client, refreshToken: refreshToken);
 
+/// Exchange an OIDC ID token for KalamDB access and refresh tokens.
+Future<DartLoginResponse> dartExchangeOidcToken(
+        {required DartKalamClient client, required String token}) =>
+    RustLib.instance.api
+        .crateApiDartExchangeOidcToken(client: client, token: token);
+
 /// Pull the next connection lifecycle event.
 ///
 /// Returns `None` when event collection is disabled or the client is dropped.

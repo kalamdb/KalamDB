@@ -1728,7 +1728,9 @@ pub fn print_chat_summary(
     println!(
         "  Backend note: conversations_ai/messages_ai are USER tables with a topic AI agent; \
          conversations/conversation_members/messages are SHARED tables with CREATE POLICY \
-         membership RLS; typing_events is a STREAM table used by the AI agent.",
+         membership RLS; messages and messages_ai are indexed on (conversation_id, \
+         created_at_ms); conversation_members is indexed on (user_id); typing_events is a STREAM \
+         table used by the AI agent.",
     );
     println!(
         "  Scenario note: AI sessions send one user message, stream typing, then wait for an \

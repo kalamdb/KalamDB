@@ -8,9 +8,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { getErrorMessage } from '@/lib/errors';
 import type { User } from '@/services/userService';
-import { Loader2, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 interface DeleteUserDialogProps {
   open: boolean;
@@ -77,7 +78,7 @@ export function DeleteUserDialog({
             onClick={handleDelete}
             disabled={isDeleting}
           >
-            {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {isDeleting && <Spinner data-icon="inline-start" />}
             Delete User
           </Button>
         </DialogFooter>

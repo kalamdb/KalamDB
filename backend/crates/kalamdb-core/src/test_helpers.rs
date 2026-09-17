@@ -14,8 +14,11 @@ use datafusion::prelude::SessionContext;
 // ── Imports needed by init_test_app_context / test_app_context ─────────────────
 #[cfg(any(test, feature = "test-helpers"))]
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_commons::models::{NodeId, StorageId};
-use kalamdb_store::{test_utils::TestDb, StorageBackend};
+use kalamdb_commons::{
+    models::{NodeId, StorageId},
+    storage::KvIterator,
+};
+use kalamdb_store::{test_utils::TestDb, Operation, Partition, StorageBackend, StorageStats};
 use kalamdb_system::{StoragePartition, SystemTable};
 #[cfg(any(test, feature = "test-helpers"))]
 use once_cell::sync::OnceCell;
@@ -209,10 +212,9 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
     column_families.push("stream_table:app:events");
 
     let test_db = TestDb::new(&column_families).expect("create test db");
-    let storage_backend: Arc<dyn StorageBackend> = test_db.backend();
-
     let storage_base_path = test_db.storage_dir().expect("create storage base path");
     let data_path = test_db.path().to_path_buf();
+    let storage_backend: Arc<dyn StorageBackend> = Arc::new(OwnedTestBackend::new(test_db));
 
     let mut test_config = kalamdb_configs::ServerConfig::default();
     test_config.storage.data_path = data_path.to_string_lossy().to_string();
@@ -247,12 +249,144 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
             .unwrap();
     }
 
-    std::mem::forget(test_db);
     app_ctx
 }
 
-/// Creates a SessionContext using test_app_context_simple() (no Raft bootstrap).
-pub fn create_test_session_simple() -> Arc<SessionContext> {
-    let app_ctx = test_app_context_simple();
+/// Session bound to an existing simple test `AppContext`.
+///
+/// Prefer this over [`create_test_session_simple`] when the test already owns a
+/// context, so catalog and session share one RocksDB instead of leaking a second.
+pub fn create_test_session_for(app_ctx: &AppContext) -> Arc<SessionContext> {
     Arc::new(app_ctx.session_factory().create_session())
+}
+
+/// Creates a SessionContext using test_app_context_simple() (no Raft bootstrap).
+///
+/// Prefer [`create_test_session_for`] when the test already constructed an
+/// [`AppContext`]: this helper allocates a second RocksDB that lives only as
+/// long as the returned session (and any catalog Arcs it shares).
+pub fn create_test_session_simple() -> Arc<SessionContext> {
+    create_test_session_for(test_app_context_simple().as_ref())
+}
+
+/// Owns a [`TestDb`] for as long as [`AppContext`] holds the storage backend.
+///
+/// `test_app_context_simple` used to `mem::forget` the temp dir so RocksDB files
+/// outlived the helper. That leaked `/tmp` databases until process exit and
+/// filled CI disks near the end of the workspace suite.
+struct OwnedTestBackend {
+    inner: Option<Arc<dyn StorageBackend>>,
+    _db:   Option<TestDb>,
+}
+
+impl OwnedTestBackend {
+    fn new(db: TestDb) -> Self {
+        Self {
+            inner: Some(db.backend()),
+            _db:   Some(db),
+        }
+    }
+
+    fn inner(&self) -> &dyn StorageBackend {
+        self.inner.as_ref().expect("owned test backend already dropped").as_ref()
+    }
+}
+
+impl Drop for OwnedTestBackend {
+    fn drop(&mut self) {
+        // Close the engine before deleting its directory.
+        self.inner.take();
+        self._db.take();
+    }
+}
+
+impl StorageBackend for OwnedTestBackend {
+    fn get(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<Option<Vec<u8>>> {
+        self.inner().get(partition, key)
+    }
+
+    fn put(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+        value: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().put(partition, key, value)
+    }
+
+    fn delete(
+        &self,
+        partition: &Partition,
+        key: &[u8],
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().delete(partition, key)
+    }
+
+    fn batch(&self, operations: Vec<Operation>) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().batch(operations)
+    }
+
+    fn scan(
+        &self,
+        partition: &Partition,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+        self.inner().scan(partition, prefix, start_key, limit)
+    }
+
+    fn scan_reverse(
+        &self,
+        partition: &Partition,
+        prefix: Option<&[u8]>,
+        start_key: Option<&[u8]>,
+        limit: Option<usize>,
+    ) -> kalamdb_store::storage_trait::Result<KvIterator<'_>> {
+        self.inner().scan_reverse(partition, prefix, start_key, limit)
+    }
+
+    fn partition_exists(&self, partition: &Partition) -> bool {
+        self.inner().partition_exists(partition)
+    }
+
+    fn create_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().create_partition(partition)
+    }
+
+    fn list_partitions(&self) -> kalamdb_store::storage_trait::Result<Vec<Partition>> {
+        self.inner().list_partitions()
+    }
+
+    fn drop_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().drop_partition(partition)
+    }
+
+    fn compact_partition(&self, partition: &Partition) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().compact_partition(partition)
+    }
+
+    fn flush_all_memtables(&self) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().flush_all_memtables()
+    }
+
+    fn backup_to(&self, backup_dir: &std::path::Path) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().backup_to(backup_dir)
+    }
+
+    fn restore_from(
+        &self,
+        backup_dir: &std::path::Path,
+        restore_token: &str,
+    ) -> kalamdb_store::storage_trait::Result<()> {
+        self.inner().restore_from(backup_dir, restore_token)
+    }
+
+    fn stats(&self) -> StorageStats {
+        self.inner().stats()
+    }
 }

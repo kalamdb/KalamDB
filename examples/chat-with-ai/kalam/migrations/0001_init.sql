@@ -5,8 +5,15 @@
 -- UP
 CREATE NAMESPACE IF NOT EXISTS chat_demo;
 
+DROP TRIGGER IF EXISTS chat_demo.process_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.send_message;
+DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP TYPE IF EXISTS chat_demo.message_target;
+DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;
 DROP TABLE IF EXISTS chat_demo.messages;
+DROP TABLE IF EXISTS chat_demo.direct_messages;
 DROP TABLE IF EXISTS chat_demo.room_members;
 DROP TABLE IF EXISTS chat_demo.rooms;
 
@@ -29,13 +36,30 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.messages (
     author TEXT NOT NULL,
     sender_username TEXT NOT NULL,
     content TEXT NOT NULL,
+    reply_to BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    role TEXT NOT NULL,
+    author TEXT NOT NULL,
+    sender_username TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reply_to BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_room ON chat_demo.messages (room);
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON chat_demo.messages (reply_to);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_reply_to ON chat_demo.direct_messages (reply_to);
+CREATE INDEX IF NOT EXISTS idx_room_members_user ON chat_demo.room_members (user_id);
 
 CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     response_id TEXT NOT NULL,
     room TEXT NOT NULL DEFAULT 'main',
+    scope TEXT NOT NULL DEFAULT 'room',
     sender_username TEXT NOT NULL,
     stage TEXT NOT NULL,
     preview TEXT NOT NULL DEFAULT '',
@@ -43,14 +67,9 @@ CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (TTL_SECONDS = 10);
 
-CREATE POLICY rooms_member_select ON chat_demo.rooms
+CREATE POLICY rooms_visible ON chat_demo.rooms
   FOR SELECT TO user
-  USING (
-    id IN (
-      SELECT room_id FROM chat_demo.room_members
-      WHERE user_id = CURRENT_USER
-    )
-  );
+  USING (true);
 
 CREATE POLICY rooms_create ON chat_demo.rooms
   FOR INSERT TO user
@@ -94,8 +113,29 @@ CREATE POLICY messages_member_update ON chat_demo.messages
     )
   );
 
+CREATE TYPE chat_demo.message_target AS ENUM ('room', 'direct');
+
 CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
+ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT;
+
+CREATE PROCEDURE chat_demo.join_room(room_id TEXT NOT NULL)
+RETURNS TEXT
+SECURITY INVOKER;
+
+CREATE PROCEDURE chat_demo.send_message(
+    target chat_demo.message_target NOT NULL,
+    target_id TEXT NOT NULL,
+    content TEXT NOT NULL
+)
+RETURNS chat_demo.ai_inbox
+SECURITY INVOKER;
+
+CREATE PROCEDURE chat_demo.on_user_message(payload chat_demo.ai_inbox NOT NULL)
+SECURITY DEFINER;
+
+GRANT EXECUTE ON PROCEDURE chat_demo.join_room TO user;
+GRANT EXECUTE ON PROCEDURE chat_demo.send_message TO user;
 
 INSERT INTO chat_demo.rooms (id, title)
 VALUES ('main', 'Main');
@@ -109,9 +149,26 @@ VALUES ('user', 'user_1', 'root', 'Hello everyone!');
 INSERT INTO chat_demo.messages (role, author, sender_username, content)
 VALUES ('assistant', 'ai_bot', 'assistant', 'Hi, how can I help?');
 
+CREATE TRIGGER chat_demo.process_user_message
+  ON TOPIC chat_demo.ai_inbox
+  EXECUTE PROCEDURE chat_demo.on_user_message(PAYLOAD)
+  WITH (
+    principal = 'system',
+    start = 'latest',
+    retries = 5,
+    retry_backoff = '1s',
+    concurrency = 1
+  );
+
 -- DOWN
-DROP TOPIC chat_demo.ai_inbox;
+DROP TRIGGER IF EXISTS chat_demo.process_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.send_message;
+DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP TYPE IF EXISTS chat_demo.message_target;
+DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;
 DROP TABLE IF EXISTS chat_demo.messages;
+DROP TABLE IF EXISTS chat_demo.direct_messages;
 DROP TABLE IF EXISTS chat_demo.room_members;
 DROP TABLE IF EXISTS chat_demo.rooms;

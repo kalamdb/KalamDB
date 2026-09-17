@@ -3,8 +3,6 @@
 //!
 //! **IMPORTANT**: These tests require a running KalamDB server (auto-started).
 
-mod common;
-
 #[path = "proxied/ack_before_first_batch.rs"]
 mod ack_before_first_batch;
 #[path = "proxied/blackhole_during_subscribe.rs"]

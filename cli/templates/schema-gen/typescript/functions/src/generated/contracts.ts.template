@@ -1,0 +1,6 @@
+{{header}}
+// {{contract_hash_line}}
+
+export * from "{{schema_import}}";
+export type { ProcedureContext } from "./runtime";
+export { procedure } from "./procedure.js";

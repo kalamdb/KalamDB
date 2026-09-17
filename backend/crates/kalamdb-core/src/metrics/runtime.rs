@@ -141,5 +141,23 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
 /// - Manifest cache metrics (memory, RocksDB, breakdown)
 /// - Server metadata (version, node ID, cluster info)
 pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, String)> {
-    collect_system_stats(&AppContextSystemStatsSource { ctx })
+    let mut metrics = collect_system_stats(&AppContextSystemStatsSource { ctx });
+    let census = ctx.function_runtime().memory_census();
+    metrics.push(("function_memory_reserved_bytes".to_string(), census.reserved_bytes.to_string()));
+    metrics.push((
+        "function_memory_reserved_mb".to_string(),
+        (census.reserved_bytes / (1024 * 1024)).to_string(),
+    ));
+    metrics.push(("function_memory_limit_bytes".to_string(), census.limit_bytes.to_string()));
+    metrics.push((
+        "function_memory_limit_mb".to_string(),
+        (census.limit_bytes / (1024 * 1024)).to_string(),
+    ));
+    metrics.push(("function_instances_idle".to_string(), census.idle_instances.to_string()));
+    metrics.push(("function_instances_active".to_string(), census.active_instances.to_string()));
+    metrics.push((
+        "function_instances_total".to_string(),
+        (census.idle_instances + census.active_instances).to_string(),
+    ));
+    metrics
 }

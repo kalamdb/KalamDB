@@ -140,3 +140,5 @@ impl<T: Debug> Debug for Wrapper<T> {
 - [api-impl-into](./api-impl-into.md) - Using Into bounds
 - [api-impl-asref](./api-impl-asref.md) - Using AsRef bounds
 - [name-type-param-single](./name-type-param-single.md) - Type parameter naming
+- [trait-dyn-vs-generic](./trait-dyn-vs-generic.md) - Static vs dynamic dispatch
+- [trait-associated-type-vs-generic](./trait-associated-type-vs-generic.md) - Associated types vs generics

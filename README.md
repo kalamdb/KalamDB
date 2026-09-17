@@ -2,15 +2,15 @@
 
 ### Build realtime apps with SQL. Connect agents to the same data.
 
-KalamDB brings SQL tables, live subscriptions, and durable topics together in one open-source backend. Build collaborative apps with live updates, keep personal data isolated by user, and let workers and AI agents react to changes.
+KalamDB brings SQL tables, live subscriptions, durable topics, and deployable server functions together in one open-source backend. Build collaborative apps with live updates, keep personal data isolated by user, and let workers and AI agents react to changes. Connect through the SDKs, HTTP API, or PostgreSQL wire protocol (PGWire).
 
 ![CI](https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag) ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)
 
-[Get started](#get-started) · [How it scales](#grow-your-app-and-your-data) · [Examples](#build-something) · [Documentation](https://kalamdb.org/docs)
+[Get started](#get-started) · [Server functions](#deploy-a-function-to-your-backend) · [PGWire](#connect-with-postgresql-tools) · [How it scales](#grow-your-app-and-your-data) · [Documentation](https://kalamdb.org/docs)
 
 ## Get started
 
-Start with a working React chat app: two browser tabs, live messages, and a worker that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated agent response, so no external AI key is required.
+Start with a working React chat app: two browser tabs, live messages, and a procedure that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated copilot response, so no external AI key is required.
 
 ```bash
 npm install -g @kalamdb/cli
@@ -22,7 +22,7 @@ kalam dev
 
 **Open the app URL printed in your terminal in two browser tabs.** Send a message such as `latency spike after deploy`. Watch it appear in both tabs, followed by live worker progress and a saved reply.
 
-`kalam init` creates the app, schema, migrations, and project configuration. `kalam dev` starts or reuses a local database, applies the schema, generates types, and runs the app and worker. Keep it running while you develop.
+`kalam init` creates the app, schema, migrations, and project configuration. `kalam dev` starts or reuses a local database, applies the schema, generates types, activates procedures, and runs the app. Keep it running while you develop.
 
 Prefer a minimal starter? Run `kalam init` in an empty folder and choose a template. See the [quick-start guide](docs/getting-started/quick-start.md) for setup details.
 
@@ -30,29 +30,29 @@ Prefer a minimal starter? Run `kalam init` in an empty folder and choose a templ
 
 ![A SQL write enters KalamDB, reaches connected clients through live queries, and feeds a worker through durable topics. The worker saves its result back to KalamDB.](docs/images/kalamdb-app-flow.png)
 
-In the chat starter, sending a message inserts a row. KalamDB sends the change to subscribed clients and routes it to a topic. Your worker consumes the change and saves a reply, which appears through the same live subscriptions.
+In the chat starter, sending a message calls `send_message`. KalamDB sends the change to subscribed clients and routes it to a topic. A trigger procedure drafts a reply and saves it, which appears through the same live subscriptions.
 
 After joining a room, the app's write looks like this:
 
 ```ts
-await db.insert(chatMessages).values({
-  room: ROOM,
-  role: 'user',
-  author: CHAT_USERNAME,
-  sender_username: CHAT_USERNAME,
+await api.chatDemo.sendMessage({
+  target: 'room',
+  target_id: ROOM,
   content: 'Hello, team!',
 });
 ```
 
-The starter uses generated TypeScript tables with the KalamDB ORM. Its SQL schema connects new messages to the worker's topic:
+The starter uses generated TypeScript tables and a procedure client from `kalam schema gen`. Its SQL schema connects new messages to a topic trigger:
 
 ```sql
 CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
-ALTER TOPIC chat_demo.ai_inbox
-  ADD SOURCE chat_demo.messages ON INSERT;
+ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
+CREATE TRIGGER chat_demo.process_user_message
+  ON TOPIC chat_demo.ai_inbox
+  EXECUTE PROCEDURE chat_demo.on_user_message(PAYLOAD);
 ```
 
-Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [worker](examples/chat-with-ai/src/agent.ts) to see how they fit together. Your worker runs your application or model logic; KalamDB handles data, subscriptions, and topic delivery.
+Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo) to see how they fit together. Your procedures run next to the data; KalamDB handles subscriptions, topics, and retries.
 
 ## What you can build on
 
@@ -63,10 +63,74 @@ Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](exam
 | Shared rooms, teams, and projects | **SHARED tables + RLS:** SQL policies control access to collaborative data. |
 | Typing indicators and agent progress | **STREAM tables:** temporary events with TTL-based expiry. |
 | Background jobs and AI workers | **Durable topics:** table changes, consumer groups, acknowledgements, and retries. |
+| Custom backend logic close to your data | **Server functions:** write TypeScript procedures, deploy with `kalam deploy`, and invoke through SQL or HTTP. |
+| Familiar database clients and drivers | **PGWire:** connect PostgreSQL clients such as `psql` and DBeaver, with support for prepared queries and transactions. |
 | A short development loop | **`kalam dev`:** schema changes, migrations, generated types, and app processes together. |
 | A growing dataset and more connected clients | **Tiered storage and clusters:** Parquet on disk or object storage, with replicated nodes serving clients. |
 
 USER tables scope both hot keys and cold segments by user. SHARED tables use explicit row-level policies on reads, writes, live events, and file access; ordinary user and service roles are denied without an applicable policy. See the [SQL reference](docs/reference/sql.md) for table types and policies.
+
+## Deploy a function to your backend
+
+Add custom logic that runs inside KalamDB. Server functions execute in a sandboxed V8 runtime and can query tables, write data, publish to topics, and call other procedures within the request transaction.
+
+In a TypeScript project, add a procedure contract to your configured schema file (`kalam/schema.sql` in the chat starter):
+
+```sql
+CREATE PROCEDURE chat_demo.greet(name TEXT NOT NULL) RETURNS TEXT;
+```
+
+Generate its implementation file:
+
+```bash
+kalam schema gen
+```
+
+Replace `functions/src/chat_demo/greet.ts` with:
+
+```ts
+import { procedure } from "../generated/contracts";
+
+export const greet = procedure.chatDemo.greet(async (_ctx, input) => {
+  return "Hello, " + input.name + "!";
+});
+```
+
+With your development server running and DBA or System credentials configured, deploy the project:
+
+```bash
+kalam deploy --env dev
+```
+
+The CLI builds the function module, applies migrations, and activates the new revision on the backend. Call it from SQL, including over PGWire:
+
+```sql
+CALL chat_demo.greet('developer');
+-- result: Hello, developer!
+```
+
+The same procedure is available at `POST /v1/functions/chat_demo/greet`. Procedures run as the caller by default; grant `EXECUTE` to the roles that should use them. See the [procedure reference](docs/reference/sql.md#create-procedure) and [deployment workflow](docs/getting-started/cli.md#deploy-with-migration-guardrails) for access control, environments, revisions, and rollback.
+
+Use matching CLI and server builds with functions support; `kalam functions --help` lists the available build and revision commands.
+
+## Connect with PostgreSQL tools
+
+Use `psql`, DBeaver, or PostgreSQL drivers to query KalamDB through its PGWire listener. Enable it in your server configuration:
+
+```toml
+[postgres_wire]
+enabled = true
+host = "127.0.0.1"
+port = 5432
+```
+
+For a local server, connect with your KalamDB credentials:
+
+```bash
+psql -h 127.0.0.1 -p 5432 -U root -d kalam -W
+```
+
+PGWire supports simple and prepared queries, transactions, and SQL `CALL`. Queries use KalamDB's SQL engine and permissions; PostgreSQL protocol support does not imply full PostgreSQL SQL or extension compatibility. See [client compatibility](docs/architecture/pg-catalog-shims.md) for supported catalog features and current limits.
 
 ## Grow your app and your data
 
@@ -74,7 +138,7 @@ Start with one node and local disk. As your application grows, distribute client
 
 ```mermaid
 flowchart TB
-    Apps["Apps and agents"] -->|"SQL + WebSocket connections"| Entry["Your load balancer / node endpoints"]
+    Apps["Apps, agents, and SQL clients"] -->|"HTTP + WebSocket + PGWire"| Entry["Your load balancer / node endpoints"]
 
     subgraph Cluster["KalamDB cluster · writes replicated with Multi-Raft"]
         N1["Node 1<br/>SQL + live subscriptions<br/>RocksDB on local disk"]
@@ -116,7 +180,7 @@ The demo exposes nodes at `http://localhost:8081`, `http://localhost:8082`, and 
 
 ## Build something
 
-- [Collaborative chat with an agent](examples/chat-with-ai/README.md) — shared rooms, policies, live messages, and a topic worker.
+- [Collaborative chat with an in-database copilot](examples/chat-with-ai/README.md) — shared rooms, a personal inbox, live messages, and a topic-trigger procedure.
 - [Personal AI assistant](examples/react-ai-chat/README.md) — USER tables, streamed activity, tool calls, and approvals.
 - [Summarizer worker](examples/summarizer-agent/README.md) — consume a change and write an enriched result back.
 - SDKs: [TypeScript](link/sdks/typescript/client/) · [React](link/sdks/typescript/react/) · [ORM](link/sdks/typescript/orm/) · [Dart / Flutter](link/sdks/dart/link/) · [Rust](link/sdks/rust/).

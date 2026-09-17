@@ -19,6 +19,13 @@ pub fn record_batch_to_json_arrays(
     commons::record_batch_to_json_arrays(batch).map_err(map_error)
 }
 
+pub fn rows_to_json_arrays(
+    schema: &arrow::datatypes::SchemaRef,
+    rows: Vec<Row>,
+) -> Result<Vec<Vec<KalamCellValue>>, KalamDbError> {
+    commons::rows_to_json_arrays(schema, rows).map_err(map_error)
+}
+
 pub fn row_to_json_map(row: &Row) -> Result<HashMap<String, KalamCellValue>, KalamDbError> {
     commons::row_to_json_map(row).map_err(map_error)
 }

@@ -1,10 +1,10 @@
 //! Topic consumer feature tests.
 
-mod common;
-
 use std::time::Duration;
 
 use kalam_client::AutoOffsetReset;
+
+use super::common;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]

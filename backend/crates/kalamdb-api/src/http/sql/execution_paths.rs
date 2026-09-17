@@ -36,6 +36,7 @@ use super::{
     helpers::{
         cleanup_files, execute_single_statement, execute_single_statement_raw,
         execution_result_to_query_result, stream_sql_rows_response,
+        stream_sql_scalar_rows_response,
     },
     models::{ErrorCode, QueryRequest, QueryResult, SqlResponse},
     request::took_ms,
@@ -807,6 +808,42 @@ pub(super) async fn execute_batch_path(
                 );
 
                 if !is_batch {
+                    // Handle ScalarRows before Rows. Calling into_arrow_rows()
+                    // here would undo skip-Arrow on cached PK point gets.
+                    if let kalamdb_core::sql::ExecutionResult::ScalarRows {
+                        rows,
+                        row_count,
+                        schema,
+                    } = exec_result
+                    {
+                        let effective_role = if execute_as_user.is_some() {
+                            Some(kalamdb_commons::Role::User)
+                        } else {
+                            Some(statement_exec_ctx.user_role())
+                        };
+                        return match stream_sql_scalar_rows_response(
+                            rows,
+                            schema,
+                            effective_role,
+                            effective_username,
+                            row_count,
+                            took_ms(start_time),
+                        ) {
+                            Ok(response) => response,
+                            Err(err) => {
+                                let _ = request_transaction_guard
+                                    .rollback_if_active(&request_transaction_coordinator);
+                                HttpResponse::InternalServerError().json(
+                                    SqlResponse::error_for_privilege(
+                                        ErrorCode::InternalError,
+                                        &format!("Failed to stream SQL response: {}", err),
+                                        took_ms(start_time),
+                                        statement_exec_ctx.is_admin(),
+                                    ),
+                                )
+                            },
+                        };
+                    }
                     if let kalamdb_core::sql::ExecutionResult::Rows {
                         batches,
                         row_count,

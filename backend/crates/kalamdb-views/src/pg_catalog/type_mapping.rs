@@ -1,5 +1,8 @@
 use kalamdb_commons::datatypes::KalamDataType;
 
+/// PostgreSQL `pg_type.oid` for `void`.
+pub(crate) const PG_VOID_OID: i64 = 2278;
+
 /// PostgreSQL `pg_type.oid` for a Kalam column type.
 pub(crate) fn pg_type_oid(data_type: &KalamDataType) -> i64 {
     match data_type {
@@ -124,10 +127,12 @@ pub fn pg_format_type(oid: i64) -> &'static str {
     match oid {
         16 => "boolean",
         17 => "bytea",
+        19 => "name",
         20 => "bigint",
         21 => "smallint",
         23 => "integer",
         25 => "text",
+        26 => "oid",
         114 => "json",
         700 => "real",
         701 => "double precision",
@@ -135,6 +140,7 @@ pub fn pg_format_type(oid: i64) -> &'static str {
         1083 => "time without time zone",
         1114 => "timestamp without time zone",
         1700 => "numeric",
+        2278 => "void",
         2950 => "uuid",
         _ => "unknown",
     }

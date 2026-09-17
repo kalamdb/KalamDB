@@ -150,6 +150,16 @@ fn validate_topics(config: &ServerConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn validate_jobs(config: &ServerConfig) -> anyhow::Result<()> {
+    if config.jobs.history_cleanup_interval_seconds > 0 && config.jobs.history_retention_days <= 0 {
+        return Err(anyhow::anyhow!(
+            "jobs.history_retention_days must be greater than 0 when \
+             jobs.history_cleanup_interval_seconds is enabled"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_security(config: &ServerConfig) -> anyhow::Result<()> {
     parse_trusted_proxy_entries(&config.security.trusted_proxy_ranges).map_err(|error| {
         anyhow::anyhow!("Invalid security.trusted_proxy_ranges configuration: {}", error)
@@ -320,6 +330,7 @@ impl ServerConfig {
         validate_limits(self)?;
         validate_user_management(self)?;
         validate_topics(self)?;
+        validate_jobs(self)?;
         validate_auth(self)?;
         validate_security(self)?;
         validate_cluster_tls(self)?;
@@ -364,6 +375,27 @@ mod tests {
     fn test_default_config_is_valid() {
         let config = ServerConfig::default();
         assert!(config.validate().is_ok());
+        assert_eq!(config.jobs.history_cleanup_interval_seconds, 3600);
+        assert_eq!(config.jobs.history_retention_days, 7);
+    }
+
+    #[test]
+    fn test_jobs_history_cleanup_can_be_disabled() {
+        let mut config = ServerConfig::default();
+        config.jobs.history_cleanup_interval_seconds = 0;
+        config.jobs.history_retention_days = 0;
+        config
+            .validate()
+            .expect("disabled history cleanup should not require retention days");
+    }
+
+    #[test]
+    fn test_jobs_history_retention_required_when_enabled() {
+        let mut config = ServerConfig::default();
+        config.jobs.history_cleanup_interval_seconds = 3600;
+        config.jobs.history_retention_days = 0;
+        let err = config.validate().expect_err("enabled history cleanup requires retention days");
+        assert!(err.to_string().contains("history_retention_days"));
     }
 
     #[test]

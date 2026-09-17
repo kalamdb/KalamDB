@@ -163,3 +163,4 @@ pub struct MyType { ... }
 - [own-copy-small](./own-copy-small.md) - When to implement Copy
 - [api-default-impl](./api-default-impl.md) - Implementing Default
 - [doc-examples-section](./doc-examples-section.md) - Documenting trait implementations
+- [type-display-vs-debug](./type-display-vs-debug.md) - Display vs Debug responsibilities

@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Weak,
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Weak,
+    },
 };
 
 use kalamdb_commons::{JobId, NodeId};
@@ -44,6 +47,9 @@ pub struct JobsManager {
     pub(crate) awake_sender:   mpsc::UnboundedSender<JobId>,
     /// Channel receiver for job awakening (consumed by run_loop)
     pub(crate) awake_receiver: parking_lot::Mutex<Option<mpsc::UnboundedReceiver<JobId>>>,
+    /// Job IDs currently executing on this process. Used to fail zombies whose
+    /// executor task dropped while `system.jobs.status` stayed Running.
+    pub(crate) executing_jobs: parking_lot::Mutex<HashSet<JobId>>,
 }
 
 impl JobsManager {
@@ -71,6 +77,7 @@ impl JobsManager {
             app_context: Arc::downgrade(&app_ctx),
             awake_sender,
             awake_receiver: parking_lot::Mutex::new(Some(awake_receiver)),
+            executing_jobs: parking_lot::Mutex::new(HashSet::new()),
         }
     }
 
@@ -102,5 +109,27 @@ impl JobsManager {
         log::debug!("Initiating job manager shutdown");
         self.shutdown.store(true, Ordering::Release);
         self.shutdown_notify.notify_waiters();
+    }
+
+    /// Record that this process is executing `job_id` until the guard drops.
+    pub(crate) fn track_executing(&self, job_id: JobId) -> ExecutingJobGuard<'_> {
+        self.executing_jobs.lock().insert(job_id.clone());
+        ExecutingJobGuard {
+            manager: self,
+            job_id,
+        }
+    }
+}
+
+/// Removes `job_id` from [`JobsManager::executing_jobs`] when the executor returns
+/// or the task is dropped.
+pub(crate) struct ExecutingJobGuard<'a> {
+    manager: &'a JobsManager,
+    job_id:  JobId,
+}
+
+impl Drop for ExecutingJobGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.executing_jobs.lock().remove(&self.job_id);
     }
 }

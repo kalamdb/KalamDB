@@ -117,9 +117,6 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 - `--token` – JWT bearer token
 - `--user` / `--password` – user/password login
 - `--save-credentials` – save JWT token after login
-- `--show-credentials` – show stored credentials for instance
-- `--update-credentials` – login and update stored credentials
-- `--delete-credentials` – delete stored credentials for instance
 - `--list-instances` – list stored credential instances
 - `--format` – `table` (default) | `json` | `csv`
 - `--json` / `--csv` – shorthand for `--format`
@@ -149,7 +146,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 ### Top-level commands
 
 - `kalam version` – print CLI version/build metadata
-- `kalam update [--version <version>] [--pre-release]` – replace the current binary with a verified GitHub release artifact
+- `kalam update [--version <version>] [--pre-release | --stable]` – replace the current binary with a verified GitHub release artifact. `--pre-release` installs the newest published rc/beta/alpha and never downgrades. `--stable` switches to GitHub's latest non-draft release and is the only implicit path that may leave a newer installed pre-release.
 - `kalam doctor [--strict]` – inspect binary path, config, credentials, healthcheck, and auth reachability
 - `kalam login --instance <name> --url <url>` – login, save access/refresh tokens, and enter the interactive shell immediately when run from a terminal
 - `kalam logout [--all]` – remove saved credentials locally and best-effort notify the server
@@ -256,9 +253,9 @@ kalam --subscribe "SELECT * FROM app.messages WHERE user_id = 'alice';"
 
 ```bash
 # Setup credentials for different environments
-kalam --update-credentials --instance dev --user dev_user
-kalam --update-credentials --instance staging --user staging_user
-kalam --update-credentials --instance prod --user prod_admin
+kalam login --instance dev --user dev_user
+kalam login --instance staging --user staging_user
+kalam login --instance prod --user prod_admin
 
 # Switch between instances
 kalam --instance dev      # Connect to dev
@@ -540,11 +537,11 @@ kalam --verbose --url http://localhost:2900
 
 ```bash
 # Verify stored credentials
-kalam --show-credentials --instance local
+kalam whoami --instance local
 
 # Clear and re-enter credentials
-kalam --delete-credentials --instance local
-kalam --update-credentials --instance local
+kalam logout --instance local
+kalam login --instance local
 ```
 
 ### Performance Issues
@@ -594,9 +591,11 @@ kalam init --yes --name my-app --schema-mode sql --languages typescript,dart
 
 This creates:
 
-- `kalam.toml` — project configuration
+- `kalam.toml` — project configuration (`server_version` pinned, `purpose = "development"`)
 - `schema.sql` — file-based schema source (sql mode)
 - `kalam/migrations/` — ordered migration history
+- `kalam/seed.sql` — development fixtures
+- `.kalam/` — runtime identity (gitignored)
 - `src/generated/kalam.ts` and `lib/generated/kalam.dart` — generated output directories
 - `.env.example` — environment override template
 
@@ -605,23 +604,21 @@ This creates:
 ```bash
 # Regenerate workflow artifacts
 # TypeScript uses @kalamdb/orm against the resolved server/namespace.
-# Dart reads schema.sql and writes KalamTableSpec codecs to lib/generated/kalam.dart.
+# Dart reads schema.sql and writes KalamTableSpec codecs plus typed KalamFunctions to lib/generated/kalam.dart.
 kalam schema gen
 kalam schema gen --languages dart
 
 # Create a migration from the current schema
-kalam migration create add_profile
+kalam db migration create add_profile
 
 # Inspect local migration state
-kalam migration status
+kalam db migration status
 
 # Apply pending migrations (local state tracking in v1)
 kalam db migrate
 ```
 
-Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml` → default `dev`.
-
-`kalam schema pull` requires a connected KalamDB server when using remote schema mode.
+Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `KALAM_URL`, `KALAM_NAMESPACE`) → `kalam.toml`. `--global` / `-g` selects the shared local database. `schema.mode = "remote"` is rejected.
 
 ### Link environments
 
@@ -629,14 +626,29 @@ Environment resolution order: CLI flag → environment variable (`KALAM_ENV`, `K
 kalam link --env prod --url https://db.example.com --namespace app
 ```
 
-Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/`.
+Stores URL and namespace in `kalam.toml` only — credentials stay in `~/.kalam/`. Does not change `project.default_env`.
 
 ### Local development orchestration
 
 ```bash
-kalam dev
-kalam dev --force   # retry a paused schema pipeline
+kalam up                 # database only, background
+kalam status
+kalam servers            # list tracked local and global servers
+kalam logs --follow      # --tail is an alias
+kalam dev                # full loop; reuses `up` and leaves it running
+kalam dev --force        # retry a paused schema pipeline
+kalam dev --exec "npm test"
+kalam down               # stop the database; keep data
 ```
+
+`kalam up` prints the server URL, server.toml path, data folder, log file, and
+initial root login credentials. Existing databases retain their current password.
+Passwords are omitted from JSON/agent output and saved workflow logs.
+`kalam logs` prints the selected log file before reading it; `--follow` and
+`--tail` follow new lines until Ctrl+C. Managed console output is captured in
+`console.log`, separately from the server's structured `server.log`.
+`kalam down` distinguishes a stopped server from one that was already stopped
+and preserves its data. Add `-g` to these commands for the shared server.
 
 `kalam dev`:
 
@@ -645,6 +657,52 @@ kalam dev --force   # retry a paused schema pipeline
 - supervises `[dev.processes]` child commands with prefixed, color-coded stderr logs
 - pauses only the schema pipeline on migration/apply failure while keeping processes running
 
+### List and select instances
+
+`kalam instances`, `kalam servers`, and `kalam list` show the same inventory:
+managed local servers and saved cloud connections. The legacy `--list-instances`
+flag uses this view too. Rows show name, local/cloud type, status, and URL.
+Indented local details show the folder and global scope; cloud details show
+the saved user and authentication expiry, never tokens.
+
+Use `--local` or `--cloud` to filter, `--check` to probe cloud reachability,
+and `--json` for an `instances` array. Cloud endpoints are not contacted
+unless requested; saved authentication and reachability are separate.
+
+Names shown in the list can target lifecycle commands from any folder:
+
+```bash
+kalam status --instance analytics
+kalam logs --instance analytics --follow
+kalam down --instance analytics
+kalam up --instance analytics
+```
+
+Local names normally use their folder basename; the shared server uses `global`.
+Conflicting names receive a suffix. Ambiguous short names fail with suggested
+unique names. Named selection cannot be combined with `--global`, `--env`,
+`--url`, `--host`, or `--project-dir`. Cloud names support authenticated `status` and `logs`; `up` and `down`
+manage local processes only.
+
+`status` queries `system.cluster` with saved authentication. `logs` queries
+`system.server_logs`, including `--follow` / `--tail` and `-n`. Running local
+instances use the same SQL diagnostics when matching credentials are saved;
+otherwise local process status and capture files remain available.
+Use `kalam logs --instance analytics --local-file` to explicitly inspect the
+local capture file, including startup failures.
+
+SQL diagnostics retain the server's system-table authorization requirements.
+SQL log entries require `[logging] format = "json"` on the server. Following
+polls once per second and reads the logs of the node answering the query, not a
+durable cluster-wide stream. Expired credentials use the existing refresh flow
+when a refresh token is available; otherwise login is required.
+
+Starts through `up` and `dev` register under `~/.kalam/server-registry/`.
+Older instances are discovered by `status` in their folder or listing from
+that folder; the default global instance is discovered automatically.
+Missing/unreadable records appear unavailable. Manually launched processes
+are not scanned. Saved credentials matching one local URL merge into that row.
+
 ### Inspect project state
 
 ```bash
@@ -652,21 +710,72 @@ kalam status
 kalam status --env prod
 ```
 
-Reports project name, resolved environment (with precedence source), schema mode, generated targets, and migration counts.
+In a folder with no managed instance or server configuration, status says
+"No local server is configured in this folder" and suggests `kalam up`,
+`kalam status -g`, or `kalam servers`. It does not probe the default port and
+report an unrelated server as belonging to that folder.
+
+For a server started with `kalam up`, reports server state, URL, server.toml,
+data folder, and log file. Development sessions retain project, environment,
+namespace migration details alongside the server paths. The human label is
+`namespace migrations`; `schema` is retained only as a legacy JSON field. A
+reachable server without a matching local process record is labeled
+`running (not managed from this folder)`.
 
 ### Deploy with migration guardrails
 
+`kalam deploy` generates schema artifacts, builds the project's server functions,
+applies migrations, activates the function module, runs configured rollout steps,
+and checks the target's health. Use a CLI and server build with functions support
+and configure the target environment and DBA or System credentials first.
+`kalam dev` also builds and activates on startup and when `functions/src` changes;
+build or activation failures are printed as errors (CALL stays `procedure not
+implemented` until the next successful activate).
+
 ```bash
-kalam db migrate          # apply locally first
+kalam deploy --env dev --dry-run  # validate locally without activating
+kalam deploy --env dev
 kalam deploy --env prod
 ```
 
-Deploy blocks when:
+The dry run generates schema artifacts and builds functions when
+`functions/package.json` is present. It does not apply migrations, upload functions,
+or activate a revision. To build functions independently, use `kalam functions build`.
+Production-like environments enforce migration history when automatic migrations
+are enabled: schema changes must be covered by a migration before deployment.
 
-- pending migrations exist (run `kalam db migrate` first)
-- production schema drift exists without a committed migration file
+### Server functions
 
-After rollout, deploy runs `GET {url}/ui` and accepts 2xx/3xx responses.
+Declare a bodyless `CREATE PROCEDURE` in your schema and run `kalam schema gen`.
+TypeScript generation writes `procedure.<schema>.<method>` builders and a one-time
+named-export scaffold at `functions/src/<namespace>/<procedure>.ts` for each
+unbound procedure. Existing implementations are preserved. Edit the implementation, then use `kalam deploy`
+to build and activate the project module. See the
+[README example](../../README.md#deploy-a-function-to-your-backend)
+and [SQL procedure reference](../reference/sql.md#create-procedure).
+
+```bash
+kalam functions build
+kalam functions status --env dev
+kalam functions revisions --env dev
+kalam functions runtime --env dev
+kalam functions logs --env dev
+kalam functions logs api.health --env dev
+kalam functions override api.health
+kalam functions rollback backend:<artifact> --env dev
+```
+
+`status` prints the current module, every procedure (implementation and
+signature), and function memory/isolate stats. `revisions` lists module
+history with `is_current`. `runtime` lists resident V8 isolates and
+in-flight root calls. `logs` prints recent invocation, V8 console/`ctx.log`, and error records from
+`system.procedure_logs`. On disk those files are
+`{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`
+(default `./data/functions/runtime/...`).
+
+To restore a previously activated revision, use
+`kalam functions rollback <revision> --env dev` with an identifier from
+`kalam functions revisions`. This changes the active revision without rebuilding.
 
 ---
 

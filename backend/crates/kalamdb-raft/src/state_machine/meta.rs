@@ -524,6 +524,72 @@ impl MetaStateMachine {
 
                 Ok(MetaResponse::Ok)
             },
+
+            MetaCommand::CompareExchangeSchedules { updates } => {
+                let mut applied = Vec::with_capacity(updates.len());
+                for update in updates {
+                    applied.push(if let Some(ref a) = applier {
+                        a.compare_exchange_schedule(
+                            &update.schedule_id,
+                            update.expected_version.as_deref(),
+                            update.replacement.as_ref(),
+                        )
+                        .await?
+                    } else {
+                        false
+                    });
+                }
+                Ok(MetaResponse::SchedulesUpdated { applied })
+            },
+            MetaCommand::CompareExchangeSchedule {
+                schedule_id,
+                expected_version,
+                replacement,
+            } => {
+                let applied = if let Some(ref a) = applier {
+                    a.compare_exchange_schedule(
+                        &schedule_id,
+                        expected_version.as_deref(),
+                        replacement.as_ref(),
+                    )
+                    .await?
+                } else {
+                    false
+                };
+                Ok(MetaResponse::Message {
+                    message: if applied { "applied" } else { "conflict" }.into(),
+                })
+            },
+            MetaCommand::ActivateFunctionRevision {
+                module,
+                revision,
+                artifact,
+                expected_revision_id,
+            } => {
+                log::debug!(
+                    "MetaStateMachine: ActivateFunctionRevision {} -> {:?}",
+                    module.module_id,
+                    revision.revision_id
+                );
+
+                let message = if let Some(ref a) = applier {
+                    a.activate_function_revision(
+                        &module,
+                        &revision,
+                        &artifact,
+                        expected_revision_id.as_ref(),
+                    )
+                    .await?
+                } else {
+                    String::new()
+                };
+
+                if message.starts_with("conflict:") {
+                    Ok(MetaResponse::Error { message })
+                } else {
+                    Ok(MetaResponse::Message { message })
+                }
+            },
         }
     }
 }

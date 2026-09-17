@@ -9,27 +9,31 @@ use std::{
 };
 
 use crate::{
+    config::WorkflowLoggingPolicy,
     error::{CLIError, Result},
     output::WorkflowOutput,
-    workflow::project::{
-        config::{
-            ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-            ProjectSection, SchemaMode, SchemaSection, SchemaTarget, KALAM_TOML,
+    workflow::{
+        project::{
+            config::{
+                ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+                MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                KALAM_TOML,
+            },
+            dart::{
+                self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND,
+                SCHEMA_TARGET_OUTPUT as DART_SCHEMA_TARGET_OUTPUT,
+            },
+            guidance::{
+                init_config_validation_failed, init_project_already_exists, init_stage_context,
+            },
+            identifiers::{normalize_namespace_name, parse_namespace_id},
+            repository_examples, templates,
+            ts::{
+                execute_package_install, install_dependencies, resolve_package_manager,
+                resolve_starter, PackageManager, ProjectStarter, SCHEMA_TARGET_OUTPUT,
+            },
         },
-        dart::{
-            self, DEFAULT_DEV_COMMAND as DART_DEV_COMMAND,
-            SCHEMA_TARGET_OUTPUT as DART_SCHEMA_TARGET_OUTPUT,
-        },
-        guidance::{
-            init_config_validation_failed, init_project_already_exists, init_stage_context,
-        },
-        identifiers::{normalize_namespace_name, parse_namespace_id},
         prompts::print_workflow_banner,
-        repository_examples, templates,
-        ts::{
-            execute_package_install, install_dependencies, resolve_package_manager,
-            resolve_starter, PackageManager, ProjectStarter, SCHEMA_TARGET_OUTPUT,
-        },
     },
 };
 
@@ -85,6 +89,18 @@ pub fn list_init_templates() -> Vec<InitTemplateInfo> {
 
 pub async fn run_init(options: InitOptions, output: &WorkflowOutput) -> Result<()> {
     run_init_with_installer(options, output, execute_package_install).await
+}
+
+pub async fn init_project(
+    options: InitOptions,
+    use_color: bool,
+    animations: bool,
+    json: bool,
+) -> Result<()> {
+    let output = WorkflowOutput::new(use_color, WorkflowLoggingPolicy::disabled())
+        .with_animations(animations)
+        .with_json(json);
+    run_init(options, &output).await
 }
 
 pub(crate) async fn run_init_with_installer<F>(
@@ -261,7 +277,8 @@ fn build_config(
         targets.insert(
             language.clone(),
             SchemaTarget {
-                output: output.into(),
+                output:            output.into(),
+                unqualified_names: false,
             },
         );
     }
@@ -272,12 +289,14 @@ fn build_config(
             default_env:     "dev".into(),
             package_manager: package_manager.map(PackageManager::as_str).map(str::to_string),
             kalam_dir:       "kalam".into(),
+            server_version:  Some(crate::CLI_VERSION.to_string()),
         },
         connection: HashMap::from([(
             "dev".into(),
             ConnectionEnv {
                 url:       server_url.to_string(),
                 namespace: parse_namespace_id(&normalize_namespace_name(name))?,
+                purpose:   Some(crate::workflow::project::config::EnvironmentPurpose::Development),
             },
         )]),
         schema:     SchemaSection {
@@ -303,6 +322,7 @@ fn build_config(
             ..DevSection::default()
         },
         logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     })
 }
 
@@ -347,6 +367,7 @@ mod tests {
             assert!(temp.path().join("schema.sql").is_file());
             assert!(temp.path().join("package.json").is_file());
             assert!(temp.path().join("kalam/migrations/.gitkeep").is_file());
+            assert!(temp.path().join("scripts/orm-codegen.mjs").is_file());
             assert!(temp.path().join("src/generated").is_dir());
             assert!(temp.path().join("kalam/server/server.toml").is_file());
             let kalam_toml = fs::read_to_string(temp.path().join(KALAM_TOML)).unwrap();
@@ -401,6 +422,8 @@ mod tests {
 
             let gitignore = fs::read_to_string(temp.path().join(".gitignore")).unwrap();
             assert!(gitignore.lines().any(|line| line.trim() == ".env"));
+            assert!(gitignore.lines().any(|line| line.trim() == ".kalam/"));
+            assert!(temp.path().join("kalam/seed.sql").is_file());
         });
     }
 

@@ -22,13 +22,20 @@ auto_create = true
 [dev]
 auto_start_db = true
 apply_schema = true
+# Needs Kalam CLI 0.7+ (this repo: npm run kalam:dev). 0.6 applies
+# CREATE PROCEDURE without activating JS, so CALL fails, and it overwrites
+# src/generated/kalam.ts with ORM table stubs (drops createKalam).
 generate_types = true
 watch = true
 
 [dev.processes]
 app = "npm run dev"
-agent = "npm run agent"
 
 [logging]
 file = true
 capture_process_output = true
+
+[functions]
+path = "functions"
+runtime = "typescript"
+module = "backend"

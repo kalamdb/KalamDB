@@ -56,18 +56,6 @@ pub fn init_remote_schema_unavailable() -> String {
     )
 }
 
-pub fn init_repository_templates_unavailable() -> String {
-    format!(
-        "could not load a repository example.\n\nHow to fix:\n{}",
-        bullet_list(&[
-            "List templates: `kalam init --list-templates --json`",
-            "Retry with an explicit id: `kalam init --yes --template chat-with-ai --languages \
-             typescript --package-manager npm`",
-            "Or use the embedded starter: `kalam init --yes --template simple-live`",
-        ])
-    )
-}
-
 pub fn init_invalid_server_url(url: &str, parse_error: &str) -> String {
     format!(
         "server URL '{url}' is not valid ({parse_error}).\n\n\
@@ -131,17 +119,6 @@ pub fn init_scaffold_io_error(operation: &str, path: &Path, error: &std::io::Err
     )
 }
 
-pub fn init_missing_scaffold_template(project_path: &str, bundle: &str) -> String {
-    format!(
-        "missing scaffold template file '{project_path}' in '{bundle}'.\n\nHow to fix:\n{}",
-        bullet_list(&[
-            "Reinstall or upgrade the Kalam CLI — built-in templates ship with the binary",
-            "If you built from source, run `cargo build --release` in the cli workspace",
-            "Report an issue if the template bundle is missing after a clean install",
-        ])
-    )
-}
-
 pub fn init_stage_context(stage: &str, message: String) -> String {
     format!("kalam init failed while {stage}.\n\n{message}")
 }
@@ -172,10 +149,10 @@ pub fn dev_kalamdb_server_bin_missing(path: &Path) -> String {
 pub fn dev_kalamdb_server_not_found() -> String {
     format!(
         "kalamdb-server was not found (checked KALAMDB_SERVER_BIN, ~/.kalam/bin, and \
-         PATH).\n\nHow to fix:\n{}\n\nAfter the server is available, rerun:\nkalam dev",
+         PATH).\n\nHow to fix:\n{}\n\nAfter the server is available, rerun:\nkalam up",
         bullet_list(&[
-            "Run `kalam dev` in an interactive terminal — the CLI can download the server on \
-             first use",
+            "Run `kalam up` in an interactive terminal — the CLI can download the server on first \
+             use",
             "Or set KALAMDB_SERVER_BIN to the full path of kalamdb-server",
             "Or install kalamdb-server into ~/.kalam/bin (created automatically on download)",
             "On Windows, ensure kalamdb-server.exe is on PATH or use KALAMDB_SERVER_BIN",
@@ -188,9 +165,9 @@ pub fn dev_kalamdb_server_non_interactive_download(detail: &str) -> String {
     format!(
         "{detail}\n\nHow to fix:\n{}",
         bullet_list(&[
-            "Rerun `kalam dev` in a regular terminal (TTY) so the CLI can download the server",
+            "Rerun `kalam up` in a regular terminal (TTY) so the CLI can download the server",
             "Or download/install kalamdb-server manually and set KALAMDB_SERVER_BIN",
-            "For CI, preinstall the server binary before running kalam dev",
+            "For CI, preinstall the server binary before running kalam up",
         ])
     )
 }
@@ -313,6 +290,7 @@ mod tests {
     #[test]
     fn dev_kalamdb_server_not_found_lists_recovery_options() {
         let message = dev_kalamdb_server_not_found();
+        assert!(!message.contains("kalam dev"));
         assert!(message.contains("kalamdb-server was not found"));
         assert!(message.contains("KALAMDB_SERVER_BIN"));
         assert!(message.contains("How to fix:"));

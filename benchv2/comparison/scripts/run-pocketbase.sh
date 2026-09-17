@@ -43,6 +43,8 @@ cargo build --release -p comparison_pocketbase
 OUT="$RESULTS/pocketbase-$(date +%Y%m%d-%H%M%S).txt"
 {
   echo "# PocketBase comparison (collections Record API)"
+  echo "# server_bin=${BIN}"
+  echo "# version=$(cat "$ROOT/bin/.pocketbase-version" 2>/dev/null || echo unknown)"
   echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   POCKETBASE_URL="http://127.0.0.1:${PORT}" ./target/release/comparison_pocketbase
   echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

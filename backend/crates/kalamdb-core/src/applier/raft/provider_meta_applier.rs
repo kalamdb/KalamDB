@@ -10,11 +10,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kalamdb_commons::{
-    models::{schemas::TableDefinition, JobId, NamespaceId, NodeId, StorageId, TableId, UserId},
+    models::{
+        schemas::TableDefinition, FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId,
+        TableId, UserId,
+    },
     schemas::TableType,
 };
 use kalamdb_raft::{applier::MetaApplier, RaftError};
-use kalamdb_system::{providers::jobs::models::Job, JobNode, JobStatus, Storage, User};
+use kalamdb_system::{
+    providers::jobs::models::Job, ActivateFunctionOutcome, CatalogFunctionArtifact,
+    CatalogFunctionModule, CatalogFunctionRevision, JobNode, JobStatus, Storage, User,
+};
 
 use super::utils::run_blocking_raft;
 use crate::{
@@ -623,6 +629,60 @@ impl MetaApplier for ProviderMetaApplier {
             }
 
             Ok(format!("Job {} not found for cancellation", job_id))
+        })
+        .await
+    }
+
+    async fn compare_exchange_schedule(
+        &self,
+        id: &kalamdb_commons::ScheduleId,
+        expected_version: Option<&str>,
+        replacement: Option<&kalamdb_system::CatalogSchedule>,
+    ) -> Result<bool, RaftError> {
+        let app = self.app_context.clone();
+        let id = id.clone();
+        let version = expected_version.map(str::to_owned);
+        let replacement = replacement.cloned();
+        run_blocking_raft(move || {
+            app.system_tables()
+                .catalog_stores()
+                .compare_exchange_schedule(&id, version.as_deref(), replacement.as_ref())
+                .map_err(|error| RaftError::Internal(error.to_string()))
+        })
+        .await
+    }
+
+    async fn activate_function_revision(
+        &self,
+        module: &CatalogFunctionModule,
+        revision: &CatalogFunctionRevision,
+        artifact: &CatalogFunctionArtifact,
+        expected_revision_id: Option<&FunctionRevisionId>,
+    ) -> Result<String, RaftError> {
+        let app_context = self.app_context.clone();
+        let module = module.clone();
+        let revision = revision.clone();
+        let artifact = artifact.clone();
+        let expected_revision_id = expected_revision_id.cloned();
+        run_blocking_raft(move || {
+            let stores = app_context.system_tables().catalog_stores();
+            match stores.activate_function_revision(
+                module,
+                revision,
+                artifact,
+                expected_revision_id.as_ref(),
+            ) {
+                Ok(ActivateFunctionOutcome::Activated) => {
+                    Ok("function revision activated".to_string())
+                },
+                Ok(ActivateFunctionOutcome::NoOp) => Ok("function revision unchanged".to_string()),
+                Err(kalamdb_system::error::SystemError::Conflict(message)) => {
+                    Ok(format!("conflict:{message}"))
+                },
+                Err(error) => Err(RaftError::Internal(format!(
+                    "Failed to activate function revision: {error}"
+                ))),
+            }
         })
         .await
     }

@@ -21,7 +21,7 @@ server = [
 	"dep:serde_json",
 	"dep:uuid",
 ]
-tls = ["tonic/tls-webpki-roots", "tonic/tls-ring"]
+tls = ["tonic/tls-native-roots", "tonic/tls-aws-lc"]
 
 [dependencies]
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false, optional = true }

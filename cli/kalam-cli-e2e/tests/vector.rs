@@ -4,19 +4,20 @@
 //   cargo test --test vector
 //
 // Run individual test files:
-//   cargo test --test vector test_minio_embedding_flush_multiple_common_dimensions
-//   cargo test --test vector test_minio_vector_index_manifest_snapshot_exists
+//   cargo test --test vector --features cloud-aws
 
-mod common;
-
+#[cfg(feature = "cloud-aws")]
 #[path = "storage/minio/common.rs"]
-mod minio_common;
+pub(crate) mod minio_common;
 
+#[cfg(feature = "cloud-aws")]
 #[path = "vector/helpers.rs"]
 mod helpers;
 
+#[cfg(feature = "cloud-aws")]
 #[path = "vector/embedding_flush.rs"]
 mod embedding_flush;
 
+#[cfg(feature = "cloud-aws")]
 #[path = "vector/vector_index_manifest_snapshot.rs"]
 mod vector_index_manifest_snapshot;

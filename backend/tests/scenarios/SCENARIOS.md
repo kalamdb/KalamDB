@@ -18,10 +18,10 @@ This document defines **end-to-end (E2E) scenarios** for KalamDB using the share
 
 ## Runnable Categories
 
-- `test_scenarios_realtime`: chat, offline sync, shopping cart, collaborative editing
-- `test_scenarios_lifecycle`: dashboards, jobs, DDL while active, multi-tenant, multi-storage, vector/RAG
-- `test_scenarios_scale`: IoT telemetry, burst traffic, performance baselines, soak tests
-- `test_scenarios`: aggregate driver that includes every scenario category
+- `--test e2e` with filter `realtime`: chat, offline sync, shopping cart, collaborative editing
+- `--test e2e` with filter `lifecycle`: dashboards, jobs, DDL while active, multi-tenant, multi-storage, vector/RAG
+- `--test e2e` with filter `scale`: IoT telemetry, burst traffic, performance baselines, soak tests
+- `--test e2e` with no extra filter: every scenario category
 
 ### 0.1 Core Invariants (Must hold everywhere)
 

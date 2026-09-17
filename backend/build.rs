@@ -2,6 +2,7 @@
 // - Captures Git commit hash and build timestamp
 // - Falls back to version.toml if git is not available (e.g., Docker builds)
 // - Builds the Admin UI for kalamdb-api release builds (must run before rust-embed)
+// - On Windows MSVC, kalamdb-server passes /FORCE:MULTIPLE so V8 + RocksDB can link
 
 use std::{
     fs,
@@ -15,6 +16,8 @@ fn main() {
     let repo_root = find_repo_root(&manifest_dir).unwrap_or_else(|| manifest_dir.clone());
 
     build_isoc23_glibc_shim_if_needed(&repo_root);
+    build_early_memory_policy_if_needed(&repo_root, &package_name);
+    emit_windows_msvc_duplicate_symbol_link_flags(&package_name);
 
     // Build UI for release builds FIRST (before rust-embed macro runs).
     // Only when the embedded-ui feature is enabled.
@@ -80,6 +83,30 @@ fn main() {
     }
 }
 
+fn emit_windows_msvc_duplicate_symbol_link_flags(package_name: &str) {
+    // This file is shared with kalamdb-api (an rlib). rustc-link-arg-bins is only
+    // valid for packages that have a bin target; emitting it from kalamdb-api
+    // fails the Windows release build before link.
+    if package_name != "kalamdb-server" {
+        return;
+    }
+
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os != "windows" || target_env != "msvc" {
+        return;
+    }
+
+    // rusty_v8 statically includes exception.obj (std::exception_ptr). RocksDB's
+    // MSVC objects define the same symbols, so link.exe fails with LNK2005/LNK1169.
+    // /FORCE:MULTIPLE keeps the first definition. Emit from this build script
+    // because release CI sets CARGO_ENCODED_RUSTFLAGS="" and that overrides
+    // .cargo/config.toml rustflags.
+    println!("cargo:rustc-link-arg=/FORCE:MULTIPLE");
+    println!("cargo:rustc-link-arg-bins=/FORCE:MULTIPLE");
+    println!("cargo:rustc-link-arg-tests=/FORCE:MULTIPLE");
+}
+
 fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
@@ -99,6 +126,25 @@ fn build_isoc23_glibc_shim_if_needed(repo_root: &Path) {
     println!("cargo:rerun-if-changed={}", shim_path.display());
 
     cc::Build::new().file(&shim_path).compile("kalamdb_isoc23_shim");
+}
+
+fn build_early_memory_policy_if_needed(repo_root: &Path, package_name: &str) {
+    if package_name != "kalamdb-server" {
+        return;
+    }
+
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "linux" && target_os != "android" {
+        return;
+    }
+
+    let source = repo_root.join("backend").join("build").join("early_memory.c");
+    if !source.exists() {
+        panic!("Expected early memory policy file at {} but it was not found", source.display());
+    }
+
+    println!("cargo:rerun-if-changed={}", source.display());
+    cc::Build::new().file(&source).compile("kalamdb_early_memory");
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -135,6 +181,7 @@ fn build_ui_if_release(repo_root: &Path) {
                  unset SKIP_UI_BUILD."
             );
         }
+        assert_ui_dist_is_real(&index_file);
         return;
     }
 
@@ -241,6 +288,7 @@ fn build_ui_if_release(repo_root: &Path) {
     if !index_file.exists() {
         panic!("UI build completed but ui/dist/index.html not found - UI build may have failed!");
     }
+    assert_ui_dist_is_real(&index_file);
 
     // Rerun if UI inputs change.
     // NOTE: do NOT watch link/sdks/typescript/client/src. The SDK build creates/removes wasm and
@@ -287,6 +335,17 @@ fn ensure_ui_dist_exists(repo_root: &Path) {
         if let Err(e) = std::fs::write(&placeholder, content) {
             println!("cargo:warning=Failed to create placeholder index.html: {}", e);
         }
+    }
+}
+
+fn assert_ui_dist_is_real(index_file: &Path) {
+    let contents = fs::read_to_string(index_file).unwrap_or_default();
+    if contents.contains("UI Not Built") || !contents.contains("id=\"root\"") {
+        panic!(
+            "{} is not a built Admin UI. Build `ui/` first or unset SKIP_UI_BUILD so the release \
+             binary can embed it.",
+            index_file.display()
+        );
     }
 }
 

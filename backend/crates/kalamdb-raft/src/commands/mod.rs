@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 mod data_response;
 mod meta;
+mod schedule_update;
 mod shared_data;
 mod user_data;
 
@@ -21,6 +22,7 @@ mod user_data;
 // Data commands (split into separate files for better organization)
 pub use data_response::{commit_seq_from_log_position, DataResponse, TransactionApplyResult};
 pub use meta::{MetaCommand, MetaResponse};
+pub use schedule_update::ScheduleUpdate;
 pub use shared_data::SharedDataCommand;
 pub use user_data::UserDataCommand;
 

@@ -6,6 +6,8 @@
 pub mod auth;
 pub mod cluster;
 pub mod files;
+pub mod functions;
+pub mod functions_admin;
 pub mod sql;
 pub mod table_transfer;
 pub mod topics;

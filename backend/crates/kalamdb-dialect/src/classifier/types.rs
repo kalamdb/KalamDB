@@ -69,6 +69,37 @@ pub enum SqlStatementKind {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable(CreateTableStatement),
+    /// CREATE SCHEMA ... (PostgreSQL alias of CREATE NAMESPACE)
+    CreateSchema(CreateSchemaStatement),
+    /// SET search_path TO ...
+    SetSearchPath(SetSearchPathStatement),
+    /// CREATE TYPE ...
+    CreateType(CreateTypeStatement),
+    /// ALTER TYPE ...
+    AlterType(AlterTypeStatement),
+    /// DROP TYPE ...
+    DropType(DropTypeStatement),
+    /// CREATE PROCEDURE ...
+    CreateProcedure(CreateProcedureStatement),
+    /// DROP PROCEDURE ...
+    DropProcedure(DropProcedureStatement),
+    /// COMMENT ON TYPE|PROCEDURE ...
+    CommentOn(CommentOnStatement),
+    /// GRANT EXECUTE ON PROCEDURE ...
+    GrantExecute(GrantExecuteStatement),
+    /// REVOKE EXECUTE ON PROCEDURE ...
+    RevokeExecute(RevokeExecuteStatement),
+    /// CALL schema.name(...)
+    Call(CallStatement),
+    /// CREATE TRIGGER ... ON TOPIC ... EXECUTE PROCEDURE ...
+    CreateTrigger(CreateTriggerStatement),
+    CreateSchedule(CreateScheduleStatement),
+    /// DROP TRIGGER ...
+    DropTrigger(DropTriggerStatement),
+    DropSchedule(DropScheduleStatement),
+    /// ALTER TRIGGER ... ENABLE|DISABLE
+    AlterTrigger(AlterTriggerStatement),
+    AlterSchedule(AlterScheduleStatement),
     /// CREATE VIEW ...
     CreateView(CreateViewStatement),
     /// ALTER TABLE <namespace>.<table> ...
@@ -215,36 +246,6 @@ impl SqlStatement {
         &self.kind
     }
 
-    /// Check if this is a specific statement kind (helper for tests and matching)
-    pub fn is_kind<F>(&self, checker: F) -> bool
-    where
-        F: FnOnce(&SqlStatementKind) -> bool,
-    {
-        checker(&self.kind)
-    }
-
-    /// Check if this statement type requires DataFusion execution
-    ///
-    /// Returns true for SELECT, INSERT, DELETE statements that should be
-    /// passed to DataFusion for execution.
-    pub fn is_datafusion_statement(&self) -> bool {
-        matches!(
-            self.kind,
-            SqlStatementKind::Select | SqlStatementKind::Insert(_) | SqlStatementKind::Delete(_)
-        )
-    }
-
-    /// Check if this statement type is a custom KalamDB command
-    ///
-    /// Returns true for all non-standard SQL commands that need
-    /// custom execution logic.
-    pub fn is_custom_command(&self) -> bool {
-        !matches!(
-            self.kind,
-            SqlStatementKind::Select | SqlStatementKind::Insert(_) | SqlStatementKind::Unknown
-        )
-    }
-
     /// Returns true when slow-query logging should consider this statement.
     ///
     /// Only DML (INSERT, UPDATE, DELETE) and read queries (SELECT) are tracked.
@@ -284,11 +285,27 @@ impl SqlStatement {
             | SqlStatementKind::DataFusionMetaCommand
             | SqlStatementKind::Unknown => false,
 
-            // USE NAMESPACE only affects session state, not cluster state
-            SqlStatementKind::UseNamespace(_) => false,
+            // USE NAMESPACE / SET search_path only affect session state, not cluster state
+            SqlStatementKind::UseNamespace(_) | SqlStatementKind::SetSearchPath(_) => false,
 
             // All other operations modify data or schema - must go to leader
             SqlStatementKind::CreateNamespace(_)
+            | SqlStatementKind::CreateSchema(_)
+            | SqlStatementKind::CreateType(_)
+            | SqlStatementKind::AlterType(_)
+            | SqlStatementKind::DropType(_)
+            | SqlStatementKind::CreateProcedure(_)
+            | SqlStatementKind::DropProcedure(_)
+            | SqlStatementKind::CommentOn(_)
+            | SqlStatementKind::GrantExecute(_)
+            | SqlStatementKind::RevokeExecute(_)
+            | SqlStatementKind::Call(_)
+            | SqlStatementKind::CreateTrigger(_)
+            | SqlStatementKind::CreateSchedule(_)
+            | SqlStatementKind::DropTrigger(_)
+            | SqlStatementKind::DropSchedule(_)
+            | SqlStatementKind::AlterTrigger(_)
+            | SqlStatementKind::AlterSchedule(_)
             | SqlStatementKind::AlterNamespace(_)
             | SqlStatementKind::DropNamespace(_)
             | SqlStatementKind::CreateStorage(_)
@@ -346,6 +363,23 @@ impl SqlStatement {
             SqlStatementKind::DropNamespace(_) => "DROP NAMESPACE",
             SqlStatementKind::ShowNamespaces(_) => "SHOW NAMESPACES",
             SqlStatementKind::UseNamespace(_) => "USE NAMESPACE",
+            SqlStatementKind::CreateSchema(_) => "CREATE SCHEMA",
+            SqlStatementKind::SetSearchPath(_) => "SET SEARCH_PATH",
+            SqlStatementKind::CreateType(_) => "CREATE TYPE",
+            SqlStatementKind::AlterType(_) => "ALTER TYPE",
+            SqlStatementKind::DropType(_) => "DROP TYPE",
+            SqlStatementKind::CreateProcedure(_) => "CREATE PROCEDURE",
+            SqlStatementKind::DropProcedure(_) => "DROP PROCEDURE",
+            SqlStatementKind::CommentOn(_) => "COMMENT ON",
+            SqlStatementKind::GrantExecute(_) => "GRANT EXECUTE",
+            SqlStatementKind::RevokeExecute(_) => "REVOKE EXECUTE",
+            SqlStatementKind::Call(_) => "CALL",
+            SqlStatementKind::CreateTrigger(_) => "CREATE TRIGGER",
+            SqlStatementKind::CreateSchedule(_) => "CREATE SCHEDULE",
+            SqlStatementKind::DropTrigger(_) => "DROP TRIGGER",
+            SqlStatementKind::DropSchedule(_) => "DROP SCHEDULE",
+            SqlStatementKind::AlterTrigger(_) => "ALTER TRIGGER",
+            SqlStatementKind::AlterSchedule(_) => "ALTER SCHEDULE",
             SqlStatementKind::CreateStorage(_) => "CREATE STORAGE",
             SqlStatementKind::AlterStorage(_) => "ALTER STORAGE",
             SqlStatementKind::DropStorage(_) => "DROP STORAGE",

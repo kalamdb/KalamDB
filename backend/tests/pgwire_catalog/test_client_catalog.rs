@@ -6,8 +6,8 @@
 //!
 //! Spec: `specs/033-unified-backend-pgwire/validation/us9-client-catalog.md`
 //!
-//! Run (when wire + shims are implemented):
-//!   cd backend && cargo test --test pgwire_catalog --features e2e-tests
+//! Run via `cli/run-tests.sh` (full run or `--test-target pgwire_catalog`), which
+//! exports `KALAMDB_PGWIRE_HOST`/`PORT` and uses `--run-ignored` for this module.
 
 mod catalog_checks;
 mod jdbc;
@@ -65,6 +65,13 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
         .await
         .map_err(|e| format!("CREATE TABLE fixture failed: {e}"))?;
 
+    let procedure_sql =
+        format!("CREATE OR REPLACE PROCEDURE {FIXTURE_NAMESPACE}.ping(label TEXT) RETURNS TEXT");
+    client
+        .batch_execute(&procedure_sql)
+        .await
+        .map_err(|e| format!("CREATE PROCEDURE fixture failed: {e}"))?;
+
     Ok(())
 }
 
@@ -73,8 +80,8 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
 /// Requires: running server with `postgres_wire.enabled = true`.
 /// Future: replace env-based connect with embedded test server (extend `http_server` harness).
 #[tokio::test]
-#[ignore = "requires postgres wire listener (US2) and pg_catalog shims (US9); see \
-            validation/us9-client-catalog.md"]
+#[ignore = "requires postgres wire listener; run via cli/run-tests.sh (full run or --test-target \
+            pgwire_catalog)"]
 async fn wire_client_catalog_returns_data_and_matches_system_views() {
     let client = connect_pgwire().await.expect("connect");
     seed_fixture_metadata(&client).await.expect("seed fixture");

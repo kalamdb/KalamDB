@@ -39,4 +39,4 @@ This directory contains categorized documentation of all backend test scenarios.
 When asked to add a new test, please refer to these documents to find the most appropriate category and check if the scenario is already covered.
 Prefer extending an existing scenario in `scenarios/` for complex workflows, or adding a focused test in `misc/` or `testserver/` for specific feature verification.
 
-Scenario categories are also exposed as dedicated nextest targets so partial runs do not require the full scenario suite: `test_scenarios_realtime`, `test_scenarios_lifecycle`, and `test_scenarios_scale`.
+Scenario categories live in one `--test e2e` binary. Filter with `realtime`, `lifecycle`, or `scale` for a partial run.

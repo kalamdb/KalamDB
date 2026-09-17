@@ -19,6 +19,16 @@ function unwrapSerializableValue(value: unknown): unknown {
     return unwrapSerializableValue(value.toJson());
   }
 
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      ...Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, unwrapSerializableValue(entry)]),
+      ),
+    };
+  }
+
   if (Array.isArray(value)) {
     return value.map((item) => unwrapSerializableValue(item));
   }
@@ -122,11 +132,11 @@ export function CodeBlock({
     <div className={cn("flex h-full min-h-0 flex-col rounded-md border border-slate-700 bg-black", className)}>
       <ScrollArea className={cn("min-h-0 w-full flex-1", maxHeightClassName)}>
         {normalized.isJson && highlighted ? (
-          <pre className="whitespace-pre p-3 font-mono text-xs leading-5 text-slate-200">
+          <pre className="whitespace-pre-wrap break-all p-3 font-mono text-xs leading-5 text-slate-200">
             <code dangerouslySetInnerHTML={{ __html: highlighted }} />
           </pre>
         ) : (
-          <pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-5 text-slate-200">
+          <pre className="whitespace-pre-wrap break-all p-3 font-mono text-xs leading-5 text-slate-200">
             {normalized.text}
           </pre>
         )}

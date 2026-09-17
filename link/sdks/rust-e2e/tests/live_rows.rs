@@ -1,9 +1,9 @@
 //! Materialized `live()` subscription tests.
 
-mod common;
-
 use kalam_client::{LiveRowsConfig, LiveRowsEvent, SubscriptionConfig, SubscriptionOptions};
 use tokio::time::{timeout, Duration};
+
+use super::common;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]

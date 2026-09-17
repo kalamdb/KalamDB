@@ -1,0 +1,31 @@
+---
+description: Everyday kalam CLI lifecycle — targets, up/down/dev, agent usage
+globs: cli/**/*.rs, cli/templates/**, specs/035-cli-everyday-lifecycle/**
+---
+
+# Everyday CLI workflow
+
+Read `specs/035-cli-everyday-lifecycle/spec.md` before changing CLI lifecycle
+behavior.
+
+## Source files
+
+- Target resolution: `cli/src/workflow/target.rs`
+- Process identity: `cli/src/workflow/instance.rs`
+- Command dispatch: `cli/src/commands/workflow/`
+- `up` / `down` / `logs` / status: `cli/src/workflow/lifecycle/`
+- `kalam dev`: `cli/src/workflow/dev/`
+- Canonical agent skill: `../kalamdb-skills/skills/kalamdb/references/cli-lifecycle.md`
+
+## Invariants
+
+- One resolved target for SQL, `dev`, `up`, `down`, `status`, and `logs`.
+- `--global` / `-g` is shared-local (`~/.kalam/servers/default/`), not a
+  network service.
+- Reject `--global` with `--env`, `--url`, or `--host`.
+- Do not treat a healthy port as ownership. Require `instance.json`.
+- Honor existing `kalam/server` data paths; do not auto-migrate them.
+- `link` must not silently change `project.default_env`.
+- Do not inject root credentials into application processes.
+- Ordinary schema-watch failures keep the database and app running.
+- User-facing CLI changes also update `../kalamdb-skills`.

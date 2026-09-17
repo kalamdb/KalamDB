@@ -30,6 +30,22 @@ impl JobStatus {
         }
     }
 
+    /// True while the job or job_node is still eligible to run.
+    pub fn is_in_progress(self) -> bool {
+        matches!(
+            self,
+            JobStatus::New | JobStatus::Queued | JobStatus::Running | JobStatus::Retrying
+        )
+    }
+
+    /// True once the job or job_node has a terminal outcome.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            JobStatus::Completed | JobStatus::Failed | JobStatus::Cancelled | JobStatus::Skipped
+        )
+    }
+
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "new" => Some(JobStatus::New),

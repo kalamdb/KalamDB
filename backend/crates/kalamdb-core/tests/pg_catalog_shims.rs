@@ -3,11 +3,18 @@ mod support;
 use datafusion_common::ScalarValue;
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
-    models::{KalamCellValue, SessionOrigin, UserId},
+    models::{
+        datatypes::KalamDataType, KalamCellValue, RoutineId, RoutineParameterId,
+        RoutineSecurityMode, SessionOrigin, UserId,
+    },
     NamespaceId, Role,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_core::sql::{context::ExecutionContext, ExecutionResult};
+use kalamdb_core::{
+    app_context::AppContext,
+    sql::{context::ExecutionContext, ExecutionResult},
+};
+use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_shared_table, execute_err, execute_ok, execute_ok_with_params, observer_exec_ctx,
@@ -968,4 +975,404 @@ async fn pg_catalog_shim_jdbc_typeinfo_cache_and_keywords() {
         !keywords.split(',').any(|word| word == "select"),
         "getSQLKeywords should exclude SQL:2003 keyword select: {keywords:?}"
     );
+}
+
+fn tabularis_columns_sql() -> &'static str {
+    "
+        SELECT
+            c.column_name::text,
+            CASE
+                WHEN c.data_type = 'USER-DEFINED' THEN c.udt_name::text
+                ELSE c.data_type::text
+            END AS data_type,
+            c.is_nullable::text,
+            c.column_default::text,
+            c.is_identity::text,
+            c.character_maximum_length,
+            (SELECT string_agg('''' || replace(e.enumlabel, '''', '''''') || '''', ',' ORDER BY \
+     e.enumsortorder)
+             FROM pg_enum e
+             JOIN pg_type t ON t.oid = e.enumtypid
+             JOIN pg_namespace tn ON tn.oid = t.typnamespace
+             WHERE t.typname = c.udt_name AND tn.nspname = c.udt_schema) AS enum_values,
+            EXISTS (
+                SELECT 1
+                FROM pg_constraint pk_con
+                JOIN pg_class pk_table ON pk_table.oid = pk_con.conrelid
+                JOIN pg_namespace pk_schema ON pk_schema.oid = pk_table.relnamespace
+                JOIN unnest(pk_con.conkey) AS pk_col(attnum) ON true
+                JOIN pg_attribute pk_att
+                    ON pk_att.attrelid = pk_table.oid
+                    AND pk_att.attnum = pk_col.attnum
+                    AND NOT pk_att.attisdropped
+                WHERE pk_con.contype = 'p'
+                    AND pk_schema.nspname = c.table_schema
+                    AND pk_table.relname = c.table_name
+                    AND pk_att.attname = c.column_name
+            ) AS is_pk
+        FROM information_schema.columns c
+        WHERE c.table_schema = $1 AND c.table_name = $2
+        ORDER BY c.ordinal_position
+    "
+}
+
+fn tabularis_indexes_sql() -> &'static str {
+    "
+        SELECT
+            i.relname AS index_name,
+            COALESCE(
+                a.attname::text,
+                pg_get_indexdef(ix.indexrelid, k.n::int, true)
+            ) AS column_name,
+            ix.indisunique AS is_unique,
+            ix.indisprimary AS is_primary,
+            k.n::int AS seq_in_index,
+            (k.attnum = 0) AS is_expression
+        FROM
+            pg_class t
+            JOIN pg_namespace n ON t.relnamespace = n.oid
+            JOIN pg_index ix ON t.oid = ix.indrelid
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            CROSS JOIN LATERAL unnest(string_to_array(ix.indkey::text, ' ')::int2[])
+                WITH ORDINALITY AS k(attnum, n)
+            LEFT JOIN pg_attribute a
+                ON a.attrelid = t.oid
+                AND a.attnum = k.attnum
+                AND k.attnum <> 0
+        WHERE
+            t.relkind IN ('r', 'm')
+            AND n.nspname = $1
+            AND t.relname = $2
+        ORDER BY
+            i.relname,
+            k.n
+    "
+}
+
+fn tabularis_fkeys_sql() -> &'static str {
+    "
+        SELECT
+            con.conname::text AS constraint_name,
+            src_att.attname::text AS column_name,
+            ref_nsp.nspname::text AS foreign_schema_name,
+            ref_cl.relname::text AS foreign_table_name,
+            ref_att.attname::text AS foreign_column_name,
+            CASE con.confupdtype
+                WHEN 'a' THEN 'NO ACTION'
+                WHEN 'r' THEN 'RESTRICT'
+                WHEN 'c' THEN 'CASCADE'
+                WHEN 'n' THEN 'SET NULL'
+                WHEN 'd' THEN 'SET DEFAULT'
+            END::text AS update_rule,
+            CASE con.confdeltype
+                WHEN 'a' THEN 'NO ACTION'
+                WHEN 'r' THEN 'RESTRICT'
+                WHEN 'c' THEN 'CASCADE'
+                WHEN 'n' THEN 'SET NULL'
+                WHEN 'd' THEN 'SET DEFAULT'
+            END::text AS delete_rule
+        FROM pg_constraint con
+        JOIN pg_class src_cl ON src_cl.oid = con.conrelid
+        JOIN pg_namespace src_nsp ON src_nsp.oid = src_cl.relnamespace
+        JOIN pg_class ref_cl ON ref_cl.oid = con.confrelid
+        JOIN pg_namespace ref_nsp ON ref_nsp.oid = ref_cl.relnamespace
+        JOIN unnest(con.conkey, con.confkey) AS cols(src_attnum, ref_attnum) ON true
+        JOIN pg_attribute src_att
+            ON src_att.attrelid = src_cl.oid
+            AND src_att.attnum = cols.src_attnum
+            AND NOT src_att.attisdropped
+        JOIN pg_attribute ref_att
+            ON ref_att.attrelid = ref_cl.oid
+            AND ref_att.attnum = cols.ref_attnum
+            AND NOT ref_att.attisdropped
+        WHERE con.contype = 'f'
+          AND con.conparentid = 0
+          AND src_nsp.nspname = $1
+          AND src_cl.relname = $2
+        ORDER BY con.conname, cols.src_attnum
+    "
+}
+
+fn schema_table_params(namespace: &str, table: &str) -> Vec<ScalarValue> {
+    vec![
+        ScalarValue::Utf8(Some(namespace.to_string())),
+        ScalarValue::Utf8(Some(table.to_string())),
+    ]
+}
+
+fn cell_is_true(value: &KalamCellValue) -> bool {
+    value.as_bool() == Some(true)
+        || value
+            .as_str()
+            .is_some_and(|text| text.eq_ignore_ascii_case("true") || text == "t")
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn pg_catalog_shim_tabularis_table_browser_probes() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let namespace = unique_namespace("tabularis_browse");
+    create_shared_table(&app_ctx, &namespace, "items").await;
+    let params = schema_table_params(namespace.as_str(), "items");
+
+    let column_rows = result_rows(
+        execute_ok_with_params(&executor, &observer_ctx, tabularis_columns_sql(), params.clone())
+            .await,
+    );
+    let column_names = string_values(&column_rows, "column_name");
+    assert!(column_names.contains(&"id".to_string()), "missing id column: {column_names:?}");
+    assert!(
+        column_names.contains(&"name".to_string()),
+        "missing name column: {column_names:?}"
+    );
+    let id_row = column_rows
+        .iter()
+        .find(|row| row.get("column_name").and_then(|value| value.as_str()) == Some("id"))
+        .expect("id column row");
+    assert!(
+        cell_is_true(id_row.get("is_pk").expect("is_pk")),
+        "expected id to be primary key: {id_row:?}"
+    );
+
+    let index_rows = result_rows(
+        execute_ok_with_params(&executor, &observer_ctx, tabularis_indexes_sql(), params.clone())
+            .await,
+    );
+    assert!(!index_rows.is_empty(), "expected a primary key index for items");
+    assert!(
+        string_values(&index_rows, "column_name").contains(&"id".to_string()),
+        "expected PK index on id: {index_rows:?}"
+    );
+    assert!(
+        index_rows
+            .iter()
+            .any(|row| cell_is_true(row.get("is_primary").expect("is_primary"))),
+        "expected indisprimary: {index_rows:?}"
+    );
+
+    let fk_rows = result_rows(
+        execute_ok_with_params(&executor, &observer_ctx, tabularis_fkeys_sql(), params).await,
+    );
+    assert!(fk_rows.is_empty(), "fixture table has no foreign keys: {fk_rows:?}");
+
+    let trigger_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT t.trigger_name AS name, t.event_object_table AS table_name FROM \
+             information_schema.triggers t WHERE t.trigger_schema = $1 ORDER BY t.trigger_name",
+            vec![ScalarValue::Utf8(Some(namespace.to_string()))],
+        )
+        .await,
+    );
+    let _ = trigger_rows;
+
+    insert_catalog_procedure(&app_ctx, &namespace, "ping");
+    let routine_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT proname, prokind FROM pg_proc WHERE pronamespace = (SELECT oid FROM \
+             pg_namespace WHERE nspname = $1) AND prokind IN ('f', 'p') ORDER BY proname",
+            vec![ScalarValue::Utf8(Some(namespace.to_string()))],
+        )
+        .await,
+    );
+    assert_eq!(string_values(&routine_rows, "proname"), vec!["ping".to_string()]);
+    assert_eq!(string_values(&routine_rows, "prokind"), vec!["p".to_string()]);
+
+    let indexdef_rows = result_rows(
+        execute_ok(&executor, &observer_ctx, "SELECT pg_get_indexdef(1, 1, true) AS indexdef")
+            .await,
+    );
+    assert_eq!(indexdef_rows.len(), 1);
+}
+
+#[tokio::test]
+#[ntest::timeout(20_000)]
+async fn pg_catalog_shim_jdbc_and_information_schema_routines() {
+    let mut config = ServerConfig::default();
+    config.postgres_wire.enabled = true;
+    let (app_ctx, _test_db) = create_cluster_app_context_with_config(config).await;
+    let executor = create_executor(app_ctx.clone());
+    let observer_ctx = observer_exec_ctx(&app_ctx);
+    let namespace = unique_namespace("jdbc_routines");
+    create_shared_table(&app_ctx, &namespace, "items").await;
+    insert_catalog_procedure(&app_ctx, &namespace, "ping");
+
+    let procedure_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT current_database() AS \"PROCEDURE_CAT\", n.nspname AS \"PROCEDURE_SCHEM\", \
+             p.proname AS \"PROCEDURE_NAME\", NULL, NULL, NULL, d.description AS \"REMARKS\", 2 \
+             AS \"PROCEDURE_TYPE\", p.proname || '_' || p.oid AS \"SPECIFIC_NAME\" FROM \
+             pg_catalog.pg_namespace n, pg_catalog.pg_proc p LEFT JOIN pg_catalog.pg_description \
+             d ON (p.oid=d.objoid) LEFT JOIN pg_catalog.pg_class c ON (d.classoid=c.oid AND \
+             c.relname='pg_proc') LEFT JOIN pg_catalog.pg_namespace pn ON (c.relnamespace=pn.oid \
+             AND pn.nspname='pg_catalog') WHERE p.pronamespace=n.oid AND p.prokind='p' AND \
+             n.nspname LIKE $1 ORDER BY \"PROCEDURE_SCHEM\", \"PROCEDURE_NAME\", p.oid::text",
+            vec![ScalarValue::Utf8(Some(namespace.to_string()))],
+        )
+        .await,
+    );
+    assert!(
+        string_values(&procedure_rows, "PROCEDURE_NAME").contains(&"ping".to_string()),
+        "JDBC getProcedures missed ping: {procedure_rows:?}"
+    );
+
+    let function_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT current_database() AS \"FUNCTION_CAT\", n.nspname AS \"FUNCTION_SCHEM\", \
+             p.proname AS \"FUNCTION_NAME\", d.description AS \"REMARKS\", CASE WHEN \
+             (format_type(p.prorettype, null) = 'unknown') THEN 0 WHEN \
+             (substring(pg_get_function_result(p.oid) from 0 for 6) = 'TABLE') OR \
+             (substring(pg_get_function_result(p.oid) from 0 for 6) = 'SETOF') THEN 2 ELSE 1 END \
+             AS \"FUNCTION_TYPE\", p.proname || '_' || p.oid AS \"SPECIFIC_NAME\" FROM \
+             pg_catalog.pg_proc p INNER JOIN pg_catalog.pg_namespace n ON p.pronamespace=n.oid \
+             LEFT JOIN pg_catalog.pg_description d ON p.oid=d.objoid WHERE true AND p.prokind='f' \
+             AND n.nspname LIKE $1 ORDER BY \"FUNCTION_SCHEM\", \"FUNCTION_NAME\", p.oid::text",
+            vec![ScalarValue::Utf8(Some(namespace.to_string()))],
+        )
+        .await,
+    );
+    assert!(
+        function_rows.is_empty(),
+        "Kalam procedures are CALL-able (prokind=p), so getFunctions is empty: {function_rows:?}"
+    );
+
+    let procedure_column_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT current_database() AS current_database, n.nspname, p.proname, p.prorettype, \
+             p.proargtypes, t.typtype, t.typrelid, p.proargnames, p.proargmodes, \
+             p.proallargtypes, p.oid FROM pg_catalog.pg_proc p, pg_catalog.pg_namespace n, \
+             pg_catalog.pg_type t WHERE p.pronamespace=n.oid AND p.prorettype=t.oid AND n.nspname \
+             LIKE $1 AND p.proname LIKE $2 ORDER BY n.nspname, p.proname, p.oid::text",
+            vec![
+                ScalarValue::Utf8(Some(namespace.to_string())),
+                ScalarValue::Utf8(Some("ping".to_string())),
+            ],
+        )
+        .await,
+    );
+    assert_eq!(string_values(&procedure_column_rows, "proname"), vec!["ping".to_string()]);
+
+    let is_routine_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT routine_name, routine_type FROM information_schema.routines WHERE \
+             routine_schema = $1 ORDER BY routine_name",
+            vec![ScalarValue::Utf8(Some(namespace.to_string()))],
+        )
+        .await,
+    );
+    assert_eq!(string_values(&is_routine_rows, "routine_name"), vec!["ping".to_string()]);
+    assert_eq!(string_values(&is_routine_rows, "routine_type"), vec!["PROCEDURE".to_string()]);
+
+    let parameter_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT p.parameter_name, p.data_type, p.parameter_mode FROM \
+             information_schema.parameters p JOIN information_schema.routines r ON \
+             p.specific_name = r.specific_name WHERE r.routine_schema = $1 AND r.routine_name = \
+             $2 ORDER BY p.ordinal_position",
+            vec![
+                ScalarValue::Utf8(Some(namespace.to_string())),
+                ScalarValue::Utf8(Some("ping".to_string())),
+            ],
+        )
+        .await,
+    );
+    assert_eq!(string_values(&parameter_rows, "parameter_name"), vec!["label".to_string()]);
+    assert_eq!(string_values(&parameter_rows, "parameter_mode"), vec!["IN".to_string()]);
+
+    let definition_rows = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT pg_get_functiondef(p.oid) AS definition, \
+             pg_get_function_identity_arguments(p.oid) AS args FROM pg_proc p JOIN pg_namespace n \
+             ON p.pronamespace = n.oid WHERE n.nspname = $1 AND p.proname = $2",
+            vec![
+                ScalarValue::Utf8(Some(namespace.to_string())),
+                ScalarValue::Utf8(Some("ping".to_string())),
+            ],
+        )
+        .await,
+    );
+    let definitions = string_values(&definition_rows, "definition");
+    assert_eq!(definitions.len(), 1, "expected one pg_get_functiondef row: {definition_rows:?}");
+    assert!(
+        definitions[0].contains("CREATE OR REPLACE PROCEDURE") && definitions[0].contains("ping"),
+        "unexpected procedure definition: {definitions:?}"
+    );
+    assert_eq!(string_values(&definition_rows, "args"), vec!["label text".to_string()]);
+
+    let best_row = result_rows(
+        execute_ok_with_params(
+            &executor,
+            &observer_ctx,
+            "SELECT a.attname, a.atttypid, atttypmod FROM pg_catalog.pg_class ct JOIN \
+             pg_catalog.pg_attribute a ON (ct.oid = a.attrelid) JOIN pg_catalog.pg_namespace n ON \
+             (ct.relnamespace = n.oid) JOIN (SELECT i.indexrelid, i.indrelid, i.indisprimary, \
+             information_schema._pg_expandarray(i.indkey) AS keys FROM pg_catalog.pg_index i) i \
+             ON (a.attnum = (i.keys).x AND a.attrelid = i.indrelid) WHERE true AND n.nspname = $1 \
+             AND ct.relname = $2 AND i.indisprimary ORDER BY a.attnum",
+            schema_table_params(namespace.as_str(), "items"),
+        )
+        .await,
+    );
+    assert_eq!(string_values(&best_row, "attname"), vec!["id".to_string()]);
+}
+
+fn insert_catalog_procedure(
+    app_ctx: &std::sync::Arc<AppContext>,
+    namespace: &NamespaceId,
+    name: &str,
+) {
+    let stores = app_ctx.system_tables().catalog_stores();
+    let routine_id = RoutineId::from_parts(Some(namespace), name);
+    stores
+        .upsert_routine(CatalogRoutine {
+            routine_id:         routine_id.clone(),
+            namespace_id:       namespace.clone(),
+            name:               name.to_string(),
+            owner:              UserId::new("root"),
+            security:           RoutineSecurityMode::Invoker,
+            language:           Some("sql".to_string()),
+            body:               None,
+            return_type_id:     None,
+            return_type_name:   Some("TEXT".to_string()),
+            return_is_array:    false,
+            return_not_null:    false,
+            comment:            Some("liveness probe".to_string()),
+            return_data_type:   Some(KalamDataType::Text),
+            inline_source_hash: None,
+            inline_artifact_id: None,
+        })
+        .expect("upsert catalog routine");
+    stores
+        .upsert_parameter(CatalogRoutineParameter {
+            parameter_id: RoutineParameterId::new(&routine_id, 0).expect("parameter id"),
+            routine_id,
+            name: "label".to_string(),
+            ordinal: 0,
+            type_id: None,
+            type_name: "TEXT".to_string(),
+            is_array: false,
+            not_null: false,
+            nonempty: false,
+            data_type: Some(KalamDataType::Text),
+        })
+        .expect("upsert catalog routine parameter");
 }

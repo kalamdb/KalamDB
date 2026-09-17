@@ -14,7 +14,7 @@ watch = true
 languages = ["typescript"]
 
 [schema.targets.typescript]
-output = "src/app/schema.generated.ts"
+output = "src/app/generated/kalam.ts"
 
 [migrations]
 auto_create = true

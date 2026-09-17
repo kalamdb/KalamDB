@@ -25,8 +25,8 @@ const cleanupPlugin = () => ({
   name: 'cleanup-kalam-client',
   closeBundle() {
     const duplicatePaths = [
-      path.resolve(__dirname, 'dist/kalam-link'),
-      path.resolve(__dirname, 'dist/@kalam'),
+      path.resolve(import.meta.dirname, 'dist/kalam-link'),
+      path.resolve(import.meta.dirname, 'dist/@kalam'),
     ];
 
     for (const duplicatePath of duplicatePaths) {
@@ -39,7 +39,7 @@ const cleanupPlugin = () => ({
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, __dirname, "");
+  const env = loadEnv(mode, import.meta.dirname, "");
   const backendOrigin = normalizeOrigin(env.VITE_API_URL || "http://localhost:2900");
   const backendWebSocketOrigin = toWebSocketOrigin(backendOrigin);
 
@@ -51,13 +51,13 @@ export default defineConfig(({ mode }) => {
       preserveSymlinks: true,
       dedupe: ["drizzle-orm", "@kalamdb/client", "@kalamdb/orm", "react", "react-dom"],
       alias: {
-        "@": path.resolve(__dirname, "./src"),
+        "@": path.resolve(import.meta.dirname, "./src"),
         "@kalamdb/client": path.resolve(
-          __dirname,
+          import.meta.dirname,
           "../link/sdks/typescript/client/dist/src/index.js",
         ),
         "@kalamdb/orm": path.resolve(
-          __dirname,
+          import.meta.dirname,
           "../link/sdks/typescript/orm/dist/index.js",
         ),
       },
@@ -77,9 +77,9 @@ export default defineConfig(({ mode }) => {
       fs: {
         // Allow serving files from the local SDK directory for WASM
         allow: [
-          path.resolve(__dirname, "."),
-          path.resolve(__dirname, "../link/sdks/typescript/client"),
-          path.resolve(__dirname, "../link/sdks/typescript/orm"),
+          path.resolve(import.meta.dirname, "."),
+          path.resolve(import.meta.dirname, "../link/sdks/typescript/client"),
+          path.resolve(import.meta.dirname, "../link/sdks/typescript/orm"),
         ],
       },
       // Disable caching for WASM and SDK files
@@ -113,6 +113,7 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       exclude: [...configDefaults.exclude, "tests/e2e/**"],
+      setupFiles: ["./src/test/setup.ts"],
     },
     // Ensure WASM files are handled correctly
     assetsInclude: ["**/*.wasm"],

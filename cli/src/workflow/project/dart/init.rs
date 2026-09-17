@@ -6,11 +6,13 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     terminal_ui::{self, SelectOption},
-    workflow::project::{
-        dart::templates::{self, DEFAULT_TEMPLATE},
+    workflow::{
+        project::{
+            dart::templates::{self, DEFAULT_TEMPLATE},
+            templates::EmbeddedTemplate,
+            ts::{apply_scaffold, SKIP_PACKAGE_INSTALL_ENV},
+        },
         prompts::prompt_select,
-        templates::EmbeddedTemplate,
-        ts::{apply_scaffold, SKIP_PACKAGE_INSTALL_ENV},
     },
 };
 

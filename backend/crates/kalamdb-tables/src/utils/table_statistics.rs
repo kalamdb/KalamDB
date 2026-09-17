@@ -7,7 +7,7 @@
 //! exposes table-level aggregates through `TableProvider::statistics` for future
 //! optimizer rules. DataFusion's mainline planner does not read that hook today.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use datafusion::{
     arrow::datatypes::SchemaRef,
@@ -24,7 +24,8 @@ use kalamdb_commons::{
     TableId, UserId,
 };
 use kalamdb_system::{
-    ColumnStats, Manifest, ManifestService as ManifestServiceTrait, SegmentMetadata,
+    ColumnStats, Manifest, ManifestCacheEntry, ManifestService as ManifestServiceTrait,
+    SegmentMetadata,
 };
 
 use crate::utils::core::TableProviderCore;
@@ -41,7 +42,8 @@ pub fn compute_manifest_table_statistics(
     let table_id = core.table_id();
     let manifest_service = core.manifest_service();
 
-    let manifests = load_manifests(manifest_service.as_ref(), table_id, table_type)?;
+    let entries = load_manifests(manifest_service.as_ref(), table_id, table_type)?;
+    let manifests: Vec<&Manifest> = entries.iter().map(|entry| &entry.manifest).collect();
     Some(aggregate_manifest_statistics(&schema, core.table_def(), &manifests))
 }
 
@@ -49,23 +51,22 @@ fn load_manifests(
     manifest_service: &dyn ManifestServiceTrait,
     table_id: &TableId,
     table_type: TableType,
-) -> Option<Vec<Manifest>> {
+) -> Option<Vec<Arc<ManifestCacheEntry>>> {
     match table_type {
         TableType::User => {
             let user_ids = manifest_service.get_manifest_user_ids(table_id).ok()?;
             if user_ids.is_empty() {
-                return load_manifest(manifest_service, table_id, None)
-                    .map(|manifest| vec![manifest]);
+                return load_manifest(manifest_service, table_id, None).map(|entry| vec![entry]);
             }
 
-            let manifests: Vec<Manifest> = user_ids
+            let entries: Vec<Arc<ManifestCacheEntry>> = user_ids
                 .iter()
                 .filter_map(|user_id| load_manifest(manifest_service, table_id, Some(user_id)))
                 .collect();
-            Some(manifests)
+            Some(entries)
         },
         TableType::Shared | TableType::Stream => {
-            load_manifest(manifest_service, table_id, None).map(|manifest| vec![manifest])
+            load_manifest(manifest_service, table_id, None).map(|entry| vec![entry])
         },
         _ => None,
     }
@@ -75,18 +76,14 @@ fn load_manifest(
     manifest_service: &dyn ManifestServiceTrait,
     table_id: &TableId,
     user_id: Option<&UserId>,
-) -> Option<Manifest> {
-    manifest_service
-        .get_or_load(table_id, user_id)
-        .ok()
-        .flatten()
-        .map(|entry| entry.manifest.clone())
+) -> Option<Arc<ManifestCacheEntry>> {
+    manifest_service.get_or_load(table_id, user_id).ok().flatten()
 }
 
 fn aggregate_manifest_statistics(
     schema: &SchemaRef,
     table_def: &TableDefinition,
-    manifests: &[Manifest],
+    manifests: &[&Manifest],
 ) -> Statistics {
     let readable_segments: Vec<&SegmentMetadata> = manifests
         .iter()
@@ -299,7 +296,7 @@ mod tests {
         manifest.add_segment(test_segment(100, 1, 100, 10, 90));
         manifest.add_segment(test_segment(50, 101, 150, 5, 95));
 
-        let stats = aggregate_manifest_statistics(&schema, &table_def, &[manifest]);
+        let stats = aggregate_manifest_statistics(&schema, &table_def, &[&manifest]);
 
         assert_eq!(stats.num_rows, Precision::Inexact(150));
         assert_eq!(stats.total_byte_size, Precision::Inexact(150 * 64));
@@ -321,7 +318,7 @@ mod tests {
         let table_def = test_table_def();
         let manifest = Manifest::new(TableId::from_strings("app", "items"), None);
 
-        let stats = aggregate_manifest_statistics(&schema, &table_def, &[manifest]);
+        let stats = aggregate_manifest_statistics(&schema, &table_def, &[&manifest]);
 
         assert_eq!(stats.num_rows, Precision::Exact(0));
         assert_eq!(stats.total_byte_size, Precision::Exact(0));

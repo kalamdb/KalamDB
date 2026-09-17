@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
+    "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
+    "drizzle-orm": "^0.45.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

@@ -61,8 +61,16 @@ function mapTableRow<TTable extends Table>(table: TTable, row: RowData): InferSe
     const normalizer = normalizerForColumn(col);
     const driverValue = raw !== undefined && normalizer ? normalizer(raw) : raw;
 
-    if (raw !== undefined && 'mapFromDriverValue' in col) {
-      mapped[key] = (col as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue(driverValue);
+    if (raw == null) {
+      mapped[key] = null;
+      continue;
+    }
+
+    if ('mapFromDriverValue' in col) {
+      mapped[key] =
+        driverValue == null
+          ? null
+          : (col as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue(driverValue);
     } else {
       mapped[key] = driverValue ?? null;
     }

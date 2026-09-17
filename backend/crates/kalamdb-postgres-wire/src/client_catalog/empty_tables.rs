@@ -7,21 +7,16 @@
 //! Also compiled into `kalamdb-views` via `#[path]` so providers and wire share
 //! one definition without a crate dependency cycle.
 
-use std::sync::Arc;
-
 use datafusion::arrow::datatypes::{DataType, Field};
 
 /// Number of empty `pg_catalog` tables registered for wire client probes.
-pub const EMPTY_PG_CATALOG_TABLE_COUNT: usize = 22;
+pub const EMPTY_PG_CATALOG_TABLE_COUNT: usize = 19;
 
 /// Names of empty `pg_catalog` tables (for coverage tests).
 pub fn empty_pg_catalog_table_names() -> &'static [&'static str] {
     &[
         "pg_attrdef",
         "pg_description",
-        "pg_constraint",
-        "pg_proc",
-        "pg_index",
         "pg_inherits",
         "pg_enum",
         "pg_matviews",
@@ -58,10 +53,6 @@ fn float64(name: &str, nullable: bool) -> Field {
     Field::new(name, DataType::Float64, nullable)
 }
 
-fn int64_list(name: &str) -> Field {
-    Field::new(name, DataType::List(Arc::new(Field::new("item", DataType::Int64, true))), true)
-}
-
 /// Schema definitions for empty `pg_catalog` probe tables.
 pub fn empty_pg_catalog_table_defs() -> Vec<(&'static str, Vec<Field>)> {
     vec![
@@ -81,46 +72,6 @@ pub fn empty_pg_catalog_table_defs() -> Vec<(&'static str, Vec<Field>)> {
                 int64("classoid", false),
                 int64("objsubid", false),
                 utf8("description", false),
-            ],
-        ),
-        (
-            "pg_constraint",
-            vec![
-                int64("oid", false),
-                utf8("conname", false),
-                int64("connamespace", false),
-                utf8("contype", false),
-                int64("conrelid", false),
-                int64("confrelid", false),
-                int64_list("conkey"),
-            ],
-        ),
-        (
-            "pg_proc",
-            vec![
-                int64("oid", false),
-                utf8("proname", false),
-                int64("pronamespace", false),
-                utf8("prokind", false),
-            ],
-        ),
-        (
-            "pg_index",
-            vec![
-                int64("indexrelid", false),
-                int64("indrelid", false),
-                int64("indnatts", false),
-                int64("indnkeyatts", false),
-                bool_field("indisunique", false),
-                bool_field("indisprimary", false),
-                bool_field("indisexclusion", false),
-                bool_field("indimmediate", false),
-                bool_field("indisclustered", false),
-                bool_field("indisvalid", false),
-                bool_field("indcheckxmin", false),
-                bool_field("indisready", false),
-                bool_field("indislive", false),
-                bool_field("indisreplident", false),
             ],
         ),
         (
@@ -340,9 +291,6 @@ mod tests {
         for required in [
             "pg_settings",
             "pg_roles",
-            "pg_proc",
-            "pg_index",
-            "pg_constraint",
             "pg_description",
             "pg_collation",
             "pg_attrdef",

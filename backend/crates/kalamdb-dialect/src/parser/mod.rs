@@ -22,6 +22,7 @@
 pub mod dml;
 pub mod explain;
 pub mod extensions;
+mod pg_unnest;
 pub mod query_parser;
 pub mod system;
 pub mod utils;

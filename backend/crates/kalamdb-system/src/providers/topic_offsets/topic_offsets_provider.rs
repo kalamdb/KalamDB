@@ -10,10 +10,10 @@ use datafusion::{
     logical_expr::Expr,
 };
 use kalamdb_commons::{
-    conversions::{row_to_serde_model, serde_model_to_row},
     models::{rows::SystemTableRow, ConsumerGroupId, TopicId},
     SystemTable,
 };
+use kalamdb_serialization::{model_to_row, row_to_model};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
 use super::models::TopicOffset;
@@ -194,12 +194,6 @@ impl TopicOffsetsTableProvider {
         Ok(count)
     }
 
-    /// List all topic offsets
-    pub fn list_offsets(&self) -> Result<Vec<TopicOffset>, SystemError> {
-        let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter().map(|(_, row)| Self::decode_offset_row(&row)).collect()
-    }
-
     /// Load all topic offsets as a single RecordBatch for DataFusion
     fn load_batch_internal(&self) -> Result<RecordBatch, SystemError> {
         let rows = self
@@ -254,14 +248,14 @@ impl TopicOffsetsTableProvider {
     }
 
     fn encode_offset_row(offset: &TopicOffset) -> Result<SystemTableRow, SystemError> {
-        let fields = serde_model_to_row(offset, &TopicOffset::definition())
-            .map_err(SystemError::SerializationError)?;
+        let fields = model_to_row(offset, &TopicOffset::definition())
+            .map_err(|error| SystemError::SerializationError(error.to_string()))?;
         Ok(SystemTableRow { fields })
     }
 
     fn decode_offset_row(row: &SystemTableRow) -> Result<TopicOffset, SystemError> {
-        row_to_serde_model(&row.fields, &TopicOffset::definition())
-            .map_err(SystemError::SerializationError)
+        row_to_model(&row.fields, &TopicOffset::definition())
+            .map_err(|error| SystemError::SerializationError(error.to_string()))
     }
 }
 

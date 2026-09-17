@@ -289,7 +289,15 @@ impl SubscriptionFlowControl {
                 (None, None) => std::cmp::Ordering::Equal,
             }
         });
-        buffer.drain(..).collect()
+        let drained: Vec<BufferedNotification> = buffer.drain(..).collect();
+        buffer.shrink_to_fit();
+        drained
+    }
+
+    pub fn release_buffer(&self) {
+        let mut buffer = self.buffer.lock();
+        buffer.clear();
+        buffer.shrink_to_fit();
     }
 }
 
@@ -521,7 +529,13 @@ impl ConnectionState {
 
     /// Remove a subscription by key, returning the removed value.
     pub fn remove_subscription(&self, key: &str) -> Option<(Arc<str>, SubscriptionState)> {
-        self.subscriptions.write().remove_entry(key)
+        let mut subscriptions = self.subscriptions.write();
+        let removed = subscriptions.remove_entry(key);
+        if let Some((_, state)) = &removed {
+            release_subscription_buffer(state);
+        }
+        shrink_subscription_map(&mut subscriptions);
+        removed
     }
 
     /// Remove a subscription by primary key, falling back to a secondary key
@@ -535,9 +549,14 @@ impl ConnectionState {
         F: FnOnce() -> Option<String>,
     {
         let mut subscriptions = self.subscriptions.write();
-        subscriptions
+        let removed = subscriptions
             .remove_entry(primary_key)
-            .or_else(|| fallback_fn().and_then(|key| subscriptions.remove_entry(key.as_str())))
+            .or_else(|| fallback_fn().and_then(|key| subscriptions.remove_entry(key.as_str())));
+        if let Some((_, state)) = &removed {
+            release_subscription_buffer(state);
+        }
+        shrink_subscription_map(&mut subscriptions);
+        removed
     }
 
     /// Get a subscription by ID (cloned out of the connection map).
@@ -565,8 +584,10 @@ impl ConnectionState {
         let mut subscriptions = self.subscriptions.write();
         let mut result = Vec::with_capacity(subscriptions.len());
         for (_, value) in subscriptions.drain() {
+            release_subscription_buffer(&value);
             result.push(f(&value));
         }
+        subscriptions.shrink_to_fit();
         result
     }
 
@@ -652,6 +673,18 @@ impl ConnectionState {
     }
 }
 
+fn release_subscription_buffer(state: &SubscriptionState) {
+    if let Some(initial_load) = state.initial_load.as_ref() {
+        initial_load.flow_control.release_buffer();
+    }
+}
+
+fn shrink_subscription_map(subscriptions: &mut HashMap<Arc<str>, SubscriptionState>) {
+    if subscriptions.capacity() > subscriptions.len().saturating_mul(4).max(8) {
+        subscriptions.shrink_to_fit();
+    }
+}
+
 /// Registration info returned when a connection is registered
 pub struct ConnectionRegistration {
     pub connection_id:   ConnectionId,
@@ -730,6 +763,21 @@ mod tests {
             .collect();
 
         assert_eq!(seqs, vec![3, 6, 9]);
+    }
+
+    #[test]
+    fn test_subscription_flow_control_release_buffer_drops_capacity() {
+        let flow_control = SubscriptionFlowControl::new();
+        for seq in 1..=32 {
+            flow_control.buffer_notification(
+                make_notification("sub-release"),
+                Some(SeqId::from(seq)),
+                None,
+            );
+        }
+
+        flow_control.release_buffer();
+        assert!(flow_control.drain_buffered_notifications().is_empty());
     }
 
     #[test]

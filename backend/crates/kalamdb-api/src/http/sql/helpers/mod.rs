@@ -19,4 +19,4 @@ pub use executor::{
 };
 pub use files::cleanup_files;
 pub use params::{parse_forward_params, parse_scalar_params};
-pub use streaming::stream_sql_rows_response;
+pub use streaming::{stream_sql_rows_response, stream_sql_scalar_rows_response};

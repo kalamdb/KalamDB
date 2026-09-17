@@ -7,7 +7,10 @@ export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
   expect: { timeout: 5_000 },
-  fullyParallel: true,
+  // SQL Studio workspace is synced per logged-in user. Parallel workers
+  // sharing root would overwrite each other's editor tabs mid-query.
+  fullyParallel: false,
+  workers: 1,
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: `http://${host}:${port}`,

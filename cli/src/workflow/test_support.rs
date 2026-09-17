@@ -9,8 +9,8 @@ use crate::{
     workflow::{
         project::{
             config::{
-                ConnectionEnv, DevSection, KalamProjectConfig, LoggingSection, MigrationsSection,
-                ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
+                ConnectionEnv, DevSection, FunctionsSection, KalamProjectConfig, LoggingSection,
+                MigrationsSection, ProjectSection, SchemaMode, SchemaSection, SchemaTarget,
             },
             resolve::{ResolutionSource, ResolvedEnvironment},
         },
@@ -31,6 +31,10 @@ pub fn test_workflow_context(project_root: &Path) -> WorkflowContext {
         env_override:       None,
         namespace_override: None,
         url_override:       None,
+        global:             false,
+        host:               None,
+        port:               None,
+        instance:           None,
     }
 }
 
@@ -52,12 +56,14 @@ pub fn minimal_sql_project_config() -> KalamProjectConfig {
             default_env:     "dev".into(),
             package_manager: None,
             kalam_dir:       "kalam".into(),
+            server_version:  None,
         },
         connection: HashMap::from([(
             "dev".into(),
             ConnectionEnv {
                 url:       "http://localhost:2900".into(),
                 namespace: NamespaceId::new("demo"),
+                purpose:   None,
             },
         )]),
         schema:     SchemaSection {
@@ -70,6 +76,7 @@ pub fn minimal_sql_project_config() -> KalamProjectConfig {
         migrations: MigrationsSection::default(),
         dev:        DevSection::default(),
         logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     }
 }
 
@@ -79,7 +86,8 @@ pub fn sql_project_config_with_typescript_target() -> KalamProjectConfig {
     config.schema.targets = HashMap::from([(
         "typescript".into(),
         SchemaTarget {
-            output: "src/generated/kalam.ts".into(),
+            output:            "src/generated/kalam.ts".into(),
+            unqualified_names: false,
         },
     )]);
     config
@@ -104,6 +112,7 @@ pub fn prod_deploy_test_config() -> KalamProjectConfig {
         ConnectionEnv {
             url:       "https://db.example.com".into(),
             namespace: NamespaceId::new("app"),
+            purpose:   None,
         },
     )]);
     config.migrations.auto_create = true;
@@ -119,6 +128,7 @@ pub fn multi_env_resolve_test_config() -> KalamProjectConfig {
             ConnectionEnv {
                 url:       "http://localhost:2900".into(),
                 namespace: NamespaceId::new("app"),
+                purpose:   None,
             },
         ),
         (
@@ -126,6 +136,7 @@ pub fn multi_env_resolve_test_config() -> KalamProjectConfig {
             ConnectionEnv {
                 url:       "https://db.example.com".into(),
                 namespace: NamespaceId::new("app"),
+                purpose:   None,
             },
         ),
     ]);
@@ -150,7 +161,7 @@ output = "src/generated/kalam.ts"
 }
 
 #[cfg(test)]
-mod env_lock {
+pub mod env_lock {
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     fn mutex() -> &'static Mutex<()> {
@@ -184,6 +195,26 @@ mod env_lock {
         let result = f();
         restore_var(key, previous);
         result
+    }
+
+    pub fn unset(key: &'static str) -> UnsetGuard {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
+        UnsetGuard { key, previous }
+    }
+
+    pub struct UnsetGuard {
+        key:      &'static str,
+        previous: Option<String>,
+    }
+
+    impl Drop for UnsetGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
     }
 
     fn restore_var(key: &str, previous: Option<std::ffi::OsString>) {

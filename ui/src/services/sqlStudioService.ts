@@ -1,4 +1,5 @@
 import { executeQuery } from "@/lib/kalam-client";
+import { getErrorMessage } from "@/lib/errors";
 import { getDb } from "@/lib/db";
 import type { SystemNamespaceRow, SystemSchemaRow, SystemTablePolicyRow } from "@/lib/models";
 import { system_namespaces, system_schemas, system_table_policies } from "@/lib/schema";
@@ -575,6 +576,7 @@ export async function executeSqlStudioQuery(
 
   if (response.status === "error" && response.error) {
     const createdAt = new Date().toISOString();
+    const errorMessage = getErrorMessage(response.error, response.error.message);
     return {
       status: "error",
       rows: [],
@@ -585,12 +587,12 @@ export async function executeSqlStudioQuery(
         {
           id: `${createdAt}-error`,
           level: "error",
-          message: response.error.message,
+          message: errorMessage,
           response: response.error,
           createdAt,
         },
       ],
-      errorMessage: response.error.message,
+      errorMessage,
     };
   }
 

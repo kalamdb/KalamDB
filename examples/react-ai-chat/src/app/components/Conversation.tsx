@@ -3,16 +3,16 @@ import type { KalamDBClient } from '@kalamdb/client';
 import { Database, MoreVertical, Share2 } from 'lucide-react';
 import type { ChatLiveContext } from '../App';
 import {
-  react_ai_chat_approval_actions as approval_actions,
-  react_ai_chat_conversations as conversations,
-  react_ai_chat_messages as messages,
-} from '../schema.generated';
+  reactAiChatApprovalActions as approval_actions,
+  reactAiChatConversations as conversations,
+  reactAiChatMessages as messages,
+} from '../generated/kalam';
 import type {
   ReactAiChatApprovals as ApprovalRow,
   ReactAiChatConversations as ConversationRow,
   ReactAiChatMessages as MessageRow,
   ReactAiChatTypingTokens as TypingTokenRow,
-} from '../schema.generated';
+} from '../generated/kalam';
 import { ChatComposer } from './ChatComposer';
 import { Messages } from './Messages';
 
@@ -74,12 +74,14 @@ export function Conversation({
   onSelectConversation: (conversationId: string) => void;
 }) {
   const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
-  const { approvals, markApprovalStatus } = useApprovalCache(client, live.messages.rows);
+  const messageRows = live.messages.rows as MessageRow[];
+  const typingRows = live.typingTokens.rows as TypingTokenRow[];
+  const { approvals, markApprovalStatus } = useApprovalCache(client, messageRows);
   const conversationId = conversation?.id ?? selectedConversationId;
 
   const confirmedClientIds = useMemo(() => new Set(
-    live.messages.rows.map((message) => message.client_id).filter((clientId): clientId is string => Boolean(clientId)),
-  ), [live.messages.rows]);
+    messageRows.map((message) => message.client_id).filter((clientId): clientId is string => Boolean(clientId)),
+  ), [messageRows]);
   const confirmedClientKey = useMemo(() => [...confirmedClientIds].sort().join('|'), [confirmedClientIds]);
 
   useEffect(() => {
@@ -87,12 +89,12 @@ export function Conversation({
   }, [confirmedClientIds, confirmedClientKey]);
 
   const messageViews = useMemo(() => buildMessageViews({
-    messages: live.messages.rows,
-    tokens: live.typingTokens.rows,
+    messages: messageRows,
+    tokens: typingRows,
     pendingMessages,
     confirmedClientIds,
     conversationId,
-  }), [confirmedClientIds, conversationId, live.messages.rows, live.typingTokens.rows, pendingMessages]);
+  }), [confirmedClientIds, conversationId, messageRows, typingRows, pendingMessages]);
 
   const ensureConversation = useCallback(async (firstMessage: string): Promise<string> => {
     if (conversation) {
@@ -278,7 +280,7 @@ function buildMessageViews({
 }): MessageView[] {
   const finalDraftClientIds = new Set(liveRows.map((row) => row.client_id).filter(Boolean));
   const liveViews = liveRows.map((row): MessageView => ({
-    id: row.id,
+    id: String(row.id),
     clientId: row.client_id,
     conversationId: row.conversation_id,
     role: row.role,
@@ -349,8 +351,6 @@ function mapApproval(row: Record<string, unknown>): ApprovalRow {
     status: cellString(row.status),
     created_at: cellDate(row.created_at),
     updated_at: cellDate(row.updated_at),
-    _seq: row._seq == null ? null : cellString(row._seq),
-    _deleted: typeof row._deleted === 'boolean' ? row._deleted : null,
   };
 }
 

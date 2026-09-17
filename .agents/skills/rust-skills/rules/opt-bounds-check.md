@@ -49,7 +49,9 @@ fn apply_filter(data: &mut [u8]) {
 ## Iterator Patterns
 
 ```rust
-// All of these avoid bounds checks:
+// These give the compiler much better opportunities to eliminate bounds checks
+// (and often do in practice), but elimination is not guaranteed — verify hot
+// code with generated assembly (e.g. cargo-show-asm):
 
 // zip - parallel iteration
 for (a, b) in xs.iter().zip(ys.iter()) { ... }

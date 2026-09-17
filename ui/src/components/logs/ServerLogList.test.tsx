@@ -24,7 +24,7 @@ function createLogs(count: number) {
       level: "INFO",
       thread: "main",
       target: "kalamdb::server",
-      line: "42",
+      line: 42,
       message: `Server log ${index + 1}`,
     };
   });

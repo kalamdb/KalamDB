@@ -10,7 +10,7 @@ use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    pg_catalog::{relation_is_view, visible_table_definitions, PgCatalogView},
+    pg_catalog::{primary_key_attnums, relation_is_view, visible_table_definitions, PgCatalogView},
 };
 
 fn schema() -> SchemaRef {
@@ -69,7 +69,7 @@ impl PgCatalogView for PgTablesView {
             table_names.append_value(table.table_name.as_str());
             table_owners.append_value("kalam");
             tablespaces.append_null();
-            has_indexes.append_value(false);
+            has_indexes.append_value(!primary_key_attnums(&table).is_empty());
             has_rules.append_value(false);
             has_triggers.append_value(false);
             row_security.append_value(false);

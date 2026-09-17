@@ -114,9 +114,10 @@ fn read_config(path: &Path) -> Result<Config, MyError> {
 ## likely/unlikely Hints
 
 ```rust
-// Nightly: intrinsics for branch hints
-#![feature(core_intrinsics)]
-use std::intrinsics::{likely, unlikely};
+// Nightly: std::hint likely/unlikely branch hints (still unstable as of Rust 1.96)
+// (std::hint::cold_path() is stable since 1.95 for marking the rare branch)
+#![feature(likely_unlikely)]
+use std::hint::{likely, unlikely};
 
 fn process(data: Option<&Data>) -> Result<Output, Error> {
     if unlikely(data.is_none()) {

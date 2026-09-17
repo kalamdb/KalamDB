@@ -32,7 +32,7 @@ fn get_flags() -> SmallVec<[Flag; 4]> {
 use arrayvec::ArrayVec;
 
 // Guaranteed no heap allocation
-fn parse_options(input: &str) -> ArrayVec<Option, 8> {
+fn parse_options(input: &str) -> ArrayVec<Option<u32>, 8> {
     let mut options = ArrayVec::new();
     for part in input.split(',') {
         if options.try_push(parse_option(part)).is_err() {
@@ -100,6 +100,7 @@ let arr: ArrayVec<_, 10> = (0..100)
 
 ```rust
 use arrayvec::ArrayString;
+use std::fmt::Write; // brings the write! target trait into scope
 
 // Stack-allocated string with max capacity
 let mut s: ArrayString<64> = ArrayString::new();

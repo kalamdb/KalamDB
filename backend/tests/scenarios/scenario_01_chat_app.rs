@@ -98,6 +98,24 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE typing_events table");
 
+    create_enum_type(server, &format!("{ns}.message_role"), &["user", "assistant", "system"])
+        .await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.send_message"),
+        &format!(
+            "id BIGINT NOT NULL, conversation_id BIGINT NOT NULL, role_id {ns}.message_role NOT \
+             NULL, content TEXT NOT NULL"
+        ),
+        &format!(
+            "return ctx.db.execute('INSERT INTO {ns}.messages (id, conversation_id, role_id, \
+             content) VALUES ($1, $2, $3, $4)', [input.id, input.conversation_id, input.role_id, \
+             input.content]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.send_message")).await?;
+
     // =========================================================
     // Step 3: Create users and get clients
     // =========================================================
@@ -123,7 +141,7 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
         assert!(resp.success(), "u1 insert conversation {}", conv_id);
     }
 
-    for i in 1..=50 {
+    for i in 1..=48 {
         let conv_id = if i <= 25 { 1 } else { 2 };
         let role = if i % 2 == 0 { "user" } else { "assistant" };
         let sql = format!(
@@ -133,6 +151,42 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
         );
         let resp = u1_client.execute_query(&sql, None, None, None).await?;
         assert!(resp.success(), "u1 insert message {}", i);
+    }
+    for (id, conv_id, role) in [(49, 2, "user"), (50, 2, "assistant")] {
+        let sql =
+            format!("CALL {ns}.send_message({id}, {conv_id}, '{role}', 'Message {id} from u1')");
+        let resp = u1_client.execute_query(&sql, None, None, None).await?;
+        assert!(resp.success(), "u1 send_message {id}: {:?}", resp.error);
+    }
+    match u1_client
+        .execute_query(
+            &format!("CALL {ns}.send_message(999, 1, 'hacker', 'should fail')"),
+            None,
+            None,
+            None,
+        )
+        .await
+    {
+        Ok(resp) => {
+            assert!(!resp.success(), "invalid message_role must fail CALL: {:?}", resp.error)
+        },
+        Err(_) => {},
+    }
+    match u1_client
+        .execute_query(
+            &format!("CALL {ns}.send_message(998, 1, NULL, 'should fail null')"),
+            None,
+            None,
+            None,
+        )
+        .await
+    {
+        Ok(resp) => assert!(
+            !resp.success(),
+            "NOT NULL message_role must reject NULL CALL: {:?}",
+            resp.error
+        ),
+        Err(_) => {},
     }
 
     // u2: 1 conversation, 20 messages

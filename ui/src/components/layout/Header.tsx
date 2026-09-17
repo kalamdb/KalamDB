@@ -19,10 +19,10 @@ export default function Header() {
           alt="KalamDB"
           className="h-6 w-6 shrink-0 object-contain"
         />
-        <Button variant="ghost" size="xs" className="h-[26px] px-2 text-xs font-normal">
+        <Button variant="ghost" size="sm">
           KalamDB Admin
         </Button>
-        <Button variant="outline" size="xs" className="hidden h-[26px] gap-1.5 px-2 text-xs font-normal md:inline-flex">
+        <Button variant="outline" size="sm" className="hidden md:inline-flex">
           <Database data-icon="inline-start" />
           Connect
         </Button>
@@ -30,12 +30,12 @@ export default function Header() {
 
       <div className="ml-auto hidden min-w-0 items-center md:flex">
         <div className="relative w-40 lg:w-56">
-          <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search..."
-            className="h-[30px] border-input bg-background pl-7 pr-10 text-xs"
+            className="pl-7 pr-10"
           />
-          <kbd className="pointer-events-none absolute right-2 top-1.5 hidden rounded-sm border px-1 text-[10px] text-muted-foreground lg:block">
+          <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-sm border px-1 text-[10px] text-muted-foreground lg:block">
             Cmd K
           </kbd>
         </div>

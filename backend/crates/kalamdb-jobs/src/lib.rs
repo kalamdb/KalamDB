@@ -10,7 +10,9 @@
 pub mod executors;
 pub mod flush_scheduler;
 pub mod health_monitor;
+pub mod job_cleanup;
 pub mod jobs_manager;
+pub(crate) mod procedure_schedules;
 pub(crate) mod scheduler_common;
 pub mod stream_eviction;
 pub mod topic_retention;
@@ -25,6 +27,7 @@ pub mod leader_guard;
 pub use executors::{JobContext, JobDecision, JobExecutor as JobExecutorTrait, JobRegistry};
 pub use flush_scheduler::FlushScheduler;
 pub use health_monitor::HealthMonitor;
+pub use job_cleanup::JobCleanupScheduler;
 pub use jobs_manager::{JobsManager, JobsManagerRuntime, JobsShutdownStatus};
 // Phase 16 exports (cluster mode)
 pub use leader_failover::{JobRecoveryAction, LeaderFailoverHandler, RecoveryReport};
@@ -73,6 +76,7 @@ pub fn init_job_manager(app_ctx: &Arc<AppContext>) {
     let job_registry = Arc::new(JobRegistry::new());
     job_registry.register(Arc::new(FlushExecutor::new()));
     job_registry.register(Arc::new(CleanupExecutor::new()));
+    job_registry.register(Arc::new(JobCleanupExecutor::new()));
     job_registry.register(Arc::new(StreamEvictionExecutor::new()));
     job_registry.register(Arc::new(CompactExecutor::new()));
     job_registry.register(Arc::new(SegmentCompactExecutor::new()));

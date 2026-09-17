@@ -268,14 +268,6 @@ impl ConnectionGuard {
     }
 
     #[inline]
-    pub fn get_connection_count(&self, ip: IpAddr) -> u32 {
-        self.ip_states
-            .get(&ip)
-            .map(|state| state.active_connections.load(Ordering::Relaxed))
-            .unwrap_or(0)
-    }
-
-    #[inline]
     pub fn is_banned(&self, ip: IpAddr) -> bool {
         self.ip_states.get(&ip).and_then(|state| state.is_banned()).is_some()
     }

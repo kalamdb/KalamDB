@@ -6,7 +6,7 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
-use kalamdb_configs::{RocksDbMemoryMode, RocksDbSettings};
+use kalamdb_configs::RocksDbSettings;
 use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, DataBlockIndexType, Options, DB};
 use sysinfo::{MemoryRefreshKind, System};
 
@@ -148,21 +148,19 @@ pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOption
 }
 
 fn resolve_rocksdb_settings(settings: RocksDbSettings) -> RocksDbSettings {
-    match settings.memory_mode {
-        RocksDbMemoryMode::Compact => settings,
-        RocksDbMemoryMode::Auto => {
-            let total_memory_bytes = host_total_memory_bytes();
-            let resolved = settings.resolved_for_host_memory(total_memory_bytes);
-            log::info!(
-                "rocksdb memory_mode=auto host_ram_bytes={:?} block_cache={} \
-                 hot_data_write_buffer={}",
-                total_memory_bytes,
-                resolved.block_cache_size,
-                resolved.cf_profiles.hot_data.write_buffer_size
-            );
-            resolved
-        },
+    if !settings.memory_mode.scales_from_host_ram() {
+        return settings;
     }
+    let total_memory_bytes = host_total_memory_bytes();
+    let resolved = settings.resolved_for_host_memory(total_memory_bytes);
+    log::info!(
+        "rocksdb memory_mode={} host_ram_bytes={:?} block_cache={} hot_data_write_buffer={}",
+        resolved.memory_mode,
+        total_memory_bytes,
+        resolved.block_cache_size,
+        resolved.cf_profiles.hot_data.write_buffer_size
+    );
+    resolved
 }
 
 fn host_total_memory_bytes() -> Option<u64> {

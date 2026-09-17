@@ -336,8 +336,7 @@ test("invited Dex user is created from the OIDC email invite on first Admin UI l
   await clearClientAuthState(page);
   await page.goto("/ui/login");
   const continueWithDex = page.getByRole("button", { name: /continue with dex/i });
-  const dexButtonVisible = await continueWithDex.isVisible().catch(() => false);
-  test.skip(!dexButtonVisible, "OIDC login control is not visible on the login page");
+  await expect(continueWithDex).toBeVisible();
   await continueWithDex.click();
 
   const connectorButton = page.getByRole("button", { name: /log in with email/i });

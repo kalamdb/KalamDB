@@ -30,7 +30,7 @@ export function StudioIconButton({
     <Button
       type="button"
       variant="ghost"
-      size="icon-xxs"
+      size="icon-sm"
       disabled={disabled}
       className={cn(
         "text-muted-foreground hover:text-foreground",

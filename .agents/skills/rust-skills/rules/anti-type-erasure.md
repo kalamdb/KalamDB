@@ -99,10 +99,14 @@ fn process() -> impl Future<Output = Result> { }
 // Argument position - like generics but simpler
 fn handle(handler: impl Handler) { }
 
-// Can't use in trait definitions (use associated types instead)
+// Return-position impl Trait in traits (RPITIT) is stable since Rust 1.75
 trait Processor {
-    type Output: Display;  // Not impl Display
-    fn process(&self) -> Self::Output;
+    // Use impl Trait when callers don't need to name the return type:
+    fn process(&self) -> impl Display;  // stable, idiomatic (Rust 1.75+)
+
+    // Use an associated type when callers need to name or constrain the type:
+    type Output: Display;
+    fn process_named(&self) -> Self::Output;
 }
 ```
 
@@ -132,3 +136,5 @@ impl Shape {
 - [anti-over-abstraction](./anti-over-abstraction.md) - Excessive generics
 - [type-generic-bounds](./type-generic-bounds.md) - Generic constraints
 - [mem-box-large-variant](./mem-box-large-variant.md) - Boxing enum variants
+- [trait-dyn-vs-generic](./trait-dyn-vs-generic.md) - Choose dispatch deliberately
+- [closure-static-vs-dyn](./closure-static-vs-dyn.md) - Same tradeoff for closures

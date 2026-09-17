@@ -91,7 +91,26 @@ let borrow2 = cell.borrow_mut(); // PANIC: already borrowed
 
 Use `try_borrow()` and `try_borrow_mut()` for fallible borrowing.
 
+## Cell for Copy Types
+
+For simple `Copy` values, `Cell<T>` is lighter than `RefCell<T>` — no runtime borrow flags, no panics. You `get()`/`set()`/`replace()` the value instead of borrowing it:
+
+```rust
+use std::cell::Cell;
+
+struct Counter {
+    count: Cell<u32>,
+}
+
+impl Counter {
+    fn bump(&self) {
+        self.count.set(self.count.get() + 1); // mutate through &self, never panics
+    }
+}
+```
+
 ## See Also
 
 - [own-rc-single-thread](./own-rc-single-thread.md) - Combining with Rc for shared ownership
 - [own-mutex-interior](./own-mutex-interior.md) - Thread-safe alternative
+- [conc-thread-local](./conc-thread-local.md) - `thread_local!` with `Cell`/`RefCell` for per-thread state

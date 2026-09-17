@@ -157,3 +157,5 @@ let id: Option<NonZeroU64> = NonZeroU64::new(42);
 - [mem-box-large-variant](./mem-box-large-variant.md) - Optimizing enum sizes
 - [mem-assert-type-size](./mem-assert-type-size.md) - Compile-time size checks
 - [type-newtype-ids](./type-newtype-ids.md) - Type safety for integer IDs
+- [num-nonzero](num-nonzero.md) - NonZero* niche optimization
+- [num-cast-try-from](num-cast-try-from.md) - Avoid lossy `as` casts

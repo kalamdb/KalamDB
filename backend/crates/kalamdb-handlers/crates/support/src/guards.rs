@@ -4,7 +4,7 @@
 //! These helpers consolidate repeated validation patterns across handlers.
 
 use kalamdb_commons::models::NamespaceId;
-use kalamdb_core::{error::KalamDbError, sql::context::ExecutionContext};
+use kalamdb_core::{app_context::AppContext, error::KalamDbError, sql::context::ExecutionContext};
 
 /// Block modifications (ALTER, DROP, CREATE) on system namespaces.
 ///
@@ -70,6 +70,25 @@ pub fn block_system_namespace_modification(
 /// ```ignore
 /// require_admin(context, "create storage")?;
 /// ```
+/// Require that `namespace_id` exists in `system.namespaces`.
+///
+/// Matches CREATE TABLE: procedures and types cannot be created in a
+/// namespace that has not been created yet.
+pub fn require_existing_namespace(
+    app_context: &AppContext,
+    namespace_id: &NamespaceId,
+) -> Result<(), KalamDbError> {
+    let namespaces = app_context.system_tables().namespaces();
+    if namespaces.get_namespace(namespace_id)?.is_none() {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "Namespace '{}' does not exist. Create it first with CREATE NAMESPACE {}",
+            namespace_id.as_str(),
+            namespace_id.as_str(),
+        )));
+    }
+    Ok(())
+}
+
 pub fn require_admin(context: &ExecutionContext, action: &str) -> Result<(), KalamDbError> {
     use kalamdb_session::is_admin_role;
     if !is_admin_role(context.user_role()) {

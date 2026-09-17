@@ -271,4 +271,26 @@ describe("executeSqlStudioQuery", () => {
       },
     ]);
   });
+
+  it("formats structured SQL errors for the results and log views", async () => {
+    executeQueryMock.mockResolvedValue({
+      status: "error",
+      results: [],
+      took: 0.394,
+      error: {
+        code: "SQL_EXECUTION_ERROR",
+        message: "procedure foo is not found",
+      },
+    } as never);
+
+    const result = await executeSqlStudioQuery("select foo();");
+
+    expect(result.status).toBe("error");
+    expect(result.errorMessage).toBe("SQL_EXECUTION_ERROR: procedure foo is not found");
+    expect(result.logs[0]?.message).toBe("SQL_EXECUTION_ERROR: procedure foo is not found");
+    expect(result.logs[0]?.response).toEqual({
+      code: "SQL_EXECUTION_ERROR",
+      message: "procedure foo is not found",
+    });
+  });
 });

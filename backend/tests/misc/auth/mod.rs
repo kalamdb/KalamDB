@@ -24,7 +24,9 @@ mod test_last_seen;
 mod test_live_queries_auth_expiry;
 mod test_local_auth_policy;
 mod test_oauth;
+#[cfg(feature = "oidc")]
 mod test_oidc_auto_provision;
+#[cfg(feature = "oidc")]
 mod test_oidc_token_validation;
 mod test_password_complexity;
 mod test_rbac;

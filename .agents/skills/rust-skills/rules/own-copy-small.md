@@ -110,7 +110,7 @@ struct Transform {
 
 Standard library types that are `Copy`:
 - All primitives: `i32`, `f64`, `bool`, `char`, etc.
-- References: `&T`, `&mut T`
+- Shared references: `&T` (note: `&mut T` is NOT `Copy` — copying a mutable reference would alias it, so it is reborrowed instead)
 - Raw pointers: `*const T`, `*mut T`
 - Function pointers: `fn(T) -> U`
 - Tuples of `Copy` types: `(i32, f64)`

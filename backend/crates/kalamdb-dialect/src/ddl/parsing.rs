@@ -5,6 +5,91 @@
 
 use crate::ddl::DdlResult;
 
+/// True when `input` begins with ASCII `prefix`, compared without allocating.
+#[inline]
+pub fn starts_with_ci(input: &str, prefix: &str) -> bool {
+    let input = input.as_bytes();
+    let prefix = prefix.as_bytes();
+    input.len() >= prefix.len() && input[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+/// If `input` starts with an ASCII keyword (or keyword phrase), return the remainder.
+///
+/// Words in `keyword` may be separated by any ASCII whitespace in `input`. The match
+/// is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
+#[inline]
+pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    let mut rest = input.trim_start();
+    for word in keyword.split_ascii_whitespace() {
+        rest = rest.trim_start();
+        if !starts_with_ci(rest, word) {
+            return None;
+        }
+        rest = &rest[word.len()..];
+        if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+            return None;
+        }
+    }
+    Some(rest.trim_start())
+}
+
+/// Consume `keyword` from the start of `input` when present.
+#[inline]
+pub fn take_keyword_ci<'a>(input: &mut &'a str, keyword: &str) -> bool {
+    match strip_keyword_ci(*input, keyword) {
+        Some(after) => {
+            *input = after;
+            true
+        },
+        None => false,
+    }
+}
+
+/// Parse `COMMENT 'text'` or `COMMENT = 'text'` when present.
+pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, &str)> {
+    let rest = input.trim_start();
+    let Some(mut after) = strip_keyword_ci(rest, "COMMENT") else {
+        return Ok((None, rest));
+    };
+    if after.starts_with('=') {
+        after = after[1..].trim_start();
+    }
+    let (value, leftover) = parse_sql_string_prefix(after)?;
+    Ok((Some(value), leftover))
+}
+
+/// Parse a SQL string literal and return leftover input after the closing quote.
+pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
+    let input = input.trim_start();
+    let mut chars = input.char_indices();
+    let Some((_, '\'')) = chars.next() else {
+        return Err(format!("Expected string literal, got '{input}'"));
+    };
+    let mut out = String::new();
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '\'' {
+            if chars.as_str().starts_with('\'') {
+                chars.next();
+                out.push('\'');
+                continue;
+            }
+            return Ok((out, &input[idx + 1..]));
+        }
+        out.push(ch);
+    }
+    Err("Unterminated string literal".to_string())
+}
+
+/// Parse a SQL string that must consume the entire input.
+pub(crate) fn parse_sql_string(input: &str) -> DdlResult<String> {
+    let (value, leftover) = parse_sql_string_prefix(input)?;
+    if leftover.trim().is_empty() {
+        Ok(value)
+    } else {
+        Err(format!("Expected string literal, got '{input}'"))
+    }
+}
+
 /// Normalize SQL and convert to uppercase for pattern matching (optimized)
 ///
 /// Removes extra whitespace, trailing semicolons, and converts to uppercase.
@@ -334,6 +419,26 @@ pub fn extract_after_prefix(sql: &str, prefix: &str) -> DdlResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_keyword_ci_skips_whitespace_and_rejects_ident_glue() {
+        assert_eq!(strip_keyword_ci("  Create   Type chat.t", "CREATE TYPE"), Some("chat.t"));
+        assert_eq!(strip_keyword_ci("ASSET foo", "AS"), None);
+        assert_eq!(strip_keyword_ci("AS ENUM ('a')", "AS ENUM"), Some("('a')"));
+        assert_eq!(strip_keyword_ci("COMMENTARY", "COMMENT"), None);
+        let mut rest = "CREATE OR REPLACE PROCEDURE api.health()";
+        assert!(take_keyword_ci(&mut rest, "CREATE OR REPLACE PROCEDURE"));
+        assert_eq!(rest, "api.health()");
+    }
+
+    #[test]
+    fn parse_sql_string_requires_full_literal() {
+        assert_eq!(parse_sql_string("'it''s'").unwrap(), "it's");
+        assert!(parse_sql_string("'hello' leftover").is_err());
+        let (value, leftover) = parse_sql_string_prefix("'hello' leftover").unwrap();
+        assert_eq!(value, "hello");
+        assert_eq!(leftover.trim(), "leftover");
+    }
 
     #[test]
     fn test_normalize_and_upper() {

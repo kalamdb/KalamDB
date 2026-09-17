@@ -12,11 +12,11 @@ use crate::{
                 init_remote_schema_unavailable, init_requires_non_interactive_flags,
                 init_unsupported_language,
             },
-            prompts::{
-                echo_prompt_selection, interactive_available, prompt_multi_select, prompt_select,
-                prompt_text, prompt_text_with_default,
-            },
             scaffold_input::validate_project_display_name,
+        },
+        prompts::{
+            echo_prompt_selection, interactive_available, prompt_multi_select, prompt_select,
+            prompt_text, prompt_text_with_default,
         },
     },
 };
@@ -55,21 +55,10 @@ pub(super) fn resolve_schema_mode(options: &InitOptions, color: bool) -> Result<
         }
         return Ok(mode);
     }
-    if options.yes {
-        return Ok(SchemaMode::Sql);
+    if !options.yes && interactive_available() {
+        echo_prompt_selection("Schema mode:", schema_mode_label(SchemaMode::Sql), color);
     }
-
-    let options_list = [
-        SelectOption::described("SQL file", "Use schema.sql as the source of truth"),
-        SelectOption::disabled("Remote schema", "Coming soon"),
-    ];
-    let selected = prompt_select("Schema mode", &options_list, 0, color)?;
-    let mode = SchemaMode::Sql;
-    if selected != 0 {
-        return Err(CLIError::ConfigurationError(init_remote_schema_unavailable()));
-    }
-    echo_prompt_selection("Schema mode:", schema_mode_label(mode), color);
-    Ok(mode)
+    Ok(SchemaMode::Sql)
 }
 
 pub(super) fn resolve_languages(options: &InitOptions, color: bool) -> Result<Vec<String>> {

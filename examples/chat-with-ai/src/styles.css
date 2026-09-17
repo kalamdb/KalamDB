@@ -102,6 +102,30 @@ textarea {
   border-radius: 26px;
 }
 
+.inbox-toggle {
+  display: inline-flex;
+  margin-bottom: 16px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.inbox-toggle button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #d2dae8;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.inbox-toggle button.is-active {
+  background: rgba(255, 153, 85, 0.2);
+  color: #fff;
+}
+
 .chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;

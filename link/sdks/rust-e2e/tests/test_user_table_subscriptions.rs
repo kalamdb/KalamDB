@@ -12,7 +12,7 @@
 //! cd backend && cargo run --bin kalamdb-server
 //!
 //! # Terminal 2: Run the tests
-//! cargo test --test test_user_table_subscriptions -- --nocapture
+//! cargo nextest run -p kalam-client-e2e --test e2e -- --nocapture
 //! ```
 
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ use kalam_client::{
 };
 use tokio::time::{sleep, timeout};
 
-mod common;
+use super::common;
 
 /// Test configuration
 const TEST_TIMEOUT: Duration = Duration::from_secs(30);

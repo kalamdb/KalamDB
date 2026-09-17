@@ -87,13 +87,6 @@ impl TokenBucket {
         self.refill();
         self.tokens
     }
-
-    /// Get the capacity of this bucket
-    #[inline]
-    #[allow(dead_code)]
-    pub fn capacity(&self) -> u32 {
-        self.capacity
-    }
 }
 
 #[cfg(test)]

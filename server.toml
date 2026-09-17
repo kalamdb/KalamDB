@@ -54,8 +54,8 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-# Tiny shared HyperClockCache (default: 2MB). Set memory_mode = "auto"
-# to size cache and memtables from host RAM, still clamped.
+# Tiny shared HyperClockCache (default: 2MB). Keep memory_mode = "compact"
+# for local/dev. Use "server" or "performance" on dedicated hosts.
 # memory_mode = "compact"
 block_cache_size = 2097152
 
@@ -351,6 +351,14 @@ retry_backoff_ms = 100
 # How often the jobs runner flushes all RocksDB memtables so stale WAL files
 # can be reclaimed (default: 300 seconds). Set to 0 to disable.
 wal_cleanup_interval_seconds = 300
+
+# How often the leader scans system.jobs for expired history and creates a
+# cleanup job (default: 3600 seconds). Set to 0 to disable job-history cleanup.
+history_cleanup_interval_seconds = 3600
+
+# Keep completed, failed, cancelled, and skipped jobs for this many days
+# (default: 7). Ignored when history_cleanup_interval_seconds = 0.
+history_retention_days = 7
 
 # Phase 11, T026: SQL Handler Execution Configuration
 [execution]

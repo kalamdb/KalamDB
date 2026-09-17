@@ -34,6 +34,7 @@ pub fn register_stream_handlers(registry: &HandlerRegistry, app_context: Arc<App
         registry,
         SqlStatementKind::DropTopic(DropTopicStatement {
             topic_name: "_placeholder".to_string(),
+            if_exists:  false,
         }),
         topics::DropTopicHandler::new(app_context.clone()),
         SqlStatementKind::DropTopic,

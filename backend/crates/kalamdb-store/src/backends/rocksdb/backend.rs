@@ -11,6 +11,7 @@ use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, Writ
 
 use super::{
     cf_tuning::apply_cf_settings,
+    group_commit::WalGroupCommit,
     init::{create_block_options_with_cache, new_block_cache},
     keyspace::{
         decode_logical_partition_registry_key, logical_partition_registry_key,
@@ -84,6 +85,7 @@ pub struct RocksDBBackend {
     write_opts: WriteOptions,
     settings: RocksDbSettings,
     block_cache: Cache,
+    wal_group: Option<WalGroupCommit>,
     known_cf_names: std::sync::RwLock<Vec<String>>,
     logical_partition_names: std::sync::RwLock<Vec<String>>,
 }
@@ -96,14 +98,16 @@ impl RocksDBBackend {
         settings: RocksDbSettings,
         block_cache: Cache,
     ) -> Self {
+        let group_wal = sync_writes && !disable_wal;
         let mut write_opts = WriteOptions::default();
-        write_opts.set_sync(sync_writes);
+        write_opts.set_sync(!group_wal && sync_writes);
         write_opts.disable_wal(disable_wal);
         let backend = Self {
             db,
             write_opts,
             settings,
             block_cache,
+            wal_group: group_wal.then(WalGroupCommit::new),
             known_cf_names: std::sync::RwLock::new(Vec::new()),
             logical_partition_names: std::sync::RwLock::new(Vec::new()),
         };
@@ -229,7 +233,8 @@ impl RocksDBBackend {
             .ok_or_else(|| StorageError::PartitionNotFound(SYSTEM_META_CF.to_string()))?;
         self.db
             .put_cf_opt(&cf, logical_partition_registry_key(partition_name), b"", &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        self.durable_after_write()
     }
 
     fn remove_logical_partition(&self, partition_name: &str) -> Result<()> {
@@ -239,7 +244,15 @@ impl RocksDBBackend {
             .ok_or_else(|| StorageError::PartitionNotFound(SYSTEM_META_CF.to_string()))?;
         self.db
             .delete_cf_opt(&cf, logical_partition_registry_key(partition_name), &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        self.durable_after_write()
+    }
+
+    fn durable_after_write(&self) -> Result<()> {
+        match &self.wal_group {
+            Some(group) => group.wait_durable(&self.db),
+            None => Ok(()),
+        }
     }
 
     fn tracked_cf_names(&self) -> Vec<String> {
@@ -292,7 +305,8 @@ impl StorageBackend for RocksDBBackend {
         let physical_key = physical_key(partition.name(), key);
         self.db
             .put_cf_opt(&cf, physical_key, value, &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        self.durable_after_write()
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
@@ -305,7 +319,8 @@ impl StorageBackend for RocksDBBackend {
         let physical_key = physical_key(partition.name(), key);
         self.db
             .delete_cf_opt(&cf, physical_key, &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        self.durable_after_write()
     }
 
     fn batch(&self, operations: Vec<Operation>) -> Result<()> {
@@ -351,7 +366,8 @@ impl StorageBackend for RocksDBBackend {
 
         self.db
             .write_opt(batch, &self.write_opts)
-            .map_err(|e| StorageError::IoError(e.to_string()))
+            .map_err(|e| StorageError::IoError(e.to_string()))?;
+        self.durable_after_write()
     }
 
     fn scan(
@@ -573,6 +589,7 @@ impl StorageBackend for RocksDBBackend {
             self.db
                 .delete_range_cf_opt(&cf, start, end, &self.write_opts)
                 .map_err(|e| StorageError::IoError(e.to_string()))?;
+            self.durable_after_write()?;
         }
 
         if let Ok(mut names) = self.logical_partition_names.write() {
@@ -1076,6 +1093,43 @@ mod tests {
 
             assert_eq!(backend.get(&partition, b"key1").unwrap(), Some(b"original".to_vec()));
             assert!(!staging.exists());
+        }
+    }
+
+    #[test]
+    fn grouped_wal_commit_makes_concurrent_puts_readable() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let mut settings = RocksDbSettings::default();
+        settings.sync_writes = true;
+        settings.disable_wal = false;
+        let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
+        let (db, cf_names, cache) = init.open_with_cf_names_and_cache().unwrap();
+        let backend = std::sync::Arc::new(RocksDBBackend::with_options_settings_and_cache(
+            db, true, false, settings, cache,
+        ));
+        backend.set_known_cf_names(cf_names);
+
+        let partition = Partition::new("wal_group_cf");
+        backend.create_partition(&partition).unwrap();
+
+        let workers = 8;
+        std::thread::scope(|scope| {
+            for i in 0..workers {
+                let backend = std::sync::Arc::clone(&backend);
+                let partition = partition.clone();
+                scope.spawn(move || {
+                    let key = format!("k{i}");
+                    let value = format!("v{i}");
+                    backend.put(&partition, key.as_bytes(), value.as_bytes()).unwrap();
+                });
+            }
+        });
+
+        for i in 0..workers {
+            let key = format!("k{i}");
+            let value = format!("v{i}");
+            assert_eq!(backend.get(&partition, key.as_bytes()).unwrap(), Some(value.into_bytes()));
         }
     }
 }

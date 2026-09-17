@@ -1,6 +1,6 @@
 # kalam_link
 
-Official Dart and Flutter client for [KalamDB](https://kalamdb.org): SQL over HTTP, live rows over WebSocket, and JWT auth.
+Official Dart and Flutter client for [KalamDB](https://kalamdb.org): SQL over HTTP, live rows over WebSocket, and JWT/OIDC auth.
 
 For a local-first Flutter app (offline cache, optimistic writes), use [`kalam_sync`](https://pub.dev/packages/kalam_sync) instead.
 
@@ -61,7 +61,28 @@ Live SQL must stay `SELECT ... FROM ... WHERE ...`. Prefer `live()` / `liveTable
 authProvider: () async => Auth.jwt(await tokens.freshAccessToken()),
 ```
 
-`Auth.basic(user, password)` exchanges credentials for a JWT on connect. Call `refreshAuth()` when the token rotates. See [Authentication](https://kalamdb.org/docs/dart-sdk/auth).
+`Auth.basic(user, password)` exchanges credentials for a JWT on connect. Call `refreshAuth()` when the token rotates.
+
+For Keycloak or any KalamDB-configured OIDC issuer, obtain an ID token in the app (for example with `flutter_appauth`), then exchange it for KalamDB tokens:
+
+```dart
+final session = await client.exchangeOidcToken(idToken);
+```
+
+The client then uses the returned KalamDB access token for SQL, files, and live rows. See [Authentication](https://kalamdb.org/docs/dart-sdk/auth) and [Keycloak](https://kalamdb.org/docs/server/integrations/keycloak).
+
+## Procedures
+
+Do not call procedures through a generic string API on `KalamClient`. Run `kalam schema gen --languages dart` and use the generated typed client, which wraps `query('CALL ...')`:
+
+```dart
+final db = KalamFunctions(client);
+final user = await db.chat.createMessage(
+  ChatCreateMessageRequest(userId: 'u1', body: 'hello'),
+);
+```
+
+Edit `schema.sql`, regenerate, and keep using the generated types. REST `POST /v1/functions/...` is a server HTTP path, not a Dart SDK method.
 
 ## Local-first Flutter
 

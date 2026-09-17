@@ -61,6 +61,19 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
         .await?;
     assert_success(&resp, "CREATE cold_data table");
 
+    create_enum_type(server, &format!("{ns}.storage_tier"), &["hot", "cold"]).await?;
+    create_js_procedure(
+        server,
+        &format!("{ns}.archive_row"),
+        &format!("id BIGINT NOT NULL, archive_value TEXT, tier {ns}.storage_tier NOT NULL"),
+        &format!(
+            "return ctx.db.execute('INSERT INTO {ns}.cold_data (id, archive_value) VALUES ($1, \
+             $2)', [input.id, input.archive_value]).then(function () {{ return 1; }});"
+        ),
+    )
+    .await?;
+    grant_execute_to_user(server, &format!("{ns}.archive_row")).await?;
+
     // =========================================================
     // Step 4: Insert data to both tables
     // =========================================================
@@ -84,8 +97,8 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
         assert!(resp.success(), "Insert hot_data {}", i);
     }
 
-    // Insert to cold_data
-    for i in 1..=100 {
+    // Insert to cold_data (last row through a procedure + enum, rest stay SQL)
+    for i in 1..=99 {
         let resp = client
             .execute_query(
                 &format!(
@@ -99,6 +112,15 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
             .await?;
         assert!(resp.success(), "Insert cold_data {}", i);
     }
+    let resp = client
+        .execute_query(
+            &format!("CALL {ns}.archive_row(100, 'cold_value_100', 'cold')"),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    assert!(resp.success(), "archive_row 100: {:?}", resp.error);
 
     // =========================================================
     // Step 5: Flush both tables

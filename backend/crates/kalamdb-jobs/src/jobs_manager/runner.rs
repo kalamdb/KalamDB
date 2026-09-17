@@ -17,7 +17,7 @@ use tracing::Instrument;
 
 use super::{runtime::drain_job_tasks, types::JobsManager, utils::log_job};
 use crate::{
-    executors::JobDecision, AppContextJobsExt, FlushScheduler, HealthMonitor,
+    executors::JobDecision, AppContextJobsExt, FlushScheduler, HealthMonitor, JobCleanupScheduler,
     StreamEvictionScheduler, TopicRetentionScheduler,
 };
 
@@ -254,6 +254,21 @@ impl JobsManager {
         };
         let topic_retention_enabled = topic_retention_interval.is_some();
 
+        // Job history cleanup interval (configurable, default 1 hour).
+        // Set jobs.history_cleanup_interval_seconds = 0 to disable.
+        let history_cleanup_secs = app_context.config().jobs.history_cleanup_interval_seconds;
+        let mut history_cleanup_interval = if history_cleanup_secs > 0 {
+            let mut interval = tokio::time::interval_at(
+                Instant::now() + Duration::from_secs(history_cleanup_secs),
+                Duration::from_secs(history_cleanup_secs),
+            );
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            Some(interval)
+        } else {
+            None
+        };
+        let history_cleanup_enabled = history_cleanup_interval.is_some();
+
         // Flush scheduler interval (configurable, default 60 seconds)
         let flush_check_secs = app_context.config().flush.check_interval_seconds;
         let mut flush_check_interval = if flush_check_secs > 0 {
@@ -306,6 +321,12 @@ impl JobsManager {
         } else {
             true
         };
+        // Own the schedule task so cancellation/error of this loop cannot detach it.
+        // A separate task also progresses while job capacity or maintenance is awaited.
+        let mut schedule_tasks = JoinSet::new();
+        let mut schedule_failure = None;
+        let schedule_manager = app_context.job_manager();
+        schedule_tasks.spawn(async move { schedule_manager.run_procedure_schedules().await });
         let mut was_leader = is_leader;
         let max_concurrent = max_concurrent.max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
@@ -352,6 +373,13 @@ impl JobsManager {
                     Some(job_id) = awake_receiver.recv() => Some(job_id),
                     // Priority 2: fallback polling for crash recovery/retries
                     _ = poll_interval.tick() => None,
+                    result = schedule_tasks.join_next() => {
+                        if let Some(Err(error)) = result {
+                            log::error!("Procedure schedule task failed: {error}");
+                            schedule_failure = Some(error);
+                        }
+                        break;
+                    }
                     // Periodic leadership check
                     _ = async {
                         if leadership_enabled {
@@ -376,6 +404,11 @@ impl JobsManager {
                     _ = health_interval.tick() => {
                         let app_ctx = self.get_attached_app_context();
                         HealthMonitor::maintain_idle_resources(app_ctx.as_ref());
+                        if is_leader {
+                            if let Err(e) = self.fail_orphaned_running_jobs().await {
+                                log::warn!("Failed to fail orphaned running jobs: {}", e);
+                            }
+                        }
                         if log::log_enabled!(Level::Debug) {
                             if let Err(e) = HealthMonitor::log_metrics(app_ctx).await {
                                 log::warn!("Failed to log health metrics: {}", e);
@@ -482,6 +515,27 @@ impl JobsManager {
                             let app_ctx = self.get_attached_app_context();
                             if let Err(e) = TopicRetentionScheduler::check_and_schedule(&app_ctx, self).await {
                                 log::warn!("Failed to check topic retention: {}", e);
+                            }
+                        }
+                        continue;
+                    }
+                    // Periodic job-history cleanup job creation (leader-only)
+                    _ = async {
+                        if history_cleanup_enabled {
+                            let interval = history_cleanup_interval
+                                .as_mut()
+                                .expect("job history cleanup interval missing");
+                            interval.tick().await;
+                        }
+                    }, if history_cleanup_enabled => {
+                        if self.is_shutting_down() {
+                            log::info!("Shutdown signal received, stopping job loop");
+                            break;
+                        }
+                        if is_leader {
+                            let app_ctx = self.get_attached_app_context();
+                            if let Err(e) = JobCleanupScheduler::check_and_schedule(&app_ctx, self).await {
+                                log::warn!("Failed to check job history cleanup: {}", e);
                             }
                         }
                         continue;
@@ -600,9 +654,41 @@ impl JobsManager {
 
         // Stop scheduling new work, then let already-started jobs finish. The owner of this run
         // loop enforces the shutdown deadline and aborts this task only if draining takes too long.
+        schedule_tasks.shutdown().await;
         drain_job_tasks(&mut join_set).await;
 
+        if let Some(error) = schedule_failure {
+            return Err(KalamDbError::Other(format!("Procedure schedule task failed: {error}")));
+        }
         Ok(())
+    }
+
+    async fn run_procedure_schedules(&self) {
+        let app = self.get_attached_app_context();
+        let mut schedules = crate::procedure_schedules::ProcedureSchedules::default();
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // Register before checking the flag so shutdown cannot be lost between them.
+            let shutdown = self.shutdown_notify.notified();
+            tokio::pin!(shutdown);
+            shutdown.as_mut().enable();
+            if self.is_shutting_down() {
+                break;
+            }
+            tokio::select! {
+                biased;
+                _ = &mut shutdown => break,
+                _ = interval.tick() => {
+                    if self.is_shutting_down() {
+                        break;
+                    }
+                    if let Err(error) = schedules.tick(&app).await {
+                        log::warn!("Procedure schedules: {error}");
+                    }
+                }
+            }
+        }
     }
 
     /// Fetch an awakened job by ID for execution.
@@ -745,6 +831,7 @@ impl JobsManager {
         _job_node: JobNode,
         is_leader: bool,
     ) -> Result<(), KalamDbError> {
+        let _executing = self.track_executing(job.job_id.clone());
         let span = tracing::info_span!(
             "jobs.execution",
             job_id = %job.job_id,
@@ -1147,6 +1234,13 @@ impl JobsManager {
     ///
     /// Called when this node becomes the leader in cluster mode.
     async fn handle_leader_failover(&self) {
+        if let Err(e) = self.fail_jobs_without_in_progress_nodes("Leader failover").await {
+            log::error!(
+                "[JobLoop] Failed to fail leader-phase jobs with no in-progress job_nodes: {}",
+                e
+            );
+        }
+
         let mut jobs = Vec::new();
         for status in [JobStatus::Running, JobStatus::Queued] {
             let filter = JobFilter {
@@ -1187,6 +1281,7 @@ impl JobsManager {
 
     async fn resume_leader_actions(&self, job: Job) -> Result<(), KalamDbError> {
         let job_id = job.job_id.clone();
+        let _executing = self.track_executing(job_id.clone());
 
         if job.job_type.has_local_work() {
             let node_ids = self.active_cluster_node_ids();

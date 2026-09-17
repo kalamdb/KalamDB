@@ -47,11 +47,6 @@ pub fn kill_supervised_process_by_pid(pid: u32, scope: SupervisedKillScope) {
     }
 }
 
-/// Backward-compatible helper that always tears down the full supervised tree.
-pub async fn kill_child_process_tree(child: &mut Child) {
-    kill_supervised_child(child, SupervisedKillScope::Tree).await;
-}
-
 fn kill_single_process(pid: u32) {
     #[cfg(windows)]
     {
@@ -120,6 +115,91 @@ fn signal_process(pid: u32, signal: i32) {
 fn signal_process_group(pgid: i32, signal: i32) {
     unsafe {
         let _ = libc::kill(-pgid, signal);
+    }
+}
+
+/// Returns true when `pid` is still alive.
+pub fn pid_is_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unsafe {
+            if libc::kill(pid as i32, 0) == 0 {
+                return true;
+            }
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
+    }
+    #[cfg(windows)]
+    {
+        process_command_line(pid).is_some()
+    }
+}
+
+/// Best-effort command line for `pid`, used to confirm process identity.
+pub fn process_command_line(pid: u32) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::process::{Command, Stdio};
+
+        let output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "args="])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let cmdline = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if cmdline.is_empty() {
+            None
+        } else {
+            Some(cmdline)
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::process::{Command, Stdio};
+
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.to_ascii_lowercase().contains("no tasks") || text.trim().is_empty() {
+            None
+        } else {
+            Some(text.trim().to_string())
+        }
+    }
+}
+
+/// Returns true when `pid` is running and its command line looks like `exe`.
+pub fn process_matches_executable(pid: u32, exe: &std::path::Path) -> bool {
+    if !pid_is_running(pid) {
+        return false;
+    }
+    let Some(cmdline) = process_command_line(pid) else {
+        return true;
+    };
+    let exe_str = exe.to_string_lossy();
+    let exe_name = exe.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+    cmdline.contains(exe_str.as_ref()) || (!exe_name.is_empty() && cmdline.contains(exe_name))
+}
+
+/// Send SIGTERM (Unix) or equivalent without waiting.
+pub fn request_terminate(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        let _ = libc::kill(pid as i32, libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    {
+        kill_single_process(pid);
     }
 }
 

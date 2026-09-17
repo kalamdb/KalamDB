@@ -31,12 +31,14 @@ impl FileUpload {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 impl FileUpload {
     pub(crate) fn into_owned_tuple(self) -> (String, String, Vec<u8>, Option<String>) {
         (self.placeholder, self.filename, self.data, self.mime)
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub(crate) fn uploads_to_owned(
     files: Option<Vec<FileUpload>>,
 ) -> Option<Vec<(String, String, Vec<u8>, Option<String>)>> {

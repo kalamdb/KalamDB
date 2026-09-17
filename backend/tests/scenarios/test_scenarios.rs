@@ -1,10 +1,6 @@
 //! Test driver for scenario-based end-to-end tests.
 //!
-//! Run with: cargo test --test test_scenarios
-
-// Include the common test support
-#[path = "../common/testserver/mod.rs"]
-mod test_support;
+//! Run with: cargo nextest run -p kalamdb-server --features e2e-tests --test e2e
 
 // Include all scenario categories
 pub mod helpers;

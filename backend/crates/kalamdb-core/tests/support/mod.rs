@@ -367,7 +367,15 @@ pub async fn execute_err(executor: &SqlExecutor, exec_ctx: &ExecutionContext, sq
     executor.execute(sql, exec_ctx, vec![]).await.unwrap_err().to_string()
 }
 
+/// Convert query results to JSON rows for assertions.
+///
+/// Cached point gets return `ExecutionResult::ScalarRows`. Convert those
+/// through Arrow here so tests can share one helper. HTTP must not do this
+/// conversion; see `docs/architecture/sql-cache-performance.md`.
 pub fn result_rows(result: ExecutionResult) -> Vec<HashMap<String, KalamCellValue>> {
+    let result = result
+        .into_arrow_rows()
+        .unwrap_or_else(|error| panic!("scalar rows to arrow: {error}"));
     let ExecutionResult::Rows {
         batches, row_count, ..
     } = result

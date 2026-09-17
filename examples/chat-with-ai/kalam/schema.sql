@@ -1,31 +1,39 @@
 -- Chat With AI
 --
--- A multi-user room chat on KalamDB. There is no polling and no extra backend
--- besides a small topic worker in src/agent.ts.
+-- Schema-first KalamDB app: one SQL file, generated client types, and
+-- TypeScript procedures deployed with `kalam deploy` / `kalam dev`.
+-- There is no separate agent process.
 --
 -- How a sent message travels:
---   1. The browser inserts a row into chat_demo.messages.
---   2. Topic chat_demo.ai_inbox receives that INSERT.
---   3. src/agent.ts consumes the topic and writes STREAM rows while drafting.
---   4. The agent inserts the assistant reply as DBA (SHARED tables reject
---      EXECUTE AS USER). STREAM thinking/typing rows still use AS USER.
+--   1. The browser calls chat_demo.send_message (room or personal inbox).
+--   2. That insert fans out on topic chat_demo.ai_inbox.
+--   3. Trigger chat_demo.process_user_message runs chat_demo.on_user_message.
+--   4. The procedure writes STREAM thinking/typing rows, then the assistant reply.
 --   5. Every member tab sees both steps through live queries.
 --
 -- Table kinds used here:
 --   SHARED  one copy of the data, then CREATE POLICY decides who sees which rows
+--   USER    per-user personal inbox (direct_messages)
 --   STREAM  ephemeral progress rows (thinking / typing) with a short TTL
---   TOPIC   fan-out of INSERTs so a worker can react without polling
+--   TOPIC   fan-out of INSERTs so a procedure can react without polling
 
 CREATE NAMESPACE IF NOT EXISTS chat_demo;
 
 -- This file is the source of truth for `kalam dev`. Dropping first lets the
 -- same script recreate a clean local demo.
+DROP TRIGGER IF EXISTS chat_demo.process_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
+DROP PROCEDURE IF EXISTS chat_demo.send_message;
+DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP TYPE IF EXISTS chat_demo.message_target;
+DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;
 DROP TABLE IF EXISTS chat_demo.messages;
+DROP TABLE IF EXISTS chat_demo.direct_messages;
 DROP TABLE IF EXISTS chat_demo.room_members;
 DROP TABLE IF EXISTS chat_demo.rooms;
 
--- Rooms everyone can create. SELECT is limited to rooms the user belongs to.
+-- Rooms everyone can list and create. Membership still gates the transcript.
 CREATE SHARED TABLE IF NOT EXISTS chat_demo.rooms (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -40,7 +48,7 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.room_members (
     room_id TEXT NOT NULL
 );
 
--- Durable chat transcript. Policies keep each user inside rooms they joined.
+-- Durable room transcript. Policies keep each user inside rooms they joined.
 CREATE SHARED TABLE IF NOT EXISTS chat_demo.messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     room TEXT NOT NULL DEFAULT 'main',
@@ -48,14 +56,33 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.messages (
     author TEXT NOT NULL,
     sender_username TEXT NOT NULL,
     content TEXT NOT NULL,
+    reply_to BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Live "the agent is thinking / typing" rows. STREAM + TTL so they fade away.
+-- Personal copilot inbox. Each signed-in user has their own copy of this table.
+CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    role TEXT NOT NULL,
+    author TEXT NOT NULL,
+    sender_username TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reply_to BIGINT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_room ON chat_demo.messages (room);
+CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON chat_demo.messages (reply_to);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_reply_to ON chat_demo.direct_messages (reply_to);
+CREATE INDEX IF NOT EXISTS idx_room_members_user ON chat_demo.room_members (user_id);
+
+-- Live "the copilot is thinking / typing" rows. STREAM + TTL so they fade away.
+-- `room` is the destination id (room id or username). `scope` is 'room' | 'direct'.
 CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     response_id TEXT NOT NULL,
     room TEXT NOT NULL DEFAULT 'main',
+    scope TEXT NOT NULL DEFAULT 'room',
     sender_username TEXT NOT NULL,
     stage TEXT NOT NULL,
     preview TEXT NOT NULL DEFAULT '',
@@ -63,15 +90,11 @@ CREATE STREAM TABLE IF NOT EXISTS chat_demo.agent_events (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 ) WITH (TTL_SECONDS = 10);
 
--- You only see rooms you have joined.
-CREATE POLICY rooms_member_select ON chat_demo.rooms
+-- Room directory is public so join_room (INVOKER) can find an existing room
+-- before inserting membership. Messages stay membership-gated below.
+CREATE POLICY rooms_visible ON chat_demo.rooms
   FOR SELECT TO user
-  USING (
-    id IN (
-      SELECT room_id FROM chat_demo.room_members
-      WHERE user_id = CURRENT_USER
-    )
-  );
+  USING (true);
 
 -- Anyone signed in can create a room. Joining is a separate membership insert.
 CREATE POLICY rooms_create ON chat_demo.rooms
@@ -120,11 +143,37 @@ CREATE POLICY messages_member_update ON chat_demo.messages
     )
   );
 
--- Wake the agent on every new chat row. The worker ignores non-user roles.
+CREATE TYPE chat_demo.message_target AS ENUM ('room', 'direct');
+
+-- Topic payload type is implicit: a tagged union of these source row types,
+-- discriminated by `_table` (`chat_demo:messages` | `chat_demo:direct_messages`).
 CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
+ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT;
 
--- Seed a default room so the first browser tab has somewhere to join.
+-- Join (or create) a room. Browser clients call this instead of inserting membership.
+CREATE PROCEDURE chat_demo.join_room(room_id TEXT NOT NULL)
+RETURNS TEXT
+SECURITY INVOKER;
+
+-- Post a user message into a room transcript or the caller's personal inbox.
+-- Returns the inserted row tagged with its source table, same shape as PAYLOAD.
+CREATE PROCEDURE chat_demo.send_message(
+    target chat_demo.message_target NOT NULL,
+    target_id TEXT NOT NULL,
+    content TEXT NOT NULL
+)
+RETURNS chat_demo.ai_inbox
+SECURITY INVOKER;
+
+-- Topic-trigger handler. PAYLOAD is chat_demo.ai_inbox (union of source rows).
+CREATE PROCEDURE chat_demo.on_user_message(payload chat_demo.ai_inbox NOT NULL)
+SECURITY DEFINER;
+
+GRANT EXECUTE ON PROCEDURE chat_demo.join_room TO user;
+GRANT EXECUTE ON PROCEDURE chat_demo.send_message TO user;
+
+-- Seed before the trigger so these INSERTs are not handled as live user mail.
 INSERT INTO chat_demo.rooms (id, title)
 VALUES ('main', 'Main');
 
@@ -136,3 +185,16 @@ VALUES ('user', 'user_1', 'root', 'Hello everyone!');
 
 INSERT INTO chat_demo.messages (role, author, sender_username, content)
 VALUES ('assistant', 'ai_bot', 'assistant', 'Hi, how can I help?');
+
+-- STREAM progress is per chatting user (EXECUTE AS). All members see the
+-- committed SHARED assistant row through live queries.
+CREATE TRIGGER chat_demo.process_user_message
+  ON TOPIC chat_demo.ai_inbox
+  EXECUTE PROCEDURE chat_demo.on_user_message(PAYLOAD)
+  WITH (
+    principal = 'system',
+    start = 'latest',
+    retries = 5,
+    retry_backoff = '1s',
+    concurrency = 1
+  );

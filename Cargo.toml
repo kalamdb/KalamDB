@@ -9,6 +9,7 @@ members = [
     "pg/crates/kalam-pg-client",
     "backend/crates/kalamdb-macros",
     "backend/crates/kalamdb-commons",
+    "backend/crates/kalamdb-serialization",
     "backend/crates/kalamdb-row-filter",
     "backend/crates/kalamdb-configs",
     "backend/crates/kalamdb-filestore",
@@ -39,6 +40,8 @@ members = [
     "backend/crates/kalamdb-plan-cache",
     "backend/crates/kalamdb-publisher",
     "backend/crates/kalamdb-dialect",
+    "backend/crates/kalamdb-functions",
+    "backend/crates/kalamdb-functions-host",
     "backend/crates/kalamdb-store",
     "backend/crates/kalamdb-api",
     "backend/crates/kalamdb-auth",
@@ -63,7 +66,7 @@ members = [
 exclude = ["benchv2"]
 
 [workspace.package]
-version = "0.6.0-rc.0"
+version = "0.7.0-beta.0"
 edition = "2021"
 rust-version = "1.94"
 authors = ["KalamDB Team"]
@@ -89,27 +92,32 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "
 tokio-netem = "0.1.1"
 tokio-stream = { version = "0.1.19", features = ["net"] }
 
-# HTTP client (with HTTP/2 support) - using rustls-tls for cross-compilation compatibility
+# HTTP client (with HTTP/2 support). 0.12 matches object_store 0.13 / openidconnect 4.
+# rustls-tls-native-roots matches object_store so we do not also compile webpki-roots 1.x.
 # Note: native-tls requires OpenSSL which is difficult to cross-compile for aarch64
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "multipart", "stream", "form"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls-native-roots", "http2", "multipart", "stream"] }
 hyper = { version = "1.11.1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["client", "client-legacy", "http1", "tokio"] }
 url = "2.5.8"
 
 # WebSocket
-tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 
 # Security floor pins for vulnerable transitive TLS/QUIC crates.
-aws-lc-rs = { version = "1.18.0", default-features = false }
-rustls = { version = "0.23.43", default-features = false }
+aws-lc-rs = { version = "1.18.1", default-features = false }
+rustls = { version = "0.23.44", default-features = false }
 quinn-proto = { version = "0.11.17", default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false }
 
 # Time handling
+croner = "4.0"
+chrono-tz = "0.10"
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # Storage
-rocksdb = { version = "0.25.0", default-features = false, features = ["snappy", "lz4", "zstd", "multi-threaded-cf", "bindgen-runtime"] }
+# Lz4 stays compiled so existing SST files can be read; new writes use Zstd only (cf_tuning.rs).
+# Table COMPRESSION='snappy' is Parquet (`snap`), not RocksDB.
+rocksdb = { version = "0.25.0", default-features = false, features = ["lz4", "zstd", "multi-threaded-cf", "bindgen-runtime"] }
 
 # Apache Arrow ecosystem
 # IMPORTANT: arrow, arrow-schema and parquet MUST match the version used by DataFusion.
@@ -119,10 +127,10 @@ rocksdb = { version = "0.25.0", default-features = false, features = ["snappy", 
 arrow = { version = "59.2.0", default-features = false }
 arrow-ipc = { version = "59.2.0", default-features = false }
 arrow-schema = { version = "59.2.0" }
-datafusion = { version = "55.0.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions"] }
-datafusion-datasource = { version = "55.0.0", default-features = false }
-datafusion-common = { version = "55.0.0", default-features = false }
-datafusion-expr = { version = "55.0.0" }
+datafusion = { version = "55.1.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions", "unicode_expressions"] }
+datafusion-datasource = { version = "55.1.0", default-features = false }
+datafusion-common = { version = "55.1.0", default-features = false }
+datafusion-expr = { version = "55.1.0" }
 datafusion-functions-json = { path = "vendor/datafusion-functions-json" }
 sqlparser = { version = "0.62.0" }
 parquet = { version = "59.2.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
@@ -136,7 +144,7 @@ actix-files = "0.7.0"
 actix-multipart = "0.8.1"
 
 # UUID generation
-uuid = { version = "1.26.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.26.1", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.5.0"
@@ -146,7 +154,8 @@ ulid = "3.0.0"
 
 # JWT authentication
 jsonwebtoken = { version = "11.0.0", default-features = false, features = ["aws_lc_rs"] }
-openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
+# rustls-tls would enable reqwest/rustls-tls (webpki-roots). TLS comes from workspace reqwest.
+openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest"] }
 
 # Configuration
 toml = "1.1.2"
@@ -154,7 +163,7 @@ dotenv = "0.15"
 
 # CLI tools
 clap = { version = "4.6.6", features = ["derive", "color"] }
-console = { version = "0.16.4", default-features = false, features = ["unicode-width"] }
+console = { version = "0.16.6", default-features = false, features = ["unicode-width"] }
 humantime = "2.4.0"
 rustyline = { version = "18.0.1" }
 shlex = "2.0.1"
@@ -167,7 +176,7 @@ hostname = "0.4"
 # Testing
 tempfile = "3.27.0"
 wait-timeout = "0.2"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 testcontainers-modules = { version = "0.15.0", default-features = false, features = ["dex"] }
 
 # Benchmarking
@@ -191,6 +200,7 @@ rand = "0.10.2"
 rcgen = "0.14.10"
 x509-parser = "0.18.1"
 kalamdb-commons = { path = "backend/crates/kalamdb-commons", default-features = false }
+kalamdb-serialization = { path = "backend/crates/kalamdb-serialization" }
 kalamdb-observability = { path = "backend/crates/kalamdb-observability", default-features = false }
 link-common = { path = "link/link-common", default-features = false }
 kalam-client = { path = "link/sdks/rust", default-features = false }
@@ -203,12 +213,12 @@ kalamdb-tables = { path = "backend/crates/kalamdb-tables" }
 kalamdb-rls = { path = "backend/crates/kalamdb-rls" }
 kalamdb-views = { path = "backend/crates/kalamdb-views" }
 kalamdb-datafusion-sources = { path = "backend/crates/kalamdb-datafusion-sources" }
-cookie = "0.18.2"
+kalamdb-functions = { path = "backend/crates/kalamdb-functions" }
 colored = "3.1.1"
 fern = "0.7"
 indicatif = "0.18.6"
 rpassword = "7.5.4"
-dirs = "6.0"
+dirs = "7.0.0"
 term_size = "0.3"
 crossterm = "0.29.0"
 assert_cmd = "2.2.2"
@@ -221,14 +231,16 @@ async-trait = "0.1.92"
 once_cell = "1.21.4"
 regex = "1.13.1"
 dashmap = "6.2.1"
-pgwire = { version = "0.40.7", default-features = false, features = ["server-api-aws-lc-rs", "pg-type-chrono"] }
+arc-swap = "1.7.1"
+smallvec = "1.16.1"
+pgwire = { version = "0.41.0", default-features = false, features = ["server-api-aws-lc-rs", "pg-type-chrono"] }
 bytes = "1.12.1"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
 cc = "1.4.5"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
-syn = { version = "3.0.4", features = ["full", "extra-traits"] }
+syn = { version = "3.0.5", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
 object_store = { version = "0.13.2" }
@@ -241,10 +253,14 @@ tokio-util = "0.7.19"
 hex = "0.4"
 hmac = "0.13.0"
 sha2 = "0.11.0"
+oxc_allocator = "=0.139.0"
+oxc_ast = "=0.139.0"
+oxc_parser = "=0.139.0"
+oxc_span = "=0.139.0"
 storekey = "0.11"
 moka = { version = "0.12.16", features = ["future", "sync"] }
 ntest = "0.9.5"
-ipnet = "2.12.1"
+ipnet = "2.12.2"
 wasm-bindgen = { version = "0.2.128" }
 wasm-bindgen-futures = { version = "0.4.78" }
 js-sys = { version = "0.3.105" }
@@ -261,7 +277,9 @@ flutter_rust_bridge = "=2.13.0"
 rust-embed = { version = "8.11.0", features = ["compression", "include-exclude"] }
 mime_guess = "2.0"
 kalamdb-configs = { path = "backend/crates/kalamdb-configs" }
-kalamdb-server = { path = "backend" }
+# Keep default-features false here so kalam-client-e2e cannot re-enable
+# embedded-ui through feature unification (Rust 1.94 ignores per-dep overrides).
+kalamdb-server = { path = "backend", default-features = false }
 pgrx = "=0.18.1"
 pgrx-bench = "=0.18.1"
 pgrx-tests = "=0.18.1"
@@ -269,6 +287,7 @@ tokio-postgres = "0.7.18"
 
 # Tracing / observability
 tracing = "0.1"
+v8 = "152.2.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fmt"] }
 tracing-actix-web = "0.7.22"
 tracing-log = "0.2"

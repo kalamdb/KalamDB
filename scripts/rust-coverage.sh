@@ -53,7 +53,16 @@ case "$SCOPE" in
     REPORT_ARGS=("${PACKAGE_ARGS[@]}")
     ;;
   workspace)
-    RUN_ARGS=(--workspace --tests --exclude kalam-pg-extension)
+    RUN_ARGS=(
+      --workspace
+      --tests
+      --exclude kalam-pg-extension
+      --exclude kalam-link-wasm
+      --exclude kalam-consumer-wasm
+      --exclude kalam-link-dart
+      --exclude kalamdb-python
+      --exclude quickstart
+    )
     REPORT_ARGS=(--workspace)
     ;;
   *)

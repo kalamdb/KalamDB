@@ -698,17 +698,6 @@ impl CLISession {
         }
     }
 
-    #[allow(dead_code)]
-    fn format_json(value: &serde_json::Value) -> String {
-        match value {
-            serde_json::Value::String(s) => format!("\"{}\"", s),
-            serde_json::Value::Null => "null".to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Number(n) => n.to_string(),
-            _ => serde_json::to_string(value).unwrap_or_else(|_| value.to_string()),
-        }
-    }
-
     pub(in crate::session) fn format_row(row: &kalam_client::RowData) -> String {
         serde_json::to_string(row).unwrap_or_else(|_| format!("{:?}", row))
     }

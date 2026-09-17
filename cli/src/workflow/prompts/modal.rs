@@ -10,7 +10,7 @@ use crate::{
     error::{CLIError, Result},
     output::WorkflowOutput,
     terminal_ui::{self, SelectOption},
-    workflow::project::prompts::{interactive_available, prompt_error},
+    workflow::prompts::{interactive_available, prompt_error},
 };
 
 pub trait WorkflowModalPrompt {

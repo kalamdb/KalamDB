@@ -70,6 +70,10 @@ impl WireSqlExecutor {
             )))]);
         }
 
+        if let Some(response) = self.apply_postgres_client_set(state, metadata.sql.as_str()) {
+            return Ok(response);
+        }
+
         let mut exec_ctx = self.execution_context(state);
         if let Some(transaction_id) = self
             .session_manager
@@ -80,10 +84,7 @@ impl WireSqlExecutor {
         }
 
         match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, params).await {
-            Ok(result) => {
-                self.persist_search_path_if_needed(state, metadata.sql.as_str());
-                execution_result_to_responses_with_format(result, column_format)
-            },
+            Ok(result) => execution_result_to_responses_with_format(result, column_format),
             Err(error) => {
                 self.mark_statement_failed_if_in_block(state);
                 Ok(vec![Response::Error(Box::new(error_info(
@@ -108,6 +109,10 @@ impl WireSqlExecutor {
             )))]);
         }
 
+        if let Some(response) = self.apply_postgres_client_set(state, sql) {
+            return Ok(response);
+        }
+
         let mut exec_ctx = self.execution_context(state);
         if let Some(transaction_id) = self
             .session_manager
@@ -117,17 +122,7 @@ impl WireSqlExecutor {
             exec_ctx = exec_ctx.with_transaction_id(transaction_id);
         }
         match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
-            Ok(result) => {
-                self.persist_search_path_if_needed(state, sql);
-                // SET returns Success — map to Execution tag clients expect.
-                if matches!(
-                    classify_postgres_set(sql),
-                    Some(PostgresSetAction::NoOp | PostgresSetAction::SetSearchPath { .. })
-                ) {
-                    return Ok(vec![Response::Execution(Tag::new("SET"))]);
-                }
-                execution_result_to_responses(result)
-            },
+            Ok(result) => execution_result_to_responses(result),
             Err(error) => {
                 self.mark_statement_failed_if_in_block(state);
                 Ok(vec![Response::Error(Box::new(error_info(
@@ -139,11 +134,22 @@ impl WireSqlExecutor {
         }
     }
 
-    fn persist_search_path_if_needed(&self, state: &WireConnectionState, sql: &str) {
-        let Some(PostgresSetAction::SetSearchPath { schema }) = classify_postgres_set(sql) else {
-            return;
-        };
-        let namespace = NamespaceId::new(schema.as_str());
+    fn apply_postgres_client_set(
+        &self,
+        state: &WireConnectionState,
+        sql: &str,
+    ) -> Option<Vec<Response>> {
+        match classify_postgres_set(sql)? {
+            PostgresSetAction::SetSearchPath { schema } => {
+                self.persist_search_path(state, &schema);
+                Some(vec![Response::Execution(Tag::new("SET"))])
+            },
+            PostgresSetAction::NoOp => Some(vec![Response::Execution(Tag::new("SET"))]),
+        }
+    }
+
+    fn persist_search_path(&self, state: &WireConnectionState, schema: &str) {
+        let namespace = NamespaceId::new(schema);
         let exists = self
             .app_context
             .system_tables()

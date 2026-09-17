@@ -101,10 +101,6 @@ impl ProcessSupervisor {
         .await
     }
 
-    pub fn manages_process(&self, name: &str) -> bool {
-        self.processes.contains_key(name)
-    }
-
     pub fn managed_pid(&self, name: &str) -> Option<u32> {
         self.processes.get(name).map(|managed| managed.pid)
     }

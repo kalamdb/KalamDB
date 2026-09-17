@@ -180,6 +180,9 @@ async fn commit_processed_batch(
             Ok(_) => return,
             Err(err) => {
                 let message = err.to_string();
+                if message.contains("No processed offsets to commit") {
+                    return;
+                }
                 if is_retryable_consumer_poll_error(&message) && Instant::now() < deadline {
                     tokio::time::sleep(idle_sleep).await;
                     continue;
@@ -210,11 +213,11 @@ pub async fn build_test_consumer(
 
 pub struct UniqueOffsetPollConfig {
     pub expected_messages: Option<usize>,
-    pub publishers_done: Option<Arc<AtomicBool>>,
-    pub deadline: Duration,
-    pub idle_break_after: u32,
-    pub idle_sleep: Duration,
-    pub per_record_delay: Duration,
+    pub publishers_done:   Option<Arc<AtomicBool>>,
+    pub deadline:          Duration,
+    pub idle_break_after:  u32,
+    pub idle_sleep:        Duration,
+    pub per_record_delay:  Duration,
     pub commit_each_batch: bool,
 }
 
@@ -231,15 +234,16 @@ pub async fn poll_unique_offsets_until(
     {
         match consumer.poll().await {
             Ok(batch) if batch.is_empty() => {
-                idle_loops += 1;
-                if config
+                let publishers_done = config
                     .publishers_done
                     .as_ref()
                     .map(|done| done.load(Ordering::Relaxed))
-                    .unwrap_or(false)
-                    && idle_loops >= config.idle_break_after
-                {
-                    break;
+                    .unwrap_or(true);
+                if publishers_done {
+                    idle_loops += 1;
+                    if idle_loops >= config.idle_break_after {
+                        break;
+                    }
                 }
                 tokio::time::sleep(config.idle_sleep).await;
             },

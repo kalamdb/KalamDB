@@ -150,15 +150,18 @@ fn process<'a>(arena: &'a Bump, input: &str) -> Vec<'a, String<'a>> {
 
 ## Performance Impact
 
-```rust
-// Benchmarks from production systems:
-// - Individual allocations: ~25-50ns each
-// - Arena bump: ~1-2ns each (20-50x faster)
-// - Arena reset: O(1) regardless of allocation count
+Arena/bump allocation removes per-allocation metadata overhead and can be
+substantially faster than the global allocator — often an order of magnitude in
+microbenchmarks — but the actual speedup depends on the allocator, workload,
+and allocation size. Arena reset is O(1) regardless of how many allocations
+were made. Measure with [criterion](https://crates.io/crates/criterion) to
+confirm the benefit in your specific use case.
 
-// Memory overhead:
-// - Arena wastes some memory (unused capacity)
+```rust
+// Memory trade-off:
+// - Arena wastes some memory (unused capacity at the end)
 // - But eliminates per-allocation metadata overhead
+// - Frees everything in O(1) with a single bump reset
 ```
 
 ## See Also

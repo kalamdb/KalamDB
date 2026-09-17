@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import { StudioExecutionLog } from "./StudioExecutionLog";
 import type { QueryLogEntry } from "../../shared/types";
 
@@ -23,6 +23,9 @@ const logs: QueryLogEntry[] = [
 ];
 
 describe("StudioExecutionLog", () => {
+  afterEach(() => {
+    cleanup();
+  });
   it("renders the timeline and preview as a two-column split", () => {
     render(<StudioExecutionLog logs={logs} status="success" />);
 
@@ -34,5 +37,38 @@ describe("StudioExecutionLog", () => {
     expect(timeline.style.minWidth).toBe("280px");
     expect(timeline.style.maxWidth).toBe("500px");
     expect(screen.getByLabelText("Trace details")).toBeTruthy();
+  });
+
+  it("wraps error messages and shows the structured payload instead of truncating", () => {
+    const body =
+      '{"status":"error","results":[],"took":0.394,"error":{"code":"SQL_EXECUTION_ERROR","message":"procedure foo is not found"}}';
+
+    render(
+      <StudioExecutionLog
+        logs={[
+          {
+            id: "log-error",
+            level: "error",
+            message: body,
+            createdAt: "2026-05-31T12:00:02.000Z",
+            asUser: "admin",
+            response: {},
+          },
+        ]}
+        status="error"
+      />,
+    );
+
+    const heading = screen.getByRole("heading", {
+      name: "SQL_EXECUTION_ERROR: procedure foo is not found",
+    });
+    expect(heading.className).toContain("whitespace-pre-wrap");
+    expect(heading.className).toContain("break-all");
+    expect(heading.className).not.toContain("truncate");
+
+    const details = screen.getByLabelText("Trace details");
+    expect(details.textContent).toContain("SQL_EXECUTION_ERROR");
+    expect(details.textContent).toContain("procedure foo is not found");
+    expect(details.textContent).not.toMatch(/\{\s*\}/);
   });
 });

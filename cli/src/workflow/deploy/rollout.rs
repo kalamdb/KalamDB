@@ -8,17 +8,14 @@ pub fn run_rollout(
     env_name: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    output.status(format!("rolling out '{env_name}' deployment"));
-
-    if config.dev.processes.is_empty() {
-        output.detail("no deploy processes configured; migration apply and health check only");
-    } else {
+    output.detail(format!(
+        "procedure activation for '{env_name}' does not roll back schema changes"
+    ));
+    if !config.dev.processes.is_empty() {
         output.detail(format!(
-            "configured dev processes: {}",
+            "application processes are not started by deploy: {}",
             config.dev.processes.keys().cloned().collect::<Vec<_>>().join(", ")
         ));
     }
-
-    output.status("rollout complete");
     Ok(())
 }

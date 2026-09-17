@@ -20,7 +20,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
   return (
     <div className={cn("flex flex-wrap items-start justify-between gap-3", className)}>
       <div className="flex min-w-0 flex-col gap-1">
-        <h1 className={pageTitleClassName}>{title}</h1>
+        <h1 className={cn(pageTitleClassName, "truncate")}>{title}</h1>
         {description ? <p className={pageDescriptionClassName}>{description}</p> : null}
       </div>
       {actions ? <div className="shrink-0">{actions}</div> : null}

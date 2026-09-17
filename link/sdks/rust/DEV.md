@@ -102,7 +102,7 @@ Server-backed integration tests compile separately in `kalam-client-e2e` (includ
 
 ```bash
 cd link
-cargo test -p kalam-client-e2e
+cargo nextest run -p kalam-client-e2e --test e2e
 ```
 
 CI uses the release-server harness:

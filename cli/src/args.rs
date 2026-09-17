@@ -10,8 +10,9 @@ mod workflow;
 
 use parsers::parse_watch_interval;
 pub use workflow::{
-    DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, InitArgs, LinkArgs, MigrationArgs,
-    MigrationCommand, SchemaArgs, SchemaCommand, StatusArgs,
+    DbArgs, DbCommand, DeployArgs, DevArgs, DevCommand, DownArgs, FunctionsArgs, FunctionsCommand,
+    InitArgs, InstancesArgs, LinkArgs, LogsArgs, MigrationCommand, SchemaArgs, SchemaCommand,
+    StatusArgs, UpArgs,
 };
 
 // Build information - Create a static version string at compile time
@@ -31,18 +32,57 @@ macro_rules! version_string {
     };
 }
 
+const AFTER_HELP: &str = "\
+EVERYDAY
+  dev        Develop your application with schema and procedure watching
+  up         Start a local database
+  down       Stop a local database; keep its data
+  status     Show server status for this folder or selected target
+  instances  List local servers and saved cloud connections
+  logs       View database logs
+
+GET STARTED
+  init       Add KalamDB to an application or use a template
+  login      Authenticate
+  link       Connect a project to a remote environment
+
+DATABASE & DEPLOYMENT
+  db         Migrations, reset, and development fixtures
+  schema     Generate types from the local schema
+  deploy     Apply database and procedure changes
+
+ADVANCED & MAINTENANCE
+  functions  Inspect and manage procedures
+  token      Service tokens
+  invite     OIDC invitations
+  doctor     Diagnose configuration and connectivity
+  update     Update the CLI
+
+SQL
+  kalam                    Open the SQL shell
+  kalam -c \"SELECT ...\"    Execute SQL
+  kalam --file query.sql   Execute a SQL file
+
+TARGETS
+  --global, -g             Shared local database
+  --env NAME               Named project environment
+  --agent                  Deterministic events for AI coding agents
+  --watch-schema           Watch information_schema.tables and run a command
+";
+
 /// KalamDB CLI for projects, SQL, development, and deployment
 #[derive(Parser, Debug)]
 #[command(name = "kalam")]
 #[command(author = "KalamDB Team")]
 #[command(version = version_string!())]
 #[command(about = "KalamDB CLI for projects, SQL, development, and deployment", long_about = None)]
+#[command(after_help = AFTER_HELP)]
 pub struct Cli {
     /// Command to run (for example: login, logout, whoami, doctor, update)
     #[command(subcommand)]
     pub subcommand: Option<CliCommand>,
 
-    /// Server URL (e.g., http://localhost:3000)
+    /// Server URL (e.g., http://localhost:2900)
     #[arg(short = 'u', long = "url", global = true)]
     pub url: Option<String>,
 
@@ -50,9 +90,21 @@ pub struct Cli {
     #[arg(short = 'H', long = "host", global = true)]
     pub host: Option<String>,
 
-    /// Port number (default: 3000)
-    #[arg(short = 'p', long = "port", default_value = "3000", global = true)]
-    pub port: u16,
+    /// Port number (default: 2900 when used with --host or `kalam up`)
+    #[arg(short = 'p', long = "port", global = true)]
+    pub port: Option<u16>,
+
+    /// Named project environment (`dev`, `staging`, ...)
+    #[arg(long = "env", global = true)]
+    pub env: Option<String>,
+
+    /// Use the current user's shared local database (`~/.kalam/servers/default`)
+    #[arg(short = 'g', long = "global", global = true)]
+    pub global: bool,
+
+    /// Deterministic, non-interactive mode optimized for AI coding agents and automation
+    #[arg(long = "agent", global = true)]
+    pub agent: bool,
 
     /// JWT authentication token (avoid in shared shells; may appear in process list/history)
     #[arg(long = "token", global = true)]
@@ -67,7 +119,7 @@ pub struct Cli {
     #[arg(long = "password", num_args = 0..=1, default_missing_value = "", global = true)]
     pub password: Option<String>,
 
-    /// Database instance name (for credential storage)
+    /// Instance name for saved credentials or a named local server
     #[arg(long = "instance", default_value = "local", global = true)]
     pub instance: String,
 
@@ -100,7 +152,7 @@ pub struct Cli {
     pub no_spinner: bool,
 
     /// Loading indicator threshold in ms (0 to always show)
-    #[arg(long = "loading-threshold-ms", global = true)]
+    #[arg(long = "loading-threshold-ms", global = true, hide = true)]
     pub loading_threshold_ms: Option<u64>,
 
     /// Configuration file path
@@ -116,7 +168,8 @@ pub struct Cli {
         long = "timeout",
         value_name = "SECONDS",
         default_value_t = 30,
-        global = true
+        global = true,
+        hide = true
     )]
     pub timeout: u64,
 
@@ -125,7 +178,8 @@ pub struct Cli {
         long = "connection-timeout",
         value_name = "SECONDS",
         default_value_t = 10,
-        global = true
+        global = true,
+        hide = true
     )]
     pub connection_timeout: u64,
 
@@ -134,7 +188,8 @@ pub struct Cli {
         long = "receive-timeout",
         value_name = "SECONDS",
         default_value_t = 30,
-        global = true
+        global = true,
+        hide = true
     )]
     pub receive_timeout: u64,
 
@@ -143,29 +198,17 @@ pub struct Cli {
         long = "auth-timeout",
         value_name = "SECONDS",
         default_value_t = 5,
-        global = true
+        global = true,
+        hide = true
     )]
     pub auth_timeout: u64,
-
-    // Credential management commands
-    /// Show stored credentials for instance
-    #[arg(long = "show-credentials")]
-    pub show_credentials: bool,
-
-    /// Update stored credentials for instance
-    #[arg(long = "update-credentials")]
-    pub update_credentials: bool,
-
-    /// Delete stored credentials for instance
-    #[arg(long = "delete-credentials")]
-    pub delete_credentials: bool,
 
     /// Save credentials (JWT token) after successful login
     /// When used with --user/--password, stores the JWT token for future sessions
     #[arg(long = "save-credentials")]
     pub save_credentials: bool,
 
-    /// List all stored credential instances
+    /// List local servers and saved cloud connections (alias for instances)
     #[arg(long = "list-instances")]
     pub list_instances: bool,
 
@@ -193,11 +236,11 @@ pub struct Cli {
     pub initial_data_timeout: u64,
 
     /// Use fast timeout preset (optimized for local development)
-    #[arg(long = "fast-timeouts", global = true)]
+    #[arg(long = "fast-timeouts", global = true, hide = true)]
     pub fast_timeouts: bool,
 
     /// Use relaxed timeout preset (optimized for high-latency networks)
-    #[arg(long = "relaxed-timeouts", global = true)]
+    #[arg(long = "relaxed-timeouts", global = true, hide = true)]
     pub relaxed_timeouts: bool,
 
     /// Watch schema metadata and run a command when `information_schema.tables` changes
@@ -206,9 +249,6 @@ pub struct Cli {
         conflicts_with_all = [
             "file",
             "command",
-            "show_credentials",
-            "update_credentials",
-            "delete_credentials",
             "list_instances",
             "subscribe",
             "list_subscriptions",
@@ -304,35 +344,52 @@ pub enum CliCommand {
     /// Link this project to an environment namespace
     Link(LinkArgs),
 
-    /// Generate or pull schema artifacts for the current project
+    /// Generate types from the local schema
     Schema(SchemaArgs),
-
-    /// Create and inspect schema migration history
-    Migration(MigrationArgs),
 
     /// Run database migration operations for the linked project
     Db(DbArgs),
 
-    /// Run the local KalamDB development environment (`--agent` for coding agents)
-    #[command(about = "Run the local KalamDB development environment")]
+    /// Run the local development environment with schema and procedure watching
+    #[command(about = "Run the local development environment with schema and procedure watching")]
     Dev(DevArgs),
 
-    /// Show project workflow status for the current environment
+    /// Start a local database in the background
+    Up(UpArgs),
+
+    /// Stop a managed local database and keep its data
+    Down(DownArgs),
+
+    /// List local servers and saved cloud connections
+    #[command(visible_aliases = ["servers", "list"])]
+    Instances(InstancesArgs),
+
+    /// Show server status for this folder or selected project environment
     Status(StatusArgs),
 
-    /// Apply migrations and health checks for a deployment
+    /// View managed database logs
+    Logs(LogsArgs),
+
+    /// Apply migrations and activate procedures
     Deploy(DeployArgs),
+
+    /// Build, inspect, and roll back project procedures
+    Functions(FunctionsArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct UpdateArgs {
     /// Install a specific version instead of the latest release
-    #[arg(long = "version", value_name = "VERSION")]
+    #[arg(long = "version", value_name = "VERSION", conflicts_with_all = ["pre_release", "stable"])]
     pub version: Option<String>,
 
-    /// Use the latest GitHub prerelease
-    #[arg(long = "pre-release")]
+    /// Use the newest published pre-release (rc, beta, alpha)
+    #[arg(long = "pre-release", conflicts_with = "stable")]
     pub pre_release: bool,
+
+    /// Use the latest GitHub stable release. Allows leaving a newer installed pre-release
+    #[arg(long = "stable")]
+    pub stable: bool,
 
     /// Show the resolved update without replacing the binary
     #[arg(long = "dry-run")]
@@ -435,7 +492,6 @@ pub enum TokenRole {
 }
 
 impl TokenRole {
-    #[allow(dead_code)]
     pub fn as_sql(self) -> &'static str {
         match self {
             Self::User => "user",
@@ -446,7 +502,6 @@ impl TokenRole {
     }
 }
 
-#[allow(dead_code)]
 pub fn version_report() -> &'static str {
     version_string!()
 }
@@ -454,6 +509,19 @@ pub fn version_report() -> &'static str {
 impl Cli {
     pub fn command_text(&self) -> Option<String> {
         self.command.as_ref().map(|parts| parts.join(" "))
+    }
+
+    pub fn listen_port(&self) -> u16 {
+        self.port.unwrap_or(2900)
+    }
+
+    pub fn explicit_instance(&self) -> Option<&str> {
+        let trimmed = self.instance.trim();
+        if trimmed.is_empty() || trimmed == "local" {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 }
 
@@ -527,7 +595,7 @@ mod tests {
         .expect("short flags should parse");
 
         assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
-        assert_eq!(cli.port, 2900);
+        assert_eq!(cli.port, Some(2900));
         assert_eq!(cli.file.as_deref(), Some(Path::new("./queries.sql")));
     }
 
@@ -619,7 +687,7 @@ mod tests {
         let Some(CliCommand::Dev(args)) = start.subcommand else {
             panic!("expected dev command");
         };
-        assert!(args.agent);
+        assert!(start.agent);
         assert!(args.force);
         assert!(matches!(args.command, Some(DevCommand::Start)));
 
@@ -628,7 +696,7 @@ mod tests {
         let Some(CliCommand::Dev(args)) = before_flag.subcommand else {
             panic!("expected dev command");
         };
-        assert!(args.agent);
+        assert!(before_flag.agent);
         assert!(matches!(args.command, Some(DevCommand::Status)));
 
         let logs = Cli::try_parse_from(["kalam", "dev", "logs", "--follow", "-n", "20"])
@@ -649,5 +717,52 @@ mod tests {
             panic!("expected dev command");
         };
         assert!(matches!(args.command, Some(DevCommand::Stop)));
+    }
+
+    #[test]
+    fn lifecycle_commands_and_global_flag_parse() {
+        for alias in ["instances", "servers", "list"] {
+            assert!(Cli::try_parse_from(["kalam", alias, "--local"]).is_ok());
+            assert!(Cli::try_parse_from(["kalam", alias, "--cloud", "--check"]).is_ok());
+        }
+        assert!(Cli::try_parse_from(["kalam", "instances", "--local", "--cloud"]).is_err());
+
+        assert!(Cli::try_parse_from(["kalam", "servers"]).is_ok());
+        let up = Cli::try_parse_from(["kalam", "up", "-g"]).expect("up -g should parse");
+        assert!(up.global);
+        assert!(matches!(up.subcommand, Some(CliCommand::Up(_))));
+
+        let down = Cli::try_parse_from(["kalam", "down", "--global"]).expect("down should parse");
+        assert!(down.global);
+        assert!(matches!(down.subcommand, Some(CliCommand::Down(_))));
+
+        let logs =
+            Cli::try_parse_from(["kalam", "logs", "--tail"]).expect("logs --tail should parse");
+        let Some(CliCommand::Logs(args)) = logs.subcommand else {
+            panic!("expected logs command");
+        };
+        assert!(args.follow);
+
+        let status = Cli::try_parse_from(["kalam", "status", "--env", "staging"])
+            .expect("status --env should parse");
+        assert_eq!(status.env.as_deref(), Some("staging"));
+        assert!(matches!(status.subcommand, Some(CliCommand::Status(_))));
+    }
+
+    #[test]
+    fn global_and_env_are_accepted_separately() {
+        Cli::try_parse_from(["kalam", "up", "--env", "dev"]).expect("up --env parses");
+        Cli::try_parse_from(["kalam", "dev", "--exec", "npm test"]).expect("dev --exec parses");
+    }
+
+    #[test]
+    fn removed_legacy_flags_are_rejected() {
+        assert!(Cli::try_parse_from(["kalam", "--show-credentials"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "--update-credentials"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "--delete-credentials"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "dev", "--progress"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "init", "--schema-mode", "remote"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "schema", "pull"]).is_err());
+        assert!(Cli::try_parse_from(["kalam", "migration", "status"]).is_err());
     }
 }

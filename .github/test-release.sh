@@ -75,9 +75,23 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
         cargo install cross --locked
     fi
     rustup target add x86_64-unknown-linux-gnu
-    cross build --profile docker --target x86_64-unknown-linux-gnu --bin kalam --bin kalamdb-server
+    cross build --profile docker --target x86_64-unknown-linux-gnu --bin kalam
+    cross build \
+      -p kalamdb-server \
+      --no-default-features \
+      --features embedded-ui,traceability,mimalloc,cloud-aws \
+      --profile docker \
+      --target x86_64-unknown-linux-gnu \
+      --bin kalamdb-server
 else
-    cargo build --profile release-dist --target x86_64-unknown-linux-gnu --bin kalam --bin kalamdb-server
+    cargo build --profile release-dist --target x86_64-unknown-linux-gnu --bin kalam
+    cargo build \
+      -p kalamdb-server \
+      --no-default-features \
+      --features embedded-ui,traceability,mimalloc,cloud-aws \
+      --profile release-dist \
+      --target x86_64-unknown-linux-gnu \
+      --bin kalamdb-server
 fi
 print_success "Linux build successful"
 echo ""
@@ -96,7 +110,14 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     export LIBCLANG_PATH="$(brew --prefix llvm@16)/lib"
     export LLVM_CONFIG_PATH="$(brew --prefix llvm@16)/bin/llvm-config"
     
-    cargo build --profile release-dist --target aarch64-apple-darwin --bin kalam --bin kalamdb-server
+    cargo build --profile release-dist --target aarch64-apple-darwin --bin kalam
+    cargo build \
+      -p kalamdb-server \
+      --no-default-features \
+      --features embedded-ui,traceability,mimalloc,cloud-aws \
+      --profile release-dist \
+      --target aarch64-apple-darwin \
+      --bin kalamdb-server
     print_success "macOS ARM64 build successful"
 else
     print_step "Step 3/5: Skipping macOS build (not on macOS)"

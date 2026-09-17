@@ -25,9 +25,11 @@ pub const LATEST_MARKER: &str = "<lat>";
 pub const VERSION_MARKER: &str = "<ver>";
 
 /// Discriminator for latest pointer keys
+#[cfg(feature = "storage")]
 pub const VERSION_KIND_LATEST: u8 = 0;
 
 /// Discriminator for versioned keys
+#[cfg(feature = "storage")]
 pub const VERSION_KIND_VERSIONED: u8 = 1;
 
 /// Composite key for versioned table schema storage

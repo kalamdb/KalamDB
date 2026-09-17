@@ -108,8 +108,8 @@ export function NotificationsDropdown() {
     <>
       <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="relative h-8 w-8" aria-label="Open notifications">
-            <Bell className="h-4 w-4" />
+          <Button variant="ghost" size="icon-lg" className="relative" aria-label="Open notifications">
+            <Bell />
             {runningJobsCount > 0 && (
               <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-yellow-400 opacity-75"></span>
@@ -129,10 +129,9 @@ export function NotificationsDropdown() {
                   {formatTimestamp(lastFetchTime.toISOString())}
                 </span>
               )}
-                <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-6 w-6" 
+                <Button
+                variant="ghost"
+                size="icon-sm"
                 aria-label="Refresh notifications"
                 title="Refresh notifications"
                 onClick={(e) => {
@@ -140,7 +139,7 @@ export function NotificationsDropdown() {
                   void refetch();
                 }}
               >
-                <RefreshCw className={cn("h-3 w-3", isLoading && "animate-spin")} />
+                <RefreshCw className={cn(isLoading && "animate-spin")} />
               </Button>
             </div>
           </DropdownMenuLabel>

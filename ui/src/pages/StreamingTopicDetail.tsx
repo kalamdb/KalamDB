@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Copy, FileCode2, RefreshCw } from "lucide-react";
+import { Copy, FileCode2, RefreshCw } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { PageBreadcrumb } from "@/components/layout/PageBreadcrumb";
 import { PageLayout } from "@/components/layout/PageLayout";
+import { PageTabs, PageTabsList } from "@/components/layout/PageTabs";
 import {
   useConsumeStreamingMessagesMutation,
   useGetStreamingOffsetsQuery,
@@ -36,7 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { fieldLabelClassName } from "@/components/layout/typography";
 import { formatDate, formatTimestamp } from "@/lib/formatters";
 
@@ -208,44 +210,36 @@ export default function StreamingTopicDetail() {
     setSelectedMessageKey(batch.messages[0] ? toMessageKey(batch.messages[0]) : null);
   };
 
+  const title = topicId || "Streaming";
+
   return (
     <PageLayout
-      title={topicId ? "Streaming Topic" : "Streaming"}
+      breadcrumb={(
+        <PageBreadcrumb
+          items={[
+            { label: "Streaming" },
+            { label: "Topics", to: "/streaming/topics" },
+            ...(topicId ? [{ label: topicId, mono: true }] : []),
+          ]}
+        />
+      )}
+      title={<span className="font-mono">{title}</span>}
       description="Inspect messages and offset snapshots for a single topic"
       actions={(
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void refetchTopics();
-              void refetchOffsets();
-            }}
-            disabled={topicsLoading || offsetsLoading}
-          >
-            <RefreshCw data-icon="inline-start" className={(topicsLoading || offsetsLoading) ? "animate-spin" : undefined} />
-            Refresh
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void refetchTopics();
+            void refetchOffsets();
+          }}
+          disabled={topicsLoading || offsetsLoading}
+        >
+          <RefreshCw data-icon="inline-start" className={(topicsLoading || offsetsLoading) ? "animate-spin" : undefined} />
+          Refresh
+        </Button>
       )}
     >
-      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Streaming</span>
-        <span className="text-muted-foreground">/</span>
-        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => navigate("/streaming/topics")}>
-          <ArrowLeft data-icon="inline-start" />
-          Topics
-        </Button>
-        {topicId ? (
-          <>
-            <span className="text-muted-foreground">/</span>
-            <span aria-current="page" className="min-w-0 truncate font-mono text-xs text-foreground">
-              {topicId}
-            </span>
-          </>
-        ) : null}
-      </nav>
-
       {!selectedTopic ? (
         <Card>
           <CardHeader>
@@ -280,41 +274,12 @@ export default function StreamingTopicDetail() {
             </CardContent>
           </Card>
 
-          <Tabs defaultValue="messages" className="gap-4">
-            <TabsList
-              className="h-auto w-full flex-wrap items-stretch justify-start gap-2 rounded-2xl border border-border/60 bg-muted/40 p-2 shadow-sm"
-            >
-              <TabsTrigger
-                value="messages"
-                aria-label="Inspect Messages"
-                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
-              >
-                <div className="flex min-w-0 flex-col items-start gap-1">
-                  <span className="text-sm font-semibold leading-none">Inspect Messages</span>
-                  <span className="text-xs text-muted-foreground">Pull a batch and inspect decoded payloads.</span>
-                </div>
-              </TabsTrigger>
-              <TabsTrigger
-                value="offsets"
-                aria-label="Committed Offsets"
-                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
-              >
-                <div className="flex min-w-0 flex-col items-start gap-1">
-                  <span className="text-sm font-semibold leading-none">Committed Offsets</span>
-                  <span className="text-xs text-muted-foreground">Inspect stored cursors for every consumer group.</span>
-                </div>
-              </TabsTrigger>
-              <TabsTrigger
-                value="sql"
-                aria-label="SQL Studio Shortcuts"
-                className="h-auto min-w-[12rem] flex-1 rounded-xl border border-transparent bg-transparent px-4 py-3 text-left data-[state=active]:border-border data-[state=active]:bg-background data-[state=active]:shadow-sm"
-              >
-                <div className="flex min-w-0 flex-col items-start gap-1">
-                  <span className="text-sm font-semibold leading-none">SQL Studio Shortcuts</span>
-                  <span className="text-xs text-muted-foreground">Open prepared queries and preview the exact SQL first.</span>
-                </div>
-              </TabsTrigger>
-            </TabsList>
+          <PageTabs defaultValue="messages">
+            <PageTabsList>
+              <TabsTrigger value="messages">Inspect Messages</TabsTrigger>
+              <TabsTrigger value="offsets">Committed Offsets</TabsTrigger>
+              <TabsTrigger value="sql">SQL Studio Shortcuts</TabsTrigger>
+            </PageTabsList>
 
             <TabsContent value="messages" className="mt-0 flex flex-col gap-4">
               <Card>
@@ -630,7 +595,7 @@ export default function StreamingTopicDetail() {
                 </CardContent>
               </Card>
             </TabsContent>
-          </Tabs>
+          </PageTabs>
         </>
       )}
     </PageLayout>

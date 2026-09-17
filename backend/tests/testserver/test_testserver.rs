@@ -1,10 +1,8 @@
 //! Test driver for testserver integration tests.
 //!
-//! Run with: cargo test --test test_testserver
+//! Run with: cargo nextest run -p kalamdb-server --features e2e-tests --test e2e
 
-// Include the common test support
-#[path = "../common/testserver/mod.rs"]
-mod test_support;
+pub(super) use crate::test_support;
 
 // Include test modules organized by category
 mod cluster;

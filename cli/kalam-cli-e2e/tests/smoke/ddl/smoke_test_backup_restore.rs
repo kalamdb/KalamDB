@@ -4,8 +4,8 @@
 //! - `BACKUP DATABASE TO '<path>'` creates a job that completes and writes either the expected
 //!   backup directory layout (`rocksdb/`, `storage/`, `snapshots/`, `streams/`) or a `.tar.gz`
 //!   archive containing that layout.
-//! - `RESTORE DATABASE FROM '<path>'` accepts either a backup directory or a `.tar.gz` archive
-//!   and creates a restore job that reaches a terminal state.
+//! - `RESTORE DATABASE FROM '<path>'` accepts either a backup directory or a `.tar.gz` archive and
+//!   creates a restore job that reaches a terminal state.
 //! - Non-DBA users receive an authorization error when attempting either command.
 //! - `RESTORE DATABASE FROM '<non-existent-path>'` returns a clear error immediately (no job
 //!   created).
@@ -68,7 +68,8 @@ fn seed_backup_fixture_data(prefix: &str) -> (String, String, String) {
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("create fixture namespace");
     execute_sql_as_root_via_client(&format!(
-        "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', FLUSH_POLICY='rows:5')",
+        "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', \
+         FLUSH_POLICY='rows:5')",
         table_fqn
     ))
     .expect("create fixture table");
@@ -101,6 +102,13 @@ fn seed_backup_fixture_data(prefix: &str) -> (String, String, String) {
     }
 
     (namespace, table, table_fqn)
+}
+
+fn wait_until_job_completed(job_id: &str, timeout: Duration, kind: &str) {
+    let status = wait_for_job_finished(job_id, timeout)
+        .unwrap_or_else(|e| panic!("{kind} job wait failed: {e}"));
+    assert_eq!(status, "completed", "{kind} job did not complete: {job_id}");
+    assert_job_fully_terminal(job_id, "completed");
 }
 
 fn assert_backup_directory_layout(backup_path: &std::path::Path) {
@@ -165,11 +173,7 @@ fn smoke_backup_database_job_completes() {
 
     println!("🗄️  Backup job: {}", job_id);
 
-    // Wait for job completion
-    let status = wait_for_job_finished(&job_id, BACKUP_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Backup job wait failed: {}", e));
-
-    assert_eq!(status, "completed", "Backup job did not complete: {}", job_id);
+    wait_until_job_completed(&job_id, BACKUP_JOB_TIMEOUT, "Backup");
 
     // Verify backup directory structure
     assert!(
@@ -206,10 +210,7 @@ fn smoke_backup_database_archive_job_completes() {
     let job_id =
         parse_job_id(&output).unwrap_or_else(|| panic!("Could not parse job id from: {}", output));
 
-    let status = wait_for_job_finished(&job_id, BACKUP_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
-
-    assert_eq!(status, "completed", "Backup archive job did not complete: {}", job_id);
+    wait_until_job_completed(&job_id, BACKUP_JOB_TIMEOUT, "Backup archive");
     assert!(
         backup_path.is_file(),
         "Backup archive was not created: {}",
@@ -249,9 +250,7 @@ fn smoke_restore_from_backup_job_completes() {
             .expect("BACKUP DATABASE should succeed");
 
     let bkp_job_id = parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
-    let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Backup job wait failed: {}", e));
-    assert_eq!(bkp_status, "completed", "Backup must complete before restore test");
+    wait_until_job_completed(&bkp_job_id, BACKUP_JOB_TIMEOUT, "Backup");
     assert_backup_directory_layout(&backup_path);
 
     // Step 2: restore from the backup
@@ -272,10 +271,7 @@ fn smoke_restore_from_backup_job_completes() {
 
     println!("♻️  Restore job: {}", restore_job_id);
 
-    let status = wait_for_job_finished(&restore_job_id, RESTORE_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Restore job wait failed: {}", e));
-
-    assert_eq!(status, "completed", "Restore job should complete successfully");
+    wait_until_job_completed(&restore_job_id, RESTORE_JOB_TIMEOUT, "Restore");
     println!("✅  Restore job completed");
 
     // Cleanup
@@ -301,9 +297,7 @@ fn smoke_restore_from_backup_archive_job_completes() {
             .expect("BACKUP DATABASE archive should succeed");
 
     let bkp_job_id = parse_job_id(&bkp_out).unwrap_or_else(|| panic!("No job id in: {}", bkp_out));
-    let bkp_status = wait_for_job_finished(&bkp_job_id, BACKUP_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Backup archive job wait failed: {}", e));
-    assert_eq!(bkp_status, "completed", "Backup archive must complete before restore test");
+    wait_until_job_completed(&bkp_job_id, BACKUP_JOB_TIMEOUT, "Backup archive");
     assert!(
         backup_path.is_file(),
         "Backup archive was not created: {}",
@@ -320,10 +314,7 @@ fn smoke_restore_from_backup_archive_job_completes() {
     let restore_job_id = parse_job_id(&restore_out)
         .unwrap_or_else(|| panic!("Could not parse restore job id from: {}", restore_out));
 
-    let status = wait_for_job_finished(&restore_job_id, RESTORE_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Restore archive job wait failed: {}", e));
-
-    assert_eq!(status, "completed", "Restore archive job should complete successfully");
+    wait_until_job_completed(&restore_job_id, RESTORE_JOB_TIMEOUT, "Restore archive");
     println!("✅  Restore archive job completed");
 
     let _ = std::fs::remove_file(&backup_path);
@@ -494,11 +485,7 @@ fn smoke_backup_job_visible_in_system_jobs() {
 
     let job_id = parse_job_id(&output).unwrap_or_else(|| panic!("No job id in: {}", output));
 
-    // Wait for job to appear and finish in system.jobs
-    let status = wait_for_job_finished(&job_id, BACKUP_JOB_TIMEOUT)
-        .unwrap_or_else(|e| panic!("Backup job wait failed: {}", e));
-
-    assert_eq!(status, "completed");
+    wait_until_job_completed(&job_id, BACKUP_JOB_TIMEOUT, "Backup");
 
     // Verify the job appears in system.jobs with correct type
     let jobs_output = execute_sql_as_root_via_client_json(&format!(
@@ -529,4 +516,17 @@ fn smoke_backup_job_visible_in_system_jobs() {
     println!("✅  Backup job {} is visible in system.jobs as type '{}'", job_id, job_type);
 
     let _ = std::fs::remove_dir_all(&backup_path);
+}
+
+/// Fail if a backup/restore job has been sitting in new/queued/running/retrying
+/// for several minutes. Leader-only jobs complete `system.job_nodes` immediately,
+/// so a leftover `system.jobs` Running row used to be invisible to these tests.
+#[ntest::timeout(30_000)]
+#[test]
+fn smoke_no_stale_running_backup_restore_jobs() {
+    if !require_server_running() {
+        return;
+    }
+
+    assert_no_stale_active_backup_restore_jobs(Duration::from_secs(180));
 }

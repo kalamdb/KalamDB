@@ -14,6 +14,7 @@ categories = ["database"]
 # Internal crates
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-macros = { path = "../kalamdb-macros" }
+kalamdb-serialization = { workspace = true }
 kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
 kalamdb-store = { path = "../kalamdb-store", features = ["datafusion"] }
 kalamdb-datafusion-sources = { workspace = true }
@@ -33,13 +34,14 @@ tokio = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-flexbuffers = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
 
 # Time handling
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
+croner = { workspace = true }
 
 # Logging
 log = { workspace = true }

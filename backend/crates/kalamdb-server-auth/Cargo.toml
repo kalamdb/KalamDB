@@ -9,7 +9,7 @@ description = "Server-to-server authentication for KalamDB gRPC endpoints (mTLS,
 
 [dependencies]
 log = { workspace = true }
-tonic = { workspace = true, features = ["tls-webpki-roots", "tls-ring"] }
+tonic = { workspace = true, features = ["tls-native-roots", "tls-aws-lc"] }
 x509-parser = { workspace = true }
 
 [dev-dependencies]

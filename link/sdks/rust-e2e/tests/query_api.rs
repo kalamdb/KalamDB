@@ -1,8 +1,8 @@
 //! HTTP query API tests.
 
-mod common;
-
 use kalam_client::QueryParam;
+
+use super::common;
 
 #[tokio::test]
 #[ignore = "requires running KalamDB server"]

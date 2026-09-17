@@ -361,14 +361,17 @@ impl ManifestService {
         match self.cached_entry_snapshot(&rocksdb_key) {
             Ok(Some(old_entry)) => {
                 if old_entry.sync_state == SyncState::PendingWrite {
-                    self.insert_memory_entry(rocksdb_key, Arc::new(old_entry));
+                    self.insert_memory_entry(rocksdb_key, old_entry);
                     return Ok(());
                 }
 
-                let mut new_entry = old_entry.clone();
+                let mut new_entry = old_entry.as_ref().clone();
                 new_entry.mark_pending_write();
-                self.provider
-                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &rocksdb_key,
+                    old_entry.as_ref(),
+                    &new_entry,
+                )?;
                 self.insert_memory_entry(rocksdb_key, Arc::new(new_entry));
 
                 // Index automatically updated by IndexedEntityStore
@@ -889,7 +892,11 @@ impl ManifestService {
     ) -> Result<Arc<ManifestCacheEntry>, StorageError> {
         let inserted_new_entry = match self.cached_entry_snapshot(&manifest_id) {
             Ok(Some(old_entry)) => {
-                self.provider.update_cache_entry_with_old(&manifest_id, &old_entry, &entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &manifest_id,
+                    old_entry.as_ref(),
+                    &entry,
+                )?;
                 false
             },
             Ok(None) => {
@@ -999,14 +1006,14 @@ impl ManifestService {
     fn cached_entry_snapshot(
         &self,
         manifest_id: &ManifestId,
-    ) -> Result<Option<ManifestCacheEntry>, StorageError> {
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         if self.should_cache_in_memory(manifest_id) {
             if let Some(entry) = self.memory_cache.get(manifest_id) {
-                return Ok(Some(entry.value().as_ref().clone()));
+                return Ok(Some(Arc::clone(entry.value())));
             }
         }
 
-        self.provider.get_cache_entry(manifest_id)
+        Ok(self.provider.get_cache_entry(manifest_id)?.map(Arc::new))
     }
 
     fn update_cached_entry<F>(
@@ -1022,10 +1029,13 @@ impl ManifestService {
 
         match self.cached_entry_snapshot(&rocksdb_key) {
             Ok(Some(old_entry)) => {
-                let mut new_entry = old_entry.clone();
+                let mut new_entry = old_entry.as_ref().clone();
                 update(&mut new_entry);
-                self.provider
-                    .update_cache_entry_with_old(&rocksdb_key, &old_entry, &new_entry)?;
+                self.provider.update_cache_entry_with_old(
+                    &rocksdb_key,
+                    old_entry.as_ref(),
+                    &new_entry,
+                )?;
                 self.insert_memory_entry(rocksdb_key, Arc::new(new_entry));
             },
             Ok(None) => {

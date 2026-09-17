@@ -41,6 +41,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - `benchv2/`: benchmarks.
 - `ui/`: admin UI.
 - `docs/`: maintained architecture, API, security, and operational docs.
+- `docs/releases/`: GitHub Releases body copy (one file per version).
 - `docker/`: container builds and local deployment.
 
 ## Crate Ownership
@@ -77,14 +78,16 @@ Keep context small. Read only the files needed for the current task. Do not scan
 ## Commands
 
 - Backend build: `cd backend && cargo build`
-- Backend run: `cd backend && cargo run --bin kalamdb-server`
+- Backend run (API only): `cd backend && cargo run --bin kalamdb-server`
+- Backend run with admin UI: `cd backend && cargo run --bin kalamdb-server --features embedded-ui`
 - Backend fast check (local dev, no S3/mimalloc/tracing): `cargo check -p kalamdb-server`
 - Backend prod-like build: `cargo build -p kalamdb-server --no-default-features --features embedded-ui,mimalloc,traceability,cloud-aws`
 - CLI build: `cd cli && cargo build`
-- CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo test --test smoke -- --nocapture`
+- CLI smoke: `cd cli && KALAMDB_SERVER_URL="http://localhost:3000" KALAMDB_ROOT_PASSWORD="mypass" cargo nextest run -p kalam-cli-e2e --test e2e smoke`
+- Everyday CLI (`kalam dev`, `up`, `down`, `status`, `logs`): `specs/035-cli-everyday-lifecycle/spec.md` and `cli/src/workflow/target.rs`
 - Full sweep: start the backend server, then run `./scripts/test-all.sh` from the repo root.
 - Rust SDK (fast iteration): `cargo check -p kalam-client --features native-sdk,consumer,healthcheck`.
-- Rust SDK e2e: `cargo test -p kalam-client-e2e` (requires running server).
+- Rust SDK e2e: `cargo nextest run -p kalam-client-e2e --test e2e` (requires running server).
 - Version verification after SDK version changes: `python3 scripts/versions.py verify`
 
 ## SDK And Docs
@@ -95,6 +98,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 - SDK changes under `link/sdks/**` or SDK bridge crates must update corresponding SDK docs in `../KalamSite/content/sdk/**` and include tests.
 - User-facing command, CLI flag, SQL syntax, system table, SDK entry point, config/env, or runbook changes must update canonical skill content in `../kalamdb-skills` and generated in-repo mirrors when applicable.
 - Architecture-affecting changes must update relevant docs under `docs/architecture/` or `docs/architecture/decisions/`.
+- Version ships (GitHub Releases) must add `docs/releases/<version>.md` (the release body) and a link in `docs/releases/README.md`.
 
 ## Security
 

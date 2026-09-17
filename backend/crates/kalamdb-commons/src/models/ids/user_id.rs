@@ -133,18 +133,6 @@ impl UserId {
         Self(Arc::<str>::from(nanoid::nanoid!()))
     }
 
-    /// Creates a UserId without validation (for internal use only).
-    ///
-    /// # Safety
-    /// This bypasses security validation. Only use for IDs that are known to be safe
-    /// (e.g., loaded from database, generated internally).
-    #[inline]
-    #[allow(dead_code)] // Reserved for internal use when loading from trusted sources
-    pub(crate) fn new_unchecked(id: impl Into<String>) -> Self {
-        let s: String = id.into();
-        Self(Arc::<str>::from(s))
-    }
-
     /// Returns the user ID as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {

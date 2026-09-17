@@ -5,13 +5,14 @@ use std::{fs, time::SystemTime};
 use tokio::time::{self, Duration};
 
 use crate::{
-    agent_error::AgentError,
+    agent_error::{AgentError, AgentErrorCode},
     error::{CLIError, Result},
     output::{WorkflowDisplayMode, WorkflowOutput},
     terminal_ui::ProgressTaskStatus,
     workflow::{
         agent::destructive_schema_objects,
         dev::{
+            display::{emit_task_failure, emit_task_success},
             draft_prompt::{
                 draft_migration_exists, draft_migration_path, prompt_for_draft_application,
                 DraftPromptDecision,
@@ -19,15 +20,17 @@ use crate::{
             logs::ServiceLogRegistry,
             precheck::{ensure_local_dev_authentication_ready, run_dev_prechecks},
             processes::ProcessSupervisor,
-            server::{prepare_local_server_launch, wait_for_server_ready},
+            server::{wait_for_server_ready, write_managed_server_config},
             session::wait_for_dev_shutdown_signal,
             watch::{
-                run_schema_pipeline, schema_file_changed, schema_file_mtime, schema_watch_path,
-                update_schema_baseline, wait_for_stable_schema_file, SCHEMA_WATCH_INTERVAL_SECS,
+                functions_watch_stamp, run_schema_pipeline, schema_file_changed, schema_file_mtime,
+                schema_watch_path, update_schema_baseline, wait_for_stable_schema_file,
+                SCHEMA_WATCH_INTERVAL_SECS,
             },
         },
-        display::{emit_task_failure, emit_task_success},
         display_project_path,
+        instance::{self, StartedBy},
+        lifecycle::prepare_managed_server,
         migration::{
             apply::{apply_pending_migrations, ApplyMigrationOptions},
             create::update_draft_migration,
@@ -64,8 +67,10 @@ enum DevLoopAction {
 
 #[derive(Debug)]
 struct DevSchemaLoop {
-    force:        bool,
-    schema_mtime: Option<SystemTime>,
+    force:           bool,
+    schema_mtime:    Option<SystemTime>,
+    functions_stamp: Option<SystemTime>,
+    last_state:      SchemaPipelineState,
 }
 
 impl DevSchemaLoop {
@@ -73,6 +78,8 @@ impl DevSchemaLoop {
         Self {
             force,
             schema_mtime: None,
+            functions_stamp: None,
+            last_state: SchemaPipelineState::Idle,
         }
     }
 
@@ -85,8 +92,9 @@ impl DevSchemaLoop {
             return Ok(DevLoopAction::Continue);
         }
 
-        let _ = run_initial_schema_pipeline(ctx, output, self.force, None).await?;
+        self.last_state = run_initial_schema_pipeline(ctx, output, self.force, None).await?;
         self.refresh_schema_mtime(ctx);
+        self.build_and_activate_functions(ctx, output).await;
         self.prompt_pending_draft(ctx, output).await
     }
 
@@ -96,10 +104,10 @@ impl DevSchemaLoop {
         output: &WorkflowOutput,
     ) -> Result<DevLoopAction> {
         let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) else {
-            return Ok(DevLoopAction::Continue);
+            return self.handle_functions_watch_tick(ctx, output).await;
         };
         if !schema_file_changed(&path, self.schema_mtime) {
-            return Ok(DevLoopAction::Continue);
+            return self.handle_functions_watch_tick(ctx, output).await;
         }
 
         let stable_mtime = wait_for_stable_schema_file(&path).await;
@@ -110,9 +118,66 @@ impl DevSchemaLoop {
         let watched_path = display_project_path(&ctx.project_root, &path);
         let message = format!("Schema changed in {watched_path}; applying...");
         output.status(&message);
-        let _ = run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await?;
+        self.last_state =
+            run_initial_schema_pipeline(ctx, output, self.force, Some(message)).await?;
         self.schema_mtime = schema_file_mtime(&path).or(stable_mtime);
+        self.build_and_activate_functions(ctx, output).await;
         self.prompt_pending_draft(ctx, output).await
+    }
+
+    async fn handle_functions_watch_tick(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) -> Result<DevLoopAction> {
+        let current = functions_watch_stamp(&ctx.project_root);
+        if current == self.functions_stamp {
+            return Ok(DevLoopAction::Continue);
+        }
+        output.status("functions source changed; rebuilding and activating without server restart");
+        self.build_and_activate_functions(ctx, output).await;
+        Ok(DevLoopAction::Continue)
+    }
+
+    async fn build_and_activate_functions(
+        &mut self,
+        ctx: &WorkflowContext,
+        output: &WorkflowOutput,
+    ) {
+        match crate::workflow::functions::build_functions(ctx).await {
+            Ok(()) => {
+                if let Err(error) = crate::workflow::functions::activate_function_module(ctx).await
+                {
+                    emit_task_failure(
+                        output,
+                        "functions",
+                        format!("Function activation failed: {error}"),
+                        || {
+                            output.error(format!("function activation failed: {error}"));
+                            output.warn(
+                                "CALL will fail with 'procedure not implemented' until activation \
+                                 succeeds",
+                            );
+                        },
+                    );
+                }
+            },
+            Err(error) => {
+                emit_task_failure(
+                    output,
+                    "functions",
+                    format!("Function build failed: {error}"),
+                    || {
+                        output.error(format!("function build failed: {error}"));
+                        output.warn(
+                            "CALL will fail with 'procedure not implemented' until the next \
+                             successful build",
+                        );
+                    },
+                );
+            },
+        }
+        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
     }
 
     async fn prompt_pending_draft(
@@ -131,7 +196,12 @@ impl DevSchemaLoop {
             }
 
             if output.is_agent() {
-                return self.apply_agent_draft(ctx, output, &draft_path).await;
+                // Re-check after each apply: a concurrent schema.sql edit can
+                // refresh a new draft (including a destructive one) during apply.
+                match self.apply_agent_draft(ctx, output, &draft_path).await? {
+                    DevLoopAction::Stop => return Ok(DevLoopAction::Stop),
+                    DevLoopAction::Continue => continue,
+                }
             }
 
             match prompt_for_draft_application(output, &ctx.project_root, &draft_path)? {
@@ -151,11 +221,13 @@ impl DevSchemaLoop {
         output: &WorkflowOutput,
         draft_path: &std::path::Path,
     ) -> Result<DevLoopAction> {
-        let sql = fs::read_to_string(draft_path).unwrap_or_default();
-        let objects = destructive_schema_objects(&sql);
-        if !objects.is_empty() && !self.force {
-            return Err(AgentError::destructive_schema_change(&objects.join(", ")).into());
+        if matches!(ctx.config.schema.mode, SchemaMode::Sql) {
+            let _ = update_draft_migration(&ctx.project_root, &ctx.config, output)?;
         }
+        reject_destructive_agent_sql(
+            &fs::read_to_string(draft_path).unwrap_or_default(),
+            self.force,
+        )?;
         self.apply_confirmed_draft(ctx, output).await?;
         Ok(DevLoopAction::Continue)
     }
@@ -168,7 +240,8 @@ impl DevSchemaLoop {
         let schema_path = schema_watch_path(&ctx.project_root, &ctx.config);
         let before_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
         let before_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
-        let pipeline_state = run_confirmed_schema_draft_pipeline(ctx, output).await?;
+        let pipeline_state = run_confirmed_schema_draft_pipeline(ctx, output, self.force).await?;
+        self.last_state = pipeline_state;
         self.schema_mtime = schema_path.as_ref().and_then(|p| schema_file_mtime(p));
 
         let after_schema = schema_path.as_ref().and_then(|p| fs::read_to_string(p).ok());
@@ -182,7 +255,7 @@ impl DevSchemaLoop {
                 restore_schema_baseline(ctx, &schema)?;
             }
             output.status("schema.sql changed while migrations were applying; refreshing draft");
-            let _ = run_initial_schema_pipeline(
+            self.last_state = run_initial_schema_pipeline(
                 ctx,
                 output,
                 self.force,
@@ -200,6 +273,15 @@ impl DevSchemaLoop {
         if let Some(path) = schema_watch_path(&ctx.project_root, &ctx.config) {
             self.schema_mtime = schema_file_mtime(&path);
         }
+        self.functions_stamp = functions_watch_stamp(&ctx.project_root);
+    }
+
+    fn schema_label(&self, ctx: &WorkflowContext) -> &'static str {
+        match self.last_state {
+            SchemaPipelineState::Synced => "synced",
+            SchemaPipelineState::Paused => "failed",
+            SchemaPipelineState::Idle => schema_pipeline_label(ctx),
+        }
     }
 
     async fn reset_and_apply_schema(
@@ -211,7 +293,7 @@ impl DevSchemaLoop {
         reset_remote_namespace(ctx, output).await?;
         reset_local_schema_state(ctx, output)?;
 
-        let _ = run_initial_schema_pipeline(
+        self.last_state = run_initial_schema_pipeline(
             ctx,
             output,
             self.force,
@@ -228,18 +310,28 @@ pub async fn run_dev_session(ctx: &WorkflowContext, options: DevSessionOptions) 
     let output = ctx.output().with_display_mode(options.display_mode);
     let mut supervisor = ProcessSupervisor::new();
     let mut local_server_managed = false;
+    let layout = ctx.resolved_target().ok().and_then(|target| target.layout);
 
     let result =
         run_dev_session_inner(ctx, options, &output, &mut supervisor, &mut local_server_managed)
             .await;
 
-    if local_server_managed {
+    if let Some(layout) = layout.as_ref() {
+        let _ = crate::workflow::instance::clear_dev_pid(layout);
+    }
+    if should_stop_managed_server(layout.as_ref(), local_server_managed) {
         if let Some(pid) = supervisor.managed_pid("server") {
             output.status(format!("stopping local KalamDB server (pid {pid})"));
         } else {
             output.status("stopping local KalamDB server");
         }
         supervisor.shutdown_process("server").await;
+        if let Some(layout) = layout.as_ref() {
+            if let Ok(Some(mut record)) = crate::workflow::instance::load_instance(layout) {
+                crate::workflow::instance::clear_live_pids(&mut record);
+                let _ = crate::workflow::instance::save_instance(layout, &record);
+            }
+        }
     }
     supervisor.shutdown().await;
     result
@@ -268,73 +360,118 @@ async fn run_dev_session_inner(
         project_ready_message(&ctx.config.project.name, &ctx.project_root),
     );
     let precheck = run_dev_prechecks(ctx, output, &server_source).await?;
+    let target = ctx.resolved_target()?;
+    let mut session_ctx = ctx.clone();
+    let mut environment = precheck.environment.clone();
 
     if ctx.config.dev.auto_start_db {
         if precheck.local_server_reused {
-            output.warn(dev_reusing_existing_local_server(&precheck.environment.url));
+            output.warn(dev_reusing_existing_local_server(&environment.url));
             output.progress_task(
                 "server",
                 ProgressTaskStatus::Succeeded,
-                local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
+                local_server_ready_message(&environment.url, output.workflow_log_path()),
             );
-        } else {
-            let launch = prepare_local_server_launch(
-                &ctx.project_root,
-                &ctx.config,
-                &precheck.environment.url,
-            )?;
-            output.status("starting local KalamDB server");
-            output.progress_task(
-                "server",
-                ProgressTaskStatus::Running,
-                "Starting local KalamDB server...",
-            );
-            let config_arg = launch.config_path.display().to_string();
-            if let Err(error) = supervisor
-                .spawn_program_one(
-                    "server",
-                    &launch.program,
-                    &[config_arg],
-                    &launch.working_dir,
-                    &registry,
-                    output,
-                )
-                .await
-            {
-                let message =
-                    dev_local_kalamdb_server_start_failed(&launch.program, &error.to_string());
-                output.status(&message);
-                return Err(map_server_start_error(output, message));
+            if let Some(layout) = target.layout.as_ref() {
+                instance::register_dev_pid(layout, std::process::id())?;
             }
-            *local_server_managed = true;
-            wait_for_server_ready(&precheck.environment.url, &launch.program, output, supervisor)
-                .await
-                .map_err(|error| {
-                    output.status(error.to_string());
-                    map_server_start_error(output, error.to_string())
-                })?;
-            ensure_local_dev_authentication_ready(
-                ctx,
-                &precheck.environment,
-                output,
-                &server_source,
-            )
-            .await?;
-            output.progress_task(
-                "server",
-                ProgressTaskStatus::Succeeded,
-                local_server_ready_message(&precheck.environment.url, output.workflow_log_path()),
-            );
+        } else {
+            let version = ctx.config.resolved_server_version();
+            let mut prepared =
+                prepare_managed_server(&target, ctx.port, StartedBy::Dev, false, Some(version))?;
+            if prepared.already_running {
+                environment.url = prepared.record.url.clone();
+                session_ctx.url_override = Some(environment.url.clone());
+                instance::register_dev_pid(&prepared.layout, std::process::id())?;
+                output.warn(dev_reusing_existing_local_server(&environment.url));
+                output.progress_task(
+                    "server",
+                    ProgressTaskStatus::Succeeded,
+                    local_server_ready_message(&environment.url, output.workflow_log_path()),
+                );
+            } else {
+                write_managed_server_config(
+                    &prepared.layout,
+                    prepared.record.http_port,
+                    prepared.record.postgres_port,
+                )?;
+                let program = crate::workflow::dev::server::resolve_kalamdb_server_bin_for_version(
+                    &ctx.config.resolved_server_version(),
+                )
+                .or_else(|_| crate::workflow::dev::server::resolve_kalamdb_server_bin())?;
+                output.status("starting local KalamDB server");
+                output.progress_task(
+                    "server",
+                    ProgressTaskStatus::Running,
+                    "Starting local KalamDB server...",
+                );
+                let config_arg = prepared.layout.config_path.display().to_string();
+                if let Err(error) = supervisor
+                    .spawn_program_one(
+                        "server",
+                        &program,
+                        &[config_arg],
+                        &prepared.layout.working_dir,
+                        &registry,
+                        output,
+                    )
+                    .await
+                {
+                    let message =
+                        dev_local_kalamdb_server_start_failed(&program, &error.to_string());
+                    output.status(&message);
+                    return Err(map_server_start_error(output, message));
+                }
+                *local_server_managed = true;
+                environment.url = prepared.record.url.clone();
+                session_ctx.url_override = Some(environment.url.clone());
+                wait_for_server_ready(&environment.url, &program, output, supervisor)
+                    .await
+                    .map_err(|error| {
+                        output.status(error.to_string());
+                        map_server_start_error(output, error.to_string())
+                    })?;
+                prepared.record.pid = supervisor.managed_pid("server");
+                prepared.record.exe = Some(program.clone());
+                prepared.record.keep_on_dev_exit = false;
+                instance::save_instance(&prepared.layout, &prepared.record)?;
+                crate::workflow::lifecycle::track_server(&prepared.layout, output);
+                instance::register_dev_pid(&prepared.layout, std::process::id())?;
+                ensure_local_dev_authentication_ready(
+                    &session_ctx,
+                    &environment,
+                    output,
+                    &server_source,
+                )
+                .await?;
+                output.progress_task(
+                    "server",
+                    ProgressTaskStatus::Succeeded,
+                    local_server_ready_message(&environment.url, output.workflow_log_path()),
+                );
+            }
         }
     }
 
     let mut schema_loop = DevSchemaLoop::new(options.force);
-    if schema_loop.bootstrap(ctx, output).await? == DevLoopAction::Stop {
+    if schema_loop.bootstrap(&session_ctx, output).await? == DevLoopAction::Stop {
         return Ok(());
+    }
+    if let Some(layout) = target.layout.as_ref() {
+        crate::workflow::db::seed::maybe_seed_once(
+            &session_ctx,
+            &environment,
+            Some(layout),
+            crate::workflow::db::seed::SeedMode::Once,
+            output,
+        )
+        .await?;
     }
 
     if !ctx.config.dev.processes.is_empty() {
-        let process_env = load_project_dotenv(&ctx.project_root)?;
+        let mut process_env = load_project_dotenv(&ctx.project_root)?;
+        process_env.insert("KALAM_URL".into(), environment.url.clone());
+        process_env.insert("KALAM_NAMESPACE".into(), environment.namespace.as_str().to_string());
         supervisor
             .spawn_all(
                 &ctx.config.dev.processes,
@@ -349,7 +486,7 @@ async fn run_dev_session_inner(
         }
     }
 
-    emit_agent_ready(ctx, output, &precheck.environment.url);
+    emit_ready(&session_ctx, output, &environment.url, schema_loop.schema_label(&session_ctx));
 
     let watch_enabled = precheck.watch_enabled;
     if watch_enabled {
@@ -372,7 +509,7 @@ async fn run_dev_session_inner(
                 break;
             }
             _ = watch_interval.tick(), if watch_enabled => {
-                if schema_loop.handle_watch_tick(ctx, output).await? == DevLoopAction::Stop {
+                if schema_loop.handle_watch_tick(&session_ctx, output).await? == DevLoopAction::Stop {
                     output.status("shutting down (schema prompt cancelled)");
                     break;
                 }
@@ -438,45 +575,14 @@ async fn run_initial_schema_pipeline(
             emit_schema_applied(ctx, output);
             Ok(SchemaPipelineState::Synced)
         },
-        Err(error) => {
-            if output.is_agent() {
-                emit_schema_failure(output, &error);
-                return Err(map_schema_pipeline_error(error));
-            }
-            if should_stop_dev_for_schema_pipeline_error(&error) {
-                emit_schema_failure(output, &error);
-                return Err(error);
-            }
-            if force {
-                output.warn("retrying schema pipeline (--force)");
-                return match run_schema_pipeline(ctx, output, true).await {
-                    Ok(()) => {
-                        finish_schema_pipeline_success(
-                            output,
-                            "Schema recovered",
-                            "schema pipeline recovered",
-                        );
-                        Ok(SchemaPipelineState::Synced)
-                    },
-                    Err(retry_error) => {
-                        if should_stop_dev_for_schema_pipeline_error(&retry_error) {
-                            emit_schema_failure(output, &retry_error);
-                            return Err(retry_error);
-                        }
-                        emit_schema_failure(output, &retry_error);
-                        Ok(SchemaPipelineState::Paused)
-                    },
-                };
-            }
-            emit_schema_failure(output, &error);
-            Ok(SchemaPipelineState::Paused)
-        },
+        Err(error) => recover_schema_pipeline_error(ctx, output, force, error).await,
     }
 }
 
 async fn run_confirmed_schema_draft_pipeline(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
+    force: bool,
 ) -> Result<SchemaPipelineState> {
     output.progress_task(
         "schema",
@@ -484,30 +590,20 @@ async fn run_confirmed_schema_draft_pipeline(
         "Applying confirmed schema draft...",
     );
     output.clear_progress_details("schema");
-    match apply_confirmed_schema_draft(ctx, output).await {
+    match apply_confirmed_schema_draft(ctx, output, force).await {
         Ok(()) => {
             finish_schema_pipeline_success(output, "Schema applied", "schema pipeline completed");
             emit_schema_applied(ctx, output);
             Ok(SchemaPipelineState::Synced)
         },
-        Err(error) => {
-            if output.is_agent() {
-                emit_schema_failure(output, &error);
-                return Err(map_schema_pipeline_error(error));
-            }
-            if should_stop_dev_for_schema_pipeline_error(&error) {
-                emit_schema_failure(output, &error);
-                return Err(error);
-            }
-            emit_schema_failure(output, &error);
-            Ok(SchemaPipelineState::Paused)
-        },
+        Err(error) => recover_confirmed_schema_error(output, error),
     }
 }
 
 async fn apply_confirmed_schema_draft(
     ctx: &WorkflowContext,
     output: &WorkflowOutput,
+    force: bool,
 ) -> Result<()> {
     let config = &ctx.config;
     let project_root = &ctx.project_root;
@@ -515,6 +611,15 @@ async fn apply_confirmed_schema_draft(
     if config.dev.apply_schema {
         if matches!(config.schema.mode, SchemaMode::Sql) {
             let _ = update_draft_migration(project_root, config, output)?;
+        }
+        if output.is_agent() {
+            let draft_path = config
+                .migrations_dir(project_root)
+                .join(crate::workflow::migration::DRAFT_MIGRATION_FILE);
+            reject_destructive_agent_sql(
+                &fs::read_to_string(&draft_path).unwrap_or_default(),
+                force,
+            )?;
         }
         apply_pending_migrations(ctx, output, &ApplyMigrationOptions::dev_confirmed_draft())
             .await?;
@@ -530,6 +635,53 @@ async fn apply_confirmed_schema_draft(
     }
 
     Ok(())
+}
+
+async fn recover_schema_pipeline_error(
+    ctx: &WorkflowContext,
+    output: &WorkflowOutput,
+    force: bool,
+    error: CLIError,
+) -> Result<SchemaPipelineState> {
+    if is_fatal_schema_pipeline_error(&error) {
+        emit_schema_failure(output, &error);
+        return Err(map_schema_pipeline_error(error));
+    }
+    if force {
+        output.warn("retrying schema pipeline (--force)");
+        return match run_schema_pipeline(ctx, output, true).await {
+            Ok(()) => {
+                finish_schema_pipeline_success(
+                    output,
+                    "Schema recovered",
+                    "schema pipeline recovered",
+                );
+                Ok(SchemaPipelineState::Synced)
+            },
+            Err(retry_error) => {
+                if is_fatal_schema_pipeline_error(&retry_error) {
+                    emit_schema_failure(output, &retry_error);
+                    return Err(map_schema_pipeline_error(retry_error));
+                }
+                emit_schema_failure(output, &retry_error);
+                Ok(SchemaPipelineState::Paused)
+            },
+        };
+    }
+    emit_schema_failure(output, &error);
+    Ok(SchemaPipelineState::Paused)
+}
+
+fn recover_confirmed_schema_error(
+    output: &WorkflowOutput,
+    error: CLIError,
+) -> Result<SchemaPipelineState> {
+    if is_fatal_schema_pipeline_error(&error) {
+        emit_schema_failure(output, &error);
+        return Err(map_schema_pipeline_error(error));
+    }
+    emit_schema_failure(output, &error);
+    Ok(SchemaPipelineState::Paused)
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -612,6 +764,14 @@ fn map_schema_pipeline_error(error: CLIError) -> CLIError {
     AgentError::schema_failed(&error.to_string()).into()
 }
 
+fn reject_destructive_agent_sql(sql: &str, force: bool) -> Result<()> {
+    let objects = destructive_schema_objects(sql);
+    if !objects.is_empty() && !force {
+        return Err(AgentError::destructive_schema_change(&objects.join(", ")).into());
+    }
+    Ok(())
+}
+
 fn emit_schema_applied(ctx: &WorkflowContext, output: &WorkflowOutput) {
     let generated = if ctx.config.schema.languages.is_empty() {
         "none".to_string()
@@ -621,20 +781,32 @@ fn emit_schema_applied(ctx: &WorkflowContext, output: &WorkflowOutput) {
     output.agent_event("KALAM_SCHEMA_APPLIED", &[("generated", &generated)]);
 }
 
-fn emit_agent_ready(ctx: &WorkflowContext, output: &WorkflowOutput, url: &str) {
+fn schema_pipeline_label(ctx: &WorkflowContext) -> &'static str {
+    if ctx.config.dev.apply_schema {
+        "synced"
+    } else {
+        "skipped"
+    }
+}
+
+fn emit_ready(ctx: &WorkflowContext, output: &WorkflowOutput, url: &str, schema: &str) {
     let namespace = ctx
         .resolved_environment()
         .map(|env| env.namespace.as_str().to_string())
         .unwrap_or_else(|_| ctx.config.project.name.clone());
-    let schema = if ctx.config.dev.apply_schema {
-        "applied"
-    } else {
-        "skipped"
-    };
     let types = if ctx.config.schema.languages.is_empty() {
         "none".to_string()
     } else {
         ctx.config.schema.languages.join(",")
+    };
+    let environment = ctx
+        .resolved_target()
+        .map(|target| target.display_kind().to_string())
+        .unwrap_or_else(|_| "local".into());
+    let application = if ctx.config.dev.processes.is_empty() {
+        "-"
+    } else {
+        "configured"
     };
     output.agent_event(
         "KALAM_READY",
@@ -643,26 +815,67 @@ fn emit_agent_ready(ctx: &WorkflowContext, output: &WorkflowOutput, url: &str) {
             ("namespace", &namespace),
             ("schema", schema),
             ("types", &types),
+            ("environment", &environment),
         ],
     );
+    if !output.is_agent() {
+        output.status(format!(
+            "Development ready\nEnvironment   {environment}\nDatabase      {url}\nNamespace     \
+             {namespace}\nSchema        {schema}\nApplication   {application}\n\nView logs: kalam \
+             logs --follow"
+        ));
+    }
 }
 
 fn emit_schema_failure(output: &WorkflowOutput, error: &crate::error::CLIError) {
+    if output.is_agent() {
+        let agent = match error {
+            CLIError::Agent(agent) => agent.clone(),
+            _ => AgentError::schema_failed(&error.to_string()),
+        };
+        output.agent_event(
+            "KALAM_ERROR",
+            &[("code", agent.code.as_str()), ("detail", &agent.message)],
+        );
+    }
     emit_task_failure(output, "schema", format!("Schema failed: {error}"), || {
         output.error(format!("schema pipeline failed: {error}"));
-        if should_stop_dev_for_schema_pipeline_error(error) {
+        if is_fatal_schema_pipeline_error(error) {
             output.warn("schema pipeline aborted; stopping kalam dev");
         } else {
             output.warn(
-                "schema pipeline paused; managed processes continue (retry with `kalam dev \
-                 --force`)",
+                "schema pipeline failed; database and application stay available. Fix the schema \
+                 file and kalam will retry, or run `kalam dev --force`",
             );
         }
     });
 }
 
-fn should_stop_dev_for_schema_pipeline_error(error: &crate::error::CLIError) -> bool {
+fn is_fatal_schema_pipeline_error(error: &crate::error::CLIError) -> bool {
     matches!(error, crate::error::CLIError::MigrationRecoveryAborted(_))
+        || matches!(
+            error,
+            crate::error::CLIError::Agent(agent)
+                if matches!(
+                    agent.code,
+                    AgentErrorCode::DestructiveSchemaChange
+                )
+        )
+}
+
+fn should_stop_managed_server(
+    layout: Option<&crate::workflow::instance::ManagedLayout>,
+    local_server_managed: bool,
+) -> bool {
+    if !local_server_managed {
+        return false;
+    }
+    if let Some(layout) = layout {
+        if let Ok(Some(record)) = crate::workflow::instance::load_instance(layout) {
+            return !record.keep_on_dev_exit;
+        }
+    }
+    true
 }
 
 /// Decide whether the `kalam dev` loop should keep running after reaping children.
@@ -743,5 +956,36 @@ mod tests {
     #[test]
     fn remaining_managed_process_keeps_the_session_running() {
         assert_eq!(next_dev_loop_action_after_process_reap(1, true, true), DevLoopAction::Continue);
+    }
+
+    #[test]
+    fn ordinary_schema_failure_keeps_the_session_running() {
+        let error = CLIError::ConfigurationError("syntax error in schema.sql".into());
+        assert!(!is_fatal_schema_pipeline_error(&error));
+    }
+
+    #[test]
+    fn destructive_schema_change_stops_the_agent_session() {
+        let error = CLIError::Agent(AgentError::destructive_schema_change("users"));
+        assert!(is_fatal_schema_pipeline_error(&error));
+    }
+
+    #[test]
+    fn agent_mode_rejects_refreshed_drop_table_drafts_without_force() {
+        let sql = "-- UP\nDROP TABLE users;\nCREATE TABLE tasks (id INTEGER PRIMARY KEY);\n";
+        let error = reject_destructive_agent_sql(sql, false).expect_err("drop table must fail");
+        assert!(is_fatal_schema_pipeline_error(&error));
+        assert!(reject_destructive_agent_sql(sql, true).is_ok());
+        assert!(reject_destructive_agent_sql(
+            "CREATE TABLE tasks (id INTEGER PRIMARY KEY);",
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn unmanaged_or_reused_database_is_left_running() {
+        assert!(!should_stop_managed_server(None, false));
+        assert!(should_stop_managed_server(None, true));
     }
 }

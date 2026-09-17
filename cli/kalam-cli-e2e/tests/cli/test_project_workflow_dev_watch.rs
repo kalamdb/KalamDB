@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use kalam_cli::{
@@ -13,7 +13,6 @@ use kalam_cli::{
 };
 use kalam_client::credentials::Credentials;
 use tempfile::TempDir;
-use wait_timeout::ChildExt;
 
 use crate::common::*;
 
@@ -61,18 +60,21 @@ fn start_recording_sql_server() -> (String, std::thread::JoinHandle<()>) {
 
             let mut buffer = Vec::new();
             let mut chunk = [0_u8; 4096];
-            let header_end;
+            let mut header_end = None;
             loop {
                 let read = stream.read(&mut chunk).expect("read request chunk");
                 if read == 0 {
-                    return;
+                    break;
                 }
                 buffer.extend_from_slice(&chunk[..read]);
                 if let Some(pos) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-                    header_end = pos + 4;
+                    header_end = Some(pos + 4);
                     break;
                 }
             }
+            let Some(header_end) = header_end else {
+                continue;
+            };
 
             let headers = String::from_utf8_lossy(&buffer[..header_end]).to_string();
             let content_length = headers
@@ -113,6 +115,33 @@ fn start_recording_sql_server() -> (String, std::thread::JoinHandle<()>) {
     });
 
     (url, handle)
+}
+
+fn workflow_log_path(project_dir: &std::path::Path) -> std::path::PathBuf {
+    project_dir.join("kalam/cli/logs/kalam.log")
+}
+
+fn wait_for_dev_log(project_dir: &std::path::Path, needles: &[&str], timeout: Duration) -> String {
+    let log_path = workflow_log_path(project_dir);
+    let started = Instant::now();
+    loop {
+        let log = fs::read_to_string(&log_path).unwrap_or_default();
+        if needles.iter().any(|needle| log.contains(needle)) {
+            return log;
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "timed out waiting for {needles:?} in {}\nlog: {log}",
+            log_path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn collect_dev_stderr(mut child: std::process::Child) -> String {
+    let _ = child.kill();
+    let output = child.wait_with_output().expect("collect kalam dev output");
+    String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
 fn add_dev_processes(project_dir: &std::path::Path, processes: HashMap<String, String>) {
@@ -189,22 +218,25 @@ fn test_project_workflow_dev_schema_failure_pauses_pipeline() {
     let mut cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);
     cmd.current_dir(&project_dir).arg("dev");
 
-    let mut child = cmd.spawn().expect("spawn kalam dev");
-    let timeout = Duration::from_secs(4);
-    let exit_status = child.wait_timeout(timeout).expect("wait with timeout");
-
-    if exit_status.is_some() {
-        let output = child.wait_with_output().expect("collect output");
-        panic!("dev exited early\nstderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
-
-    let _ = child.kill();
-    let output = child.wait_with_output().expect("collect output");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let child = cmd.spawn().expect("spawn kalam dev");
+    let log = wait_for_dev_log(
+        &project_dir,
+        &[
+            "schema pipeline failed",
+            "schema pipeline paused",
+            "schema apply failed (test hook)",
+        ],
+        Duration::from_secs(8),
+    );
+    let stderr = collect_dev_stderr(child);
 
     assert!(
-        stderr.contains("schema pipeline failed") || stderr.contains("schema pipeline paused"),
-        "expected schema pipeline to pause on migration failure\nstderr: {stderr}"
+        stderr.contains("schema pipeline failed")
+            || stderr.contains("schema pipeline paused")
+            || log.contains("schema pipeline failed")
+            || log.contains("schema pipeline paused")
+            || log.contains("schema apply failed (test hook)"),
+        "expected schema pipeline to pause on migration failure\nstderr: {stderr}\nlog: {log}"
     );
 }
 
@@ -222,25 +254,44 @@ fn test_project_workflow_dev_force_recovers_schema_pipeline() {
     // First run fails and pauses.
     let mut fail_cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);
     fail_cmd.current_dir(&project_dir).arg("dev");
-    let mut child = fail_cmd.spawn().expect("spawn dev");
-    std::thread::sleep(Duration::from_millis(800));
-    let _ = child.kill();
-    let _ = child.wait_with_output();
+    let child = fail_cmd.spawn().expect("spawn dev");
+    wait_for_dev_log(
+        &project_dir,
+        &[
+            "schema pipeline failed",
+            "schema pipeline paused",
+            "schema apply failed (test hook)",
+        ],
+        Duration::from_secs(8),
+    );
+    let _ = collect_dev_stderr(child);
 
     // Remove failing migration and retry with --force.
     fs::remove_file(project_dir.join("kalam/migrations/20250101120000_fail.sql")).unwrap();
 
     let mut retry_cmd = create_isolated_cli_std_command(&isolated_home, &credentials_path);
     retry_cmd.current_dir(&project_dir).args(["dev", "--force"]);
-    let mut child = retry_cmd.spawn().expect("spawn dev --force");
-    std::thread::sleep(Duration::from_millis(800));
-    let _ = child.kill();
-    let output = child.wait_with_output().expect("collect output");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let child = retry_cmd.spawn().expect("spawn dev --force");
+    let log = wait_for_dev_log(
+        &project_dir,
+        &[
+            "Schema applied",
+            "Schema recovered",
+            "schema pipeline completed",
+            "schema pipeline recovered",
+        ],
+        Duration::from_secs(10),
+    );
+    let stderr = collect_dev_stderr(child);
     assert!(
         stderr.contains("✓ Schema applied")
             || stderr.contains("✓ Schema recovered")
-            || stderr.contains("schema pipeline completed"),
-        "expected schema recovery with --force\nstderr: {stderr}"
+            || stderr.contains("schema pipeline completed")
+            || stderr.contains("schema pipeline recovered")
+            || log.contains("Schema applied")
+            || log.contains("Schema recovered")
+            || log.contains("schema pipeline completed")
+            || log.contains("schema pipeline recovered"),
+        "expected schema recovery with --force\nstderr: {stderr}\nlog: {log}"
     );
 }

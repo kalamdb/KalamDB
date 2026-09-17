@@ -172,18 +172,6 @@ fn test_docs_matrix_has_execution_tests_for_documented_flags_and_commands() {
             tests: &["test_cli_list_instances_command"],
         },
         Coverage {
-            item:  "--show-credentials",
-            tests: &["test_cli_show_credentials_command"],
-        },
-        Coverage {
-            item:  "--update-credentials",
-            tests: &["test_cli_parse_missing_documented_flags_without_server"],
-        },
-        Coverage {
-            item:  "--delete-credentials",
-            tests: &["test_cli_delete_credentials"],
-        },
-        Coverage {
             item:  "--save-credentials",
             tests: &["test_cli_save_credentials_creates_file"],
         },
@@ -600,7 +588,6 @@ fn test_cli_parse_missing_documented_flags_without_server() {
         "2900",
         "--loading-threshold-ms",
         "350",
-        "--update-credentials",
         "--consume",
         "--topic",
         "ns.topic",
@@ -616,9 +603,8 @@ fn test_cli_parse_missing_documented_flags_without_server() {
     .expect("args should parse");
 
     assert_eq!(cli.host.as_deref(), Some("127.0.0.1"));
-    assert_eq!(cli.port, 2900);
+    assert_eq!(cli.port, Some(2900));
     assert_eq!(cli.loading_threshold_ms, Some(350));
-    assert!(cli.update_credentials);
     assert!(cli.consume);
     assert_eq!(cli.topic.as_deref(), Some("ns.topic"));
     assert_eq!(cli.group.as_deref(), Some("g1"));

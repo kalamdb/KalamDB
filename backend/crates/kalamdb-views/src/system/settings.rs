@@ -206,8 +206,8 @@ impl VirtualView for SettingsView {
                         (
                             "storage.data_path",
                             config.storage.data_path,
-                            "Base data directory (auto-creates rocksdb/, storage/, snapshots/ \
-                             subdirs)",
+                            "Base data directory (auto-creates rocksdb/, storage/, snapshots/, \
+                             functions/ subdirs)",
                             "storage"
                         ),
                         (
@@ -230,7 +230,8 @@ impl VirtualView for SettingsView {
                     (
                         "storage.data_path",
                         config.storage.data_path,
-                        "Base data directory (auto-creates rocksdb/, storage/, snapshots/ subdirs)",
+                        "Base data directory (auto-creates rocksdb/, storage/, snapshots/, \
+                         functions/ subdirs)",
                         "storage"
                     ),
                     (
@@ -653,6 +654,18 @@ impl VirtualView for SettingsView {
                         "jobs.wal_cleanup_interval_seconds",
                         config.jobs.wal_cleanup_interval_seconds,
                         "Interval for periodic RocksDB WAL cleanup flushes",
+                        "jobs"
+                    ),
+                    (
+                        "jobs.history_cleanup_interval_seconds",
+                        config.jobs.history_cleanup_interval_seconds,
+                        "Interval for job-history cleanup (0 disables)",
+                        "jobs"
+                    ),
+                    (
+                        "jobs.history_retention_days",
+                        config.jobs.history_retention_days,
+                        "Days to keep completed, failed, cancelled, and skipped jobs",
                         "jobs"
                     ),
                 ]

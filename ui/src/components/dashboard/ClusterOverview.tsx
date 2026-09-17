@@ -1,11 +1,11 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import type { ClusterHealth, ClusterNode } from "@/services/clusterService";
 import {
   Activity,
   CheckCircle2,
   Crown,
-  Loader2,
   Server,
   TriangleAlert,
 } from "lucide-react";
@@ -102,8 +102,8 @@ export function DashboardClusterOverview({
             {error}
           </div>
         ) : isLoading && nodes.length === 0 ? (
-          <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <div className="flex h-72 items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Spinner />
             Loading cluster state...
           </div>
         ) : !health ? (

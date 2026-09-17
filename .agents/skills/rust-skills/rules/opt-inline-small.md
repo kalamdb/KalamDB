@@ -132,13 +132,17 @@ fn large_complex_function(data: &mut [u8]) {
 // DON'T assume inlining always helps - measure!
 // Sometimes the compiler makes better decisions
 
-// Inlining is non-transitive
+// Cross-crate inlining requires #[inline] on each function
+// Without LTO, a function body is not available to other crates unless
+// it carries #[inline]. Within a single crate (or with LTO enabled),
+// the compiler may still inline `inner` transitively after inlining
+// `outer`, but this is not guaranteed — verify hot code with assembly.
 #[inline]
 fn outer() {
-    inner();  // inner() also needs #[inline] to be inlined together
+    inner();
 }
 
-fn inner() { }  // Won't be inlined at outer's call sites
+fn inner() { }  // May not be inlined at outer's call sites across crate boundaries without #[inline]
 ```
 
 ## Verifying Inlining

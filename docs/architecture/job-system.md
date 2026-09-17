@@ -117,11 +117,12 @@ If a job returns `JobDecision::Retry`:
 
 ## Crash Recovery and Leader Failover
 
-- On startup, `recover_incomplete_jobs()` marks running or retrying jobs as failed.
-- When a node becomes leader, `handle_leader_failover()`:
-  - Scans for `Running` and `Queued` jobs.
-  - Marks queued jobs as running.
-  - Resumes leader actions when possible.
+- On startup, `recover_incomplete_jobs()` requeues this node's `Running`/`Retrying` `job_nodes` so local work can retry.
+- Leader-only jobs (backup, restore, export, …) mark their `job_node` `Completed` immediately and keep `system.jobs.status = Running` until leader actions finish. `poll_next` never claims a completed `job_node`, so a crash or dropped executor in that window used to leave `system.jobs` `Running` forever.
+- After job_node requeue, the **leader** fails any `Running`/`Retrying` job that has **no in-progress job_nodes**. Followers must not do this: a healthy leader may still be inside backup/restore.
+- A periodic orphan scan on the leader fails the same zombies when the in-process executor is gone (`executing_jobs`) and the job is older than 30 seconds.
+- Database backup/restore wait at most 6 minutes for the transfer lock so a stuck transfer cannot block the next one indefinitely.
+- When a node becomes leader, `handle_leader_failover()` first fails those leader-phase zombies, then resumes remaining `Running`/`Queued` jobs that still have local work in progress.
 
 ## Statuses
 

@@ -66,17 +66,22 @@ target-cpu=neoverse-n1     # AWS Graviton2
 #[cfg(target_arch = "x86_64")]
 fn process_fast(data: &[u8]) -> u64 {
     if is_x86_feature_detected!("avx2") {
+        // SAFETY: only reached after avx2 is detected at runtime
         unsafe { process_avx2(data) }
-    } else if is_x86_feature_detected!("sse4.2") {
-        unsafe { process_sse42(data) }
     } else {
         process_generic(data)
     }
 }
 
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn process_avx2(data: &[u8]) -> u64 {
-    // AVX2 optimized implementation
+    // an AVX2-optimized path would go here; delegate to the scalar version
+    process_generic(data)
+}
+
+fn process_generic(data: &[u8]) -> u64 {
+    data.iter().map(|&b| u64::from(b)).sum()
 }
 ```
 

@@ -92,7 +92,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "comparison_kalamdb_functions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "comparison_common",
+ "crossbeam-queue",
+ "lazy_static",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "comparison_pocketbase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "comparison_common",
+ "crossbeam-queue",
+ "lazy_static",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "comparison_surrealdb"
 version = "0.1.0"
 dependencies = [
  "anyhow",

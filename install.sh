@@ -5,13 +5,13 @@
 #
 # Flags:
 #   --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
-#   --pre-release       Install the latest GitHub prerelease
+#   --pre-release       Install the newest published pre-release (rc, beta, alpha)
 #   --help              Show usage
 #
 # Environment variables:
 #   KALAM_INSTALL_DIR  - Installation directory (default: $HOME/.kalam/bin)
 #   KALAM_VERSION      - Specific version to install (default: latest)
-#   KALAM_PRE_RELEASE  - Set to 1 to install the latest prerelease
+#   KALAM_PRE_RELEASE  - Set to 1 to install the newest published pre-release
 #   KALAM_NO_MODIFY_PATH - Set to 1 to skip PATH modification
 
 # When piped to /bin/sh (dash on Linux), the shell consumes part of stdin before any
@@ -73,13 +73,13 @@ Usage:
 
 Options:
   --version <version>  Install an exact version (for example 0.5.0 or v0.5.0)
-  --pre-release        Install the latest GitHub prerelease
+  --pre-release        Install the newest published pre-release (rc, beta, alpha)
   --help               Show this help message
 
 Environment variables:
   KALAM_INSTALL_DIR      Installation directory (default: $HOME/.kalam/bin)
   KALAM_VERSION          Specific version to install (same as --version)
-  KALAM_PRE_RELEASE      Set to 1 to install the latest prerelease
+  KALAM_PRE_RELEASE      Set to 1 to install the newest published pre-release
   KALAM_NO_MODIFY_PATH   Set to 1 to skip PATH modification
 EOF
 }
@@ -113,6 +113,17 @@ parse_args() {
 
 extract_tag_name() {
     sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p' | head -1
+}
+
+extract_prerelease_versions() {
+    local json="$1"
+    local tag value
+    while IFS= read -r tag; do
+        value="${tag#v}"
+        if [[ "$value" =~ ^[0-9]+[.][0-9]+[.][0-9]+-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*$ ]]; then
+            printf '%s\n' "$value"
+        fi
+    done < <(printf '%s\n' "$json" | sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p')
 }
 
 validate_version() {
@@ -247,27 +258,14 @@ resolve_version() {
     local tag_name=""
 
     if [[ "$PRE_RELEASE" == "1" ]]; then
-        info "Fetching latest prerelease version…"
+        info "Fetching newest pre-release version…"
 
-        local prerelease_url="https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=20"
+        local prerelease_url="https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100"
         response="$(curl -fsSL "$prerelease_url" 2>/dev/null)" || {
             fatal "Could not reach GitHub API. Check your internet connection or set KALAM_VERSION."
         }
 
-        tag_name="$(printf '%s\n' "$response" | awk '
-            /"tag_name":/ {
-                if (match($0, /"tag_name": *"[^"]+"/)) {
-                    current_tag = substr($0, RSTART + 12, RLENGTH - 13)
-                    gsub(/"/, "", current_tag)
-                }
-            }
-            /"prerelease": true/ {
-                if (current_tag != "") {
-                    print current_tag
-                    exit
-                }
-            }
-        ')"
+        tag_name="$(extract_prerelease_versions "$response" | sort -V | tail -1)"
 
         if [[ -z "$tag_name" ]]; then
             fatal "Could not determine latest prerelease version. Set KALAM_VERSION explicitly."

@@ -60,7 +60,8 @@ impl Benchmark for ChatRealtimeBench {
             "Creates {} regular KalamDB users, then runs {} concurrent conversations for {} \
              minute(s): {} personal AI chats on USER tables (conversations_ai/messages_ai) with a \
              topic-consuming agent, plus {} 2-user and {} 3-user rooms on SHARED \
-             conversations/messages with CREATE POLICY membership RLS. Each conversation paces at \
+             conversations/messages with CREATE POLICY membership RLS and scalar indexes on \
+             conversation_id/created_at_ms and membership user_id. Each conversation paces at \
              {}. Workers {}, load historic messages before a cutoff, disconnect and reconnect \
              with snapshot replay, and reopen a conversation with SELECT.",
             settings.user_count,
@@ -95,10 +96,15 @@ impl Benchmark for ChatRealtimeBench {
             BenchmarkDetail::new("Conversation Message Rate", settings.message_rate_label()),
             BenchmarkDetail::new("Message Mutations", settings.mutation_label()),
             BenchmarkDetail::new(
+                "Scalar Indexes",
+                "messages(conversation_id, created_at_ms), conversation_members(user_id), \
+                 messages_ai(conversation_id, created_at_ms)",
+            ),
+            BenchmarkDetail::new(
                 "Tables",
                 "USER conversations_ai/messages_ai, SHARED \
-                 conversations/conversation_members/messages with RLS, STREAM typing_events, \
-                 TOPIC AI inbox",
+                 conversations/conversation_members/messages with RLS and scalar indexes, STREAM \
+                 typing_events, TOPIC AI inbox",
             ),
         ]
     }
@@ -446,6 +452,36 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     )
     .await?;
 
+    // History, reconnect snapshots, and live message SQL all filter by conversation_id.
+    // Membership RLS binds conversation_members on CURRENT_USER.
+    run_sql_with_retry(
+        client,
+        &format!(
+            "CREATE INDEX IF NOT EXISTS idx_messages_ai_conversation ON {}.messages_ai \
+             (conversation_id, created_at_ms)",
+            namespace
+        ),
+    )
+    .await?;
+    run_sql_with_retry(
+        client,
+        &format!(
+            "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON {}.messages \
+             (conversation_id, created_at_ms)",
+            namespace
+        ),
+    )
+    .await?;
+    run_sql_with_retry(
+        client,
+        &format!(
+            "CREATE INDEX IF NOT EXISTS idx_conversation_members_user ON {}.conversation_members \
+             (user_id)",
+            namespace
+        ),
+    )
+    .await?;
+
     run_sql_with_retry(
         client,
         &format!(
@@ -517,7 +553,14 @@ async fn create_chat_schema(client: &KalamClient, namespace: &str) -> Result<(),
     .await?;
 
     let ai_inbox = ai_inbox_topic_name(namespace);
-    run_sql_with_retry(client, &format!("CREATE TOPIC {}", ai_inbox)).await?;
+    run_sql_with_retry(
+        client,
+        &format!(
+            "CREATE TOPIC {} WITH (retention_seconds = 60, retention_max_bytes = 1048576)",
+            ai_inbox
+        ),
+    )
+    .await?;
     run_sql_with_retry(
         client,
         &format!("ALTER TOPIC {} ADD SOURCE {}.messages_ai ON INSERT", ai_inbox, namespace),

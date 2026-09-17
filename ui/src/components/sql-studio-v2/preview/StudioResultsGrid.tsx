@@ -777,12 +777,14 @@ export function StudioResultsGrid({
       )}
 
       {!isRunning && result?.status === "error" && resultView === "results" && (
-        <Alert variant="destructive" className="m-3">
-          <AlertTitle>Execution failed</AlertTitle>
-          <AlertDescription>
-            {result.errorMessage ?? "The query could not be completed. Open the Log tab for statement-level details."}
-          </AlertDescription>
-        </Alert>
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto p-3">
+          <Alert variant="destructive" className="min-w-0">
+            <AlertTitle>Execution failed</AlertTitle>
+            <AlertDescription className="min-w-0 overflow-visible whitespace-pre-wrap break-all text-left [text-wrap:pretty]">
+              {result.errorMessage ?? "The query could not be completed. Open the Log tab for statement-level details."}
+            </AlertDescription>
+          </Alert>
+        </div>
       )}
 
       {!isRunning && result?.status === "error" && resultView === "log" && (

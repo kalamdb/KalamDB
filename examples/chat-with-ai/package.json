@@ -3,32 +3,33 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Realtime multi-user React chat with SHARED rooms, RLS, and a topic agent",
+  "description": "Realtime React chat: SHARED rooms, a USER inbox, and a topic-trigger procedure",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "agent": "node --preserve-symlinks --preserve-symlinks-main --import tsx src/agent.ts",
-    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/agent.test.ts tests/project.test.ts && playwright test"
+    "kalam": "../../target/debug/kalam",
+    "kalam:dev": "../../target/debug/kalam dev",
+    "kalam:deploy": "../../target/debug/kalam deploy",
+    "kalam:schema": "../../target/debug/kalam schema gen",
+    "test": "tsc -p tsconfig.test.json && node --preserve-symlinks --preserve-symlinks-main --import tsx --test tests/reply.test.ts tests/project.test.ts && playwright test"
   },
   "dependencies": {
     "@kalamdb/client": "file:../../link/sdks/typescript/client",
-    "@kalamdb/consumer": "file:../../link/sdks/typescript/consumer",
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
-    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
-    "@types/node": "^25.6.2",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.5.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",
