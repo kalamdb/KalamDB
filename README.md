@@ -1,16 +1,18 @@
 ![KalamDB](docs/images/kalamdb_logo.png)
 
-### Build realtime apps with SQL. Connect agents to the same data.
+### One SQL schema. Your whole realtime backend.
 
-KalamDB brings SQL tables, live subscriptions, durable topics, and deployable server functions together in one open-source backend. Build collaborative apps with live updates, keep personal data isolated by user, and let workers and AI agents react to changes. Connect through the SDKs, HTTP API, or PostgreSQL wire protocol (PGWire).
+KalamDB is an open-source, **SQL-first backend** that combines database tables, realtime subscriptions, durable pub/sub, and server functions in one system. It speaks the **PostgreSQL wire protocol (PGWire)**, so existing PostgreSQL tools and drivers can connect directly.
+
+Define your backend once in SQL. KalamDB uses that schema for storage, permissions, realtime events, procedure contracts, backend-managed schema migrations, and generated application types.
 
 ![CI](https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag) ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)
 
-[Get started](#get-started) · [Server functions](#deploy-a-function-to-your-backend) · [PGWire](#connect-with-postgresql-tools) · [How it scales](#grow-your-app-and-your-data) · [Documentation](https://kalamdb.org/docs)
+[Get started](#get-started) · [Schema first](#one-schema-for-your-whole-backend) · [Realtime + pubsub](#one-write-connects-your-app-workers-and-agents) · [PostgreSQL](#connect-with-postgresql-tools) · [How it scales](#grow-your-app-and-your-data) · [Documentation](https://kalamdb.org/docs)
 
 ## Get started
 
-Start with a working React chat app: two browser tabs, live messages, and a procedure that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated copilot response, so no external AI key is required.
+Start with a working React chat app: two browser tabs, live messages, durable worker events, and a server procedure that writes a reply. You'll need a current Node.js LTS with npm. The demo uses a simulated copilot response, so no external AI key is required.
 
 ```bash
 npm install -g @kalamdb/cli
@@ -22,17 +24,84 @@ kalam dev
 
 **Open the app URL printed in your terminal in two browser tabs.** Send a message such as `latency spike after deploy`. Watch it appear in both tabs, followed by live worker progress and a saved reply.
 
-`kalam init` creates the app, schema, migrations, and project configuration. `kalam dev` starts or reuses a local database, applies the schema, generates types, activates procedures, and runs the app. Keep it running while you develop.
+`kalam init` creates the app, SQL schema, and project configuration. `kalam dev` starts or reuses a local KalamDB server, applies backend schema migrations, regenerates application contracts, activates procedures, and runs the app.
+
+The SQL schema stays the source of truth while KalamDB keeps the backend and generated code in sync.
 
 Prefer a minimal starter? Run `kalam init` in an empty folder and choose a template. See the [quick-start guide](docs/getting-started/quick-start.md) for setup details.
 
-## One write connects your app and your agents
+## One schema for your whole backend
+
+KalamDB is **schema first**. Tables, types, enums, procedures, topics, and access rules live together in SQL instead of being redefined across your database, API, workers, and application code.
+
+A messaging backend can describe most of its contract in one `schema.sql`:
+
+```sql
+CREATE TYPE chat.message_status AS ENUM ('sent', 'delivered', 'read');
+
+CREATE TYPE chat.send_message_input AS (
+    room_id TEXT,
+    content TEXT
+);
+
+CREATE TYPE chat.send_message_result AS (
+    id BIGINT,
+    status chat.message_status
+);
+
+CREATE SHARED TABLE chat.messages (
+    id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
+    room_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status chat.message_status NOT NULL DEFAULT 'sent',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE PROCEDURE chat.send_message(input chat.send_message_input)
+RETURNS chat.send_message_result;
+
+CREATE TOPIC chat.new_messages;
+ALTER TOPIC chat.new_messages ADD SOURCE chat.messages ON INSERT;
+```
+
+That same schema describes the stored data, procedure input/output contracts, event source, and generated application types.
+
+```text
+                         schema.sql
+                             │
+          ┌──────────────────┼──────────────────┐
+          │                  │                  │
+          ▼                  ▼                  ▼
+     SQL tables         Types / enums      Procedures
+          │                  │                  │
+          ├──────────────┬───┴───────┬─────────┤
+          │              │           │         │
+          ▼              ▼           ▼         ▼
+       PGWire         Realtime     Pub/Sub   Server functions
+   PostgreSQL tools   WebSocket     Topics    V8 runtime
+          │              │           │         │
+          └──────────────┴─────┬─────┴─────────┘
+                               ▼
+                       Generated contracts
+                     TypeScript · Dart/Flutter
+```
+
+Today the CLI can generate TypeScript and Dart/Flutter targets from the same SQL schema. The contract remains language-independent, so additional generators can use the same definitions without introducing another API schema.
+
+Schema changes follow the same model: change SQL, and KalamDB handles the corresponding backend migration and contract regeneration through the development/deployment workflow.
+
+## One write connects your app, workers, and agents
 
 ![A SQL write enters KalamDB, reaches connected clients through live queries, and feeds a worker through durable topics. The worker saves its result back to KalamDB.](docs/images/kalamdb-app-flow.png)
 
-In the chat starter, sending a message calls `send_message`. KalamDB sends the change to subscribed clients and routes it to a topic. A trigger procedure drafts a reply and saves it, which appears through the same live subscriptions.
+A single write can serve several parts of your application at once:
 
-After joining a room, the app's write looks like this:
+- **SQL / PGWire** clients read and write the same tables.
+- **Realtime subscriptions** push matching changes to connected apps over WebSocket.
+- **Durable topics** let background workers and AI agents consume changes with acknowledgements and retries.
+- **Server functions** run trusted TypeScript logic close to the data and can query tables, write rows, publish events, and call other procedures.
+
+In the chat starter, sending a message calls the generated procedure client:
 
 ```ts
 await api.chatDemo.sendMessage({
@@ -42,80 +111,44 @@ await api.chatDemo.sendMessage({
 });
 ```
 
-The starter uses generated TypeScript tables and a procedure client from `kalam schema gen`. Its SQL schema connects new messages to a topic trigger:
+The message appears immediately for subscribed clients and can also be routed into a durable topic for a worker or AI agent. When that worker writes its result back, the UI receives the update through the same realtime subscription path.
 
-```sql
-CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
-ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
-CREATE TRIGGER chat_demo.process_user_message
-  ON TOPIC chat_demo.ai_inbox
-  EXECUTE PROCEDURE chat_demo.on_user_message(PAYLOAD);
-```
-
-Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo) to see how they fit together. Your procedures run next to the data; KalamDB handles subscriptions, topics, and retries.
+Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo) to see the full flow.
 
 ## What you can build on
 
 | Your app needs | KalamDB gives you |
 | --- | --- |
-| Live chat, activity feeds, and collaborative screens | **Live queries:** subscribe to supported SQL queries over WebSocket. |
+| One source of truth for backend contracts | **Schema-first SQL:** tables, types, enums, procedures, topics, and policies live together. |
+| Existing PostgreSQL tools and drivers | **PGWire:** connect `psql`, DBeaver, PostgreSQL drivers, prepared queries, transactions, and `CALL`. |
+| Live chat, feeds, dashboards, and collaborative screens | **Realtime queries:** subscribe to supported SQL queries over WebSocket. |
+| Background jobs and AI workers | **Durable pub/sub:** table-change sources, consumer groups, acknowledgements, and retries. |
+| Backend business logic | **Server functions:** sandboxed TypeScript procedures running inside KalamDB. |
+| Typed application contracts | **Code generation:** generate TypeScript and Dart/Flutter types from the same SQL schema. |
+| Schema evolution | **Backend-managed migrations:** schema changes are applied through the KalamDB development/deployment workflow. |
 | Personal notes, conversations, and agent memory | **USER tables:** the same query returns the authenticated user's own rows. |
 | Shared rooms, teams, and projects | **SHARED tables + RLS:** SQL policies control access to collaborative data. |
 | Typing indicators and agent progress | **STREAM tables:** temporary events with TTL-based expiry. |
-| Background jobs and AI workers | **Durable topics:** table changes, consumer groups, acknowledgements, and retries. |
-| Custom backend logic close to your data | **Server functions:** write TypeScript procedures, deploy with `kalam deploy`, and invoke through SQL or HTTP. |
-| Familiar database clients and drivers | **PGWire:** connect PostgreSQL clients such as `psql` and DBeaver, with support for prepared queries and transactions. |
-| A short development loop | **`kalam dev`:** schema changes, migrations, generated types, and app processes together. |
-| A growing dataset and more connected clients | **Tiered storage and clusters:** Parquet on disk or object storage, with replicated nodes serving clients. |
+| Growing datasets | **Tiered storage:** recent data in RocksDB, older USER/SHARED data in compressed Parquet. |
+| More connections and availability | **Multi-Raft clusters:** replicated nodes serve clients and coordinate failover. |
 
 USER tables scope both hot keys and cold segments by user. SHARED tables use explicit row-level policies on reads, writes, live events, and file access; ordinary user and service roles are denied without an applicable policy. See the [SQL reference](docs/reference/sql.md) for table types and policies.
 
-## Deploy a function to your backend
+## Server functions live next to your data
 
-Add custom logic that runs inside KalamDB. Server functions execute in a sandboxed V8 runtime and can query tables, write data, publish to topics, and call other procedures within the request transaction.
+Server functions execute inside KalamDB in a sandboxed V8 runtime. Their contracts are declared in the same SQL schema as your tables and types, so you do not need a separate request/response definition for the backend function.
 
-In a TypeScript project, add a procedure contract to your configured schema file (`kalam/schema.sql` in the chat starter):
+`kalam schema gen` generates the typed implementation bindings, and `kalam deploy --env dev` builds the function module, applies schema migrations, and activates the new revision on the backend.
 
-```sql
-CREATE PROCEDURE chat_demo.greet(name TEXT NOT NULL) RETURNS TEXT;
-```
+The same procedure can be called through a generated client, HTTP, or SQL `CALL` over PGWire. Procedures run as the caller by default; grant `EXECUTE` only to roles that should use them.
 
-Generate its implementation file:
-
-```bash
-kalam schema gen
-```
-
-Replace `functions/src/chat_demo/greet.ts` with:
-
-```ts
-import { procedure } from "../generated/contracts";
-
-export const greet = procedure.chatDemo.greet(async (_ctx, input) => {
-  return "Hello, " + input.name + "!";
-});
-```
-
-With your development server running and DBA or System credentials configured, deploy the project:
-
-```bash
-kalam deploy --env dev
-```
-
-The CLI builds the function module, applies migrations, and activates the new revision on the backend. Call it from SQL, including over PGWire:
-
-```sql
-CALL chat_demo.greet('developer');
--- result: Hello, developer!
-```
-
-The same procedure is available at `POST /v1/functions/chat_demo/greet`. Procedures run as the caller by default; grant `EXECUTE` to the roles that should use them. See the [procedure reference](docs/reference/sql.md#create-procedure) and [deployment workflow](docs/getting-started/cli.md#deploy-with-migration-guardrails) for access control, environments, revisions, and rollback.
-
-Use matching CLI and server builds with functions support; `kalam functions --help` lists the available build and revision commands.
+See the [procedure reference](docs/reference/sql.md#create-procedure) and [deployment workflow](docs/getting-started/cli.md#deploy-with-migration-guardrails) for access control, environments, revisions, and rollback.
 
 ## Connect with PostgreSQL tools
 
-Use `psql`, DBeaver, or PostgreSQL drivers to query KalamDB through its PGWire listener. Enable it in your server configuration:
+KalamDB speaks the PostgreSQL wire protocol, so you can use `psql`, DBeaver, and PostgreSQL drivers alongside KalamDB SDKs and realtime APIs.
+
+Enable PGWire in your server configuration:
 
 ```toml
 [postgres_wire]
@@ -130,20 +163,23 @@ For a local server, connect with your KalamDB credentials:
 psql -h 127.0.0.1 -p 5432 -U root -d kalam -W
 ```
 
-PGWire supports simple and prepared queries, transactions, and SQL `CALL`. Queries use KalamDB's SQL engine and permissions; PostgreSQL protocol support does not imply full PostgreSQL SQL or extension compatibility. See [client compatibility](docs/architecture/pg-catalog-shims.md) for supported catalog features and current limits.
+PGWire supports simple and prepared queries, transactions, and SQL `CALL`. Queries use KalamDB's SQL engine and permissions. PostgreSQL protocol support does not imply full PostgreSQL SQL or extension compatibility. See [client compatibility](docs/architecture/pg-catalog-shims.md) for supported catalog features and current limits.
 
 ## Grow your app and your data
 
-Start with one node and local disk. As your application grows, distribute client connections across cluster nodes and use object storage for your growing Parquet dataset.
+Start with one node and local disk. As your application grows, add nodes for more connection-serving capacity and replication, while moving older table data into compressed Parquet on filesystem or object storage.
 
 ```mermaid
 flowchart TB
-    Apps["Apps, agents, and SQL clients"] -->|"HTTP + WebSocket + PGWire"| Entry["Your load balancer / node endpoints"]
+    Apps["Apps, agents, workers, and SQL clients"]
+
+    Apps -->|"HTTP + WebSocket + PGWire"| Entry["Load balancer / KalamDB node endpoints"]
 
     subgraph Cluster["KalamDB cluster · writes replicated with Multi-Raft"]
-        N1["Node 1<br/>SQL + live subscriptions<br/>RocksDB on local disk"]
-        N2["Node 2<br/>SQL + live subscriptions<br/>RocksDB on local disk"]
-        N3["Node 3<br/>SQL + live subscriptions<br/>RocksDB on local disk"]
+        direction LR
+        N1["Node 1<br/>SQL + PGWire<br/>Realtime subscriptions<br/>Pub/Sub + server functions<br/>RocksDB hot tier"]
+        N2["Node 2<br/>SQL + PGWire<br/>Realtime subscriptions<br/>Pub/Sub + server functions<br/>RocksDB hot tier"]
+        N3["Node 3<br/>SQL + PGWire<br/>Realtime subscriptions<br/>Pub/Sub + server functions<br/>RocksDB hot tier"]
     end
 
     Entry --> N1
@@ -153,18 +189,28 @@ flowchart TB
     N1 <--> Cold
     N2 <--> Cold
     N3 <--> Cold
-    Cold["USER + SHARED table cold tier<br/>Compressed Parquet segments<br/>Flush writes · query reads"]
+
+    Cold["USER + SHARED cold tier<br/>Compressed Parquet segments<br/>Flush writes · query reads"]
+
     Cold --> Disk["Filesystem<br/>Local disk for one node<br/>Shared volume for a cluster"]
-    Cold --> Object["Object storage<br/>For example, Amazon S3"]
+    Cold --> Object["Object storage<br/>Amazon S3 / compatible storage"]
+
+    Query["One SQL view<br/>DataFusion + Arrow"]
+    N1 --- Query
+    N2 --- Query
+    N3 --- Query
+    Query --- Cold
 ```
 
-**More connected clients.** Each node serves its own WebSocket subscriptions after applying replicated writes locally. Clients can connect to any node; writes are forwarded to the appropriate Raft-group leader. User data is routed into user shards, and Multi-Raft coordinates replication and failover.
+**More connected clients.** Each node serves its own HTTP, PGWire, WebSocket subscriptions, topics, and function requests after applying replicated writes locally. Clients can connect to any node; writes are forwarded to the appropriate Raft-group leader. User data is routed into user shards, and Multi-Raft coordinates replication and failover.
 
-**More stored data.** Recent writes live in RocksDB on each node's local disk. USER and SHARED tables flush into compressed Parquet segments on the configured filesystem or object store. Use a shared cold-storage location accessible to every node in a cluster; the local cluster demo uses a shared volume.
+**Hot data stays fast.** Recent writes live in RocksDB on each node's local disk so active application data remains close to the compute serving queries and realtime subscriptions.
 
-**One SQL view across both tiers.** DataFusion and Arrow query hot rows and cold Parquet together, resolving row versions before returning results. Your app keeps querying the same tables as data moves into Parquet. STREAM tables stay in the hot tier and expire through TTL.
+**Older data moves to Parquet.** USER and SHARED tables flush into compressed Parquet segments on the configured filesystem or object store. Use a shared cold-storage location accessible to every node in a cluster; the local cluster demo uses a shared volume.
 
-Nodes provide connection-serving capacity and replication; cold storage provides room for the Parquet dataset. Capacity depends on your workload and deployment. See [storage and query architecture](docs/architecture/hot-cold-storage-unification.md), [storage configuration](docs/reference/sql.md#create-storage), and [cluster behavior and current limits](docs/architecture/raft-replication.md).
+**One SQL view across both tiers.** DataFusion and Arrow query hot RocksDB rows and cold Parquet together, resolving row versions before returning results. Your application keeps querying the same tables as data moves between tiers. STREAM tables remain in the hot tier and expire through TTL.
+
+Nodes provide connection-serving capacity and replication; cold storage provides room for the growing Parquet dataset. Capacity depends on your workload and deployment. See [storage and query architecture](docs/architecture/hot-cold-storage-unification.md), [storage configuration](docs/reference/sql.md#create-storage), and [cluster behavior and current limits](docs/architecture/raft-replication.md).
 
 ### Try a local 3-node cluster
 
