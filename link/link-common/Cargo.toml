@@ -29,6 +29,7 @@ miniz_oxide = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustls = { workspace = true, features = ["aws_lc_rs"], optional = true }
+rustls-native-certs = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -40,7 +41,7 @@ client-core = [
 	"dep:miniz_oxide",
 	"dep:rmp-serde",
 ]
-tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:rustls"]
+tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:rustls", "dep:rustls-native-certs"]
 auth-flows = []
 setup = []
 healthcheck = []

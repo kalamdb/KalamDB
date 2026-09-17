@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, Once, RwLock},
+    sync::{Arc, Once, OnceLock, RwLock},
     time::Duration,
 };
 
@@ -23,6 +23,43 @@ fn ensure_rustls_crypto_provider() {
     INSTALL_RUSTLS_PROVIDER.call_once(|| {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
+}
+
+/// Cache one rustls client config so each `reqwest::Client::build()` does not
+/// reload macOS Keychain / platform native roots (~80ms, serialized).
+fn shared_rustls_client_config() -> rustls::ClientConfig {
+    static CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            ensure_rustls_crypto_provider();
+            let native = rustls_native_certs::load_native_certs();
+            if !native.errors.is_empty() {
+                log::warn!(
+                    "[CLIENT] native TLS root load reported {} error(s); continuing with {} \
+                     cert(s)",
+                    native.errors.len(),
+                    native.certs.len()
+                );
+            }
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in native.certs {
+                let _ = roots.add(cert);
+            }
+            let mut config = rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            // reqwest does not set ALPN when TLS is preconfigured.
+            #[cfg(feature = "http2")]
+            {
+                config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+            }
+            #[cfg(not(feature = "http2"))]
+            {
+                config.alpn_protocols = vec![b"http/1.1".to_vec()];
+            }
+            config
+        })
+        .clone()
 }
 
 impl KalamLinkClientBuilder {
@@ -130,7 +167,8 @@ impl KalamLinkClientBuilder {
             .timeout(self.timeout)
             .connect_timeout(self.timeouts.connection_timeout)
             .pool_max_idle_per_host(self.http_pool_max_idle_per_host)
-            .pool_idle_timeout(Duration::from_secs(90));
+            .pool_idle_timeout(Duration::from_secs(90))
+            .use_preconfigured_tls(shared_rustls_client_config());
 
         client_builder = match self.connection_options.http_version {
             HttpVersion::Http1 => {
