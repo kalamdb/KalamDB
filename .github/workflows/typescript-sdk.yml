@@ -374,6 +374,8 @@ jobs:
       id-token: write
     env:
       NPM_CONFIG_PROVENANCE: "true"
+      PUBLISH_DEPENDENCY_WAIT_ATTEMPTS: "40"
+      PUBLISH_DEPENDENCY_WAIT_SECONDS: "8"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
