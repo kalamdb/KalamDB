@@ -56,6 +56,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs/heads/");
     println!("cargo:rerun-if-changed=../version.toml");
+    println!("cargo:rerun-if-changed=../versions.json");
     println!("cargo:rerun-if-changed=templates/");
 }
 

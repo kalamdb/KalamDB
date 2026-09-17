@@ -370,7 +370,7 @@ jobs:
       - test_packages
     if: ${{ github.event.inputs.publish == 'true' }}
     permissions:
-      contents: read
+      contents: write
       id-token: write
     env:
       NPM_CONFIG_PROVENANCE: "true"
@@ -470,6 +470,22 @@ jobs:
           fi
           chmod +x ./publish.sh
           ./publish.sh --version "$VERSION" $FORCE_FLAG
+
+      - name: Record published TypeScript SDK versions
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py mark-published --group typescript --write
+          if git diff --quiet -- versions.json; then
+            echo "published versions already recorded"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "chore: record published TypeScript SDK versions"
+          git push origin HEAD:main
 
   publish_github_packages:
     name: Publish TypeScript SDK packages to GitHub Packages

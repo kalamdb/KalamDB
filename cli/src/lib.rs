@@ -35,6 +35,7 @@ pub mod sql_batch;
 pub mod terminal_input;
 pub mod terminal_ui;
 pub mod update_check;
+pub mod versions_manifest;
 pub mod workflow;
 
 pub use agent_error::{AgentError, AgentErrorCode};

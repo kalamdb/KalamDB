@@ -185,6 +185,7 @@ where
         dart_template,
         output,
     )
+    .await
     .map_err(|error| map_init_stage_error("writing project files", error))?;
     install_dependencies(&options.cwd, package_manager, output, &mut installer)
         .map_err(|error| map_init_stage_error("installing JavaScript dependencies", error))?;

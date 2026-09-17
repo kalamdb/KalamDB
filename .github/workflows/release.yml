@@ -1950,7 +1950,7 @@ jobs:
 
     if: ${{ github.event.inputs.publish_npm_cli == 'true' }}
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     steps:
@@ -1974,6 +1974,7 @@ jobs:
           bash ./test.sh
 
       - name: Publish @kalamdb/cli
+        id: publish_npm_cli
         shell: bash
         working-directory: link/sdks/typescript/cli
         env:
@@ -1982,10 +1983,28 @@ jobs:
           set -euo pipefail
           if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
             echo "NPM_TOKEN is not configured; skipping npm publish"
+            echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           chmod +x ./publish.sh
           ./publish.sh --version "${{ needs.read_version.outputs.version }}"
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Record published npm CLI version
+        if: github.ref == 'refs/heads/main' && steps.publish_npm_cli.outputs.published == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py mark-published --group npm --write
+          if git diff --quiet -- versions.json; then
+            echo "published versions already recorded"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "chore: record published npm CLI version"
+          git push origin HEAD:main
 
   publish_github_packages_cli:
     name: Publish CLI to GitHub Packages

@@ -266,12 +266,59 @@ def resolve_shared_typescript_version(packages: dict[str, dict[str, Any]]) -> st
     return next(iter(unique_versions))
 
 
-def build_package_entry(version: str, compatible_core: str, depends_on: dict[str, str] | None = None) -> dict[str, Any]:
+PACKAGE_MANAGED_KEYS = {
+    "version",
+    "published",
+    "compatible_core",
+    "protocol",
+    "depends_on",
+}
+
+
+def existing_package_entry(
+    existing: dict[str, Any] | None, group: str, name: str
+) -> dict[str, Any]:
+    record = ((existing or {}).get("packages") or {}).get(group) or {}
+    if not isinstance(record, dict):
+        return {}
+    entry = record.get(name) or {}
+    return entry if isinstance(entry, dict) else {}
+
+
+def package_published(
+    existing: dict[str, Any] | None, group: str, name: str, current: str
+) -> str:
+    """Keep the last published version when syncing in-repo package files."""
+    entry = existing_package_entry(existing, group, name)
+    for key in ("published", "version"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return current
+
+
+def extra_package_fields(
+    existing: dict[str, Any] | None, group: str, name: str
+) -> dict[str, Any]:
+    entry = existing_package_entry(existing, group, name)
+    return {key: value for key, value in entry.items() if key not in PACKAGE_MANAGED_KEYS}
+
+
+def build_package_entry(
+    existing: dict[str, Any] | None,
+    group: str,
+    name: str,
+    version: str,
+    compatible_core: str,
+    depends_on: dict[str, str] | None = None,
+) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "version": version,
+        "published": package_published(existing, group, name, version),
         "compatible_core": compatible_core,
         "protocol": PROTOCOL,
     }
+    entry.update(extra_package_fields(existing, group, name))
     if depends_on:
         entry["depends_on"] = depends_on
     return entry
@@ -404,35 +451,44 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
         "archived": append_archived_release(existing, core_version),
         "packages": {
             "core_components": {
-                "server": {
-                    "version": core_version,
-                    "compatible_core": core_version,
-                    "protocol": PROTOCOL,
-                },
-                "cli": {
-                    "version": core_version,
-                    "compatible_core": core_version,
-                    "protocol": PROTOCOL,
-                },
-                "pg_extension": {
-                    "version": core_version,
-                    "compatible_core": core_version,
-                    "protocol": PROTOCOL,
-                },
+                "server": build_package_entry(
+                    existing, "core_components", "server", core_version, core_version
+                ),
+                "cli": build_package_entry(
+                    existing, "core_components", "cli", core_version, core_version
+                ),
+                "pg_extension": build_package_entry(
+                    existing, "core_components", "pg_extension", core_version, core_version
+                ),
             },
             "typescript": {
-                ts_client["name"]: build_package_entry(shared_typescript_version, compatible_core),
+                ts_client["name"]: build_package_entry(
+                    existing,
+                    "typescript",
+                    ts_client["name"],
+                    shared_typescript_version,
+                    compatible_core,
+                ),
                 ts_orm["name"]: build_package_entry(
+                    existing,
+                    "typescript",
+                    ts_orm["name"],
                     shared_typescript_version,
                     compatible_core,
                     filter_internal_dependencies(ts_orm),
                 ),
                 ts_consumer["name"]: build_package_entry(
+                    existing,
+                    "typescript",
+                    ts_consumer["name"],
                     shared_typescript_version,
                     compatible_core,
                     filter_internal_dependencies(ts_consumer),
                 ),
                 ts_react["name"]: build_package_entry(
+                    existing,
+                    "typescript",
+                    ts_react["name"],
                     shared_typescript_version,
                     compatible_core,
                     filter_internal_dependencies(ts_react),
@@ -440,24 +496,33 @@ def build_versions_manifest(existing: dict[str, Any] | None) -> dict[str, Any]:
             },
             "python": {
                 python_package["name"]: build_package_entry(
+                    existing,
+                    "python",
+                    python_package["name"],
                     python_package["version"],
                     compatible_core,
                 )
             },
             "npm": {
                 cli_npm_package["name"]: build_package_entry(
+                    existing,
+                    "npm",
+                    cli_npm_package["name"],
                     cli_npm_package["version"],
                     core_version,
                 )
             },
             "rust": {
                 rust_sdk_package["name"]: build_package_entry(
+                    existing,
+                    "rust",
+                    rust_sdk_package["name"],
                     core_version,
                     core_version,
                 )
             },
             "dart": {
-                name: build_package_entry(version, compatible_core)
+                name: build_package_entry(existing, "dart", name, version, compatible_core)
                 for name, version in dart_packages.items()
             },
         },
@@ -508,10 +573,25 @@ def sync_manifest(write: bool) -> int:
     return 0
 
 
+def package_version_fields(manifest: dict[str, Any], group: str, name: str | None = None) -> tuple[str, str]:
+    packages = manifest["packages"][group]
+    entry = packages[name] if name else next(iter(packages.values()))
+    version = entry["version"]
+    published = entry.get("published") or version
+    return version, published
+
+
 def github_outputs(repository: str | None) -> dict[str, str]:
     manifest = build_versions_manifest(load_existing_versions())
     core_version = manifest["channels"]["latest"]["core"]
     release_tag = f"v{core_version}"
+    typescript_version, typescript_published = package_version_fields(
+        manifest, "typescript", "@kalamdb/client"
+    )
+    dart_version, dart_published = package_version_fields(manifest, "dart")
+    python_version, python_published = package_version_fields(manifest, "python")
+    npm_cli_version, npm_cli_published = package_version_fields(manifest, "npm", "@kalamdb/cli")
+    rust_sdk_version, rust_sdk_published = package_version_fields(manifest, "rust")
     outputs = {
         "core_version": core_version,
         "root_version": core_version,
@@ -520,11 +600,16 @@ def github_outputs(repository: str | None) -> dict[str, str]:
         "tag": release_tag,
         "pre_release": str(version_stability(core_version) != "stable").lower(),
         "core_stability": manifest["channels"]["latest"]["stability"],
-        "typescript_version": manifest["packages"]["typescript"]["@kalamdb/client"]["version"],
-        "dart_version": next(iter(manifest["packages"]["dart"].values()))["version"],
-        "python_version": next(iter(manifest["packages"]["python"].values()))["version"],
-        "npm_cli_version": manifest["packages"]["npm"]["@kalamdb/cli"]["version"],
-        "rust_sdk_version": next(iter(manifest["packages"]["rust"].values()))["version"],
+        "typescript_version": typescript_version,
+        "typescript_published": typescript_published,
+        "dart_version": dart_version,
+        "dart_published": dart_published,
+        "python_version": python_version,
+        "python_published": python_published,
+        "npm_cli_version": npm_cli_version,
+        "npm_cli_published": npm_cli_published,
+        "rust_sdk_version": rust_sdk_version,
+        "rust_sdk_published": rust_sdk_published,
         "release_server_asset_name": f"kalamdb-server-{core_version}-linux-x86_64.tar.gz",
     }
     if repository:
@@ -532,6 +617,38 @@ def github_outputs(repository: str | None) -> dict[str, str]:
             f"https://github.com/{repository}/releases/download/{release_tag}/{outputs['release_server_asset_name']}"
         )
     return outputs
+
+
+def mark_published(group: str, names: list[str], version: str | None, write: bool) -> int:
+    existing = load_existing_versions()
+    if existing is None:
+        print("versions.json is missing. Run: python3 scripts/versions.py sync --write", file=sys.stderr)
+        return 1
+
+    packages = existing.get("packages") or {}
+    group_packages = packages.get(group)
+    if not isinstance(group_packages, dict):
+        print(f"unknown package group: {group}", file=sys.stderr)
+        return 1
+
+    selected = names or list(group_packages.keys())
+    for name in selected:
+        entry = group_packages.get(name)
+        if not isinstance(entry, dict):
+            print(f"unknown package: {group}/{name}", file=sys.stderr)
+            return 1
+        published = version or entry.get("version")
+        if not isinstance(published, str) or not published.strip():
+            print(f"missing version for {group}/{name}", file=sys.stderr)
+            return 1
+        entry["published"] = published.strip()
+
+    if write:
+        write_json(VERSIONS_PATH, existing)
+        print(f"Wrote {VERSIONS_PATH.relative_to(ROOT)}")
+    else:
+        sys.stdout.write(manifest_as_text(existing))
+    return 0
 
 
 def emit_github_outputs(output_path: Path | None, repository: str | None) -> int:
@@ -573,6 +690,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     outputs_parser.set_defaults(
         func=lambda args: emit_github_outputs(args.github_output, args.repository)
+    )
+
+    mark_parser = subparsers.add_parser(
+        "mark-published",
+        help="Set package published versions after a successful registry publish",
+    )
+    mark_parser.add_argument("--group", required=True, help="Package group in versions.json")
+    mark_parser.add_argument(
+        "--package",
+        action="append",
+        default=[],
+        help="Package name to mark; omit to mark every package in the group",
+    )
+    mark_parser.add_argument(
+        "--version",
+        help="Published version to record; defaults to each package's in-repo version",
+    )
+    mark_parser.add_argument("--write", action="store_true", help="Write the updated manifest")
+    mark_parser.set_defaults(
+        func=lambda args: mark_published(args.group, args.package, args.version, args.write)
     )
 
     return parser

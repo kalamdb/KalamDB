@@ -36,8 +36,10 @@ That script:
 - updates all `link/sdks/dart/*/pubspec.yaml` package versions,
 - updates `link/sdks/python/pyproject.toml` and `link/sdks/python/Cargo.toml` to the same version,
 - updates the internal peer dependency floors to the current cohort range,
-- regenerates `versions.json` through `python3 scripts/versions.py sync --write`, and
+- regenerates `versions.json` through `python3 scripts/versions.py sync --write` (this updates in-repo `version` fields and leaves last-shipped `published` fields unchanged),
 - verifies the generated manifest with `python3 scripts/versions.py verify`.
+
+`kalam init` pins SDK dependencies to each package's `published` version from the CLI's embedded `versions.json`. After a successful registry publish, CI runs `python3 scripts/versions.py mark-published --group <group> --write` and commits that update to main.
 
 Internal peer dependency ranges follow the shared cohort. For prerelease lanes like `0.5.0-beta.1`, the sync script keeps prerelease-safe floors such as `>=0.5.0-0 <0.6.0`.
 

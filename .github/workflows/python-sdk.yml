@@ -134,6 +134,7 @@ jobs:
       name: pypi
     permissions:
       id-token: write
+      contents: write
 
     steps:
       - name: Download all wheels
@@ -153,3 +154,25 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+
+      - name: Checkout
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Record published Python SDK versions
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py mark-published --group python --write
+          if git diff --quiet -- versions.json; then
+            echo "published versions already recorded"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "chore: record published Python SDK versions"
+          git push origin HEAD:main

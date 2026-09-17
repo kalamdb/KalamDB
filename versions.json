@@ -229,16 +229,19 @@
     "core_components": {
       "server": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.0-beta.0",
         "protocol": "v1"
       },
       "cli": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.0-beta.0",
         "protocol": "v1"
       },
       "pg_extension": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.0-beta.0",
         "protocol": "v1"
       }
@@ -246,11 +249,13 @@
     "typescript": {
       "@kalamdb/client": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1"
       },
       "@kalamdb/orm": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1",
         "depends_on": {
@@ -259,6 +264,7 @@
       },
       "@kalamdb/consumer": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1",
         "depends_on": {
@@ -267,6 +273,7 @@
       },
       "@kalamdb/react": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1",
         "depends_on": {
@@ -278,6 +285,7 @@
     "python": {
       "kalamdb": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1"
       }
@@ -285,6 +293,7 @@
     "npm": {
       "@kalamdb/cli": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.0-beta.0",
         "protocol": "v1"
       }
@@ -292,6 +301,7 @@
     "rust": {
       "kalam-client": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.0-beta.0",
         "protocol": "v1"
       }
@@ -299,16 +309,19 @@
     "dart": {
       "kalam_link": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1"
       },
       "kalam_sync": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1"
       },
       "kalam_sync_generator": {
         "version": "0.7.0-beta.0",
+        "published": "0.7.0-beta.0",
         "compatible_core": "0.7.x",
         "protocol": "v1"
       }

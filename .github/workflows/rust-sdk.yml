@@ -345,3 +345,19 @@ jobs:
           VERSION="${{ needs.resolve_versions.outputs.rust_sdk_version }}"
           chmod +x ./publish.sh
           ./publish.sh --version "$VERSION"
+
+      - name: Record published Rust SDK versions
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/versions.py mark-published --group rust --write
+          if git diff --quiet -- versions.json; then
+            echo "published versions already recorded"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "chore: record published Rust SDK versions"
+          git push origin HEAD:main

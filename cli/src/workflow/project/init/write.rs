@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-pub(super) fn write_project_scaffold(
+pub(super) async fn write_project_scaffold(
     root: &Path,
     config: &KalamProjectConfig,
     schema_mode: SchemaMode,
@@ -50,7 +50,7 @@ pub(super) fn write_project_scaffold(
             .get("dev")
             .map(|connection| connection.namespace.as_str())
             .unwrap_or("");
-        apply_scaffold(root, template, &config.project.name, server_url, namespace, output)?;
+        apply_scaffold(root, template, &config.project.name, server_url, namespace, output).await?;
     }
     if let Some(template) = dart_template {
         let namespace = config
@@ -65,7 +65,8 @@ pub(super) fn write_project_scaffold(
             server_url,
             namespace,
             output,
-        )?;
+        )
+        .await?;
     }
     if typescript_template.is_none()
         && dart_template.is_none()

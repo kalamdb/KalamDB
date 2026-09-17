@@ -66,7 +66,7 @@ pub fn resolve_starter(
     Ok(Some(template))
 }
 
-pub fn apply_dart_scaffold(
+pub async fn apply_dart_scaffold(
     root: &Path,
     template: &EmbeddedTemplate,
     project_name: &str,
@@ -74,7 +74,7 @@ pub fn apply_dart_scaffold(
     namespace: &str,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    apply_scaffold(root, template, project_name, server_url, namespace, output)
+    apply_scaffold(root, template, project_name, server_url, namespace, output).await
 }
 
 pub fn maybe_bootstrap_flutter_project(
@@ -172,8 +172,20 @@ mod tests {
             .iter()
             .find(|file| file.project_path == "pubspec.yaml")
             .expect("pubspec.yaml template");
-        assert!(pubspec.content.contains("kalam_sync"));
-        assert!(pubspec.content.contains("sdk: flutter"));
+        let rendered_pubspec = render_template_pairs(
+            pubspec.content,
+            &[(
+                "kalam_sync_version",
+                crate::versions_manifest::published_dart_package_version("kalam_sync"),
+            )],
+        )
+        .unwrap();
+        assert!(rendered_pubspec.contains("kalam_sync"));
+        assert!(rendered_pubspec.contains(&format!(
+            "kalam_sync: \"{}\"",
+            crate::versions_manifest::published_dart_package_version("kalam_sync")
+        )));
+        assert!(rendered_pubspec.contains("sdk: flutter"));
 
         let main = template
             .files

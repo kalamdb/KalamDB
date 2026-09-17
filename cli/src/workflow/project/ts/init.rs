@@ -169,7 +169,7 @@ where
     }
 }
 
-pub fn apply_scaffold(
+pub async fn apply_scaffold(
     root: &Path,
     template: &EmbeddedTemplate,
     project_name: &str,
@@ -181,7 +181,14 @@ pub fn apply_scaffold(
         ("project_name", project_name),
         ("server_url", server_url),
         ("namespace", namespace),
-        ("kalam_sdk_version", crate::CLI_VERSION),
+        (
+            "kalam_sdk_version",
+            crate::versions_manifest::published_typescript_package_version("@kalamdb/client"),
+        ),
+        (
+            "kalam_sync_version",
+            crate::versions_manifest::published_dart_package_version("kalam_sync"),
+        ),
     ];
     for file in template.files {
         let destination_path = root.join(file.project_path);
@@ -209,7 +216,7 @@ pub fn apply_scaffold(
         )?;
         output.detail(format!("created {}", display_project_path(root, &destination_path)));
     }
-    repository_examples::rewrite_sdk_dependencies(root)?;
+    repository_examples::pin_sdk_dependencies(root).await?;
     Ok(())
 }
 
@@ -445,14 +452,20 @@ mod tests {
             package_json.content,
             &[
                 ("project_name", "demo-app"),
-                ("kalam_sdk_version", crate::CLI_VERSION),
+                (
+                    "kalam_sdk_version",
+                    crate::versions_manifest::published_typescript_package_version(
+                        "@kalamdb/client",
+                    ),
+                ),
             ],
         )
         .unwrap();
         assert!(rendered_package.contains(r#""name": "demo-app""#));
-        assert!(
-            rendered_package.contains(&format!(r#""@kalamdb/client": "{}""#, crate::CLI_VERSION))
-        );
+        assert!(rendered_package.contains(&format!(
+            r#""@kalamdb/client": "{}""#,
+            crate::versions_manifest::published_typescript_package_version("@kalamdb/client")
+        )));
         assert!(!rendered_package.contains("\"latest\""));
 
         let starter = template
