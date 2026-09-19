@@ -2,7 +2,8 @@
 //!
 //! Maintains an in-memory DashMap index of `TableId → Vec<RouteEntry>` for
 //! O(1) lookups to determine which topics should receive messages for a
-//! given table mutation.
+//! given table mutation. Topic metadata is stored once as `Arc<Topic>`;
+//! route entries point at that same allocation instead of cloning routes.
 
 use std::sync::Arc;
 
@@ -11,21 +12,34 @@ use kalamdb_commons::models::{TableId, TopicId, TopicOp};
 use kalamdb_row_filter::{parse_where_clause, RowFilter};
 use kalamdb_system::providers::topics::{Topic, TopicRoute};
 
-/// Cached route entry combining topic ID with route configuration.
+/// Cached route: compiled filter plus a pointer into the shared topic.
 #[derive(Clone, Debug)]
 pub(crate) struct RouteEntry {
-    pub topic_id:         TopicId,
-    pub topic_partitions: u32,
-    pub route:            TopicRoute,
-    pub compiled_filter:  Option<Arc<RowFilter>>,
+    topic:               Arc<Topic>,
+    route_index:         usize,
+    pub compiled_filter: Option<Arc<RowFilter>>,
+}
+
+impl RouteEntry {
+    pub fn topic_id(&self) -> &TopicId {
+        &self.topic.topic_id
+    }
+
+    pub fn topic_partitions(&self) -> u32 {
+        self.topic.partitions
+    }
+
+    pub fn route(&self) -> &TopicRoute {
+        &self.topic.routes[self.route_index]
+    }
 }
 
 /// Manages the in-memory route cache.
 pub(crate) struct RouteCache {
     /// TableId → matching routes
     table_routes: DashMap<TableId, Vec<RouteEntry>>,
-    /// TopicId → full topic metadata
-    topics:       DashMap<TopicId, Topic>,
+    /// TopicId → full topic metadata (shared with `RouteEntry`)
+    topics:       DashMap<TopicId, Arc<Topic>>,
 }
 
 impl RouteCache {
@@ -46,7 +60,7 @@ impl RouteCache {
     #[inline]
     pub fn has_topics_for_table_op(&self, table_id: &TableId, operation: &TopicOp) -> bool {
         if let Some(routes) = self.table_routes.get(table_id) {
-            routes.iter().any(|entry| &entry.route.op == operation)
+            routes.iter().any(|entry| &entry.route().op == operation)
         } else {
             false
         }
@@ -59,14 +73,14 @@ impl RouteCache {
 
     /// Get a topic by ID.
     pub fn get_topic(&self, topic_id: &TopicId) -> Option<Topic> {
-        self.topics.get(topic_id).map(|r| r.clone())
+        self.topics.get(topic_id).map(|r| r.as_ref().clone())
     }
 
     /// Get all topic IDs for a table.
     pub fn get_topic_ids_for_table(&self, table_id: &TableId) -> Vec<TopicId> {
         self.table_routes
             .get(table_id)
-            .map(|routes| routes.iter().map(|e| e.topic_id.clone()).collect())
+            .map(|routes| routes.iter().map(|e| e.topic_id().clone()).collect())
             .unwrap_or_default()
     }
 
@@ -74,7 +88,7 @@ impl RouteCache {
     pub fn get_matching_routes(&self, table_id: &TableId, operation: &TopicOp) -> Vec<RouteEntry> {
         match self.table_routes.get(table_id) {
             Some(routes) => {
-                routes.iter().filter(|entry| &entry.route.op == operation).cloned().collect()
+                routes.iter().filter(|entry| &entry.route().op == operation).cloned().collect()
             },
             None => Vec::new(),
         }
@@ -82,45 +96,32 @@ impl RouteCache {
 
     /// Refresh from a full list of topics (replaces entire cache).
     pub fn refresh(&self, topics: Vec<Topic>) {
-        self.topics.clear();
-        self.table_routes.clear();
-
+        self.clear();
         for topic in topics {
-            self.topics.insert(topic.topic_id.clone(), topic.clone());
-
-            for route in &topic.routes {
-                if let Some(entry) = build_route_entry(&topic.topic_id, topic.partitions, route) {
-                    self.table_routes
-                        .entry(route.table_id.clone())
-                        .or_insert_with(Vec::new)
-                        .push(entry);
-                }
-            }
+            self.add_topic(topic);
         }
     }
 
     /// Add a single topic to the cache.
     pub fn add_topic(&self, topic: Topic) {
-        let topic_id = topic.topic_id.clone();
-
-        for route in &topic.routes {
-            if let Some(entry) = build_route_entry(&topic_id, topic.partitions, route) {
+        let topic = Arc::new(topic);
+        for route_index in 0..topic.routes.len() {
+            if let Some(entry) = build_route_entry(&topic, route_index) {
                 self.table_routes
-                    .entry(route.table_id.clone())
+                    .entry(topic.routes[route_index].table_id.clone())
                     .or_insert_with(Vec::new)
                     .push(entry);
             }
         }
-
-        self.topics.insert(topic_id, topic);
+        self.topics.insert(topic.topic_id.clone(), topic);
     }
 
     /// Remove a topic from the cache.
     pub fn remove_topic(&self, topic_id: &TopicId) {
         if let Some((_, topic)) = self.topics.remove(topic_id) {
-            for route in topic.routes {
+            for route in &topic.routes {
                 if let Some(mut routes) = self.table_routes.get_mut(&route.table_id) {
-                    routes.retain(|e| &e.topic_id != topic_id);
+                    routes.retain(|e| e.topic_id() != topic_id);
                 }
             }
         }
@@ -143,7 +144,7 @@ impl RouteCache {
     /// Iterate over all cached topics.
     pub fn iter_topics(
         &self,
-    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, TopicId, Topic>> {
+    ) -> impl Iterator<Item = dashmap::mapref::multiple::RefMulti<'_, TopicId, Arc<Topic>>> {
         self.topics.iter()
     }
 
@@ -163,11 +164,8 @@ impl RouteCache {
     }
 }
 
-fn build_route_entry(
-    topic_id: &TopicId,
-    topic_partitions: u32,
-    route: &TopicRoute,
-) -> Option<RouteEntry> {
+fn build_route_entry(topic: &Arc<Topic>, route_index: usize) -> Option<RouteEntry> {
+    let route = &topic.routes[route_index];
     let compiled_filter = match route.filter_expr.as_deref() {
         Some(filter_expr) => match parse_where_clause(filter_expr) {
             Ok(filter) => Some(Arc::new(filter)),
@@ -175,7 +173,7 @@ fn build_route_entry(
                 log::warn!(
                     "Skipping topic route {} -> {} ON {:?} because filter {:?} could not be \
                      parsed at cache load: {}",
-                    topic_id.as_str(),
+                    topic.topic_id.as_str(),
                     route.table_id,
                     route.op,
                     filter_expr,
@@ -188,9 +186,8 @@ fn build_route_entry(
     };
 
     Some(RouteEntry {
-        topic_id: topic_id.clone(),
-        topic_partitions,
-        route: route.clone(),
+        topic: Arc::clone(topic),
+        route_index,
         compiled_filter,
     })
 }

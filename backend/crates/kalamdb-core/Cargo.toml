@@ -111,6 +111,7 @@ traceability = [
     "kalamdb-commons/traceability",
     "kalamdb-filestore/traceability",
     "kalamdb-observability/traceability",
+    "kalamdb-raft/traceability",
     "kalamdb-store/traceability",
     "kalamdb-tables/traceability",
 ]

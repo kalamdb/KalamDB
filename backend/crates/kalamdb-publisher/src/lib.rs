@@ -3,7 +3,7 @@
 //! This crate provides the core topic publishing functionality:
 //! - Route matching: mapping table changes to topic subscriptions
 //! - Payload extraction: serializing row data per route's PayloadMode
-//! - Offset allocation: atomic monotonic offset counters per topic-partition
+//! - Offset allocation: monotonic per-partition counters inside `PartitionRuntime`
 //! - Message persistence: writing TopicMessages to RocksDB via TopicMessageStore
 //! - Consumer offset tracking: managing consumer group committed offsets
 //!
@@ -21,7 +21,7 @@
 
 mod keys;
 mod models;
-mod offset;
+mod partition;
 mod payload;
 mod routing;
 mod service;

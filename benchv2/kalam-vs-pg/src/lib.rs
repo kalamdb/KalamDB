@@ -30,6 +30,10 @@ pub const LATENCY_READS: i64 = 1_000_000;
 /// Offset so latency-phase ids do not collide with the throughput phase.
 pub const LATENCY_ID_OFFSET: i32 = 1_000_000;
 
+fn env_i64(name: &str, default: i64) -> i64 {
+    std::env::var(name).ok().and_then(|value| value.parse().ok()).unwrap_or(default)
+}
+
 pub const KALAMDB_USER: &str = "admin";
 pub const KALAMDB_PASSWORD: &str = "kalamdb123";
 pub const KALAMDB_NAMESPACE: &str = "bench";
@@ -292,22 +296,26 @@ where
     FR: Fn(i32) -> ReadFut + Send + Sync + 'static,
     ReadFut: Future<Output = anyhow::Result<()>> + Send + 'static,
 {
+    let throughput_n = env_i64("KALAM_VS_PG_N", N);
+    let latency_inserts = env_i64("KALAM_VS_PG_LATENCY_INSERTS", LATENCY_INSERTS);
+    let latency_reads = env_i64("KALAM_VS_PG_READS", LATENCY_READS);
+
     let insert = Arc::new(insert);
     let read = Arc::new(read);
 
     let insert_fn = insert.clone();
-    let insert_wall = run_insert_phase(N, move |id| insert_fn(id)).await?;
-    println!("Inserted {N} rows in {insert_wall:?}");
+    let insert_wall = run_insert_phase(throughput_n, move |id| insert_fn(id)).await?;
+    println!("Inserted {throughput_n} rows in {insert_wall:?}");
 
     let insert_fn = insert;
     let (insert_latency_wall, insert_latencies) =
-        run_latency_insert_phase(LATENCY_INSERTS, move |id| insert_fn(id)).await?;
-    println!("Inserted {LATENCY_INSERTS} rows in {insert_latency_wall:?}");
+        run_latency_insert_phase(latency_inserts, move |id| insert_fn(id)).await?;
+    println!("Inserted {latency_inserts} rows in {insert_latency_wall:?}");
     print_latencies(insert_latencies);
 
     let (read_wall, read_latencies) =
-        run_latency_read_phase(LATENCY_INSERTS, LATENCY_READS, move |id| read(id)).await?;
-    println!("Read {LATENCY_READS} rows in {read_wall:?}");
+        run_latency_read_phase(latency_inserts, latency_reads, move |id| read(id)).await?;
+    println!("Read {latency_reads} rows in {read_wall:?}");
     print_latencies(read_latencies);
     Ok(())
 }

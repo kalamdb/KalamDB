@@ -233,11 +233,11 @@ impl RaftApplier {
     ) -> Result<DataResponse, ApplierError> {
         let app_ctx = self.executor().app_context();
 
-        app_ctx
-            .executor()
-            .execute_shared_data(cmd)
-            .await
-            .map_err(|e| ApplierError::Raft(e.to_string()))
+        kalamdb_observability::kdb_await_in_info_span!(
+            app_ctx.executor().execute_shared_data(cmd),
+            "raft.shared_data"
+        )
+        .map_err(|e| ApplierError::Raft(e.to_string()))
     }
 
     fn transaction_group_id(
@@ -415,8 +415,10 @@ impl UnifiedApplier for RaftApplier {
         actor_user_id: Option<UserId>,
         rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError> {
-        let (rows, encoded_fields) =
-            super::ordinal_dml::encode_insert_rows(self.executor().app_context(), &table_id, rows);
+        let (rows, encoded_fields) = {
+            let _encode_span = kalamdb_observability::kdb_info_span_entered!("raft.encode_insert");
+            super::ordinal_dml::encode_insert_rows(self.executor().app_context(), &table_id, rows)
+        };
         let raft_cmd = SharedDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,

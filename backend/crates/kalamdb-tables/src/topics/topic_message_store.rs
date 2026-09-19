@@ -51,46 +51,6 @@ impl TopicMessageStore {
         self.retention_partition.clone()
     }
 
-    /// Publish a message to a topic partition, returning the assigned offset
-    ///
-    /// This method:
-    /// 1. Gets the next offset from counter
-    /// 2. Creates the message with assigned offset
-    /// 3. Stores the message
-    ///
-    /// Note: Offset management should be coordinated externally
-    pub fn publish(
-        &self,
-        topic_id: &TopicId,
-        partition_id: u32,
-        offset: u64,
-        payload: Vec<u8>,
-        key: Option<String>,
-        timestamp_ms: i64,
-    ) -> kalamdb_store::storage_trait::Result<()> {
-        let payload_bytes = payload.len();
-        let span = tracing::debug_span!(
-            "topic.store_publish",
-            topic_name = topic_id.as_str(),
-            partition_id = partition_id,
-            offset = offset,
-            payload_bytes = payload_bytes,
-            has_key = key.is_some()
-        );
-        let _span_guard = span.entered();
-        let message = TopicMessage::new(
-            topic_id.clone(),
-            partition_id,
-            offset,
-            payload,
-            key,
-            timestamp_ms,
-            Default::default(),
-        );
-        tracing::trace!("Persisting topic message");
-        self.put_message_with_retention_index(&message).map(|_| ())
-    }
-
     /// Store a message and its retention index entry in one atomic backend batch.
     pub fn put_message_with_retention_index(
         &self,
@@ -346,6 +306,27 @@ mod tests {
         TopicMessageStore::new(backend, partition)
     }
 
+    fn put_test_message(
+        store: &TopicMessageStore,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        payload: Vec<u8>,
+        key: Option<String>,
+        timestamp_ms: i64,
+    ) {
+        let message = TopicMessage::new(
+            topic_id.clone(),
+            partition_id,
+            offset,
+            payload,
+            key,
+            timestamp_ms,
+            Default::default(),
+        );
+        store.put_message_with_retention_index(&message).unwrap();
+    }
+
     #[test]
     fn test_publish_and_fetch() {
         let store = setup_test_store();
@@ -353,19 +334,16 @@ mod tests {
         let partition_id = 0;
 
         // Publish messages
-        store
-            .publish(&topic_id, partition_id, 0, b"message1".to_vec(), None, 1000)
-            .unwrap();
-        store
-            .publish(
-                &topic_id,
-                partition_id,
-                1,
-                b"message2".to_vec(),
-                Some("key1".to_string()),
-                2000,
-            )
-            .unwrap();
+        put_test_message(&store, &topic_id, partition_id, 0, b"message1".to_vec(), None, 1000);
+        put_test_message(
+            &store,
+            &topic_id,
+            partition_id,
+            1,
+            b"message2".to_vec(),
+            Some("key1".to_string()),
+            2000,
+        );
 
         // Fetch messages
         let messages = store.fetch_messages(&topic_id, partition_id, 0, 10).unwrap();
@@ -381,7 +359,7 @@ mod tests {
         let topic_id = TopicId::from("test_topic");
         let partition_id = 0;
 
-        store.publish(&topic_id, partition_id, 0, b"test".to_vec(), None, 1000).unwrap();
+        put_test_message(&store, &topic_id, partition_id, 0, b"test".to_vec(), None, 1000);
 
         let msg_id = TopicMessageId::new(topic_id.clone(), partition_id, 0);
         let message = store.get(&msg_id).unwrap();
@@ -400,10 +378,10 @@ mod tests {
         let topic_id = TopicId::from("test_topic");
 
         // Publish to partition 0
-        store.publish(&topic_id, 0, 0, b"p0_msg1".to_vec(), None, 1000).unwrap();
+        put_test_message(&store, &topic_id, 0, 0, b"p0_msg1".to_vec(), None, 1000);
 
         // Publish to partition 1
-        store.publish(&topic_id, 1, 0, b"p1_msg1".to_vec(), None, 2000).unwrap();
+        put_test_message(&store, &topic_id, 1, 0, b"p1_msg1".to_vec(), None, 2000);
 
         // Each partition has independent messages
         let messages0 = store.fetch_messages(&topic_id, 0, 0, 10).unwrap();
@@ -423,16 +401,15 @@ mod tests {
 
         // Publish 5 messages
         for i in 0..5 {
-            store
-                .publish(
-                    &topic_id,
-                    partition_id,
-                    i,
-                    format!("message{}", i).into_bytes(),
-                    None,
-                    (1000 + i * 100) as i64,
-                )
-                .unwrap();
+            put_test_message(
+                &store,
+                &topic_id,
+                partition_id,
+                i,
+                format!("message{}", i).into_bytes(),
+                None,
+                (1000 + i * 100) as i64,
+            );
         }
 
         // Fetch with limit
@@ -464,7 +441,7 @@ mod tests {
 
         let topic_id = TopicId::from("scan_topic");
         for i in 0..5 {
-            store.publish(&topic_id, 0, i, vec![i as u8], None, 1000 + i as i64).unwrap();
+            put_test_message(&store, &topic_id, 0, i, vec![i as u8], None, 1000 + i as i64);
         }
 
         let _ = store.fetch_messages(&topic_id, 0, 2, 3).unwrap();
@@ -481,9 +458,9 @@ mod tests {
         let store = setup_test_store();
         let topic_id = TopicId::from("retention_topic");
 
-        store.publish(&topic_id, 0, 0, b"newer".to_vec(), None, 3000).unwrap();
-        store.publish(&topic_id, 0, 1, b"older".to_vec(), None, 1000).unwrap();
-        store.publish(&topic_id, 0, 2, b"middle".to_vec(), None, 2000).unwrap();
+        put_test_message(&store, &topic_id, 0, 0, b"newer".to_vec(), None, 3000);
+        put_test_message(&store, &topic_id, 0, 1, b"older".to_vec(), None, 1000);
+        put_test_message(&store, &topic_id, 0, 2, b"middle".to_vec(), None, 2000);
 
         let retention_entries = store.retention_entries_for_partition(&topic_id, 0, 10).unwrap();
         let offsets: Vec<u64> = retention_entries.iter().map(|(_, entry)| entry.offset).collect();
@@ -496,8 +473,8 @@ mod tests {
         let store = setup_test_store();
         let topic_id = TopicId::from("delete_topic");
 
-        store.publish(&topic_id, 0, 0, b"old".to_vec(), None, 1000).unwrap();
-        store.publish(&topic_id, 0, 1, b"new".to_vec(), None, 2000).unwrap();
+        put_test_message(&store, &topic_id, 0, 0, b"old".to_vec(), None, 1000);
+        put_test_message(&store, &topic_id, 0, 1, b"new".to_vec(), None, 2000);
 
         let old_entries = store.retention_entries_before(&topic_id, 0, 1500, 10).unwrap();
         let stats = store.delete_retention_entries(old_entries).unwrap();

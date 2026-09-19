@@ -10,6 +10,7 @@
 //! - [`KalamTypeConfig`]: OpenRaft type configuration for KalamDB
 //! - [`KalamNode`]: Node information for cluster membership
 
+mod log_io;
 mod raft_store;
 mod types;
 

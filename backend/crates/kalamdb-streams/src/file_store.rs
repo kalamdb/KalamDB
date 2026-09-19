@@ -25,11 +25,11 @@ use crate::{
     utils::{cleanup_empty_dir, visit_dirs},
 };
 
-/// Write buffer capacity per segment file handle (64 KB).
+/// Write buffer capacity per segment file handle (128 KB).
 ///
 /// This keeps per-active-segment memory bounded while still amortising small
 /// append records into fewer `write()` syscalls.
-const SEGMENT_BUF_CAPACITY: usize = 64 * 1024;
+const SEGMENT_BUF_CAPACITY: usize = 128 * 1024;
 
 /// Maximum cached segment writers per stream table.
 ///
@@ -67,7 +67,7 @@ struct LogFileEntry {
 ///
 /// * **Cached file handles** — open segment files are kept in a sharded `DashMap`, eliminating open
 ///   / close syscall overhead per write.
-/// * **Bounded write buffers** — each segment has its own 64 KB `BufWriter`, reducing flush
+/// * **Bounded write buffers** — each segment has its own 128 KB `BufWriter`, reducing flush
 ///   frequency while enabling per-user parallelism.
 /// * **Bounded cache** — old segment writers are flushed and closed when too many users/windows are
 ///   active at once.
@@ -156,12 +156,8 @@ impl FileStreamLogStore {
         let ts = row_id.seq().timestamp_millis();
         let window_start = self.window_start_ms(ts);
         let path = self.log_path(user_id, window_start);
-        self.append_record(
-            &path,
-            StreamLogRecord::Delete {
-                row_id: row_id.clone(),
-            },
-        )
+        let encoded = self.encode_delete_frame(row_id)?;
+        self.append_encoded_bytes(&path, &encoded, 1)
     }
 
     pub fn append_row(
@@ -175,13 +171,41 @@ impl FileStreamLogStore {
         let ts = row_id.seq().timestamp_millis();
         let window_start = self.window_start_ms(ts);
         let path = self.log_path(user_id, window_start);
-        self.append_record(
-            &path,
-            StreamLogRecord::Put {
-                row_id: row_id.clone(),
-                row:    row.clone(),
-            },
-        )
+        let encoded = self.encode_put_frame(row_id, row)?;
+        self.append_encoded_bytes(&path, &encoded, 1)
+    }
+
+    /// Append many puts, encoding frames outside the segment lock.
+    pub fn append_puts(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        rows: &[(StreamTableRowId, StreamTableRow)],
+    ) -> Result<()> {
+        self.ensure_table(table_id)?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let mut by_segment: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+        for (i, (row_id, _)) in rows.iter().enumerate() {
+            let ts = row_id.seq().timestamp_millis();
+            let window_start = self.window_start_ms(ts);
+            let path = self.log_path(user_id, window_start);
+            by_segment.entry(path).or_default().push(i);
+        }
+
+        for (path, mut indices) in by_segment {
+            indices.sort_by_key(|&i| rows[i].0.seq().as_i64());
+            let mut encoded = Vec::new();
+            for &i in &indices {
+                let frame = self.encode_put_frame(&rows[i].0, &rows[i].1)?;
+                encoded.extend_from_slice(&frame);
+            }
+            self.append_encoded_bytes(&path, &encoded, indices.len() as u32)?;
+        }
+
+        Ok(())
     }
 
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
@@ -441,21 +465,24 @@ impl FileStreamLogStore {
         Ok(segment)
     }
 
-    fn persist_record(&self, record: &StreamLogRecord) -> Result<PersistedStreamLogRecord> {
-        match record {
-            StreamLogRecord::Put { row_id, row } => {
-                let payload = kalamdb_serialization::encode_stream_row(row, &self.schema)
-                    .map_err(|e| StreamLogError::Serialization(e.to_string()))?
-                    .into_bytes();
-                Ok(PersistedStreamLogRecord::Put {
-                    row_id: row_id.clone(),
-                    payload,
-                })
-            },
-            StreamLogRecord::Delete { row_id } => Ok(PersistedStreamLogRecord::Delete {
-                row_id: row_id.clone(),
-            }),
-        }
+    fn encode_put_frame(&self, row_id: &StreamTableRowId, row: &StreamTableRow) -> Result<Vec<u8>> {
+        let payload = kalamdb_serialization::encode_stream_row(row, &self.schema)
+            .map_err(|e| StreamLogError::Serialization(e.to_string()))?
+            .into_bytes();
+        let persisted = PersistedStreamLogRecord::Put {
+            row_id: row_id.clone(),
+            payload,
+        };
+        kalamdb_serialization::encode_stream_frame(&persisted)
+            .map_err(|e| StreamLogError::Serialization(e.to_string()))
+    }
+
+    fn encode_delete_frame(&self, row_id: &StreamTableRowId) -> Result<Vec<u8>> {
+        let persisted = PersistedStreamLogRecord::Delete {
+            row_id: row_id.clone(),
+        };
+        kalamdb_serialization::encode_stream_frame(&persisted)
+            .map_err(|e| StreamLogError::Serialization(e.to_string()))
     }
 
     fn hydrate_record(&self, persisted: PersistedStreamLogRecord) -> Result<StreamLogRecord> {
@@ -474,32 +501,17 @@ impl FileStreamLogStore {
         }
     }
 
-    /// Serialise `record` and write the length-prefixed frame to `writer`.
-    #[inline]
-    fn write_record_bytes(
-        &self,
-        writer: &mut BufWriter<File>,
-        record: &StreamLogRecord,
-    ) -> Result<()> {
-        let persisted = self.persist_record(record)?;
-        let payload = kalamdb_serialization::encode_stream(&persisted)
-            .map_err(|e| StreamLogError::Serialization(e.to_string()))?
-            .into_bytes();
-        let len = payload.len() as u32;
-        writer
-            .write_all(&len.to_le_bytes())
-            .map_err(|e| StreamLogError::Io(e.to_string()))?;
-        writer.write_all(&payload).map_err(|e| StreamLogError::Io(e.to_string()))?;
-        Ok(())
-    }
-
-    fn append_record(&self, path: &Path, record: StreamLogRecord) -> Result<()> {
+    /// Write already-encoded length-prefixed frames under the segment lock.
+    fn append_encoded_bytes(&self, path: &Path, encoded: &[u8], record_count: u32) -> Result<()> {
+        if encoded.is_empty() || record_count == 0 {
+            return Ok(());
+        }
         let seg = self.get_or_create_writer(path)?;
         let mut guard = seg
             .lock()
             .map_err(|e| StreamLogError::Io(format!("segment lock poisoned: {}", e)))?;
-        self.write_record_bytes(&mut guard.writer, &record)?;
-        guard.record_count += 1;
+        guard.writer.write_all(encoded).map_err(|e| StreamLogError::Io(e.to_string()))?;
+        guard.record_count += record_count;
         guard.last_write = Instant::now();
         Ok(())
     }
@@ -754,30 +766,9 @@ impl StreamLogStore for FileStreamLogStore {
         user_id: &UserId,
         rows: HashMap<StreamTableRowId, StreamTableRow>,
     ) -> Result<()> {
-        self.ensure_table(table_id)?;
-
-        // Group records by target segment so each file handle is locked once.
-        let mut by_segment: HashMap<PathBuf, Vec<StreamLogRecord>> = HashMap::new();
-        for (row_id, row) in rows {
-            let ts = row_id.seq().timestamp_millis();
-            let window_start = self.window_start_ms(ts);
-            let path = self.log_path(user_id, window_start);
-            by_segment.entry(path).or_default().push(StreamLogRecord::Put { row_id, row });
-        }
-
-        for (path, records) in by_segment {
-            let seg = self.get_or_create_writer(&path)?;
-            let mut guard = seg
-                .lock()
-                .map_err(|e| StreamLogError::Io(format!("segment lock poisoned: {}", e)))?;
-            for record in &records {
-                self.write_record_bytes(&mut guard.writer, record)?;
-            }
-            guard.record_count += records.len() as u32;
-            guard.last_write = Instant::now();
-        }
-
-        Ok(())
+        let mut ordered: Vec<(StreamTableRowId, StreamTableRow)> = rows.into_iter().collect();
+        ordered.sort_by_key(|(row_id, _)| row_id.seq().as_i64());
+        self.append_puts(table_id, user_id, &ordered)
     }
 
     fn read_with_limit(
@@ -1108,6 +1099,46 @@ mod tests {
         // Data should still be readable from disk.
         let read = store.read_with_limit(&table_id, &user_id, 10).unwrap();
         assert_eq!(read.len(), 1);
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn test_append_puts_roundtrips_in_seq_order() {
+        let base_dir = temp_base_dir("kalamdb_streams_append_puts");
+        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let store = create_store(
+            base_dir.clone(),
+            table_id.clone(),
+            ShardRouter::new(4, 1),
+            StreamTimeBucket::Hour,
+        );
+
+        let user_id = UserId::new("user-batch");
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let seqs = [
+            now_ms.saturating_sub(2_000),
+            now_ms.saturating_sub(1_000),
+            now_ms,
+        ];
+        let rows: Vec<(StreamTableRowId, StreamTableRow)> = seqs
+            .into_iter()
+            .map(|ts| {
+                let seq = seq_from_timestamp(ts);
+                let row_id = StreamTableRowId::new(user_id.clone(), seq);
+                let row = build_row(&user_id, seq);
+                (row_id, row)
+            })
+            .collect();
+
+        store.append_puts(&table_id, &user_id, &rows).unwrap();
+        store.flush_all().unwrap();
+
+        let read = store.read_in_time_range(&table_id, &user_id, 0, u64::MAX, 10).unwrap();
+        assert_eq!(read.len(), 3);
+        for (row_id, row) in &rows {
+            assert_eq!(read.get(row_id).expect("row present"), row);
+        }
 
         let _ = fs::remove_dir_all(&base_dir);
     }

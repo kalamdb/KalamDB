@@ -42,13 +42,8 @@ impl TopicPublisherService {
 
     pub fn clear_cache(&self) {
         self.route_cache.clear();
-        self.offset_allocator.clear();
+        self.partitions.clear();
         self.group_claim_state.clear();
-        self.group_fetch_locks.clear();
-        self.consumer_groups.clear();
-        self.partition_write_locks.clear();
-        self.retained_bytes.clear();
-        self.log_start_offsets.clear();
     }
 
     pub fn clear_topic_data(&self, topic_id: &TopicId) -> Result<(usize, usize)> {
@@ -66,64 +61,9 @@ impl TopicPublisherService {
     }
 
     fn clear_topic_runtime_state(&self, topic_id: &TopicId) {
-        self.offset_allocator.clear_topic(topic_id);
-
-        let claim_keys: Vec<_> = self
-            .group_claim_state
-            .iter()
-            .filter(|entry| entry.key().topic_id == *topic_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-        for key in claim_keys {
-            self.group_claim_state.remove(&key);
-            self.group_fetch_locks.remove(&key);
-        }
-
-        let consumer_keys: Vec<_> = self
-            .consumer_groups
-            .iter()
-            .filter(|entry| entry.key().topic_id == *topic_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-        for key in consumer_keys {
-            self.consumer_groups.remove(&key);
-        }
-
-        let lock_keys: Vec<_> = self
-            .partition_write_locks
-            .iter()
-            .filter(|entry| entry.key().topic_id == *topic_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-        for key in lock_keys {
-            self.partition_write_locks.remove(&key);
-        }
-
-        let retained_keys: Vec<_> = self
-            .retained_bytes
-            .iter()
-            .filter(|entry| entry.key().topic_id == *topic_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-        for key in retained_keys {
-            self.retained_bytes.remove(&key);
-        }
-
-        let log_start_keys: Vec<_> = self
-            .log_start_offsets
-            .iter()
-            .filter(|entry| entry.key().topic_id == *topic_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-        for key in log_start_keys {
-            self.log_start_offsets.remove(&key);
-        }
-
+        self.partitions.retain(|key, _| key.topic_id != *topic_id);
+        self.group_claim_state.retain(|key, _| key.topic_id != *topic_id);
+        shrink_dashmap_if_sparse(&self.partitions);
         shrink_dashmap_if_sparse(&self.group_claim_state);
-        shrink_dashmap_if_sparse(&self.group_fetch_locks);
-        shrink_dashmap_if_sparse(&self.consumer_groups);
-        shrink_dashmap_if_sparse(&self.partition_write_locks);
-        shrink_dashmap_if_sparse(&self.retained_bytes);
-        shrink_dashmap_if_sparse(&self.log_start_offsets);
     }
 }

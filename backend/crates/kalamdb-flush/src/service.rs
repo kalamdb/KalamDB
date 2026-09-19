@@ -383,10 +383,21 @@ impl ManifestService {
                 );
             },
             Ok(None) => {
-                // If no cache entry exists yet, create one with PendingWrite state
-                // This shouldn't happen in normal flow since ensure_manifest_ready is called first
-                warn!(
-                    "mark_pending_write called but no cache entry exists: table={}, user={:?}",
+                // User-scoped manifests are not kept in the in-process cache, and
+                // coalesced Raft apply buffers RocksDB puts until the apply
+                // commits. `ensure_manifest_ready` may have staged an InSync
+                // entry that `get` cannot see yet, so create PendingWrite here.
+                // The later coalesced put wins over a staged InSync for the same key.
+                let manifest = self.create_manifest(table_id, user_id);
+                self.upsert_cache_entry(
+                    table_id,
+                    user_id,
+                    &manifest,
+                    None,
+                    SyncState::PendingWrite,
+                )?;
+                debug!(
+                    "Created pending_write manifest entry after snapshot miss: table={}, user={:?}",
                     table_id,
                     user_id.map(|u| u.as_str())
                 );
@@ -1884,6 +1895,39 @@ mod tests {
         service.update_after_flush(&table_id, Some(&user_id), &manifest, None).unwrap();
         assert_eq!(service.pending_count().unwrap(), 0);
         assert!(!service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+    }
+
+    #[test]
+    fn mark_pending_write_creates_user_entry_when_coalesced_stage_is_invisible() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let backend = Arc::new(InMemoryBackend::new());
+            let service =
+                create_test_service_with_backend(Arc::clone(&backend) as Arc<dyn StorageBackend>);
+            let table_id = build_table_id("ns1", "tbl1");
+            let user_id = UserId::from("u_123");
+            let manifest = create_test_manifest(&table_id, Some(&user_id));
+
+            let ((), ops) = kalamdb_store::with_write_coalesce(async {
+                service.stage_before_flush(&table_id, Some(&user_id), &manifest).unwrap();
+                service.mark_pending_write(&table_id, Some(&user_id)).unwrap();
+            })
+            .await;
+
+            assert!(
+                !service.has_pending_writes(&table_id, Some(&user_id)).unwrap(),
+                "coalesced pending index must not be visible until commit"
+            );
+
+            backend.batch(ops).unwrap();
+            assert!(
+                service.has_pending_writes(&table_id, Some(&user_id)).unwrap(),
+                "user-scoped first write must land in the pending index after coalesced commit"
+            );
+        });
     }
 
     #[test]

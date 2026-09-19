@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         Arc, OnceLock,
     },
 };
@@ -71,10 +71,8 @@ pub struct TableEntry {
 /// Cached table data containing all metadata and schema information
 ///
 /// This struct consolidates data previously split between separate caches
-/// to eliminate duplication.
-///
-/// **Performance Note**: Moka cache handles LRU eviction automatically based on
-/// access patterns, so we only track timestamps for metrics and debugging.
+/// to eliminate duplication. LRU order lives on the entry itself so the
+/// schema registry does not keep a second DashMap of the same keys.
 pub struct CachedTableData {
     /// Full schema definition with all columns
     pub table: Arc<TableDefinition>,
@@ -101,6 +99,9 @@ pub struct CachedTableData {
     /// **Thread Safety**: first provider read is lock-free after initialization; rare
     /// override/clear paths use a write lock.
     provider: Arc<ProviderSlot>,
+
+    /// Monotonic LRU stamp written by SchemaRegistry on access.
+    last_access: AtomicU64,
 }
 
 impl std::fmt::Debug for CachedTableData {
@@ -124,6 +125,7 @@ impl Clone for CachedTableData {
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns:      self.indexed_columns.clone(),
             provider:             Arc::clone(&self.provider),
+            last_access:          AtomicU64::new(self.last_access()),
         }
     }
 }
@@ -141,7 +143,16 @@ impl CachedTableData {
             bloom_filter_columns,
             indexed_columns,
             provider: Arc::new(ProviderSlot::new()),
+            last_access: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn touch(&self, ts: u64) {
+        self.last_access.store(ts, Ordering::Relaxed);
+    }
+
+    pub(crate) fn last_access(&self) -> u64 {
+        self.last_access.load(Ordering::Relaxed)
     }
 
     /// Create cached table data from a table definition with full initialization

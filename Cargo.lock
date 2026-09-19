@@ -5331,6 +5331,7 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-core",
  "kalamdb-dialect",
+ "kalamdb-observability",
  "kalamdb-system",
  "log",
  "ntest",
@@ -5339,6 +5340,7 @@ dependencies = [
  "sqlparser",
  "tokio",
  "tokio-postgres",
+ "tracing",
  "uuid",
 ]
 
@@ -5405,6 +5407,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-prost",
+ "tracing",
 ]
 
 [[package]]

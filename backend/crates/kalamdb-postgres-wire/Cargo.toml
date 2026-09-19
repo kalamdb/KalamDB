@@ -22,7 +22,9 @@ kalamdb-auth = { path = "../kalamdb-auth", default-features = false }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
+kalamdb-observability = { path = "../kalamdb-observability", default-features = false }
 log = { workspace = true }
+tracing = { workspace = true }
 sqlparser = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
@@ -34,6 +36,9 @@ kalamdb-system = { path = "../kalamdb-system" }
 ntest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-postgres = { workspace = true }
+
+[features]
+traceability = ["kalamdb-observability/traceability"]
 
 [lib]
 name = "kalamdb_postgres_wire"

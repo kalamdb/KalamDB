@@ -66,6 +66,9 @@ impl StorageBackend for InMemoryBackend {
         key: &[u8],
         value: &[u8],
     ) -> crate::storage_trait::Result<()> {
+        if crate::write_coalesce::buffer_put(partition, key, value) {
+            return Ok(());
+        }
         let mut data = self.data.write().unwrap();
         let map = data.entry(partition.name().to_string()).or_default();
         map.insert(key.to_vec(), value.to_vec());
@@ -73,6 +76,9 @@ impl StorageBackend for InMemoryBackend {
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> crate::storage_trait::Result<()> {
+        if crate::write_coalesce::buffer_delete(partition, key) {
+            return Ok(());
+        }
         let mut data = self.data.write().unwrap();
         if let Some(map) = data.get_mut(partition.name()) {
             map.remove(key);
@@ -81,6 +87,9 @@ impl StorageBackend for InMemoryBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> crate::storage_trait::Result<()> {
+        let Some(operations) = crate::write_coalesce::buffer_operations(operations) else {
+            return Ok(());
+        };
         for op in operations {
             match op {
                 Operation::Put {

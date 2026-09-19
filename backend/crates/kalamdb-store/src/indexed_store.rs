@@ -980,6 +980,7 @@ where
         index_idx: usize,
         prefix: &[u8],
     ) -> Result<Option<(K, V)>> {
+        let _span = kalamdb_observability::kdb_info_span_entered!("store.pk_get");
         let index_partition = self
             .index_partitions
             .get(index_idx)
@@ -1014,6 +1015,7 @@ where
         prefix: &[u8],
         ordinals: &[usize],
     ) -> Result<Option<(K, V)>> {
+        let _span = kalamdb_observability::kdb_info_span_entered!("store.pk_get");
         let index_partition = self
             .index_partitions
             .get(index_idx)
