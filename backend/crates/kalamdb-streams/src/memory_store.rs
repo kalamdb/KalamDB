@@ -130,6 +130,47 @@ impl MemoryStreamLogStore {
         Ok(())
     }
 
+    pub fn append_puts(
+        &self,
+        table_id: &TableId,
+        _user_id: &UserId,
+        rows: &[(StreamTableRowId, StreamTableRow)],
+    ) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        self.ensure_table(table_id)?;
+        let mut state = self
+            .state
+            .write()
+            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
+        let mut affected_users = HashSet::new();
+
+        for (row_id, row) in rows {
+            let user_id = row_id.user_id().clone();
+            let key = self.make_key(row_id);
+            let was_new = state
+                .data
+                .insert(
+                    key,
+                    StreamLogRecord::Put {
+                        row_id: row_id.clone(),
+                        row:    row.clone(),
+                    },
+                )
+                .is_none();
+            if was_new {
+                *state.per_user_entry_counts.entry(user_id.clone()).or_default() += 1;
+            }
+            affected_users.insert(user_id);
+        }
+
+        for user_id in affected_users {
+            self.evict_excess_user_rows(&mut state, &user_id);
+        }
+        Ok(())
+    }
+
     /// Delete old logs before a given timestamp and return count of deleted entries.
     pub fn delete_old_logs_with_count(&self, before_time: u64) -> Result<usize> {
         let mut state = self
@@ -357,30 +398,11 @@ impl StreamLogStore for MemoryStreamLogStore {
     fn append_rows(
         &self,
         table_id: &TableId,
-        _user_id: &UserId,
+        user_id: &UserId,
         rows: HashMap<StreamTableRowId, StreamTableRow>,
     ) -> Result<()> {
-        self.ensure_table(table_id)?;
-        let mut state = self
-            .state
-            .write()
-            .map_err(|e| StreamLogError::Io(format!("Failed to acquire write lock: {}", e)))?;
-        let mut affected_users = HashSet::new();
-
-        for (row_id, row) in rows {
-            let user_id = row_id.user_id().clone();
-            let key = self.make_key(&row_id);
-            let was_new = state.data.insert(key, StreamLogRecord::Put { row_id, row }).is_none();
-            if was_new {
-                *state.per_user_entry_counts.entry(user_id.clone()).or_default() += 1;
-            }
-            affected_users.insert(user_id);
-        }
-
-        for user_id in affected_users {
-            self.evict_excess_user_rows(&mut state, &user_id);
-        }
-        Ok(())
+        let ordered: Vec<(StreamTableRowId, StreamTableRow)> = rows.into_iter().collect();
+        self.append_puts(table_id, user_id, &ordered)
     }
 
     fn read_with_limit(

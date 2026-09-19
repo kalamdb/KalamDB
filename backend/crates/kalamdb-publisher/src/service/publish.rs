@@ -1,58 +1,32 @@
 use super::*;
 
 impl TopicPublisherService {
-    pub(super) fn add_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {
-        if bytes == 0 {
-            return;
-        }
-        let key = TopicPartitionKey::new(topic_id, partition_id);
-        self.retained_bytes
-            .entry(key)
-            .and_modify(|current| *current = current.saturating_add(bytes))
-            .or_insert(bytes);
-    }
-
-    pub(super) fn subtract_retained_bytes(
-        &self,
-        topic_id: &TopicId,
-        partition_id: u32,
-        bytes: u64,
-    ) {
-        if bytes == 0 {
-            return;
-        }
-        let key = TopicPartitionKey::new(topic_id, partition_id);
-        self.retained_bytes
-            .entry(key)
-            .and_modify(|current| *current = current.saturating_sub(bytes))
-            .or_insert(0);
-    }
-
-    pub(super) fn set_retained_bytes(&self, topic_id: &TopicId, partition_id: u32, bytes: u64) {
-        self.retained_bytes
-            .insert(TopicPartitionKey::new(topic_id, partition_id), bytes);
-    }
-
     pub(super) fn retained_bytes_for_partition(
         &self,
         topic_id: &TopicId,
         partition_id: u32,
     ) -> Result<u64> {
-        let key = TopicPartitionKey::new(topic_id, partition_id);
-        if let Some(bytes) = self.retained_bytes.get(&key) {
-            return Ok(*bytes);
+        let partition = self.partition_runtime(topic_id, partition_id);
+        let mut write = partition.lock_write();
+        self.load_retained_bytes(&mut write, topic_id, partition_id)
+    }
+
+    pub(super) fn load_retained_bytes(
+        &self,
+        write: &mut PartitionWriteState,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> Result<u64> {
+        if let Some(bytes) = write.retained_bytes() {
+            return Ok(bytes);
         }
 
         let bytes = self
             .message_store
             .retained_bytes_for_partition(topic_id, partition_id)
             .map_err(|e| CommonError::Internal(format!("Failed to read retained bytes: {}", e)))?;
-        self.retained_bytes.insert(key, bytes);
+        write.set_retained_bytes(bytes);
         Ok(bytes)
-    }
-
-    pub(super) fn register_consumer_group(&self, topic_id: &TopicId, group_id: &ConsumerGroupId) {
-        self.consumer_groups.insert(ConsumerGroupKey::new(topic_id, group_id), ());
     }
 
     pub fn publish_message(
@@ -77,6 +51,8 @@ impl TopicPublisherService {
             return Ok(0);
         }
         let primary_key_columns = self.primary_key_columns_for(table_id)?;
+        let prepared = Self::prepare_row(row, table_id, &matching)?;
+        let key = prepared.extract_key(&primary_key_columns)?;
 
         let mut total_published = 0;
 
@@ -87,33 +63,32 @@ impl TopicPublisherService {
 
             let topic_span = tracing::debug_span!(
                 "publish_to_topic",
-                topic_name = entry.topic_id.as_str(),
-                topic_partitions = entry.topic_partitions,
-                operation = ?entry.route.op
+                topic_name = entry.topic_id().as_str(),
+                topic_partitions = entry.topic_partitions(),
+                operation = ?entry.route().op
             );
             let _topic_span_guard = topic_span.entered();
 
-            let payload_bytes = payload::extract_payload(&entry.route, row, table_id)?;
-            let key = payload::extract_key(row, &primary_key_columns)?;
+            let payload_bytes = prepared.extract_payload(entry.route(), table_id)?;
 
             let partition_id = if let Some(ref key) = key {
-                (payload::hash_key(key) % entry.topic_partitions as u64) as u32
+                (payload::hash_key(key) % entry.topic_partitions() as u64) as u32
             } else {
-                (payload::hash_row(row) % entry.topic_partitions as u64) as u32
+                (prepared.hash_row() % entry.topic_partitions() as u64) as u32
             };
 
-            let lock = self.partition_write_lock(&entry.topic_id, partition_id);
-            let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            let partition = self.partition_runtime(entry.topic_id(), partition_id);
+            let mut write = partition.lock_write();
 
-            let offset = self.offset_allocator.next_offset(&entry.topic_id, partition_id);
+            let offset = write.allocate(1);
 
             let timestamp_ms = chrono::Utc::now().timestamp_millis();
             let message = TopicMessage::new_with_user(
-                entry.topic_id.clone(),
+                entry.topic_id().clone(),
                 partition_id,
                 offset,
                 payload_bytes,
-                key,
+                key.clone(),
                 timestamp_ms,
                 user_id.cloned(),
                 operation.clone(),
@@ -123,16 +98,17 @@ impl TopicPublisherService {
                 self.message_store.put_message_with_retention_index(&message).map_err(|e| {
                     CommonError::Internal(format!("Failed to store topic message: {}", e))
                 })?;
-            self.add_retained_bytes(&entry.topic_id, partition_id, message_bytes);
+            write.add_retained_bytes(message_bytes);
             record_pubsub_messages_published(1, message_bytes);
 
             tracing::debug!(
-                topic_name = entry.topic_id.as_str(),
+                topic_name = entry.topic_id().as_str(),
                 partition_id = partition_id,
                 offset = offset,
                 payload_bytes = message.payload.len(),
                 "Published message to topic"
             );
+            partition.append_to_tail(message);
 
             total_published += 1;
         }
@@ -167,23 +143,10 @@ impl TopicPublisherService {
         }
         let primary_key_columns = self.primary_key_columns_for(table_id)?;
 
-        let needs_full_payload = matching.iter().any(|entry| {
-            matches!(
-                entry.route.payload_mode,
-                kalamdb_commons::models::PayloadMode::Full
-                    | kalamdb_commons::models::PayloadMode::Diff
-            )
-        });
-
-        let prepared: Vec<payload::PreparedRow> = if needs_full_payload {
-            rows.iter()
-                .map(|row| payload::PreparedRow::from_row_with_table(row, table_id))
-                .collect::<Result<Vec<_>>>()?
-        } else {
-            rows.iter()
-                .map(|row| payload::PreparedRow::from_row(row))
-                .collect::<Result<Vec<_>>>()?
-        };
+        let prepared: Vec<payload::PreparedRow> = rows
+            .iter()
+            .map(|row| Self::prepare_row(row, table_id, &matching))
+            .collect::<Result<Vec<_>>>()?;
 
         let prepared_keys: Vec<Option<String>> = prepared
             .iter()
@@ -206,7 +169,7 @@ impl TopicPublisherService {
                     Some(key) => payload::hash_key(key),
                     None => prep.hash_row(),
                 };
-                let partition_id = (partition_hash % entry.topic_partitions as u64) as u32;
+                let partition_id = (partition_hash % entry.topic_partitions() as u64) as u32;
                 partition_groups.entry(partition_id).or_default().push(idx);
             }
 
@@ -221,23 +184,23 @@ impl TopicPublisherService {
                     Vec::with_capacity(row_indices.len());
                 for &row_idx in row_indices {
                     let prep = &prepared[row_idx];
-                    let payload_bytes = prep.extract_payload(&entry.route, table_id)?;
+                    let payload_bytes = prep.extract_payload(entry.route(), table_id)?;
                     let key = prepared_keys[row_idx].clone();
                     pre_encoded.push((payload_bytes, key));
                 }
 
-                let lock = self.partition_write_lock(&entry.topic_id, *partition_id);
-                let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                let partition = self.partition_runtime(entry.topic_id(), *partition_id);
+                let mut write = partition.lock_write();
 
-                let start_offset =
-                    self.offset_allocator.next_n_offsets(&entry.topic_id, *partition_id, count);
+                let start_offset = write.allocate(count);
 
                 let mut raw_entries = Vec::with_capacity(pre_encoded.len());
+                let mut cached_messages = Vec::with_capacity(pre_encoded.len());
                 for (i, (payload_bytes, key)) in pre_encoded.into_iter().enumerate() {
                     let offset = start_offset + i as u64;
 
                     let message = TopicMessage::new_with_user(
-                        entry.topic_id.clone(),
+                        entry.topic_id().clone(),
                         *partition_id,
                         offset,
                         payload_bytes,
@@ -253,13 +216,14 @@ impl TopicPublisherService {
                         CommonError::Internal(format!("Failed to serialize topic message: {}", e))
                     })?;
                     let retention_entry = kalamdb_tables::TopicRetentionIndexEntry::new_raw(
-                        entry.topic_id.clone(),
+                        entry.topic_id().clone(),
                         *partition_id,
                         timestamp_ms,
                         offset,
                         value_encoded.len() as u64,
                     );
                     raw_entries.push((retention_entry, key_encoded, value_encoded));
+                    cached_messages.push(message);
                 }
 
                 let message_bytes =
@@ -269,8 +233,9 @@ impl TopicPublisherService {
                             e
                         ))
                     })?;
-                self.add_retained_bytes(&entry.topic_id, *partition_id, message_bytes);
+                write.add_retained_bytes(message_bytes);
                 record_pubsub_messages_published(row_indices.len() as u64, message_bytes);
+                partition.append_messages_to_tail(cached_messages);
 
                 total_published += row_indices.len();
             }
@@ -291,9 +256,9 @@ impl TopicPublisherService {
             return Err(CommonError::NotFound(format!("topic {topic_id} not found")));
         }
         let partition_id = 0u32;
-        let lock = self.partition_write_lock(topic_id, partition_id);
-        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let offset = self.offset_allocator.next_offset(topic_id, partition_id);
+        let partition = self.partition_runtime(topic_id, partition_id);
+        let mut write = partition.lock_write();
+        let offset = write.allocate(1);
         let timestamp_ms = chrono::Utc::now().timestamp_millis();
         let message = TopicMessage::new_with_user(
             topic_id.clone(),
@@ -309,8 +274,28 @@ impl TopicPublisherService {
             self.message_store.put_message_with_retention_index(&message).map_err(|e| {
                 CommonError::Internal(format!("Failed to store typed topic message: {}", e))
             })?;
-        self.add_retained_bytes(topic_id, partition_id, message_bytes);
+        write.add_retained_bytes(message_bytes);
         record_pubsub_messages_published(1, message_bytes);
+        partition.append_to_tail(message);
         Ok(offset)
+    }
+
+    fn prepare_row(
+        row: &Row,
+        table_id: &TableId,
+        matching: &[RouteEntry],
+    ) -> Result<payload::PreparedRow> {
+        let needs_full_payload = matching.iter().any(|entry| {
+            matches!(
+                entry.route().payload_mode,
+                kalamdb_commons::models::PayloadMode::Full
+                    | kalamdb_commons::models::PayloadMode::Diff
+            )
+        });
+        if needs_full_payload {
+            payload::PreparedRow::from_row_with_table(row, table_id)
+        } else {
+            payload::PreparedRow::from_row(row)
+        }
     }
 }

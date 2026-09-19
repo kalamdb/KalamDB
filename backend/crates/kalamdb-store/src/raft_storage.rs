@@ -258,6 +258,11 @@ impl RaftPartitionStore {
         self.group_id
     }
 
+    /// Shared backend used by table providers and this Raft log store.
+    pub fn backend(&self) -> Arc<dyn StorageBackend> {
+        Arc::clone(&self.backend)
+    }
+
     // ------------------------------------------------------------------------
     // Key construction helpers
     // ------------------------------------------------------------------------

@@ -32,6 +32,7 @@ use datafusion::{
 // Arrow <-> JSON helpers
 use kalamdb_commons::models::rows::Row;
 use kalamdb_commons::{
+    conversions::arrow_json_conversion::coerce_rows,
     ids::{SeqId, StreamTableRowId},
     models::UserId,
     websocket::ChangeNotification,
@@ -47,6 +48,7 @@ use kalamdb_datafusion_sources::{
     },
 };
 use kalamdb_session_datafusion::{check_user_table_write_access, session_error_to_datafusion};
+use tracing::Instrument;
 
 use crate::{
     error::KalamDbError,
@@ -296,47 +298,29 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         user_id: &UserId,
         row_data: Row,
     ) -> Result<StreamTableRowId, KalamDbError> {
-        let _table_id = self.core.table_id();
-
-        // Call SystemColumnsService to generate SeqId
         let sys_cols = self.core.services.system_columns.clone();
         let seq_id = sys_cols.generate_seq_id().map_err(|e| {
             KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
         })?;
 
-        // Create StreamTableRow (no _deleted field for stream tables)
         let user_id = user_id.clone();
         let entity = StreamTableRow {
             user_id: user_id.clone(),
             _seq:    seq_id,
             fields:  row_data,
         };
-
-        // Create composite key
         let row_key = StreamTableRowId::new(user_id.clone(), seq_id);
 
-        // Store in commit log (append-only, no Parquet)
         self.store.put(&row_key, &entity).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to insert stream event: {}", e))
         })?;
 
-        // log::debug!(
-        //     "[StreamProvider] Inserted event: table={} seq={} user={}",
-        //     table_id,
-        //     seq_id.as_i64(),
-        //     user_id.as_str()
-        // );
-
-        // Fire live query + topic notification (INSERT)
         let manager = self.core.services.notification_service.clone();
         let table_id = self.core.table_id().clone();
 
         let has_topics = self.core.has_topic_routes(&table_id);
         let has_live_subs = manager.has_subscribers(Some(&user_id), &table_id);
         if has_topics || has_live_subs {
-            let _table_name = table_id.full_name();
-
-            // Build complete row including system column (_seq)
             let row = Self::build_notification_row(&entity);
 
             if has_topics {
@@ -352,17 +336,111 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
 
             if has_live_subs {
                 let notification = ChangeNotification::insert(table_id.clone(), row);
-                // log::debug!(
-                //     "[StreamProvider] Notifying change: table={} type=INSERT user={} seq={}",
-                //     table_name,
-                //     user_id.as_str(),
-                //     seq_id.as_i64()
-                // );
                 manager.notify_table_change(Some(user_id.clone()), table_id, notification);
             }
         }
 
         Ok(row_key)
+    }
+
+    async fn insert_batch(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+    ) -> Result<Vec<StreamTableRowId>, KalamDbError> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let row_count = rows.len();
+        let span = tracing::debug_span!(
+            "stream.insert_batch",
+            table_id = %self.core.table_id(),
+            user_id = %user_id.as_str(),
+            row_count
+        );
+        async move {
+            let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+            })?;
+            let row_count = coerced_rows.len();
+
+            let sys_cols = self.core.services.system_columns.clone();
+            let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
+            })?;
+
+            let mut entries: Vec<(StreamTableRowId, StreamTableRow)> =
+                Vec::with_capacity(row_count);
+            for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids) {
+                let row_key = StreamTableRowId::new(user_id.clone(), seq_id);
+                entries.push((
+                    row_key,
+                    StreamTableRow {
+                        user_id: user_id.clone(),
+                        _seq:    seq_id,
+                        fields:  row_data,
+                    },
+                ));
+            }
+
+            let store = self.store.clone();
+            let entries = tokio::task::spawn_blocking(
+                move || -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
+                    store.put_batch(&entries).map_err(|e| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to batch insert stream events: {}",
+                            e
+                        ))
+                    })?;
+                    Ok(entries)
+                },
+            )
+            .await
+            .map_err(|e| {
+                KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e))
+            })??;
+
+            let row_keys: Vec<StreamTableRowId> =
+                entries.iter().map(|(row_key, _)| row_key.clone()).collect();
+
+            let manager = self.core.services.notification_service.clone();
+            let table_id = self.core.table_id().clone();
+            let has_topics = self.core.has_topic_routes(&table_id);
+            let has_live_subs = manager.has_subscribers(Some(user_id), &table_id);
+            if has_topics || has_live_subs {
+                let notification_rows: Vec<_> = entries
+                    .iter()
+                    .map(|(_row_key, entity)| Self::build_notification_row(entity))
+                    .collect();
+
+                if has_topics {
+                    self.core
+                        .publish_batch_to_topics(
+                            &table_id,
+                            kalamdb_commons::models::TopicOp::Insert,
+                            &notification_rows,
+                            Some(user_id),
+                        )
+                        .await;
+                }
+
+                if has_live_subs {
+                    for row in notification_rows {
+                        let notification = ChangeNotification::insert(table_id.clone(), row);
+                        manager.notify_table_change(
+                            Some(user_id.clone()),
+                            table_id.clone(),
+                            notification,
+                        );
+                    }
+                }
+            }
+
+            Ok(row_keys)
+        }
+        .instrument(span)
+        .await
     }
 
     async fn update(
@@ -497,15 +575,6 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                 None,
             )
             .await?;
-        // let table_id = self.core.table_id();
-        // log::debug!(
-        //     "[StreamProvider] scan_rows: table={} rows={} user={} ttl={:?}",
-        //     table_id,
-        //     kvs.len(),
-        //     user_id.as_str(),
-        //     self.ttl_seconds
-        // );
-
         let schema = self.schema_ref();
         crate::utils::base::rows_to_arrow_batch(&schema, kvs, projection, |row_values, row| {
             if self.core.schema_ref().field_with_name("user_id").is_ok() {
@@ -527,27 +596,13 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
         _cold_columns: Option<&[String]>,
         _snapshot_commit_seq: Option<u64>,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>, KalamDbError> {
-        let _table_id = self.core.table_id();
-
         // since_seq is exclusive, so start at seq + 1
         let start_seq = since_seq.map(|seq| SeqId::from_i64(seq.as_i64().saturating_add(1)));
 
         let ttl_ms = self.ttl_seconds.map(|s| s * 1000);
         let now_ms = Self::now_millis()?;
-
-        // log::debug!(
-        //     "[StreamProvider] streaming scan: table={} user={} ttl_ms={:?} limit={:?}",
-        //     table_id,
-        //     user_id.as_str(),
-        //     ttl_ms,
-        //     limit
-        // );
-
-        // Use streaming scan with TTL filtering and early termination
-        // This is more efficient than the pagination loop for LIMIT queries
         let scan_limit = limit.unwrap_or(100_000);
 
-        // Use async version to avoid blocking the runtime
         let results = self
             .store
             .scan_user_streaming_async(user_id, start_seq, scan_limit, ttl_ms, now_ms)
@@ -558,13 +613,6 @@ impl BaseTableProvider<StreamTableRowId, StreamTableRow> for StreamTableProvider
                     e
                 ))
             })?;
-
-        // log::debug!(
-        //     "[StreamProvider] streaming scan complete: table={} user={} rows={}",
-        //     table_id,
-        //     user_id.as_str(),
-        //     results.len()
-        // );
 
         // TODO(phase 13.6): Apply filter expression for simple predicates if provided
         Ok(results)

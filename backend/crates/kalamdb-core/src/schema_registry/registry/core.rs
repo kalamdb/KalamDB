@@ -58,9 +58,6 @@ pub struct SchemaRegistry {
     /// Cache for table data (latest versions)
     table_cache: DashMap<TableId, Arc<CachedTableData>>,
 
-    /// LRU access timestamps for table_cache entries.
-    table_cache_access: DashMap<TableId, u64>,
-
     /// Monotonic counter for LRU ordering of table_cache.
     table_cache_counter: AtomicU64,
 
@@ -69,9 +66,6 @@ pub struct SchemaRegistry {
 
     /// Cache for specific table versions (for reading old Parquet files)
     version_cache: DashMap<TableVersionId, Arc<CachedTableData>>,
-
-    /// LRU access timestamps for version_cache entries (separate from hot path)
-    version_cache_access: DashMap<TableVersionId, u64>,
 
     /// Monotonic counter for LRU ordering of version_cache
     version_cache_counter: AtomicU64,
@@ -101,17 +95,12 @@ impl SchemaRegistry {
         Self {
             app_context:             OnceLock::new(),
             table_cache:             DashMap::with_capacity(initial_capacity),
-            table_cache_access:      DashMap::with_capacity(initial_capacity),
             table_cache_counter:     AtomicU64::new(0),
             table_cache_max_entries: std::cmp::max(
                 1,
                 std::cmp::min(max_size, TABLE_CACHE_MAX_ENTRIES),
             ),
             version_cache:           DashMap::with_capacity(std::cmp::min(
-                VERSION_CACHE_MAX_ENTRIES,
-                64,
-            )),
-            version_cache_access:    DashMap::with_capacity(std::cmp::min(
                 VERSION_CACHE_MAX_ENTRIES,
                 64,
             )),
@@ -534,9 +523,12 @@ impl SchemaRegistry {
 
     // ===== Basic Cache Methods =====
 
-    fn touch_table_cache_entry(&self, table_id: &TableId) {
-        let ts = self.table_cache_counter.fetch_add(1, Ordering::Relaxed);
-        self.table_cache_access.insert(table_id.clone(), ts);
+    fn touch_cached(&self, cached: &CachedTableData) {
+        cached.touch(self.table_cache_counter.fetch_add(1, Ordering::Relaxed));
+    }
+
+    fn touch_version_cached(&self, cached: &CachedTableData) {
+        cached.touch(self.version_cache_counter.fetch_add(1, Ordering::Relaxed));
     }
 
     fn maybe_evict_table_cache_lru(&self) {
@@ -551,12 +543,14 @@ impl SchemaRegistry {
         }
 
         let mut entries: Vec<(TableId, u64)> = self
-            .table_cache_access
+            .table_cache
             .iter()
             .filter_map(|entry| {
-                let table_id = entry.key().clone();
-                let cached = self.table_cache.get(&table_id)?;
-                cached.value().get_provider().is_none().then_some((table_id, *entry.value()))
+                let cached = entry.value();
+                cached
+                    .get_provider()
+                    .is_none()
+                    .then(|| (entry.key().clone(), cached.last_access()))
             })
             .collect();
 
@@ -569,7 +563,6 @@ impl SchemaRegistry {
 
         for (table_id, _) in entries.into_iter().take(evict_count) {
             self.table_cache.remove(&table_id);
-            self.table_cache_access.remove(&table_id);
         }
 
         log::debug!(
@@ -580,11 +573,9 @@ impl SchemaRegistry {
     }
 
     fn get_cached(&self, table_id: &TableId) -> Option<Arc<CachedTableData>> {
-        let result = self.table_cache.get(table_id).map(|entry| entry.value().clone());
-        if result.is_some() {
-            self.touch_table_cache_entry(table_id);
-        }
-        result
+        let cached = self.table_cache.get(table_id).map(|entry| Arc::clone(entry.value()))?;
+        self.touch_cached(&cached);
+        Some(cached)
     }
 
     /// Return a cached table entry without attempting storage hydration.
@@ -672,7 +663,7 @@ impl SchemaRegistry {
         // 1. Create CachedTableData
         let cached_data = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
-        self.touch_table_cache_entry(&table_id);
+        self.touch_cached(&cached_data);
 
         // 2. Bind provider into CachedTableData
         match table_def.table_type {
@@ -704,7 +695,6 @@ impl SchemaRegistry {
                         } else {
                             self.table_cache.remove(&table_id);
                         }
-                        self.table_cache_access.remove(&table_id);
                         return Err(error);
                     }
                 },
@@ -715,7 +705,6 @@ impl SchemaRegistry {
                     } else {
                         self.table_cache.remove(&table_id);
                     }
-                    self.table_cache_access.remove(&table_id);
                     return Err(error);
                 },
             },
@@ -953,36 +942,22 @@ impl SchemaRegistry {
 
     /// Insert fully initialized cached table data into the cache
     pub fn insert_cached(&self, table_id: TableId, data: Arc<CachedTableData>) {
-        self.table_cache.insert(table_id.clone(), data);
-        self.touch_table_cache_entry(&table_id);
+        self.touch_cached(&data);
+        self.table_cache.insert(table_id, data);
         self.maybe_evict_table_cache_lru();
     }
 
     /// Invalidate (remove) cached table data
     pub fn invalidate(&self, table_id: &TableId) {
         self.table_cache.remove(table_id);
-        self.table_cache_access.remove(table_id);
         let _ = self.deregister_from_datafusion(table_id);
     }
 
     /// Invalidate all versions of a table (for DROP TABLE)
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
-        // Remove from latest cache
         self.table_cache.remove(table_id);
-        self.table_cache_access.remove(table_id);
 
-        // Remove all versioned entries for this table
-        let keys_to_remove: Vec<TableVersionId> = self
-            .version_cache
-            .iter()
-            .filter(|entry| entry.key().table_id() == table_id)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for key in &keys_to_remove {
-            self.version_cache.remove(key);
-            self.version_cache_access.remove(key);
-        }
+        self.version_cache.retain(|key, _| key.table_id() != table_id);
 
         let _ = self.deregister_from_datafusion(table_id);
     }
@@ -993,22 +968,16 @@ impl SchemaRegistry {
     ///
     /// Used when reading Parquet files written with older schemas.
     pub fn get_version(&self, version_id: &TableVersionId) -> Option<Arc<CachedTableData>> {
-        let result = self.version_cache.get(version_id).map(|entry| entry.value().clone());
-        if result.is_some() {
-            // Update LRU access time
-            let ts = self.version_cache_counter.fetch_add(1, Ordering::Relaxed);
-            self.version_cache_access.insert(version_id.clone(), ts);
-        }
-        result
+        let cached = self.version_cache.get(version_id).map(|entry| Arc::clone(entry.value()))?;
+        self.touch_version_cached(&cached);
+        Some(cached)
     }
 
     /// Insert a specific version into the cache, evicting LRU entries if over limit.
     pub fn insert_version(&self, version_id: TableVersionId, data: Arc<CachedTableData>) {
-        let ts = self.version_cache_counter.fetch_add(1, Ordering::Relaxed);
-        self.version_cache.insert(version_id.clone(), data);
-        self.version_cache_access.insert(version_id, ts);
+        self.touch_version_cached(&data);
+        self.version_cache.insert(version_id, data);
 
-        // Evict oldest entries if over limit
         if self.version_cache.len() > VERSION_CACHE_MAX_ENTRIES {
             self.evict_version_cache_lru();
         }
@@ -1022,21 +991,17 @@ impl SchemaRegistry {
             return;
         }
 
-        // Collect (key, access_ts) pairs
         let mut entries: Vec<(TableVersionId, u64)> = self
-            .version_cache_access
+            .version_cache
             .iter()
-            .map(|e| (e.key().clone(), *e.value()))
+            .map(|e| (e.key().clone(), e.value().last_access()))
             .collect();
 
-        // Sort ascending by access time (oldest first)
         entries.sort_by_key(|(_k, ts)| *ts);
 
-        // Evict the oldest `excess` entries
         let evict_count = std::cmp::min(excess, entries.len());
         for (key, _) in entries.into_iter().take(evict_count) {
             self.version_cache.remove(&key);
-            self.version_cache_access.remove(&key);
         }
 
         log::debug!(
@@ -1054,9 +1019,7 @@ impl SchemaRegistry {
     /// Clear all cached data
     pub fn clear(&self) {
         self.table_cache.clear();
-        self.table_cache_access.clear();
         self.version_cache.clear();
-        self.version_cache_access.clear();
     }
 
     /// Get number of cached entries (latest versions only)

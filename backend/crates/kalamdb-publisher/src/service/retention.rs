@@ -21,8 +21,8 @@ impl TopicPublisherService {
             )));
         }
 
-        let lock = self.partition_write_lock(&topic.topic_id, partition_id);
-        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let partition = self.partition_runtime(&topic.topic_id, partition_id);
+        let mut write = partition.lock_write();
 
         let mut stats = TopicRetentionDeletionStats::default();
 
@@ -41,7 +41,7 @@ impl TopicPublisherService {
             let deleted = self.message_store.delete_retention_entries(entries).map_err(|e| {
                 CommonError::Internal(format!("Failed to delete expired messages: {}", e))
             })?;
-            self.subtract_retained_bytes(&topic.topic_id, partition_id, deleted.bytes_freed);
+            write.subtract_retained_bytes(deleted.bytes_freed);
             stats.messages_deleted += deleted.messages_deleted;
             stats.bytes_freed += deleted.bytes_freed;
         }
@@ -49,7 +49,7 @@ impl TopicPublisherService {
         if let Some(max_bytes) = max_bytes {
             let max_bytes = max_bytes.max(0) as u64;
             let mut retained_bytes =
-                self.retained_bytes_for_partition(&topic.topic_id, partition_id)?;
+                self.load_retained_bytes(&mut write, &topic.topic_id, partition_id)?;
             while retained_bytes > max_bytes && stats.messages_deleted < batch_size {
                 let remaining = batch_size - stats.messages_deleted;
                 let entries = self
@@ -59,7 +59,7 @@ impl TopicPublisherService {
                         CommonError::Internal(format!("Failed to scan byte retention: {}", e))
                     })?;
                 if entries.is_empty() {
-                    self.set_retained_bytes(&topic.topic_id, partition_id, 0);
+                    write.set_retained_bytes(0);
                     break;
                 }
 
@@ -82,7 +82,7 @@ impl TopicPublisherService {
                 }
 
                 retained_bytes = retained_bytes.saturating_sub(deleted.bytes_freed);
-                self.subtract_retained_bytes(&topic.topic_id, partition_id, deleted.bytes_freed);
+                write.subtract_retained_bytes(deleted.bytes_freed);
                 stats.messages_deleted += deleted.messages_deleted;
                 stats.bytes_freed += deleted.bytes_freed;
             }
@@ -94,12 +94,10 @@ impl TopicPublisherService {
                     |e| CommonError::Internal(format!("Failed to fetch earliest offset: {}", e)),
                 )? {
                     Some(offset) => offset,
-                    None => self
-                        .offset_allocator
-                        .peek_next_offset(&topic.topic_id, partition_id)
-                        .unwrap_or(0),
+                    None => write.peek_next().unwrap_or(0),
                 };
-            self.set_log_start_offset(&topic.topic_id, partition_id, log_start);
+            write.set_log_start(log_start);
+            partition.trim_tail_below(log_start);
         }
 
         Ok(stats)
@@ -112,7 +110,7 @@ impl TopicPublisherService {
                 match self.message_store.latest_offset(&topic.topic_id, partition_id) {
                     Ok(Some(last_offset)) => {
                         let next = last_offset + 1;
-                        self.offset_allocator.seed(&topic.topic_id, partition_id, next);
+                        self.seed_next_offset(&topic.topic_id, partition_id, next);
                         log::debug!(
                             "Restored offset counter for topic={} partition={}: next_offset={}",
                             topic.topic_id.as_str(),

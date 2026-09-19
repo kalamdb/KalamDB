@@ -89,7 +89,11 @@ libc = { workspace = true }
 default = []
 mimalloc = ["dep:mimalloc", "kalamdb-core/mimalloc", "kalamdb-observability/mimalloc"]
 embedded-ui = ["kalamdb-api/embedded-ui"]
-traceability = ["kalamdb-core/traceability", "kalamdb-observability/traceability"]
+traceability = [
+    "kalamdb-core/traceability",
+    "kalamdb-observability/traceability",
+    "kalamdb-postgres-wire/traceability",
+]
 cloud-aws = ["kalamdb-core/cloud-aws"]
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 # End-to-end tests that require a full test server instance (tokio-postgres for pgwire catalog)

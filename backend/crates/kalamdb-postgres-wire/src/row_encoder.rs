@@ -39,6 +39,7 @@ pub fn execution_result_to_responses_with_format(
             error,
         )))
     })?;
+    let _encode_pg = kalamdb_observability::kdb_info_span_entered!("wire.encode.pg");
     match result {
         ExecutionResult::Success { message } => Ok(vec![Response::Execution(Tag::new(&message))]),
         ExecutionResult::Inserted { rows_affected } => Ok(vec![Response::Execution(

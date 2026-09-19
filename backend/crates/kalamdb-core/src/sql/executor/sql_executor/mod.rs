@@ -219,15 +219,17 @@ impl SqlExecutor {
             }
         }
 
-        let Some(insert_rows) = super::transaction_batch_insert::try_build_literal_insert_rows(
-            parsed_statement,
-            Arc::clone(&self.app_context),
-            self.sql_cache_registry.as_ref(),
-            exec_ctx,
-            table_id,
-            params,
-        )
-        .await?
+        let Some(insert_rows) = kalamdb_observability::kdb_await_in_info_span!(
+            super::transaction_batch_insert::try_build_literal_insert_rows(
+                parsed_statement,
+                Arc::clone(&self.app_context),
+                self.sql_cache_registry.as_ref(),
+                exec_ctx,
+                table_id,
+                params,
+            ),
+            "sql.insert_bind"
+        )?
         else {
             return Ok(None);
         };
@@ -293,16 +295,17 @@ impl SqlExecutor {
                         table_id
                     ))
                 })?;
-            provider
-                .check_rows_authorized(
+            kalamdb_observability::kdb_await_in_info_span!(
+                provider.check_rows_authorized(
                     exec_ctx.user_id(),
                     exec_ctx.user_role(),
                     kalamdb_commons::PolicyCommand::Insert,
                     true,
                     &rows,
                     None,
-                )
-                .await?;
+                ),
+                "table.rls_insert"
+            )?;
         }
 
         let applier = self.app_context.applier();
@@ -1098,10 +1101,10 @@ impl SqlExecutor {
             .await?;
 
         if matches!(dml_kind, DmlKind::Insert) {
-            match self
-                .try_execute_literal_insert_via_applier(sql, metadata, dml_ctx, &params)
-                .await
-            {
+            match kalamdb_observability::kdb_await_in_info_span!(
+                self.try_execute_literal_insert_via_applier(sql, metadata, dml_ctx, &params),
+                "sql.insert_literal"
+            ) {
                 Ok(Some(result)) => Ok(result),
                 Ok(None) => {
                     self.execute_dml_via_datafusion(sql, metadata, params, dml_ctx, dml_kind).await
@@ -1354,39 +1357,50 @@ impl SqlExecutor {
         };
 
         let mut filters = Vec::with_capacity(scan.filters.len());
-        for filter in &scan.filters {
-            let bound = match bind_placeholders_in_expr(filter.clone(), params) {
-                Ok(expr) => expr,
-                Err(_) => return Ok(None),
-            };
-            filters.push(Self::unqualify_scan_filter(bound)?);
-        }
-        if !filters.iter().any(|filter| {
-            kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key).is_some()
-        }) {
-            return Ok(None);
+        {
+            let _span = kalamdb_observability::kdb_info_span_entered!("sql.point_get.bind");
+            for filter in &scan.filters {
+                let bound = match bind_placeholders_in_expr(filter.clone(), params) {
+                    Ok(expr) => expr,
+                    Err(_) => return Ok(None),
+                };
+                filters.push(Self::unqualify_scan_filter(bound)?);
+            }
+            if !filters.iter().any(|filter| {
+                kalamdb_tables::utils::base::extract_pk_equality_literal(filter, primary_key)
+                    .is_some()
+            }) {
+                return Ok(None);
+            }
         }
 
         let Some(provider) = cached_table.get_provider() else {
             return Ok(None);
         };
-        let state = self.point_read_session_state(exec_ctx)?;
+        let state = {
+            let _span = kalamdb_observability::kdb_info_span_entered!("sql.point_get.session");
+            self.point_read_session_state(exec_ctx)?
+        };
         let limit = Some(scan.fetch.unwrap_or(1).min(1));
-        let physical_plan = provider
-            .scan(state.as_ref(), scan.projection.as_ref(), &filters, limit)
-            .await
-            .map_err(Self::datafusion_to_execution_error)?;
+        let physical_plan = kalamdb_observability::kdb_await_in_info_span!(
+            provider.scan(state.as_ref(), scan.projection.as_ref(), &filters, limit),
+            "sql.point_get.scan"
+        )
+        .map_err(Self::datafusion_to_execution_error)?;
         // HTTP `/v1/api/sql` serializes ScalarRows without Arrow. If this
         // returns None for a simple `pk = $1` scan, the bake-off falls back
         // to RecordBatch + JSON and regresses (~1.6s / ~25µs p50 on 1M reads).
         // Keep this Some-path; do not scan again on success.
         if let Some(deferred) = physical_plan.downcast_ref::<DeferredBatchExec>() {
-            if let Some((schema, rows)) = deferred
-                .produce_scalar_rows_direct()
-                .await
-                .map_err(Self::datafusion_to_execution_error)?
+            if let Some((schema, rows)) = kalamdb_observability::kdb_await_in_info_span!(
+                deferred.produce_scalar_rows_direct(),
+                "sql.point_get.scalar"
+            )
+            .map_err(Self::datafusion_to_execution_error)?
             {
                 let (rows, schema) = if let Some(target_schema) = requested_schema {
+                    let _span =
+                        kalamdb_observability::kdb_info_span_entered!("sql.point_get.project");
                     let Some(projected) = Self::project_point_get_scalar_rows(
                         rows,
                         &schema,
@@ -2117,10 +2131,10 @@ impl SqlExecutor {
             PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
-            if let Some(result) = self
-                .try_execute_cached_point_get(template_plan.as_ref(), &params, exec_ctx)
-                .await?
-            {
+            if let Some(result) = kalamdb_observability::kdb_await_in_info_span!(
+                self.try_execute_cached_point_get(template_plan.as_ref(), &params, exec_ctx),
+                "sql.point_get"
+            )? {
                 return Ok(result);
             }
 

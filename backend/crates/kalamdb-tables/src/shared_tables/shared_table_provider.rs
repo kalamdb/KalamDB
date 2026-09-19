@@ -1556,38 +1556,45 @@ impl SharedTableProvider {
         let row_count = coerced_rows.len();
 
         if validate_unique_pk {
-            let pk_name = self.primary_key_field_name();
-            let mut pk_values_to_check: Vec<(String, ScalarValue)> = Vec::with_capacity(row_count);
-            let mut seen_batch_pks = HashSet::with_capacity(row_count);
-            for row_data in &coerced_rows {
-                if let Some(pk_value) = row_data.get(pk_name) {
-                    if !matches!(pk_value, ScalarValue::Null) {
-                        let pk_str =
-                            crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
-                        if !seen_batch_pks.insert(pk_str.clone()) {
-                            return Err(KalamDbError::AlreadyExists(format!(
-                                "Primary key violation: value '{}' appears multiple times in the \
-                                 insert batch for column '{}'",
-                                pk_str, pk_name
-                            )));
+            kalamdb_observability::kdb_await_in_info_span!(
+                async {
+                    let pk_name = self.primary_key_field_name();
+                    let mut pk_values_to_check: Vec<(String, ScalarValue)> =
+                        Vec::with_capacity(row_count);
+                    let mut seen_batch_pks = HashSet::with_capacity(row_count);
+                    for row_data in &coerced_rows {
+                        if let Some(pk_value) = row_data.get(pk_name) {
+                            if !matches!(pk_value, ScalarValue::Null) {
+                                let pk_str = crate::utils::unified_dml::extract_user_pk_value(
+                                    row_data, pk_name,
+                                )?;
+                                if !seen_batch_pks.insert(pk_str.clone()) {
+                                    return Err(KalamDbError::AlreadyExists(format!(
+                                        "Primary key violation: value '{}' appears multiple times \
+                                         in the insert batch for column '{}'",
+                                        pk_str, pk_name
+                                    )));
+                                }
+                                pk_values_to_check.push((pk_str, pk_value.clone()));
+                            }
                         }
-                        pk_values_to_check.push((pk_str, pk_value.clone()));
                     }
-                }
-            }
 
-            if !pk_values_to_check.is_empty() {
-                let mut pk_prefixes: Vec<(String, Vec<u8>)> =
-                    Vec::with_capacity(pk_values_to_check.len());
-                for (pk_str, pk_value) in &pk_values_to_check {
-                    pk_prefixes.push((pk_str.clone(), self.pk_index.build_prefix_for_pk(pk_value)));
-                }
+                    if !pk_values_to_check.is_empty() {
+                        let mut pk_prefixes: Vec<(String, Vec<u8>)> =
+                            Vec::with_capacity(pk_values_to_check.len());
+                        for (pk_str, pk_value) in &pk_values_to_check {
+                            pk_prefixes.push((
+                                pk_str.clone(),
+                                self.pk_index.build_prefix_for_pk(pk_value),
+                            ));
+                        }
 
-                let store = self.store.clone();
-                let (hot_duplicate, tombstoned_pks) = if pk_prefixes.len() <= 1 {
-                    scan_hot_pk_insert(&store, &pk_prefixes)?
-                } else {
-                    tokio::task::spawn_blocking(
+                        let store = self.store.clone();
+                        let (hot_duplicate, tombstoned_pks) = if pk_prefixes.len() <= 1 {
+                            scan_hot_pk_insert(&store, &pk_prefixes)?
+                        } else {
+                            tokio::task::spawn_blocking(
                         move || -> Result<(Option<String>, HashSet<String>), KalamDbError> {
                             scan_hot_pk_insert(&store, &pk_prefixes)
                         },
@@ -1596,43 +1603,48 @@ impl SharedTableProvider {
                     .map_err(|e| {
                         KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e))
                     })??
-                };
+                        };
 
-                if let Some(dup_pk) = hot_duplicate {
-                    return Err(KalamDbError::AlreadyExists(format!(
-                        "Primary key violation: value '{}' already exists in column '{}'",
-                        dup_pk, pk_name
-                    )));
-                }
+                        if let Some(dup_pk) = hot_duplicate {
+                            return Err(KalamDbError::AlreadyExists(format!(
+                                "Primary key violation: value '{}' already exists in column '{}'",
+                                dup_pk, pk_name
+                            )));
+                        }
 
-                let pk_column_id = self.core.primary_key_column_id();
-                let mut pk_values_for_cold_check: Vec<String> =
-                    Vec::with_capacity(pk_values_to_check.len());
-                for (pk_str, _pk_value) in &pk_values_to_check {
-                    if !tombstoned_pks.contains(pk_str) {
-                        pk_values_for_cold_check.push(pk_str.clone());
+                        let pk_column_id = self.core.primary_key_column_id();
+                        let mut pk_values_for_cold_check: Vec<String> =
+                            Vec::with_capacity(pk_values_to_check.len());
+                        for (pk_str, _pk_value) in &pk_values_to_check {
+                            if !tombstoned_pks.contains(pk_str) {
+                                pk_values_for_cold_check.push(pk_str.clone());
+                            }
+                        }
+
+                        if !pk_values_for_cold_check.is_empty() {
+                            if let Some(found_pk) = base::pk_exists_batch_in_cold(
+                                &self.core,
+                                self.core.table_id(),
+                                self.core.table_type(),
+                                None,
+                                pk_name,
+                                pk_column_id,
+                                &pk_values_for_cold_check,
+                            )
+                            .await?
+                            {
+                                return Err(KalamDbError::AlreadyExists(format!(
+                                    "Primary key violation: value '{}' already exists in column \
+                                     '{}'",
+                                    found_pk, pk_name
+                                )));
+                            }
+                        }
                     }
-                }
-
-                if !pk_values_for_cold_check.is_empty() {
-                    if let Some(found_pk) = base::pk_exists_batch_in_cold(
-                        &self.core,
-                        self.core.table_id(),
-                        self.core.table_type(),
-                        None,
-                        pk_name,
-                        pk_column_id,
-                        &pk_values_for_cold_check,
-                    )
-                    .await?
-                    {
-                        return Err(KalamDbError::AlreadyExists(format!(
-                            "Primary key violation: value '{}' already exists in column '{}'",
-                            found_pk, pk_name
-                        )));
-                    }
-                }
-            }
+                    Ok(())
+                },
+                "table.pk_unique"
+            )?;
         }
 
         let sys_cols = self.core.services.system_columns.clone();
@@ -1656,6 +1668,8 @@ impl SharedTableProvider {
 
         let store = self.store.clone();
         let entries = if row_count <= 1 {
+            let _rocksdb_span =
+                kalamdb_observability::kdb_info_span_entered!("table.rocksdb_insert");
             store.insert_batch(&entries).map_err(|e| {
                 KalamDbError::InvalidOperation(format!(
                     "Failed to batch insert shared table rows: {}",
@@ -1664,19 +1678,26 @@ impl SharedTableProvider {
             })?;
             entries
         } else {
-            tokio::task::spawn_blocking(
-                move || -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-                    store.insert_batch(&entries).map_err(|e| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Failed to batch insert shared table rows: {}",
-                            e
-                        ))
-                    })?;
-                    Ok(entries)
+            kalamdb_observability::kdb_await_in_info_span!(
+                async {
+                    Ok::<_, KalamDbError>(tokio::task::spawn_blocking(
+                        move || -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+                            store.insert_batch(&entries).map_err(|e| {
+                                KalamDbError::InvalidOperation(format!(
+                                    "Failed to batch insert shared table rows: {}",
+                                    e
+                                ))
+                            })?;
+                            Ok(entries)
+                        },
+                    )
+                    .await
+                    .map_err(|e| {
+                        KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e))
+                    })??)
                 },
-            )
-            .await
-            .map_err(|e| KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e)))??
+                "table.rocksdb_insert"
+            )?
         };
 
         if let Err(e) = self.stage_vector_upsert_batch(&entries).await {
@@ -2063,48 +2084,30 @@ impl TableProvider for SharedTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
-        // SECURITY: Admit authenticated roles; FORCE RLS filters rows.
-        check_shared_table_access(state, self.core.table_def())
-            .map_err(session_error_to_datafusion)?;
-
-        // Extract user context including read_context for leader check
-        // SharedTableProvider ignores user_id for data access (no RLS) but uses read_context
-        let (_user_id, _role, read_context) = extract_full_user_context(state).map_err(|e| {
-            DataFusionError::Execution(format!("Failed to extract user context: {}", e))
-        })?;
-
-        if extract_transaction_query_context(state).is_some() {
-            self.validate_transaction_table_access(state)?;
-        }
-
-        // Check if this is a client read that requires leader (shared data shard)
-        // Skip check for internal reads (jobs, live query notifications, etc.)
-        if read_context.requires_leader()
-            && extract_transaction_query_context(state).is_none()
-            && self.core.services.cluster_coordinator.is_cluster_mode().await
         {
-            let is_leader = self.core.services.cluster_coordinator.is_leader_for_shared().await;
-            if !is_leader {
-                // Include leader address for auto-forwarding by the SQL handler
-                let leader_addr =
-                    self.core.services.cluster_coordinator.leader_addr_for_shared().await;
-                return Err(DataFusionError::External(Box::new(NotLeaderError::new(leader_addr))));
-            }
+            let _span = kalamdb_observability::kdb_info_span_entered!("table.access");
+            // SECURITY: Admit authenticated roles; FORCE RLS filters rows.
+            check_shared_table_access(state, self.core.table_def())
+                .map_err(session_error_to_datafusion)?;
         }
+
+        // Leader routing and transaction table access live in `base_scan`.
 
         let table_overlay = extract_transaction_query_context(state)
             .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
 
-        <Self as BaseTableProvider<SharedTableRowId, SharedTableRow>>::base_scan_with_overlay(
-            self,
-            state,
-            projection,
-            filters,
-            limit,
-            table_overlay,
-            None,
+        kalamdb_observability::kdb_await_in_info_span!(
+            <Self as BaseTableProvider<SharedTableRowId, SharedTableRow>>::base_scan_with_overlay(
+                self,
+                state,
+                projection,
+                filters,
+                limit,
+                table_overlay,
+                None,
+            ),
+            "table.base_scan"
         )
-        .await
     }
 
     async fn insert_into(
