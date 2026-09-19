@@ -76,10 +76,10 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^5.0.1"
   },
   "overrides": {
-    "undici": "^7.28.0",
+    "undici": "^7.29.1",
     "vite": "^8.0.16",
     "ws": "^8.21.0"
   },
