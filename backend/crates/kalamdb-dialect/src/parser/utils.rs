@@ -6,7 +6,7 @@
 use core::ops::ControlFlow;
 use std::hash::{Hash, Hasher};
 
-use kalamdb_commons::TableId;
+use kalamdb_commons::{NamespaceId, TableId};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::{
@@ -1210,7 +1210,7 @@ pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserErro
 /// Extract the target table for INSERT/UPDATE/DELETE DML statements.
 ///
 /// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
-pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+pub fn extract_dml_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
     let dialect = KalamDbDialect::default();
     let statements = parse_sql_statements(sql, &dialect).ok()?;
     statements
@@ -1223,7 +1223,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &str) -> Option<TableI
 ///
 /// Returns `None` for complex or unrecognized token layouts so callers can
 /// fall back to the full parser when exact syntax support is required.
-pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &str) -> Option<TableId> {
+pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
     let dialect = KalamDbDialect::default();
     let tokens = collect_non_whitespace_tokens(sql, &dialect).ok()?;
     extract_dml_table_id_from_tokens(&tokens, default_namespace)
@@ -1232,7 +1232,7 @@ pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &str) -> Option<T
 /// Extract the target table for INSERT/UPDATE/DELETE from a parsed SQL statement.
 pub fn extract_dml_table_id_from_statement(
     statement: &Statement,
-    default_namespace: &str,
+    default_namespace: &NamespaceId,
 ) -> Option<TableId> {
     match statement {
         Statement::Insert(insert) => {
@@ -1351,15 +1351,18 @@ fn object_name_matches(name: &ObjectName, expected: &str) -> bool {
     expected_parts.next().is_none()
 }
 
-fn table_id_from_parts(parts: &[String], default_namespace: &str) -> Option<TableId> {
+fn table_id_from_parts(parts: &[String], default_namespace: &NamespaceId) -> Option<TableId> {
     match parts.len() {
-        1 => Some(TableId::from_strings(default_namespace, &parts[0])),
+        1 => Some(TableId::from_namespace(default_namespace.clone(), &parts[0])),
         2 => Some(TableId::from_strings(&parts[0], &parts[1])),
         _ => None,
     }
 }
 
-fn extract_dml_table_id_from_tokens(tokens: &[Token], default_namespace: &str) -> Option<TableId> {
+fn extract_dml_table_id_from_tokens(
+    tokens: &[Token],
+    default_namespace: &NamespaceId,
+) -> Option<TableId> {
     let compact_tokens: Vec<&Token> =
         tokens.iter().filter(|token| !matches!(token, Token::Whitespace(_))).collect();
 
@@ -1730,32 +1733,37 @@ mod tests {
 
     #[test]
     fn test_extract_dml_table_id_insert_update_delete() {
-        let insert = extract_dml_table_id("INSERT INTO chat.messages (id) VALUES (1)", "default")
+        let default_ns = NamespaceId::default_ns();
+        let chat_ns = NamespaceId::new("chat");
+        let insert = extract_dml_table_id("INSERT INTO chat.messages (id) VALUES (1)", &default_ns)
             .expect("insert table id");
         assert_eq!(insert.full_name(), "chat.messages");
 
-        let update = extract_dml_table_id("UPDATE messages SET id = 2 WHERE id = 1", "chat")
+        let update = extract_dml_table_id("UPDATE messages SET id = 2 WHERE id = 1", &chat_ns)
             .expect("update table id");
         assert_eq!(update.full_name(), "chat.messages");
 
-        let delete = extract_dml_table_id("DELETE FROM chat.messages WHERE id = 1", "default")
+        let delete = extract_dml_table_id("DELETE FROM chat.messages WHERE id = 1", &default_ns)
             .expect("delete table id");
         assert_eq!(delete.full_name(), "chat.messages");
     }
 
     #[test]
     fn test_extract_dml_table_id_fast_insert_update_delete() {
+        let default_ns = NamespaceId::default_ns();
+        let chat_ns = NamespaceId::new("chat");
         let insert =
-            extract_dml_table_id_fast("INSERT INTO chat.messages (id) VALUES (1)", "default")
+            extract_dml_table_id_fast("INSERT INTO chat.messages (id) VALUES (1)", &default_ns)
                 .expect("fast insert table id");
         assert_eq!(insert.full_name(), "chat.messages");
 
-        let update = extract_dml_table_id_fast("UPDATE messages SET id = 2 WHERE id = 1", "chat")
+        let update = extract_dml_table_id_fast("UPDATE messages SET id = 2 WHERE id = 1", &chat_ns)
             .expect("fast update table id");
         assert_eq!(update.full_name(), "chat.messages");
 
-        let delete = extract_dml_table_id_fast("DELETE FROM chat.messages WHERE id = 1", "default")
-            .expect("fast delete table id");
+        let delete =
+            extract_dml_table_id_fast("DELETE FROM chat.messages WHERE id = 1", &default_ns)
+                .expect("fast delete table id");
         assert_eq!(delete.full_name(), "chat.messages");
     }
 

@@ -104,41 +104,6 @@ pub fn log_query_operation(
     create_audit_entry(context, query_type, target, Some(details), subject_user_id)
 }
 
-/// Create audit entry for authentication events
-///
-/// Logs login, logout, password changes, etc.
-///
-/// # Arguments
-/// * `user_id` - User ID
-/// * `action` - Authentication action (LOGIN, LOGOUT, PASSWORD_CHANGE, etc.)
-/// * `success` - Whether the action succeeded
-/// * `ip_address` - Optional IP address
-pub fn log_auth_event(
-    user_id: &kalamdb_commons::UserId,
-    action: &str,
-    success: bool,
-    ip_address: Option<String>,
-) -> AuditLogEntry {
-    let timestamp = Utc::now().timestamp_millis();
-    let audit_id = AuditLogId::from(format!("audit_{}", timestamp));
-
-    let details = serde_json::json!({
-        "success": success,
-    })
-    .to_string();
-
-    AuditLogEntry {
-        audit_id,
-        timestamp,
-        actor_user_id: user_id.clone(),
-        action: action.to_string(),
-        target: format!("user:{}", user_id.as_str()),
-        details: Some(details),
-        ip_address,
-        subject_user_id: None, // Authentication events don't involve impersonation
-    }
-}
-
 use std::sync::Arc;
 
 use kalamdb_core::app_context::AppContext;
@@ -227,17 +192,5 @@ mod tests {
         assert_eq!(entry.action, "SELECT");
         assert_eq!(entry.target, "default.users");
         assert!(entry.details.unwrap().contains("150"));
-    }
-
-    #[test]
-    fn test_log_auth_event() {
-        let user_id = UserId::from("eve");
-
-        let entry = log_auth_event(&user_id, "LOGIN", true, Some("10.0.0.1".to_string()));
-
-        assert_eq!(entry.action, "LOGIN");
-        assert_eq!(entry.target, "user:eve");
-        assert_eq!(entry.ip_address, Some("10.0.0.1".to_string()));
-        assert!(entry.details.unwrap().contains("true"));
     }
 }

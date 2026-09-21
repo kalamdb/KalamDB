@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
-use arrow::array::{Array, FixedSizeListArray, Float32Array};
+use arrow::{
+    array::{Array, FixedSizeListArray, Float32Array, ListArray, StructArray},
+    datatypes::{DataType, Field, Fields},
+};
 use datafusion_common::ScalarValue;
 use serde::{de, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -98,6 +101,10 @@ pub enum StoredScalarValue {
         size:   i32,
         values: Option<Vec<Option<f32>>>,
     },
+    /// Named struct. Keys are field names; slots stay in catalog.
+    Struct(BTreeMap<String, StoredScalarValue>),
+    /// List of typed values.
+    List(Vec<StoredScalarValue>),
     Fallback(String),
 }
 
@@ -180,6 +187,9 @@ impl From<&ScalarValue> for StoredScalarValue {
                 Some(stored) => stored,
                 None => StoredScalarValue::Fallback(value.to_string()),
             },
+            ScalarValue::Struct(array) => stored_from_struct(array),
+            ScalarValue::List(array) => stored_from_list(array),
+            ScalarValue::LargeList(array) => stored_from_large_list(array),
             _ => StoredScalarValue::Fallback(value.to_string()),
         }
     }
@@ -228,6 +238,8 @@ impl From<StoredScalarValue> for ScalarValue {
                 scale,
             } => ScalarValue::Decimal128(value, precision, scale),
             StoredScalarValue::Embedding { size, values } => decode_embedding(size, &values),
+            StoredScalarValue::Struct(fields) => scalar_from_stored_struct(fields),
+            StoredScalarValue::List(values) => scalar_from_stored_list(values),
             StoredScalarValue::Fallback(s) => ScalarValue::Utf8(Some(s)),
         }
     }
@@ -323,6 +335,70 @@ impl Row {
     pub fn iter(&self) -> std::collections::btree_map::Iter<'_, String, ScalarValue> {
         self.values.iter()
     }
+}
+
+fn stored_from_struct(array: &StructArray) -> StoredScalarValue {
+    if array.is_empty() || array.is_null(0) {
+        return StoredScalarValue::Struct(BTreeMap::new());
+    }
+    let mut fields = BTreeMap::new();
+    for (index, field) in array.fields().iter().enumerate() {
+        let child = array.column(index);
+        let scalar = ScalarValue::try_from_array(child, 0).unwrap_or(ScalarValue::Null);
+        fields.insert(field.name().clone(), StoredScalarValue::from(&scalar));
+    }
+    StoredScalarValue::Struct(fields)
+}
+
+fn stored_from_list(array: &ListArray) -> StoredScalarValue {
+    stored_from_list_values(array.is_empty() || array.is_null(0), array.value(0))
+}
+
+fn stored_from_large_list(array: &arrow::array::LargeListArray) -> StoredScalarValue {
+    stored_from_list_values(array.is_empty() || array.is_null(0), array.value(0))
+}
+
+fn stored_from_list_values(
+    empty_or_null: bool,
+    values: arrow::array::ArrayRef,
+) -> StoredScalarValue {
+    if empty_or_null {
+        return StoredScalarValue::List(Vec::new());
+    }
+    let mut items = Vec::with_capacity(values.len());
+    for index in 0..values.len() {
+        let scalar = ScalarValue::try_from_array(&values, index).unwrap_or(ScalarValue::Null);
+        items.push(StoredScalarValue::from(&scalar));
+    }
+    StoredScalarValue::List(items)
+}
+
+fn scalar_from_stored_struct(fields: BTreeMap<String, StoredScalarValue>) -> ScalarValue {
+    let mut arrow_fields = Vec::with_capacity(fields.len());
+    let mut arrays = Vec::with_capacity(fields.len());
+    for (name, stored) in fields {
+        let scalar = ScalarValue::from(stored);
+        let array = scalar
+            .to_array()
+            .unwrap_or_else(|_| arrow::array::new_null_array(&DataType::Null, 1));
+        arrow_fields.push(Field::new(name, array.data_type().clone(), true));
+        arrays.push(array);
+    }
+    let struct_array = StructArray::new(Fields::from(arrow_fields), arrays, None);
+    ScalarValue::Struct(Arc::new(struct_array))
+}
+
+fn scalar_from_stored_list(values: Vec<StoredScalarValue>) -> ScalarValue {
+    let scalars: Vec<ScalarValue> = values.into_iter().map(ScalarValue::from).collect();
+    let child = if scalars.is_empty() {
+        arrow::array::new_empty_array(&DataType::Null)
+    } else {
+        ScalarValue::iter_to_array(scalars)
+            .unwrap_or_else(|_| arrow::array::new_empty_array(&DataType::Null))
+    };
+    let field = Field::new("item", child.data_type().clone(), true);
+    let offsets = arrow::buffer::OffsetBuffer::from_lengths([child.len()]);
+    ScalarValue::List(Arc::new(ListArray::new(Arc::new(field), offsets, child, None)))
 }
 
 fn encode_embedding_from_list(array: Arc<FixedSizeListArray>) -> Option<StoredScalarValue> {

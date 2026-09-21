@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use arrow::datatypes::DataType;
-use kalamdb_commons::models::{NamespaceId, RoutineId, TypeId};
+use kalamdb_commons::{
+    datatypes::{assert_finite_type_graph, TypeGraphNode},
+    models::{NamespaceId, RoutineId, TypeId},
+};
 
 use super::{
     arrow::resolve_arrow_type,
@@ -274,7 +277,12 @@ fn ingest_create_type(
             schema: schema.clone(),
             fields: fields
                 .into_iter()
-                .map(|field| field_from_ref(field.name, field.type_ref, &schema))
+                .enumerate()
+                .map(|(index, field)| {
+                    let mut contract = field_from_ref(field.name, field.type_ref, &schema);
+                    contract.slot = (index + 1) as i32;
+                    contract
+                })
                 .collect(),
             comment,
         },
@@ -489,6 +497,9 @@ fn parse_contract_table(
         }
         fields.push(parse_table_column(part, &schema)?);
     }
+    for (index, field) in fields.iter_mut().enumerate() {
+        field.slot = (index + 1) as i32;
+    }
     let mut leftover = after[close + 1..].trim_start();
     let mut row_alias = None;
     if starts_ci(leftover, "ROW TYPE") {
@@ -591,8 +602,8 @@ fn apply_comment_on(
     extra_type_comments: &mut HashMap<String, Option<String>>,
 ) -> Result<(), ContractError> {
     match &stmt.target {
-        CommentOnTarget::Type(type_id) => {
-            let key = fold_ident(type_id.as_str());
+        CommentOnTarget::Type { namespace_id, name } => {
+            let key = fold_ident(&format!("{}.{}", namespace_id.as_str(), name));
             if let Some(raw) = types.get_mut(&key) {
                 set_raw_type_comment(raw, stmt.comment.clone());
                 return Ok(());
@@ -601,7 +612,9 @@ fn apply_comment_on(
                 extra_type_comments.insert(key, stmt.comment.clone());
                 return Ok(());
             }
-            Err(ContractError::new(format!("COMMENT ON TYPE unknown type '{type_id}'")))
+            Err(ContractError::new(format!(
+                "COMMENT ON TYPE unknown type '{namespace_id}.{name}'"
+            )))
         },
         CommentOnTarget::Procedure(routine_id) => {
             let folded = fold_ident(routine_id.as_str());
@@ -641,21 +654,35 @@ fn apply_alter(
     stmt: &AlterTypeStatement,
     types: &mut BTreeMap<String, RawType>,
 ) -> Result<(), ContractError> {
-    let key = stmt.type_id.as_str().to_ascii_lowercase();
-    let raw = types.get_mut(&key).ok_or_else(|| {
-        ContractError::new(format!("ALTER TYPE on unknown type '{}'", stmt.type_id))
+    let key = format!("{}.{}", stmt.namespace_id.as_str(), stmt.name).to_ascii_lowercase();
+    let mut raw = types.remove(&key).ok_or_else(|| {
+        ContractError::new(format!(
+            "ALTER TYPE on unknown type '{}.{}'",
+            stmt.namespace_id, stmt.name
+        ))
     })?;
-    match (&mut *raw, &stmt.operation) {
+    match (&mut raw, &stmt.operation) {
         (
             RawType::Composite { fields, schema, .. },
             AlterTypeOperation::AddAttribute { field, type_ref },
         ) => {
-            fields.push(field_from_ref(field.clone(), type_ref.clone(), schema));
-            Ok(())
+            let mut added = field_from_ref(field.clone(), type_ref.clone(), schema);
+            added.slot = fields.iter().map(|item| item.slot).max().unwrap_or(0) + 1;
+            if fields.iter().any(|item| item.name == added.name && !item.dropped) {
+                return Err(ContractError::new(format!(
+                    "attribute '{}' already exists on type",
+                    added.name
+                )));
+            }
+            fields.push(added);
         },
         (RawType::Composite { fields, .. }, AlterTypeOperation::DropAttribute { field, .. }) => {
-            fields.retain(|item| item.name != fold_ident(field));
-            Ok(())
+            let name = fold_ident(field);
+            if let Some(existing) =
+                fields.iter_mut().find(|item| item.name == name && !item.dropped)
+            {
+                existing.dropped = true;
+            }
         },
         (RawType::Composite { fields, .. }, AlterTypeOperation::RenameAttribute { from, to }) => {
             let from = fold_ident(from);
@@ -663,20 +690,23 @@ fn apply_alter(
             if let Some(field) = fields.iter_mut().find(|item| item.name == from) {
                 field.name = to;
             }
-            Ok(())
         },
         (
             RawType::Composite { fields, schema, .. },
             AlterTypeOperation::AlterAttributeType { field, type_ref },
         ) => {
             let name = fold_ident(field);
-            if let Some(existing) = fields.iter_mut().find(|item| item.name == name) {
+            if let Some(existing) =
+                fields.iter_mut().find(|item| item.name == name && !item.dropped)
+            {
+                let slot = existing.slot;
                 *existing = field_from_ref(name, type_ref.clone(), schema);
+                existing.slot = slot;
             }
-            Ok(())
         },
         (_, AlterTypeOperation::SetSchema { schema }) => {
-            match raw {
+            let folded = fold_ident(schema.as_str());
+            match &mut raw {
                 RawType::Composite {
                     schema: current, ..
                 }
@@ -686,11 +716,11 @@ fn apply_alter(
                 | RawType::Alias {
                     schema: current, ..
                 } => {
-                    *current = fold_ident(schema.as_str());
+                    *current = folded;
                 },
             }
-            Ok(())
         },
+        (_, AlterTypeOperation::RenameType { .. }) => {},
         (
             RawType::Enum { labels, .. },
             AlterTypeOperation::AddValue {
@@ -698,12 +728,29 @@ fn apply_alter(
                 if_not_exists,
                 neighbor,
             },
-        ) => apply_add_value(labels, label, *if_not_exists, neighbor.as_ref()),
-        _ => Err(ContractError::new(format!(
-            "ALTER TYPE '{}' is not valid for this type kind",
-            stmt.type_id
-        ))),
+        ) => apply_add_value(labels, label, *if_not_exists, neighbor.as_ref())?,
+        _ => {
+            return Err(ContractError::new(format!(
+                "ALTER TYPE '{}.{}' is not valid for this type kind",
+                stmt.namespace_id, stmt.name
+            )));
+        },
     }
+    let schema = match &raw {
+        RawType::Composite { schema, .. }
+        | RawType::Enum { schema, .. }
+        | RawType::Alias { schema, .. } => schema.clone(),
+    };
+    let name = match &stmt.operation {
+        AlterTypeOperation::RenameType { new_name } => fold_ident(new_name),
+        _ => stmt.name.clone(),
+    };
+    let new_key = format!("{schema}.{name}").to_ascii_lowercase();
+    if new_key != key && types.contains_key(&new_key) {
+        return Err(ContractError::new(format!("type '{new_key}' already exists")));
+    }
+    types.insert(new_key, raw);
+    Ok(())
 }
 
 fn apply_add_value(
@@ -758,7 +805,50 @@ fn field_from_ref(name: String, type_ref: TypeReference, current_schema: &str) -
         nonempty: type_ref.nonempty,
         primary_key: false,
         has_default: false,
+        slot: 0,
+        dropped: false,
     }
+}
+
+fn assert_named_type_graphs(types: &BTreeMap<String, ContractType>) -> Result<(), ContractError> {
+    let mut nodes = HashMap::new();
+    for ty in types.values() {
+        let node = match &ty.kind {
+            ContractTypeKind::Composite { fields }
+            | ContractTypeKind::ImplicitTableRow { fields, .. } => {
+                let refs: Vec<kalamdb_commons::LogicalTypeRef> = fields
+                    .iter()
+                    .filter(|field| !field.dropped)
+                    .map(|field| {
+                        let inner = if let Some(type_id) = &field.type_id {
+                            kalamdb_commons::LogicalTypeRef::named(type_id.clone())
+                        } else {
+                            kalamdb_commons::LogicalTypeRef::Builtin(
+                                field.data_type.unwrap_or(kalamdb_commons::KalamDataType::Text),
+                            )
+                        };
+                        if field.is_array {
+                            kalamdb_commons::LogicalTypeRef::list(inner, true)
+                        } else {
+                            inner
+                        }
+                    })
+                    .collect();
+                TypeGraphNode::from_type_refs(&refs)
+            },
+            ContractTypeKind::RowAlias { source } => TypeGraphNode {
+                children:    vec![source.clone()],
+                field_count: 1,
+            },
+            _ => TypeGraphNode::default(),
+        };
+        nodes.insert(ty.type_id.clone(), node);
+    }
+    for ty in types.values() {
+        assert_finite_type_graph(&ty.type_id, &nodes)
+            .map_err(|error| ContractError::new(error.message))?;
+    }
+    Ok(())
 }
 
 fn resolve_snapshot(
@@ -913,6 +1003,8 @@ fn resolve_snapshot(
             }
         }
     }
+
+    assert_named_type_graphs(&snapshot_types)?;
 
     Ok(ContractSnapshot {
         schemas,

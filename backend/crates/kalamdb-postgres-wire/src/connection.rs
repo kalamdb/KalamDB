@@ -110,10 +110,6 @@ impl WireConnectionState {
         self.prepared_statements.lock().len()
     }
 
-    pub fn portal_count(&self) -> usize {
-        self.portals.lock().len()
-    }
-
     pub fn ensure_prepared_statement_capacity(
         &self,
         name: &str,
@@ -176,10 +172,6 @@ impl WireConnectionState {
 
     pub fn remove_portal(&self, name: &str) -> Option<WirePortal> {
         self.portals.lock().remove(name)
-    }
-
-    pub fn clear_portals(&self) {
-        self.portals.lock().clear();
     }
 }
 

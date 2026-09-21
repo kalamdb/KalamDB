@@ -9,20 +9,14 @@ use std::sync::Arc;
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_observability::{heartbeat_pubsub_consumer, track_pubsub_consumer};
 use kalamdb_session::AuthSession;
 
 use super::models::{
-    ConsumeRequest, ConsumeResponse, StartPosition, TopicErrorResponse, TopicMessage,
+    clamp_consume_limit, ConsumeRequest, ConsumeResponse, StartPosition, TopicErrorResponse,
+    TopicMessage,
 };
-
-/// Check if role is allowed to consume/ack topics
-/// Must be service, dba, or system role (NOT user)
-fn is_topic_authorized(session: &AuthSession) -> bool {
-    matches!(session.role(), Role::Service | Role::Dba | Role::System)
-}
 
 /// POST /v1/api/topics/consume - Consume messages from a topic
 ///
@@ -53,7 +47,7 @@ pub async fn consume_handler(
     let session: AuthSession = extractor.into();
 
     // Authorization check
-    if !is_topic_authorized(&session) {
+    if !super::is_topic_authorized(&session) {
         return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
             "Topic consumption requires service, dba, or system role",
         ));
@@ -83,10 +77,9 @@ pub async fn consume_handler(
                 topic_id
             )));
         },
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
-                &format!("Failed to lookup topic: {}", e),
-            ));
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .json(TopicErrorResponse::internal_error("Failed to lookup topic"));
         },
     };
 
@@ -118,12 +111,9 @@ pub async fn consume_handler(
             StartPosition::Earliest => {
                 match topic_publisher.earliest_available_offset(topic_id, body.partition_id) {
                     Ok(offset) => offset,
-                    Err(e) => {
+                    Err(_) => {
                         return HttpResponse::InternalServerError().json(
-                            TopicErrorResponse::internal_error(&format!(
-                                "Failed to resolve earliest offset: {}",
-                                e
-                            )),
+                            TopicErrorResponse::internal_error("Failed to resolve earliest offset"),
                         );
                     },
                 }
@@ -132,12 +122,9 @@ pub async fn consume_handler(
                 match topic_publisher.latest_offset(topic_id, body.partition_id) {
                     Ok(Some(last_offset)) => last_offset + 1,
                     Ok(None) => 0,
-                    Err(e) => {
+                    Err(_) => {
                         return HttpResponse::InternalServerError().json(
-                            TopicErrorResponse::internal_error(&format!(
-                                "Failed to resolve latest offset: {}",
-                                e
-                            )),
+                            TopicErrorResponse::internal_error("Failed to resolve latest offset"),
                         );
                     },
                 }
@@ -146,21 +133,17 @@ pub async fn consume_handler(
     };
 
     // Fetch messages.
+    let limit = clamp_consume_limit(body.limit);
     let messages_result = if let Some(group_id) = group_id {
         topic_publisher.fetch_messages_for_group(
             topic_id,
             group_id,
             body.partition_id,
             start_offset,
-            body.limit as usize,
+            limit,
         )
     } else {
-        topic_publisher.fetch_messages(
-            topic_id,
-            body.partition_id,
-            start_offset,
-            body.limit as usize,
-        )
+        topic_publisher.fetch_messages(topic_id, body.partition_id, start_offset, limit)
     };
 
     let messages = match messages_result {
@@ -168,13 +151,12 @@ pub async fn consume_handler(
         Err(e) => {
             if e.to_string().contains("OffsetOutOfRange") {
                 return HttpResponse::BadRequest().json(TopicErrorResponse::new(
-                    format!("Failed to fetch messages: {}", e),
+                    "Requested offset is out of range".to_string(),
                     "OFFSET_OUT_OF_RANGE",
                 ));
             }
-            return HttpResponse::InternalServerError().json(TopicErrorResponse::internal_error(
-                &format!("Failed to fetch messages: {}", e),
-            ));
+            return HttpResponse::InternalServerError()
+                .json(TopicErrorResponse::internal_error("Failed to fetch messages"));
         },
     };
 
@@ -203,7 +185,7 @@ pub async fn consume_handler(
         .collect();
 
     let next_offset = messages.last().map(|m| m.offset + 1).unwrap_or(start_offset);
-    let has_more = messages.len() == body.limit as usize;
+    let has_more = messages.len() == limit;
 
     HttpResponse::Ok().json(ConsumeResponse {
         messages: response_messages,

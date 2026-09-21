@@ -28,6 +28,23 @@ use crate::{
     paths::{PathResolver, TemplateResolver},
 };
 
+fn sanitize_storage_relative_path(relative: &str) -> String {
+    use std::path::{Component, Path};
+
+    if relative.contains('\0') {
+        return String::new();
+    }
+
+    Path::new(relative)
+        .components()
+        .filter(|component| {
+            !matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+        })
+        .collect::<std::path::PathBuf>()
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 /// Unified storage interface with lazy `ObjectStore` and template resolution.
 ///
 /// Single entry point for all file operations. Thread-safe via double-check
@@ -111,6 +128,7 @@ impl StorageCached {
     }
 
     fn join_paths(&self, relative: &str) -> String {
+        let relative = sanitize_storage_relative_path(relative);
         let base = self.base_directory();
         if base.starts_with("s3://")
             || base.starts_with("gs://")
@@ -313,10 +331,18 @@ impl StorageCached {
 
         if matches!(self.storage.storage_type, StorageType::Filesystem) {
             let full_path = self.join_paths(cleanup_prefix.as_ref());
-            let dir_path = std::path::Path::new(&full_path);
-            if dir_path.exists() {
-                std::fs::remove_dir_all(dir_path)?;
-            }
+            tokio::task::spawn_blocking(move || {
+                let dir_path = std::path::Path::new(&full_path);
+                if dir_path.exists() {
+                    std::fs::remove_dir_all(dir_path)
+                } else {
+                    Ok(())
+                }
+            })
+            .await
+            .map_err(|error| {
+                FilestoreError::Other(format!("filesystem prefix cleanup task failed: {error}"))
+            })??;
         }
 
         Ok(DeletePrefixResult::new(cleanup_prefix.into_owned(), deleted_paths))
@@ -740,6 +766,18 @@ mod tests {
 
     fn make_table_id(ns: &str, tbl: &str) -> TableId {
         TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+    }
+
+    #[test]
+    fn sanitize_storage_relative_path_drops_parent_and_root_segments() {
+        assert_eq!(
+            sanitize_storage_relative_path("ns/table/file.parquet"),
+            "ns/table/file.parquet"
+        );
+        assert_eq!(sanitize_storage_relative_path("../secret"), "secret");
+        assert_eq!(sanitize_storage_relative_path("/etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_storage_relative_path("foo/../bar"), "foo/bar");
+        assert!(sanitize_storage_relative_path("ok\0bad").is_empty());
     }
 
     #[test]

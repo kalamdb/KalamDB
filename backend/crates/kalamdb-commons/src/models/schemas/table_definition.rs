@@ -15,12 +15,14 @@ use serde::{
 };
 
 use crate::{
-    conversions::{with_kalam_column_flags_metadata, with_kalam_data_type_metadata},
+    conversions::{
+        with_kalam_column_flags_metadata, with_kalam_data_type_metadata, with_parquet_field_id,
+    },
     models::{
         datatypes::{ArrowConversionError, ToArrowType},
         schemas::{ColumnDefinition, ScalarIndexDefinition, SchemaField, TableOptions, TableType},
     },
-    NamespaceId, TableName,
+    NamespaceId, TableId, TableName,
 };
 
 /// Complete definition of a table including schema, history, and options
@@ -299,6 +301,12 @@ impl TableDefinition {
         Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
     }
 
+    /// Composite table identity from already-typed namespace and name fields.
+    #[inline]
+    pub fn table_id(&self) -> TableId {
+        TableId::from_ref(&self.namespace_id, &self.table_name)
+    }
+
     /// Validate and sort columns by ordinal_position
     fn validate_and_sort_columns(
         mut columns: Vec<ColumnDefinition>,
@@ -354,6 +362,11 @@ impl TableDefinition {
                 {
                     field = with_kalam_column_flags_metadata(field, &flags);
                 }
+
+                field =
+                    with_parquet_field_id(field, i32::try_from(col.column_id).unwrap_or(i32::MAX));
+                // Nested occurrence ids (`parent * 1000 + slot`) are stamped by
+                // TypeRegistry overlay once named types resolve to Struct/List.
 
                 Ok(field)
             })
@@ -613,6 +626,7 @@ mod tests {
         assert_eq!(arrow_schema.field(0).name(), "id");
         assert_eq!(arrow_schema.field(1).name(), "name");
         assert_eq!(arrow_schema.field(2).name(), "age");
+        assert_eq!(crate::conversions::read_parquet_field_id(arrow_schema.field(0)), Some(1));
     }
 
     #[test]

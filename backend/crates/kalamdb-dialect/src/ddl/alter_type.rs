@@ -1,6 +1,6 @@
 //! ALTER TYPE composite and enum operations.
 
-use kalamdb_commons::models::{NamespaceId, TypeId};
+use kalamdb_commons::models::NamespaceId;
 
 use crate::ddl::{
     create_type::{
@@ -44,12 +44,16 @@ pub enum AlterTypeOperation {
     SetSchema {
         schema: NamespaceId,
     },
+    RenameType {
+        new_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlterTypeStatement {
-    pub type_id:   TypeId,
-    pub operation: AlterTypeOperation,
+    pub namespace_id: NamespaceId,
+    pub name:         String,
+    pub operation:    AlterTypeOperation,
 }
 
 impl AlterTypeStatement {
@@ -62,7 +66,6 @@ impl AlterTypeStatement {
         let rest = trimmed["ALTER TYPE".len()..].trim_start();
         let (qual, after) = split_qualified_ident(rest)?;
         let namespace_id = qual.namespace_or(default_namespace);
-        let type_id = TypeId::from_parts(Some(&namespace_id), &qual.name);
         let after = after.trim_start();
         let after_upper = after.to_ascii_uppercase();
 
@@ -83,6 +86,16 @@ impl AlterTypeStatement {
             let (field, rest) = take_ident(rest)?;
             let cascade = rest.trim().eq_ignore_ascii_case("CASCADE");
             AlterTypeOperation::DropAttribute { field, cascade }
+        } else if after_upper.starts_with("RENAME TO") {
+            let rest = after["RENAME TO".len()..].trim_start();
+            let (new_name, leftover) = take_ident(rest)?;
+            if !leftover.trim().is_empty() {
+                return Err("Unexpected tokens after RENAME TO".to_string());
+            }
+            if new_name.is_empty() {
+                return Err("Expected type name after RENAME TO".to_string());
+            }
+            AlterTypeOperation::RenameType { new_name }
         } else if after_upper.starts_with("RENAME ATTRIBUTE") {
             let rest = after["RENAME ATTRIBUTE".len()..].trim_start();
             let (from, rest) = take_ident(rest)?;
@@ -109,12 +122,16 @@ impl AlterTypeStatement {
                     .map_err(|error| error.to_string())?,
             }
         } else {
-            return Err(
-                "Expected ADD VALUE, ADD/DROP/RENAME/ALTER ATTRIBUTE, or SET SCHEMA".to_string()
-            );
+            return Err("Expected ADD VALUE, ADD/DROP/RENAME/ALTER ATTRIBUTE, RENAME TO, or SET \
+                        SCHEMA"
+                .to_string());
         };
 
-        Ok(Self { type_id, operation })
+        Ok(Self {
+            namespace_id,
+            name: qual.name,
+            operation,
+        })
     }
 }
 
@@ -222,6 +239,20 @@ mod tests {
                 assert_eq!(neighbor, Some(EnumValueNeighbor::After("Alpha".into())));
             },
             _ => panic!("expected add value"),
+        }
+    }
+
+    #[test]
+    fn parse_rename_type() {
+        let stmt =
+            AlterTypeStatement::parse("ALTER TYPE app.address RENAME TO user_address", &ns())
+                .unwrap();
+        match stmt.operation {
+            AlterTypeOperation::RenameType { new_name } => {
+                assert_eq!(new_name, "user_address");
+                assert_eq!(stmt.name, "address");
+            },
+            _ => panic!("expected rename type"),
         }
     }
 

@@ -526,6 +526,8 @@ mod tests {
                 table_id:       None,
                 source_type_id: None,
                 comment:        None,
+                type_revision:  1,
+                next_slot:      1,
             })
             .expect("upsert type");
         let routine_id = RoutineId::from_parts(Some(&namespace_id), "book_tickets");

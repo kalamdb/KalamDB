@@ -177,8 +177,7 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let table_id =
-            TableId::from_strings(statement.namespace_id.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(&statement.namespace_id, &statement.table_name);
 
         log::debug!(
             "🗑️  DROP TABLE request: {}.{} (if_exists: {}, user: {}, role: {:?})",
@@ -459,6 +458,7 @@ mod tests {
             table_type: TableType::User,
             schema,
             column_defaults: HashMap::new(),
+            column_type_refs: HashMap::new(),
             primary_key_column: Some("id".to_string()),
             storage_id: None,
             use_user_storage: false,

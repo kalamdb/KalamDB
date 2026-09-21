@@ -82,6 +82,57 @@ pub struct CatalogType {
     )]
     #[serde(default)]
     pub comment:        Option<String>,
+    #[column(
+        id = 8,
+        ordinal = 8,
+        data_type(KalamDataType::Int),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Immutable layout revision"
+    )]
+    #[serde(default = "default_type_revision")]
+    pub type_revision:  u32,
+    #[column(
+        id = 9,
+        ordinal = 9,
+        data_type(KalamDataType::Int),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Next never-reused field slot"
+    )]
+    #[serde(default = "default_next_slot")]
+    pub next_slot:      i32,
+}
+
+fn default_type_revision() -> u32 {
+    1
+}
+
+fn default_next_slot() -> i32 {
+    1
 }
 
 impl kalamdb_commons::KSerializable for CatalogType {}
+
+impl CatalogType {
+    pub fn named(
+        type_id: TypeId,
+        namespace_id: NamespaceId,
+        name: impl Into<String>,
+        kind: CatalogTypeKind,
+    ) -> Self {
+        Self {
+            type_id,
+            namespace_id,
+            name: name.into(),
+            kind,
+            table_id: None,
+            source_type_id: None,
+            comment: None,
+            type_revision: 1,
+            next_slot: 1,
+        }
+    }
+}

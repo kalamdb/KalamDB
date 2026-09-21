@@ -262,7 +262,7 @@ where
 }
 
 fn table_id(table: &TableDefinition) -> TableId {
-    TableId::new(table.namespace_id.clone(), table.table_name.clone())
+    table.table_id()
 }
 
 fn has_covering_membership_primary_key(
@@ -309,7 +309,7 @@ fn object_name_to_table_id(
         })
         .collect::<Result<Vec<_>, _>>()?;
     match parts.as_slice() {
-        [table] => TableId::try_from_strings(default_namespace.as_str(), table),
+        [table] => TableId::try_from_namespace(default_namespace.clone(), table),
         [namespace, table] => TableId::try_from_strings(namespace, table),
         _ => Err("authorization table must be <table> or <namespace>.<table>".to_string()),
     }

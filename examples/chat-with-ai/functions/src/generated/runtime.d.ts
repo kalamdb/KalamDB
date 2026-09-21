@@ -42,6 +42,14 @@ export interface LogHost {
   error(error: unknown, message?: string, ...args: unknown[]): void;
 }
 
+export interface NestedCodec<T> {
+  readonly typeId: string;
+  encode(value: T): Uint8Array;
+  decode(bytes: Uint8Array): T;
+}
+
+export type NestedStructBytes = Uint8Array;
+
 export interface HttpHost {
   readonly request: {
     readonly method: string;

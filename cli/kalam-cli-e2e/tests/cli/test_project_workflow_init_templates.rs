@@ -82,7 +82,7 @@ fn test_project_workflow_init_templates_catalog_matches_boot_cases() {
 macro_rules! template_boot_test {
     ($name:ident, $id:expr, $language:expr) => {
         #[test]
-        #[ntest::timeout(180_000)]
+        #[ntest::timeout(1_200_000)]
         fn $name() {
             boot_listed_template($id, $language);
         }
@@ -438,6 +438,23 @@ fn typecheck_typescript_project(project_dir: &Path) {
 }
 
 fn ensure_local_typescript_sdks_built(workspace: &Path) {
+    // Two template-boot tests can run at once (cli-template-boot max-threads = 2).
+    // Concurrent `npm run clean` + wasm-pack into the same wasm/ dir races
+    // wasm-pack 0.15's package.json merge (`invalid type: sequence, expected a string`).
+    let lock_path = std::env::temp_dir().join(format!(
+        "kalam-ts-sdk-build-{}.lock",
+        workspace.to_string_lossy().replace(['/', '\\'], "_")
+    ));
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap_or_else(|error| panic!("open SDK build lock {}: {error}", lock_path.display()));
+    lock_file
+        .lock()
+        .unwrap_or_else(|error| panic!("lock SDK build lock {}: {error}", lock_path.display()));
+
     let sdk_root = workspace.join("link/sdks/typescript");
     let packages = [
         ("client", "dist/src/index.js"),

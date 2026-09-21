@@ -377,6 +377,7 @@ mod tests {
         assert!(config.validate().is_ok());
         assert_eq!(config.jobs.history_cleanup_interval_seconds, 3600);
         assert_eq!(config.jobs.history_retention_days, 7);
+        assert_eq!(config.jobs.max_runtime_seconds, 1800);
     }
 
     #[test]

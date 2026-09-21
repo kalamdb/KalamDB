@@ -18,7 +18,7 @@ use kalamdb_functions::{
     hash_artifact_bytes, prepare_inline_javascript, FunctionActivation, ImplementationRef,
 };
 use kalamdb_sql::ddl::CreateProcedureStatement;
-use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter};
+use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, CatalogStores};
 
 use crate::helpers::{
     async_blocking::run_blocking,
@@ -44,13 +44,16 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "create procedure")?;
         require_existing_namespace(&self.app_context, &statement.namespace_id)?;
-        {
+        let owner = context.user_id().clone();
+        let (mut routine, parameters) = {
             let stores = self.app_context.system_tables().catalog_stores();
             crate::catalog_type::require_procedure_types(&stores, &statement)?;
-        }
+            (
+                catalog_routine(&stores, &statement, owner)?,
+                catalog_parameters(&stores, &statement)?,
+            )
+        };
         let app = Arc::clone(&self.app_context);
-        let owner = context.user_id().clone();
-        let mut routine = catalog_routine(&statement, owner);
         if let Some(body) = statement.body.as_deref() {
             routine.inline_source_hash =
                 Some(hash_artifact_bytes(body.as_bytes()).as_str().to_string());
@@ -58,7 +61,6 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
         if should_compile_javascript(statement.language.as_deref()) {
             routine.inline_artifact_id = Some(compile_inline_javascript(&app, &statement).await?);
         }
-        let parameters = catalog_parameters(&statement)?;
         let existing = {
             let stores = app.system_tables().catalog_stores();
             stores
@@ -252,8 +254,12 @@ mod tests {
     }
 }
 
-fn catalog_routine(statement: &CreateProcedureStatement, owner: UserId) -> CatalogRoutine {
-    CatalogRoutine {
+fn catalog_routine(
+    stores: &CatalogStores,
+    statement: &CreateProcedureStatement,
+    owner: UserId,
+) -> Result<CatalogRoutine, KalamDbError> {
+    Ok(CatalogRoutine {
         routine_id: statement.routine_id.clone(),
         namespace_id: statement.namespace_id.clone(),
         name: statement.name.clone(),
@@ -264,7 +270,11 @@ fn catalog_routine(statement: &CreateProcedureStatement, owner: UserId) -> Catal
         return_type_id: statement
             .return_type
             .as_ref()
-            .and_then(|ty| ty.resolved_type_id(&statement.namespace_id)),
+            .map(|ty| {
+                crate::catalog_type::resolve_named_type_id(stores, &statement.namespace_id, ty)
+            })
+            .transpose()?
+            .flatten(),
         return_type_name: statement
             .return_type
             .as_ref()
@@ -275,10 +285,11 @@ fn catalog_routine(statement: &CreateProcedureStatement, owner: UserId) -> Catal
         return_data_type: statement.return_type.as_ref().and_then(|ty| ty.builtin_data_type()),
         inline_source_hash: None,
         inline_artifact_id: None,
-    }
+    })
 }
 
 fn catalog_parameters(
+    stores: &CatalogStores,
     statement: &CreateProcedureStatement,
 ) -> Result<Vec<CatalogRoutineParameter>, KalamDbError> {
     let mut parameters = Vec::with_capacity(statement.parameters.len());
@@ -286,11 +297,15 @@ fn catalog_parameters(
         let ordinal = (index + 1) as i32;
         parameters.push(CatalogRoutineParameter {
             parameter_id: RoutineParameterId::new(&statement.routine_id, ordinal)
-                .map_err(|error| KalamDbError::InvalidSql(error))?,
+                .map_err(KalamDbError::InvalidSql)?,
             routine_id: statement.routine_id.clone(),
             name: parameter.name.clone(),
             ordinal,
-            type_id: parameter.type_ref.resolved_type_id(&statement.namespace_id),
+            type_id: crate::catalog_type::resolve_named_type_id(
+                stores,
+                &statement.namespace_id,
+                &parameter.type_ref,
+            )?,
             type_name: parameter.type_ref.resolved_type_name(&statement.namespace_id),
             is_array: parameter.type_ref.is_array,
             not_null: parameter.type_ref.not_null,

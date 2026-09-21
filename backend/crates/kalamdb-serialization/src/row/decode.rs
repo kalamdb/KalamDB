@@ -96,10 +96,61 @@ pub fn decode_stream_row(
     })
 }
 
-pub(crate) struct DecodedRow {
+pub(crate) struct DecodedSlots {
     pub commit_seq: u64,
     pub deleted:    bool,
-    pub fields:     Row,
+    pub fields:     Vec<ScalarValue>,
+}
+
+pub(crate) struct DecodedRow {
+    commit_seq: u64,
+    deleted:    bool,
+    fields:     Row,
+}
+
+pub(crate) fn decode_row_body_slots(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedSlots> {
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    let mut reader = Reader::new(payload);
+    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
+    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
+    let fields = decode_slot_fields(&mut reader, schema, indexed)?;
+    if !reader.is_empty() {
+        return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
+    }
+    Ok(DecodedSlots {
+        commit_seq,
+        deleted,
+        fields,
+    })
+}
+
+fn decode_slot_fields(
+    reader: &mut Reader<'_>,
+    schema: &StorageSchema,
+    indexed: bool,
+) -> Result<Vec<ScalarValue>> {
+    let stored_field_count = reader.u16()? as usize;
+    if indexed {
+        skip_offset_table(reader, stored_field_count)?;
+    }
+    let mut values = Vec::with_capacity(schema.fields.len());
+    let live_count = stored_field_count.min(schema.fields.len());
+    for (index, field) in schema.fields.iter().enumerate() {
+        if index < live_count {
+            if field.dropped {
+                skip_value(reader)?;
+                values.push(ScalarValue::Null);
+                continue;
+            }
+            values.push(decode_value(reader, &field.data_type)?);
+        } else {
+            values.push(ScalarValue::Null);
+        }
+    }
+    for _ in live_count..stored_field_count {
+        skip_value(reader)?;
+    }
+    Ok(values)
 }
 
 /// Decode ordinal field payloads produced by [`super::encode::encode_row_fields`].
@@ -113,19 +164,26 @@ pub fn decode_row_fields(bytes: &[u8], schema: &StorageSchema) -> Result<Row> {
 }
 
 pub(crate) fn decode_row_body(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedRow> {
-    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
-    let mut reader = Reader::new(payload);
-    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
-    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
-    let fields = decode_fields(&mut reader, schema, indexed)?;
-    if !reader.is_empty() {
-        return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
-    }
+    let slots = decode_row_body_slots(bytes, schema)?;
     Ok(DecodedRow {
-        commit_seq,
-        deleted,
-        fields,
+        commit_seq: slots.commit_seq,
+        deleted:    slots.deleted,
+        fields:     slots_to_named_row(schema, &slots.fields),
     })
+}
+
+fn slots_to_named_row(schema: &StorageSchema, slots: &[ScalarValue]) -> Row {
+    let mut values = BTreeMap::new();
+    for (index, field) in schema.fields.iter().enumerate() {
+        if field.dropped {
+            continue;
+        }
+        values.insert(
+            field.name.clone(),
+            slots.get(index).cloned().unwrap_or(ScalarValue::Null),
+        );
+    }
+    Row { values }
 }
 
 fn decode_row_body_selected(

@@ -381,3 +381,13 @@ where
     json_rows_to_arrow_batch(&target_schema, rows)
         .into_invalid_operation("Failed to build Arrow batch")
 }
+
+/// Decode RocksDB tagged payloads straight into Arrow, skipping `Row` maps.
+pub fn encoded_payloads_to_arrow_batch(
+    schema: SchemaRef,
+    storage: &kalamdb_serialization::StorageSchema,
+    payloads: &[&[u8]],
+) -> Result<RecordBatch, KalamDbError> {
+    kalamdb_serialization::decode_payloads_to_arrow_batch(storage, schema, payloads)
+        .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))
+}

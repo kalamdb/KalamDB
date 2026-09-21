@@ -5,7 +5,21 @@ import type {
   LiveQueryControllerSnapshot,
   RowData,
 } from '@kalamdb/client';
-import type { InferInsertModel, InferSelectModel, SQLWrapper, Table } from 'drizzle-orm';
+import type { InferInsertModel, InferSelectModel, Table } from 'drizzle-orm';
+
+/**
+ * Structural stand-in for drizzle-orm `SQL` / `SQLWrapper`.
+ *
+ * Public `where` / `orderBy` callbacks must not name drizzle's own types:
+ * `file:` installs of this package keep a nested `node_modules/drizzle-orm`,
+ * and TypeScript then treats the app's `SQL` as a different class because
+ * `shouldInlineParams` is private.
+ */
+export type LiveSqlFragment = {
+  getSQL(): unknown;
+};
+
+export type LiveSqlExpr = LiveSqlFragment | readonly LiveSqlFragment[];
 
 export interface KalamProviderProps {
   client: KalamDBClient;
@@ -74,8 +88,8 @@ export interface SharedLiveQueryOptions<TRow> {
 export interface DrizzleLiveQueryOptions<TTable extends Table, TSelected = SingleLiveQueryContext<InferSelectModel<TTable>>>
   extends SharedLiveQueryOptions<InferSelectModel<TTable>> {
   table: TTable;
-  where?: (table: TTable) => SQLWrapper;
-  orderBy?: (table: TTable) => SQLWrapper | SQLWrapper[];
+  where?: (table: TTable) => LiveSqlFragment;
+  orderBy?: (table: TTable) => LiveSqlExpr;
   select?: (context: SingleLiveQueryContext<InferSelectModel<TTable>>) => TSelected;
 }
 
@@ -102,8 +116,8 @@ export type LiveQueryProps<TTable extends Table = Table> = DrizzleLiveQueryProps
 export interface DrizzleLiveQueryDefinition<TTable extends Table = Table>
   extends Omit<SharedLiveQueryOptions<InferSelectModel<TTable>>, 'client'> {
   table: TTable;
-  where?: (table: TTable) => SQLWrapper;
-  orderBy?: (table: TTable) => SQLWrapper | SQLWrapper[];
+  where?: (table: TTable) => LiveSqlFragment;
+  orderBy?: (table: TTable) => LiveSqlExpr;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

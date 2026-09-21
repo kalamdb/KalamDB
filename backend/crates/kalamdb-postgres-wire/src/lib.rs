@@ -8,6 +8,7 @@ pub mod connection;
 pub mod handlers;
 pub mod listener;
 pub mod params;
+mod pg_types;
 pub mod ports;
 pub mod query;
 pub mod row_encoder;

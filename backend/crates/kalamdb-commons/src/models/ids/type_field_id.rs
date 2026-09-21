@@ -9,7 +9,7 @@ use super::TypeId;
 #[cfg(feature = "storage")]
 use crate::StorageKey;
 
-/// `{type_id}:{field_name}` identity for `system.type_fields`.
+/// `{type_id}:{slot}` identity for composite fields; `{type_id}:{label}` for enums.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct TypeFieldId(String);
@@ -21,6 +21,23 @@ impl TypeFieldId {
             return Err("type field name must be non-empty and cannot contain ':'".to_string());
         }
         Ok(Self(format!("{}:{field_name}", type_id.as_str())))
+    }
+
+    /// Stable primary key for a composite field slot. Survives attribute rename.
+    pub fn from_slot(type_id: &TypeId, slot: i32) -> Result<Self, String> {
+        if slot <= 0 {
+            return Err("type field slot must be a positive integer".to_string());
+        }
+        Ok(Self(format!("{}:{slot}", type_id.as_str())))
+    }
+
+    /// RocksDB prefix scan key `{type_id}:`.
+    pub fn scan_prefix(type_id: &TypeId) -> Self {
+        Self(format!("{}:", type_id.as_str()))
+    }
+
+    pub fn slot(&self) -> Option<i32> {
+        self.split().1.parse().ok()
     }
 
     pub fn as_str(&self) -> &str {
@@ -64,7 +81,11 @@ impl StorageKey for TypeFieldId {
         let (type_id, field_name) = value
             .rsplit_once(':')
             .ok_or_else(|| "invalid type field storage key".to_string())?;
-        Self::new(&TypeId::new(type_id), field_name)
+        let type_id = TypeId::try_new(type_id)?;
+        if field_name.parse::<i32>().is_ok() {
+            return Ok(Self(value));
+        }
+        Self::new(&type_id, field_name)
     }
 }
 

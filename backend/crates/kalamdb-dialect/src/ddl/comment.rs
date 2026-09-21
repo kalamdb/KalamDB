@@ -1,6 +1,6 @@
 //! COMMENT ON TYPE / COMMENT ON PROCEDURE via sqlparser.
 
-use kalamdb_commons::models::{NamespaceId, RoutineId, TypeId};
+use kalamdb_commons::models::{NamespaceId, RoutineId};
 use sqlparser::{
     ast::{CommentObject, ObjectName, ObjectNamePart, Statement},
     dialect::PostgreSqlDialect,
@@ -11,7 +11,10 @@ use crate::{ddl::DdlResult, parser::utils::parse_sql_statements};
 /// Catalog object targeted by `COMMENT ON`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommentOnTarget {
-    Type(TypeId),
+    Type {
+        namespace_id: NamespaceId,
+        name:         String,
+    },
     Procedure(RoutineId),
 }
 
@@ -44,9 +47,7 @@ impl CommentOnStatement {
             } => {
                 let (namespace_id, name) = resolve_object_name(&object_name, default_namespace)?;
                 let target = match object_type {
-                    CommentObject::Type => {
-                        CommentOnTarget::Type(TypeId::from_parts(Some(&namespace_id), &name))
-                    },
+                    CommentObject::Type => CommentOnTarget::Type { namespace_id, name },
                     CommentObject::Procedure => CommentOnTarget::Procedure(RoutineId::from_parts(
                         Some(&namespace_id),
                         &name.to_ascii_lowercase(),
@@ -106,7 +107,10 @@ mod tests {
         )
         .unwrap();
         match stmt.target {
-            CommentOnTarget::Type(type_id) => assert_eq!(type_id.as_str(), "chat.address"),
+            CommentOnTarget::Type { namespace_id, name } => {
+                assert_eq!(namespace_id.as_str(), "chat");
+                assert_eq!(name, "address");
+            },
             other => panic!("expected type, got {other:?}"),
         }
         assert_eq!(stmt.comment.as_deref(), Some("Postal address for a user"));

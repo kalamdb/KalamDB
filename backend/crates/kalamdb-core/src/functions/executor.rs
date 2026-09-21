@@ -288,7 +288,12 @@ async fn invoke_root(
         if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
             KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
         })? {
-            bind::validate_call_return(&stores, &routine, &value)?;
+            bind::validate_call_return(
+                host.app.schema_registry().type_registry(),
+                &stores,
+                &routine,
+                &value,
+            )?;
         }
         value
     };
@@ -334,7 +339,12 @@ async fn invoke_on_host(
     if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
         KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
     })? {
-        bind::validate_call_return(&stores, &routine, &value)?;
+        bind::validate_call_return(
+            host.app.schema_registry().type_registry(),
+            &stores,
+            &routine,
+            &value,
+        )?;
     }
     Ok(value)
 }
@@ -371,7 +381,12 @@ pub(super) fn prepare_call(
     );
 
     let revision = revision_for_routine(host, &routine)?;
-    bind::validate_call_arguments(&stores, &routine.routine_id, args)?;
+    bind::validate_call_arguments(
+        host.app.schema_registry().type_registry(),
+        &stores,
+        &routine.routine_id,
+        args,
+    )?;
     let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
     let args = attach_transfer(&args, &revision.contract_hash);
     let frame = ProcedureFrame {

@@ -62,7 +62,10 @@ pub use kalamdb_vector::{
     normalize_vector_column_name, SharedVectorHotOpId, SharedVectorHotStore, UserVectorHotOpId,
     UserVectorHotStore, VectorHotOp, VectorHotOpType,
 };
-pub use row_codec::{empty_storage_schema, storage_schema_for_table, SharedRowCodec, UserRowCodec};
+pub use row_codec::{
+    empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow,
+    SharedRowCodec, UserRowCodec,
+};
 pub use shared_tables::{
     pk_index::{create_shared_table_pk_index, SharedTablePkIndex},
     shared_table_store::{

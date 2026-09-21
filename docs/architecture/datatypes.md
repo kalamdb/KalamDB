@@ -19,6 +19,8 @@ The canonical implementations are:
 
 If this document and code diverge, **the code wins**.
 
+Named `CREATE TYPE` values use an opaque `TypeId` (not the SQL name), a unique `(namespace, name)` alias, never-reused field slots, and `TypeRegistry` layouts. `KalamDataType` stays the compact builtin enum. Named columns store `LogicalTypeRef` / `TypeId` on `ColumnDefinition` and materialize as Arrow `Struct`/`List`. See [custom-types-arrow-plan.md](./custom-types-arrow-plan.md). `JSON` remains the schemaless escape hatch; nested domain objects are named types, not JSON columns.
+
 ---
 
 ## 1) Canonical KalamDB types

@@ -61,7 +61,7 @@ fn compiler() -> (Arc<TableDefinition>, PolicyCompiler<TestResolver>) {
 }
 
 fn table_id(table: &TableDefinition) -> TableId {
-    TableId::new(table.namespace_id.clone(), table.table_name.clone())
+    table.table_id()
 }
 
 #[test]

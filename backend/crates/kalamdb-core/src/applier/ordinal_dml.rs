@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{models::rows::Row, TableId};
 use kalamdb_serialization::{decode_row_fields, encode_row_fields, StorageSchema};
-use kalamdb_tables::storage_schema_for_table;
+use kalamdb_tables::{storage_schema_for_table, storage_schema_for_table_with_arrow};
 
 use crate::app_context::AppContext;
 
@@ -70,7 +70,13 @@ pub fn decode_insert_rows(
 
 fn storage_schema(app_context: &AppContext, table_id: &TableId) -> Option<Arc<StorageSchema>> {
     let cached = app_context.schema_registry().get(table_id)?;
-    match storage_schema_for_table(&cached.table) {
+    let arrow = cached.arrow_schema().ok();
+    let result = match arrow {
+        Some(schema) => storage_schema_for_table_with_arrow(&cached.table, schema.as_ref())
+            .or_else(|_| storage_schema_for_table(&cached.table)),
+        None => storage_schema_for_table(&cached.table),
+    };
+    match result {
         Ok(schema) => Some(schema),
         Err(error) => {
             log::warn!("storage schema for {table_id} is invalid: {error}");

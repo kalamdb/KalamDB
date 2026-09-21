@@ -36,6 +36,7 @@ use std::{collections::BTreeMap, convert::TryFrom, sync::Arc};
 
 use arrow::{
     array::*,
+    buffer::OffsetBuffer,
     datatypes::{DataType, Field, SchemaRef, TimeUnit},
     record_batch::RecordBatch,
 };
@@ -45,7 +46,9 @@ use uuid::Uuid;
 
 // Chrono no longer needed - DataFusion handles timestamp serialization natively
 use crate::models::rows::Row;
-use crate::{errors::CommonError, models::KalamCellValue};
+use crate::{
+    conversions::schema_metadata::validate_enum_label, errors::CommonError, models::KalamCellValue,
+};
 
 /// Type alias for Arc<dyn Array> to improve readability
 type ArrayRef = Arc<dyn Array>;
@@ -140,6 +143,8 @@ pub fn json_rows_to_arrow_batch(schema: &SchemaRef, rows: Vec<Row>) -> Result<Re
         let field = schema.field(i);
         let array = build_array_from_scalars(field.as_ref(), col_values)
             .map_err(|e| format!("Failed to build column '{}': {}", field.name(), e))?;
+        let array = super::project::align_array_to_field(array, field.as_ref())
+            .map_err(|e| format!("Failed to align column '{}': {}", field.name(), e))?;
         arrays.push(array);
     }
 
@@ -303,6 +308,8 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
         return Ok(typed_null_for_field(field));
     }
 
+    validate_enum_scalar(field, &value)?;
+
     if &value.data_type() == field.data_type() {
         return Ok(value);
     }
@@ -316,6 +323,10 @@ pub fn coerce_scalar_to_field(value: ScalarValue, field: &Field) -> Result<Scala
 
     if let Some(embedding) = coerce_embedding_scalar(value.clone(), field)? {
         return Ok(embedding);
+    }
+
+    if let Some(nested) = coerce_nested_json_scalar(value.clone(), field)? {
+        return Ok(nested);
     }
 
     value.cast_to(field.data_type()).map_err(|e| {
@@ -372,6 +383,97 @@ fn coerce_embedding_scalar(
     let list = FixedSizeListArray::new(child.clone(), *len, Arc::new(values), None);
 
     Ok(Some(ScalarValue::FixedSizeList(Arc::new(list))))
+}
+
+fn coerce_nested_json_scalar(
+    value: ScalarValue,
+    field: &Field,
+) -> Result<Option<ScalarValue>, String> {
+    match field.data_type() {
+        DataType::Struct(_) | DataType::List(_) | DataType::LargeList(_) => {},
+        _ => return Ok(None),
+    }
+    let json = match value {
+        ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
+            serde_json::from_str::<JsonValue>(&text).map_err(|error| {
+                format!("invalid nested JSON for column '{}': {error}", field.name())
+            })?
+        },
+        ScalarValue::Struct(_) | ScalarValue::List(_) | ScalarValue::LargeList(_) => {
+            return Ok(Some(value));
+        },
+        _ => return Ok(None),
+    };
+    Ok(Some(json_value_to_scalar_for_field(&json, field)?))
+}
+
+/// Convert JSON into a ScalarValue matching an Arrow field, including named structs and lists.
+pub fn json_value_to_scalar_for_field(
+    value: &JsonValue,
+    field: &Field,
+) -> Result<ScalarValue, String> {
+    let scalar = json_value_to_scalar_for_data_type(value, field.data_type(), field.is_nullable())?;
+    validate_enum_scalar(field, &scalar)?;
+    Ok(scalar)
+}
+
+fn json_value_to_scalar_for_data_type(
+    value: &JsonValue,
+    data_type: &DataType,
+    _nullable: bool,
+) -> Result<ScalarValue, String> {
+    if value.is_null() {
+        return ScalarValue::try_from(data_type).map_err(|error| error.to_string());
+    }
+    match data_type {
+        DataType::Struct(fields) => {
+            let object = value
+                .as_object()
+                .ok_or_else(|| "named type values must be JSON objects".to_string())?;
+            let mut arrays = Vec::with_capacity(fields.len());
+            for child in fields {
+                let child_json = object.get(child.name()).unwrap_or(&JsonValue::Null);
+                let scalar = json_value_to_scalar_for_field(child_json, child)?;
+                arrays.push(scalar.to_array().map_err(|error| error.to_string())?);
+            }
+            Ok(ScalarValue::Struct(Arc::new(StructArray::new(fields.clone(), arrays, None))))
+        },
+        DataType::List(item) | DataType::LargeList(item) => {
+            let array = value
+                .as_array()
+                .ok_or_else(|| "array columns must be JSON arrays".to_string())?;
+            if array.len() > 1_048_576 {
+                return Err("decoded list exceeds max length".to_string());
+            }
+            let mut values = Vec::with_capacity(array.len());
+            for element in array {
+                values.push(json_value_to_scalar_for_field(element, item)?);
+            }
+            let child_array = if values.is_empty() {
+                new_empty_array(item.data_type())
+            } else {
+                ScalarValue::iter_to_array(values).map_err(|error| error.to_string())?
+            };
+            let offsets = OffsetBuffer::from_lengths([child_array.len()]);
+            Ok(ScalarValue::List(Arc::new(ListArray::new(
+                item.clone(),
+                offsets,
+                child_array,
+                None,
+            ))))
+        },
+        _ => Ok(json_value_to_scalar(value)),
+    }
+}
+
+fn validate_enum_scalar(field: &Field, value: &ScalarValue) -> Result<(), String> {
+    let label = match value {
+        ScalarValue::Utf8(Some(text))
+        | ScalarValue::LargeUtf8(Some(text))
+        | ScalarValue::Utf8View(Some(text)) => text.as_str(),
+        _ => return Ok(()),
+    };
+    validate_enum_label(field, label)
 }
 
 fn parse_debug_embedding_repr(raw: &str) -> Option<Vec<f32>> {
@@ -468,6 +570,21 @@ mod tests {
             email.is_null(),
             "missing required columns must remain NULL so NOT NULL validation can reject them"
         );
+    }
+
+    #[test]
+    fn coerce_rejects_invalid_enum_label() {
+        use crate::conversions::schema_metadata::with_kalam_enum_labels;
+
+        let field = with_kalam_enum_labels(
+            Field::new("status", DataType::Utf8, false),
+            &["active".to_string(), "blocked".to_string()],
+        );
+        let err = coerce_scalar_to_field(ScalarValue::Utf8(Some("nope".into())), &field)
+            .expect_err("invalid enum");
+        assert!(err.contains("invalid enum label 'nope'"), "{err}");
+        coerce_scalar_to_field(ScalarValue::Utf8(Some("active".into())), &field)
+            .expect("valid enum label");
     }
 
     #[test]

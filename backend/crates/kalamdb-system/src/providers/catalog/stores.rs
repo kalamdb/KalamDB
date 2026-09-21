@@ -140,6 +140,22 @@ impl CatalogStores {
         get_model(&self.types, type_id)
     }
 
+    /// Name lookup only. Runtime caches and FKs use [`TypeId`].
+    pub fn find_type(
+        &self,
+        namespace_id: &NamespaceId,
+        name: &str,
+    ) -> Result<Option<CatalogType>, SystemError> {
+        for catalog_type in self.list_types()? {
+            if catalog_type.namespace_id.as_str() == namespace_id.as_str()
+                && catalog_type.name == name
+            {
+                return Ok(Some(catalog_type));
+            }
+        }
+        Ok(None)
+    }
+
     /// Catalog the implicit payload type for `namespace.topic`, matching the topic id.
     pub fn ensure_implicit_topic_payload_type(
         &self,
@@ -162,15 +178,12 @@ impl CatalogStores {
                 "topic payload type requires a namespace-qualified topic".to_string(),
             ));
         }
-        self.upsert_type(CatalogType {
-            type_id:        type_id.clone(),
-            namespace_id:   NamespaceId::new(namespace),
-            name:           name.to_string(),
-            kind:           CatalogTypeKind::TopicPayload,
-            table_id:       None,
-            source_type_id: None,
-            comment:        None,
-        })?;
+        self.upsert_type(CatalogType::named(
+            type_id.clone(),
+            NamespaceId::new(namespace),
+            name,
+            CatalogTypeKind::TopicPayload,
+        ))?;
         Ok(type_id)
     }
 
@@ -195,11 +208,28 @@ impl CatalogStores {
     }
 
     pub fn list_type_fields(&self, type_id: &TypeId) -> Result<Vec<CatalogTypeField>, SystemError> {
-        let all: Vec<CatalogTypeField> = list_models(&self.type_fields)?;
-        let mut fields: Vec<CatalogTypeField> =
-            all.into_iter().filter(|field| &field.type_id == type_id).collect();
+        let prefix = TypeFieldId::scan_prefix(type_id);
+        let mut fields: Vec<CatalogTypeField> = self
+            .type_fields
+            .scan_prefix_typed(&prefix, None)?
+            .into_iter()
+            .map(|(_, field)| field)
+            .filter(|field| &field.type_id == type_id)
+            .collect();
+        if fields.is_empty() {
+            let all: Vec<CatalogTypeField> = list_models(&self.type_fields)?;
+            fields = all.into_iter().filter(|field| &field.type_id == type_id).collect();
+        }
         fields.sort_by_key(|field| field.ordinal);
         Ok(fields)
+    }
+
+    /// Upsert fields for a revision without deleting tombstones first.
+    pub fn publish_type_fields(&self, fields: Vec<CatalogTypeField>) -> Result<(), SystemError> {
+        for field in fields {
+            self.upsert_type_field(field)?;
+        }
+        Ok(())
     }
 
     pub fn replace_type_fields(
@@ -382,49 +412,53 @@ impl CatalogStores {
         Ok(ActivateFunctionOutcome::Activated)
     }
 
-    pub fn drop_type(&self, type_id: &TypeId) -> Result<(), SystemError> {
-        if self.get_type(type_id)?.is_none() {
-            return Err(SystemError::NotFound(format!("type not found: {type_id}")));
-        }
-
+    pub fn type_is_referenced(&self, type_id: &TypeId) -> Result<Option<String>, SystemError> {
         for catalog_type in self.list_types()? {
             if catalog_type.kind == CatalogTypeKind::RowAlias
                 && catalog_type.source_type_id.as_ref() == Some(type_id)
             {
-                return Err(SystemError::InvalidOperation(format!(
-                    "cannot drop type {type_id}: referenced by row alias {}",
-                    catalog_type.type_id
-                )));
+                return Ok(Some(format!("row alias {}", catalog_type.type_id)));
             }
         }
 
         let fields: Vec<CatalogTypeField> = list_models(&self.type_fields)?;
         for field in fields {
+            if field.dropped {
+                continue;
+            }
             if field.field_type_id.as_ref() == Some(type_id) && &field.type_id != type_id {
-                return Err(SystemError::InvalidOperation(format!(
-                    "cannot drop type {type_id}: referenced by {}.{}",
-                    field.type_id, field.name
-                )));
+                return Ok(Some(format!("{}.{}", field.type_id, field.name)));
             }
         }
 
         for routine in self.list_routines()? {
             if routine.return_type_id.as_ref() == Some(type_id) {
-                return Err(SystemError::InvalidOperation(format!(
-                    "cannot drop type {type_id}: referenced by routine {}",
-                    routine.routine_id
-                )));
+                return Ok(Some(format!("routine {}", routine.routine_id)));
             }
         }
 
         let parameters: Vec<CatalogRoutineParameter> = list_models(&self.routine_parameters)?;
         for parameter in parameters {
             if parameter.type_id.as_ref() == Some(type_id) {
-                return Err(SystemError::InvalidOperation(format!(
-                    "cannot drop type {type_id}: referenced by routine parameter {}.{}",
+                return Ok(Some(format!(
+                    "routine parameter {}.{}",
                     parameter.routine_id, parameter.name
                 )));
             }
+        }
+
+        Ok(None)
+    }
+
+    pub fn drop_type(&self, type_id: &TypeId) -> Result<(), SystemError> {
+        if self.get_type(type_id)?.is_none() {
+            return Err(SystemError::NotFound(format!("type not found: {type_id}")));
+        }
+
+        if let Some(dependent) = self.type_is_referenced(type_id)? {
+            return Err(SystemError::InvalidOperation(format!(
+                "cannot drop type {type_id}: referenced by {dependent}"
+            )));
         }
 
         self.force_drop_type(type_id)

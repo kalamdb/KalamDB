@@ -1318,6 +1318,13 @@ pub struct JobsSettings {
     /// (default: 7). Ignored when `history_cleanup_interval_seconds` is 0.
     #[serde(default = "default_jobs_history_retention_days")]
     pub history_retention_days: i64,
+
+    /// Maximum time a job may spend in local + leader execution (default: 1800s).
+    /// Set to 0 to disable. Hung backup/restore copies cannot be aborted; the
+    /// job is marked failed and the blocking work may still finish in the
+    /// background while holding the transfer lock.
+    #[serde(default = "default_jobs_max_runtime_seconds")]
+    pub max_runtime_seconds: u64,
 }
 
 /// SQL execution settings (Phase 11, T026)
@@ -1664,6 +1671,7 @@ impl Default for JobsSettings {
             wal_cleanup_interval_seconds: default_jobs_wal_cleanup_interval(),
             history_cleanup_interval_seconds: default_jobs_history_cleanup_interval(),
             history_retention_days: default_jobs_history_retention_days(),
+            max_runtime_seconds: default_jobs_max_runtime_seconds(),
         }
     }
 }

@@ -85,33 +85,34 @@ impl JobsManager {
     pub(crate) async fn recover_incomplete_jobs(&self) -> Result<(), KalamDbError> {
         let app_ctx = self.get_attached_app_context();
 
-        if app_ctx.executor().is_cluster_mode() {
-            let statuses = vec![JobStatus::Running, JobStatus::Retrying];
-            let job_nodes = self
-                .job_nodes_provider
-                .list_for_node_with_statuses_async(&self.node_id, &statuses, 100000)
-                .await
-                .into_kalamdb_error("Failed to list job_nodes for recovery")?;
+        // This process is gone, so Running/Retrying job_nodes on this node are
+        // stale in both standalone and cluster mode. Skipping this in
+        // standalone left flush-like jobs Running forever after a restart.
+        let statuses = vec![JobStatus::Running, JobStatus::Retrying];
+        let job_nodes = self
+            .job_nodes_provider
+            .list_for_node_with_statuses_async(&self.node_id, &statuses, 100000)
+            .await
+            .into_kalamdb_error("Failed to list job_nodes for recovery")?;
 
-            if job_nodes.is_empty() {
-                log::debug!("No incomplete job_nodes to recover for this node");
-            } else {
-                log::warn!("Recovering {} incomplete job_nodes from previous run", job_nodes.len());
+        if job_nodes.is_empty() {
+            log::debug!("No incomplete job_nodes to recover for this node");
+        } else {
+            log::warn!("Recovering {} incomplete job_nodes from previous run", job_nodes.len());
 
-                for node in job_nodes {
-                    let job_id = node.job_id.clone();
-                    let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
-                        job_id,
-                        node_id: self.node_id,
-                        status: JobStatus::Queued,
-                        error_message: Some("Node restarted".to_string()),
-                        updated_at: chrono::Utc::now(),
-                    };
+            for node in job_nodes {
+                let job_id = node.job_id.clone();
+                let cmd = kalamdb_raft::commands::MetaCommand::UpdateJobNodeStatus {
+                    job_id,
+                    node_id: self.node_id,
+                    status: JobStatus::Queued,
+                    error_message: Some("Node restarted".to_string()),
+                    updated_at: chrono::Utc::now(),
+                };
 
-                    app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
-                        KalamDbError::Other(format!("Failed to recover job_node via Raft: {}", e))
-                    })?;
-                }
+                app_ctx.executor().execute_meta(cmd).await.map_err(|e| {
+                    KalamDbError::Other(format!("Failed to recover job_node via Raft: {}", e))
+                })?;
             }
         }
 
@@ -421,6 +422,14 @@ mod tests {
             .expect("job must still exist");
         assert_eq!(recovered.status, JobStatus::Running);
         assert!(recovered.finished_at.is_none());
+
+        let nodes = jobs_manager
+            .job_nodes_provider
+            .list_for_job_id_async(&JobId::new(job_id))
+            .await
+            .expect("list job_nodes");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].status, JobStatus::Queued);
     }
 
     #[tokio::test]

@@ -128,10 +128,18 @@ fn write_field(out: &mut String, field: &ContractField) {
     out.push('\t');
     out.push_str(&field.type_name);
     out.push('\t');
+    if let Some(type_id) = &field.type_id {
+        out.push_str(type_id.as_str());
+    }
+    out.push('\t');
+    out.push_str(&field.slot.to_string());
+    out.push('\t');
     out.push_str(if field.is_array { "1" } else { "0" });
     out.push('\t');
     out.push_str(if field.not_null { "1" } else { "0" });
     out.push('\t');
     out.push_str(if field.nonempty { "1" } else { "0" });
+    out.push('\t');
+    out.push_str(if field.dropped { "dropped" } else { "live" });
     out.push('\n');
 }

@@ -45,7 +45,7 @@ static TRUSTED_PROXY_RANGES: Lazy<RwLock<Vec<IpNet>>> = Lazy::new(|| RwLock::new
 /// ```
 pub fn init_trusted_proxy_ranges(entries: &[String]) -> anyhow::Result<()> {
     let parsed = kalamdb_configs::parse_trusted_proxy_entries(entries)?;
-    *TRUSTED_PROXY_RANGES.write().expect("trusted proxy ranges lock poisoned") = parsed;
+    *TRUSTED_PROXY_RANGES.write().unwrap_or_else(std::sync::PoisonError::into_inner) = parsed;
     Ok(())
 }
 
@@ -54,7 +54,7 @@ pub fn extract_client_ip_addr_secure(
     headers: &HeaderMap,
 ) -> Option<IpAddr> {
     let trusted_proxy_ranges =
-        TRUSTED_PROXY_RANGES.read().expect("trusted proxy ranges lock poisoned");
+        TRUSTED_PROXY_RANGES.read().unwrap_or_else(std::sync::PoisonError::into_inner);
     extract_client_ip_addr_with_trusted_ranges(peer_addr, headers, &trusted_proxy_ranges)
 }
 

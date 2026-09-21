@@ -52,21 +52,24 @@ fn persist_create_type(
     require_existing_namespace(app, &statement.namespace_id)?;
     let stores = app.system_tables().catalog_stores();
     if stores
-        .get_type(&statement.type_id)
+        .find_type(&statement.namespace_id, &statement.name)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
         .is_some()
     {
         if statement.if_not_exists {
             return Ok(ExecutionResult::Success {
-                message: format!("Type {} already exists, skipping", statement.type_id),
+                message: format!(
+                    "Type {}.{} already exists, skipping",
+                    statement.namespace_id, statement.name
+                ),
             });
         }
         return Err(KalamDbError::AlreadyExists(format!(
-            "type {} already exists",
-            statement.type_id
+            "type {}.{} already exists",
+            statement.namespace_id, statement.name
         )));
     }
-    let topic_id = TopicId::new(statement.type_id.as_str());
+    let topic_id = TopicId::new(format!("{}.{}", statement.namespace_id.as_str(), statement.name));
     if app
         .system_tables()
         .topics()
@@ -75,11 +78,12 @@ fn persist_create_type(
         .is_some()
     {
         return Err(KalamDbError::AlreadyExists(format!(
-            "type {} collides with topic payload type",
-            statement.type_id
+            "type {}.{} collides with topic payload type",
+            statement.namespace_id, statement.name
         )));
     }
 
+    let type_id = TypeId::generate();
     match &statement.body {
         CreateTypeBody::Composite { fields } => {
             for field in fields {
@@ -87,16 +91,16 @@ fn persist_create_type(
                     &stores,
                     &statement.namespace_id,
                     &field.type_ref,
-                    Some(&statement.type_id),
+                    Some((&statement.namespace_id, statement.name.as_str())),
                 )?;
             }
-            upsert_named_type(&stores, &statement, CatalogTypeKind::Composite)?;
             let catalog_fields = fields
                 .iter()
                 .enumerate()
                 .map(|(index, field)| {
                     catalog_field(
-                        &statement.type_id,
+                        &stores,
+                        &type_id,
                         &statement.namespace_id,
                         field.name.clone(),
                         field.type_ref.clone(),
@@ -104,18 +108,34 @@ fn persist_create_type(
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let next_slot =
+                catalog_fields.iter().map(|field| field.physical_slot()).max().unwrap_or(0) + 1;
+            check_new_type_graph(&stores, &type_id, &catalog_fields)?;
+            upsert_named_type(
+                &stores,
+                &statement,
+                &type_id,
+                CatalogTypeKind::Composite,
+                next_slot,
+            )?;
             stores
-                .replace_type_fields(&statement.type_id, catalog_fields)
+                .publish_type_fields(catalog_fields)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
         },
         CreateTypeBody::Enum { labels } => {
-            upsert_named_type(&stores, &statement, CatalogTypeKind::Enum)?;
+            upsert_named_type(
+                &stores,
+                &statement,
+                &type_id,
+                CatalogTypeKind::Enum,
+                (labels.len() as i32) + 1,
+            )?;
             let catalog_fields = labels
                 .iter()
                 .enumerate()
                 .map(|(index, label)| {
                     CatalogTypeField::new(
-                        statement.type_id.clone(),
+                        type_id.clone(),
                         label.clone(),
                         (index + 1) as i32,
                         None,
@@ -129,7 +149,7 @@ fn persist_create_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             stores
-                .replace_type_fields(&statement.type_id, catalog_fields)
+                .publish_type_fields(catalog_fields)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
         },
         CreateTypeBody::FromTable {
@@ -140,6 +160,7 @@ fn persist_create_type(
                 app,
                 &stores,
                 &statement,
+                &type_id,
                 table_namespace_id.clone(),
                 table_name.clone(),
             )?;
@@ -147,25 +168,27 @@ fn persist_create_type(
     }
 
     Ok(ExecutionResult::Success {
-        message: format!("Type {} created", statement.type_id),
+        message: format!("Type {}.{} created", statement.namespace_id, statement.name),
     })
 }
 
 fn upsert_named_type(
     stores: &CatalogStores,
     statement: &CreateTypeStatement,
+    type_id: &TypeId,
     kind: CatalogTypeKind,
+    next_slot: i32,
 ) -> Result<(), KalamDbError> {
+    let mut catalog_type = CatalogType::named(
+        type_id.clone(),
+        statement.namespace_id.clone(),
+        statement.name.clone(),
+        kind,
+    );
+    catalog_type.comment = statement.comment.clone();
+    catalog_type.next_slot = next_slot.max(1);
     stores
-        .upsert_type(CatalogType {
-            type_id: statement.type_id.clone(),
-            namespace_id: statement.namespace_id.clone(),
-            name: statement.name.clone(),
-            kind,
-            table_id: None,
-            source_type_id: None,
-            comment: statement.comment.clone(),
-        })
+        .upsert_type(catalog_type)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
 
@@ -173,6 +196,7 @@ fn persist_from_table(
     app: &AppContext,
     stores: &CatalogStores,
     statement: &CreateTypeStatement,
+    type_id: &TypeId,
     table_namespace_id: Option<NamespaceId>,
     table_name: String,
 ) -> Result<(), KalamDbError> {
@@ -188,7 +212,7 @@ fn persist_from_table(
     };
 
     let implicit_id = ensure_implicit_row_type(stores, &table_id, &cached.table)?;
-    if statement.type_id == implicit_id {
+    if type_id == &implicit_id {
         return Ok(());
     }
 
@@ -198,7 +222,7 @@ fn persist_from_table(
     {
         if existing.kind == CatalogTypeKind::RowAlias
             && existing.source_type_id.as_ref() == Some(&implicit_id)
-            && existing.type_id != statement.type_id
+            && existing.type_id != *type_id
         {
             return Err(KalamDbError::AlreadyExists(format!(
                 "table {table_id} already has row alias {}",
@@ -207,16 +231,16 @@ fn persist_from_table(
         }
     }
 
+    let mut alias = CatalogType::named(
+        type_id.clone(),
+        statement.namespace_id.clone(),
+        statement.name.clone(),
+        CatalogTypeKind::RowAlias,
+    );
+    alias.source_type_id = Some(implicit_id);
+    alias.comment = statement.comment.clone();
     stores
-        .upsert_type(CatalogType {
-            type_id:        statement.type_id.clone(),
-            namespace_id:   statement.namespace_id.clone(),
-            name:           statement.name.clone(),
-            kind:           CatalogTypeKind::RowAlias,
-            table_id:       None,
-            source_type_id: Some(implicit_id),
-            comment:        statement.comment.clone(),
-        })
+        .upsert_type(alias)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
 
@@ -225,32 +249,32 @@ pub fn ensure_implicit_row_type(
     table_id: &TableId,
     table_def: &TableDefinition,
 ) -> Result<TypeId, KalamDbError> {
-    let type_id = TypeId::from_parts(Some(table_id.namespace_id()), table_id.table_name().as_str());
     if let Some(existing) = stores
-        .get_type(&type_id)
+        .find_type(table_id.namespace_id(), table_id.table_name().as_str())
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
     {
         if existing.kind != CatalogTypeKind::ImplicitTableRow {
             return Err(KalamDbError::AlreadyExists(match existing.kind {
                 CatalogTypeKind::TopicPayload => {
-                    format!("topic '{type_id}' collides with implicit table row type")
+                    format!("topic '{}' collides with implicit table row type", existing.type_id)
                 },
-                _ => format!("type {type_id} already exists"),
+                _ => format!("type {}.{} already exists", existing.namespace_id, existing.name),
             }));
         }
-        return Ok(type_id);
+        return Ok(existing.type_id);
     }
 
+    let type_id = TypeId::generate();
+    let mut catalog_type = CatalogType::named(
+        type_id.clone(),
+        table_id.namespace_id().clone(),
+        table_id.table_name().as_str(),
+        CatalogTypeKind::ImplicitTableRow,
+    );
+    catalog_type.table_id = Some(table_id.clone());
+    catalog_type.next_slot = (table_def.columns.len() as i32) + 1;
     stores
-        .upsert_type(CatalogType {
-            type_id:        type_id.clone(),
-            namespace_id:   table_id.namespace_id().clone(),
-            name:           table_id.table_name().as_str().to_string(),
-            kind:           CatalogTypeKind::ImplicitTableRow,
-            table_id:       Some(table_id.clone()),
-            source_type_id: None,
-            comment:        None,
-        })
+        .upsert_type(catalog_type)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
 
     let fields = table_def
@@ -261,57 +285,96 @@ pub fn ensure_implicit_row_type(
         })
         .collect::<Result<Vec<_>, _>>()?;
     stores
-        .replace_type_fields(&type_id, fields)
+        .publish_type_fields(fields)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(type_id)
 }
 
 pub(super) fn catalog_field(
+    stores: &CatalogStores,
     type_id: &TypeId,
     current_schema: &NamespaceId,
     name: String,
     type_ref: TypeReference,
     ordinal: i32,
 ) -> Result<CatalogTypeField, KalamDbError> {
-    let (type_name, field_type_id) = if let Some(data_type) = type_ref.builtin_data_type() {
-        (data_type.sql_name(), None)
-    } else {
-        let nested = type_ref.resolved_type_id(current_schema).expect("named types have a type id");
-        (nested.to_string(), Some(nested))
-    };
-    CatalogTypeField::new(
+    let mut field = CatalogTypeField::new(
         type_id.clone(),
         name,
         ordinal,
-        field_type_id,
+        resolve_named_type_id(stores, current_schema, &type_ref)?,
         type_ref.builtin_data_type(),
-        type_name,
+        type_ref.resolved_type_name(current_schema),
         type_ref.is_array,
         type_ref.not_null,
         type_ref.nonempty,
     )
-    .map_err(KalamDbError::InvalidSql)
+    .map_err(KalamDbError::InvalidSql)?;
+    field.element_nullable = !type_ref.not_null || type_ref.is_array;
+    Ok(field)
 }
 
 pub(crate) fn require_type_reference(
     stores: &CatalogStores,
     current_schema: &NamespaceId,
     type_ref: &TypeReference,
-    self_type: Option<&TypeId>,
+    creating: Option<(&NamespaceId, &str)>,
 ) -> Result<(), KalamDbError> {
-    let Some(type_id) = type_ref.resolved_type_id(current_schema) else {
+    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
         return Ok(());
     };
-    if self_type.is_some_and(|self_id| self_id == &type_id) {
-        return Err(KalamDbError::InvalidSql(format!("type {type_id} cannot reference itself")));
+    if creating.is_some_and(|(cns, cname)| cns == &namespace_id && cname == name) {
+        return Err(KalamDbError::InvalidSql(format!(
+            "type {namespace_id}.{name} cannot reference itself"
+        )));
     }
+    resolve_named_type_id(stores, current_schema, type_ref).map(|_| ())
+}
+
+/// Live catalog TypeId for a named type reference. Builtins return `None`.
+pub(crate) fn resolve_named_type_id(
+    stores: &CatalogStores,
+    current_schema: &NamespaceId,
+    type_ref: &TypeReference,
+) -> Result<Option<TypeId>, KalamDbError> {
+    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
+        return Ok(None);
+    };
     let found = stores
-        .get_type(&type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    if found.is_none() {
-        return Err(KalamDbError::NotFound(format!("type {type_id} not found")));
+        .find_type(&namespace_id, &name)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .ok_or_else(|| KalamDbError::NotFound(format!("type {namespace_id}.{name} not found")))?;
+    Ok(Some(found.type_id))
+}
+
+pub(super) fn check_new_type_graph(
+    stores: &CatalogStores,
+    type_id: &TypeId,
+    fields: &[CatalogTypeField],
+) -> Result<(), KalamDbError> {
+    use std::collections::HashMap;
+
+    use kalamdb_commons::{assert_finite_type_graph, TypeGraphNode};
+
+    let mut nodes = HashMap::new();
+    for catalog_type in stores
+        .list_types()
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    {
+        let existing_fields = stores
+            .list_type_fields(&catalog_type.type_id)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+        let refs: Vec<_> = existing_fields
+            .iter()
+            .filter(|field| !field.dropped)
+            .filter_map(|field| field.type_ref().ok())
+            .collect();
+        nodes.insert(catalog_type.type_id, TypeGraphNode::from_type_refs(&refs));
     }
-    Ok(())
+    let refs: Vec<_> = fields.iter().filter_map(|field| field.type_ref().ok()).collect();
+    nodes.insert(type_id.clone(), TypeGraphNode::from_type_refs(&refs));
+    assert_finite_type_graph(type_id, &nodes)
+        .map_err(|error| KalamDbError::InvalidSql(error.message))
 }
 
 pub(crate) fn require_procedure_types(

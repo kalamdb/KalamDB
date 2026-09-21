@@ -275,6 +275,11 @@ pub fn default_jobs_history_retention_days() -> i64 {
     7
 }
 
+/// Cap a single job's local+leader execution. Set to 0 to disable.
+pub fn default_jobs_max_runtime_seconds() -> u64 {
+    1800
+}
+
 // Execution defaults (Phase 11, T026)
 pub fn default_handler_timeout_seconds() -> u64 {
     30 // 30 seconds

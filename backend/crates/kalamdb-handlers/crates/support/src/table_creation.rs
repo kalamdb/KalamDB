@@ -5,179 +5,15 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{NamespaceId, StorageId, TableId, UserId},
+    models::{StorageId, TableId, UserId},
     schemas::{ColumnDefault, TableType},
     Role,
 };
 use kalamdb_core::{
     app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt,
 };
-use kalamdb_sql::ddl::CreateTableStatement;
+use kalamdb_sql::ddl::{CreateTableStatement, TypeReference};
 use kalamdb_system::providers::storages::models::StorageType;
-
-/// Unified CREATE TABLE handler for all table types (USER/SHARED/STREAM)
-///
-/// This single function handles table creation by:
-/// 1. Building the table definition with validation
-/// 2. Registering through SchemaRegistry (persist + cache)
-/// 3. Logging success with type-specific details
-///
-/// # Arguments
-/// * `app_context` - Application context
-/// * `stmt` - Parsed CREATE TABLE statement
-/// * `user_id` - User ID from execution context
-/// * `user_role` - User role from execution context
-///
-/// # Returns
-/// Ok with success message, or error
-pub fn create_table(
-    app_context: Arc<AppContext>,
-    stmt: CreateTableStatement,
-    user_id: &UserId,
-    user_role: Role,
-) -> Result<String, KalamDbError> {
-    let table_id_str = format!("{}.{}", stmt.namespace_id.as_str(), stmt.table_name.as_str());
-    let table_type = stmt.table_type;
-
-    log::info!(
-        "🔨 CREATE TABLE request: {} (type: {:?}, user: {}, role: {:?})",
-        table_id_str,
-        table_type,
-        user_id.as_str(),
-        user_role
-    );
-
-    // Block CREATE on system namespaces - they are managed internally
-    super::guards::block_system_namespace_modification(
-        &stmt.namespace_id,
-        "CREATE",
-        "TABLE",
-        Some(stmt.table_name.as_str()),
-    )?;
-
-    // Reject SYSTEM tables
-    if stmt.table_type == TableType::System {
-        log::error!(
-            "❌ CREATE TABLE failed: Cannot create SYSTEM tables via SQL ({})",
-            table_id_str
-        );
-        return Err(KalamDbError::InvalidOperation(
-            "Cannot create SYSTEM tables via SQL".to_string(),
-        ));
-    }
-
-    // Shared tables are FORCE RLS. Omitting CREATE POLICY is default-deny for
-    // User and Service; System and DBA bypass.
-
-    let schema_registry = app_context.schema_registry();
-    let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
-
-    if stmt.if_not_exists {
-        if let Some(existing_def) = schema_registry
-            .get_table_if_exists(&table_id)
-            .into_kalamdb_error("Failed to check table existence")?
-        {
-            if schema_registry.get_provider(&table_id).is_none() {
-                log::info!("Table {} exists but provider missing - registering now", table_id);
-                schema_registry.put((*existing_def).clone())?;
-            }
-
-            log::info!(
-                "ℹ️  {:?} TABLE {} already exists (IF NOT EXISTS - skipping)",
-                table_type,
-                table_id
-            );
-            return Ok(format!("Table {} already exists (IF NOT EXISTS)", table_id));
-        }
-    }
-
-    // Build definition (validates, checks existence, builds)
-    let table_def = build_table_definition(app_context.clone(), &stmt, user_id, user_role)?;
-
-    // Handle existing table (IF NOT EXISTS)
-    if schema_registry.get(&table_id).is_some() {
-        // Ensure provider is registered even if table exists
-        if schema_registry.get_provider(&table_id).is_none() {
-            log::info!("Table {} exists but provider missing - registering now", table_id);
-            schema_registry.put(table_def)?;
-        }
-
-        log::info!(
-            "ℹ️  {:?} TABLE {} already exists (IF NOT EXISTS - skipping)",
-            table_type,
-            table_id
-        );
-        return Ok(format!("Table {} already exists (IF NOT EXISTS)", table_id));
-    }
-
-    // Register (Persist + Cache) - single unified path
-    schema_registry.register_table(table_def.clone())?;
-
-    // Log success with type-specific details
-    log_table_created(&table_def, &table_id);
-
-    let type_name = match table_type {
-        TableType::User => "User",
-        TableType::Shared => "Shared",
-        TableType::Stream => "Stream",
-        TableType::System => "System",
-    };
-
-    Ok(format!("{} table {} created successfully", type_name, table_id))
-}
-
-/// Log table creation with type-specific details
-fn log_table_created(
-    table_def: &kalamdb_commons::models::schemas::TableDefinition,
-    table_id: &TableId,
-) {
-    use kalamdb_commons::models::schemas::TableOptions;
-
-    let pk_col = table_def
-        .columns
-        .iter()
-        .find(|c| c.is_primary_key)
-        .map(|c| c.column_name.as_str())
-        .unwrap_or("none");
-
-    match &table_def.table_options {
-        TableOptions::User(opts) => {
-            log::info!(
-                "✅ USER TABLE created: {} | storage: {} | columns: {} | pk: {} | system_columns: \
-                 [_seq, _deleted]",
-                table_id,
-                opts.storage_id.as_str(),
-                table_def.columns.len(),
-                pk_col
-            );
-        },
-        TableOptions::Shared(opts) => {
-            log::info!(
-                "✅ SHARED TABLE created: {} | storage: {} | columns: {} | pk: {} | \
-                 system_columns: [_seq, _deleted]",
-                table_id,
-                opts.storage_id.as_str(),
-                table_def.columns.len(),
-                pk_col
-            );
-        },
-        TableOptions::Stream(opts) => {
-            log::info!(
-                "✅ STREAM TABLE created: {} | columns: {} | TTL: {}s | system_columns: none",
-                table_id,
-                table_def.columns.len(),
-                opts.ttl_seconds
-            );
-        },
-        TableOptions::System(_) => {
-            log::info!(
-                "✅ SYSTEM TABLE created: {} | columns: {}",
-                table_id,
-                table_def.columns.len()
-            );
-        },
-    }
-}
 
 /// Build a TableDefinition by validating inputs and constructing the definition
 /// WITHOUT persisting or registering providers.
@@ -244,7 +80,7 @@ pub fn build_table_definition(
 
     // Validate namespace exists
     let namespaces_provider = app_context.system_tables().namespaces();
-    let namespace_id = NamespaceId::new(stmt.namespace_id.as_str());
+    let namespace_id = stmt.namespace_id.clone();
     if namespaces_provider.get_namespace(&namespace_id)?.is_none() {
         log::error!(
             "❌ CREATE TABLE failed: Namespace '{}' does not exist",
@@ -291,7 +127,7 @@ pub fn build_table_definition(
 
     // Check if table already exists
     let schema_registry = app_context.schema_registry();
-    let table_id = TableId::from_strings(stmt.namespace_id.as_str(), stmt.table_name.as_str());
+    let table_id = TableId::from_ref(&stmt.namespace_id, &stmt.table_name);
     let existing_def = schema_registry
         .get_table_if_exists(&table_id)
         .into_kalamdb_error("Failed to check table existence")?;
@@ -341,7 +177,7 @@ pub fn build_table_definition(
             let default_val =
                 stmt.column_defaults.get(field.name()).cloned().unwrap_or(ColumnDefault::None);
 
-            Ok(ColumnDefinition::new(
+            let mut column = ColumnDefinition::new(
                 (idx + 1) as u64,
                 field.name().clone(),
                 (idx + 1) as u32,
@@ -351,7 +187,11 @@ pub fn build_table_definition(
                 false,
                 default_val,
                 None,
-            ))
+            );
+            if let Some(type_ref) = stmt.column_type_refs.get(field.name()) {
+                apply_column_type_ref(app_context.as_ref(), &stmt.namespace_id, &mut column, type_ref)?;
+            }
+            Ok(column)
         })
         .collect::<Result<Vec<_>, KalamDbError>>()?;
 
@@ -475,5 +315,30 @@ pub fn validate_column_default(
             call.routine_id
         )));
     }
+    Ok(())
+}
+
+pub fn apply_column_type_ref(
+    app_context: &AppContext,
+    current_schema: &kalamdb_commons::models::NamespaceId,
+    column: &mut kalamdb_commons::models::schemas::ColumnDefinition,
+    type_ref: &TypeReference,
+) -> Result<(), KalamDbError> {
+    column.is_array = type_ref.is_array;
+    column.element_nullable = !type_ref.not_null || type_ref.is_array;
+    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
+        return Ok(());
+    };
+    let stores = app_context.system_tables().catalog_stores();
+    let catalog = stores
+        .find_type(&namespace_id, &name)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .ok_or_else(|| KalamDbError::NotFound(format!("type {namespace_id}.{name} not found")))?;
+    if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
+        return Err(KalamDbError::InvalidSql(format!(
+            "topic payload type {namespace_id}.{name} cannot be stored as a column"
+        )));
+    }
+    column.named_type_id = Some(catalog.type_id);
     Ok(())
 }

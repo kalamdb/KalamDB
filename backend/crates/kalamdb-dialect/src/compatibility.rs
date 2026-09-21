@@ -5,8 +5,12 @@
 
 use std::string::String;
 
-use kalamdb_commons::models::datatypes::KalamDataType;
-use sqlparser::ast::{DataType as SQLDataType, DataType::*, ObjectName};
+use kalamdb_commons::models::{datatypes::KalamDataType, NamespaceId};
+use sqlparser::ast::{
+    ArrayElemTypeDef, DataType as SQLDataType, DataType::*, ObjectName, ObjectNamePart,
+};
+
+use crate::ddl::create_type::TypeReference;
 
 fn map_decimal_kalam_type(info: &sqlparser::ast::ExactNumberInfo) -> Result<KalamDataType, String> {
     let (precision, scale) = match info {
@@ -76,6 +80,71 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
         Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => Ok(KalamDataType::Text),
         other => Err(format!("Unsupported data type: {other:?}")),
     }
+}
+
+/// Map a parsed SQL type to a logical [`TypeReference`] (builtin, named, or list).
+pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReference, String> {
+    match sql_type {
+        Array(elem) => {
+            let inner = match elem {
+                ArrayElemTypeDef::None => {
+                    return Err("ARRAY type requires an element type".to_string());
+                },
+                ArrayElemTypeDef::SquareBracket(inner, _)
+                | ArrayElemTypeDef::AngleBracket(inner)
+                | ArrayElemTypeDef::Parenthesis(inner) => inner.as_ref(),
+            };
+            let mut type_ref = sql_type_to_type_reference(inner)?;
+            type_ref.is_array = true;
+            Ok(type_ref)
+        },
+        Custom(name, modifiers) => match map_custom_kalam_type(name, modifiers) {
+            Ok(data_type) => Ok(builtin_type_reference(data_type)),
+            Err(_) => Ok(named_type_reference(name)?),
+        },
+        other => Ok(builtin_type_reference(map_sql_type_to_kalam(other)?)),
+    }
+}
+
+fn builtin_type_reference(data_type: KalamDataType) -> TypeReference {
+    TypeReference {
+        namespace_id: None,
+        name:         data_type.sql_name().to_string(),
+        data_type:    Some(data_type),
+        is_array:     false,
+        not_null:     false,
+        nonempty:     false,
+    }
+}
+
+fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
+    let mut parts = Vec::new();
+    for part in &name.0 {
+        match part {
+            ObjectNamePart::Identifier(ident) => parts.push(ident.value.clone()),
+            other => parts.push(other.to_string()),
+        }
+    }
+    let (namespace_id, type_name) = match parts.as_slice() {
+        [type_name] => (None, type_name.clone()),
+        [schema, type_name] => {
+            (Some(NamespaceId::new(schema.to_ascii_lowercase())), type_name.clone())
+        },
+        _ => {
+            return Err(format!(
+                "named type '{}' must be unqualified or schema-qualified",
+                parts.join(".")
+            ));
+        },
+    };
+    Ok(TypeReference {
+        namespace_id,
+        name: type_name.to_ascii_lowercase(),
+        data_type: None,
+        is_array: false,
+        not_null: false,
+        nonempty: false,
+    })
 }
 
 fn map_custom_kalam_type(name: &ObjectName, modifiers: &[String]) -> Result<KalamDataType, String> {

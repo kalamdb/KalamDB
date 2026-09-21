@@ -1,6 +1,7 @@
 use super::*;
 
 impl TopicPublisherService {
+    #[cfg(test)]
     pub(super) fn retained_bytes_for_partition(
         &self,
         topic_id: &TopicId,

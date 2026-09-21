@@ -140,6 +140,9 @@ impl SystemColumnsService {
             is_partition_key: false,
             default_value:    ColumnDefault::None,
             column_comment:   Some("Version ID (MVCC) with embedded timestamp".to_string()),
+            named_type_id:    None,
+            is_array:         false,
+            element_nullable: true,
         });
         table_def.next_column_id += 1;
 
@@ -155,6 +158,9 @@ impl SystemColumnsService {
             is_partition_key: false,
             default_value:    ColumnDefault::Literal(serde_json::json!(false)),
             column_comment:   Some("Soft delete flag".to_string()),
+            named_type_id:    None,
+            is_array:         false,
+            element_nullable: true,
         });
         table_def.next_column_id += 1;
 

@@ -68,6 +68,9 @@ pub async fn invoke_function_v1(
 
     let mut headers = Vec::new();
     for (name, value) in http_req.headers() {
+        if is_sensitive_request_header(name.as_str()) {
+            continue;
+        }
         if let Ok(value) = value.to_str() {
             headers.push((name.as_str().to_string(), value.to_string()));
         }
@@ -135,29 +138,24 @@ fn function_http_status(
 ) -> (actix_web::http::StatusCode, &'static str) {
     use actix_web::http::StatusCode;
     use kalamdb_functions::FunctionErrorCode;
-    match error.function_error_code() {
-        Some(FunctionErrorCode::ProcedureNotFound)
-        | Some(FunctionErrorCode::ProcedureNotImplemented) => {
-            (StatusCode::NOT_FOUND, error.function_error_code().unwrap().as_str())
+    let Some(code) = error.function_error_code() else {
+        return (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS");
+    };
+    match code {
+        FunctionErrorCode::ProcedureNotFound | FunctionErrorCode::ProcedureNotImplemented => {
+            (StatusCode::NOT_FOUND, code.as_str())
         },
-        Some(FunctionErrorCode::ExecuteDenied) => (StatusCode::FORBIDDEN, "EXECUTE_DENIED"),
-        Some(FunctionErrorCode::AuthenticationRequired) => {
-            (StatusCode::UNAUTHORIZED, "AUTHENTICATION_REQUIRED")
+        FunctionErrorCode::ExecuteDenied => (StatusCode::FORBIDDEN, code.as_str()),
+        FunctionErrorCode::AuthenticationRequired => (StatusCode::UNAUTHORIZED, code.as_str()),
+        FunctionErrorCode::InvalidArguments => (StatusCode::BAD_REQUEST, code.as_str()),
+        FunctionErrorCode::ResourceLimit => (StatusCode::TOO_MANY_REQUESTS, code.as_str()),
+        FunctionErrorCode::ProcedureTimeout => (StatusCode::GATEWAY_TIMEOUT, code.as_str()),
+        FunctionErrorCode::ContractMismatch
+        | FunctionErrorCode::AbiMismatch
+        | FunctionErrorCode::StaleRevision => (StatusCode::CONFLICT, code.as_str()),
+        FunctionErrorCode::InternalRuntimeError => {
+            (StatusCode::INTERNAL_SERVER_ERROR, code.as_str())
         },
-        Some(FunctionErrorCode::InvalidArguments) => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS"),
-        Some(FunctionErrorCode::ResourceLimit) => (StatusCode::TOO_MANY_REQUESTS, "RESOURCE_LIMIT"),
-        Some(FunctionErrorCode::ProcedureTimeout) => {
-            (StatusCode::GATEWAY_TIMEOUT, "PROCEDURE_TIMEOUT")
-        },
-        Some(FunctionErrorCode::ContractMismatch)
-        | Some(FunctionErrorCode::AbiMismatch)
-        | Some(FunctionErrorCode::StaleRevision) => {
-            (StatusCode::CONFLICT, error.function_error_code().unwrap().as_str())
-        },
-        Some(FunctionErrorCode::InternalRuntimeError) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_RUNTIME_ERROR")
-        },
-        None => (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS"),
     }
 }
 
@@ -274,6 +272,13 @@ fn parameter_data_type(
         return None;
     }
     parameter.builtin_data_type()
+}
+
+fn is_sensitive_request_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "authorization" | "proxy-authorization" | "cookie"
+    )
 }
 
 #[cfg(test)]
@@ -448,5 +453,13 @@ mod tests {
             response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
             Some("application/json")
         );
+    }
+
+    #[test]
+    fn sensitive_request_headers_are_stripped() {
+        assert!(super::is_sensitive_request_header("Authorization"));
+        assert!(super::is_sensitive_request_header("Cookie"));
+        assert!(super::is_sensitive_request_header("proxy-authorization"));
+        assert!(!super::is_sensitive_request_header("x-client-version"));
     }
 }

@@ -308,8 +308,7 @@ impl AlterTableHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         use crate::helpers::audit;
 
-        let table_id =
-            TableId::from_strings(statement.namespace_id.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(&statement.namespace_id, &statement.table_name);
         let registry = self.app_context.schema_registry();
         let table_def = registry.get_table_if_exists(&table_id)?.ok_or_else(|| {
             KalamDbError::NotFound(format!(
@@ -461,7 +460,7 @@ impl AlterTableHandler {
         context: &ExecutionContext,
     ) -> Result<(TableDefinition, String, bool), KalamDbError> {
         let namespace_id: NamespaceId = statement.namespace_id.clone();
-        let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(&namespace_id, &statement.table_name);
 
         log::info!(
             "🔧 ALTER TABLE request: {}.{} (operation: {:?}, user: {}, role: {:?})",
@@ -559,10 +558,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         }
 
         if let ColumnOperation::DropIndex { name, .. } = &statement.operation {
-            let table_id = TableId::from_strings(
-                statement.namespace_id.as_str(),
-                statement.table_name.as_str(),
-            );
+            let table_id = TableId::from_ref(&statement.namespace_id, &statement.table_name);
             let registry = self.app_context.schema_registry();
             if let Ok(Some(table_def)) = registry.get_table_if_exists(&table_id) {
                 let is_scalar = table_def
@@ -582,7 +578,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         use crate::helpers::audit;
 
         let namespace_id: NamespaceId = statement.namespace_id.clone();
-        let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(&namespace_id, &statement.table_name);
 
         // Build the altered table definition (validate + apply mutation)
         let (table_def, change_desc, changed) =
@@ -677,7 +673,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         block_anonymous_write(context, "ALTER TABLE")?;
 
         let namespace_id = &statement.namespace_id;
-        let table_id = TableId::from_strings(namespace_id.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(namespace_id, &statement.table_name);
 
         let registry = self.app_context.schema_registry();
         if let Ok(Some(def)) = registry.get_table_if_exists(&table_id) {
@@ -710,6 +706,7 @@ fn apply_alter_operation(
         ColumnOperation::Add {
             column_name,
             data_type,
+            type_ref,
             nullable,
             default_value,
             if_not_exists,
@@ -754,7 +751,7 @@ fn apply_alter_operation(
             crate::helpers::table_creation::validate_column_default(app_context, &default)?;
             let ordinal = (table_def.columns.len() + 1) as u32;
             let column_id = table_def.next_column_id;
-            table_def.columns.push(ColumnDefinition::new(
+            let mut column = ColumnDefinition::new(
                 column_id,
                 column_name.clone(),
                 ordinal,
@@ -764,7 +761,16 @@ fn apply_alter_operation(
                 false,
                 default,
                 None,
-            ));
+            );
+            if let Some(type_ref) = type_ref {
+                crate::helpers::table_creation::apply_column_type_ref(
+                    app_context,
+                    &table_def.namespace_id,
+                    &mut column,
+                    type_ref,
+                )?;
+            }
+            table_def.columns.push(column);
             table_def.next_column_id += 1;
             log::debug!(
                 "✓ Added column {} (type: {}, nullable: {})",

@@ -370,7 +370,8 @@ pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
 fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
     // V8 WebAssembly.Memory bypasses the ArrayBuffer allocator. WASM needs its own bounded
     // runtime adapter; it must not provide an unaccounted memory path inside JavaScript.
-    let key = v8::String::new(scope, "WebAssembly").unwrap();
+    let key = v8::String::new(scope, "WebAssembly")
+        .ok_or_else(|| FunctionsError::Invalid("WebAssembly name".into()))?;
     let undefined = v8::undefined(scope);
     scope
         .get_current_context()
@@ -823,7 +824,8 @@ fn compile_and_run_cached<'s>(
     v8::tc_scope!(let try_catch, scope);
     let code = v8::String::new(try_catch, source)
         .ok_or_else(|| FunctionsError::Invalid("module source too large".to_string()))?;
-    let origin_name = v8::String::new(try_catch, "module.js").unwrap();
+    let origin_name = v8::String::new(try_catch, "module.js")
+        .ok_or_else(|| FunctionsError::Invalid("module origin name".into()))?;
     let origin = ScriptOrigin::new(
         try_catch,
         origin_name.into(),

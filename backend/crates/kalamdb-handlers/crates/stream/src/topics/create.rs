@@ -226,6 +226,8 @@ mod tests {
                 )),
                 source_type_id: None,
                 comment:        None,
+                type_revision:  1,
+                next_slot:      1,
             })
             .unwrap();
         let handler = CreateTopicHandler::new(Arc::clone(&app));
@@ -261,6 +263,8 @@ mod tests {
                 table_id:       None,
                 source_type_id: None,
                 comment:        None,
+                type_revision:  1,
+                next_slot:      1,
             })
             .unwrap();
         let handler = CreateTopicHandler::new(Arc::clone(&app));

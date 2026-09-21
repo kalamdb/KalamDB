@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use kalamdb_commons::quote_sql_identifier;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -57,7 +58,11 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
             // Replace table reference in the query
             statement.select_query.replace(
                 &format!("FROM {}", statement.table_name.as_str()),
-                &format!("FROM {}.{}", effective_namespace.as_str(), statement.table_name.as_str()),
+                &format!(
+                    "FROM {}.{}",
+                    quote_sql_identifier(effective_namespace.as_str()),
+                    quote_sql_identifier(statement.table_name.as_str()),
+                ),
             )
         } else {
             statement.select_query.clone()

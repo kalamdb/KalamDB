@@ -144,16 +144,77 @@ pub fn storage_schema_from_table(table: &TableDefinition) -> Result<StorageSchem
     for id in 1..=max_id {
         match by_id.get(&id) {
             Some(column) => {
-                fields.push(StorageField::new(
-                    column.column_name.clone(),
-                    storage_data_type_from_kalam(&column.data_type)?,
-                ));
+                let storage_type = storage_type_for_column(column, None)?;
+                fields.push(StorageField::new(column.column_name.clone(), storage_type));
             },
             None => fields.push(StorageField::dropped_slot()),
         }
     }
 
     Ok(StorageSchema::new(version, fields))
+}
+
+/// Build storage schema using a resolved Arrow overlay so named TypeId columns
+/// encode as Struct/List instead of the builtin placeholder type.
+pub fn storage_schema_from_table_with_arrow(
+    table: &TableDefinition,
+    arrow: &arrow::datatypes::Schema,
+) -> Result<StorageSchema> {
+    let version = u16::try_from(table.schema_version).map_err(|_| {
+        SerializationError::Encode(format!(
+            "schema version {} does not fit in u16",
+            table.schema_version
+        ))
+    })?;
+
+    let mut live = Vec::new();
+    for column in &table.columns {
+        if is_key_or_envelope_column(table, &column.column_name) {
+            continue;
+        }
+        if column.column_id == 0 {
+            return Err(SerializationError::Encode("column_id 0 is reserved".to_string()));
+        }
+        live.push(column);
+    }
+    live.sort_by_key(|column| column.column_id);
+
+    let max_id = live.last().map(|column| column.column_id).unwrap_or(0);
+    let mut by_id = std::collections::BTreeMap::new();
+    for column in live {
+        by_id.insert(column.column_id, column);
+    }
+
+    let mut fields = Vec::new();
+    for id in 1..=max_id {
+        match by_id.get(&id) {
+            Some(column) => {
+                let storage_type = storage_type_for_column(column, Some(arrow))?;
+                fields.push(StorageField::new(column.column_name.clone(), storage_type));
+            },
+            None => fields.push(StorageField::dropped_slot()),
+        }
+    }
+
+    Ok(StorageSchema::new(version, fields))
+}
+
+fn storage_type_for_column(
+    column: &kalamdb_commons::schemas::ColumnDefinition,
+    arrow: Option<&arrow::datatypes::Schema>,
+) -> Result<StorageDataType> {
+    if column.named_type_id.is_some() || column.is_array {
+        if let Some(schema) = arrow {
+            if let Ok(field) = schema.field_with_name(&column.column_name) {
+                return storage_data_type_from_arrow(field.data_type());
+            }
+        }
+        return Err(SerializationError::Encode(format!(
+            "named/array column '{}' requires a resolved Arrow overlay",
+            column.column_name
+        )));
+    }
+    storage_data_type_from_kalam(&column.data_type)
 }
 
 #[cfg(test)]

@@ -38,15 +38,14 @@ impl TypedStatementHandler<DropUserStatement> for DropUserHandler {
             .map_err(|e| KalamDbError::InvalidOperation(e.to_string()))?;
         let existing =
             run_blocking(move || app_ctx.system_tables().users().get_user_by_id(&user_id)).await?;
-        if existing.is_none() {
+        let Some(user) = existing else {
             if statement.if_exists {
                 return Ok(ExecutionResult::Success {
                     message: format!("User '{}' does not exist (skipped)", statement.username),
                 });
             }
             return Err(KalamDbError::NotFound(format!("User '{}' not found", statement.username)));
-        }
-        let user = existing.unwrap();
+        };
 
         // Delegate to unified applier (handles standalone vs cluster internally)
         self.app_context

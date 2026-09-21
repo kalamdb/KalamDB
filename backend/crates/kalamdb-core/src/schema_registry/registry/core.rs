@@ -20,7 +20,7 @@ use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::json_value_to_scalar,
     datatypes::KalamDataType,
-    models::{schemas::TableDefinition, StorageId, TableId, TableVersionId},
+    models::{schemas::TableDefinition, StorageId, TableId, TableVersionId, TypeId},
     schemas::{ColumnDefault, ColumnDefinition, TableType},
     SystemTable,
 };
@@ -28,8 +28,10 @@ use kalamdb_live::models::ChangeNotification;
 use kalamdb_system::{NotificationService, SchemaRegistry as SchemaRegistryTrait};
 
 use crate::{
-    app_context::AppContext, error::KalamDbError, error_extensions::KalamDbResultExt,
-    schema_registry::cached_table_data::CachedTableData,
+    app_context::AppContext,
+    error::KalamDbError,
+    error_extensions::KalamDbResultExt,
+    schema_registry::{cached_table_data::CachedTableData, type_registry::TypeRegistry},
 };
 
 #[derive(Debug, Default)]
@@ -70,6 +72,9 @@ pub struct SchemaRegistry {
     /// Monotonic counter for LRU ordering of version_cache
     version_cache_counter: AtomicU64,
 
+    /// Named type layouts keyed by TypeId + revision.
+    type_registry: TypeRegistry,
+
     /// DataFusion base session context for table registration (set once during init)
     base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
 }
@@ -105,8 +110,13 @@ impl SchemaRegistry {
                 64,
             )),
             version_cache_counter:   AtomicU64::new(0),
+            type_registry:           TypeRegistry::new(),
             base_session_context:    OnceLock::new(),
         }
+    }
+
+    pub fn type_registry(&self) -> &TypeRegistry {
+        &self.type_registry
     }
 
     /// Set the DataFusion base session context for table registration
@@ -181,8 +191,7 @@ impl SchemaRegistry {
         let mut failed_count = 0;
 
         for def in all_defs {
-            let table_id =
-                TableId::from_strings(def.namespace_id.as_str(), def.table_name.as_str());
+            let table_id = def.table_id();
 
             // System tables are wired through SystemTablesRegistry; warming above is enough.
             if def.namespace_id.is_system_namespace() {
@@ -224,8 +233,7 @@ impl SchemaRegistry {
 
         for expected in expected_defs {
             let expected = expected.as_ref();
-            let table_id =
-                TableId::from_strings(expected.namespace_id.as_str(), expected.table_name.as_str());
+            let table_id = expected.table_id();
 
             if self.table_cache.contains_key(&table_id) {
                 continue;
@@ -281,8 +289,7 @@ impl SchemaRegistry {
 
         for expected in expected_defs {
             let expected = expected.as_ref();
-            let table_id =
-                TableId::from_strings(expected.namespace_id.as_str(), expected.table_name.as_str());
+            let table_id = expected.table_id();
 
             let persisted = tables_provider
                 .get_table_by_id(&table_id)
@@ -627,8 +634,7 @@ impl SchemaRegistry {
     /// 2. Updating the cache (and DataFusion registry)
     pub fn register_table(&self, table_def: TableDefinition) -> Result<(), KalamDbError> {
         let app_ctx = self.app_context();
-        let table_id =
-            TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
+        let table_id = table_def.table_id();
 
         // 1. Persist latest schema definition without duplicating identical writes.
         let tables_provider = app_ctx.system_tables().tables();
@@ -657,11 +663,15 @@ impl SchemaRegistry {
     /// - Creates matching TableProvider (User/Shared/Stream)
     /// - Registers with DataFusion
     pub fn put(&self, table_def: TableDefinition) -> Result<(), KalamDbError> {
-        let table_id =
-            TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
+        let table_id = table_def.table_id();
+        let app_ctx = self.app_context();
 
-        // 1. Create CachedTableData
-        let cached_data = Arc::new(CachedTableData::new(Arc::new(table_def.clone())));
+        // 1. Create CachedTableData with named-type Arrow overlay
+        let cached_data = Arc::new(CachedTableData::from_table_definition(
+            app_ctx.as_ref(),
+            &table_id,
+            Arc::new(table_def.clone()),
+        )?);
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
         self.touch_cached(&cached_data);
 
@@ -771,7 +781,7 @@ impl SchemaRegistry {
         use kalamdb_sharding::ShardRouter;
         use kalamdb_tables::{
             new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
-            storage_schema_for_table, StreamTableStoreConfig,
+            storage_schema_for_table, storage_schema_for_table_with_arrow, StreamTableStoreConfig,
         };
 
         use crate::{
@@ -782,8 +792,7 @@ impl SchemaRegistry {
         };
 
         let app_ctx = self.app_context();
-        let table_id =
-            TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
+        let table_id = table_def.table_id();
         let column_defaults = self.build_column_defaults(table_def);
 
         // Resolve PK field (required for User/Shared; Stream falls back to _seq)
@@ -839,12 +848,15 @@ impl SchemaRegistry {
 
         match table_def.table_type {
             TableType::User => {
-                let storage_schema = storage_schema_for_table(&table_def).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to build storage schema for {}: {}",
-                        table_id, e
-                    ))
-                })?;
+                let storage_schema =
+                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
+                        .or_else(|_| storage_schema_for_table(&table_def))
+                        .map_err(|e| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Failed to build storage schema for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
                 let user_table_store = Arc::new(new_indexed_user_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -866,12 +878,15 @@ impl SchemaRegistry {
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
             },
             TableType::Shared => {
-                let storage_schema = storage_schema_for_table(&table_def).map_err(|e| {
-                    KalamDbError::InvalidOperation(format!(
-                        "Failed to build storage schema for {}: {}",
-                        table_id, e
-                    ))
-                })?;
+                let storage_schema =
+                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
+                        .or_else(|_| storage_schema_for_table(&table_def))
+                        .map_err(|e| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Failed to build storage schema for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
                 let shared_store = Arc::new(new_indexed_shared_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -913,12 +928,14 @@ impl SchemaRegistry {
                         ttl_seconds: Some(ttl_seconds),
                         storage_mode: kalamdb_tables::StreamTableStorageMode::File,
                     },
-                    storage_schema_for_table(&table_def).map_err(|e| {
-                        KalamDbError::InvalidOperation(format!(
-                            "Failed to build storage schema for {}: {}",
-                            table_id, e
-                        ))
-                    })?,
+                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
+                        .or_else(|_| storage_schema_for_table(&table_def))
+                        .map_err(|e| {
+                            KalamDbError::InvalidOperation(format!(
+                                "Failed to build storage schema for {}: {}",
+                                table_id, e
+                            ))
+                        })?,
                 ));
 
                 let core = Arc::new(TableProviderCore::new(
@@ -951,6 +968,32 @@ impl SchemaRegistry {
     pub fn invalidate(&self, table_id: &TableId) {
         self.table_cache.remove(table_id);
         let _ = self.deregister_from_datafusion(table_id);
+    }
+
+    /// Rebuild cached tables whose columns (or nested named types) use `type_id`.
+    ///
+    /// Collect related TypeIds first, then [`TypeRegistry::invalidate`], then this.
+    /// `put` rebuilds the Arrow overlay and re-registers the DataFusion provider.
+    pub fn invalidate_tables_using_named_types(&self, type_ids: &[TypeId]) {
+        if type_ids.is_empty() {
+            return;
+        }
+        let wanted: HashSet<&TypeId> = type_ids.iter().collect();
+        let tables: Vec<TableDefinition> = self
+            .table_cache
+            .iter()
+            .filter_map(|entry| {
+                let uses_type = entry.value().table.columns.iter().any(|column| {
+                    column.named_type_id.as_ref().is_some_and(|type_id| wanted.contains(type_id))
+                });
+                uses_type.then(|| entry.value().table.as_ref().clone())
+            })
+            .collect();
+        for table in tables {
+            if let Err(error) = self.put(table) {
+                log::error!("Failed to refresh table after named type change: {error}");
+            }
+        }
     }
 
     /// Invalidate all versions of a table (for DROP TABLE)
@@ -1375,8 +1418,12 @@ impl SchemaRegistry {
                 ))
             })?;
 
-        // Create cached data and compute arrow schema
-        let cached_data = CachedTableData::new(Arc::new(table_def));
+        // Create cached data with named-type overlay
+        let cached_data = CachedTableData::from_table_definition(
+            app_ctx.as_ref(),
+            table_id,
+            Arc::new(table_def),
+        )?;
         let arrow_schema = cached_data.arrow_schema()?;
 
         // Cache for future lookups

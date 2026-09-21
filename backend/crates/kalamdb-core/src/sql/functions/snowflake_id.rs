@@ -87,10 +87,7 @@ impl SnowflakeIdFunction {
 }
 
 fn current_timestamp_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
 fn pack_timestamp_and_sequence(timestamp: u64, sequence: u16) -> u64 {
@@ -102,13 +99,15 @@ fn unpack_timestamp_and_sequence(value: u64) -> (u64, u16) {
 }
 
 fn wait_for_next_timestamp(last_timestamp: u64) -> u64 {
-    loop {
+    for _ in 0..1_000_000 {
         let timestamp = current_timestamp_millis();
         if timestamp > last_timestamp {
             return timestamp;
         }
         thread::yield_now();
     }
+    // Clock is stuck or before the Unix epoch; keep IDs unique without spinning forever.
+    last_timestamp.saturating_add(1)
 }
 
 fn next_timestamp_and_sequence() -> (u64, u16) {

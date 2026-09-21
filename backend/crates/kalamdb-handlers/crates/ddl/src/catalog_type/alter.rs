@@ -14,7 +14,10 @@ use kalamdb_core::{
 use kalamdb_sql::ddl::{AlterTypeOperation, AlterTypeStatement, EnumValueNeighbor};
 use kalamdb_system::{CatalogStores, CatalogType, CatalogTypeField};
 
-use super::create::{catalog_field, require_type_reference};
+use super::{
+    create::{catalog_field, require_type_reference},
+    type_alias,
+};
 use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
 pub struct AlterTypeHandler {
@@ -36,31 +39,45 @@ impl TypedStatementHandler<AlterTypeStatement> for AlterTypeHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "alter type")?;
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || persist_alter_type(&app.system_tables().catalog_stores(), statement))
-            .await
+        run_blocking(move || persist_alter_type(&app, statement)).await
     }
 }
 
 fn persist_alter_type(
-    stores: &CatalogStores,
+    app: &AppContext,
     statement: AlterTypeStatement,
 ) -> Result<ExecutionResult, KalamDbError> {
+    let stores = app.system_tables().catalog_stores();
     let catalog_type = stores
-        .get_type(&statement.type_id)
+        .find_type(&statement.namespace_id, &statement.name)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .ok_or_else(|| KalamDbError::NotFound(format!("type {} not found", statement.type_id)))?;
+        .ok_or_else(|| {
+            KalamDbError::NotFound(format!(
+                "type {}.{} not found",
+                statement.namespace_id, statement.name
+            ))
+        })?;
+    let type_id = catalog_type.type_id.clone();
 
-    match statement.operation {
+    let result = match statement.operation {
         AlterTypeOperation::SetSchema { schema } => {
-            persist_set_schema(stores, catalog_type, schema)
+            persist_set_schema(&stores, catalog_type, schema)
+        },
+        AlterTypeOperation::RenameType { new_name } => {
+            persist_rename_type(&stores, catalog_type, new_name)
         },
         AlterTypeOperation::AddValue {
             label,
             if_not_exists,
             neighbor,
-        } => persist_add_value(stores, catalog_type, label, if_not_exists, neighbor),
-        other => persist_attribute_op(stores, catalog_type, other),
-    }
+        } => persist_add_value(&stores, catalog_type, label, if_not_exists, neighbor),
+        other => persist_attribute_op(&stores, catalog_type, other),
+    }?;
+    let mut related = vec![type_id.clone()];
+    related.extend(app.schema_registry().type_registry().dependent_type_ids(&type_id));
+    app.schema_registry().type_registry().invalidate(&type_id);
+    app.schema_registry().invalidate_tables_using_named_types(&related);
+    Ok(result)
 }
 
 fn persist_attribute_op(
@@ -71,7 +88,7 @@ fn persist_attribute_op(
     if catalog_type.kind != CatalogTypeKind::Composite {
         return Err(KalamDbError::InvalidSql(format!(
             "ALTER TYPE {} attribute operations require a composite type",
-            catalog_type.type_id
+            type_alias(&catalog_type)
         )));
     }
     let mut fields = stores
@@ -83,22 +100,42 @@ fn persist_attribute_op(
                 stores,
                 &catalog_type.namespace_id,
                 &type_ref,
-                Some(&catalog_type.type_id),
+                Some((&catalog_type.namespace_id, catalog_type.name.as_str())),
             )?;
-            if fields.iter().any(|existing| existing.name == field) {
+            if fields.iter().any(|existing| existing.name == field && !existing.dropped) {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "attribute {field} already exists on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 )));
             }
-            let ordinal = fields.iter().map(|existing| existing.ordinal).max().unwrap_or(0) + 1;
-            fields.push(catalog_field(
+            if type_ref.not_null && type_has_stored_dependents(stores, &catalog_type.type_id)? {
+                return Err(KalamDbError::InvalidSql(
+                    "cannot ADD a NOT NULL attribute while the type is stored in dependents; add \
+                     a nullable attribute"
+                        .to_string(),
+                ));
+            }
+            let slot = catalog_type
+                .next_slot
+                .max(fields.iter().map(|existing| existing.physical_slot()).max().unwrap_or(0) + 1);
+            let mut added = catalog_field(
+                stores,
                 &catalog_type.type_id,
                 &catalog_type.namespace_id,
                 field,
                 type_ref,
-                ordinal,
-            )?);
+                slot,
+            )?;
+            added.slot = slot;
+            added.ordinal =
+                fields.iter().filter(|f| !f.dropped).map(|f| f.ordinal).max().unwrap_or(0) + 1;
+            fields.push(added);
+            let mut header = catalog_type.clone();
+            header.next_slot = slot + 1;
+            header.type_revision = header.type_revision.saturating_add(1);
+            stores
+                .upsert_type(header)
+                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
         },
         AlterTypeOperation::DropAttribute { field, cascade } => {
             if cascade {
@@ -106,71 +143,92 @@ fn persist_attribute_op(
                     "DROP ATTRIBUTE CASCADE is not supported; drop dependents first".to_string(),
                 ));
             }
-            let before = fields.len();
-            fields.retain(|existing| existing.name != field);
-            if fields.len() == before {
+            if type_has_stored_dependents(stores, &catalog_type.type_id)? {
+                return Err(KalamDbError::InvalidSql(
+                    "cannot DROP ATTRIBUTE while the type is referenced by stored dependents"
+                        .to_string(),
+                ));
+            }
+            let Some(existing) = fields.iter_mut().find(|item| item.name == field && !item.dropped)
+            else {
                 return Err(KalamDbError::NotFound(format!(
                     "attribute {field} not found on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 )));
-            }
+            };
+            existing.dropped = true;
         },
         AlterTypeOperation::RenameAttribute { from, to } => {
-            if !fields.iter().any(|field| field.name == from) {
+            if type_has_stored_dependents(stores, &catalog_type.type_id)? {
+                return Err(KalamDbError::InvalidSql(
+                    "cannot RENAME ATTRIBUTE while the type is referenced by stored dependents"
+                        .to_string(),
+                ));
+            }
+            if !fields.iter().any(|field| field.name == from && !field.dropped) {
                 return Err(KalamDbError::NotFound(format!(
                     "attribute {from} not found on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 )));
             }
-            if fields.iter().any(|field| field.name == to) {
+            if fields.iter().any(|field| field.name == to && !field.dropped) {
                 return Err(KalamDbError::AlreadyExists(format!(
                     "attribute {to} already exists on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 )));
             }
             for existing in &mut fields {
-                if existing.name == from {
+                if existing.name == from && !existing.dropped {
                     existing.name = to;
-                    existing.type_field_id = kalamdb_commons::models::TypeFieldId::new(
-                        &catalog_type.type_id,
-                        &existing.name,
-                    )
-                    .map_err(KalamDbError::InvalidSql)?;
                     break;
                 }
             }
         },
         AlterTypeOperation::AlterAttributeType { field, type_ref } => {
+            if type_has_stored_dependents(stores, &catalog_type.type_id)? {
+                return Err(KalamDbError::InvalidSql(
+                    "cannot ALTER ATTRIBUTE TYPE while the type is referenced by stored dependents"
+                        .to_string(),
+                ));
+            }
             require_type_reference(
                 stores,
                 &catalog_type.namespace_id,
                 &type_ref,
-                Some(&catalog_type.type_id),
+                Some((&catalog_type.namespace_id, catalog_type.name.as_str())),
             )?;
-            let Some(existing) = fields.iter_mut().find(|item| item.name == field) else {
+            let Some(existing) = fields.iter_mut().find(|item| item.name == field && !item.dropped)
+            else {
                 return Err(KalamDbError::NotFound(format!(
                     "attribute {field} not found on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 )));
             };
-            let rebuilt = catalog_field(
+            let mut rebuilt = catalog_field(
+                stores,
                 &catalog_type.type_id,
                 &catalog_type.namespace_id,
                 field,
                 type_ref,
-                existing.ordinal,
+                existing.physical_slot(),
             )?;
+            rebuilt.slot = existing.physical_slot();
+            rebuilt.ordinal = existing.ordinal;
+            rebuilt.type_field_id = existing.type_field_id.clone();
             *existing = rebuilt;
         },
-        AlterTypeOperation::SetSchema { .. } | AlterTypeOperation::AddValue { .. } => {
+        AlterTypeOperation::SetSchema { .. }
+        | AlterTypeOperation::AddValue { .. }
+        | AlterTypeOperation::RenameType { .. } => {
             unreachable!("handled separately")
         },
     }
+    super::create::check_new_type_graph(stores, &catalog_type.type_id, &fields)?;
     stores
-        .replace_type_fields(&catalog_type.type_id, fields)
+        .publish_type_fields(fields)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ExecutionResult::Success {
-        message: format!("Type {} altered", catalog_type.type_id),
+        message: format!("Type {} altered", type_alias(&catalog_type)),
     })
 }
 
@@ -184,7 +242,7 @@ fn persist_add_value(
     if catalog_type.kind != CatalogTypeKind::Enum {
         return Err(KalamDbError::InvalidSql(format!(
             "ALTER TYPE {} ADD VALUE requires an enum type",
-            catalog_type.type_id
+            type_alias(&catalog_type)
         )));
     }
     let fields = stores
@@ -196,13 +254,13 @@ fn persist_add_value(
             return Ok(ExecutionResult::Success {
                 message: format!(
                     "Enum label '{label}' already exists on {}, skipping",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 ),
             });
         }
         return Err(KalamDbError::AlreadyExists(format!(
             "ENUM label '{label}' already exists on {}",
-            catalog_type.type_id
+            type_alias(&catalog_type)
         )));
     }
     let insert_at = match neighbor {
@@ -211,7 +269,7 @@ fn persist_add_value(
             labels.iter().position(|item| item == &existing).ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "ENUM label '{existing}' not found on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 ))
             })?
         },
@@ -219,7 +277,7 @@ fn persist_add_value(
             labels.iter().position(|item| item == &existing).ok_or_else(|| {
                 KalamDbError::NotFound(format!(
                     "ENUM label '{existing}' not found on {}",
-                    catalog_type.type_id
+                    type_alias(&catalog_type)
                 ))
             })? + 1
         },
@@ -244,18 +302,92 @@ fn persist_add_value(
         })
         .collect::<Result<Vec<_>, _>>()?;
     stores
-        .replace_type_fields(&catalog_type.type_id, catalog_fields)
+        .publish_type_fields(catalog_fields)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    let alias = type_alias(&catalog_type);
+    let mut header = catalog_type;
+    header.type_revision = header.type_revision.saturating_add(1);
+    stores
+        .upsert_type(header)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ExecutionResult::Success {
-        message: format!("Type {} altered", catalog_type.type_id),
+        message: format!("Type {alias} altered"),
+    })
+}
+
+fn persist_rename_type(
+    stores: &CatalogStores,
+    mut catalog_type: CatalogType,
+    new_name: String,
+) -> Result<ExecutionResult, KalamDbError> {
+    reject_implicit_rename(&catalog_type)?;
+    if new_name == catalog_type.name {
+        return Ok(ExecutionResult::Success {
+            message: format!("Type {} already named {new_name}", type_alias(&catalog_type)),
+        });
+    }
+    if stores
+        .find_type(&catalog_type.namespace_id, &new_name)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .is_some()
+    {
+        return Err(KalamDbError::AlreadyExists(format!(
+            "type {}.{} already exists",
+            catalog_type.namespace_id, new_name
+        )));
+    }
+    let previous_name = catalog_type.name.clone();
+    catalog_type.name = new_name;
+    stores
+        .upsert_type(catalog_type.clone())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    Ok(ExecutionResult::Success {
+        message: format!(
+            "Type {}.{} renamed to {}",
+            catalog_type.namespace_id, previous_name, catalog_type.name
+        ),
     })
 }
 
 fn persist_set_schema(
     stores: &CatalogStores,
-    catalog_type: CatalogType,
+    mut catalog_type: CatalogType,
     namespace_id: NamespaceId,
 ) -> Result<ExecutionResult, KalamDbError> {
+    reject_implicit_rename(&catalog_type)?;
+    if namespace_id == catalog_type.namespace_id {
+        return Ok(ExecutionResult::Success {
+            message: format!(
+                "Type {} already in schema {}",
+                type_alias(&catalog_type),
+                namespace_id
+            ),
+        });
+    }
+    if stores
+        .find_type(&namespace_id, &catalog_type.name)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+        .is_some()
+    {
+        return Err(KalamDbError::AlreadyExists(format!(
+            "type {}.{} already exists",
+            namespace_id, catalog_type.name
+        )));
+    }
+    let previous = type_alias(&catalog_type);
+    catalog_type.namespace_id = namespace_id;
+    stores
+        .upsert_type(catalog_type.clone())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    Ok(ExecutionResult::Success {
+        message: format!(
+            "Type {previous} moved to {}.{}",
+            catalog_type.namespace_id, catalog_type.name
+        ),
+    })
+}
+
+fn reject_implicit_rename(catalog_type: &CatalogType) -> Result<(), KalamDbError> {
     if matches!(
         catalog_type.kind,
         CatalogTypeKind::ImplicitTableRow
@@ -263,51 +395,22 @@ fn persist_set_schema(
             | CatalogTypeKind::TopicPayload
     ) {
         return Err(KalamDbError::InvalidSql(format!(
-            "cannot SET SCHEMA on {} type {}",
+            "cannot rename or SET SCHEMA on {} type {}",
             catalog_type.kind.as_str(),
-            catalog_type.type_id
+            type_alias(catalog_type)
         )));
     }
-    let new_id = TypeId::from_parts(Some(&namespace_id), &catalog_type.name);
-    if new_id == catalog_type.type_id {
-        return Ok(ExecutionResult::Success {
-            message: format!("Type {} already in schema {}", catalog_type.type_id, namespace_id),
-        });
-    }
-    if stores
-        .get_type(&new_id)
+    Ok(())
+}
+
+fn type_has_stored_dependents(
+    stores: &CatalogStores,
+    type_id: &TypeId,
+) -> Result<bool, KalamDbError> {
+    Ok(stores
+        .type_is_referenced(type_id)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .is_some()
-    {
-        return Err(KalamDbError::AlreadyExists(format!("type {new_id} already exists")));
-    }
-    let fields = stores
-        .list_type_fields(&catalog_type.type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    let mut moved = catalog_type.clone();
-    moved.type_id = new_id.clone();
-    moved.namespace_id = namespace_id;
-    stores
-        .upsert_type(moved)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    let moved_fields = fields
-        .into_iter()
-        .map(|mut field| {
-            field.type_id = new_id.clone();
-            field.type_field_id = kalamdb_commons::models::TypeFieldId::new(&new_id, &field.name)
-                .map_err(KalamDbError::InvalidSql)?;
-            Ok(field)
-        })
-        .collect::<Result<Vec<_>, KalamDbError>>()?;
-    stores
-        .replace_type_fields(&new_id, moved_fields)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    stores
-        .drop_type(&catalog_type.type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    Ok(ExecutionResult::Success {
-        message: format!("Type {} moved to {new_id}", catalog_type.type_id),
-    })
+        .is_some())
 }
 
 #[cfg(test)]
@@ -361,13 +464,17 @@ mod tests {
         .unwrap();
         handler.execute(statement, vec![], &ctx).await.unwrap();
 
+        let type_id = app
+            .system_tables()
+            .catalog_stores()
+            .find_type(&NamespaceId::new("app"), "status")
+            .unwrap()
+            .expect("created enum")
+            .type_id;
         let labels: Vec<String> = app
             .system_tables()
             .catalog_stores()
-            .list_type_fields(&kalamdb_commons::models::TypeId::from_parts(
-                Some(&NamespaceId::new("app")),
-                "status",
-            ))
+            .list_type_fields(&type_id)
             .unwrap()
             .into_iter()
             .map(|field| field.name)

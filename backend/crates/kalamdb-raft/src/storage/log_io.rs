@@ -46,9 +46,7 @@ fn run_log_io_job(job: LogIoJob) {
             records,
             callback,
         } => {
-            let result = store
-                .append_encoded(records)
-                .map_err(|e| io::Error::other(e.to_string()));
+            let result = store.append_encoded(records).map_err(|e| io::Error::other(e.to_string()));
             callback.log_io_completed(result);
         },
     }

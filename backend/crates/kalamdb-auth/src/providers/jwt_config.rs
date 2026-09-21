@@ -71,11 +71,11 @@ pub fn init_jwt_config(
         oidc_clients: oidc_client_cache(16),
     });
 
-    *JWT_CONFIG.write().expect("JWT config lock poisoned") = config;
+    *JWT_CONFIG.write().unwrap_or_else(std::sync::PoisonError::into_inner) = config;
 }
 
 pub fn get_jwt_config() -> Arc<JwtConfig> {
-    JWT_CONFIG.read().expect("JWT config lock poisoned").clone()
+    JWT_CONFIG.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
 }
 
 fn default_jwt_config() -> JwtConfig {

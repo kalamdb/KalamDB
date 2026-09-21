@@ -34,7 +34,7 @@ pub use function_metrics::{
 };
 pub use health_monitor::{
     decrement_websocket_sessions, get_websocket_session_count, get_websocket_session_peak_count,
-    increment_websocket_sessions, HealthCounts, HealthMetrics, HealthMonitor,
+    increment_websocket_sessions, HealthMonitor,
 };
 pub use process_memory::{apply_process_memory_policy, reclaim_idle_process_memory};
 pub use pubsub_metrics::{

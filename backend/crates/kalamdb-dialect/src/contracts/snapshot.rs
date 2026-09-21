@@ -21,6 +21,10 @@ pub struct ContractField {
     pub nonempty:    bool,
     pub primary_key: bool,
     pub has_default: bool,
+    /// Physical slot. Never reused. 0 until assigned from CREATE order or identity manifest.
+    pub slot:        i32,
+    /// Tombstone after DROP ATTRIBUTE. Slot is never reused.
+    pub dropped:     bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

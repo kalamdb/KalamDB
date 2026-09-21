@@ -2,10 +2,7 @@
 
 use std::collections::HashSet;
 
-use kalamdb_commons::{
-    models::{NamespaceId, TypeId},
-    KalamDataType,
-};
+use kalamdb_commons::{models::NamespaceId, KalamDataType};
 
 use crate::ddl::{
     parsing::{parse_optional_comment, parse_sql_string, take_keyword_ci},
@@ -25,32 +22,27 @@ pub struct TypeReference {
 }
 
 impl TypeReference {
-    pub fn type_id(&self) -> TypeId {
-        TypeId::from_parts(self.namespace_id.as_ref(), &self.name)
-    }
-
     /// Built-in catalog type, if this reference is not a named `CREATE TYPE`.
     pub fn builtin_data_type(&self) -> Option<KalamDataType> {
         self.data_type
     }
 
-    /// Named type identity, or `None` for builtins such as `TEXT` / `UUID`.
-    pub fn resolved_type_id(&self, current: &NamespaceId) -> Option<TypeId> {
+    /// Schema + unqualified name for live catalog lookup (not the TypeId).
+    pub fn resolved_name(&self, current: &NamespaceId) -> Option<(NamespaceId, String)> {
         if self.builtin_data_type().is_some() {
             None
         } else {
-            Some(TypeId::from_parts(
-                Some(self.namespace_id.as_ref().unwrap_or(current)),
-                &self.name,
-            ))
+            Some((self.namespace_id.clone().unwrap_or_else(|| current.clone()), self.name.clone()))
         }
     }
 
+    /// SQL display name. Named types use `schema.name`, never a synthesized TypeId.
     pub fn resolved_type_name(&self, current: &NamespaceId) -> String {
         if let Some(data_type) = self.builtin_data_type() {
             data_type.sql_name()
         } else {
-            self.resolved_type_id(current).expect("named types have a type id").to_string()
+            let namespace_id = self.namespace_id.as_ref().unwrap_or(current);
+            format!("{}.{}", namespace_id.as_str(), self.name)
         }
     }
 }
@@ -80,7 +72,6 @@ pub enum CreateTypeBody {
 /// CREATE TYPE statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTypeStatement {
-    pub type_id:       TypeId,
     pub namespace_id:  NamespaceId,
     pub name:          String,
     pub if_not_exists: bool,
@@ -109,7 +100,6 @@ impl CreateTypeStatement {
         }
 
         Ok(Self {
-            type_id: TypeId::from_parts(Some(&namespace_id), &name),
             namespace_id,
             name,
             if_not_exists,
@@ -122,9 +112,10 @@ impl CreateTypeStatement {
 /// DROP TYPE [IF EXISTS] name [CASCADE|RESTRICT]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropTypeStatement {
-    pub type_id:   TypeId,
-    pub if_exists: bool,
-    pub cascade:   bool,
+    pub namespace_id: NamespaceId,
+    pub name:         String,
+    pub if_exists:    bool,
+    pub cascade:      bool,
 }
 
 impl DropTypeStatement {
@@ -147,7 +138,8 @@ impl DropTypeStatement {
         }
         let namespace_id = qual.namespace_or(default_namespace);
         Ok(Self {
-            type_id: TypeId::from_parts(Some(&namespace_id), &qual.name),
+            namespace_id,
+            name: qual.name,
             if_exists,
             cascade,
         })
@@ -468,7 +460,8 @@ mod tests {
             &ns(),
         )
         .unwrap();
-        assert_eq!(stmt.type_id.as_str(), "chat.recipient_result");
+        assert_eq!(stmt.namespace_id.as_str(), "chat");
+        assert_eq!(stmt.name, "recipient_result");
         match stmt.body {
             CreateTypeBody::Composite { fields } => {
                 assert_eq!(fields.len(), 2);

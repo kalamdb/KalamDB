@@ -19,7 +19,7 @@ use kalamdb_transactions::CommitSequenceSource;
 
 use crate::{
     error::KalamDbError,
-    row_codec::{empty_storage_schema, storage_schema_for_table},
+    row_codec::{empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow},
 };
 
 /// Combined services struct shared across all table providers.
@@ -168,11 +168,11 @@ impl TableProviderCore {
         };
 
         // Cache TableId (constructed once, then O(1) access)
-        let table_id =
-            TableId::from_strings(table_def.namespace_id.as_str(), table_def.table_name.as_str());
+        let table_id = table_def.table_id();
 
-        let storage_schema =
-            storage_schema_for_table(table_def.as_ref()).unwrap_or_else(|_| empty_storage_schema());
+        let storage_schema = storage_schema_for_table_with_arrow(table_def.as_ref(), schema.as_ref())
+            .or_else(|_| storage_schema_for_table(table_def.as_ref()))
+            .unwrap_or_else(|_| empty_storage_schema());
 
         Self {
             table_def,

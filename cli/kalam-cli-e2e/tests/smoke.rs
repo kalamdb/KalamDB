@@ -141,6 +141,8 @@ mod kobj_indexes;
 mod kobj_rows;
 #[path = "smoke/kobj/schedules.rs"]
 mod kobj_schedules;
+#[path = "smoke/kobj/types.rs"]
+mod kobj_types;
 
 // DML tests
 #[path = "smoke/dml/smoke_test_dml_extended.rs"]

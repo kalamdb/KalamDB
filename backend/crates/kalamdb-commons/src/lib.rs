@@ -89,19 +89,19 @@ pub use conversions::{
 pub use errors::{CommonError, NotLeaderError, Result};
 #[cfg(feature = "arrow-utils")]
 pub use helpers::arrow_utils;
-#[cfg(feature = "arrow-utils")]
-pub use helpers::arrow_utils::{empty_batch, RecordBatchBuilder};
 #[cfg(feature = "storage")]
 pub use helpers::string_interner;
 pub use helpers::{
-    file_helpers, naming,
+    naming,
     naming::{
-        normalize_sql_identifier, validate_namespace_reference, validate_sql_identifier,
-        validate_user_namespace_name, SqlIdentifierError, MAX_SQL_IDENTIFIER_LENGTH,
+        normalize_sql_identifier, quote_sql_identifier, validate_namespace_reference,
+        validate_sql_identifier, validate_user_namespace_name, SqlIdentifierError,
+        MAX_SQL_IDENTIFIER_LENGTH,
     },
     process_shutdown, security,
 };
 pub use models::{
+    assert_finite_type_graph,
     // Phase 15 (008-schema-consolidation): Re-export schema types
     datatypes,
     schemas,
@@ -123,6 +123,7 @@ pub use models::{
     JobId,
     KalamDataType,
     LiveQueryId,
+    LogicalTypeRef,
     ManifestId,
     NamespaceId,
     NodeId,
@@ -153,7 +154,10 @@ pub use models::{
     TriggerAttemptId,
     TriggerId,
     TypeFieldId,
+    TypeFieldSlot,
+    TypeGraphNode,
     TypeId,
+    TypeRevision,
     UserId,
 };
 pub use schemas::{TableAccess, TableName, TableType};
@@ -162,7 +166,7 @@ pub use serialization::KSerializable;
 #[cfg(feature = "storage")]
 pub use storage_key::{decode_key, encode_key, encode_prefix, next_storage_key_bytes, StorageKey};
 #[cfg(feature = "storage")]
-pub use string_interner::{intern, stats as interner_stats, SystemColumns, SYSTEM_COLUMNS};
+pub use string_interner::{intern, SystemColumns, SYSTEM_COLUMNS};
 pub use system_tables::{StoragePartition, SystemTable};
 #[cfg(feature = "full")]
 pub use websocket::{

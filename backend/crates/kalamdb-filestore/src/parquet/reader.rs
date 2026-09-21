@@ -274,14 +274,29 @@ pub async fn parse_parquet_stream_with_options(
 
 // ========== Internal helpers ==========
 
-/// Resolve column names to Parquet leaf column indices.
+/// Resolve column names or Parquet field_ids to leaf column indices.
+///
+/// Names are preferred. If a requested name is missing, a decimal field_id match
+/// is used so renamed columns still project after `PARQUET:field_id` is written.
 fn resolve_column_indices(
     parquet_schema: &parquet::schema::types::SchemaDescriptor,
     columns: &[&str],
 ) -> Vec<usize> {
     columns
         .iter()
-        .filter_map(|name| parquet_schema.columns().iter().position(|c| c.name() == *name))
+        .filter_map(|name| {
+            parquet_schema
+                .columns()
+                .iter()
+                .position(|column| column.name() == *name)
+                .or_else(|| {
+                    let field_id = name.parse::<i32>().ok()?;
+                    parquet_schema.columns().iter().position(|column| {
+                        column.self_type().get_basic_info().has_id()
+                            && column.self_type().get_basic_info().id() == field_id
+                    })
+                })
+        })
         .collect()
 }
 
@@ -771,6 +786,101 @@ mod tests {
         assert_eq!(total_rows, 18_928);
         let first_id = batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0);
         assert_eq!(first_id, 131_072);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_projects_by_parquet_field_id() {
+        use arrow::datatypes::{DataType, Field, Schema};
+        use kalamdb_commons::conversions::with_parquet_field_id;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_stream_field_id");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let schema = Arc::new(Schema::new(vec![
+            with_parquet_field_id(Field::new("id", DataType::Int64, false), 1),
+            with_parquet_field_id(Field::new("display_name", DataType::Utf8, true), 2),
+            with_parquet_field_id(Field::new("_seq", DataType::Int64, false), 3),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![7_i64])),
+                Arc::new(StringArray::from(vec!["alice"])),
+                Arc::new(Int64Array::from(vec![1_i64])),
+            ],
+        )
+        .unwrap();
+        let (store, path) = write_test_parquet(&temp_dir, "field_id.parquet", vec![batch]);
+
+        let by_name = parse_parquet_stream(store.clone(), &path, &["id", "display_name"])
+            .await
+            .unwrap();
+        let named: Vec<RecordBatch> = by_name.try_collect().await.unwrap();
+        assert_eq!(named[0].num_columns(), 2);
+
+        let by_id = parse_parquet_stream(store, &path, &["1", "2"]).await.unwrap();
+        let numbered: Vec<RecordBatch> = by_id.try_collect().await.unwrap();
+        assert_eq!(numbered[0].num_columns(), 2);
+        assert_eq!(
+            numbered[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap().value(0),
+            7
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_read_nested_struct_field_ids() {
+        use arrow::{
+            array::StructArray,
+            datatypes::{DataType, Field, Schema},
+        };
+        use kalamdb_commons::conversions::with_parquet_field_id;
+
+        let temp_dir = env::temp_dir().join("kalamdb_test_stream_nested_field_id");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let postal = with_parquet_field_id(Field::new("postalcode", DataType::Utf8, true), 1001);
+        let line1 = with_parquet_field_id(Field::new("line1", DataType::Utf8, true), 1002);
+        let address = with_parquet_field_id(
+            Field::new(
+                "home",
+                DataType::Struct(vec![Arc::new(postal.clone()), Arc::new(line1.clone())].into()),
+                true,
+            ),
+            1,
+        );
+        let schema = Arc::new(Schema::new(vec![
+            address,
+            with_parquet_field_id(Field::new("_seq", DataType::Int64, false), 2),
+        ]));
+        let nested = StructArray::from(vec![
+            (
+                Arc::new(postal),
+                Arc::new(StringArray::from(vec!["02139"])) as Arc<dyn Array>,
+            ),
+            (
+                Arc::new(line1),
+                Arc::new(StringArray::from(vec!["Main"])) as Arc<dyn Array>,
+            ),
+        ]);
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(nested),
+                Arc::new(Int64Array::from(vec![1_i64])),
+            ],
+        )
+        .unwrap();
+        let (store, path) = write_test_parquet(&temp_dir, "nested_field_id.parquet", vec![batch]);
+        let stream = parse_parquet_stream(store, &path, &[]).await.unwrap();
+        let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
+        assert_eq!(batches[0].num_columns(), 2);
+        assert!(matches!(batches[0].schema().field(0).data_type(), DataType::Struct(_)));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

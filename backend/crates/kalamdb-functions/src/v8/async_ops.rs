@@ -310,7 +310,8 @@ impl V8Session {
         let mut scope = v8::ContextScope::new(scope, context);
         bind_ctx(&mut scope)?;
         v8::tc_scope!(let scope, &mut scope);
-        let key = v8::String::new(scope, "kalamInvoke").unwrap();
+        let key = v8::String::new(scope, "kalamInvoke")
+            .ok_or_else(|| FunctionsError::Invalid("kalamInvoke name".into()))?;
         let function = context
             .global(scope)
             .get(scope, key.into())

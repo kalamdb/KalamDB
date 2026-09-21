@@ -21,7 +21,7 @@ use sqlparser::{
 };
 
 use crate::{
-    compatibility::map_sql_type_to_kalam,
+    compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::{column_default::expr_to_column_default, parsing::parse_table_reference, DdlResult},
     parser::utils::parse_sql_statements,
 };
@@ -33,6 +33,7 @@ pub enum ColumnOperation {
     Add {
         column_name:   String,
         data_type:     KalamDataType,
+        type_ref:      Option<crate::ddl::TypeReference>,
         nullable:      bool,
         default_value: Option<ColumnDefault>,
         if_not_exists: bool,
@@ -335,13 +336,23 @@ fn build_add_column_operation(
 ) -> DdlResult<ColumnOperation> {
     let default_nullable = true;
     let column_name = column_def.name.value.clone();
-    let data_type = map_sql_type_to_kalam(&column_def.data_type)?;
+    let type_ref = sql_type_to_type_reference(&column_def.data_type)?;
+    let data_type = type_ref
+        .builtin_data_type()
+        .or_else(|| map_sql_type_to_kalam(&column_def.data_type).ok())
+        .unwrap_or(KalamDataType::Text);
+    let named_ref = if type_ref.builtin_data_type().is_none() || type_ref.is_array {
+        Some(type_ref)
+    } else {
+        None
+    };
     let (nullable, default_value) =
         extract_column_options(&column_def.options, default_nullable, default_namespace)?;
 
     Ok(ColumnOperation::Add {
         column_name,
         data_type,
+        type_ref: named_ref,
         nullable,
         default_value,
         if_not_exists,
@@ -632,6 +643,7 @@ mod tests {
                 nullable,
                 default_value,
                 if_not_exists,
+                ..
             } => {
                 assert_eq!(column_name, "age");
                 assert_eq!(data_type, KalamDataType::Int);

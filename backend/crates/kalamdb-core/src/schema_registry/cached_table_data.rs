@@ -100,6 +100,9 @@ pub struct CachedTableData {
     /// override/clear paths use a write lock.
     provider: Arc<ProviderSlot>,
 
+    /// Named-type overlay schema (Struct/List). Falls back to builtin `to_arrow_schema`.
+    resolved_arrow: OnceLock<Arc<datafusion::arrow::datatypes::Schema>>,
+
     /// Monotonic LRU stamp written by SchemaRegistry on access.
     last_access: AtomicU64,
 }
@@ -125,6 +128,7 @@ impl Clone for CachedTableData {
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns:      self.indexed_columns.clone(),
             provider:             Arc::clone(&self.provider),
+            resolved_arrow:       OnceLock::new(),
             last_access:          AtomicU64::new(self.last_access()),
         }
     }
@@ -143,6 +147,7 @@ impl CachedTableData {
             bloom_filter_columns,
             indexed_columns,
             provider: Arc::new(ProviderSlot::new()),
+            resolved_arrow: OnceLock::new(),
             last_access: AtomicU64::new(0),
         }
     }
@@ -160,11 +165,18 @@ impl CachedTableData {
     /// This method resolves storage_id and computes all cached fields.
     /// Used when loading table definitions from persistence or creating new tables.
     pub fn from_table_definition(
-        _app_ctx: &AppContext,
+        app_ctx: &AppContext,
         _table_id: &TableId,
         table_def: Arc<TableDefinition>,
     ) -> Result<Self, KalamDbError> {
-        Ok(Self::new(table_def))
+        let cached = Self::new(table_def);
+        let stores = app_ctx.system_tables().catalog_stores();
+        let overlay = app_ctx
+            .schema_registry()
+            .type_registry()
+            .arrow_schema_for_table(&stores, &cached.table)?;
+        let _ = cached.resolved_arrow.set(overlay);
+        Ok(cached)
     }
 
     /// Compute bloom filter columns and indexed columns from table definition
@@ -257,12 +269,12 @@ impl CachedTableData {
     /// # Returns
     /// Arc-wrapped Arrow Schema for zero-copy sharing across TableProvider instances
     pub fn arrow_schema(&self) -> Result<Arc<datafusion::arrow::datatypes::Schema>, KalamDbError> {
-        // Fast path: get schema from cached provider (already computed and stored there)
+        if let Some(overlay) = self.resolved_arrow.get() {
+            return Ok(Arc::clone(overlay));
+        }
         if let Some(provider) = self.get_provider() {
             return Ok(provider.schema());
         }
-
-        // Slow path: compute from TableDefinition (provider not yet created)
         self.table
             .to_arrow_schema()
             .into_schema_error("Failed to convert to Arrow schema")

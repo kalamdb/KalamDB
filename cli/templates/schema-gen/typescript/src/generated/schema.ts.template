@@ -21,6 +21,13 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | { [key:
 export type KalamFileColumn = FileRef | File | KalamFileUpload | Blob | null;
 {{/if}}
 
+export type NestedStructBytes = Uint8Array;
+export interface NestedCodec<T> {
+  readonly typeId: string;
+  encode(value: T): NestedStructBytes;
+  decode(bytes: NestedStructBytes): T;
+}
+
 {{#each decls}}
 {{{jsdoc}}}{{#if is_enum}}export type {{ident}} = {{{union}}};
 {{/if}}{{#if is_object}}export type {{ident}} = {

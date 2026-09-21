@@ -6,8 +6,8 @@
 
 pub mod cached_table_data;
 pub mod policy_table_resolver;
-pub mod projection;
 pub mod registry;
+pub mod type_registry;
 
 pub use cached_table_data::{CachedTableData, TableEntry};
 // Re-export common types from kalamdb_commons for convenience
@@ -16,5 +16,5 @@ pub use kalamdb_commons::{helpers::string_interner::SystemColumns, schemas::Tabl
 pub use kalamdb_system::SystemColumnsService;
 pub use kalamdb_views::error::RegistryError;
 pub use policy_table_resolver::SchemaPolicyTableResolver;
-pub use projection::{project_batch, schemas_compatible};
 pub use registry::{SchemaRegistry, TablesSchemaRegistryAdapter};
+pub use type_registry::{ResolvedType, ResolvedTypeField, TypeRegistry};

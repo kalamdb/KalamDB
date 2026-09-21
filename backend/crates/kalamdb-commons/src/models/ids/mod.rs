@@ -37,7 +37,9 @@ mod transaction_id;
 mod trigger_attempt_id;
 mod trigger_id;
 mod type_field_id;
+mod type_field_slot;
 mod type_id;
+mod type_revision;
 mod user_id;
 mod user_row_id;
 
@@ -69,6 +71,8 @@ pub use transaction_id::TransactionId;
 pub use trigger_attempt_id::TriggerAttemptId;
 pub use trigger_id::TriggerId;
 pub use type_field_id::TypeFieldId;
+pub use type_field_slot::TypeFieldSlot;
 pub use type_id::TypeId;
+pub use type_revision::TypeRevision;
 pub use user_id::{UserId, UserIdValidationError};
 pub use user_row_id::UserRowId;

@@ -66,7 +66,10 @@ pub use auth_type::AuthType;
 pub use call_argument::CallArgument;
 pub use catalog_type_kind::CatalogTypeKind;
 pub use connection::ConnectionInfo;
-pub use datatypes::KalamDataType;
+pub use datatypes::{
+    assert_finite_type_graph, assert_finite_type_graph_with_limits, KalamDataType, LogicalTypeRef,
+    TypeGraphNode,
+};
 pub use file_ref::FileRef;
 pub use function_runtime::FunctionRuntime;
 pub use ids::*;

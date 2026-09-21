@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{RoutineId, TypeId};
+use kalamdb_commons::models::{NamespaceId, RoutineId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -45,9 +45,10 @@ fn persist_comment(
     statement: CommentOnStatement,
 ) -> Result<ExecutionResult, KalamDbError> {
     match statement.target {
-        CommentOnTarget::Type(type_id) => persist_type_comment(
+        CommentOnTarget::Type { namespace_id, name } => persist_type_comment(
             stores,
-            &type_id,
+            &namespace_id,
+            &name,
             statement.comment.as_deref(),
             statement.if_exists,
         ),
@@ -62,21 +63,26 @@ fn persist_comment(
 
 fn persist_type_comment(
     stores: &CatalogStores,
-    type_id: &TypeId,
+    namespace_id: &NamespaceId,
+    name: &str,
     comment: Option<&str>,
     if_exists: bool,
 ) -> Result<ExecutionResult, KalamDbError> {
-    let Some(mut catalog_type) = lookup_type(stores, type_id)? else {
+    let qualified = format!("{namespace_id}.{name}");
+    let Some(mut catalog_type) = stores
+        .find_type(namespace_id, name)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    else {
         if if_exists {
             return Ok(ExecutionResult::Success {
-                message: format!("Type {type_id} does not exist, skipping comment"),
+                message: format!("Type {qualified} does not exist, skipping comment"),
             });
         }
-        return Err(KalamDbError::NotFound(format!("type {type_id} not found")));
+        return Err(KalamDbError::NotFound(format!("type {qualified} not found")));
     };
     catalog_type.comment = comment.map(str::to_string);
     upsert_type(stores, catalog_type)?;
-    Ok(comment_message("Type", type_id.as_str(), comment))
+    Ok(comment_message("Type", &qualified, comment))
 }
 
 fn persist_procedure_comment(
@@ -101,25 +107,6 @@ fn persist_procedure_comment(
         .upsert_routine(routine)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(comment_message("Procedure", routine_id.as_str(), comment))
-}
-
-fn lookup_type(
-    stores: &CatalogStores,
-    type_id: &TypeId,
-) -> Result<Option<CatalogType>, KalamDbError> {
-    if let Some(catalog_type) = stores
-        .get_type(type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-    {
-        return Ok(Some(catalog_type));
-    }
-    let folded = TypeId::new(type_id.as_str().to_ascii_lowercase());
-    if folded.as_str() == type_id.as_str() {
-        return Ok(None);
-    }
-    stores
-        .get_type(&folded)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
 
 fn upsert_type(stores: &CatalogStores, catalog_type: CatalogType) -> Result<(), KalamDbError> {

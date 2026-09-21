@@ -812,6 +812,11 @@ impl JobsManager {
         Ok(Some((job, job_node)))
     }
 
+    fn job_max_runtime(&self) -> Option<Duration> {
+        let secs = self.get_attached_app_context().config().jobs.max_runtime_seconds;
+        (secs > 0).then(|| Duration::from_secs(secs))
+    }
+
     /// Execute a single job with two-phase distributed model
     ///
     /// **Phase 1 - Local Work (ALL nodes)**:
@@ -828,10 +833,48 @@ impl JobsManager {
     async fn execute_job(
         &self,
         job: Job,
-        _job_node: JobNode,
+        job_node: JobNode,
         is_leader: bool,
     ) -> Result<(), KalamDbError> {
         let _executing = self.track_executing(job.job_id.clone());
+        let job_id = job.job_id.clone();
+        let work = self.execute_job_body(job, job_node, is_leader);
+        match self.job_max_runtime() {
+            None => work.await,
+            Some(limit) => match tokio::time::timeout(limit, work).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let reason = format!("Job timed out after {}s", limit.as_secs());
+                    self.log_job_event(&job_id, &Level::Error, &reason);
+                    if is_leader {
+                        if let Err(err) = self.mark_job_failed(&job_id, reason).await {
+                            log::error!(
+                                "[{}] Failed to mark timed-out job as failed via Raft: {}",
+                                job_id,
+                                err
+                            );
+                        }
+                    } else if let Err(err) =
+                        self.update_job_node_status(&job_id, JobStatus::Failed, Some(reason)).await
+                    {
+                        log::error!(
+                            "[{}] Failed to mark timed-out job_node as failed: {}",
+                            job_id,
+                            err
+                        );
+                    }
+                    Ok(())
+                },
+            },
+        }
+    }
+
+    async fn execute_job_body(
+        &self,
+        job: Job,
+        _job_node: JobNode,
+        is_leader: bool,
+    ) -> Result<(), KalamDbError> {
         let span = tracing::info_span!(
             "jobs.execution",
             job_id = %job.job_id,

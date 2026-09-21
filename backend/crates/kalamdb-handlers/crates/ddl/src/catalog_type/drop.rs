@@ -43,43 +43,43 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
         run_blocking(move || {
             let stores = app.system_tables().catalog_stores();
             let existing = stores
-                .get_type(&statement.type_id)
+                .find_type(&statement.namespace_id, &statement.name)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            if existing.is_none() {
+            let Some(catalog_type) = existing else {
                 if statement.if_exists {
                     return Ok(ExecutionResult::Success {
-                        message: format!("Type {} does not exist, skipping", statement.type_id),
+                        message: format!(
+                            "Type {}.{} does not exist, skipping",
+                            statement.namespace_id, statement.name
+                        ),
                     });
                 }
                 return Err(KalamDbError::NotFound(format!(
-                    "type {} not found",
-                    statement.type_id
+                    "type {}.{} not found",
+                    statement.namespace_id, statement.name
                 )));
-            }
-            if let Some(catalog_type) = existing.as_ref() {
-                match catalog_type.kind {
-                    CatalogTypeKind::ImplicitTableRow => {
-                        return Err(KalamDbError::InvalidSql(format!(
-                            "cannot drop implicit table row type {}; drop the table instead",
-                            statement.type_id
-                        )));
-                    },
-                    CatalogTypeKind::TopicPayload => {
-                        return Err(KalamDbError::InvalidSql(format!(
-                            "cannot drop implicit topic payload type {}; drop the topic instead",
-                            statement.type_id
-                        )));
-                    },
-                    CatalogTypeKind::RowAlias
-                    | CatalogTypeKind::Composite
-                    | CatalogTypeKind::Enum => {},
-                }
+            };
+            match catalog_type.kind {
+                CatalogTypeKind::ImplicitTableRow => {
+                    return Err(KalamDbError::InvalidSql(format!(
+                        "cannot drop implicit table row type {}; drop the table instead",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    )));
+                },
+                CatalogTypeKind::TopicPayload => {
+                    return Err(KalamDbError::InvalidSql(format!(
+                        "cannot drop implicit topic payload type {}; drop the topic instead",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    )));
+                },
+                CatalogTypeKind::RowAlias | CatalogTypeKind::Composite | CatalogTypeKind::Enum => {
+                },
             }
             stores
-                .drop_type(&statement.type_id)
+                .drop_type(&catalog_type.type_id)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
             Ok(ExecutionResult::Success {
-                message: format!("Type {} dropped", statement.type_id),
+                message: format!("Type {} dropped", crate::catalog_type::type_alias(&catalog_type)),
             })
         })
         .await

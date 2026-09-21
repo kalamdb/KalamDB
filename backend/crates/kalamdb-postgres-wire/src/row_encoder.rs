@@ -23,6 +23,8 @@ use pgwire::{
     error::{ErrorInfo, PgWireError, PgWireResult},
 };
 
+use crate::pg_types::pg_type_for_named_field;
+
 pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Vec<Response>> {
     execution_result_to_responses_with_format(result, None)
 }
@@ -69,7 +71,13 @@ pub fn execution_result_to_responses_with_format(
             schema,
             column_format,
         )?)]),
-        ExecutionResult::ScalarRows { .. } => unreachable!("converted by into_arrow_rows"),
+        ExecutionResult::ScalarRows { .. } => {
+            Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_string(),
+                "XX000".to_string(),
+                "internal: scalar rows were not converted before PostgreSQL encoding".to_string(),
+            ))))
+        },
     }
 }
 
@@ -125,9 +133,16 @@ fn field_info_for_arrow(
         field.name().clone(),
         None,
         None,
-        pg_type_for_arrow(field.data_type())?,
+        pg_type_for_field(field)?,
         format,
     ))
+}
+
+fn pg_type_for_field(field: &Field) -> PgWireResult<Type> {
+    if let Some(pg_type) = pg_type_for_named_field(field) {
+        return Ok(pg_type);
+    }
+    pg_type_for_arrow(field.data_type())
 }
 
 fn pg_type_for_arrow(data_type: &DataType) -> PgWireResult<Type> {
@@ -225,27 +240,29 @@ fn encode_array_value(
 
     match array.data_type() {
         DataType::Timestamp(TimeUnit::Second, _) => {
-            let array = array.as_any().downcast_ref::<TimestampSecondArray>().unwrap();
+            let array = downcast_array::<TimestampSecondArray>(array, "timestamp(second)")?;
             return encode_timestamp_micros(encoder, seconds_to_micros(array.value(row_index))?);
         },
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
-            let array = array.as_any().downcast_ref::<TimestampMillisecondArray>().unwrap();
+            let array =
+                downcast_array::<TimestampMillisecondArray>(array, "timestamp(millisecond)")?;
             return encode_timestamp_micros(encoder, millis_to_micros(array.value(row_index))?);
         },
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            let array = array.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap();
+            let array =
+                downcast_array::<TimestampMicrosecondArray>(array, "timestamp(microsecond)")?;
             return encode_timestamp_micros(encoder, array.value(row_index));
         },
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
-            let array = array.as_any().downcast_ref::<TimestampNanosecondArray>().unwrap();
+            let array = downcast_array::<TimestampNanosecondArray>(array, "timestamp(nanosecond)")?;
             return encode_timestamp_micros(encoder, array.value(row_index) / 1_000);
         },
         DataType::Date32 => {
-            let array = array.as_any().downcast_ref::<Date32Array>().unwrap();
+            let array = downcast_array::<Date32Array>(array, "date32")?;
             return encode_date32(encoder, array.value(row_index));
         },
         DataType::Date64 => {
-            let array = array.as_any().downcast_ref::<Date64Array>().unwrap();
+            let array = downcast_array::<Date64Array>(array, "date64")?;
             return encode_date64(encoder, array.value(row_index));
         },
         _ => {},
@@ -273,7 +290,7 @@ fn encode_list_array_value(
     let values = list.value(row_index);
     match values.data_type() {
         DataType::Utf8 => {
-            let strings = values.as_any().downcast_ref::<StringArray>().expect("utf8 list values");
+            let strings = downcast_array::<StringArray>(values.as_ref(), "utf8 list values")?;
             let items = (0..strings.len())
                 .map(|index| {
                     if strings.is_null(index) {
@@ -286,7 +303,7 @@ fn encode_list_array_value(
             encoder.encode_field(&items)
         },
         DataType::Int64 => {
-            let ints = values.as_any().downcast_ref::<Int64Array>().expect("int64 list values");
+            let ints = downcast_array::<Int64Array>(values.as_ref(), "int64 list values")?;
             let items = (0..ints.len())
                 .map(|index| {
                     if ints.is_null(index) {
@@ -299,7 +316,7 @@ fn encode_list_array_value(
             encoder.encode_field(&items)
         },
         DataType::Int32 => {
-            let ints = values.as_any().downcast_ref::<Int32Array>().expect("int32 list values");
+            let ints = downcast_array::<Int32Array>(values.as_ref(), "int32 list values")?;
             let items = (0..ints.len())
                 .map(|index| {
                     if ints.is_null(index) {
@@ -312,7 +329,7 @@ fn encode_list_array_value(
             encoder.encode_field(&items)
         },
         DataType::Boolean => {
-            let flags = values.as_any().downcast_ref::<BooleanArray>().expect("bool list values");
+            let flags = downcast_array::<BooleanArray>(values.as_ref(), "bool list values")?;
             let items = (0..flags.len())
                 .map(|index| {
                     if flags.is_null(index) {
@@ -372,6 +389,14 @@ fn encode_value_error(message: String) -> PgWireError {
         "XX000".to_string(),
         message,
     )))
+}
+
+fn downcast_array<'a, T: 'static>(array: &'a dyn Array, expected: &str) -> PgWireResult<&'a T> {
+    array.as_any().downcast_ref::<T>().ok_or_else(|| {
+        encode_value_error(format!(
+            "internal type mismatch encoding {expected} for PostgreSQL wire"
+        ))
+    })
 }
 
 fn supports_display_fallback(data_type: &DataType) -> bool {

@@ -39,6 +39,8 @@ fn implicit_row_type() -> CatalogType {
         table_id:       Some(TableId::from_strings("chat", "messages")),
         source_type_id: None,
         comment:        Some("implicit row".to_string()),
+        type_revision:  1,
+        next_slot:      1,
     }
 }
 
@@ -51,41 +53,52 @@ fn address_type() -> CatalogType {
         table_id:       None,
         source_type_id: None,
         comment:        None,
+        type_revision:  1,
+        next_slot:      1,
     }
 }
 
 fn street_field() -> CatalogTypeField {
     CatalogTypeField {
-        type_field_id: TypeFieldId::new(&TypeId::from_parts(Some(&chat_ns()), "address"), "street")
-            .unwrap(),
-        type_id:       TypeId::from_parts(Some(&chat_ns()), "address"),
-        name:          "street".to_string(),
-        ordinal:       0,
-        field_type_id: None,
-        type_name:     "text".to_string(),
-        is_array:      false,
-        not_null:      true,
-        nonempty:      false,
-        data_type:     Some(kalamdb_commons::KalamDataType::Text),
+        type_field_id:    TypeFieldId::new(
+            &TypeId::from_parts(Some(&chat_ns()), "address"),
+            "street",
+        )
+        .unwrap(),
+        type_id:          TypeId::from_parts(Some(&chat_ns()), "address"),
+        name:             "street".to_string(),
+        ordinal:          0,
+        field_type_id:    None,
+        type_name:        "text".to_string(),
+        is_array:         false,
+        not_null:         true,
+        nonempty:         false,
+        data_type:        Some(kalamdb_commons::KalamDataType::Text),
+        slot:             1,
+        dropped:          false,
+        element_nullable: true,
     }
 }
 
 fn nested_location_field() -> CatalogTypeField {
     CatalogTypeField {
-        type_field_id: TypeFieldId::new(
+        type_field_id:    TypeFieldId::new(
             &TypeId::from_parts(Some(&chat_ns()), "message"),
             "location",
         )
         .unwrap(),
-        type_id:       TypeId::from_parts(Some(&chat_ns()), "message"),
-        name:          "location".to_string(),
-        ordinal:       0,
-        field_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "address")),
-        type_name:     "chat.address".to_string(),
-        is_array:      false,
-        not_null:      false,
-        nonempty:      false,
-        data_type:     None,
+        type_id:          TypeId::from_parts(Some(&chat_ns()), "message"),
+        name:             "location".to_string(),
+        ordinal:          0,
+        field_type_id:    Some(TypeId::from_parts(Some(&chat_ns()), "address")),
+        type_name:        "chat.address".to_string(),
+        is_array:         false,
+        not_null:         false,
+        nonempty:         false,
+        data_type:        None,
+        slot:             1,
+        dropped:          false,
+        element_nullable: true,
     }
 }
 
@@ -140,6 +153,8 @@ fn implicit_row_type_and_alias_have_catalog_relationships() {
         table_id:       None,
         source_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
         comment:        None,
+        type_revision:  1,
+        next_slot:      1,
     };
     stores.upsert_type(alias.clone()).unwrap();
 
@@ -319,6 +334,8 @@ fn drop_namespace_catalog_removes_routines_types_schedules_and_spares_other_sche
         table_id:       None,
         source_type_id: None,
         comment:        None,
+        type_revision:  1,
+        next_slot:      1,
     };
     stores.upsert_type(other_type.clone()).unwrap();
 
@@ -403,6 +420,8 @@ fn drop_type_is_blocked_by_alias_nested_field_and_routine() {
         table_id:       None,
         source_type_id: Some(TypeId::from_parts(Some(&chat_ns()), "message")),
         comment:        None,
+        type_revision:  1,
+        next_slot:      1,
     };
     stores.upsert_type(alias).unwrap();
     let err = stores.drop_type(&TypeId::from_parts(Some(&chat_ns()), "message")).unwrap_err();

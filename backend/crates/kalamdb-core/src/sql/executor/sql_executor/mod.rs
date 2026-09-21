@@ -20,6 +20,7 @@ use datafusion::{
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
     models::{rows::row::Row, NamespaceId, TableId, TransactionId, UserId},
+    quote_sql_identifier,
     schemas::TableType,
     try_pk_bucket_key, PkBucketKey, Role, SystemTable,
 };
@@ -118,7 +119,7 @@ fn table_ref_is_client_catalog(table: &datafusion::common::TableReference) -> bo
     matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
 }
 
-fn extract_select_from_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+fn extract_select_from_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
     let lowered = sql.to_ascii_lowercase();
     let from_idx = lowered.find(" from ")?;
     let rest = sql[from_idx + 6..].trim_start();
@@ -131,20 +132,18 @@ fn extract_select_from_table_id(sql: &str, default_namespace: &str) -> Option<Ta
     }
     let mut parts = ident.split('.');
     match (parts.next(), parts.next(), parts.next()) {
-        (Some(table), None, None) => Some(TableId::from_strings(default_namespace, table)),
+        (Some(table), None, None) => {
+            Some(TableId::from_namespace(default_namespace.clone(), table))
+        },
         (Some(namespace), Some(table), None) => Some(TableId::from_strings(namespace, table)),
         _ => None,
     }
 }
 
-fn extract_sql_target_table_id(sql: &str, default_namespace: &str) -> Option<TableId> {
+fn extract_sql_target_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
     kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
         .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
         .or_else(|| extract_select_from_table_id(sql, default_namespace))
-}
-
-fn quote_sql_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 fn nullable_arrow_schema(schema: &SchemaRef) -> SchemaRef {
@@ -1062,7 +1061,7 @@ impl SqlExecutor {
         }
         let Some(table_id) = table_id
             .cloned()
-            .or_else(|| extract_sql_target_table_id(sql, exec_ctx.default_namespace().as_str()))
+            .or_else(|| extract_sql_target_table_id(sql, &exec_ctx.default_namespace()))
         else {
             return Ok(false);
         };
@@ -1182,9 +1181,14 @@ impl SqlExecutor {
         &self,
         session: &SessionContext,
         data_frame: &DataFrame,
+        default_namespace: &NamespaceId,
     ) -> Result<LogicalPlan, KalamDbError> {
-        let ordered =
-            apply_default_order_by(data_frame.logical_plan().clone(), &self.app_context).await?;
+        let ordered = apply_default_order_by(
+            data_frame.logical_plan().clone(),
+            &self.app_context,
+            default_namespace,
+        )
+        .await?;
         session.state().optimize(&ordered).map_err(Self::datafusion_to_execution_error)
     }
 
@@ -1335,12 +1339,12 @@ impl SqlExecutor {
                 _ => return Ok(None),
             };
 
-        let namespace = scan
-            .table_name
-            .schema()
-            .map(NamespaceId::new)
-            .unwrap_or_else(|| exec_ctx.default_namespace());
-        let table_id = TableId::from_strings(namespace.as_str(), scan.table_name.table());
+        let default_ns = exec_ctx.default_namespace();
+        let namespace = match scan.table_name.schema() {
+            Some(schema) => NamespaceId::from_session_schema(schema, Some(&default_ns)),
+            None => default_ns,
+        };
+        let table_id = TableId::from_namespace(namespace, scan.table_name.table());
         let Some(cached_table) = self.app_context.schema_registry().get(&table_id) else {
             return Ok(None);
         };
@@ -1553,9 +1557,9 @@ impl SqlExecutor {
 
         let classified = SqlStatement::classify_and_parse(sql, default_namespace, role)?;
         let (table_id, parsed_dml) = if include_dml_ast {
-            Self::parse_dml_metadata(sql, classified.kind(), default_namespace.as_str())?
+            Self::parse_dml_metadata(sql, classified.kind(), default_namespace)?
         } else {
-            Self::extract_dml_table_id_only(sql, classified.kind(), default_namespace.as_str())
+            Self::extract_dml_table_id_only(sql, classified.kind(), default_namespace)
         };
         let table_type = table_id.as_ref().and_then(|table_id| {
             self.app_context
@@ -1581,7 +1585,7 @@ impl SqlExecutor {
     fn parse_dml_metadata(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &str,
+        default_namespace: &NamespaceId,
     ) -> Result<(Option<TableId>, Option<Statement>), StatementClassificationError> {
         match kind {
             SqlStatementKind::Insert(_)
@@ -1613,7 +1617,7 @@ impl SqlExecutor {
     fn extract_dml_table_id_only(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &str,
+        default_namespace: &NamespaceId,
     ) -> (Option<TableId>, Option<Statement>) {
         let table_id = match kind {
             SqlStatementKind::Insert(_)
@@ -2118,6 +2122,7 @@ impl SqlExecutor {
         };
         let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
         let execution_sql: &str = &execution_sql;
+        let default_namespace = exec_ctx.default_namespace();
 
         // Validate parameters if present
         if !params.is_empty() {
@@ -2128,7 +2133,7 @@ impl SqlExecutor {
         // Key excludes user_id because LogicalPlan is user-agnostic - filtering happens at scan
         // time.
         let cache_key =
-            PlanCacheKey::new(exec_ctx.default_namespace(), exec_ctx.user_role(), execution_sql);
+            PlanCacheKey::new(default_namespace.clone(), exec_ctx.user_role(), execution_sql);
 
         let df = if let Some(template_plan) = self.sql_cache_registry.plan_cache().get(&cache_key) {
             if let Some(result) = kalamdb_observability::kdb_await_in_info_span!(
@@ -2180,8 +2185,9 @@ impl SqlExecutor {
                         },
                     };
 
-                    let template_plan =
-                        self.optimized_plan_for_cache(&session, &planned_df).await?;
+                    let template_plan = self
+                        .optimized_plan_for_cache(&session, &planned_df, &default_namespace)
+                        .await?;
                     self.sql_cache_registry
                         .plan_cache()
                         .insert(cache_key.clone(), template_plan.clone());
@@ -2243,7 +2249,8 @@ impl SqlExecutor {
                 },
             };
 
-            let template_plan = self.optimized_plan_for_cache(&session, &planned_df).await?;
+            let template_plan =
+                self.optimized_plan_for_cache(&session, &planned_df, &default_namespace).await?;
             self.sql_cache_registry.plan_cache().insert(cache_key, template_plan.clone());
 
             let executable_plan = if params.is_empty() {

@@ -6,19 +6,13 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_session::AuthSession;
 
 use super::models::{
     LatestOffsetsRequest, LatestOffsetsResponse, TopicErrorResponse, TopicPartitionLatestOffset,
+    MAX_LATEST_OFFSET_PARTITIONS,
 };
-
-/// Check if role is allowed to resolve topic offsets.
-/// Must be service, dba, or system role (NOT user)
-fn is_topic_authorized(session: &AuthSession) -> bool {
-    matches!(session.role(), Role::Service | Role::Dba | Role::System)
-}
 
 /// POST /v1/api/topics/latest-offsets - Resolve topic partition head offsets
 ///
@@ -35,9 +29,16 @@ pub async fn latest_offsets_handler(
 ) -> impl Responder {
     let session: AuthSession = extractor.into();
 
-    if !is_topic_authorized(&session) {
+    if !super::is_topic_authorized(&session) {
         return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
             "Topic offset inspection requires service, dba, or system role",
+        ));
+    }
+
+    if body.partitions.len() > MAX_LATEST_OFFSET_PARTITIONS {
+        return HttpResponse::BadRequest().json(TopicErrorResponse::new(
+            format!("partitions list exceeds maximum of {}", MAX_LATEST_OFFSET_PARTITIONS),
+            "INVALID_REQUEST",
         ));
     }
 

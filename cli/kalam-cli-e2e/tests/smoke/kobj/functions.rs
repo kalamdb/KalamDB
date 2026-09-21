@@ -537,8 +537,10 @@ fn kobj_functions_create_type_and_inline_procedure() {
     exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     exec(&format!("CREATE TYPE {ns}.status AS ENUM ('active', 'blocked')"));
 
-    let types =
-        query_rows(&format!("SELECT type_id, kind FROM system.types WHERE type_id LIKE '{ns}.%'"));
+    let types = query_rows(&format!(
+        "SELECT type_id, name, kind FROM system.types WHERE namespace_id = '{ns}' AND name IN \
+         ('address', 'status')"
+    ));
     let kinds: Vec<String> = types.iter().filter_map(|row| cell_str(row, "kind")).collect();
     assert!(
         kinds.iter().any(|kind| kind.contains("composite")),

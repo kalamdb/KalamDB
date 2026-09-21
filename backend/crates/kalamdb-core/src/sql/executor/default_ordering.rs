@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use datafusion::logical_expr::{LogicalPlan, Sort, SortExpr};
-use kalamdb_commons::{constants::SystemColumnNames, models::TableId};
+use kalamdb_commons::{constants::SystemColumnNames, models::TableId, NamespaceId};
 
 use crate::{app_context::AppContext, error::KalamDbError};
 
@@ -83,33 +83,43 @@ fn inject_default_sort(
 ///
 /// Returns the first TableScan found in the plan tree.
 /// For simple SELECT queries, this is typically the main table.
-/// /// FIXME: Pass the ExecutionContext to read the default namespace from there
-fn extract_table_reference(plan: &LogicalPlan) -> Option<TableId> {
+/// Bare table names resolve against `default_namespace` (session `USE NAMESPACE`).
+fn extract_table_reference(plan: &LogicalPlan, default_namespace: &NamespaceId) -> Option<TableId> {
     match plan {
         LogicalPlan::TableScan(scan) => {
             let table_id = match &scan.table_name {
                 datafusion::common::TableReference::Bare { table } => {
-                    TableId::from_strings("default", table.as_ref())
+                    TableId::from_namespace(default_namespace.clone(), table.as_ref())
                 },
                 datafusion::common::TableReference::Partial { schema, table } => {
-                    TableId::from_strings(schema.as_ref(), table.as_ref())
+                    table_id_from_qualified_scan(schema.as_ref(), table.as_ref(), default_namespace)
                 },
                 datafusion::common::TableReference::Full { schema, table, .. } => {
-                    TableId::from_strings(schema.as_ref(), table.as_ref())
+                    table_id_from_qualified_scan(schema.as_ref(), table.as_ref(), default_namespace)
                 },
             };
             Some(table_id)
         },
-        // For other plan nodes, check their inputs
         _ => {
             for input in plan.inputs() {
-                // FIXME: Pass the ExecutionContext to read the default namespace from there
-                if let Some(result) = extract_table_reference(input) {
+                if let Some(result) = extract_table_reference(input, default_namespace) {
                     return Some(result);
                 }
             }
             None
         },
+    }
+}
+
+fn table_id_from_qualified_scan(
+    schema: &str,
+    table: &str,
+    default_namespace: &NamespaceId,
+) -> TableId {
+    if schema.eq_ignore_ascii_case(default_namespace.as_str()) {
+        TableId::from_namespace(default_namespace.clone(), table)
+    } else {
+        TableId::from_strings(schema, table)
     }
 }
 
@@ -198,10 +208,10 @@ fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
 /// # Returns
 /// * `Ok(LogicalPlan)` - The original plan if ORDER BY exists, or wrapped plan
 /// * `Err(KalamDbError)` - If schema lookup fails (rare, plan is returned unchanged)
-/// FIXME: Pass the ExecutionContext to read the default namespace from there
 pub async fn apply_default_order_by(
     plan: LogicalPlan,
     app_context: &Arc<AppContext>,
+    default_namespace: &NamespaceId,
 ) -> Result<LogicalPlan, KalamDbError> {
     // Skip if already has ORDER BY
     if has_order_by(&plan) {
@@ -209,9 +219,7 @@ pub async fn apply_default_order_by(
         return Ok(plan);
     }
 
-    // Extract table reference
-    // FIXME: Pass the ExecutionContext to read the default namespace from there
-    let table_id = match extract_table_reference(&plan) {
+    let table_id = match extract_table_reference(&plan, default_namespace) {
         Some(id) => id,
         None => {
             // No table found (might be a function call like SELECT NOW())

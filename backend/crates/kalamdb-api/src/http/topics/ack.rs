@@ -6,17 +6,10 @@ use std::sync::Arc;
 
 use actix_web::{post, web, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::Role;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_session::AuthSession;
 
 use super::models::{AckRequest, AckResponse, TopicErrorResponse};
-
-/// Check if role is allowed to consume/ack topics
-/// Must be service, dba, or system role (NOT user)
-fn is_topic_authorized(session: &AuthSession) -> bool {
-    matches!(session.role(), Role::Service | Role::Dba | Role::System)
-}
 
 /// POST /v1/api/topics/ack - Acknowledge offset for consumer group
 ///
@@ -34,7 +27,7 @@ pub async fn ack_handler(
     let session: AuthSession = extractor.into();
 
     // Authorization check
-    if !is_topic_authorized(&session) {
+    if !super::is_topic_authorized(&session) {
         return HttpResponse::Forbidden().json(TopicErrorResponse::forbidden(
             "Topic acknowledgment requires service, dba, or system role",
         ));

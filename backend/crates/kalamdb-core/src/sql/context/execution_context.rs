@@ -288,8 +288,8 @@ impl ExecutionContext {
     pub fn default_namespace(&self) -> NamespaceId {
         if let Some(session) = self.session_context_cache.get() {
             let state = session.state();
-            let default_schema = state.config().options().catalog.default_schema.clone();
-            return NamespaceId::new(default_schema);
+            let default_schema = state.config().options().catalog.default_schema.as_str();
+            return NamespaceId::from_session_schema(default_schema, self.namespace_id.as_ref());
         }
 
         self.namespace_id.clone().unwrap_or_default()

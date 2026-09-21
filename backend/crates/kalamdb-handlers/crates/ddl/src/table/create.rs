@@ -244,6 +244,7 @@ mod tests {
             table_type,
             schema,
             column_defaults: std::collections::HashMap::new(),
+            column_type_refs: std::collections::HashMap::new(),
             primary_key_column: Some("id".to_string()),
             storage_id: None,
             use_user_storage: false,

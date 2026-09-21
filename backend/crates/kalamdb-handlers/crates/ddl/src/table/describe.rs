@@ -34,7 +34,7 @@ impl TypedStatementHandler<DescribeTableStatement> for DescribeTableHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         let start_time = std::time::Instant::now();
         let ns = statement.namespace_id.clone().unwrap_or_else(|| context.default_namespace());
-        let table_id = TableId::from_strings(ns.as_str(), statement.table_name.as_str());
+        let table_id = TableId::from_ref(&ns, &statement.table_name);
         let def = self.app_context.schema_registry().get_table_if_exists(&table_id)?.ok_or_else(
             || {
                 KalamDbError::NotFound(format!(
