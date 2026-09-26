@@ -4790,6 +4790,7 @@ dependencies = [
 name = "kalamdb-auth"
 version = "0.7.0-beta.0"
 dependencies = [
+ "actix-rt",
  "actix-web",
  "anyhow",
  "async-trait",
@@ -4897,6 +4898,7 @@ dependencies = [
  "kalamdb-live",
  "kalamdb-observability",
  "kalamdb-pg",
+ "kalamdb-pg-bridge",
  "kalamdb-plan-cache",
  "kalamdb-publisher",
  "kalamdb-raft",
@@ -5294,6 +5296,7 @@ dependencies = [
  "kalamdb-commons",
  "kalamdb-configs",
  "kalamdb-core",
+ "kalamdb-pg-bridge",
  "kalamdb-server-auth",
  "kalamdb-sharding",
  "kalamdb-system",
@@ -5305,6 +5308,30 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "uuid",
+]
+
+[[package]]
+name = "kalamdb-pg-bridge"
+version = "0.7.0-beta.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "bytes",
+ "datafusion",
+ "datafusion-common",
+ "kalamdb-auth",
+ "kalamdb-backend",
+ "kalamdb-commons",
+ "kalamdb-core",
+ "kalamdb-pg",
+ "kalamdb-raft",
+ "kalamdb-session-datafusion",
+ "kalamdb-tables",
+ "kalamdb-transactions",
+ "log",
+ "thiserror 2.0.20",
+ "tokio",
+ "tonic",
 ]
 
 [[package]]
@@ -5380,9 +5407,11 @@ name = "kalamdb-raft"
 version = "0.7.0-beta.0"
 dependencies = [
  "async-trait",
+ "axum",
  "chrono",
  "dashmap 6.2.1",
  "hostname",
+ "http 1.4.0",
  "kalam-pg-client",
  "kalam-pg-common",
  "kalamdb-commons",
@@ -5407,6 +5436,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-prost",
+ "tower",
  "tracing",
 ]
 
@@ -5475,6 +5505,7 @@ dependencies = [
  "kalamdb-jobs",
  "kalamdb-live",
  "kalamdb-observability",
+ "kalamdb-pg-bridge",
  "kalamdb-postgres-wire",
  "kalamdb-raft",
  "kalamdb-rls",

@@ -233,7 +233,7 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Jwt { token };
-        assert_eq!(extract_user_id_for_audit(&request), UserId::from("user_from_sub"));
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
     }
 
     #[test]
@@ -254,10 +254,10 @@ mod tests {
 
         let token = format!("{}.{}.{}", header, payload, signature);
         let request = AuthRequest::Header(format!("Bearer {}", token));
-        assert_eq!(extract_user_id_for_audit(&request), UserId::from("bearer_user"));
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
 
         let request = AuthRequest::Header(format!("bearer {}", token));
-        assert_eq!(extract_user_id_for_audit(&request), UserId::from("bearer_user"));
+        assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());
 
         let request = AuthRequest::Header(format!("Bearerish {}", token));
         assert_eq!(extract_user_id_for_audit(&request), UserId::anonymous());

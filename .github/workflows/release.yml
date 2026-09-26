@@ -1553,6 +1553,7 @@ jobs:
           KALAMDB_NODE_ID: "1"
           KALAMDB_CLUSTER_RPC_ADDR: "127.0.0.1:2910"
           KALAMDB_CLUSTER_API_ADDR: "http://127.0.0.1:2900"
+          KALAMDB_ENABLE_PG_EXTENSION: "true"
         run: |
           set -euo pipefail
           mkdir -p test-data/rocksdb test-data/storage test-data/logs

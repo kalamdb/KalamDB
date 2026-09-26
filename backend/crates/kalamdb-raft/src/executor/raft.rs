@@ -13,9 +13,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use kalamdb_commons::models::{NodeId, UserId};
 use kalamdb_observability::{collect_runtime_metrics, SERVER_VERSION};
-use kalamdb_pg::KalamPgService;
 use kalamdb_sharding::ShardRouter;
 use openraft::ServerState;
+use tonic::service::Routes;
 
 use crate::{
     cluster_types::NodeStatus,
@@ -44,8 +44,8 @@ pub struct RaftExecutor {
     server_start_time: Instant,
     /// Cluster message handler (set before `start()`)
     cluster_handler: tokio::sync::OnceCell<Arc<dyn ClusterMessageHandler>>,
-    /// PostgreSQL remote gRPC service hosted on the shared RPC port.
-    pg_service: tokio::sync::OnceCell<Arc<KalamPgService>>,
+    /// Optional gRPC routes mounted on the shared RPC port beside Raft.
+    extra_rpc_routes: tokio::sync::OnceCell<Routes>,
     /// Per-peer live statistics cache, refreshed on `\cluster list` / `system.cluster` queries.
     ///
     /// Keyed by `NodeId`. Only populated in cluster mode when the node has peers.
@@ -71,7 +71,7 @@ impl RaftExecutor {
             manager,
             server_start_time,
             cluster_handler: tokio::sync::OnceCell::new(),
-            pg_service: tokio::sync::OnceCell::new(),
+            extra_rpc_routes: tokio::sync::OnceCell::new(),
             peer_stats_cache: Arc::new(DashMap::new()),
             peer_stats_cache_refreshed_at: Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -87,10 +87,14 @@ impl RaftExecutor {
         }
     }
 
-    /// Set the PostgreSQL remote gRPC service.
-    pub fn set_pg_service(&self, service: Arc<KalamPgService>) {
-        if self.pg_service.set(service).is_err() {
-            log::warn!("KalamPgService already set in RaftExecutor");
+    /// Mount extra gRPC routes on the shared RPC listener.
+    ///
+    /// Must be called before [`CommandExecutor::start`](crate::CommandExecutor::start).
+    /// Build the routes with [`crate::named_service_routes`] so they do not
+    /// replace the Raft listener's fallback.
+    pub fn set_extra_rpc_routes(&self, routes: Routes) {
+        if self.extra_rpc_routes.set(routes).is_err() {
+            log::warn!("extra RPC routes already set on RaftExecutor");
         }
     }
 
@@ -100,11 +104,6 @@ impl RaftExecutor {
     /// after the full context is created.
     pub fn manager(&self) -> &Arc<RaftManager> {
         &self.manager
-    }
-
-    /// Access the hosted PostgreSQL gRPC service if it has been registered.
-    pub fn pg_service(&self) -> Option<Arc<KalamPgService>> {
-        self.pg_service.get().map(Arc::clone)
     }
 
     /// Refresh the per-peer statistics cache by fanning out `GetNodeInfo` RPCs
@@ -498,8 +497,8 @@ impl CommandExecutor for RaftExecutor {
         // First start the RPC server so we can receive incoming Raft RPCs
         // and cluster messages (both services share the same port)
         let rpc_addr = self.manager.config().rpc_addr.clone();
-        let pg_service = self.pg_service.get().map(Arc::clone);
-        crate::network::start_rpc_server(self.manager.clone(), rpc_addr, handler, pg_service)
+        let extra_routes = self.extra_rpc_routes.get().cloned();
+        crate::network::start_rpc_server(self.manager.clone(), rpc_addr, handler, extra_routes)
             .await?;
 
         // Then start the Raft groups

@@ -32,6 +32,10 @@ pub struct ServerConfig {
     pub websocket: WebSocketSettings,
     #[serde(default)]
     pub postgres_wire: PostgresWireSettings,
+    /// PostgreSQL extension gRPC bridge on the cluster RPC port.
+    /// Off unless an external PostgreSQL extension still dials this node.
+    #[serde(default)]
+    pub pg_extension: PgExtensionSettings,
     #[serde(default)]
     pub functions: FunctionsSettings,
     #[serde(default)]
@@ -1170,6 +1174,23 @@ pub struct PostgresWireSettings {
     pub portal_limit: usize,
 }
 
+/// PostgreSQL extension gRPC bridge settings.
+///
+/// This is the FDW/extension service mounted on the cluster RPC port.
+/// It is separate from [`PostgresWireSettings`], which is the native wire listener.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PgExtensionSettings {
+    /// Mount `PgService` on the cluster RPC listener. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for PgExtensionSettings {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
 impl Default for PostgresWireSettings {
     fn default() -> Self {
         Self {
@@ -1754,6 +1775,7 @@ impl Default for ServerConfig {
             topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
             postgres_wire: PostgresWireSettings::default(),
+            pg_extension: PgExtensionSettings::default(),
             functions: FunctionsSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),

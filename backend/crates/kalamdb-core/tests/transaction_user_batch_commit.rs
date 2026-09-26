@@ -7,11 +7,9 @@ use kalamdb_commons::{
     models::{pg_operations::InsertRequest, rows::Row, OperationKind, TransactionOrigin, UserId},
     TableType,
 };
-use kalamdb_core::{
-    operations::service::OperationService,
-    transactions::{ExecutionOwnerKey, StagedMutation},
-};
+use kalamdb_core::transactions::{ExecutionOwnerKey, StagedMutation};
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use kalamdb_sharding::ShardRouter;
 use kalamdb_tables::UserTableProvider;
 use support::{create_cluster_app_context, create_user_table, row, unique_namespace};

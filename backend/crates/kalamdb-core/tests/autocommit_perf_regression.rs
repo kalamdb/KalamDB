@@ -19,8 +19,9 @@ use kalamdb_commons::{
     TableType,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_core::{app_context::AppContext, operations::service::OperationService};
+use kalamdb_core::app_context::AppContext;
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use kalamdb_store::{test_utils::TestDb, StorageBackend};
 use kalamdb_system::{
     providers::storages::models::StorageType, Storage, StoragePartition, SystemTable,

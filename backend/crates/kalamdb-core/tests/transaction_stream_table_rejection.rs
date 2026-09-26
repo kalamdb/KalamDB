@@ -12,10 +12,9 @@ use kalamdb_commons::{
     schemas::ColumnDefault,
     TableType,
 };
-use kalamdb_core::{
-    operations::service::OperationService, sql::executor::PreparedExecutionStatement,
-};
+use kalamdb_core::sql::executor::PreparedExecutionStatement;
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use support::{
     create_cluster_app_context, create_executor, execute_ok, request_exec_ctx, row, select_names,
     unique_namespace,

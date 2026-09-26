@@ -1,8 +1,7 @@
 use datafusion::error::DataFusionError;
+use kalamdb_core::applier::ApplierError;
 use thiserror::Error;
 use tonic::Status;
-
-use crate::applier::ApplierError;
 
 /// Errors from `OperationService` domain-typed execution.
 #[derive(Debug, Error)]

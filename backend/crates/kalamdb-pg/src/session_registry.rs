@@ -104,23 +104,53 @@ impl RemotePgSession {
     }
 }
 
+/// Where bridge sessions live.
+///
+/// Production uses the shared backend manager and does not allocate a local map.
+/// Unit tests without a manager keep sessions in a `DashMap`.
+#[derive(Debug)]
+enum SessionStore {
+    Shared(Arc<BackendSessionManager>),
+    Local(DashMap<String, RemotePgSession>),
+}
+
 /// Thin adapter over `BackendSessionManager` with a local fallback for unit tests.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SessionRegistry {
-    manager:        Option<Arc<BackendSessionManager>>,
-    local_sessions: DashMap<String, RemotePgSession>,
+    store: SessionStore,
+}
+
+impl Default for SessionRegistry {
+    fn default() -> Self {
+        Self {
+            store: SessionStore::Local(DashMap::new()),
+        }
+    }
 }
 
 impl SessionRegistry {
     pub(crate) fn with_manager(manager: Arc<BackendSessionManager>) -> Self {
         Self {
-            manager:        Some(manager),
-            local_sessions: DashMap::new(),
+            store: SessionStore::Shared(manager),
+        }
+    }
+
+    fn shared(&self) -> Option<&Arc<BackendSessionManager>> {
+        match &self.store {
+            SessionStore::Shared(manager) => Some(manager),
+            SessionStore::Local(_) => None,
+        }
+    }
+
+    fn local(&self) -> Option<&DashMap<String, RemotePgSession>> {
+        match &self.store {
+            SessionStore::Local(sessions) => Some(sessions),
+            SessionStore::Shared(_) => None,
         }
     }
 
     pub(crate) fn manager(&self) -> Option<Arc<BackendSessionManager>> {
-        self.manager.as_ref().map(Arc::clone)
+        self.shared().map(Arc::clone)
     }
 
     pub(crate) fn open_authenticated(
@@ -138,7 +168,7 @@ impl SessionRegistry {
         session.last_method = Some("OpenSession".to_string());
         let client_addr = normalize_optional(client_addr);
 
-        if let Some(manager) = &self.manager {
+        if let Some(manager) = self.shared() {
             let backend_auth = BackendAuth::new(
                 bridge_auth.user_id.clone(),
                 bridge_auth.role,
@@ -162,14 +192,14 @@ impl SessionRegistry {
                 session = RemotePgSession::from_snapshot(&snapshot, Some(bridge_auth));
             }
         } else {
-            self.local_sessions.insert(session_id, session.clone());
+            self.local().expect("local session store").insert(session_id, session.clone());
         }
 
         Ok(session)
     }
 
     pub(crate) fn validate_session(&self, session_id: &str) -> Result<(), &'static str> {
-        if let Some(manager) = &self.manager {
+        if let Some(manager) = self.shared() {
             let snapshot = manager.get_snapshot(session_id).ok_or("session not found")?;
             if snapshot.origin != SessionOrigin::ExtensionBridge {
                 return Err("session origin mismatch");
@@ -177,7 +207,11 @@ impl SessionRegistry {
             return manager.validate_session(session_id, current_timestamp_ms());
         }
 
-        let session = self.local_sessions.get(session_id).ok_or("session not found")?;
+        let session = self
+            .local()
+            .expect("local session store")
+            .get(session_id)
+            .ok_or("session not found")?;
         if !session.is_authenticated() {
             return Err("session not authenticated");
         }
@@ -193,10 +227,14 @@ impl SessionRegistry {
         current_schema: Option<&str>,
         client_addr: Option<&str>,
         last_method: Option<&str>,
+        create_if_missing: bool,
     ) {
         let session_id = session_id.trim().to_string();
-        if let Some(manager) = &self.manager {
+        if let Some(manager) = self.shared() {
             if manager.get_snapshot(&session_id).is_none() {
+                if !create_if_missing {
+                    return;
+                }
                 let _ = manager.open_session(
                     SessionOrigin::ExtensionBridge,
                     session_id.clone(),
@@ -219,22 +257,30 @@ impl SessionRegistry {
             return;
         }
 
-        self.local_sessions
+        let sessions = self.local().expect("local session store");
+        if !create_if_missing && !sessions.contains_key(&session_id) {
+            return;
+        }
+        sessions
             .entry(session_id.clone())
             .or_insert_with(|| RemotePgSession::new(session_id))
             .record_activity(current_schema, last_method);
     }
 
     pub(crate) fn get(&self, session_id: &str) -> Option<RemotePgSession> {
-        if let Some(manager) = &self.manager {
+        if let Some(manager) = self.shared() {
             return manager
                 .get_snapshot(session_id)
                 .map(|snapshot| RemotePgSession::from_snapshot(&snapshot, None));
         }
-        self.local_sessions.get(session_id).map(|entry| entry.clone())
+        self.local()
+            .expect("local session store")
+            .get(session_id)
+            .map(|entry| entry.clone())
     }
 
     pub(crate) fn close_local_session(&self, session_id: &str) -> Option<RemotePgSession> {
-        self.local_sessions.remove(session_id).map(|(_, session)| session)
+        self.local()
+            .and_then(|sessions| sessions.remove(session_id).map(|(_, session)| session))
     }
 }

@@ -124,7 +124,7 @@ async fn account_login_sends_basic_auth_on_open_session() {
     let port = listener.local_addr().expect("gRPC local addr").port();
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
     // No expected static header — the server should accept Basic auth.
-    let service = KalamPgService::new(false, None);
+    let service = KalamPgService::new(false, None).allow_insecure_unauthenticated();
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()

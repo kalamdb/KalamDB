@@ -10,8 +10,8 @@ use kalamdb_commons::{
     },
     TableType,
 };
-use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use support::{
     create_cluster_app_context, create_shared_table_with_public_policy, row, unique_namespace,
 };

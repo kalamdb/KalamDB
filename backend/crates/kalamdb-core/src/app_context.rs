@@ -11,7 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use datafusion::{catalog::SchemaProvider, prelude::SessionContext};
-use kalamdb_auth::{CachedUsersRepo, CoreUsersRepo, UserRepository};
+use kalamdb_auth::CachedUsersRepo;
 use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
@@ -24,7 +24,6 @@ use kalamdb_live::{
     ConnectionsManager, LiveQueryManager, NotificationService, TopicPrimaryKeyLookup,
     TopicPublisherService,
 };
-use kalamdb_pg::KalamPgService;
 use kalamdb_raft::CommandExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_store::StorageBackend;
@@ -638,19 +637,6 @@ impl AppContext {
                 let cluster_handler =
                     Arc::new(crate::cluster_handler::CoreClusterHandler::new(Arc::clone(&app_ctx)));
                 raft_executor.set_cluster_handler(cluster_handler);
-                let pg_executor =
-                    Arc::new(crate::operations::OperationService::new(Arc::clone(&app_ctx)));
-                let mtls = app_ctx.config().rpc_tls.enabled
-                    && app_ctx.config().rpc_tls.require_client_cert;
-                let pg_auth_token = app_ctx.config().auth.pg_auth_token.clone();
-                let pg_user_repo: Arc<dyn UserRepository> =
-                    Arc::new(CoreUsersRepo::new(app_ctx.system_tables().users()));
-                let pg_service = Arc::new(
-                    KalamPgService::new(mtls, pg_auth_token)
-                        .with_bearer_auth(pg_user_repo)
-                        .with_backend_session_manager(app_ctx.backend_session_manager())
-                        .with_operation_executor(pg_executor),
-                );
                 let app_ctx_for_sessions = Arc::clone(&app_ctx);
                 let sessions_snapshot_callback: SessionsSnapshotCallback = Arc::new(move || {
                     let active_transactions_by_owner = app_ctx_for_sessions
@@ -733,7 +719,6 @@ impl AppContext {
                         .register_schema("pg_catalog", pg_catalog_schema as Arc<dyn SchemaProvider>)
                         .expect("Failed to register pg_catalog schema");
                 }
-                raft_executor.set_pg_service(pg_service);
                 log::debug!("Wired gRPC ClusterClient and CoreClusterHandler for cluster RPC");
             }
 

@@ -414,7 +414,7 @@ impl FunctionHost for CoreFunctionHost {
                 "nested procedures cannot mutate ctx.http".to_string(),
             ));
         }
-        if is_blocked_response_header(name) {
+        if !is_allowed_response_header(name, value) {
             return Err(FunctionsError::Invalid(format!(
                 "response header '{name}' is not allowed"
             )));
@@ -539,7 +539,11 @@ mod tests {
         assert!(is_blocked_response_header("Transfer-Encoding"));
         assert!(is_blocked_response_header("Content-Length"));
         assert!(is_blocked_response_header("Host"));
+        assert!(is_blocked_response_header("Set-Cookie"));
         assert!(!is_blocked_response_header("x-kalam-trace"));
+        assert!(is_allowed_response_header("x-kalam-trace", "ok"));
+        assert!(!is_allowed_response_header("x-evil", "a\r\nSet-Cookie: session=1"));
+        assert!(!is_allowed_response_header("bad name", "ok"));
     }
 }
 
@@ -569,8 +573,42 @@ fn is_blocked_request_header(name: &str) -> bool {
 fn is_blocked_response_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "connection" | "transfer-encoding" | "content-length" | "host"
+        "connection"
+            | "transfer-encoding"
+            | "content-length"
+            | "host"
+            | "set-cookie"
+            | "set-cookie2"
+            | "trailer"
+            | "upgrade"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
     )
+}
+
+fn is_allowed_response_header(name: &str, value: &str) -> bool {
+    if name.is_empty() || is_blocked_response_header(name) {
+        return false;
+    }
+    let name_ok = name.bytes().all(|byte| {
+        matches!(
+            byte,
+            b'!'
+                | b'#'..=b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'0'..=b'9'
+                | b'A'..=b'Z'
+                | b'^'..=b'z'
+                | b'|'
+                | b'~'
+        )
+    });
+    let value_ok = value.bytes().all(|byte| byte == b'\t' || (0x20..=0x7e).contains(&byte));
+    name_ok && value_ok
 }
 
 fn map_join(error: tokio::task::JoinError) -> FunctionsError {

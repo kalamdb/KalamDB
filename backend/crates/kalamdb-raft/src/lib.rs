@@ -65,10 +65,10 @@ pub use manager::{
     DEFAULT_SHARED_DATA_SHARDS, DEFAULT_USER_DATA_SHARDS,
 };
 pub use network::{
-    forward_sql_param, start_rpc_server, ClusterClient, ClusterMessageHandler, ClusterServiceImpl,
-    ForwardSqlParam, ForwardSqlRequest, ForwardSqlResponse, ForwardSqlResponsePayload,
-    GetNodeInfoRequest, GetNodeInfoResponse, NoOpClusterHandler, PingRequest, PingResponse,
-    RaftNetwork, RaftNetworkFactory, RaftService,
+    forward_sql_param, named_service_routes, start_rpc_server, ClusterClient,
+    ClusterMessageHandler, ClusterServiceImpl, ForwardSqlParam, ForwardSqlRequest,
+    ForwardSqlResponse, ForwardSqlResponsePayload, GetNodeInfoRequest, GetNodeInfoResponse,
+    NoOpClusterHandler, PingRequest, PingResponse, RaftNetwork, RaftNetworkFactory, RaftService,
 };
 pub use state_machine::{
     serde_helpers, ApplyResult, KalamStateMachine, MetaStateMachine, SharedDataStateMachine,

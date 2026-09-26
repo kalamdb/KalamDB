@@ -13,6 +13,13 @@ use kalamdb_commons::{
     },
     NamespaceId, PolicyCommand, TableId, TableType,
 };
+use kalamdb_core::{
+    app_context::AppContext,
+    sql::ExecutionContext,
+    transactions::{
+        CoordinatorAccessValidator, CoordinatorOverlayView, ExecutionOwnerKey, StagedMutation,
+    },
+};
 use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::SessionUserContext;
 use kalamdb_tables::SharedTableProvider;
@@ -21,14 +28,7 @@ use kalamdb_transactions::{
 };
 use tonic::Status;
 
-use super::scan;
-use crate::{
-    app_context::AppContext,
-    sql::ExecutionContext,
-    transactions::{
-        CoordinatorAccessValidator, CoordinatorOverlayView, ExecutionOwnerKey, StagedMutation,
-    },
-};
+use crate::scan;
 
 /// Domain-typed operation executor for Tier-2 (typed) callers.
 ///
@@ -268,7 +268,8 @@ impl OperationService {
     fn active_transaction_handle_for_session(
         &self,
         session_id: Option<&str>,
-    ) -> Result<Option<(TransactionId, crate::transactions::TransactionHandle)>, Status> {
+    ) -> Result<Option<(TransactionId, kalamdb_core::transactions::TransactionHandle)>, Status>
+    {
         let Some(transaction_id) = self.active_transaction_for_session(session_id)? else {
             return Ok(None);
         };
@@ -309,7 +310,7 @@ impl OperationService {
             transaction_id.clone(),
             handle.snapshot_commit_seq,
             Arc::new(CoordinatorOverlayView::new(Arc::clone(&coordinator), transaction_id.clone())),
-            Arc::new(crate::transactions::CoordinatorMutationSink::new(coordinator)),
+            Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
             Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),
         )))
     }
@@ -656,7 +657,7 @@ impl OperationExecutor for OperationService {
             .map_err(|e| Status::internal(e.to_string()))?;
 
         let message = match result {
-            crate::sql::ExecutionResult::Success { message } => message,
+            kalamdb_core::sql::ExecutionResult::Success { message } => message,
             other => format!("OK (affected: {})", other.affected_rows()),
         };
         Ok(message)
@@ -680,13 +681,13 @@ impl OperationExecutor for OperationService {
         let result = result.into_arrow_rows().map_err(Status::internal)?;
 
         match result {
-            crate::sql::ExecutionResult::Rows {
+            kalamdb_core::sql::ExecutionResult::Rows {
                 batches, row_count, ..
             } => {
                 let (ipc_batches, _) = kalamdb_pg::encode_batches(&batches)?;
                 Ok((format!("{} row(s)", row_count), ipc_batches))
             },
-            crate::sql::ExecutionResult::Success { message } => Ok((message, Vec::new())),
+            kalamdb_core::sql::ExecutionResult::Success { message } => Ok((message, Vec::new())),
             other => Ok((format!("OK (affected: {})", other.affected_rows()), Vec::new())),
         }
     }
@@ -718,12 +719,12 @@ mod tests {
         },
         TableType,
     };
+    use kalamdb_core::{
+        schema_registry::cached_table_data::CachedTableData, test_helpers::test_app_context_simple,
+    };
     use kalamdb_pg::OperationExecutor;
 
     use super::*;
-    use crate::{
-        schema_registry::cached_table_data::CachedTableData, test_helpers::test_app_context_simple,
-    };
 
     fn empty_row() -> Row {
         Row {
@@ -1142,7 +1143,8 @@ mod tests {
         let transaction_id = app_ctx
             .transaction_coordinator()
             .begin(
-                crate::transactions::ExecutionOwnerKey::from_pg_session_id(session_id).unwrap(),
+                kalamdb_core::transactions::ExecutionOwnerKey::from_pg_session_id(session_id)
+                    .unwrap(),
                 session_id.to_string().into(),
                 kalamdb_commons::models::TransactionOrigin::PgRpc,
             )
@@ -1236,7 +1238,8 @@ mod tests {
         app_ctx
             .transaction_coordinator()
             .begin(
-                crate::transactions::ExecutionOwnerKey::from_pg_session_id(session_id).unwrap(),
+                kalamdb_core::transactions::ExecutionOwnerKey::from_pg_session_id(session_id)
+                    .unwrap(),
                 session_id.to_string().into(),
                 kalamdb_commons::models::TransactionOrigin::PgRpc,
             )

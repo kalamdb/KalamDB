@@ -1277,6 +1277,7 @@ start_pgwire_test_server() {
         KALAMDB_SERVER_BIN="${KALAMDB_SERVER_BIN:-$REPO_ROOT/target/debug/kalamdb-server}" \
         KALAMDB_URL="$PGWIRE_SERVER_URL" \
         KALAMDB_ENABLE_PGWIRE=true \
+        KALAMDB_ENABLE_PG_EXTENSION=true \
         KALAMDB_PGWIRE_HOST="$pgwire_host" \
         KALAMDB_PGWIRE_PORT="$PGWIRE_PORT" \
         KALAMDB_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" \

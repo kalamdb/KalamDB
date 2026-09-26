@@ -7,8 +7,8 @@ use kalamdb_commons::{
     TableType,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_core::operations::service::OperationService;
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use support::{
     create_cluster_app_context_with_config, create_executor,
     create_shared_table_with_public_policy, observer_exec_ctx, row, select_names, unique_namespace,

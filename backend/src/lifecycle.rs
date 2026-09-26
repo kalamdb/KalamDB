@@ -230,6 +230,7 @@ pub async fn bootstrap(
     config: &ServerConfig,
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let app_context = create_app_context(config, AppContextMode::Global)?;
+    kalamdb_pg_bridge::install(&app_context);
     app_context.log_runtime_metrics();
 
     // Start the executor (always Raft - single-node or cluster)
@@ -339,6 +340,7 @@ async fn bootstrap_isolated_inner(
 ) -> Result<(ApplicationComponents, Arc<kalamdb_core::app_context::AppContext>)> {
     let bootstrap_start = std::time::Instant::now();
     let app_context = create_app_context(config, AppContextMode::Isolated)?;
+    kalamdb_pg_bridge::install(&app_context);
 
     // Start Raft (same as bootstrap)
     if let Err(error) = app_context.executor().start().await {

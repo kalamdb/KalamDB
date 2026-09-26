@@ -19,7 +19,6 @@ use kalamdb_commons::{
 };
 use kalamdb_core::{
     app_context::AppContext,
-    operations::service::OperationService,
     test_helpers::{test_app_context, test_app_context_simple},
 };
 use kalamdb_pg::{
@@ -27,6 +26,7 @@ use kalamdb_pg::{
     KalamPgService, OpenSessionRequest, PgService, RollbackTransactionRequest, ScanRpcRequest,
     ScanRpcResponse,
 };
+use kalamdb_pg_bridge::OperationService;
 use tokio::time::{sleep, Duration};
 use tonic::Request;
 use uuid::Uuid;
@@ -41,6 +41,7 @@ pub fn unique_namespace(prefix: &str) -> NamespaceId {
 
 pub fn build_service(app_ctx: Arc<AppContext>) -> KalamPgService {
     KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
         .with_backend_session_manager(app_ctx.backend_session_manager())
         .with_operation_executor(Arc::new(OperationService::new(app_ctx)))
 }

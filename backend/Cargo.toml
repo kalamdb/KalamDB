@@ -32,6 +32,7 @@ kalamdb-commons = { path = "crates/kalamdb-commons" }
 kalamdb-configs = { path = "crates/kalamdb-configs" }
 kalamdb-system = { path = "crates/kalamdb-system" }
 kalamdb-dba = { path = "crates/kalamdb-dba" }
+kalamdb-pg-bridge = { path = "crates/kalamdb-pg-bridge" }
 kalamdb-postgres-wire = { path = "crates/kalamdb-postgres-wire" }
 kalamdb-functions = { path = "crates/kalamdb-functions" }
 

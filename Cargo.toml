@@ -48,6 +48,7 @@ members = [
     "backend/crates/kalamdb-raft",
     "backend/crates/kalamdb-views",
     "backend/crates/kalamdb-pg",
+    "backend/crates/kalamdb-pg-bridge",
     "backend/crates/kalamdb-postgres-wire",
     "backend/crates/kalamdb-server-auth",
     "backend",
