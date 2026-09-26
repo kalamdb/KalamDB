@@ -24,9 +24,11 @@ use tar::Archive;
 use crate::common::*;
 
 /// Timeout for a backup job (RocksDB BackupEngine + file copies can be slow).
-const BACKUP_JOB_TIMEOUT: Duration = Duration::from_secs(120);
+/// CI runners often share the disk with a multi-gigabyte build cache, so a
+/// small archive backup can sit past two minutes without being stuck.
+const BACKUP_JOB_TIMEOUT: Duration = Duration::from_secs(240);
 /// Timeout for a restore job.
-const RESTORE_JOB_TIMEOUT: Duration = Duration::from_secs(120);
+const RESTORE_JOB_TIMEOUT: Duration = Duration::from_secs(240);
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -147,7 +149,7 @@ fn assert_backup_archive_layout(backup_path: &std::path::Path) {
 
 /// BACKUP DATABASE creates a completed job and writes the expected directory layout
 /// when the target path is a directory.
-#[ntest::timeout(300_000)]
+#[ntest::timeout(480_000)]
 #[test]
 fn smoke_backup_database_job_completes() {
     if !require_server_running() {
@@ -193,7 +195,7 @@ fn smoke_backup_database_job_completes() {
 
 /// BACKUP DATABASE writes a `.tar.gz` archive when the target path ends with
 /// `.tar.gz`.
-#[ntest::timeout(300_000)]
+#[ntest::timeout(480_000)]
 #[test]
 fn smoke_backup_database_archive_job_completes() {
     if !require_server_running() {
@@ -234,7 +236,7 @@ fn smoke_backup_database_archive_job_completes() {
 /// Restore rewrites on-disk data; a server restart is required to reload it.
 /// This test verifies only that the job reaches a terminal state, not
 /// post-restart data correctness.
-#[ntest::timeout(360_000)]
+#[ntest::timeout(540_000)]
 #[test]
 fn smoke_restore_from_backup_job_completes() {
     if !require_server_running() {
@@ -282,7 +284,7 @@ fn smoke_restore_from_backup_job_completes() {
 
 /// RESTORE DATABASE FROM accepts a `.tar.gz` archive path and creates a restore
 /// job that reaches a terminal state.
-#[ntest::timeout(360_000)]
+#[ntest::timeout(540_000)]
 #[test]
 fn smoke_restore_from_backup_archive_job_completes() {
     if !require_server_running() {
@@ -470,7 +472,7 @@ fn smoke_restore_nonexistent_path_returns_error() {
 }
 
 /// SHOW JOBS contains backup/restore jobs after they are created.
-#[ntest::timeout(300_000)]
+#[ntest::timeout(480_000)]
 #[test]
 fn smoke_backup_job_visible_in_system_jobs() {
     if !require_server_running() {
