@@ -427,6 +427,11 @@ jobs:
           shared-key: wasm-build
           cache-on-failure: true
 
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Setup Node 24
         uses: actions/setup-node@v6
         with:
@@ -526,6 +531,11 @@ jobs:
           shared-key: cli-linux-x86_64-ubuntu-24-04
           cache-on-failure: true
 
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -586,6 +596,11 @@ jobs:
         with:
           shared-key: cli-windows-x86_64-msvc
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Configure Windows build parallelism
         shell: pwsh
@@ -665,6 +680,11 @@ jobs:
           shared-key: cli-macos-aarch64
           cache-on-failure: true
 
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Install LLVM (fix libclang.dylib)
         shell: bash
         run: |
@@ -731,6 +751,11 @@ jobs:
         with:
           shared-key: server-linux-x86_64-ubuntu-24-04
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Install system deps
         run: |
@@ -808,6 +833,11 @@ jobs:
           shared-key: server-linux-aarch64
           cache-on-failure: true
 
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Install cross
         shell: bash
         run: |
@@ -871,6 +901,11 @@ jobs:
         with:
           shared-key: cli-linux-aarch64
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Install cross
         shell: bash
@@ -942,6 +977,11 @@ jobs:
         with:
           shared-key: server-windows-x86_64-msvc
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Install LLVM (bindgen / RocksDB)
         uses: KyleMayes/install-llvm-action@v2
@@ -1065,6 +1105,11 @@ jobs:
         with:
           shared-key: server-macos-aarch64
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Install LLVM (fix libclang.dylib)
         shell: bash
@@ -1312,6 +1357,11 @@ jobs:
           shared-key: smoke-tests
           cache-on-failure: true
 
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Install cargo-nextest
         shell: bash
         run: |
@@ -1494,6 +1544,11 @@ jobs:
         with:
           shared-key: pg-extension-tests-native
           cache-on-failure: true
+
+
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
 
       - name: Cache pgrx PostgreSQL install
         id: cache-pgrx-install
