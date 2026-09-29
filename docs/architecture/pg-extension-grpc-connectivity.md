@@ -2,9 +2,11 @@
 
 ## Overview
 
-The `pg_kalam` PostgreSQL extension talks to KalamDB through the gRPC `PgService`, not through the HTTP SQL API. The client lives in `pg/crates/kalam-pg-client`, the extension-side state/cache lives in `pg/src/remote_state.rs`, and the server-side service lives in `backend/crates/kalamdb-pg/src/service.rs`.
+The `pg_kalam` PostgreSQL extension talks to KalamDB through the gRPC `PgService`, not through the HTTP SQL API. The client lives in `pg/crates/kalam-pg-client`, the extension-side state/cache lives in `pg/src/remote_state.rs`, and the server-side service lives in `backend/crates/kalamdb-pg`. The database host that implements those RPCs lives in `backend/crates/kalamdb-pg-bridge`.
 
-The gRPC service is mounted on KalamDB's shared RPC listener, which is the same listener used by the Raft RPC and cluster message services. In practice, the PostgreSQL extension connects to `host:port` from `CREATE SERVER ... OPTIONS (...)`, and that `host:port` must point at the shared RPC listener, not the HTTP listener.
+The bridge is off by default. Set `pg_extension.enabled = true` in `server.toml`, or `KALAMDB_ENABLE_PG_EXTENSION=true`, before an extension client can connect. While the flag is false, the server does not build the bridge service and does not register its methods on the RPC port. The native PostgreSQL wire listener is a separate setting, `postgres_wire.enabled`.
+
+When the flag is true, the gRPC service is mounted on KalamDB's shared RPC listener, which is the same listener used by the Raft RPC and cluster message services. The PostgreSQL extension connects to `host:port` from `CREATE SERVER ... OPTIONS (...)`, and that `host:port` must point at the shared RPC listener, not the HTTP listener.
 
 ## Endpoint and Security Model
 

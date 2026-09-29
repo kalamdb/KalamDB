@@ -13,6 +13,8 @@ mod registry;
 mod retention;
 
 use std::{
+    collections::HashSet,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -35,9 +37,9 @@ use kalamdb_tables::{
 };
 
 use crate::{
-    keys::{ConsumerGroupKey, GroupPartitionKey, TopicPartitionKey},
+    keys::{GroupPartitionKey, TopicPartitionKey},
     models::TopicCacheStats,
-    offset::OffsetAllocator,
+    partition::{PartitionRuntime, PartitionWriteState},
     payload,
     routing::{RouteCache, RouteEntry},
 };
@@ -54,9 +56,8 @@ pub trait TopicPrimaryKeyLookup: Send + Sync {
 /// claimed range is released so another consumer can re-deliver it.
 const DEFAULT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Cap in-flight claim ranges per group-partition so a consumer that polls
-/// without acking cannot grow `pending` without bound.
 const MAX_PENDING_CLAIMS: usize = 32;
+const GROUP_FETCH_STRIPES: usize = 64;
 
 /// Tracks per-(topic, group, partition) claim state for consumer groups.
 ///
@@ -284,40 +285,16 @@ impl ClaimState {
     }
 }
 
-/// Topic Publisher Service — unified service for all topic operations.
-///
 /// Thread-safe. Wrap in `Arc` for shared ownership.
 pub struct TopicPublisherService {
-    /// Persistent storage for topic messages.
-    message_store:         Arc<TopicMessageStore>,
-    /// System table provider for consumer group offsets.
-    offset_store:          Arc<TopicOffsetsTableProvider>,
-    /// In-memory route cache: TableId → routes.
-    route_cache:           RouteCache,
-    /// Schema-backed lookup for deriving stable topic keys from table primary keys.
-    primary_key_lookup:    Option<Arc<dyn TopicPrimaryKeyLookup>>,
-    /// Atomic per-topic-partition offset counters.
-    offset_allocator:      OffsetAllocator,
-    /// In-memory per-(topic, group, partition) claim state used to avoid
-    /// duplicate delivery and to expire stale claims from crashed consumers.
-    group_claim_state:     DashMap<GroupPartitionKey, ClaimState>,
-    /// Serializes grouped fetches for a single (topic, group, partition) so
-    /// concurrent consumers cannot observe overlapping claim windows.
-    group_fetch_locks:     DashMap<GroupPartitionKey, Arc<Mutex<()>>>,
-    /// Known consumer groups observed from consume/ack activity or restored offsets.
-    consumer_groups:       DashMap<ConsumerGroupKey, ()>,
-    /// Per-(topic, partition) write locks that serialize offset allocation +
-    /// RocksDB write to guarantee messages are stored in offset order.
-    partition_write_locks: DashMap<TopicPartitionKey, Arc<Mutex<()>>>,
-    /// Approximate retained message bytes per topic partition, populated on
-    /// demand and updated by publish/retention paths.
-    retained_bytes:        DashMap<TopicPartitionKey, u64>,
-    /// Kafka-style log start offset. Advanced only by retention, never by the
-    /// allocator. An in-flight first publish can leave `peek_next=1` while the
-    /// store is still empty; that must not look like offset 0 was retained.
-    log_start_offsets:     DashMap<TopicPartitionKey, u64>,
-    /// How long a consumer claim stays valid before re-delivery.
-    visibility_timeout:    Duration,
+    message_store:       Arc<TopicMessageStore>,
+    offset_store:        Arc<TopicOffsetsTableProvider>,
+    route_cache:         RouteCache,
+    primary_key_lookup:  Option<Arc<dyn TopicPrimaryKeyLookup>>,
+    partitions:          DashMap<TopicPartitionKey, Arc<PartitionRuntime>>,
+    group_claim_state:   DashMap<GroupPartitionKey, ClaimState>,
+    group_fetch_stripes: [Mutex<()>; GROUP_FETCH_STRIPES],
+    visibility_timeout:  Duration,
 }
 
 impl TopicPublisherService {
@@ -366,13 +343,9 @@ impl TopicPublisherService {
             offset_store,
             route_cache: RouteCache::new(),
             primary_key_lookup,
-            offset_allocator: OffsetAllocator::new(),
+            partitions: DashMap::new(),
             group_claim_state: DashMap::new(),
-            group_fetch_locks: DashMap::new(),
-            consumer_groups: DashMap::new(),
-            partition_write_locks: DashMap::new(),
-            retained_bytes: DashMap::new(),
-            log_start_offsets: DashMap::new(),
+            group_fetch_stripes: std::array::from_fn(|_| Mutex::new(())),
             visibility_timeout,
         }
     }
@@ -393,10 +366,10 @@ impl TopicPublisherService {
             Ok(matches) => matches,
             Err(error) => {
                 tracing::warn!(
-                    topic_name = entry.topic_id.as_str(),
-                    table_id = %entry.route.table_id,
-                    operation = ?entry.route.op,
-                    filter_expr = %entry.route.filter_expr.as_deref().unwrap_or(""),
+                    topic_name = entry.topic_id().as_str(),
+                    table_id = %entry.route().table_id,
+                    operation = ?entry.route().op,
+                    filter_expr = %entry.route().filter_expr.as_deref().unwrap_or(""),
                     error = %error,
                     "Skipping topic route because WHERE evaluation failed"
                 );
@@ -405,11 +378,43 @@ impl TopicPublisherService {
         }
     }
 
-    fn partition_write_lock(&self, topic_id: &TopicId, partition_id: u32) -> Arc<Mutex<()>> {
-        self.partition_write_locks
+    fn partition_runtime(&self, topic_id: &TopicId, partition_id: u32) -> Arc<PartitionRuntime> {
+        self.partitions
             .entry(TopicPartitionKey::new(topic_id, partition_id))
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| Arc::new(PartitionRuntime::new()))
             .clone()
+    }
+
+    fn partition_if_present(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+    ) -> Option<Arc<PartitionRuntime>> {
+        self.partitions
+            .get(&TopicPartitionKey::new(topic_id, partition_id))
+            .map(|entry| Arc::clone(entry.value()))
+    }
+
+    fn group_partition_fetch_lock(&self, cursor_key: &GroupPartitionKey) -> &Mutex<()> {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        cursor_key.hash(&mut hasher);
+        let idx = hasher.finish() as usize % GROUP_FETCH_STRIPES;
+        &self.group_fetch_stripes[idx]
+    }
+
+    fn seed_next_offset(&self, topic_id: &TopicId, partition_id: u32, next_offset: u64) {
+        self.partition_runtime(topic_id, partition_id).lock_write().seed(next_offset);
+    }
+
+    fn try_fetch_from_tail(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        limit: usize,
+    ) -> Option<Vec<TopicMessage>> {
+        self.partition_if_present(topic_id, partition_id)?
+            .fetch_from_tail(offset, limit)
     }
 
     pub fn message_store(&self) -> Arc<TopicMessageStore> {
@@ -425,11 +430,17 @@ impl TopicPublisherService {
     }
 
     pub fn cache_stats(&self) -> TopicCacheStats {
+        let consumer_group_count = self
+            .group_claim_state
+            .iter()
+            .map(|entry| (entry.key().topic_id.clone(), entry.key().group_id.clone()))
+            .collect::<HashSet<_>>()
+            .len();
         TopicCacheStats {
-            topic_count:              self.route_cache.topic_count(),
-            table_route_count:        self.route_cache.table_route_count(),
-            total_routes:             self.route_cache.total_routes(),
-            consumer_group_count:     self.consumer_groups.len(),
+            topic_count: self.route_cache.topic_count(),
+            table_route_count: self.route_cache.table_route_count(),
+            total_routes: self.route_cache.total_routes(),
+            consumer_group_count,
             consumer_partition_count: self.group_claim_state.len(),
         }
     }

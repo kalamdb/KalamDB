@@ -273,9 +273,9 @@ impl SubscribeStatement {
             .collect();
 
         if parts.len() == 2 {
-            Ok((NamespaceId::new(parts[0].as_str()), TableName::from(parts[1].clone())))
+            Ok((NamespaceId::new(&parts[0]), TableName::new(&parts[1])))
         } else if parts.len() == 1 {
-            Ok((default_namespace.clone(), TableName::from(parts[0].clone())))
+            Ok((default_namespace.clone(), TableName::new(&parts[0])))
         } else {
             Err(format!("Invalid table reference: expected [namespace.]table, got {}", name))
         }

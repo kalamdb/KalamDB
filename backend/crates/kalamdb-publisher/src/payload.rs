@@ -111,30 +111,8 @@ impl PreparedRow {
     }
 }
 
-/// Extract payload bytes from a Row based on the route's PayloadMode.
-///
-/// For Full and Diff modes, injects `_table` metadata so consumers can identify
-/// the source table of each message.
-pub(crate) fn extract_payload(
-    route: &TopicRoute,
-    row: &Row,
-    table_id: &TableId,
-) -> Result<Vec<u8>> {
-    match route.payload_mode {
-        PayloadMode::Key => extract_key_columns(row),
-        PayloadMode::Full | PayloadMode::Diff => extract_full_row_with_metadata(row, table_id),
-    }
-}
-
-/// Extract a message key from a Row using the table primary key columns.
-pub(crate) fn extract_key(row: &Row, primary_key_columns: &[String]) -> Result<Option<String>> {
-    let json_map = row_to_json_map(row)
-        .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-
-    extract_primary_key(&json_map, primary_key_columns)
-}
-
 /// Hash a row for consistent partition selection.
+#[cfg(test)]
 pub(crate) fn hash_row(row: &Row) -> u64 {
     // Hash the JSON representation for consistency
     if let Ok(json_map) = row_to_json_map(row) {
@@ -202,31 +180,4 @@ fn extract_primary_key(
     serde_json::to_string(&key_map)
         .map(Some)
         .map_err(|e| CommonError::Internal(format!("Failed to serialize key: {}", e)))
-}
-
-fn extract_key_columns(row: &Row) -> Result<Vec<u8>> {
-    if row.values.is_empty() {
-        return Err(CommonError::InvalidInput("Cannot extract key from empty row".to_string()));
-    }
-
-    let json_map = row_to_json_map(row)
-        .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-
-    serde_json::to_vec(&json_map)
-        .map_err(|e| CommonError::Internal(format!("Failed to serialize keys: {}", e)))
-}
-
-/// Extract full row payload with `_table` metadata injected.
-///
-/// This allows consumers to identify which source table produced each message
-/// without needing to track route configurations.
-fn extract_full_row_with_metadata(row: &Row, table_id: &TableId) -> Result<Vec<u8>> {
-    let mut json_map = row_to_json_map(row)
-        .map_err(|e| CommonError::Internal(format!("Failed to convert row to JSON: {}", e)))?;
-
-    // Inject source table metadata (uses system column convention with underscore prefix)
-    json_map.insert("_table".to_string(), KalamCellValue::text(table_id.to_string()));
-
-    serde_json::to_vec(&json_map)
-        .map_err(|e| CommonError::Internal(format!("Failed to serialize row: {}", e)))
 }

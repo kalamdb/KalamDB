@@ -96,10 +96,29 @@ impl ErrorCode {
     /// Get the string representation of the error code
     #[inline]
     pub fn as_str(&self) -> &'static str {
-        ERROR_CODE_METADATA
-            .iter()
-            .find_map(|(code, name)| (*code == *self).then_some(*name))
-            .expect("all error codes must have string metadata")
+        match self {
+            ErrorCode::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
+            ErrorCode::InvalidParameter => "INVALID_PARAMETER",
+            ErrorCode::BatchParseError => "BATCH_PARSE_ERROR",
+            ErrorCode::EmptySql => "EMPTY_SQL",
+            ErrorCode::ParamsWithBatch => "PARAMS_WITH_BATCH",
+            ErrorCode::SqlExecutionError => "SQL_EXECUTION_ERROR",
+            ErrorCode::ForwardFailed => "FORWARD_FAILED",
+            ErrorCode::NotLeader => "NOT_LEADER",
+            ErrorCode::InvalidSql => "INVALID_SQL",
+            ErrorCode::TableNotFound => "TABLE_NOT_FOUND",
+            ErrorCode::PermissionDenied => "PERMISSION_DENIED",
+            ErrorCode::ClusterUnavailable => "CLUSTER_UNAVAILABLE",
+            ErrorCode::LeaderNotAvailable => "LEADER_NOT_AVAILABLE",
+            ErrorCode::InternalError => "INTERNAL_ERROR",
+            ErrorCode::InvalidInput => "INVALID_INPUT",
+            ErrorCode::FileTooLarge => "FILE_TOO_LARGE",
+            ErrorCode::TooManyFiles => "TOO_MANY_FILES",
+            ErrorCode::MissingFile => "MISSING_FILE",
+            ErrorCode::ExtraFile => "EXTRA_FILE",
+            ErrorCode::FileNotFound => "FILE_NOT_FOUND",
+            ErrorCode::InvalidMimeType => "INVALID_MIME_TYPE",
+        }
     }
 
     #[inline]
@@ -355,8 +374,8 @@ impl QueryResult {
             KalamCellValue::text(subscription_data.status.as_str()),
             KalamCellValue::text(subscription_data.ws_url),
             KalamCellValue::from(
-                serde_json::to_value(subscription_data.subscription)
-                    .expect("SQL subscription descriptor should serialize"),
+                serde_json::to_value(&subscription_data.subscription)
+                    .unwrap_or(serde_json::Value::Null),
             ),
             KalamCellValue::text(subscription_data.message),
         ];

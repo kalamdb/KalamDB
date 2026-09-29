@@ -67,13 +67,13 @@ pub fn normalize_sql_identifier(name: &str) -> String {
 }
 
 pub fn is_reserved_namespace_name(name: &str) -> bool {
-    if RESERVED_NAMESPACE_NAMES.iter().any(|reserved| *reserved == name) {
+    if RESERVED_NAMESPACE_NAMES.contains(&name) {
         return true;
     }
 
     if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
         let lowercase = name.to_ascii_lowercase();
-        return RESERVED_NAMESPACE_NAMES.iter().any(|reserved| *reserved == lowercase);
+        return RESERVED_NAMESPACE_NAMES.contains(&lowercase.as_str());
     }
 
     false
@@ -148,13 +148,28 @@ pub fn validate_namespace_reference(name: &str) -> Result<(), SqlIdentifierError
         return Err(SqlIdentifierError::ReservedNamespace(name.to_string()));
     }
 
-    if is_reserved_namespace_name(name)
-        && !BUILTIN_NAMESPACE_ALIASES.iter().any(|alias| *alias == lowered.as_str())
-    {
+    if is_reserved_namespace_name(name) && !BUILTIN_NAMESPACE_ALIASES.contains(&lowered.as_str()) {
         return Err(SqlIdentifierError::ReservedNamespace(name.to_string()));
     }
 
     Ok(())
+}
+
+/// Quote a SQL identifier with standard double-quote escaping.
+///
+/// Use this whenever an identifier is interpolated into generated SQL so
+/// parser-extracted names (`Ident.value`) cannot change statement structure.
+pub fn quote_sql_identifier(name: &str) -> String {
+    let mut quoted = String::with_capacity(name.len() + 2);
+    quoted.push('"');
+    for ch in name.chars() {
+        if ch == '"' {
+            quoted.push('"');
+        }
+        quoted.push(ch);
+    }
+    quoted.push('"');
+    quoted
 }
 
 #[cfg(test)]
@@ -196,5 +211,16 @@ mod tests {
     fn validate_namespace_reference_rejects_user_reserved_names() {
         let err = validate_namespace_reference("kalamdb").unwrap_err();
         assert_eq!(err, SqlIdentifierError::ReservedNamespace("kalamdb".to_string()));
+    }
+
+    #[test]
+    fn quote_sql_identifier_escapes_embedded_quotes_and_metacharacters() {
+        assert_eq!(quote_sql_identifier("id"), "\"id\"");
+        assert_eq!(quote_sql_identifier("_seq"), "\"_seq\"");
+        assert_eq!(quote_sql_identifier(r#"a"b"#), r#""a""b""#);
+        assert_eq!(
+            quote_sql_identifier("col; DROP TABLE secrets; --"),
+            "\"col; DROP TABLE secrets; --\""
+        );
     }
 }

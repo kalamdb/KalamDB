@@ -7,8 +7,9 @@ use kalamdb_commons::{
     TableType,
 };
 use kalamdb_configs::ServerConfig;
-use kalamdb_core::{operations::service::OperationService, transactions::ExecutionOwnerKey};
+use kalamdb_core::transactions::ExecutionOwnerKey;
 use kalamdb_pg::OperationExecutor;
+use kalamdb_pg_bridge::OperationService;
 use support::{
     create_cluster_app_context, create_cluster_app_context_with_config, create_executor,
     create_user_table, execute_ok, insert_sql, observer_exec_ctx, request_exec_ctx,

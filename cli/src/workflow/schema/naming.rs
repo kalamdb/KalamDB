@@ -24,7 +24,7 @@ pub struct AssignedNames {
 
 impl AssignedNames {
     pub fn type_ident(&self, type_id: &str) -> &str {
-        self.types.get(type_id).map(String::as_str).unwrap_or("Unknown")
+        self.types.get(type_id).map(String::as_str).unwrap_or("never")
     }
 
     pub fn routine_ident(&self, routine_id: &str) -> &str {
@@ -38,7 +38,8 @@ pub fn assign_names(snapshot: &ContractSnapshot, options: NamingOptions) -> Resu
     for (id, ty) in &snapshot.types {
         let ident = generated_type_ident(&ty.schema, &ty.name, options.unqualified_names);
         claimed.entry(ident.clone()).or_default().push(id.clone());
-        types.insert(id.clone(), ident);
+        types.insert(id.clone(), ident.clone());
+        types.insert(ty.type_id.to_string(), ident);
     }
     let mut routines = BTreeMap::new();
     for (id, routine) in &snapshot.routines {

@@ -6,9 +6,9 @@ use datafusion::{
     prelude::{col, lit, SessionContext},
 };
 use kalamdb_commons::TableId;
+use kalamdb_core::schema_registry::SchemaRegistry;
 
-use super::error::OperationError;
-use crate::schema_registry::SchemaRegistry;
+use crate::error::OperationError;
 
 /// Convert a string filter value to a typed DataFusion `Expr` literal
 /// based on the Arrow column type. Falls back to string literal for unknown types.

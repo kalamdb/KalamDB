@@ -18,7 +18,6 @@ kalamdb-flush = { path = "../kalamdb-flush" }
 kalamdb-live = { path = "../kalamdb-live" }
 kalamdb-observability = { path = "../kalamdb-observability" }
 kalamdb-plan-cache = { workspace = true }
-kalamdb-pg = { path = "../kalamdb-pg" }
 kalamdb-raft = { path = "../kalamdb-raft" }
 kalamdb-rls = { path = "../kalamdb-rls" }
 kalamdb-session = { path = "../kalamdb-session" }
@@ -78,9 +77,6 @@ chrono = { workspace = true }
 # Logging
 log = { workspace = true }
 
-# gRPC (for PgQueryExecutor trait)
-tonic = { workspace = true }
-
 # Tracing / observability
 tracing = { workspace = true }
 
@@ -95,7 +91,10 @@ once_cell = { workspace = true }
 
 [dev-dependencies]
 # Testing utilities
+kalamdb-pg = { path = "../kalamdb-pg" }
+kalamdb-pg-bridge = { path = "../kalamdb-pg-bridge" }
 tempfile = { workspace = true }
+tonic = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 ntest = { workspace = true }
 kalamdb-handlers = { path = "../kalamdb-handlers" }
@@ -111,6 +110,7 @@ traceability = [
     "kalamdb-commons/traceability",
     "kalamdb-filestore/traceability",
     "kalamdb-observability/traceability",
+    "kalamdb-raft/traceability",
     "kalamdb-store/traceability",
     "kalamdb-tables/traceability",
 ]

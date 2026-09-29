@@ -4,15 +4,15 @@
 //! - [`RaftLogStorage`] for the Raft log, vote, and committed index
 //! - [`RaftStateMachine`] for apply and snapshots
 //!
-//! OpenRaft 0.9 still awaits `LogFlushed` on the core task, so an extra log-IO
-//! thread cannot overlap the next `append()`. Apply runs on a separate worker
-//! and can overlap the *next* append. Unit tests call inherent helpers such as
-//! `append_to_log`.
+//! OpenRaft 0.9 awaits `LogFlushed` on the core task, so consecutive `append()`
+//! calls stay serial. Cluster `append()` still returns immediately and completes
+//! `LogFlushed` from a dedicated log-IO thread so the core can yield while the
+//! previous apply runs. Unit tests call inherent helpers such as `append_to_log`.
 //!
 //! Persistent mode stores logs and SM progress via `RaftPartitionStore`.
 //! In-memory mode is for tests. Production standalone still uses persistent
-//! storage; it only skips flushing the log in `append()` and folds log +
-//! `last_applied` into the apply batch.
+//! storage; it skips flushing the log in `append()` and folds the table write
+//! plus log + `last_applied` into one apply `WriteBatch` (single-entry apply).
 
 use std::{
     collections::BTreeMap,
@@ -30,7 +30,7 @@ use kalamdb_store::{
     raft_storage::{
         RaftLogEntry, RaftLogId, RaftPartitionStore, RaftSnapshotData, RaftSnapshotMeta, RaftVote,
     },
-    StorageBackend,
+    with_write_coalesce, StorageBackend,
 };
 use openraft::{
     storage::{LogFlushed, LogState, RaftLogReader, RaftLogStorage, RaftStateMachine, Snapshot},
@@ -452,8 +452,8 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         self.persistent_store.is_some()
     }
 
-    /// Cluster mode flushes the log in `append()`. Single-node defers log+last_applied
-    /// into the apply WriteBatch (OpenRaft 0.9 still awaits `LogFlushed` either way).
+    /// Cluster mode flushes the log in `append()` on the log-IO thread.
+    /// Single-node defers log+last_applied into the apply WriteBatch.
     pub fn set_flush_log_on_append(&self, flush: bool) {
         self.flush_log_on_append.store(flush, Ordering::Relaxed);
     }
@@ -882,6 +882,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         entries: &[Entry<KalamTypeConfig>],
         last_applied: LogId<u64>,
     ) -> Result<(), StorageError<u64>> {
+        let _span = kalamdb_observability::kdb_info_span_entered!(
+            "raft.persist_applied",
+            entry_count = entries.len() as u64
+        );
         let Some(store) = &self.persistent_store else {
             return Ok(());
         };
@@ -917,6 +921,30 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
 
         let mut log = self.log.write();
         self.trim_log_cache(&mut log);
+        Ok(())
+    }
+
+    fn append_entries<I>(
+        &self,
+        entries: I,
+        callback: LogFlushed<KalamTypeConfig>,
+    ) -> Result<(), StorageError<u64>>
+    where
+        I: IntoIterator<Item = Entry<KalamTypeConfig>>,
+    {
+        let entries = entries.into_iter();
+        let _span = kalamdb_observability::kdb_info_span_entered!(
+            "raft.append",
+            entry_count = entries.size_hint().0 as u64
+        );
+        let staged = self.stage_log_entries(entries)?;
+        if self.flush_log_on_append.load(Ordering::Relaxed) {
+            if let Some(store) = &self.persistent_store {
+                super::log_io::flush_log_records(store, staged, callback);
+                return Ok(());
+            }
+        }
+        callback.log_io_completed(Ok(()));
         Ok(())
     }
 
@@ -1082,6 +1110,27 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         &self,
         entries: &[Entry<KalamTypeConfig>],
     ) -> Result<Vec<Vec<u8>>, StorageError<u64>> {
+        // Single-entry apply is the OLTP path. Fold table insert + raft persist
+        // into one backend batch. Multi-entry apply keeps immediate writes so a
+        // later entry's unique-PK scan can see earlier rows in the same batch.
+        if entries.len() == 1 {
+            if let Some(store) = self.persistent_store.as_ref() {
+                let backend = store.backend();
+                let (result, ops) =
+                    with_write_coalesce(self.apply_entries_to_state_machine(entries)).await;
+                if !ops.is_empty() {
+                    backend.batch(ops).map_err(|e| StorageIOError::<u64>::write(&e))?;
+                }
+                return result;
+            }
+        }
+        self.apply_entries_to_state_machine(entries).await
+    }
+
+    async fn apply_entries_to_state_machine(
+        &self,
+        entries: &[Entry<KalamTypeConfig>],
+    ) -> Result<Vec<Vec<u8>>, StorageError<u64>> {
         let mut results = Vec::with_capacity(entries.len());
 
         for entry in entries {
@@ -1099,7 +1148,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
                     // Apply command to state machine
                     // Since state_machine is Arc<SM> and SM uses internal synchronization,
                     // we can safely call apply() without holding any lock across await
-                    match self.state_machine.apply(index, term, data).await {
+                    match kalamdb_observability::kdb_await_in_info_span!(
+                        self.state_machine.apply(index, term, data),
+                        "raft.apply_sm"
+                    ) {
                         Ok(apply_result) => match apply_result {
                             crate::state_machine::ApplyResult::Ok(response_data) => {
                                 self.commit_last_applied_log_id(log_id);
@@ -1354,16 +1406,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftLogStorage<KalamTypeConf
         I: IntoIterator<Item = Entry<KalamTypeConfig>> + OptionalSend,
         I::IntoIter: OptionalSend,
     {
-        let staged = self.stage_log_entries(entries)?;
-        if self.flush_log_on_append.load(Ordering::Relaxed) {
-            if let Some(store) = &self.persistent_store {
-                if !staged.is_empty() {
-                    store.append_encoded(staged).map_err(|e| StorageIOError::write_logs(&e))?;
-                }
-            }
-        }
-        callback.log_io_completed(Ok(()));
-        Ok(())
+        self.append_entries(entries, callback)
     }
 
     async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
@@ -1392,7 +1435,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftStateMachine<KalamTypeCo
         I::IntoIter: OptionalSend,
     {
         let entries: Vec<Entry<KalamTypeConfig>> = entries.into_iter().collect();
-        KalamRaftStorage::apply_to_state_machine(self, &entries).await
+        kalamdb_observability::kdb_await_in_info_span!(
+            KalamRaftStorage::apply_to_state_machine(self, &entries),
+            "raft.apply",
+            entry_count = entries.len() as u64
+        )
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {

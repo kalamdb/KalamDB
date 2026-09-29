@@ -82,6 +82,10 @@ impl ExecutionResult {
                 row_count,
                 schema,
             } => {
+                let _span = kalamdb_observability::kdb_info_span_entered!(
+                    "sql.scalar_to_arrow",
+                    row_count = row_count
+                );
                 let batch = if rows.is_empty() {
                     RecordBatch::new_empty(std::sync::Arc::clone(&schema))
                 } else {

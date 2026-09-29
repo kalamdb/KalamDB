@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kalamdb_commons::{NamespaceId, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -22,8 +23,8 @@ impl AddTopicSourceHandler {
         Self { app_context }
     }
 
-    fn namespace_from_topic_name(topic_name: &str) -> Option<String> {
-        topic_name.split_once('.').map(|(namespace, _)| namespace.to_string())
+    fn namespace_from_topic_name(topic_name: &str) -> Option<NamespaceId> {
+        topic_name.split_once('.').map(|(namespace, _)| NamespaceId::new(namespace))
     }
 
     fn route_matches_statement(existing: &TopicRoute, route: &TopicRoute, qualified: bool) -> bool {
@@ -60,16 +61,9 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
         let resolved_table_id = if statement.table_name_qualified {
             statement.table_id.clone()
         } else if let Some(topic_namespace) = Self::namespace_from_topic_name(&topic.name) {
-            kalamdb_commons::models::TableId::from_strings(
-                &topic_namespace,
-                statement.table_id.table_name().as_str(),
-            )
+            TableId::new(topic_namespace, statement.table_id.table_name().clone())
         } else {
-            // Defensive fallback for malformed topic names.
-            kalamdb_commons::models::TableId::from_strings(
-                context.default_namespace().as_str(),
-                statement.table_id.table_name().as_str(),
-            )
+            TableId::new(context.default_namespace(), statement.table_id.table_name().clone())
         };
 
         let route = TopicRoute {
@@ -129,7 +123,7 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{PayloadMode, TableId, TopicOp};
+    use kalamdb_commons::models::{NamespaceId, PayloadMode, TableId, TopicOp};
     use kalamdb_system::providers::topics::models::TopicRoute;
 
     use super::AddTopicSourceHandler;
@@ -159,7 +153,7 @@ mod tests {
     fn namespace_from_topic_name_extracts_prefix() {
         assert_eq!(
             AddTopicSourceHandler::namespace_from_topic_name("app.topic"),
-            Some("app".to_string())
+            Some(NamespaceId::new("app"))
         );
         assert_eq!(AddTopicSourceHandler::namespace_from_topic_name("topic"), None);
     }

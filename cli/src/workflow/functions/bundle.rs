@@ -116,6 +116,10 @@ fn esbuild_run_bundle(
     // `file:`-linked packages (e.g. `@kalamdb/orm`) resolve from their real path, so
     // peer deps like `drizzle-orm` live in the app `node_modules`, not the SDK tree.
     // esbuild's CLI reads extra package search directories from NODE_PATH.
+    //
+    // `@kalamdb/orm` re-exports browser helpers that import `@kalamdb/client`.
+    // Function artifacts run in V8 and must not embed the WASM websocket client;
+    // keep that specifier external so a missing client `dist/` cannot fail deploy.
     let mut command = Command::new(esbuild_bin);
     command.args([
         sourcefile,
@@ -125,6 +129,8 @@ fn esbuild_run_bundle(
         "--target=es2022",
         "--log-level=error",
         "--legal-comments=none",
+        "--external:@kalamdb/client",
+        "--external:@kalamdb/client/*",
         &format!("--outfile={outfile_arg}"),
     ]);
     if minify {

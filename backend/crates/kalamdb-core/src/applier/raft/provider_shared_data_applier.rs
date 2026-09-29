@@ -44,13 +44,16 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         encoded_fields: &[Vec<u8>],
         commit_seq: u64,
     ) -> Result<usize, RaftError> {
-        let rows = crate::applier::ordinal_dml::decode_insert_rows(
-            self.executor.app_context(),
-            table_id,
-            rows,
-            encoded_fields,
-        )
-        .map_err(RaftError::provider)?;
+        let rows = {
+            let _decode_span = kalamdb_observability::kdb_info_span_entered!("raft.decode_rows");
+            crate::applier::ordinal_dml::decode_insert_rows(
+                self.executor.app_context(),
+                table_id,
+                rows,
+                encoded_fields,
+            )
+            .map_err(RaftError::provider)?
+        };
 
         log::debug!("ProviderSharedDataApplier: Inserting into {} ({} rows)", table_id, rows.len());
 

@@ -28,8 +28,8 @@ pub use row::{
     decode_stream_row, decode_user_row, decode_user_row_selected, encode_row_envelope,
     encode_row_fields, encode_row_fields_from_columns, encode_shared_row, encode_stream_row,
     encode_user_row, encode_user_row_from_columns, storage_data_type_from_arrow,
-    storage_data_type_from_kalam, storage_schema_from_table, RowMetadata, StorageDataType,
-    StorageField, StorageSchema,
+    storage_data_type_from_kalam, storage_schema_from_table, storage_schema_from_table_with_arrow,
+    decode_payloads_to_arrow_batch, RowMetadata, StorageDataType, StorageField, StorageSchema,
 };
 pub use stream_frame::{
     decode_stream, decode_stream_frame_payload, encode_stream, encode_stream_frame,

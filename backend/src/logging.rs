@@ -47,7 +47,6 @@ fn is_otlp_noisy_target(target: &str) -> bool {
         "tower",
         "tonic",
         "openraft",
-        "kalamdb_raft",
         "opentelemetry",
         "opentelemetry_sdk",
         "opentelemetry_otlp",
@@ -265,7 +264,12 @@ pub fn init_logging(
         let tracer_provider = build_otlp_provider(otlp)?;
         let tracer = tracer_provider.tracer("kalamdb-server");
         let otlp_target_levels = target_levels.cloned();
-        let otlp_default_level = level.to_string();
+        // Query waterfalls are INFO spans. Keep exporting them to Jaeger even
+        // when console/file logging is warn (the bake-off default).
+        let otlp_export_level = match level_verbosity(level) {
+            Some(verbosity) if verbosity >= 3 => level.to_string(),
+            _ => "info".to_string(),
+        };
 
         // Respect the configured level/target overrides, but still strip known
         // transport/exporter chatter from trace export.
@@ -277,7 +281,7 @@ pub fn init_logging(
             target_level_enabled(
                 metadata.target(),
                 metadata.level(),
-                &otlp_default_level,
+                &otlp_export_level,
                 otlp_target_levels.as_ref(),
             )
         });

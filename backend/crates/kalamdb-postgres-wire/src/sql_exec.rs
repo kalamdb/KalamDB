@@ -83,17 +83,25 @@ impl WireSqlExecutor {
             exec_ctx = exec_ctx.with_transaction_id(transaction_id);
         }
 
-        match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, params).await {
-            Ok(result) => execution_result_to_responses_with_format(result, column_format),
-            Err(error) => {
-                self.mark_statement_failed_if_in_block(state);
-                Ok(vec![Response::Error(Box::new(error_info(
-                    "ERROR",
-                    SQL_ERROR_SQLSTATE,
-                    error.to_string(),
-                )))])
+        kalamdb_observability::kdb_await_in_info_span!(
+            async {
+                match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, params).await {
+                    Ok(result) => {
+                        let _span = kalamdb_observability::kdb_info_span_entered!("wire.encode");
+                        execution_result_to_responses_with_format(result, column_format)
+                    },
+                    Err(error) => {
+                        self.mark_statement_failed_if_in_block(state);
+                        Ok(vec![Response::Error(Box::new(error_info(
+                            "ERROR",
+                            SQL_ERROR_SQLSTATE,
+                            error.to_string(),
+                        )))])
+                    },
+                }
             },
-        }
+            "wire.execute"
+        )
     }
 
     pub async fn execute(

@@ -212,6 +212,23 @@ pub trait MetaApplier: Send + Sync {
         Err(RaftError::Internal("Schedule applier unavailable".into()))
     }
 
+    /// Write a catalog type and replace its fields. Idempotent.
+    async fn upsert_catalog_type(
+        &self,
+        _catalog_type: &kalamdb_system::CatalogType,
+        _fields: &[kalamdb_system::CatalogTypeField],
+    ) -> Result<String, RaftError> {
+        Ok(String::new())
+    }
+
+    /// Drop a catalog type. Already-absent types succeed.
+    async fn drop_catalog_type(
+        &self,
+        _type_id: &kalamdb_commons::models::TypeId,
+    ) -> Result<String, RaftError> {
+        Ok(String::new())
+    }
+
     /// Stage artifact/revision rows then CAS-activate the module pointer.
     async fn activate_function_revision(
         &self,

@@ -10,6 +10,9 @@
 //!
 //! **Authorization**: Endpoints require `service`, `dba`, or `system` role (NOT `user`).
 
+use kalamdb_commons::Role;
+use kalamdb_session::AuthSession;
+
 pub mod models;
 
 mod ack;
@@ -19,3 +22,7 @@ mod latest_offsets;
 pub(crate) use ack::ack_handler;
 pub(crate) use consume::consume_handler;
 pub(crate) use latest_offsets::latest_offsets_handler;
+
+fn is_topic_authorized(session: &AuthSession) -> bool {
+    matches!(session.role(), Role::Service | Role::Dba | Role::System)
+}

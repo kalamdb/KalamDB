@@ -3,9 +3,10 @@ use std::{sync::Arc, time::Duration};
 use kalam_pg_client::RemoteKalamClient;
 use kalam_pg_common::RemoteServerConfig;
 use kalamdb_commons::models::NodeId;
-use kalamdb_pg::KalamPgService;
+use kalamdb_pg::{KalamPgService, PgServiceServer};
 use kalamdb_raft::{
     manager::{RaftManager, RaftManagerConfig},
+    named_service_routes,
     network::{cluster_handler::NoOpClusterHandler, start_rpc_server},
 };
 
@@ -26,9 +27,10 @@ async fn shared_rpc_server_hosts_pg_service() {
     let manager = Arc::new(RaftManager::new(config));
     let cluster_handler: Arc<dyn kalamdb_raft::ClusterMessageHandler> =
         Arc::new(NoOpClusterHandler);
-    let pg_service = Arc::new(KalamPgService::new(false, None));
+    let pg_service = KalamPgService::new(false, None).allow_insecure_unauthenticated();
+    let routes = named_service_routes(PgServiceServer::new(pg_service));
 
-    start_rpc_server(manager, rpc_addr, cluster_handler, Some(pg_service))
+    start_rpc_server(manager, rpc_addr, cluster_handler, Some(routes))
         .await
         .expect("start shared rpc server");
 

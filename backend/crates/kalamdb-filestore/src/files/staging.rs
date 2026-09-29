@@ -199,6 +199,11 @@ fn sanitize_path_component(s: &str) -> String {
         }
     }
 
+    if output.is_empty() || matches!(output.as_str(), "." | "..") {
+        output.clear();
+        output.push('_');
+    }
+
     output
 }
 
@@ -286,6 +291,9 @@ mod tests {
         assert_eq!(sanitize_path_component("hello-world_123.txt"), "hello-world_123.txt");
         assert_eq!(sanitize_path_component("../../../etc/passwd"), "...etcpasswd");
         assert_eq!(sanitize_path_component("file with spaces"), "filewithspaces");
+        assert_eq!(sanitize_path_component(".."), "_");
+        assert_eq!(sanitize_path_component("."), "_");
+        assert_eq!(sanitize_path_component(""), "_");
     }
 
     #[test]

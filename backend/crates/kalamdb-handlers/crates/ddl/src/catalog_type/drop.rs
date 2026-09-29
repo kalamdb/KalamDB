@@ -40,49 +40,63 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
             ));
         }
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || {
+        let (result, dropped_id) = run_blocking(move || {
             let stores = app.system_tables().catalog_stores();
             let existing = stores
-                .get_type(&statement.type_id)
+                .find_type(&statement.namespace_id, &statement.name)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            if existing.is_none() {
+            let Some(catalog_type) = existing else {
                 if statement.if_exists {
-                    return Ok(ExecutionResult::Success {
-                        message: format!("Type {} does not exist, skipping", statement.type_id),
-                    });
+                    return Ok((
+                        ExecutionResult::Success {
+                            message: format!(
+                                "Type {}.{} does not exist, skipping",
+                                statement.namespace_id, statement.name
+                            ),
+                        },
+                        None,
+                    ));
                 }
                 return Err(KalamDbError::NotFound(format!(
-                    "type {} not found",
-                    statement.type_id
+                    "type {}.{} not found",
+                    statement.namespace_id, statement.name
                 )));
+            };
+            match catalog_type.kind {
+                CatalogTypeKind::ImplicitTableRow => {
+                    return Err(KalamDbError::InvalidSql(format!(
+                        "cannot drop implicit table row type {}; drop the table instead",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    )));
+                },
+                CatalogTypeKind::TopicPayload => {
+                    return Err(KalamDbError::InvalidSql(format!(
+                        "cannot drop implicit topic payload type {}; drop the topic instead",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    )));
+                },
+                CatalogTypeKind::RowAlias | CatalogTypeKind::Composite | CatalogTypeKind::Enum => {
+                },
             }
-            if let Some(catalog_type) = existing.as_ref() {
-                match catalog_type.kind {
-                    CatalogTypeKind::ImplicitTableRow => {
-                        return Err(KalamDbError::InvalidSql(format!(
-                            "cannot drop implicit table row type {}; drop the table instead",
-                            statement.type_id
-                        )));
-                    },
-                    CatalogTypeKind::TopicPayload => {
-                        return Err(KalamDbError::InvalidSql(format!(
-                            "cannot drop implicit topic payload type {}; drop the topic instead",
-                            statement.type_id
-                        )));
-                    },
-                    CatalogTypeKind::RowAlias
-                    | CatalogTypeKind::Composite
-                    | CatalogTypeKind::Enum => {},
-                }
-            }
+            let type_id = catalog_type.type_id.clone();
             stores
-                .drop_type(&statement.type_id)
+                .drop_type(&type_id)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            Ok(ExecutionResult::Success {
-                message: format!("Type {} dropped", statement.type_id),
-            })
+            Ok((
+                ExecutionResult::Success {
+                    message: format!(
+                        "Type {} dropped",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    ),
+                },
+                Some(type_id),
+            ))
         })
-        .await
+        .await?;
+        if let Some(type_id) = dropped_id {
+            super::replicate_dropped_type(&self.app_context, type_id).await?;
+        }
+        Ok(result)
     }
 }
 

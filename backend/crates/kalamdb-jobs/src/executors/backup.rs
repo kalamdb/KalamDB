@@ -34,7 +34,7 @@ use kalamdb_transfer::{copy_dir_to_dir, finalize_database_backup, prepare_databa
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{
-    database_transfer::{acquire_database_transfer_lock, wait_for_storage_quiescence},
+    database_transfer::{acquire_database_transfer_lock_blocking, wait_for_storage_quiescence},
     JobContext, JobDecision, JobExecutor, JobParams,
 };
 
@@ -86,7 +86,6 @@ impl JobExecutor for BackupExecutor {
         let params = ctx.params();
         let backup_target = std::path::PathBuf::from(&params.backup_path);
 
-        let _transfer_guard = acquire_database_transfer_lock().await?;
         wait_for_storage_quiescence(ctx).await?;
 
         let config = ctx.app_ctx.config();
@@ -100,6 +99,7 @@ impl JobExecutor for BackupExecutor {
         let src_streams = storage.streams_dir();
 
         let result = tokio::task::spawn_blocking(move || -> Result<u64, KalamDbError> {
+            let _transfer_guard = acquire_database_transfer_lock_blocking()?;
             let plan = prepare_database_backup(&backup_target)?;
 
             // 1. RocksDB native backup (hot, consistent, with flush)

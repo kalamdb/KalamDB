@@ -31,15 +31,24 @@ fn is_active_job_status(status: JobStatus) -> bool {
 }
 
 /// Serialize full-database backup/restore against each other.
-pub(crate) async fn acquire_database_transfer_lock(
+///
+/// Acquired inside `spawn_blocking` so a job timeout can drop the async
+/// executor without releasing the lock while RocksDB/copy work is still
+/// running on the blocking thread.
+pub(crate) fn acquire_database_transfer_lock_blocking(
 ) -> Result<tokio::sync::MutexGuard<'static, ()>, KalamDbError> {
-    tokio::time::timeout(DATABASE_TRANSFER_LOCK_TIMEOUT, DATABASE_TRANSFER_LOCK.lock())
-        .await
-        .map_err(|_| {
-            KalamDbError::InvalidOperation(
+    let deadline = std::time::Instant::now() + DATABASE_TRANSFER_LOCK_TIMEOUT;
+    loop {
+        if let Ok(guard) = DATABASE_TRANSFER_LOCK.try_lock() {
+            return Ok(guard);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(KalamDbError::InvalidOperation(
                 "timed out waiting for another database backup or restore to finish".to_string(),
-            )
-        })
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Wait until no flush or segment-compaction jobs are active.

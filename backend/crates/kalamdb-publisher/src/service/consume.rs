@@ -1,11 +1,19 @@
 use super::*;
 
 impl TopicPublisherService {
-    fn group_partition_fetch_lock(&self, cursor_key: &GroupPartitionKey) -> Arc<Mutex<()>> {
-        self.group_fetch_locks
-            .entry(cursor_key.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+    fn load_messages(
+        &self,
+        topic_id: &TopicId,
+        partition_id: u32,
+        offset: u64,
+        limit: usize,
+    ) -> Result<Vec<TopicMessage>> {
+        if let Some(messages) = self.try_fetch_from_tail(topic_id, partition_id, offset, limit) {
+            return Ok(messages);
+        }
+        self.message_store
+            .fetch_messages(topic_id, partition_id, offset, limit)
+            .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))
     }
 
     pub fn fetch_messages(
@@ -17,6 +25,12 @@ impl TopicPublisherService {
     ) -> Result<Vec<TopicMessage>> {
         if limit == 0 {
             return Ok(Vec::new());
+        }
+
+        if let Some(messages) = self.try_fetch_from_tail(topic_id, partition_id, offset, limit) {
+            let payload_bytes = messages.iter().map(|message| message.payload.len() as u64).sum();
+            record_pubsub_messages_consumed(messages.len() as u64, payload_bytes);
+            return Ok(messages);
         }
 
         let earliest = self.earliest_available_offset(topic_id, partition_id)?;
@@ -98,12 +112,10 @@ impl TopicPublisherService {
                     // messages written at offset 0.
                     if current_start > earliest {
                         state.cursor = current_start;
-                        self.register_consumer_group(topic_id, group_id);
                     } else if state.pending.is_empty() {
                         drop(state);
                         self.group_claim_state.remove(&cursor_key);
-                        self.unregister_consumer_group_if_idle(topic_id, group_id);
-                        self.trim_consumer_runtime_maps();
+                        shrink_dashmap_if_sparse(&self.group_claim_state);
                     }
                     return Ok(Vec::new());
                 }
@@ -111,14 +123,10 @@ impl TopicPublisherService {
                 let claimed_at = Instant::now();
                 let reservation_id =
                     state.reserve_window(current_start, available_limit, claimed_at);
-                self.register_consumer_group(topic_id, group_id);
                 (current_start, available_limit, reservation_id)
             };
 
-            let messages = self
-                .message_store
-                .fetch_messages(topic_id, partition_id, fetch_start, fetch_limit)
-                .map_err(|e| CommonError::Internal(format!("Failed to fetch messages: {}", e)))?;
+            let messages = self.load_messages(topic_id, partition_id, fetch_start, fetch_limit)?;
 
             if messages.is_empty() {
                 let high_watermark = self.log_high_watermark(topic_id, partition_id, earliest)?;
@@ -130,8 +138,7 @@ impl TopicPublisherService {
                     } else if state.pending.is_empty() {
                         drop(state);
                         self.group_claim_state.remove(&cursor_key);
-                        self.unregister_consumer_group_if_idle(topic_id, group_id);
-                        self.trim_consumer_runtime_maps();
+                        shrink_dashmap_if_sparse(&self.group_claim_state);
                     }
                 }
                 return Ok(messages);
@@ -213,9 +220,10 @@ impl TopicPublisherService {
     }
 
     pub fn latest_offset(&self, topic_id: &TopicId, partition_id: u32) -> Result<Option<u64>> {
-        let next_offset = self.offset_allocator.peek_next_offset(topic_id, partition_id);
-
-        if let Some(next) = next_offset {
+        if let Some(next) = self
+            .partition_if_present(topic_id, partition_id)
+            .and_then(|partition| partition.lock_write().peek_next())
+        {
             return Ok(next.checked_sub(1));
         }
 
@@ -233,7 +241,10 @@ impl TopicPublisherService {
             return Ok(offset);
         }
 
-        Ok(self.log_start_offset(topic_id, partition_id))
+        Ok(self
+            .partition_if_present(topic_id, partition_id)
+            .map(|partition| partition.lock_write().log_start())
+            .unwrap_or(0))
     }
 
     fn log_high_watermark(
@@ -246,24 +257,6 @@ impl TopicPublisherService {
             .latest_offset(topic_id, partition_id)?
             .map(|last| last.saturating_add(1))
             .unwrap_or(earliest))
-    }
-
-    pub(crate) fn log_start_offset(&self, topic_id: &TopicId, partition_id: u32) -> u64 {
-        self.log_start_offsets
-            .get(&TopicPartitionKey::new(topic_id, partition_id))
-            .map(|offset| *offset)
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn set_log_start_offset(&self, topic_id: &TopicId, partition_id: u32, offset: u64) {
-        self.log_start_offsets
-            .entry(TopicPartitionKey::new(topic_id, partition_id))
-            .and_modify(|current| {
-                if offset > *current {
-                    *current = offset;
-                }
-            })
-            .or_insert(offset);
     }
 
     pub fn ack_offset(
@@ -287,7 +280,6 @@ impl TopicPublisherService {
             let mut state = ClaimState::new(offset.saturating_add(1));
             state.ack_up_to(offset);
             self.group_claim_state.insert(cursor_key, state);
-            self.register_consumer_group(topic_id, group_id);
         }
 
         Ok(())
@@ -319,22 +311,6 @@ impl TopicPublisherService {
         }
     }
 
-    fn unregister_consumer_group_if_idle(&self, topic_id: &TopicId, group_id: &ConsumerGroupId) {
-        let still_claimed = self
-            .group_claim_state
-            .iter()
-            .any(|entry| entry.key().topic_id == *topic_id && entry.key().group_id == *group_id);
-        if !still_claimed {
-            self.consumer_groups.remove(&ConsumerGroupKey::new(topic_id, group_id));
-        }
-    }
-
-    fn trim_consumer_runtime_maps(&self) {
-        shrink_dashmap_if_sparse(&self.group_claim_state);
-        shrink_dashmap_if_sparse(&self.group_fetch_locks);
-        shrink_dashmap_if_sparse(&self.consumer_groups);
-    }
-
     pub fn reset_group_offset(
         &self,
         topic_id: &TopicId,
@@ -342,8 +318,6 @@ impl TopicPublisherService {
         partition_id: u32,
         next_offset: u64,
     ) -> Result<()> {
-        self.register_consumer_group(topic_id, group_id);
-
         self.offset_store
             .reset_offset(topic_id, group_id, partition_id, next_offset)
             .map_err(|e| CommonError::Internal(format!("Failed to reset offset: {}", e)))?;

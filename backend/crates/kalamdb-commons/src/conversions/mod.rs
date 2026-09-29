@@ -16,6 +16,8 @@ pub mod schema_metadata;
 pub use arrow::json as arrow_json_conversion;
 #[cfg(feature = "conversions")]
 pub use arrow::json::*;
+#[cfg(feature = "conversions")]
+pub use arrow::project::{align_array_to_field, get_field, get_struct_field};
 #[cfg(feature = "arrow-conversion")]
 pub use arrow::types as arrow_conversion;
 #[cfg(feature = "conversions")]
@@ -48,7 +50,10 @@ pub use scalar::string::{parse_string_as_scalar, scalar_to_pk_string};
 pub use schema_metadata::{mask_sensitive_rows_for_role, schema_fields_from_arrow_schema};
 #[cfg(feature = "schema-metadata")]
 pub use schema_metadata::{
-    read_kalam_column_flags_metadata, read_kalam_data_type_metadata,
-    with_kalam_column_flags_metadata, with_kalam_data_type_metadata,
-    KALAM_COLUMN_FLAGS_METADATA_KEY, KALAM_DATA_TYPE_METADATA_KEY,
+    nested_parquet_occurrence_id, read_kalam_column_flags_metadata, read_kalam_data_type_metadata,
+    read_kalam_enum_labels, read_kalam_type_id_metadata, read_parquet_field_id,
+    validate_enum_label, with_kalam_column_flags_metadata, with_kalam_data_type_metadata,
+    with_kalam_enum_labels, with_kalam_type_id_metadata, with_parquet_field_id,
+    KALAM_COLUMN_FLAGS_METADATA_KEY, KALAM_DATA_TYPE_METADATA_KEY, KALAM_ENUM_LABELS_METADATA_KEY,
+    KALAM_TYPE_ID_METADATA_KEY, PARQUET_FIELD_ID_METADATA_KEY,
 };

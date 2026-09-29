@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::datatypes::{Field, Schema};
+use arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_commons::{
     conversions::with_kalam_data_type_metadata,
     models::{datatypes::ToArrowType, NamespaceId, StorageId, TableName},
@@ -15,7 +15,7 @@ use sqlparser::ast::{ColumnOption, CreateTable, ObjectNamePart, Statement, Table
 
 use super::types::CreateTableStatement;
 use crate::{
-    compatibility::map_sql_type_to_kalam,
+    compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::column_default::expr_to_column_default,
     parser::utils::{format_span, parse_sql_statements},
     validation::validate_column_name,
@@ -292,6 +292,7 @@ impl CreateTableStatement {
                 // 4. Parse columns and constraints
                 let mut arrow_fields = Vec::new();
                 let mut column_defaults = HashMap::new();
+                let mut column_type_refs = HashMap::new();
                 let mut primary_key_column = None;
 
                 // Check table constraints for PRIMARY KEY
@@ -340,10 +341,22 @@ impl CreateTableStatement {
                         ));
                     }
 
-                    let kalam_type = map_sql_type_to_kalam(&col.data_type)?;
-                    let data_type = kalam_type
+                    let type_ref = sql_type_to_type_reference(&col.data_type)?;
+                    let kalam_type = type_ref.builtin_data_type().unwrap_or_else(|| {
+                        map_sql_type_to_kalam(&col.data_type)
+                            .unwrap_or(kalamdb_commons::KalamDataType::Text)
+                    });
+                    let mut data_type = kalam_type
                         .to_arrow_type()
                         .map_err(|e| format!("Unsupported SQL data type: {}", e))?;
+                    if type_ref.is_array {
+                        data_type = DataType::List(std::sync::Arc::new(Field::new(
+                            "item", data_type, true,
+                        )));
+                    }
+                    if type_ref.builtin_data_type().is_none() || type_ref.is_array {
+                        column_type_refs.insert(col_name.clone(), type_ref);
+                    }
                     let is_nullable = true;
 
                     // Check column options (PRIMARY KEY, DEFAULT, NOT NULL)
@@ -453,6 +466,7 @@ impl CreateTableStatement {
                     table_type,
                     schema: Arc::new(Schema::new(arrow_fields)),
                     column_defaults,
+                    column_type_refs,
                     primary_key_column,
                     storage_id,
                     use_user_storage,

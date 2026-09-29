@@ -16,7 +16,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::datatypes::Schema as ArrowSchema;
 use kalamdb_commons::{
-    models::{NamespaceId, RoutineId, StorageId, TableName, TriggerId, TypeId},
+    models::{NamespaceId, RoutineId, StorageId, TableName, TriggerId},
     RoutineSecurityMode, TableType,
 };
 use kalamdb_core::{app_context::AppContext, sql::executor::handler_registry::HandlerRegistry};
@@ -150,6 +150,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             table_type:              TableType::Shared,
             schema:                  Arc::new(ArrowSchema::empty()),
             column_defaults:         HashMap::new(),
+            column_type_refs:        HashMap::new(),
             primary_key_column:      None,
             storage_id:              None,
             use_user_storage:        false,
@@ -249,7 +250,6 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateType(CreateTypeStatement {
-            type_id:       TypeId::new("_placeholder.t"),
             namespace_id:  NamespaceId::new("_placeholder"),
             name:          String::new(),
             if_not_exists: false,
@@ -263,8 +263,9 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::AlterType(AlterTypeStatement {
-            type_id:   TypeId::new("_placeholder.t"),
-            operation: AlterTypeOperation::AddAttribute {
+            namespace_id: NamespaceId::new("_placeholder"),
+            name:         String::new(),
+            operation:    AlterTypeOperation::AddAttribute {
                 field:    String::new(),
                 type_ref: TypeReference {
                     namespace_id: None,
@@ -283,9 +284,10 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::DropType(DropTypeStatement {
-            type_id:   TypeId::new("_placeholder.t"),
-            if_exists: false,
-            cascade:   false,
+            namespace_id: NamespaceId::new("_placeholder"),
+            name:         String::new(),
+            if_exists:    false,
+            cascade:      false,
         }),
         catalog_type::DropTypeHandler::new(app_context.clone()),
         SqlStatementKind::DropType
@@ -322,7 +324,10 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::CommentOn(CommentOnStatement {
-            target:    CommentOnTarget::Type(TypeId::new("_placeholder.t")),
+            target:    CommentOnTarget::Type {
+                namespace_id: NamespaceId::new("_placeholder"),
+                name:         String::new(),
+            },
             comment:   None,
             if_exists: false,
         }),

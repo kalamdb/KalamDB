@@ -306,6 +306,7 @@ mod tests {
                 session_id,
                 current_schema: request.current_schema,
                 lease_expires_at_ms: 0,
+                session_token: String::new(),
             }))
         }
 

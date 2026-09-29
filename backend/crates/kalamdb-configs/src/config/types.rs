@@ -32,6 +32,10 @@ pub struct ServerConfig {
     pub websocket: WebSocketSettings,
     #[serde(default)]
     pub postgres_wire: PostgresWireSettings,
+    /// PostgreSQL extension gRPC bridge on the cluster RPC port.
+    /// Off unless an external PostgreSQL extension still dials this node.
+    #[serde(default)]
+    pub pg_extension: PgExtensionSettings,
     #[serde(default)]
     pub functions: FunctionsSettings,
     #[serde(default)]
@@ -1170,6 +1174,23 @@ pub struct PostgresWireSettings {
     pub portal_limit: usize,
 }
 
+/// PostgreSQL extension gRPC bridge settings.
+///
+/// This is the FDW/extension service mounted on the cluster RPC port.
+/// It is separate from [`PostgresWireSettings`], which is the native wire listener.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PgExtensionSettings {
+    /// Mount `PgService` on the cluster RPC listener. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for PgExtensionSettings {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
 impl Default for PostgresWireSettings {
     fn default() -> Self {
         Self {
@@ -1318,6 +1339,13 @@ pub struct JobsSettings {
     /// (default: 7). Ignored when `history_cleanup_interval_seconds` is 0.
     #[serde(default = "default_jobs_history_retention_days")]
     pub history_retention_days: i64,
+
+    /// Maximum time a job may spend in local + leader execution (default: 1800s).
+    /// Set to 0 to disable. Hung backup/restore copies cannot be aborted; the
+    /// job is marked failed and the blocking work may still finish in the
+    /// background while holding the transfer lock.
+    #[serde(default = "default_jobs_max_runtime_seconds")]
+    pub max_runtime_seconds: u64,
 }
 
 /// SQL execution settings (Phase 11, T026)
@@ -1664,6 +1692,7 @@ impl Default for JobsSettings {
             wal_cleanup_interval_seconds: default_jobs_wal_cleanup_interval(),
             history_cleanup_interval_seconds: default_jobs_history_cleanup_interval(),
             history_retention_days: default_jobs_history_retention_days(),
+            max_runtime_seconds: default_jobs_max_runtime_seconds(),
         }
     }
 }
@@ -1746,6 +1775,7 @@ impl Default for ServerConfig {
             topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
             postgres_wire: PostgresWireSettings::default(),
+            pg_extension: PgExtensionSettings::default(),
             functions: FunctionsSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),

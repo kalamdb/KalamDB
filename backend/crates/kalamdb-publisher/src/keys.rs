@@ -33,19 +33,3 @@ impl GroupPartitionKey {
         }
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ConsumerGroupKey {
-    pub topic_id: TopicId,
-    pub group_id: ConsumerGroupId,
-}
-
-impl ConsumerGroupKey {
-    #[inline]
-    pub fn new(topic_id: &TopicId, group_id: &ConsumerGroupId) -> Self {
-        Self {
-            topic_id: topic_id.clone(),
-            group_id: group_id.clone(),
-        }
-    }
-}

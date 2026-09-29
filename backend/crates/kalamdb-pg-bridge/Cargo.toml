@@ -1,0 +1,36 @@
+[package]
+name = "kalamdb-pg-bridge"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+description = "PostgreSQL extension gRPC host. Delete this crate to drop the extension bridge."
+
+[dependencies]
+async-trait = { workspace = true }
+datafusion = { workspace = true }
+kalamdb-auth = { path = "../kalamdb-auth", default-features = false }
+kalamdb-backend = { path = "../kalamdb-backend" }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-pg = { path = "../kalamdb-pg" }
+kalamdb-raft = { path = "../kalamdb-raft" }
+kalamdb-session-datafusion = { path = "../kalamdb-session-datafusion" }
+kalamdb-tables = { path = "../kalamdb-tables" }
+kalamdb-transactions = { path = "../kalamdb-transactions" }
+arrow = { workspace = true }
+bytes = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+tonic = { workspace = true }
+
+[dev-dependencies]
+arrow = { workspace = true }
+datafusion = { workspace = true }
+datafusion-common = { workspace = true }
+kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
+kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
+kalamdb-pg = { path = "../kalamdb-pg" }
+tokio = { workspace = true, features = ["macros", "rt"] }

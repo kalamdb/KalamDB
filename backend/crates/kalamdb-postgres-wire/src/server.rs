@@ -61,31 +61,6 @@ impl PgWireServerHandlers for KalamWireHandlers {
     }
 }
 
-pub async fn run_listener_until_shutdown<F>(
-    config: PostgresWireListenerConfig,
-    handlers: Arc<KalamWireHandlers>,
-    shutdown: F,
-) -> std::io::Result<()>
-where
-    F: Future<Output = ()> + Send,
-{
-    if !config.enabled {
-        shutdown.await;
-        return Ok(());
-    }
-
-    let tls_acceptor = load_tls_acceptor(&config)?;
-    let listener = bind_listener(&config).await?;
-    run_bound_listener_until_shutdown(
-        listener,
-        handlers,
-        tls_acceptor,
-        Duration::from_secs(10),
-        shutdown,
-    )
-    .await
-}
-
 pub(crate) async fn bind_listener(
     config: &PostgresWireListenerConfig,
 ) -> std::io::Result<TcpListener> {

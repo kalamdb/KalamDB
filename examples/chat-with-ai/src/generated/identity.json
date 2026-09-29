@@ -1,0 +1,67 @@
+{
+  "types": {
+    "chat_demo.agent_events": {
+      "type_id": "chat_demo.agent_events",
+      "slots": {
+        "created_at": 9,
+        "id": 1,
+        "message": 8,
+        "preview": 7,
+        "response_id": 2,
+        "room": 3,
+        "scope": 4,
+        "sender_username": 5,
+        "stage": 6
+      }
+    },
+    "chat_demo.ai_inbox": {
+      "type_id": "chat_demo.ai_inbox",
+      "slots": {}
+    },
+    "chat_demo.direct_messages": {
+      "type_id": "chat_demo.direct_messages",
+      "slots": {
+        "author": 3,
+        "content": 5,
+        "created_at": 7,
+        "id": 1,
+        "reply_to": 6,
+        "role": 2,
+        "sender_username": 4
+      }
+    },
+    "chat_demo.message_target": {
+      "type_id": "chat_demo.message_target",
+      "slots": {}
+    },
+    "chat_demo.messages": {
+      "type_id": "chat_demo.messages",
+      "slots": {
+        "author": 4,
+        "content": 6,
+        "created_at": 8,
+        "id": 1,
+        "reply_to": 7,
+        "role": 3,
+        "room": 2,
+        "sender_username": 5
+      }
+    },
+    "chat_demo.room_members": {
+      "type_id": "chat_demo.room_members",
+      "slots": {
+        "id": 1,
+        "room_id": 3,
+        "user_id": 2
+      }
+    },
+    "chat_demo.rooms": {
+      "type_id": "chat_demo.rooms",
+      "slots": {
+        "created_at": 3,
+        "id": 1,
+        "title": 2
+      }
+    }
+  }
+}

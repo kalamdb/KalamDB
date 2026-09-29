@@ -38,6 +38,35 @@ impl TableId {
         }
     }
 
+    /// Clone already-typed components without re-validating or reallocating strings.
+    #[inline]
+    pub fn from_ref(namespace_id: &NamespaceId, table_name: &TableName) -> Self {
+        Self {
+            namespace_id: namespace_id.clone(),
+            table_name:   table_name.clone(),
+        }
+    }
+
+    /// Combine a typed namespace with a table name parsed from SQL or a scan.
+    #[inline]
+    pub fn from_namespace(namespace_id: NamespaceId, table_name: &str) -> Self {
+        Self {
+            namespace_id,
+            table_name: TableName::new(table_name),
+        }
+    }
+
+    /// Fallible version of [`from_namespace`].
+    #[inline]
+    pub fn try_from_namespace(namespace_id: NamespaceId, table_name: &str) -> Result<Self, String> {
+        let parsed = TableName::try_new(table_name)
+            .map_err(|e| format!("invalid table_name '{}': {}", table_name, e))?;
+        Ok(Self {
+            namespace_id,
+            table_name: parsed,
+        })
+    }
+
     /// Get the namespace ID component
     #[inline]
     pub fn namespace_id(&self) -> &NamespaceId {
@@ -309,6 +338,18 @@ mod tests {
 
         assert_eq!(namespace_id.as_str(), "ns1");
         assert_eq!(table_name.as_str(), "users");
+    }
+
+    #[test]
+    fn test_table_id_from_typed_components_skips_string_roundtrip() {
+        let namespace_id = NamespaceId::new("ns1");
+        let table_name = TableName::new("users");
+        let from_ref = TableId::from_ref(&namespace_id, &table_name);
+        let from_namespace = TableId::from_namespace(namespace_id.clone(), "users");
+
+        assert_eq!(from_ref, TableId::new(namespace_id.clone(), table_name.clone()));
+        assert_eq!(from_namespace, from_ref);
+        assert_eq!(TableId::try_from_namespace(namespace_id, "users").unwrap(), from_ref);
     }
 
     #[cfg(feature = "storage")]

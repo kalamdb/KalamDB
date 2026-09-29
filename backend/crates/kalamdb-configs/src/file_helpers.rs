@@ -56,42 +56,6 @@ pub fn join_path<P: AsRef<Path>, S: AsRef<Path>>(base: P, subdir: S) -> PathBuf 
     base.as_ref().join(subdir)
 }
 
-/// Ensure a directory exists, creating it and all parent directories if needed.
-///
-/// This is equivalent to `mkdir -p` on Unix systems.
-///
-/// # Errors
-///
-/// Returns an error if the directory cannot be created due to permissions
-/// or other I/O errors.
-///
-/// # Examples
-///
-/// ```no_run
-/// use kalamdb_configs::file_helpers::ensure_dir_exists;
-///
-/// ensure_dir_exists("./data/rocksdb").expect("Failed to create directory");
-/// ```
-pub fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
-    std::fs::create_dir_all(path)
-}
-
-/// Get the parent directory of a path.
-///
-/// Returns None if the path has no parent (e.g., root directory).
-///
-/// # Examples
-///
-/// ```
-/// use kalamdb_configs::file_helpers::get_parent_dir;
-///
-/// let parent = get_parent_dir("./data/rocksdb");
-/// assert_eq!(parent, Some(std::path::PathBuf::from("./data")));
-/// ```
-pub fn get_parent_dir<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
-    path.as_ref().parent().map(|p| p.to_path_buf())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,14 +87,5 @@ mod tests {
         let subdir = "rocksdb";
         let result = join_path(base, subdir);
         assert_eq!(result, PathBuf::from("./data/rocksdb"));
-    }
-
-    #[test]
-    fn test_get_parent_dir() {
-        let parent = get_parent_dir("./data/rocksdb");
-        assert_eq!(parent, Some(PathBuf::from("./data")));
-
-        let root_parent = get_parent_dir("/");
-        assert_eq!(root_parent, None);
     }
 }

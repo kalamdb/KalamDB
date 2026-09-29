@@ -3,8 +3,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::runtime_metrics::{current_process_physical_footprint_bytes, SHARED_SYSTEM};
-
 /// Global counter for active WebSocket sessions
 /// This is updated by kalamdb-api when sessions start/stop
 static ACTIVE_WEBSOCKET_SESSIONS: AtomicUsize = AtomicUsize::new(0);
@@ -30,39 +28,6 @@ pub fn get_websocket_session_count() -> usize {
 /// Get the highest concurrently active WebSocket session count seen since process start.
 pub fn get_websocket_session_peak_count() -> usize {
     PEAK_WEBSOCKET_SESSIONS.load(Ordering::SeqCst)
-}
-
-/// Health metrics snapshot
-#[derive(Debug, Clone)]
-pub struct HealthMetrics {
-    pub memory_mb:               Option<u64>,
-    pub cpu_usage:               Option<f32>,
-    pub open_files:              usize,
-    pub open_file_breakdown:     Option<OpenFileBreakdown>,
-    pub namespace_count:         usize,
-    pub table_count:             usize,
-    pub storage_partition_count: Option<usize>,
-    pub subscription_count:      usize,
-    pub connection_count:        usize,
-    pub ws_session_count:        usize,
-    pub jobs_running:            usize,
-    pub jobs_queued:             usize,
-    pub jobs_failed:             usize,
-    pub jobs_total:              usize,
-}
-
-/// Aggregated counts for health metrics.
-#[derive(Debug, Clone, Copy)]
-pub struct HealthCounts {
-    pub namespace_count:         usize,
-    pub table_count:             usize,
-    pub storage_partition_count: Option<usize>,
-    pub subscription_count:      usize,
-    pub connection_count:        usize,
-    pub jobs_running:            usize,
-    pub jobs_queued:             usize,
-    pub jobs_failed:             usize,
-    pub jobs_total:              usize,
 }
 
 /// Descriptor class breakdown captured from process file descriptors.
@@ -96,108 +61,6 @@ impl HealthMonitor {
 
         let open_files = open_file_breakdown.map(|breakdown| breakdown.total).unwrap_or(0);
         (open_files, open_file_breakdown)
-    }
-
-    /// Collect system health metrics
-    ///
-    /// Returns a structured snapshot of current health metrics.
-    /// Reuses the shared System instance to avoid heap fragmentation.
-    pub fn collect_system_metrics() -> (Option<u64>, Option<f32>, usize, Option<OpenFileBreakdown>)
-    {
-        use sysinfo::{
-            MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
-        };
-
-        let mut guard = SHARED_SYSTEM
-            .lock()
-            .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner());
-        let sys = guard.get_or_insert_with(|| {
-            System::new_with_specifics(
-                RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
-            )
-        });
-
-        // Get process info
-        let pid = match sysinfo::get_current_pid() {
-            Ok(pid) => pid,
-            Err(e) => {
-                log::warn!("Failed to get current process ID for health metrics: {}", e);
-                return (None, None, 0, None);
-            },
-        };
-
-        let process_refresh = ProcessRefreshKind::nothing().with_memory().with_cpu();
-        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), false, process_refresh);
-        sys.refresh_memory_specifics(MemoryRefreshKind::everything());
-
-        let process = sys.process(pid);
-
-        let (open_files, open_file_breakdown) = Self::collect_open_file_metrics();
-
-        if let Some(proc) = process {
-            let rss_mb = proc.memory() / 1024 / 1024;
-            let memory_mb = current_process_physical_footprint_bytes(Some(proc.pid().as_u32()))
-                .map(|bytes| bytes / 1024 / 1024)
-                .unwrap_or(rss_mb);
-            let cpu_usage = proc.cpu_usage();
-            (Some(memory_mb), Some(cpu_usage), open_files, open_file_breakdown)
-        } else {
-            (None, None, open_files, open_file_breakdown)
-        }
-    }
-
-    /// Build complete health metrics snapshot
-    pub fn build_metrics(
-        memory_mb: Option<u64>,
-        cpu_usage: Option<f32>,
-        open_files: usize,
-        open_file_breakdown: Option<OpenFileBreakdown>,
-        counts: HealthCounts,
-    ) -> HealthMetrics {
-        HealthMetrics {
-            memory_mb,
-            cpu_usage,
-            open_files,
-            open_file_breakdown,
-            namespace_count: counts.namespace_count,
-            table_count: counts.table_count,
-            storage_partition_count: counts.storage_partition_count,
-            subscription_count: counts.subscription_count,
-            connection_count: counts.connection_count,
-            ws_session_count: get_websocket_session_count(),
-            jobs_running: counts.jobs_running,
-            jobs_queued: counts.jobs_queued,
-            jobs_failed: counts.jobs_failed,
-            jobs_total: counts.jobs_total,
-        }
-    }
-
-    /// Log health metrics to debug output
-    pub fn log_metrics(metrics: &HealthMetrics) {
-        let mut segments = Vec::with_capacity(6);
-        if let Some(memory_mb) = metrics.memory_mb {
-            segments.push(format!("memory {memory_mb} MB"));
-        }
-        if let Some(cpu_usage) = metrics.cpu_usage {
-            segments.push(format!("cpu {cpu_usage:.2}%"));
-        }
-        segments.push(format!("files {}", metrics.open_files));
-        segments.push(format!(
-            "connections {}, subscriptions {}, websocket {}",
-            metrics.connection_count, metrics.subscription_count, metrics.ws_session_count
-        ));
-        segments.push(format!(
-            "jobs {} running, {} queued, {} failed",
-            metrics.jobs_running, metrics.jobs_queued, metrics.jobs_failed
-        ));
-        let mut catalog = Vec::with_capacity(3);
-        catalog.push(format!("namespaces {}", metrics.namespace_count));
-        catalog.push(format!("tables {}", metrics.table_count));
-        if let Some(partitions) = metrics.storage_partition_count {
-            catalog.push(format!("partitions {partitions}"));
-        }
-        segments.push(catalog.join(", "));
-        log::debug!("Health metrics: {}", segments.join("; "));
     }
 
     /// Format a concise health log line from system.stats key/value pairs.

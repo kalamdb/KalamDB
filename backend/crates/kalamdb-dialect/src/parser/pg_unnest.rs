@@ -171,14 +171,11 @@ fn is_int_array_type(data_type: &DataType) -> bool {
 fn unwrap_text_cast(expr: &Expr) -> Expr {
     match expr {
         Expr::Cast {
-            expr, data_type, ..
-        } if matches!(
-            data_type,
-            DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Character(_)
-        ) =>
-        {
-            unwrap_text_cast(expr)
-        },
+            expr,
+            data_type:
+                DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Character(_),
+            ..
+        } => unwrap_text_cast(expr),
         other => other.clone(),
     }
 }
@@ -357,7 +354,7 @@ fn unnest_as_lateral(
                 Ident::new(format!("unnest_{index}"))
             }
         });
-        projections.push(format!("unnest({expr}) AS {column}"));
+        projections.push(format!("unnest({expr}) AS {}", quoted_ident(&column)));
     }
 
     let inner_sql = if with_ordinality {
@@ -369,15 +366,21 @@ fn unnest_as_lateral(
         // Number unnested rows in an outer SELECT so ROW_NUMBER() is not computed
         // before DataFusion expands `unnest()`.
         format!(
-            "SELECT {first_column}, ROW_NUMBER() OVER () AS {ordinal_column} FROM (SELECT {})",
+            "SELECT {}, ROW_NUMBER() OVER () AS {} FROM (SELECT {})",
+            quoted_ident(&first_column),
+            quoted_ident(&ordinal_column),
             projections.join(", ")
         )
     } else {
         format!("SELECT {}", projections.join(", "))
     };
 
-    let sql = format!("SELECT * FROM LATERAL ({inner_sql}) AS {alias_name}");
+    let sql = format!("SELECT * FROM LATERAL ({inner_sql}) AS {}", quoted_ident(&alias_name));
     parse_single_table_factor(&sql)
+}
+
+fn quoted_ident(ident: &Ident) -> String {
+    kalamdb_commons::quote_sql_identifier(&ident.value)
 }
 
 fn parse_single_table_factor(sql: &str) -> Option<TableFactor> {
@@ -423,5 +426,27 @@ fn function_arg_expr(arg: &FunctionArg) -> Option<&Expr> {
             ..
         } => Some(expr),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unnest_rewrite_quotes_hostile_column_aliases() {
+        let sql = r#"SELECT 1 FROM unnest(xs) AS t("col; DROP TABLE secrets")"#;
+        let mut statements =
+            parse_sql_statements(sql, &KalamDbDialect::default()).expect("parse unnest");
+        apply_pg_table_function_rewrites(&mut statements);
+        let rewritten = statements[0].to_string();
+        assert!(
+            rewritten.contains("\"col; DROP TABLE secrets\""),
+            "column alias must be quoted: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("AS col; DROP TABLE secrets"),
+            "unquoted alias must not change SQL structure: {rewritten}"
+        );
     }
 }

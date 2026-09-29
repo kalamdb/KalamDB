@@ -5,11 +5,11 @@ use kalamdb_commons::{
     KalamDataType,
 };
 use kalamdb_functions::{FunctionsError, RoutineValue};
-use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, CatalogStores, CatalogTypeField};
+use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, CatalogStores};
 use serde_json::Value as JsonValue;
 
 use super::convert::{json_to_routine_value, routine_value_as_json};
-use crate::error::KalamDbError;
+use crate::{error::KalamDbError, schema_registry::TypeRegistry};
 
 struct TypeSpec {
     display:   String,
@@ -63,6 +63,7 @@ impl TypeSpec {
 }
 
 pub(super) fn validate_call_arguments(
+    type_registry: &TypeRegistry,
     stores: &CatalogStores,
     routine_id: &RoutineId,
     args: &[RoutineValue],
@@ -74,12 +75,13 @@ pub(super) fn validate_call_arguments(
     })?;
     let positional = positional_args(routine_id, &params, args)?;
     for (parameter, value) in params.iter().zip(positional.iter()) {
-        validate_spec(stores, &TypeSpec::from_parameter(parameter), value)?;
+        validate_spec(type_registry, stores, &TypeSpec::from_parameter(parameter), value)?;
     }
     Ok(())
 }
 
 pub(super) fn validate_call_return(
+    type_registry: &TypeRegistry,
     stores: &CatalogStores,
     routine: &CatalogRoutine,
     value: &RoutineValue,
@@ -87,7 +89,7 @@ pub(super) fn validate_call_return(
     let Some(spec) = TypeSpec::from_return(routine) else {
         return Ok(());
     };
-    validate_spec(stores, &spec, value)
+    validate_spec(type_registry, stores, &spec, value)
 }
 
 fn positional_args(
@@ -143,15 +145,17 @@ fn extract_named(
 }
 
 fn validate_spec(
+    type_registry: &TypeRegistry,
     stores: &CatalogStores,
     spec: &TypeSpec,
     value: &RoutineValue,
 ) -> Result<(), KalamDbError> {
     let json = structured_json(value).unwrap_or(JsonValue::Null);
-    validate_json(stores, spec, &json)
+    validate_json(type_registry, stores, spec, &json)
 }
 
 fn validate_json(
+    type_registry: &TypeRegistry,
     stores: &CatalogStores,
     spec: &TypeSpec,
     json: &JsonValue,
@@ -171,12 +175,12 @@ fn validate_json(
         }
         let element = spec.element();
         for item in items {
-            validate_json(stores, &element, item)?;
+            validate_json(type_registry, stores, &element, item)?;
         }
         return Ok(());
     }
     if let Some(type_id) = &spec.type_id {
-        return validate_named_type(stores, spec, type_id, json);
+        return validate_named_type(type_registry, stores, spec, type_id, json);
     }
     if spec.nonempty {
         match json {
@@ -193,26 +197,24 @@ fn validate_json(
 }
 
 fn validate_named_type(
+    type_registry: &TypeRegistry,
     stores: &CatalogStores,
     spec: &TypeSpec,
     type_id: &TypeId,
     json: &JsonValue,
 ) -> Result<(), KalamDbError> {
-    let catalog_type = stores
-        .get_type(type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .ok_or_else(|| KalamDbError::NotFound(format!("type {type_id} not found")))?;
-    let fields = load_type_fields(stores, &catalog_type)?;
-    match catalog_type.kind {
+    let resolved = type_registry.get_or_load(stores, type_id)?;
+    match resolved.kind {
         CatalogTypeKind::Enum => {
-            let supported = format_supported_enum_values(&fields);
+            let supported =
+                format_supported_enum_labels(resolved.fields.iter().map(|f| f.name.as_str()));
             let JsonValue::String(label) = json else {
                 return Err(invalid_args(format!(
                     "{} must be an enum label of {type_id}; {supported}",
                     spec.display
                 )));
             };
-            if fields.iter().any(|field| field.name == *label) {
+            if resolved.fields.iter().any(|field| field.name == *label) {
                 Ok(())
             } else {
                 Err(invalid_args(format!(
@@ -227,17 +229,26 @@ fn validate_named_type(
             let JsonValue::Object(map) = json else {
                 return Err(invalid_args(format!("{} must be an object", spec.display)));
             };
-            for field in fields {
+            for field in resolved.fields.iter() {
                 let child = TypeSpec {
                     display:   format!("{} field '{}'", spec.display, field.name),
-                    type_id:   field.field_type_id.clone(),
-                    data_type: field.builtin_data_type(),
-                    is_array:  field.is_array,
+                    type_id:   field.type_ref.named_type_id().cloned(),
+                    data_type: match &field.type_ref {
+                        kalamdb_commons::LogicalTypeRef::Builtin(dt) => Some(*dt),
+                        kalamdb_commons::LogicalTypeRef::List { element, .. } => {
+                            match element.as_ref() {
+                                kalamdb_commons::LogicalTypeRef::Builtin(dt) => Some(*dt),
+                                _ => None,
+                            }
+                        },
+                        _ => None,
+                    },
+                    is_array:  field.type_ref.is_array(),
                     not_null:  field.not_null,
-                    nonempty:  field.nonempty,
+                    nonempty:  false,
                 };
                 let value = map.get(&field.name).unwrap_or(&JsonValue::Null);
-                validate_json(stores, &child, value)?;
+                validate_json(type_registry, stores, &child, value)?;
             }
             Ok(())
         },
@@ -254,22 +265,6 @@ fn validate_named_type(
             }
         },
     }
-}
-
-fn load_type_fields(
-    stores: &CatalogStores,
-    catalog_type: &kalamdb_system::CatalogType,
-) -> Result<Vec<CatalogTypeField>, KalamDbError> {
-    if catalog_type.kind == CatalogTypeKind::RowAlias {
-        if let Some(source) = &catalog_type.source_type_id {
-            return stores
-                .list_type_fields(source)
-                .map_err(|error| KalamDbError::ExecutionError(error.to_string()));
-        }
-    }
-    stores
-        .list_type_fields(&catalog_type.type_id)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
 
 fn structured_json(value: &RoutineValue) -> Option<JsonValue> {
@@ -291,10 +286,6 @@ fn is_empty_object(value: &RoutineValue) -> bool {
 
 fn invalid_args(message: String) -> KalamDbError {
     FunctionsError::InvalidArguments(message).into()
-}
-
-fn format_supported_enum_values(fields: &[CatalogTypeField]) -> String {
-    format_supported_enum_labels(fields.iter().map(|field| field.name.as_str()))
 }
 
 fn format_supported_enum_labels<'a, I>(labels: I) -> String

@@ -529,7 +529,10 @@ fn parse_table_id(table_str: &str) -> Result<(TableId, bool), String> {
         Some(namespace) => {
             TableId::try_from_strings(&namespace, &table_name).map(|table_id| (table_id, true))
         },
-        None => TableId::try_from_strings("default", &table_name).map(|table_id| (table_id, false)),
+        None => {
+            TableId::try_from_namespace(kalamdb_commons::NamespaceId::default_ns(), &table_name)
+                .map(|table_id| (table_id, false))
+        },
     }
 }
 

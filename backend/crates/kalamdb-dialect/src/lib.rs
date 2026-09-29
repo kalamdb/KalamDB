@@ -22,10 +22,11 @@ pub use batch_execution::{
     ExecutionBatchPrepareError, ParsedExecutionStatement, PreparedExecutionBatchStatement,
 };
 pub use classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
-pub use compatibility::map_sql_type_to_kalam;
+pub use compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference};
 pub use contracts::{
-    canonical_contract_hash, compile_contract, compile_contract_sql, diff_contracts, ContractDiff,
-    ContractError, ContractSnapshot, ContractSource,
+    apply_identity_manifest, canonical_contract_hash, compile_contract, compile_contract_sql,
+    diff_contracts, ContractDiff, ContractError, ContractSnapshot, ContractSource,
+    TypeIdentityEntry, TypeIdentityManifest,
 };
 pub use ddl::{
     parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement,

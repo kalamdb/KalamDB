@@ -4,6 +4,7 @@ mod arrow;
 mod compile;
 mod diff;
 mod hash;
+mod identity;
 mod snapshot;
 
 use std::fmt;
@@ -12,6 +13,7 @@ pub use arrow::{is_builtin_type, resolve_arrow_type};
 pub use compile::{compile_contract, compile_contract_sql, ContractSource};
 pub use diff::{diff_contracts, ContractDiff};
 pub use hash::canonical_contract_hash;
+pub use identity::{apply_identity_manifest, TypeIdentityEntry, TypeIdentityManifest};
 pub use snapshot::{
     table_payload_tag, ContractField, ContractRoutine, ContractSnapshot, ContractTable,
     ContractTableKind, ContractTrigger, ContractType, ContractTypeKind,

@@ -174,6 +174,27 @@ impl NamespaceId {
         Self(DEFAULT_NS.get_or_init(|| Arc::from("default")).clone())
     }
 
+    /// Reuse a typed namespace when it already matches a session schema string.
+    ///
+    /// Avoids re-validation and a new `Arc<str>` on the common path where
+    /// `ExecutionContext.namespace_id` matches DataFusion's `default_schema`,
+    /// or the schema is the cached `default` / `system` singleton.
+    #[inline]
+    pub fn from_session_schema(schema: &str, cached: Option<&Self>) -> Self {
+        if let Some(ns) = cached {
+            if ns.as_str().eq_ignore_ascii_case(schema) {
+                return ns.clone();
+            }
+        }
+        if schema.eq_ignore_ascii_case("default") {
+            return Self::default_ns();
+        }
+        if schema.eq_ignore_ascii_case(SYSTEM_NAMESPACE) {
+            return Self::system();
+        }
+        Self::new(schema)
+    }
+
     /// Check if this is a system namespace (internal DataFusion/KalamDB namespaces).
     ///
     /// Returns true for namespaces used internally by the system:
@@ -322,6 +343,22 @@ mod tests {
         assert_eq!(ns.as_str(), "system");
         assert!(ns.is_system_namespace());
         assert!(ns.is_reserved());
+    }
+
+    #[test]
+    fn test_from_session_schema_reuses_cached_and_singletons() {
+        let chat = NamespaceId::new("chat");
+        assert_eq!(NamespaceId::from_session_schema("chat", Some(&chat)), chat);
+        assert_eq!(NamespaceId::from_session_schema("CHAT", Some(&chat)), chat);
+        assert_eq!(
+            NamespaceId::from_session_schema("default", Some(&chat)),
+            NamespaceId::default_ns()
+        );
+        assert_eq!(NamespaceId::from_session_schema("system", None), NamespaceId::system());
+        assert_eq!(
+            NamespaceId::from_session_schema("other", Some(&chat)),
+            NamespaceId::new("other")
+        );
     }
 
     #[test]

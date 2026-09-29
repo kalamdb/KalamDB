@@ -2,7 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{datatypes::KalamDataType, schemas::column_default::ColumnDefault};
+use crate::models::{
+    datatypes::{KalamDataType, LogicalTypeRef},
+    schemas::column_default::ColumnDefault,
+    TypeId,
+};
 
 /// Complete definition of a table column.
 /// Fields ordered for optimal memory alignment (8-byte types first).
@@ -45,6 +49,18 @@ pub struct ColumnDefinition {
 
     /// Whether this column is part of the partition key (for distributed tables)
     pub is_partition_key: bool,
+
+    /// Named `CREATE TYPE` identity when this column is not a builtin.
+    #[serde(default)]
+    pub named_type_id: Option<TypeId>,
+
+    /// True when the column is an array of `data_type` / `named_type_id`.
+    #[serde(default)]
+    pub is_array: bool,
+
+    /// List-element nullability. Independent of [`Self::is_nullable`].
+    #[serde(default = "LogicalTypeRef::default_element_nullable")]
+    pub element_nullable: bool,
 }
 
 impl ColumnDefinition {
@@ -82,7 +98,28 @@ impl ColumnDefinition {
             is_partition_key,
             default_value,
             column_comment,
+            named_type_id: None,
+            is_array: false,
+            element_nullable: LogicalTypeRef::default_element_nullable(),
         }
+    }
+
+    /// Logical type for this column: builtin, named TypeId, and optional list.
+    pub fn type_ref(&self) -> Result<LogicalTypeRef, String> {
+        LogicalTypeRef::stored(
+            &format!("column '{}'", self.column_name),
+            self.named_type_id.as_ref(),
+            Some(self.data_type),
+            self.is_array,
+            self.element_nullable,
+        )
+    }
+
+    pub fn with_named_type(mut self, type_id: TypeId, is_array: bool) -> Self {
+        self.named_type_id = Some(type_id);
+        self.is_array = is_array;
+        self.data_type = KalamDataType::Text;
+        self
     }
 
     /// Create a simple column with minimal configuration
@@ -98,17 +135,17 @@ impl ColumnDefinition {
         ordinal_position: u32,
         data_type: KalamDataType,
     ) -> Self {
-        Self {
+        Self::new(
             column_id,
-            column_name: column_name.into().to_lowercase(),
+            column_name,
             ordinal_position,
             data_type,
-            is_nullable: true,
-            is_primary_key: false,
-            is_partition_key: false,
-            default_value: ColumnDefault::None,
-            column_comment: None,
-        }
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        )
     }
 
     /// Create a primary key column
@@ -118,22 +155,26 @@ impl ColumnDefinition {
         ordinal_position: u32,
         data_type: KalamDataType,
     ) -> Self {
-        Self {
+        Self::new(
             column_id,
-            column_name: column_name.into().to_lowercase(),
+            column_name,
             ordinal_position,
             data_type,
-            is_nullable: false, // Primary keys cannot be NULL
-            is_primary_key: true,
-            is_partition_key: false,
-            default_value: ColumnDefault::None,
-            column_comment: None,
-        }
+            false,
+            true,
+            false,
+            ColumnDefault::None,
+            None,
+        )
     }
 
     /// Get SQL DDL fragment for this column
     pub fn to_sql(&self) -> String {
-        let mut parts = vec![self.column_name.clone(), self.data_type.sql_name()];
+        let type_sql = self
+            .type_ref()
+            .map(|type_ref| type_ref.to_string())
+            .unwrap_or_else(|_| self.data_type.sql_name());
+        let mut parts = vec![self.column_name.clone(), type_sql];
 
         if self.is_primary_key {
             parts.push("PRIMARY KEY".to_string());

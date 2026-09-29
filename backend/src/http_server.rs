@@ -4,6 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use actix_web::{App, HttpServer};
 use anyhow::Result;
+use kalamdb_api::http::client_cancel::watch_http_client_disconnect;
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::app_context::AppContext;
 use tracing_actix_web::{RootSpanBuilder, TracingLogger};
@@ -137,6 +138,7 @@ impl HttpServerRuntime {
 
             app
         })
+        .on_connect(watch_http_client_disconnect)
         .backlog(config.performance.backlog)
         .disable_signals();
 

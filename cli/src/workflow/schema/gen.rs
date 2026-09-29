@@ -46,6 +46,7 @@ pub fn generate_languages(
 
     let (snapshot, hash) = load::compile_project_contract(project_root, config)?;
 
+    let mut wrote_exports = false;
     for language in languages {
         let key = language.as_str();
         let Some(target) = config.schema.targets.get(key) else {
@@ -73,6 +74,10 @@ pub fn generate_languages(
             let _spinner = output
                 .map(|out| out.status_spinner(format!("generating {} -> {}", key, target.output)));
             write_language(*language, &input)?;
+            if !wrote_exports {
+                super::api_exports::write_api_exports(&input)?;
+                wrote_exports = true;
+            }
         }
         if let Some(out) = output {
             out.status(format!("generated {} -> {}", key, target.output));

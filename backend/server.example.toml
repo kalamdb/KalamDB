@@ -605,6 +605,11 @@ history_cleanup_interval_seconds = 3600
 # (default: 7). Ignored when history_cleanup_interval_seconds = 0.
 history_retention_days = 7
 
+# Maximum time a single job may run (default: 1800 seconds). Set to 0 to disable.
+# Hung backup/restore copies cannot be killed; the job is marked failed and the
+# blocking work may still finish while holding the transfer lock.
+max_runtime_seconds = 1800
+
 # Phase 11, T026: SQL Handler Execution Configuration
 [execution]
 # Handler execution timeout in seconds (default: 30)

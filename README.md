@@ -34,7 +34,7 @@ Prefer a minimal starter? Run `kalam init` in an empty folder and choose a templ
 
 KalamDB is **schema first**. Tables, types, enums, procedures, topics, and access rules live together in SQL instead of being redefined across your database, API, workers, and application code.
 
-A messaging backend can describe most of its contract in one `schema.sql`:
+A room chat can describe the stored transcript, the send API, the durable work queue, and the worker that handles each new message in one `schema.sql`:
 
 ```sql
 CREATE TYPE chat.message_status AS ENUM ('sent', 'delivered', 'read');
@@ -58,13 +58,30 @@ CREATE SHARED TABLE chat.messages (
 );
 
 CREATE PROCEDURE chat.send_message(input chat.send_message_input)
-RETURNS chat.send_message_result;
+RETURNS chat.send_message_result
+SECURITY INVOKER;
 
 CREATE TOPIC chat.new_messages;
 ALTER TOPIC chat.new_messages ADD SOURCE chat.messages ON INSERT;
+
+CREATE PROCEDURE chat.on_new_message(payload chat.new_messages NOT NULL)
+SECURITY DEFINER;
+
+GRANT EXECUTE ON PROCEDURE chat.send_message TO user;
+
+CREATE TRIGGER chat.deliver_message
+  ON TOPIC chat.new_messages
+  EXECUTE PROCEDURE chat.on_new_message(PAYLOAD)
+  WITH (
+    principal = 'system',
+    start = 'latest',
+    retries = 5,
+    retry_backoff = '1s',
+    concurrency = 1
+  );
 ```
 
-That same schema describes the stored data, procedure input/output contracts, event source, and generated application types.
+The app calls `chat.send_message`, which inserts a row with status `sent`. Connected clients see that row through a live query. The same insert is published to `chat.new_messages`, and trigger `chat.deliver_message` runs `chat.on_new_message` as a durable worker: mark the message `delivered`, fan out device notifications, or start a copilot reply, then write the result back to the same tables. Clients never `EXECUTE` the trigger procedure; the dispatcher does.
 
 ```text
                          schema.sql
@@ -101,19 +118,18 @@ A single write can serve several parts of your application at once:
 - **Durable topics** let background workers and AI agents consume changes with acknowledgements and retries.
 - **Server functions** run trusted TypeScript logic close to the data and can query tables, write rows, publish events, and call other procedures.
 
-In the chat starter, sending a message calls the generated procedure client:
+Sending a message uses the generated procedure client for that schema:
 
 ```ts
-await api.chatDemo.sendMessage({
-  target: 'room',
-  target_id: ROOM,
-  content: 'Hello, team!',
+await api.chat.sendMessage({
+  room_id: 'ops',
+  content: 'latency spike after deploy',
 });
 ```
 
-The message appears immediately for subscribed clients and can also be routed into a durable topic for a worker or AI agent. When that worker writes its result back, the UI receives the update through the same realtime subscription path.
+The insert is visible to subscribed clients immediately, and the topic trigger runs the delivery worker with acknowledgements and retries. When that worker updates `status` or writes a reply, the UI receives it through the same live query.
 
-Follow the complete [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo) to see the full flow.
+See the chat starter for a fuller version of this loop: [schema](examples/chat-with-ai/kalam/schema.sql), [app](examples/chat-with-ai/src/App.tsx), and [procedures](examples/chat-with-ai/functions/src/chat_demo).
 
 ## What you can build on
 

@@ -4,7 +4,7 @@ use kalamdb_commons::{websocket::SerializationType, WebSocketMessage};
 use kalamdb_jobs::health_monitor::{
     decrement_websocket_sessions, increment_websocket_sessions, record_activity_now,
 };
-use kalamdb_live::{ConnectionEvent, ConnectionRegistration};
+use kalamdb_live::{ConnectionEvent, ConnectionRegistration, NOTIFICATION_CHANNEL_CAPACITY};
 use log::{debug, error, warn};
 
 use super::{
@@ -239,14 +239,34 @@ pub(super) async fn run_websocket(
                 }
 
                 notification = notification_rx.recv() => {
-                    match notification {
-                        Some(notif) => {
-                            let ser = connection_state.serialization_type();
-                            if send_wire_notification(&mut session, notif.as_ref(), ser, handler_context.compression_enabled).await.is_err() {
+                    let Some(first) = notification else {
+                        break;
+                    };
+                    let ser = connection_state.serialization_type();
+                    if send_wire_notification(&mut session, first.as_ref(), ser, handler_context.compression_enabled).await.is_err() {
+                        break;
+                    }
+                    // A burst of changes for this connection is already queued.
+                    // Write them before returning to select so a pending ping
+                    // does not sit between every notification.
+                    let mut disconnected = false;
+                    for _ in 1..NOTIFICATION_CHANNEL_CAPACITY {
+                        match notification_rx.try_recv() {
+                            Ok(next) => {
+                                if send_wire_notification(&mut session, next.as_ref(), ser, handler_context.compression_enabled).await.is_err() {
+                                    disconnected = true;
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                                disconnected = true;
                                 break;
                             }
                         }
-                        None => break,
+                    }
+                    if disconnected {
+                        break;
                     }
                 }
             }

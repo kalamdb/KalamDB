@@ -149,8 +149,11 @@ fn append_retained_message(
         Default::default(),
     );
     let message_bytes = service.message_store.put_message_with_retention_index(&message).unwrap();
-    service.add_retained_bytes(topic_id, partition_id, message_bytes);
-    service.offset_allocator.seed(topic_id, partition_id, offset + 1);
+    service
+        .partition_runtime(topic_id, partition_id)
+        .lock_write()
+        .add_retained_bytes(message_bytes);
+    service.seed_next_offset(topic_id, partition_id, offset + 1);
     message_bytes
 }
 
@@ -891,7 +894,6 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
     let (tx, rx) = mpsc::channel();
     let second_service = service.clone();
     let second_topic = topic_id.clone();
-    let second_group = group_id.clone();
     let second_group = ConsumerGroupId::new("nonblocking_other_group");
     thread::spawn(move || {
         let batch = second_service
@@ -1562,7 +1564,7 @@ fn allocated_but_unwritten_offset_is_not_treated_as_retained() {
     // message. Readers do not take that lock, so they can observe peek_next=1
     // while the store is still empty. That is not retention: offset 0 must remain
     // fetchable as an empty result, not OffsetOutOfRange.
-    service.offset_allocator.seed(&topic_id, 0, 1);
+    service.seed_next_offset(&topic_id, 0, 1);
 
     assert_eq!(service.earliest_available_offset(&topic_id, 0).unwrap(), 0);
 
@@ -1575,10 +1577,39 @@ fn allocated_but_unwritten_offset_is_not_treated_as_retained() {
     let empty_group = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
     assert!(empty_group.is_empty());
 
-    service.offset_allocator.seed(&topic_id, 0, 1);
+    service.seed_next_offset(&topic_id, 0, 1);
     let still_empty = service.fetch_messages_for_group(&topic_id, &group_id, 0, 0, 10).unwrap();
     assert!(
         still_empty.is_empty(),
         "a prior empty group poll must not error when the first offset is still in flight"
     );
+}
+
+#[test]
+fn test_fetch_recent_messages_from_partition_tail() {
+    let service = service_with_primary_key(&["id"]);
+
+    let ns = NamespaceId::new("test_ns");
+    let table_id = TableId::new(ns, TableName::from("events"));
+    let topic_id = TopicId::new("tail_cache_topic");
+
+    let topic =
+        create_test_topic_with_partitions(topic_id.clone(), table_id.clone(), TopicOp::Insert, 1);
+    service.add_topic(topic);
+
+    let rows: Vec<_> = (0..5).map(|idx| create_test_row(idx, &format!("event_{idx}"))).collect();
+    assert_eq!(
+        service.publish_batch(&table_id, TopicOp::Insert, &rows, None).unwrap(),
+        rows.len()
+    );
+
+    let messages = service.fetch_messages(&topic_id, 0, 0, 10).unwrap();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(
+        messages.iter().map(|message| message.offset).collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+
+    let at_watermark = service.fetch_messages(&topic_id, 0, 5, 10).unwrap();
+    assert!(at_watermark.is_empty(), "cached high watermark should return an empty hit");
 }

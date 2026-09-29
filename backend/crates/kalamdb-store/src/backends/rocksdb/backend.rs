@@ -295,6 +295,9 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn put(&self, partition: &Partition, key: &[u8], value: &[u8]) -> Result<()> {
+        if crate::write_coalesce::buffer_put(partition, key, value) {
+            return Ok(());
+        }
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.put",
             partition = %partition.name(),
@@ -310,6 +313,9 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn delete(&self, partition: &Partition, key: &[u8]) -> Result<()> {
+        if crate::write_coalesce::buffer_delete(partition, key) {
+            return Ok(());
+        }
         let _span = kalamdb_observability::kdb_trace_span_entered!(
             "rocksdb.delete",
             partition = %partition.name(),
@@ -324,6 +330,9 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn batch(&self, operations: Vec<Operation>) -> Result<()> {
+        let Some(operations) = crate::write_coalesce::buffer_operations(operations) else {
+            return Ok(());
+        };
         let _span = kalamdb_observability::kdb_debug_span_entered!(
             "rocksdb.batch",
             op_count = operations.len()
@@ -1131,5 +1140,39 @@ mod tests {
             let value = format!("v{i}");
             assert_eq!(backend.get(&partition, key.as_bytes()).unwrap(), Some(value.into_bytes()));
         }
+    }
+
+    #[tokio::test]
+    async fn write_coalesce_folds_puts_into_one_batch() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let settings = RocksDbSettings::default();
+        let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
+        let (db, cf_names, cache) = init.open_with_cf_names_and_cache().unwrap();
+        let backend = std::sync::Arc::new(RocksDBBackend::with_options_settings_and_cache(
+            db, false, true, settings, cache,
+        ));
+        backend.set_known_cf_names(cf_names);
+
+        let hot = Partition::new("hot_data");
+        let raft = Partition::new("raft_data");
+        backend.create_partition(&hot).unwrap();
+        backend.create_partition(&raft).unwrap();
+
+        let writer = std::sync::Arc::clone(&backend);
+        let hot_write = hot.clone();
+        let raft_write = raft.clone();
+        let (seen, ops) = crate::with_write_coalesce(async move {
+            writer.put(&hot_write, b"row", b"table").unwrap();
+            writer.put(&raft_write, b"log:1", b"entry").unwrap();
+            writer.get(&hot_write, b"row").unwrap()
+        })
+        .await;
+
+        assert_eq!(seen, None);
+        assert_eq!(ops.len(), 2);
+        backend.batch(ops).unwrap();
+        assert_eq!(backend.get(&hot, b"row").unwrap(), Some(b"table".to_vec()));
+        assert_eq!(backend.get(&raft, b"log:1").unwrap(), Some(b"entry".to_vec()));
     }
 }

@@ -3,7 +3,7 @@
 //! Represents a single Raft consensus group with its own log, state machine, and network.
 
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 
@@ -42,6 +42,22 @@ pub struct RaftGroup<SM: KalamStateMachine + Send + Sync + 'static> {
 
     /// Network factory for this group
     network_factory: RaftNetworkFactory,
+
+    /// One in-flight local apply wait per group. Parallel live subscribers
+    /// join it instead of each registering an OpenRaft waiter.
+    apply_barrier: Arc<StdMutex<Option<Arc<ApplyBarrierFlight>>>>,
+}
+
+#[derive(Clone)]
+enum ApplyBarrierOutcome {
+    Pending,
+    Ready(u64),
+    Failed(Arc<str>),
+}
+
+struct ApplyBarrierFlight {
+    target:  u64,
+    outcome: tokio::sync::watch::Sender<ApplyBarrierOutcome>,
 }
 
 impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
@@ -61,6 +77,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             raft: RwLock::new(None),
             storage: Arc::new(KalamRaftStorage::new(group_id, state_machine)),
             network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
+            apply_barrier: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -102,6 +119,7 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             raft: RwLock::new(None),
             storage: Arc::new(storage),
             network_factory: RaftNetworkFactory::new_with_channel_pool(group_id, channel_pool),
+            apply_barrier: Arc::new(StdMutex::new(None)),
         })
     }
 
@@ -185,14 +203,105 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             return Ok(applied_index);
         }
 
-        match raft
-            .wait(Some(timeout))
-            .applied_index_at_least(Some(target_index), "local apply barrier")
-            .await
-        {
-            Ok(metrics) => {
-                Ok(metrics.last_applied.map(|log_id| log_id.index).unwrap_or(target_index))
-            },
+        let mut receiver = self.join_apply_barrier(raft, target_index, timeout);
+        self.await_shared_apply_barrier(
+            &mut receiver,
+            target_index,
+            timeout,
+            committed_index,
+            snapshot_index,
+        )
+        .await
+    }
+
+    /// Join an in-flight barrier for `target`, starting one shared Raft wait when needed.
+    ///
+    /// The wait runs on its own task so a cancelled subscriber does not drop it
+    /// for the other sockets that joined the same catch-up.
+    fn join_apply_barrier(
+        &self,
+        raft: RaftInstance,
+        target: u64,
+        timeout: Duration,
+    ) -> tokio::sync::watch::Receiver<ApplyBarrierOutcome> {
+        let mut guard = self.apply_barrier.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(existing) = guard.as_ref() {
+            if existing.target >= target {
+                return existing.outcome.subscribe();
+            }
+        }
+
+        let (sender, receiver) = tokio::sync::watch::channel(ApplyBarrierOutcome::Pending);
+        let flight = Arc::new(ApplyBarrierFlight {
+            target,
+            outcome: sender,
+        });
+        *guard = Some(Arc::clone(&flight));
+        drop(guard);
+
+        let barrier = Arc::clone(&self.apply_barrier);
+        let group_name = self.group_id.to_string();
+        tokio::spawn(async move {
+            let outcome = match raft
+                .wait(Some(timeout))
+                .applied_index_at_least(Some(target), "local apply barrier")
+                .await
+            {
+                Ok(metrics) => ApplyBarrierOutcome::Ready(
+                    metrics.last_applied.map(|log_id| log_id.index).unwrap_or(target),
+                ),
+                Err(_) => ApplyBarrierOutcome::Failed(Arc::from(format!(
+                    "local apply barrier did not reach the required read point for {group_name}"
+                ))),
+            };
+            let _ = flight.outcome.send(outcome);
+            let mut guard = barrier.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if guard.as_ref().is_some_and(|current| Arc::ptr_eq(current, &flight)) {
+                guard.take();
+            }
+        });
+
+        receiver
+    }
+
+    async fn await_shared_apply_barrier(
+        &self,
+        receiver: &mut tokio::sync::watch::Receiver<ApplyBarrierOutcome>,
+        target_index: u64,
+        timeout: Duration,
+        committed_index: u64,
+        snapshot_index: u64,
+    ) -> Result<u64, RaftError> {
+        let wait = async {
+            loop {
+                let current = receiver.borrow().clone();
+                match current {
+                    ApplyBarrierOutcome::Ready(index) if index >= target_index => {
+                        return Ok(index);
+                    },
+                    ApplyBarrierOutcome::Failed(detail) => {
+                        return Err(RaftError::ReplicationTimeout {
+                            group:            self.group_id.to_string(),
+                            committed_log_id: target_index.to_string(),
+                            detail:           detail.to_string(),
+                            timeout_ms:       timeout.as_millis() as u64,
+                        });
+                    },
+                    ApplyBarrierOutcome::Pending | ApplyBarrierOutcome::Ready(_) => {},
+                }
+                if receiver.changed().await.is_err() {
+                    return Err(self.local_apply_timeout(
+                        self.storage.state_machine().last_applied_index(),
+                        committed_index,
+                        snapshot_index,
+                        timeout,
+                    ));
+                }
+            }
+        };
+
+        match tokio::time::timeout(timeout, wait).await {
+            Ok(result) => result,
             Err(_) => Err(self.local_apply_timeout(
                 self.storage.state_machine().last_applied_index(),
                 committed_index,
@@ -317,8 +426,10 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         let config =
             Arc::new(raft_config.validate().map_err(|e| RaftError::Config(e.to_string()))?);
 
-        // Single-node: OpenRaft 0.9 still awaits LogFlushed, so flush-on-append cannot overlap
-        // the next storage call. Defer log+last_applied into the apply WriteBatch instead.
+        // Single-node: defer log+last_applied into apply and fold them with the
+        // table insert (one WriteBatch). Cluster: persist the log in append() on
+        // the log-IO thread so the core can yield while apply of the previous
+        // entry runs.
         self.storage.set_flush_log_on_append(!is_single_node);
 
         let storage = self.storage.clone();
@@ -550,17 +661,22 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
     ) -> Result<(crate::RaftResponse, u64), RaftError> {
         // Serialize the INNER command (not the RaftCommand wrapper)
         // The state machine expects MetaCommand, UserDataCommand, or SharedDataCommand directly
-        let command_bytes = match &command {
-            crate::RaftCommand::Meta(cmd) => crate::codec::command_codec::encode_meta_command(cmd)?,
-            crate::RaftCommand::UserData(cmd) => {
-                crate::codec::command_codec::encode_user_data_command(cmd)?
-            },
-            crate::RaftCommand::SharedData(cmd) => {
-                crate::codec::command_codec::encode_shared_data_command(cmd)?
-            },
-            crate::RaftCommand::TransactionCommit { .. } => {
-                crate::codec::command_codec::encode_raft_command(&command)?
-            },
+        let command_bytes = {
+            let _encode_span = kalamdb_observability::kdb_info_span_entered!("raft.encode_cmd");
+            match &command {
+                crate::RaftCommand::Meta(cmd) => {
+                    crate::codec::command_codec::encode_meta_command(cmd)?
+                },
+                crate::RaftCommand::UserData(cmd) => {
+                    crate::codec::command_codec::encode_user_data_command(cmd)?
+                },
+                crate::RaftCommand::SharedData(cmd) => {
+                    crate::codec::command_codec::encode_shared_data_command(cmd)?
+                },
+                crate::RaftCommand::TransactionCommit { .. } => {
+                    crate::codec::command_codec::encode_raft_command(&command)?
+                },
+            }
         };
 
         // Clone Arc once outside the lock scope to avoid holding read lock
@@ -571,8 +687,11 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
             .ok_or_else(|| RaftError::NotStarted(self.group_id.to_string()))?
             .clone();
 
-        // Submit the command and wait for commit
-        let response = match raft.client_write(command_bytes).await {
+        // Submit the command and wait until OpenRaft has applied it.
+        let response = match kalamdb_observability::kdb_await_in_info_span!(
+            raft.client_write(command_bytes),
+            "raft.client_write"
+        ) {
             Ok(response) => response,
             Err(OpenRaftError::APIError(ClientWriteError::ForwardToLeader(forward))) => {
                 return Err(RaftError::not_leader(self.group_id.to_string(), forward.leader_id));
@@ -584,29 +703,34 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> RaftGroup<SM> {
         // The state machine returns MetaResponse or DataResponse directly, not wrapped in
         // RaftResponse. If the state machine short-circuits with NoOp, response.data can be
         // empty; treat as Ok.
-        let response_obj = if response.data.is_empty() {
-            match command {
-                crate::RaftCommand::Meta(_) => crate::RaftResponse::Meta(crate::MetaResponse::Ok),
-                crate::RaftCommand::UserData(_)
-                | crate::RaftCommand::SharedData(_)
-                | crate::RaftCommand::TransactionCommit { .. } => {
-                    crate::RaftResponse::Data(crate::DataResponse::Ok)
-                },
-            }
-        } else {
-            match command {
-                crate::RaftCommand::Meta(_) => {
-                    let meta_response =
-                        crate::codec::command_codec::decode_meta_response(&response.data)?;
-                    crate::RaftResponse::Meta(meta_response)
-                },
-                crate::RaftCommand::UserData(_)
-                | crate::RaftCommand::SharedData(_)
-                | crate::RaftCommand::TransactionCommit { .. } => {
-                    let data_response =
-                        crate::codec::command_codec::decode_data_response(&response.data)?;
-                    crate::RaftResponse::Data(data_response)
-                },
+        let response_obj = {
+            let _decode_span = kalamdb_observability::kdb_info_span_entered!("raft.decode_resp");
+            if response.data.is_empty() {
+                match command {
+                    crate::RaftCommand::Meta(_) => {
+                        crate::RaftResponse::Meta(crate::MetaResponse::Ok)
+                    },
+                    crate::RaftCommand::UserData(_)
+                    | crate::RaftCommand::SharedData(_)
+                    | crate::RaftCommand::TransactionCommit { .. } => {
+                        crate::RaftResponse::Data(crate::DataResponse::Ok)
+                    },
+                }
+            } else {
+                match command {
+                    crate::RaftCommand::Meta(_) => {
+                        let meta_response =
+                            crate::codec::command_codec::decode_meta_response(&response.data)?;
+                        crate::RaftResponse::Meta(meta_response)
+                    },
+                    crate::RaftCommand::UserData(_)
+                    | crate::RaftCommand::SharedData(_)
+                    | crate::RaftCommand::TransactionCommit { .. } => {
+                        let data_response =
+                            crate::codec::command_codec::decode_data_response(&response.data)?;
+                        crate::RaftResponse::Data(data_response)
+                    },
+                }
             }
         };
 

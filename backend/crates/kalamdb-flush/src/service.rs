@@ -46,6 +46,13 @@ pub struct ManifestService {
     /// layer to keep memory bounded for high-cardinality user tables.
     memory_cache: DashMap<ManifestId, Arc<ManifestCacheEntry>>,
 
+    /// `last_refreshed` of empty cache entries already compared with `manifest.json`.
+    ///
+    /// An empty cache must not hide a manifest file written by flush. The check runs once per
+    /// cache generation so tables that have never been flushed do not reread storage on every
+    /// query.
+    empty_storage_checks: DashMap<ManifestId, i64>,
+
     /// Per-scope flush serialization guards.
     ///
     /// Flushes for the same table/user scope must not race batch-number allocation or manifest
@@ -142,6 +149,7 @@ impl ManifestService {
     pub fn new(provider: Arc<ManifestTableProvider>, config: ManifestCacheSettings) -> Self {
         let service = Self {
             memory_cache: DashMap::with_capacity(config.max_entries.min(1024)),
+            empty_storage_checks: DashMap::with_capacity(128),
             flush_scope_locks: DashMap::with_capacity(128),
             active_compactions: Arc::new(DashSet::with_capacity(128)),
             provider,
@@ -210,15 +218,17 @@ impl ManifestService {
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let manifest_id = Self::manifest_id(table_id, user_id);
 
-        if let Some(entry) = self.memory_cache.get(&manifest_id) {
-            return Ok(Some(Arc::clone(entry.value())));
+        if let Some(cached) = self.memory_cache.get(&manifest_id) {
+            let entry = Arc::clone(cached.value());
+            drop(cached);
+            return self.entry_visible_to_readers(table_id, user_id, entry);
         }
 
         match self.provider.get_cache_entry(&manifest_id) {
             Ok(Some(entry)) => {
                 let entry = Arc::new(entry);
                 self.insert_memory_entry(manifest_id, Arc::clone(&entry));
-                Ok(Some(entry))
+                self.entry_visible_to_readers(table_id, user_id, entry)
             },
             Ok(None) => self.load_from_storage_and_hydrate(table_id, user_id),
             Err(StorageError::SerializationError(err)) => {
@@ -243,15 +253,17 @@ impl ManifestService {
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let manifest_id = Self::manifest_id(table_id, user_id);
 
-        if let Some(entry) = self.memory_cache.get(&manifest_id) {
-            return Ok(Some(Arc::clone(entry.value())));
+        if let Some(cached) = self.memory_cache.get(&manifest_id) {
+            let entry = Arc::clone(cached.value());
+            drop(cached);
+            return self.entry_visible_to_readers_async(table_id, user_id, entry).await;
         }
 
         match self.provider.get_cache_entry_async(&manifest_id).await {
             Ok(Some(entry)) => {
                 let entry = Arc::new(entry);
                 self.insert_memory_entry(manifest_id, Arc::clone(&entry));
-                Ok(Some(entry))
+                self.entry_visible_to_readers_async(table_id, user_id, entry).await
             },
             Ok(None) => self.load_from_storage_and_hydrate_async(table_id, user_id).await,
             Err(StorageError::SerializationError(err)) => {
@@ -266,6 +278,99 @@ impl ManifestService {
             },
             Err(err) => Err(err),
         }
+    }
+
+    /// Return a cached manifest, repairing it when storage has segments the cache dropped.
+    fn entry_visible_to_readers(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        entry: Arc<ManifestCacheEntry>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        if !entry.manifest.segments.is_empty() {
+            return Ok(Some(entry));
+        }
+
+        let manifest_id = Self::manifest_id(table_id, user_id);
+        if self
+            .empty_storage_checks
+            .get(&manifest_id)
+            .is_some_and(|checked_at| *checked_at == entry.last_refreshed)
+        {
+            return Ok(Some(entry));
+        }
+
+        match self.read_manifest_from_storage(table_id, user_id) {
+            Ok(Some(manifest)) if !manifest.segments.is_empty() => {
+                self.adopt_storage_manifest(manifest_id, &entry, manifest)
+            },
+            Ok(_) => {
+                self.empty_storage_checks.insert(manifest_id, entry.last_refreshed);
+                Ok(Some(entry))
+            },
+            Err(err) => {
+                warn!(
+                    "Manifest storage check failed for {}: {} (using cached empty manifest)",
+                    manifest_id.as_str(),
+                    err
+                );
+                Ok(Some(entry))
+            },
+        }
+    }
+
+    async fn entry_visible_to_readers_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        entry: Arc<ManifestCacheEntry>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        if !entry.manifest.segments.is_empty() {
+            return Ok(Some(entry));
+        }
+
+        let manifest_id = Self::manifest_id(table_id, user_id);
+        if self
+            .empty_storage_checks
+            .get(&manifest_id)
+            .is_some_and(|checked_at| *checked_at == entry.last_refreshed)
+        {
+            return Ok(Some(entry));
+        }
+
+        match self.read_manifest_from_storage_async(table_id, user_id).await {
+            Ok(Some(manifest)) if !manifest.segments.is_empty() => {
+                self.adopt_storage_manifest(manifest_id, &entry, manifest)
+            },
+            Ok(_) => {
+                self.empty_storage_checks.insert(manifest_id, entry.last_refreshed);
+                Ok(Some(entry))
+            },
+            Err(err) => {
+                warn!(
+                    "Manifest storage check failed for {}: {} (using cached empty manifest)",
+                    manifest_id.as_str(),
+                    err
+                );
+                Ok(Some(entry))
+            },
+        }
+    }
+
+    fn adopt_storage_manifest(
+        &self,
+        manifest_id: ManifestId,
+        entry: &ManifestCacheEntry,
+        manifest: Manifest,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        self.empty_storage_checks.remove(&manifest_id);
+        let refreshed = ManifestCacheEntry::new(
+            manifest,
+            entry.etag.clone(),
+            chrono::Utc::now().timestamp_millis(),
+            entry.sync_state,
+        );
+        self.upsert_entry(manifest_id, refreshed).map(Some)
     }
 
     /// Count all cached manifest entries.
@@ -383,10 +488,21 @@ impl ManifestService {
                 );
             },
             Ok(None) => {
-                // If no cache entry exists yet, create one with PendingWrite state
-                // This shouldn't happen in normal flow since ensure_manifest_ready is called first
-                warn!(
-                    "mark_pending_write called but no cache entry exists: table={}, user={:?}",
+                // User-scoped manifests are not kept in the in-process cache, and
+                // coalesced Raft apply buffers RocksDB puts until the apply
+                // commits. `ensure_manifest_ready` may have staged an InSync
+                // entry that `get` cannot see yet, so create PendingWrite here.
+                // The later coalesced put wins over a staged InSync for the same key.
+                let manifest = self.create_manifest(table_id, user_id);
+                self.upsert_cache_entry(
+                    table_id,
+                    user_id,
+                    &manifest,
+                    None,
+                    SyncState::PendingWrite,
+                )?;
+                debug!(
+                    "Created pending_write manifest entry after snapshot miss: table={}, user={:?}",
                     table_id,
                     user_id.map(|u| u.as_str())
                 );
@@ -890,6 +1006,7 @@ impl ManifestService {
         manifest_id: ManifestId,
         entry: ManifestCacheEntry,
     ) -> Result<Arc<ManifestCacheEntry>, StorageError> {
+        self.empty_storage_checks.remove(&manifest_id);
         let inserted_new_entry = match self.cached_entry_snapshot(&manifest_id) {
             Ok(Some(old_entry)) => {
                 self.provider.update_cache_entry_with_old(
@@ -1884,6 +2001,39 @@ mod tests {
         service.update_after_flush(&table_id, Some(&user_id), &manifest, None).unwrap();
         assert_eq!(service.pending_count().unwrap(), 0);
         assert!(!service.has_pending_writes(&table_id, Some(&user_id)).unwrap());
+    }
+
+    #[test]
+    fn mark_pending_write_creates_user_entry_when_coalesced_stage_is_invisible() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let backend = Arc::new(InMemoryBackend::new());
+            let service =
+                create_test_service_with_backend(Arc::clone(&backend) as Arc<dyn StorageBackend>);
+            let table_id = build_table_id("ns1", "tbl1");
+            let user_id = UserId::from("u_123");
+            let manifest = create_test_manifest(&table_id, Some(&user_id));
+
+            let ((), ops) = kalamdb_store::with_write_coalesce(async {
+                service.stage_before_flush(&table_id, Some(&user_id), &manifest).unwrap();
+                service.mark_pending_write(&table_id, Some(&user_id)).unwrap();
+            })
+            .await;
+
+            assert!(
+                !service.has_pending_writes(&table_id, Some(&user_id)).unwrap(),
+                "coalesced pending index must not be visible until commit"
+            );
+
+            backend.batch(ops).unwrap();
+            assert!(
+                service.has_pending_writes(&table_id, Some(&user_id)).unwrap(),
+                "user-scoped first write must land in the pending index after coalesced commit"
+            );
+        });
     }
 
     #[test]

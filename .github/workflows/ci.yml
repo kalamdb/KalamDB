@@ -189,6 +189,10 @@ jobs:
         with:
           shared-key: ci-test-suite
 
+      - name: Repair stale rusty_v8 cache
+        shell: bash
+        run: bash scripts/repair-rusty-v8-cache.sh
+
       - name: Install cargo-nextest
         run: |
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin

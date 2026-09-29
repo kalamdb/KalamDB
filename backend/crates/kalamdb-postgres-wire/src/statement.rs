@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Field};
 use async_trait::async_trait;
 use kalamdb_core::{
     app_context::AppContext,
@@ -22,7 +22,9 @@ use pgwire::{
     error::{ErrorInfo, PgWireError, PgWireResult},
 };
 
-use crate::{connection::WireConnectionState, sql_exec::pg_error};
+use crate::{
+    connection::WireConnectionState, pg_types::pg_type_for_named_field, sql_exec::pg_error,
+};
 
 /// Prepared statement cached at PostgreSQL wire Parse time.
 #[derive(Debug, Clone)]
@@ -174,11 +176,18 @@ impl KalamQueryParser {
         for field in schema.fields() {
             columns.push(WireResultColumn {
                 name:     field.name().to_string(),
-                datatype: pg_type_for_data_type(field.data_type()).unwrap_or(Type::TEXT),
+                datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
             });
         }
         Some(columns)
     }
+}
+
+fn pg_type_for_field(field: &Field) -> PgWireResult<Type> {
+    if let Some(pg_type) = pg_type_for_named_field(field) {
+        return Ok(pg_type);
+    }
+    pg_type_for_data_type(field.data_type())
 }
 
 fn pg_type_for_data_type(data_type: &DataType) -> PgWireResult<Type> {

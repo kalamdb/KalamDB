@@ -1,4 +1,10 @@
-use std::{future::Future, io::Cursor, time::Duration};
+use std::{
+    collections::HashMap,
+    future::Future,
+    io::Cursor,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use arrow::record_batch::RecordBatch;
 use arrow_ipc::reader::StreamReader;
@@ -123,6 +129,9 @@ pub struct RemoteSessionHandle {
     pub current_schema:      Option<String>,
     /// Lease expiry (epoch ms). Client should re-authenticate before this time.
     pub lease_expires_at_ms: i64,
+    /// Capability returned by an authenticated bridge. Empty when the server
+    /// is running in the explicit insecure test mode.
+    pub session_token:       String,
 }
 
 #[derive(Debug, Clone)]
@@ -131,8 +140,10 @@ pub struct RemoteKalamClient {
     config:            RemoteServerConfig,
     /// "host:port" used in error messages.
     server_addr:       String,
-    /// Auth metadata to send on `open_session` only.
+    /// Auth metadata to send on `open_session` and `ping`.
     open_session_auth: OpenSessionAuth,
+    /// Session capabilities issued by authenticated bridges, shared across reconnects.
+    session_tokens:    Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl RemoteKalamClient {
@@ -176,7 +187,33 @@ impl RemoteKalamClient {
             config,
             server_addr,
             open_session_auth,
+            session_tokens: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    fn remember_session_token(&self, session_id: &str, token: &str) {
+        if token.is_empty() {
+            return;
+        }
+        let mut tokens =
+            self.session_tokens.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        tokens.insert(session_id.to_string(), token.to_string());
+    }
+
+    fn session_request<T>(&self, payload: T, session_id: &str) -> Request<T> {
+        let mut request = Request::new(payload);
+        let token = self
+            .session_tokens
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(session_id)
+            .cloned();
+        if let Some(token) = token {
+            if let Ok(value) = token.parse() {
+                request.metadata_mut().insert("x-kalam-session-token", value);
+            }
+        }
+        request
     }
 
     fn should_retry_cleanup_status(status: &tonic::Status) -> bool {
@@ -189,7 +226,9 @@ impl RemoteKalamClient {
     }
 
     async fn reconnect(&self) -> Result<Self, KalamPgError> {
-        Self::connect(self.config.clone()).await
+        let mut client = Self::connect(self.config.clone()).await?;
+        client.session_tokens = Arc::clone(&self.session_tokens);
+        Ok(client)
     }
 
     /// Convert a transport-level connection error into a user-readable message.
@@ -415,11 +454,6 @@ impl RemoteKalamClient {
         Ok(tls)
     }
 
-    /// Create a plain gRPC request (no auth metadata).
-    fn plain_request<T>(payload: T) -> Request<T> {
-        Request::new(payload)
-    }
-
     /// Create a gRPC request with auth metadata for `open_session`.
     fn authenticated_request<T>(&self, payload: T) -> Request<T> {
         let mut req = Request::new(payload);
@@ -447,12 +481,17 @@ impl RemoteKalamClient {
         Ok(response.into_inner())
     }
 
-    async fn call_plain_status<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, Status>
+    async fn call_plain_status<T, R, F, Fut>(
+        &self,
+        session_id: &str,
+        payload: T,
+        call: F,
+    ) -> Result<R, Status>
     where
         F: FnOnce(PgServiceClient<Channel>, Request<T>) -> Fut,
         Fut: Future<Output = Result<Response<R>, Status>>,
     {
-        self.call_with_request(Self::plain_request(payload), call).await
+        self.call_with_request(self.session_request(payload, session_id), call).await
     }
 
     async fn call_authenticated<T, R, F, Fut>(&self, payload: T, call: F) -> Result<R, KalamPgError>
@@ -497,10 +536,12 @@ impl RemoteKalamClient {
             )
             .await?;
 
+        self.remember_session_token(&response.session_id, &response.session_token);
         Ok(RemoteSessionHandle {
             session_id:          response.session_id,
             current_schema:      response.current_schema,
             lease_expires_at_ms: response.lease_expires_at_ms,
+            session_token:       response.session_token,
         })
     }
 
@@ -521,6 +562,7 @@ impl RemoteKalamClient {
 
     async fn close_session_attempt(&self, session_id: &str) -> Result<(), tonic::Status> {
         self.call_plain_status(
+            session_id,
             CloseSessionRequest {
                 session_id: session_id.trim().to_string(),
             },
@@ -534,10 +576,10 @@ impl RemoteKalamClient {
         &self,
         payload: ScanRpcRequest,
     ) -> Result<ScanRpcResponse, tonic::Status> {
-        self.call_plain_status(
-            payload,
-            |mut client, request| async move { client.scan(request).await },
-        )
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
+            client.scan(request).await
+        })
         .await
     }
 
@@ -545,7 +587,8 @@ impl RemoteKalamClient {
         &self,
         payload: InsertRpcRequest,
     ) -> Result<InsertRpcResponse, tonic::Status> {
-        self.call_plain_status(payload, |mut client, request| async move {
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
             client.insert(request).await
         })
         .await
@@ -555,7 +598,8 @@ impl RemoteKalamClient {
         &self,
         payload: UpdateRpcRequest,
     ) -> Result<UpdateRpcResponse, tonic::Status> {
-        self.call_plain_status(payload, |mut client, request| async move {
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
             client.update(request).await
         })
         .await
@@ -565,7 +609,8 @@ impl RemoteKalamClient {
         &self,
         payload: DeleteRpcRequest,
     ) -> Result<DeleteRpcResponse, tonic::Status> {
-        self.call_plain_status(payload, |mut client, request| async move {
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
             client.delete(request).await
         })
         .await
@@ -575,7 +620,8 @@ impl RemoteKalamClient {
         &self,
         payload: ExecuteSqlRpcRequest,
     ) -> Result<kalamdb_pg::ExecuteSqlRpcResponse, tonic::Status> {
-        self.call_plain_status(payload, |mut client, request| async move {
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
             client.execute_sql(request).await
         })
         .await
@@ -585,7 +631,8 @@ impl RemoteKalamClient {
         &self,
         payload: ExecuteQueryRpcRequest,
     ) -> Result<kalamdb_pg::ExecuteQueryRpcResponse, tonic::Status> {
-        self.call_plain_status(payload, |mut client, request| async move {
+        let session_id = payload.session_id.clone();
+        self.call_plain_status(&session_id, payload, |mut client, request| async move {
             client.execute_query(request).await
         })
         .await
@@ -768,6 +815,7 @@ impl RemoteKalamClient {
     async fn begin_transaction_attempt(&self, session_id: &str) -> Result<String, tonic::Status> {
         let response = self
             .call_plain_status(
+                session_id,
                 BeginTransactionRequest {
                     session_id: session_id.to_string(),
                 },
@@ -805,6 +853,7 @@ impl RemoteKalamClient {
     ) -> Result<String, tonic::Status> {
         let response = self
             .call_plain_status(
+                session_id,
                 CommitTransactionRequest {
                     session_id:     session_id.to_string(),
                     transaction_id: transaction_id.to_string(),
@@ -851,6 +900,7 @@ impl RemoteKalamClient {
     ) -> Result<String, tonic::Status> {
         let response = self
             .call_plain_status(
+                session_id,
                 RollbackTransactionRequest {
                     session_id:     session_id.to_string(),
                     transaction_id: transaction_id.to_string(),

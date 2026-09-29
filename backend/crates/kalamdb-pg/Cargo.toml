@@ -48,6 +48,7 @@ kalamdb-backend = { path = "../kalamdb-backend" }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
 kalamdb-core = { path = "../kalamdb-core", features = ["test-helpers"] }
+kalamdb-pg-bridge = { path = "../kalamdb-pg-bridge" }
 kalamdb-sharding = { path = "../kalamdb-sharding" }
 kalamdb-system = { path = "../kalamdb-system" }
 ntest = { workspace = true }

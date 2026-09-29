@@ -400,7 +400,11 @@ where
         let schema = self.schema_ref();
         let pk_name = self.primary_key_field_name();
 
-        if !self.pre_authorize_scan(scan_context, authorization_filter).await? {
+        if !kalamdb_observability::kdb_await_in_info_span!(
+            self.pre_authorize_scan(scan_context, authorization_filter),
+            "table.pre_authorize"
+        )? {
+            let _materialize = kalamdb_observability::kdb_info_span_entered!("table.materialize");
             let (target, rows) =
                 materialize_scan_rows(&schema, Vec::<(K, V)>::new(), projection, |_, _| {})?;
             return Ok(Some((target, rows)));
@@ -417,11 +421,15 @@ where
                 )
                 .await?;
                 let resolved = if self.requires_row_authorization(scan_context) {
-                    self.authorize_resolved_rows(scan_context, resolved.into_iter().collect())
-                        .await?
+                    kalamdb_observability::kdb_await_in_info_span!(
+                        self.authorize_resolved_rows(scan_context, resolved.into_iter().collect(),),
+                        "table.authorize_rows"
+                    )?
                 } else {
                     resolved.into_iter().collect()
                 };
+                let _materialize =
+                    kalamdb_observability::kdb_info_span_entered!("table.materialize");
                 let (target, rows) =
                     materialize_scan_rows(&schema, resolved, projection, |_, _| {})?;
                 return Ok(Some((target, rows)));
@@ -600,11 +608,12 @@ where
     }
 
     async fn produce_scalar_rows(&self) -> DataFusionResult<Option<(SchemaRef, Vec<Row>)>> {
-        // `id = $1` is Exact, so `base_scan` keeps a residual physical filter
-        // and output projection. The hot PK lookup already applied that
-        // equality. Treating `physical_filter.is_some()` as "must use Arrow"
-        // disables skip-Arrow on every cached point get, including the
-        // comparison bake-off (`SELECT id, owner, room, data FROM t WHERE id = $1`).
+        // `id = $1` is Exact. `base_scan` skips PhysicalExpr for that shape
+        // because the hot PK lookup already applied the equality, but it may
+        // still set `output_projection`. Treating `physical_filter.is_some()`
+        // as "must use Arrow" used to disable skip-Arrow on every cached point
+        // get, including the bake-off (`SELECT id, owner, room, data FROM t
+        // WHERE id = $1`).
         //
         // Inspect the full scan filter list (`authorization_filter`), not
         // `self.filter`. The latter is the inexact/source-pruning subset, which
@@ -983,14 +992,20 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         self.validate_transaction_table_access(state)?;
         self.ensure_leader_read(state).await.map_err(kalam_error_to_datafusion)?;
 
+        let _scan_plan = kalamdb_observability::kdb_info_span_entered!("table.scan_plan");
+        let pk_name = self.primary_key_field_name();
         let descriptor = self.scan_descriptor(projection, filters, limit);
         let pruning = descriptor.pruning_request();
-        let filter_evaluation =
-            mvcc_filter_evaluation(pruning.filters.filters.as_ref(), self.primary_key_field_name());
-        let _ = pruning.limit.limit;
+        let filter_evaluation = mvcc_filter_evaluation(pruning.filters.filters.as_ref(), pk_name);
         let source_filter = combined_filter(filter_evaluation.inexact.filters.as_ref());
         let authorization_filter = combined_filter(filters);
-        let exact_filter = combined_filter(filter_evaluation.exact.filters.as_ref());
+        let skip_physical_expr =
+            is_simple_pk_equality_filter(authorization_filter.as_ref(), pk_name);
+        let exact_filter = if skip_physical_expr {
+            None
+        } else {
+            combined_filter(filter_evaluation.exact.filters.as_ref())
+        };
         let effective_projection =
             pruning.projection.columns.as_ref().map(|indices| indices.as_ref().to_vec());
 
@@ -1017,13 +1032,20 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                 .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?,
             None => Arc::clone(&descriptor.schema),
         };
+        // PK equality is already applied by `resolve_pk_point_lookup`. Building
+        // a DataFusion PhysicalExpr for `id = $1` is unused on both the skip-Arrow
+        // and batch PK fast paths.
         let physical_filter = if let Some(filter) = exact_filter {
             let df_schema = DFSchema::try_from(Arc::clone(&merged_schema))?;
+            let _physical = kalamdb_observability::kdb_info_span_entered!("table.physical_expr");
             Some(state.create_physical_expr(filter, &df_schema)?)
         } else {
             None
         };
-        let scan_context = self.build_scan_context(state).map_err(kalam_error_to_datafusion)?;
+        let scan_context = {
+            let _ctx = kalamdb_observability::kdb_info_span_entered!("table.scan_context");
+            self.build_scan_context(state).map_err(kalam_error_to_datafusion)?
+        };
         let source = Arc::new(DeferredMvccScanSource::<Self, K, V> {
             provider: self.clone(),
             scan_context,
@@ -1114,28 +1136,33 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             return Ok(());
         }
 
-        let coordinator = self.cluster_coordinator();
-        if !coordinator.is_cluster_mode().await {
-            return Ok(());
-        }
-
-        match self.provider_table_type() {
-            TableType::User | TableType::Stream => {
-                if !coordinator.is_leader_for_user(user_id).await {
-                    let leader_addr = coordinator.leader_addr_for_user(user_id).await;
-                    return Err(KalamDbError::NotLeader { leader_addr });
+        kalamdb_observability::kdb_await_in_info_span!(
+            async {
+                let coordinator = self.cluster_coordinator();
+                if !coordinator.is_cluster_mode().await {
+                    return Ok(());
                 }
-            },
-            TableType::Shared => {
-                if !coordinator.is_leader_for_shared().await {
-                    let leader_addr = coordinator.leader_addr_for_shared().await;
-                    return Err(KalamDbError::NotLeader { leader_addr });
-                }
-            },
-            TableType::System => {},
-        }
 
-        Ok(())
+                match self.provider_table_type() {
+                    TableType::User | TableType::Stream => {
+                        if !coordinator.is_leader_for_user(user_id).await {
+                            let leader_addr = coordinator.leader_addr_for_user(user_id).await;
+                            return Err(KalamDbError::NotLeader { leader_addr });
+                        }
+                    },
+                    TableType::Shared => {
+                        if !coordinator.is_leader_for_shared().await {
+                            let leader_addr = coordinator.leader_addr_for_shared().await;
+                            return Err(KalamDbError::NotLeader { leader_addr });
+                        }
+                    },
+                    TableType::System => {},
+                }
+
+                Ok(())
+            },
+            "table.ensure_leader"
+        )
     }
 
     // ===========================
@@ -1450,24 +1477,30 @@ where
     K: StorageKey + Send + Sync + 'static,
     V: ScanRow + Send + Sync + 'static,
 {
-    let latest_hot = provider
-        .scan_latest_hot_pk_entry(scan_context, pk_scalar, storage_ordinals)
-        .await?;
+    let latest_hot = kalamdb_observability::kdb_await_in_info_span!(
+        provider.scan_latest_hot_pk_entry(scan_context, pk_scalar, storage_ordinals),
+        "table.pk_hot_get"
+    )?;
     if latest_hot.as_ref().is_some_and(|(_, row)| row.deleted_flag()) {
         return Ok(None);
     }
     let hot = visible_hot_entry(latest_hot);
 
-    let skip_cold = match provider
-        .core()
-        .services
-        .manifest_service
-        .get_or_load_async(provider.table_id(), provider.scan_cold_scope(scan_context))
-        .await
-    {
-        Ok(entry) => cached_manifest_is_hot_only(entry.as_deref()),
-        Err(_) => false,
-    };
+    let skip_cold = kalamdb_observability::kdb_await_in_info_span!(
+        async {
+            match provider
+                .core()
+                .services
+                .manifest_service
+                .get_or_load_async(provider.table_id(), provider.scan_cold_scope(scan_context))
+                .await
+            {
+                Ok(entry) => cached_manifest_is_hot_only(entry.as_deref()),
+                Err(_) => false,
+            }
+        },
+        "table.manifest_hot_only"
+    );
     if skip_cold {
         return Ok(hot);
     }
@@ -1699,7 +1732,10 @@ pub async fn pk_exists_in_cold(
 
     // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
     let manifest_service = core.services.manifest_service.clone();
-    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
+    let cache_result = kalamdb_observability::kdb_await_in_info_span!(
+        manifest_service.get_or_load_async(table_id, user_id),
+        "table.pk_cold_exists"
+    );
 
     let manifest: Option<&Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(&entry.manifest),
@@ -1910,7 +1946,10 @@ pub async fn pk_exists_batch_in_cold(
 
     // 1. Load manifest through the centralized memory -> RocksDB -> storage path.
     let manifest_service = core.services.manifest_service.clone();
-    let cache_result = manifest_service.get_or_load_async(table_id, user_id).await;
+    let cache_result = kalamdb_observability::kdb_await_in_info_span!(
+        manifest_service.get_or_load_async(table_id, user_id),
+        "table.pk_cold_exists"
+    );
 
     let manifest: Option<&Manifest> = match &cache_result {
         Ok(Some(entry)) => Some(&entry.manifest),

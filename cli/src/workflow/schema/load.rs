@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use kalamdb_sql::{canonical_contract_hash, compile_contract, ContractSnapshot, ContractSource};
+use kalamdb_sql::{
+    apply_identity_manifest, canonical_contract_hash, compile_contract, ContractSnapshot,
+    ContractSource, TypeIdentityManifest,
+};
 
 use crate::{
     error::{CLIError, Result},
@@ -62,9 +65,31 @@ pub fn compile_project_contract(
             sql:  sql.as_str(),
         })
         .collect();
-    let snapshot = compile_contract(&sources, DEFAULT_NAMESPACE).map_err(|err| {
+    let mut snapshot = compile_contract(&sources, DEFAULT_NAMESPACE).map_err(|err| {
         CLIError::ConfigurationError(format!("failed to compile schema contract: {}", err.message))
     })?;
+    let identity_path = if path.is_dir() {
+        Some(path.join("identity.json"))
+    } else {
+        path.parent().map(|parent| parent.join("identity.json"))
+    };
+    if let Some(identity_path) = identity_path {
+        if identity_path.exists() {
+            let json = read_schema_file(&identity_path)?;
+            let manifest = TypeIdentityManifest::parse(&json).map_err(|err| {
+                CLIError::ConfigurationError(format!(
+                    "failed to parse type identity manifest: {}",
+                    err.message
+                ))
+            })?;
+            apply_identity_manifest(&mut snapshot, &manifest).map_err(|err| {
+                CLIError::ConfigurationError(format!(
+                    "failed to apply type identity manifest: {}",
+                    err.message
+                ))
+            })?;
+        }
+    }
     let hash = canonical_contract_hash(&snapshot);
     Ok((snapshot, hash))
 }

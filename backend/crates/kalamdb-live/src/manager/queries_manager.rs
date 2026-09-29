@@ -276,7 +276,8 @@ impl LiveQueryManager {
             .options
             .as_ref()
             .and_then(|options| options.batch_size)
-            .unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
+            .unwrap_or(kalamdb_commons::websocket::MAX_ROWS_PER_BATCH)
+            .clamp(1, kalamdb_commons::websocket::MAX_ROWS_PER_BATCH);
 
         // Compile row-local filter from WHERE clause once for live change fanout.
         let where_clause = parsed_query.where_clause.clone();

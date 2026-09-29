@@ -125,7 +125,9 @@ pub async fn start_server_on_ephemeral_port(
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ephemeral port");
     let port = listener.local_addr().expect("local addr").port();
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-    let service = KalamPgService::new(false, None).with_operation_executor(executor);
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor);
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()

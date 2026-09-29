@@ -100,6 +100,12 @@ impl FunctionService {
         request_state.sync(&coordinator);
         let owned_tx = !request_state.is_active();
         let mut began_owned_tx = false;
+        // Armed once this call begins its own transaction. Drop rolls that
+        // transaction back if the caller disconnects before commit.
+        let owned_tx_guard = OwnedFunctionTx {
+            app: Arc::clone(&app),
+            id:  Mutex::new(None),
+        };
 
         let actor = exec_ctx.user_id().clone();
         let origin_kind = origin.kind();
@@ -116,6 +122,7 @@ impl FunctionService {
             &coordinator,
             owned_tx,
             &mut began_owned_tx,
+            &owned_tx_guard,
         )
         .await;
         if let Err(error) = &invoke_result {
@@ -188,6 +195,9 @@ impl FunctionService {
         match invoke_result {
             Ok(result) => {
                 if began_owned_tx {
+                    // Disarm before commit so a drop during commit cannot roll
+                    // back a transaction that is already committing.
+                    owned_tx_guard.disarm();
                     request_state
                         .commit(&coordinator)
                         .await
@@ -198,6 +208,7 @@ impl FunctionService {
             Err(error) => {
                 if began_owned_tx {
                     let _ = request_state.rollback(&coordinator);
+                    owned_tx_guard.disarm();
                 }
                 Err(error)
             },
@@ -215,6 +226,7 @@ async fn invoke_root(
     coordinator: &AppContextRequestTransactionCoordinator<'_>,
     owned_tx: bool,
     began_owned_tx: &mut bool,
+    owned_tx_guard: &OwnedFunctionTx,
 ) -> Result<FunctionCallResult, KalamDbError> {
     if app.function_runtime().active_set().generation == 0 {
         rebuild_active_function_set(&app).await?;
@@ -267,6 +279,9 @@ async fn invoke_root(
         scope:    InvocationScope {
             deadline: std::time::Instant::now()
                 + app.function_runtime().engine().map_err(map_functions)?.config().timeout,
+            // Cancelled when the HTTP statement future is dropped, and again
+            // on timeout inside the engine. The socket watch lives on the
+            // connection, not here.
             cancel:   CancellationToken::new(),
             depth:    0,
         },
@@ -277,8 +292,10 @@ async fn invoke_root(
         let engine = host.app.function_runtime().engine().map_err(map_functions)?;
         let admission = engine.admit(&invocation).await.map_err(map_functions)?;
         if owned_tx {
-            request_state.begin(coordinator).map_err(map_request_transaction_error)?;
+            let transaction_id =
+                request_state.begin(coordinator).map_err(map_request_transaction_error)?;
             *began_owned_tx = true;
+            owned_tx_guard.arm(transaction_id);
         }
         let value = engine
             .invoke_admitted(invocation, child, admission)
@@ -288,7 +305,12 @@ async fn invoke_root(
         if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
             KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
         })? {
-            bind::validate_call_return(&stores, &routine, &value)?;
+            bind::validate_call_return(
+                host.app.schema_registry().type_registry(),
+                &stores,
+                &routine,
+                &value,
+            )?;
         }
         value
     };
@@ -334,7 +356,12 @@ async fn invoke_on_host(
     if let Some(routine) = stores.get_routine(&routine_id).map_err(|error| {
         KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
     })? {
-        bind::validate_call_return(&stores, &routine, &value)?;
+        bind::validate_call_return(
+            host.app.schema_registry().type_registry(),
+            &stores,
+            &routine,
+            &value,
+        )?;
     }
     Ok(value)
 }
@@ -371,7 +398,12 @@ pub(super) fn prepare_call(
     );
 
     let revision = revision_for_routine(host, &routine)?;
-    bind::validate_call_arguments(&stores, &routine.routine_id, args)?;
+    bind::validate_call_arguments(
+        host.app.schema_registry().type_registry(),
+        &stores,
+        &routine.routine_id,
+        args,
+    )?;
     let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
     let args = attach_transfer(&args, &revision.contract_hash);
     let frame = ProcedureFrame {
@@ -438,6 +470,11 @@ fn inline_revision(artifact: &InlineArtifact) -> Arc<ModuleRevision> {
 }
 
 pub async fn rebuild_active_function_set(app: &AppContext) -> Result<(), KalamDbError> {
+    // Concurrent CREATE PROCEDURE calls each rebuild from a catalog snapshot.
+    // Without this lock, a snapshot taken earlier can publish last and drop a
+    // procedure that a later snapshot already installed.
+    let runtime = app.function_runtime();
+    let _rebuild = runtime.rebuild_lock().lock().await;
     let stores = app.system_tables().catalog_stores();
     let module_id = FunctionModuleId::new(app.config().functions.module.as_str());
     let activation = FunctionActivation::new(stores.clone());
@@ -623,6 +660,29 @@ pub async fn rollback_module_revision(
         .map_err(map_functions)?;
     rebuild_active_function_set(app).await?;
     Ok(outcome)
+}
+
+struct OwnedFunctionTx {
+    app: Arc<AppContext>,
+    id:  Mutex<Option<TransactionId>>,
+}
+
+impl OwnedFunctionTx {
+    fn arm(&self, transaction_id: TransactionId) {
+        *self.id.lock() = Some(transaction_id);
+    }
+
+    fn disarm(&self) {
+        self.id.lock().take();
+    }
+}
+
+impl Drop for OwnedFunctionTx {
+    fn drop(&mut self) {
+        if let Some(transaction_id) = self.id.lock().take() {
+            let _ = self.app.transaction_coordinator().rollback(&transaction_id);
+        }
+    }
 }
 
 struct ActiveRunGuard {

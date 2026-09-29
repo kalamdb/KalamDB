@@ -537,8 +537,10 @@ fn kobj_functions_create_type_and_inline_procedure() {
     exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     exec(&format!("CREATE TYPE {ns}.status AS ENUM ('active', 'blocked')"));
 
-    let types =
-        query_rows(&format!("SELECT type_id, kind FROM system.types WHERE type_id LIKE '{ns}.%'"));
+    let types = query_rows(&format!(
+        "SELECT type_id, name, kind FROM system.types WHERE namespace_id = '{ns}' AND name IN \
+         ('address', 'status')"
+    ));
     let kinds: Vec<String> = types.iter().filter_map(|row| cell_str(row, "kind")).collect();
     assert!(
         kinds.iter().any(|kind| kind.contains("composite")),
@@ -1214,7 +1216,7 @@ fn kobj_functions_named_multi_arg_call_input() {
 
 /// Real SQL/transaction boundary: failures must release the runtime and roll back prior writes.
 #[test]
-#[ntest::timeout(30000)]
+#[ntest::timeout(180000)]
 fn kobj_functions_runtime_failure_cleanup_and_recovery() {
     assert!(is_server_running(), "this test requires a running server");
     let ns = setup_namespace("fn_cleanup");

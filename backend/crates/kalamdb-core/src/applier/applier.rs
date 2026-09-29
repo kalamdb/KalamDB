@@ -144,6 +144,19 @@ pub trait UnifiedApplier: Send + Sync {
         pk_values: Option<Vec<String>>,
     ) -> Result<DataResponse, ApplierError>;
 
+    /// Replicate a catalog type that was already written on this node.
+    async fn upsert_catalog_type(
+        &self,
+        catalog_type: kalamdb_system::CatalogType,
+        fields: Vec<kalamdb_system::CatalogTypeField>,
+    ) -> Result<String, ApplierError>;
+
+    /// Replicate removal of a catalog type that was already dropped on this node.
+    async fn drop_catalog_type(
+        &self,
+        type_id: kalamdb_commons::models::TypeId,
+    ) -> Result<String, ApplierError>;
+
     /// Commit a staged explicit transaction through a single Raft proposal.
     async fn commit_transaction(
         &self,
@@ -182,6 +195,16 @@ impl RaftApplier {
     /// Get the executor
     fn executor(&self) -> &CommandExecutorImpl {
         &self.executor
+    }
+
+    /// Unit tests construct a Raft manager that has not elected a leader.
+    fn meta_raft_accepts_proposals(&self) -> bool {
+        let executor = self.executor().app_context().executor();
+        let Some(raft) = executor.as_any().downcast_ref::<RaftExecutor>() else {
+            return false;
+        };
+        let manager = raft.manager();
+        manager.current_leader(GroupId::Meta).is_some() || manager.is_leader(GroupId::Meta)
     }
 
     /// Propose a meta command to the Meta Raft group
@@ -233,11 +256,11 @@ impl RaftApplier {
     ) -> Result<DataResponse, ApplierError> {
         let app_ctx = self.executor().app_context();
 
-        app_ctx
-            .executor()
-            .execute_shared_data(cmd)
-            .await
-            .map_err(|e| ApplierError::Raft(e.to_string()))
+        kalamdb_observability::kdb_await_in_info_span!(
+            app_ctx.executor().execute_shared_data(cmd),
+            "raft.shared_data"
+        )
+        .map_err(|e| ApplierError::Raft(e.to_string()))
     }
 
     fn transaction_group_id(
@@ -286,6 +309,32 @@ impl UnifiedApplier for RaftApplier {
     async fn drop_table(&self, table_id: TableId) -> Result<String, ApplierError> {
         let cmd = MetaCommand::DropTable { table_id };
         self.propose_meta(cmd, "DROP TABLE").await
+    }
+
+    async fn upsert_catalog_type(
+        &self,
+        catalog_type: kalamdb_system::CatalogType,
+        fields: Vec<kalamdb_system::CatalogTypeField>,
+    ) -> Result<String, ApplierError> {
+        if !self.meta_raft_accepts_proposals() {
+            return Ok("catalog type stored locally".to_string());
+        }
+        let cmd = MetaCommand::UpsertCatalogType {
+            catalog_type,
+            fields,
+        };
+        self.propose_meta(cmd, "UPSERT TYPE").await
+    }
+
+    async fn drop_catalog_type(
+        &self,
+        type_id: kalamdb_commons::models::TypeId,
+    ) -> Result<String, ApplierError> {
+        if !self.meta_raft_accepts_proposals() {
+            return Ok("catalog type dropped locally".to_string());
+        }
+        let cmd = MetaCommand::DropCatalogType { type_id };
+        self.propose_meta(cmd, "DROP TYPE").await
     }
 
     // =========================================================================
@@ -415,8 +464,10 @@ impl UnifiedApplier for RaftApplier {
         actor_user_id: Option<UserId>,
         rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError> {
-        let (rows, encoded_fields) =
-            super::ordinal_dml::encode_insert_rows(self.executor().app_context(), &table_id, rows);
+        let (rows, encoded_fields) = {
+            let _encode_span = kalamdb_observability::kdb_info_span_entered!("raft.encode_insert");
+            super::ordinal_dml::encode_insert_rows(self.executor().app_context(), &table_id, rows)
+        };
         let raft_cmd = SharedDataCommand::Insert {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,

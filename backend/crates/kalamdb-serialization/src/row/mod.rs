@@ -1,6 +1,7 @@
 //! Ordinal nested row codec.
 
 mod array;
+mod batch;
 mod decode;
 mod encode;
 mod from_table;
@@ -13,12 +14,16 @@ pub use decode::{
     decode_row_fields, decode_shared_row, decode_shared_row_selected, decode_stream_row,
     decode_user_row, decode_user_row_selected,
 };
+pub use batch::{
+    decode_payloads_to_arrow_batch, MAX_BATCH_BYTES, MAX_BATCH_ROWS, MAX_LIST_LEN, MAX_NESTING,
+};
 pub use encode::{
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
     encode_stream_row, encode_user_row, encode_user_row_from_columns,
 };
 pub use from_table::{
     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
+    storage_schema_from_table_with_arrow,
 };
 pub use metadata::{decode_row_metadata, RowMetadata};
 pub use schema::{StorageDataType, StorageField, StorageSchema};

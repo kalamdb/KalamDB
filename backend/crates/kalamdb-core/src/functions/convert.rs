@@ -85,8 +85,7 @@ fn bind_typed_argument(
         return Ok(ScalarValue::Null);
     }
     let coerced = coerce_typed_json(data_type, value)?;
-    json_value_to_scalar_for_column(&coerced, data_type)
-        .map_err(|error| KalamDbError::InvalidSql(error))
+    json_value_to_scalar_for_column(&coerced, data_type).map_err(KalamDbError::InvalidSql)
 }
 
 fn coerce_typed_json(
@@ -187,7 +186,9 @@ fn rows_to_routine(batches: &[arrow::array::RecordBatch]) -> Result<RoutineValue
         return Ok(RoutineValue::new(ScalarValue::Null));
     }
     let row_count: usize = batches.iter().map(|batch| batch.num_rows()).sum();
-    let batch = batches.iter().find(|batch| batch.num_rows() > 0).expect("nonempty result");
+    let Some(batch) = batches.iter().find(|batch| batch.num_rows() > 0) else {
+        return Ok(RoutineValue::new(ScalarValue::Null));
+    };
     if row_count == 1 && batch.num_columns() == 1 {
         let scalar = ScalarValue::try_from_array(batch.column(0), 0)
             .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;

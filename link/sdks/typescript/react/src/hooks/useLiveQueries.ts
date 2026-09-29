@@ -5,7 +5,7 @@ import type {
   LiveQueryControllerSnapshot,
   LiveQueryDescriptor,
 } from '@kalamdb/client';
-import type { Table } from 'drizzle-orm';
+import type { SQLWrapper, Table } from 'drizzle-orm';
 import { useKalamClient } from '../context.js';
 import type {
   DrizzleLiveQueryDefinition,
@@ -220,8 +220,9 @@ function compileDescriptor(
   definition: DrizzleLiveQueryDefinition<Table>,
 ): LiveQueryDescriptor<unknown> {
   return orm.compileLiveTableDescriptor(definition.table, {
-    where: definition.where?.(definition.table),
-    orderBy: definition.orderBy?.(definition.table),
+    // App SQL objects are runtime-compatible; don't require drizzle's private SQL class.
+    where: definition.where?.(definition.table) as SQLWrapper | undefined,
+    orderBy: definition.orderBy?.(definition.table) as SQLWrapper | SQLWrapper[] | undefined,
     limit: definition.limit,
     getKey: definition.getKey,
   }) as LiveQueryDescriptor<unknown>;

@@ -668,6 +668,12 @@ impl VirtualView for SettingsView {
                         "Days to keep completed, failed, cancelled, and skipped jobs",
                         "jobs"
                     ),
+                    (
+                        "jobs.max_runtime_seconds",
+                        config.jobs.max_runtime_seconds,
+                        "Maximum job runtime in seconds (0 disables)",
+                        "jobs"
+                    ),
                 ]
             );
 

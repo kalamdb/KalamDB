@@ -652,6 +652,52 @@ impl MetaApplier for ProviderMetaApplier {
         .await
     }
 
+    async fn upsert_catalog_type(
+        &self,
+        catalog_type: &kalamdb_system::CatalogType,
+        fields: &[kalamdb_system::CatalogTypeField],
+    ) -> Result<String, RaftError> {
+        let app = self.app_context.clone();
+        let catalog_type = catalog_type.clone();
+        let fields = fields.to_vec();
+        run_blocking_raft(move || {
+            let stores = app.system_tables().catalog_stores();
+            let type_id = catalog_type.type_id.clone();
+            stores
+                .upsert_type(catalog_type)
+                .map_err(|error| RaftError::Internal(error.to_string()))?;
+            stores
+                .replace_type_fields(&type_id, fields)
+                .map_err(|error| RaftError::Internal(error.to_string()))?;
+            let registry = app.schema_registry();
+            let mut related = vec![type_id.clone()];
+            related.extend(registry.type_registry().dependent_type_ids(&type_id));
+            registry.type_registry().invalidate(&type_id);
+            registry.invalidate_tables_using_named_types(&related);
+            Ok(format!("catalog type {type_id} upserted"))
+        })
+        .await
+    }
+
+    async fn drop_catalog_type(
+        &self,
+        type_id: &kalamdb_commons::models::TypeId,
+    ) -> Result<String, RaftError> {
+        let app = self.app_context.clone();
+        let type_id = type_id.clone();
+        run_blocking_raft(move || {
+            let stores = app.system_tables().catalog_stores();
+            stores
+                .drop_type_applied(&type_id)
+                .map_err(|error| RaftError::Internal(error.to_string()))?;
+            let registry = app.schema_registry();
+            registry.type_registry().invalidate(&type_id);
+            registry.invalidate_tables_using_named_types(std::slice::from_ref(&type_id));
+            Ok(format!("catalog type {type_id} dropped"))
+        })
+        .await
+    }
+
     async fn activate_function_revision(
         &self,
         module: &CatalogFunctionModule,

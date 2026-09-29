@@ -79,6 +79,30 @@ impl DdlExecutor {
         let table_def = table_def.clone();
         with_plan_cache_invalidation(app_context, move |app_context: Arc<AppContext>| async move {
             run_blocking_applier(move || {
+                let previous =
+                    app_context.schema_registry().get_table_if_exists(&table_id).map_err(|e| {
+                        ApplierError::Execution(format!(
+                            "Failed to load table {} before alter: {}",
+                            table_id.full_name(),
+                            e
+                        ))
+                    })?;
+                // Index keys live in each replica's RocksDB. Backfill before the
+                // new schema is published so a reader never sees the index empty.
+                kalamdb_tables::sync_scalar_indexes(
+                    app_context.storage_backend(),
+                    &table_id,
+                    previous.as_deref(),
+                    &table_def,
+                )
+                .map_err(|e| {
+                    ApplierError::Execution(format!(
+                        "Failed to sync scalar indexes on {}: {}",
+                        table_id.full_name(),
+                        e
+                    ))
+                })?;
+
                 app_context.schema_registry().register_table(table_def.clone()).map_err(|e| {
                     ApplierError::Execution(format!("Failed to register altered table: {}", e))
                 })?;

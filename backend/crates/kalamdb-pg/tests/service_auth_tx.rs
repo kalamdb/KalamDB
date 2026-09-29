@@ -41,6 +41,7 @@ fn init_test_auth_settings() -> AuthSettings {
 
 fn service() -> KalamPgService {
     KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
         .with_operation_executor(Arc::new(LocalRegistryExecutor::default()))
 }
 
@@ -1030,7 +1031,9 @@ async fn begin_after_commit_succeeds() {
 
 #[tokio::test]
 async fn execute_sql_closes_ephemeral_idle_session() {
-    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(SqlExecutor));
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(Arc::new(SqlExecutor));
 
     service
         .execute_sql(plain_request(ExecuteSqlRpcRequest {
@@ -1045,7 +1048,9 @@ async fn execute_sql_closes_ephemeral_idle_session() {
 
 #[tokio::test]
 async fn execute_query_closes_ephemeral_idle_session() {
-    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(SqlExecutor));
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(Arc::new(SqlExecutor));
 
     service
         .execute_query(plain_request(ExecuteQueryRpcRequest {
@@ -1060,7 +1065,9 @@ async fn execute_query_closes_ephemeral_idle_session() {
 
 #[tokio::test]
 async fn execute_sql_keeps_preexisting_session_open() {
-    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(SqlExecutor));
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(Arc::new(SqlExecutor));
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1085,7 +1092,9 @@ async fn execute_sql_keeps_preexisting_session_open() {
 
 #[tokio::test]
 async fn execute_query_keeps_preexisting_session_open() {
-    let service = KalamPgService::new(false, None).with_operation_executor(Arc::new(SqlExecutor));
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(Arc::new(SqlExecutor));
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1113,7 +1122,9 @@ async fn execute_query_passes_json_operator_sql_through_without_rewrite() {
     // With datafusion-functions-json the -> / ->> operators are handled by
     // DataFusion's planner, so the PG service must forward the raw SQL.
     let executor = Arc::new(CapturingSqlExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor.clone());
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor.clone());
 
     service
         .execute_query(plain_request(ExecuteQueryRpcRequest {
@@ -1137,7 +1148,9 @@ async fn execute_query_passes_json_operator_sql_through_without_rewrite() {
 #[tokio::test]
 async fn transaction_rpcs_delegate_to_configured_operation_executor() {
     let executor = Arc::new(RecordingExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor.clone());
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor.clone());
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1190,7 +1203,9 @@ async fn transaction_rpcs_delegate_to_configured_operation_executor() {
 #[tokio::test]
 async fn close_session_rolls_back_via_configured_operation_executor() {
     let executor = Arc::new(RecordingExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor.clone());
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor.clone());
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1225,7 +1240,9 @@ async fn close_session_rolls_back_via_configured_operation_executor() {
 #[tokio::test]
 async fn begin_transaction_reclaims_stale_remote_transaction_via_executor() {
     let executor = Arc::new(RecordingExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor.clone());
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor.clone());
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1260,7 +1277,9 @@ async fn begin_transaction_reclaims_stale_remote_transaction_via_executor() {
 #[tokio::test]
 async fn begin_transaction_reconciles_local_state_when_stale_remote_tx_is_missing() {
     let executor = Arc::new(BeginRollbackNotFoundExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor);
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor);
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1298,7 +1317,9 @@ async fn begin_transaction_reconciles_local_state_when_stale_remote_tx_is_missin
 #[tokio::test]
 async fn commit_transaction_clears_local_state_when_remote_tx_is_already_gone() {
     let executor = Arc::new(CommitNotFoundExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor);
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor);
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1333,7 +1354,9 @@ async fn commit_transaction_clears_local_state_when_remote_tx_is_already_gone() 
 #[tokio::test]
 async fn close_session_succeeds_when_remote_tx_is_already_committed() {
     let executor = Arc::new(RollbackCommittedExecutor::default());
-    let service = KalamPgService::new(false, None).with_operation_executor(executor);
+    let service = KalamPgService::new(false, None)
+        .allow_insecure_unauthenticated()
+        .with_operation_executor(executor);
 
     let session_id = service
         .open_session(plain_request(OpenSessionRequest {
@@ -1453,4 +1476,100 @@ async fn legacy_static_header_still_authenticates_when_bearer_auth_enabled() {
         .expect("legacy shared secret should still authenticate");
 
     assert!(response.into_inner().ok);
+}
+
+fn session_token_request<T>(payload: T, session_token: &str) -> Request<T> {
+    let mut request = Request::new(payload);
+    request.metadata_mut().insert(
+        "x-kalam-session-token",
+        session_token.parse().expect("session token is ascii metadata"),
+    );
+    request
+}
+
+#[tokio::test]
+async fn unconfigured_pg_rpc_rejects_ping_and_open_session() {
+    let service = KalamPgService::new(false, None);
+
+    let ping = service.ping(plain_request(PingRequest {})).await.expect_err("ping");
+    assert_eq!(ping.code(), tonic::Code::Unauthenticated);
+
+    let open = service
+        .open_session(plain_request(OpenSessionRequest {
+            session_id:     String::new(),
+            current_schema: None,
+        }))
+        .await
+        .expect_err("open");
+    assert_eq!(open.code(), tonic::Code::Unauthenticated);
+}
+
+#[tokio::test]
+async fn authenticated_session_id_without_capability_cannot_run_or_close() {
+    let auth = init_test_auth_settings();
+    let repo: Arc<dyn UserRepository> = Arc::new(StaticUserRepo::new(Role::Dba));
+    let service = KalamPgService::new(false, None)
+        .with_bearer_auth(repo)
+        .with_operation_executor(Arc::new(LocalRegistryExecutor::default()));
+    let user_id = kalamdb_commons::UserId::new("pg_bridge_user");
+    let (token, _) = create_and_sign_token(&user_id, &Role::Dba, None, None, &auth.jwt_secret)
+        .expect("create bearer token");
+
+    let opened = service
+        .open_session(auth_request(
+            OpenSessionRequest {
+                session_id:     "pg-42-deadbeef".to_string(),
+                current_schema: None,
+            },
+            &format!("Bearer {token}"),
+        ))
+        .await
+        .expect("open authenticated session")
+        .into_inner();
+    assert!(!opened.session_token.is_empty());
+
+    let begin = BeginTransactionRequest {
+        session_id: opened.session_id.clone(),
+    };
+    let missing_capability = service
+        .begin_transaction(plain_request(begin.clone()))
+        .await
+        .expect_err("session id alone must not authorize DBA work");
+    assert_eq!(missing_capability.code(), tonic::Code::Unauthenticated);
+
+    let forged = service
+        .begin_transaction(session_token_request(begin.clone(), "not-the-issued-token"))
+        .await
+        .expect_err("forged session token");
+    assert_eq!(forged.code(), tonic::Code::Unauthenticated);
+
+    service
+        .begin_transaction(session_token_request(begin, &opened.session_token))
+        .await
+        .expect("issued session token should authorize the bridge session");
+
+    let close_without_token = service
+        .close_session(plain_request(CloseSessionRequest {
+            session_id: opened.session_id.clone(),
+        }))
+        .await
+        .expect_err("live session close requires the capability");
+    assert_eq!(close_without_token.code(), tonic::Code::Unauthenticated);
+
+    service
+        .close_session(session_token_request(
+            CloseSessionRequest {
+                session_id: opened.session_id.clone(),
+            },
+            &opened.session_token,
+        ))
+        .await
+        .expect("close with capability");
+
+    service
+        .close_session(plain_request(CloseSessionRequest {
+            session_id: opened.session_id,
+        }))
+        .await
+        .expect("closing an already closed session stays idempotent");
 }

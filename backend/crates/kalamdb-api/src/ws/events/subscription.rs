@@ -238,7 +238,10 @@ pub async fn handle_subscribe(
 }
 
 fn subscription_batch_size(options: Option<&SubscriptionOptions>) -> usize {
-    options.and_then(|options| options.batch_size).unwrap_or(MAX_ROWS_PER_BATCH)
+    options
+        .and_then(|options| options.batch_size)
+        .unwrap_or(MAX_ROWS_PER_BATCH)
+        .clamp(1, MAX_ROWS_PER_BATCH)
 }
 
 fn validate_subscription_options(
@@ -312,5 +315,17 @@ mod tests {
 
         assert_eq!(batch_size, MAX_ROWS_PER_BATCH);
         assert!(validate_subscription_options(Some(&options), batch_size).is_err());
+    }
+
+    #[test]
+    fn subscription_batch_size_clamps_oversized_client_hint() {
+        let options = SubscriptionOptions {
+            batch_size:         Some(MAX_ROWS_PER_BATCH.saturating_mul(10)),
+            last_rows:          None,
+            from:               None,
+            auto_fetch_batches: None,
+        };
+
+        assert_eq!(subscription_batch_size(Some(&options)), MAX_ROWS_PER_BATCH);
     }
 }

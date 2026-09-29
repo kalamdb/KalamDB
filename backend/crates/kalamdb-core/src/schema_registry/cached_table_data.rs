@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         Arc, OnceLock,
     },
 };
@@ -71,10 +71,8 @@ pub struct TableEntry {
 /// Cached table data containing all metadata and schema information
 ///
 /// This struct consolidates data previously split between separate caches
-/// to eliminate duplication.
-///
-/// **Performance Note**: Moka cache handles LRU eviction automatically based on
-/// access patterns, so we only track timestamps for metrics and debugging.
+/// to eliminate duplication. LRU order lives on the entry itself so the
+/// schema registry does not keep a second DashMap of the same keys.
 pub struct CachedTableData {
     /// Full schema definition with all columns
     pub table: Arc<TableDefinition>,
@@ -101,6 +99,12 @@ pub struct CachedTableData {
     /// **Thread Safety**: first provider read is lock-free after initialization; rare
     /// override/clear paths use a write lock.
     provider: Arc<ProviderSlot>,
+
+    /// Named-type overlay schema (Struct/List). Falls back to builtin `to_arrow_schema`.
+    resolved_arrow: OnceLock<Arc<datafusion::arrow::datatypes::Schema>>,
+
+    /// Monotonic LRU stamp written by SchemaRegistry on access.
+    last_access: AtomicU64,
 }
 
 impl std::fmt::Debug for CachedTableData {
@@ -124,6 +128,8 @@ impl Clone for CachedTableData {
             bloom_filter_columns: self.bloom_filter_columns.clone(),
             indexed_columns:      self.indexed_columns.clone(),
             provider:             Arc::clone(&self.provider),
+            resolved_arrow:       OnceLock::new(),
+            last_access:          AtomicU64::new(self.last_access()),
         }
     }
 }
@@ -141,7 +147,17 @@ impl CachedTableData {
             bloom_filter_columns,
             indexed_columns,
             provider: Arc::new(ProviderSlot::new()),
+            resolved_arrow: OnceLock::new(),
+            last_access: AtomicU64::new(0),
         }
+    }
+
+    pub(crate) fn touch(&self, ts: u64) {
+        self.last_access.store(ts, Ordering::Relaxed);
+    }
+
+    pub(crate) fn last_access(&self) -> u64 {
+        self.last_access.load(Ordering::Relaxed)
     }
 
     /// Create cached table data from a table definition with full initialization
@@ -149,11 +165,18 @@ impl CachedTableData {
     /// This method resolves storage_id and computes all cached fields.
     /// Used when loading table definitions from persistence or creating new tables.
     pub fn from_table_definition(
-        _app_ctx: &AppContext,
+        app_ctx: &AppContext,
         _table_id: &TableId,
         table_def: Arc<TableDefinition>,
     ) -> Result<Self, KalamDbError> {
-        Ok(Self::new(table_def))
+        let cached = Self::new(table_def);
+        let stores = app_ctx.system_tables().catalog_stores();
+        let overlay = app_ctx
+            .schema_registry()
+            .type_registry()
+            .arrow_schema_for_table(&stores, &cached.table)?;
+        let _ = cached.resolved_arrow.set(overlay);
+        Ok(cached)
     }
 
     /// Compute bloom filter columns and indexed columns from table definition
@@ -246,12 +269,12 @@ impl CachedTableData {
     /// # Returns
     /// Arc-wrapped Arrow Schema for zero-copy sharing across TableProvider instances
     pub fn arrow_schema(&self) -> Result<Arc<datafusion::arrow::datatypes::Schema>, KalamDbError> {
-        // Fast path: get schema from cached provider (already computed and stored there)
+        if let Some(overlay) = self.resolved_arrow.get() {
+            return Ok(Arc::clone(overlay));
+        }
         if let Some(provider) = self.get_provider() {
             return Ok(provider.schema());
         }
-
-        // Slow path: compute from TableDefinition (provider not yet created)
         self.table
             .to_arrow_schema()
             .into_schema_error("Failed to convert to Arrow schema")

@@ -56,20 +56,6 @@ pub fn block_system_namespace_modification(
     Ok(())
 }
 
-/// Require admin privileges (DBA or System role) for an operation.
-///
-/// # Arguments
-/// * `context` - The execution context containing user role information
-/// * `action` - Description of the action (e.g., "create storage", "drop namespace")
-///
-/// # Returns
-/// * `Ok(())` if user has admin privileges
-/// * `Err(KalamDbError::Unauthorized)` if user lacks privileges
-///
-/// # Example
-/// ```ignore
-/// require_admin(context, "create storage")?;
-/// ```
 /// Require that `namespace_id` exists in `system.namespaces`.
 ///
 /// Matches CREATE TABLE: procedures and types cannot be created in a
@@ -89,6 +75,7 @@ pub fn require_existing_namespace(
     Ok(())
 }
 
+/// Require admin privileges (DBA or System role) for an operation.
 pub fn require_admin(context: &ExecutionContext, action: &str) -> Result<(), KalamDbError> {
     use kalamdb_session::is_admin_role;
     if !is_admin_role(context.user_role()) {

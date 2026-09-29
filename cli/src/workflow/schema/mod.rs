@@ -1,3 +1,4 @@
+pub mod api_exports;
 pub mod dart;
 pub mod diff;
 pub mod gen;

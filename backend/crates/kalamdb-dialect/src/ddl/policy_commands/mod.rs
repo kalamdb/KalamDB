@@ -39,7 +39,7 @@ fn resolve_table_id(name: &ObjectName, default_namespace: &NamespaceId) -> DdlRe
         .collect::<Result<Vec<_>, _>>()?;
 
     match identifiers.as_slice() {
-        [table] => TableId::try_from_strings(default_namespace.as_str(), table),
+        [table] => TableId::try_from_namespace(default_namespace.clone(), table),
         [namespace, table] => TableId::try_from_strings(namespace, table),
         _ => Err("policy table name must be <table> or <namespace>.<table>".to_string()),
     }

@@ -33,11 +33,16 @@ impl KSerializable for PolicyGenerationRecord {}
 pub struct TablePoliciesTableProvider {
     store:                TablePoliciesStore,
     generations:          PolicyGenerationsStore,
-    /// In-memory generation mirror so hot-path `compiled_for_table` avoids RocksDB.
-    generation_cache:     Arc<DashMap<TableId, u64>>,
+    /// Per-table generation + compiled bundle (same key, one map).
+    runtime:              Arc<DashMap<TableId, TablePolicyRuntime>>,
     reverse_dependencies: Arc<DashMap<TableId, HashSet<PolicyId>>>,
-    compiled_cache:       Arc<DashMap<TableId, Arc<CompiledTablePolicies>>>,
     mutation_lock:        Arc<Mutex<()>>,
+}
+
+#[derive(Clone)]
+struct TablePolicyRuntime {
+    generation: u64,
+    compiled:   Option<Arc<CompiledTablePolicies>>,
 }
 
 impl TablePoliciesTableProvider {
@@ -54,9 +59,8 @@ impl TablePoliciesTableProvider {
         let provider = Self {
             store,
             generations,
-            generation_cache: Arc::new(DashMap::new()),
+            runtime: Arc::new(DashMap::new()),
             reverse_dependencies: Arc::new(DashMap::new()),
-            compiled_cache: Arc::new(DashMap::new()),
             mutation_lock: Arc::new(Mutex::new(())),
         };
         provider.rebuild_reverse_dependencies();
@@ -155,11 +159,13 @@ impl TablePoliciesTableProvider {
         schema_generation: u64,
     ) -> Result<Arc<CompiledTablePolicies>, SystemError> {
         let policy_generation = self.policy_generation(table_id)?;
-        if let Some(compiled) = self.compiled_cache.get(table_id) {
-            if compiled.policy_generation == policy_generation
-                && compiled.schema_generation == schema_generation
-            {
-                return Ok(Arc::clone(compiled.value()));
+        if let Some(runtime) = self.runtime.get(table_id) {
+            if let Some(compiled) = runtime.compiled.as_ref() {
+                if compiled.policy_generation == policy_generation
+                    && compiled.schema_generation == schema_generation
+                {
+                    return Ok(Arc::clone(compiled));
+                }
             }
         }
 
@@ -170,7 +176,13 @@ impl TablePoliciesTableProvider {
             schema_generation,
             policies,
         });
-        self.compiled_cache.insert(table_id.clone(), Arc::clone(&compiled));
+        self.runtime.insert(
+            table_id.clone(),
+            TablePolicyRuntime {
+                generation: policy_generation,
+                compiled:   Some(Arc::clone(&compiled)),
+            },
+        );
         Ok(compiled)
     }
 
@@ -208,15 +220,21 @@ impl TablePoliciesTableProvider {
     }
 
     pub fn policy_generation(&self, table_id: &TableId) -> Result<u64, SystemError> {
-        if let Some(generation) = self.generation_cache.get(table_id) {
-            return Ok(*generation);
+        if let Some(runtime) = self.runtime.get(table_id) {
+            return Ok(runtime.generation);
         }
         let generation = self
             .generations
             .get(table_id)
             .into_system_error("read table policy generation")?
             .map_or(0, |record| record.generation);
-        self.generation_cache.insert(table_id.clone(), generation);
+        self.runtime.insert(
+            table_id.clone(),
+            TablePolicyRuntime {
+                generation,
+                compiled: None,
+            },
+        );
         Ok(generation)
     }
 
@@ -238,9 +256,13 @@ impl TablePoliciesTableProvider {
         self.generations
             .insert(table_id, &PolicyGenerationRecord { generation })
             .into_system_error("write table policy generation")?;
-        self.generation_cache.insert(table_id.clone(), generation);
-        // Drop stale compiled bundles immediately; next bind rebuilds.
-        self.compiled_cache.remove(table_id);
+        self.runtime.insert(
+            table_id.clone(),
+            TablePolicyRuntime {
+                generation,
+                compiled: None,
+            },
+        );
         Ok(generation)
     }
 

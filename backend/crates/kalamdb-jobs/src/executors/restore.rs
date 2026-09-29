@@ -35,7 +35,7 @@ use kalamdb_transfer::{copy_dir_to_dir, finalize_database_restore, prepare_datab
 use serde::{Deserialize, Serialize};
 
 use crate::executors::{
-    database_transfer::{acquire_database_transfer_lock, wait_for_storage_quiescence},
+    database_transfer::{acquire_database_transfer_lock_blocking, wait_for_storage_quiescence},
     JobContext, JobDecision, JobExecutor, JobParams,
 };
 
@@ -86,7 +86,6 @@ impl JobExecutor for RestoreExecutor {
         let params = ctx.params();
         let backup_source = std::path::PathBuf::from(&params.backup_path);
 
-        let _transfer_guard = acquire_database_transfer_lock().await?;
         wait_for_storage_quiescence(ctx).await?;
 
         let config = ctx.app_ctx.config();
@@ -102,6 +101,7 @@ impl JobExecutor for RestoreExecutor {
         let dst_streams = storage.streams_dir();
 
         let result = tokio::task::spawn_blocking(move || -> Result<(), KalamDbError> {
+            let _transfer_guard = acquire_database_transfer_lock_blocking()?;
             let plan = prepare_database_restore(&backup_source)?;
             let rocksdb_backup_dir = plan.rocksdb_dir();
 

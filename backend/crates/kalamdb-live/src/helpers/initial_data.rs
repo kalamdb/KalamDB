@@ -15,7 +15,7 @@ use kalamdb_commons::{
     constants::SystemColumnNames,
     ids::SeqId,
     models::{rows::Row, ReadContext, TableId},
-    Role, TableType,
+    quote_sql_identifier, Role, TableType,
 };
 use once_cell::sync::OnceCell;
 
@@ -168,6 +168,14 @@ struct TableCapabilities {
     has_deleted:    bool,
 }
 
+fn quoted_table_sql(table_id: &TableId) -> String {
+    format!(
+        "{}.{}",
+        quote_sql_identifier(table_id.namespace_id().as_str()),
+        quote_sql_identifier(table_id.table_name().as_str())
+    )
+}
+
 const BLOCKING_MATERIALIZATION_ROW_THRESHOLD: usize = 4_096;
 
 impl InitialDataFetcher {
@@ -232,7 +240,7 @@ impl InitialDataFetcher {
         let user_id = live_id.user_id().clone();
 
         // Execute via trait — handles user scoping and RLS internally
-        let table_name = table_id.full_name(); // "namespace.table"
+        let table_name = quoted_table_sql(table_id);
 
         // Build SELECT clause: either specific columns or *
         // Always include _seq column for pagination, even if not in projections
@@ -247,7 +255,11 @@ impl InitialDataFetcher {
             if has_commit_seq && !columns.iter().any(|c| c == SystemColumnNames::COMMIT_SEQ) {
                 columns.push(SystemColumnNames::COMMIT_SEQ.to_string());
             }
-            columns.join(", ")
+            columns
+                .iter()
+                .map(|column| quote_sql_identifier(column))
+                .collect::<Vec<_>>()
+                .join(", ")
         } else {
             "*".to_string()
         };
@@ -263,20 +275,15 @@ impl InitialDataFetcher {
         }
 
         // Add ORDER BY — use write! to avoid intermediate format! allocations
+        let seq_col = quote_sql_identifier(SystemColumnNames::SEQ);
+        let commit_col = quote_sql_identifier(SystemColumnNames::COMMIT_SEQ);
         if has_commit_seq && options.since_commit_seq.is_some() {
             let direction = if options.fetch_last { "DESC" } else { "ASC" };
-            let _ = write!(
-                sql,
-                " ORDER BY {} {}, {} {}",
-                SystemColumnNames::COMMIT_SEQ,
-                direction,
-                SystemColumnNames::SEQ,
-                direction
-            );
+            let _ = write!(sql, " ORDER BY {commit_col} {direction}, {seq_col} {direction}");
         } else if options.fetch_last {
-            let _ = write!(sql, " ORDER BY {} DESC", SystemColumnNames::SEQ);
+            let _ = write!(sql, " ORDER BY {seq_col} DESC");
         } else {
-            let _ = write!(sql, " ORDER BY {} ASC", SystemColumnNames::SEQ);
+            let _ = write!(sql, " ORDER BY {seq_col} ASC");
         }
 
         // Add LIMIT (fetch limit + 1 to check has_more)
@@ -376,10 +383,10 @@ impl InitialDataFetcher {
         }
 
         let user_id = live_id.user_id().clone();
-        let table_name = table_id.full_name();
+        let table_name = quoted_table_sql(table_id);
         let mut sql = format!(
             "SELECT MAX({}) AS max_commit_seq FROM {}",
-            SystemColumnNames::COMMIT_SEQ,
+            quote_sql_identifier(SystemColumnNames::COMMIT_SEQ),
             table_name
         );
 
@@ -423,9 +430,12 @@ impl InitialDataFetcher {
     ) -> Result<Option<SeqId>, LiveError> {
         let user_id = live_id.user_id().clone();
 
-        let table_name = table_id.full_name();
-        let mut sql =
-            format!("SELECT MAX({}) AS max_seq FROM {}", SystemColumnNames::SEQ, table_name);
+        let table_name = quoted_table_sql(table_id);
+        let mut sql = format!(
+            "SELECT MAX({}) AS max_seq FROM {}",
+            quote_sql_identifier(SystemColumnNames::SEQ),
+            table_name
+        );
 
         let where_clauses =
             self.build_where_clauses(table_type, options, where_clause, table_capabilities);
@@ -466,43 +476,35 @@ impl InitialDataFetcher {
     ) -> Vec<String> {
         let mut where_clauses = Vec::new();
 
+        let seq_col = quote_sql_identifier(SystemColumnNames::SEQ);
+        let commit_col = quote_sql_identifier(SystemColumnNames::COMMIT_SEQ);
         if table_capabilities.has_commit_seq {
             match (options.since_commit_seq, options.since_seq) {
                 (Some(since_commit), Some(since_seq)) => where_clauses.push(format!(
                     "({commit_col} > {since_commit} OR ({commit_col} = {since_commit} AND \
                      {seq_col} > {since_seq}))",
-                    commit_col = SystemColumnNames::COMMIT_SEQ,
-                    seq_col = SystemColumnNames::SEQ,
                     since_seq = since_seq.as_i64()
                 )),
-                (Some(since_commit), None) => where_clauses.push(format!(
-                    "{} > {}",
-                    SystemColumnNames::COMMIT_SEQ,
-                    since_commit
-                )),
-                (None, Some(since_seq)) => where_clauses.push(format!(
-                    "{} > {}",
-                    SystemColumnNames::SEQ,
-                    since_seq.as_i64()
-                )),
+                (Some(since_commit), None) => {
+                    where_clauses.push(format!("{commit_col} > {since_commit}"))
+                },
+                (None, Some(since_seq)) => {
+                    where_clauses.push(format!("{seq_col} > {}", since_seq.as_i64()))
+                },
                 (None, None) => {},
             }
 
             if let Some(until_commit_seq) = options.until_commit_seq {
-                where_clauses.push(format!(
-                    "{} <= {}",
-                    SystemColumnNames::COMMIT_SEQ,
-                    until_commit_seq
-                ));
+                where_clauses.push(format!("{commit_col} <= {until_commit_seq}"));
             } else if let Some(until_seq) = options.until_seq {
-                where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until_seq.as_i64()));
+                where_clauses.push(format!("{seq_col} <= {}", until_seq.as_i64()));
             }
         } else {
             if let Some(since) = options.since_seq {
-                where_clauses.push(format!("{} > {}", SystemColumnNames::SEQ, since.as_i64()));
+                where_clauses.push(format!("{seq_col} > {}", since.as_i64()));
             }
             if let Some(until) = options.until_seq {
-                where_clauses.push(format!("{} <= {}", SystemColumnNames::SEQ, until.as_i64()));
+                where_clauses.push(format!("{seq_col} <= {}", until.as_i64()));
             }
         }
 
@@ -510,7 +512,8 @@ impl InitialDataFetcher {
             && matches!(table_type, TableType::User | TableType::Shared)
             && table_capabilities.has_deleted
         {
-            where_clauses.push(format!("{} = false", SystemColumnNames::DELETED));
+            where_clauses
+                .push(format!("{} = false", quote_sql_identifier(SystemColumnNames::DELETED)));
         }
 
         if let Some(where_sql) = where_clause {
@@ -622,9 +625,9 @@ fn sort_initial_rows(
             });
         }
     } else if options.fetch_last {
-        rows_with_seq.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        rows_with_seq.sort_unstable_by_key(|row| std::cmp::Reverse(row.0));
     } else {
-        rows_with_seq.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        rows_with_seq.sort_unstable_by_key(|row| row.0);
     }
 }
 
@@ -891,7 +894,7 @@ mod tests {
         assert_eq!(boundary, Some(SeqId::from(42)));
         assert_eq!(
             executor.seen_sql.lock().as_deref(),
-            Some("SELECT MAX(_seq) AS max_seq FROM app.items")
+            Some("SELECT MAX(\"_seq\") AS max_seq FROM \"app\".\"items\"")
         );
     }
 
@@ -1007,10 +1010,56 @@ mod tests {
         assert_eq!(
             executor.seen_sql.lock().as_slice(),
             [
-                "SELECT id, _seq FROM app.items WHERE _seq > 10 AND _seq <= 40 AND id > 0 ORDER \
-                 BY _seq ASC LIMIT 3"
+                "SELECT \"id\", \"_seq\" FROM \"app\".\"items\" WHERE \"_seq\" > 10 AND \"_seq\" \
+                 <= 40 AND id > 0 ORDER BY \"_seq\" ASC LIMIT 3"
             ],
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_initial_data_quotes_projection_identifiers() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+        ]));
+        let executor = Arc::new(CaptureFetchExecutor {
+            seen_sql: Mutex::new(Vec::new()),
+            batches:  Vec::new(),
+        });
+        let fetcher = InitialDataFetcher::new(Arc::new(CountingSchemaLookup {
+            schema,
+            calls: StdArc::new(AtomicUsize::new(0)),
+        }));
+        fetcher.set_sql_executor(executor.clone());
+
+        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let live_id = LiveQueryId::new(
+            UserId::new("u1"),
+            kalamdb_commons::models::ConnectionId::new("c1"),
+            "sub1".to_string(),
+        );
+
+        let _ = fetcher
+            .fetch_initial_data(
+                &live_id,
+                Role::User,
+                &table_id,
+                TableType::User,
+                InitialDataOptions::default(),
+                None,
+                Some(&["id; DROP TABLE secrets; --".to_string()]),
+            )
+            .await
+            .expect("quoted projection fetch");
+
+        let sql = executor.seen_sql.lock()[0].clone();
+        assert!(
+            sql.starts_with(
+                "SELECT \"id; DROP TABLE secrets; --\", \"_seq\" FROM \"app\".\"items\""
+            ),
+            "projection must be quoted so it cannot change SQL structure: {sql}"
+        );
+        assert!(!sql.contains("DROP TABLE secrets; --\", \"_seq\" FROM app.items"));
     }
 
     #[tokio::test]
@@ -1055,9 +1104,9 @@ mod tests {
         assert_eq!(
             executor.seen_sql.lock().as_slice(),
             [
-                "SELECT id, _seq, _commit_seq FROM app.items WHERE (_commit_seq > 7 OR \
-                 (_commit_seq = 7 AND _seq > 10)) AND _commit_seq <= 9 ORDER BY _commit_seq ASC, \
-                 _seq ASC LIMIT 3"
+                "SELECT \"id\", \"_seq\", \"_commit_seq\" FROM \"app\".\"items\" WHERE \
+                 (\"_commit_seq\" > 7 OR (\"_commit_seq\" = 7 AND \"_seq\" > 10)) AND \
+                 \"_commit_seq\" <= 9 ORDER BY \"_commit_seq\" ASC, \"_seq\" ASC LIMIT 3"
             ],
         );
     }

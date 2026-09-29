@@ -178,7 +178,9 @@ pub async fn parse_multipart_request(
                 ));
             }
 
-            let file_key = field_name.strip_prefix("file:").unwrap().to_string();
+            let Some(file_key) = field_name.strip_prefix("file:").map(str::to_string) else {
+                continue;
+            };
             let original_name = content_disposition
                 .get_filename()
                 .map(|s| s.to_string())
@@ -307,14 +309,18 @@ pub fn extract_file_placeholders(sql: &str) -> Vec<String> {
             for expected in ['I', 'L', 'E', '('] {
                 if let Some(&next) = chars.peek() {
                     if next.to_ascii_uppercase() == expected {
-                        matched.push(chars.next().unwrap());
+                        if let Some(consumed) = chars.next() {
+                            matched.push(consumed);
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
                 }
             }
 
-            if matched.to_uppercase() == "FILE(" {
+            if matched.eq_ignore_ascii_case("FILE(") {
                 // Skip whitespace
                 while let Some(&c) = chars.peek() {
                     if c.is_whitespace() {
@@ -329,7 +335,7 @@ pub fn extract_file_placeholders(sql: &str) -> Vec<String> {
                     if quote == '"' || quote == '\'' {
                         chars.next();
                         let mut name = String::new();
-                        while let Some(c) = chars.next() {
+                        for c in chars.by_ref() {
                             if c == quote {
                                 break;
                             }
@@ -439,7 +445,7 @@ pub async fn stage_and_finalize_files(
 /// Parse table name from INSERT/UPDATE SQL to determine target table
 /// Returns TableId or None if cannot parse
 #[cfg(test)]
-pub fn extract_table_from_sql(sql: &str, default_namespace: &str) -> Option<TableId> {
+pub fn extract_table_from_sql(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
     kalamdb_sql::extract_dml_table_id(sql, default_namespace)
 }
 
@@ -536,7 +542,7 @@ mod tests {
     #[test]
     fn test_extract_table_from_insert() {
         let sql = "INSERT INTO myapp.users (name) VALUES ('Alice')";
-        let table_id = extract_table_from_sql(sql, "default");
+        let table_id = extract_table_from_sql(sql, &NamespaceId::default_ns());
         assert!(table_id.is_some());
         let tid = table_id.unwrap();
         assert_eq!(tid.namespace_id().as_str(), "myapp");
@@ -546,7 +552,7 @@ mod tests {
     #[test]
     fn test_extract_table_from_insert_no_namespace() {
         let sql = "INSERT INTO users (name) VALUES ('Alice')";
-        let table_id = extract_table_from_sql(sql, "default");
+        let table_id = extract_table_from_sql(sql, &NamespaceId::default_ns());
         assert!(table_id.is_some());
         let tid = table_id.unwrap();
         assert_eq!(tid.namespace_id().as_str(), "default");

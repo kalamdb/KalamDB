@@ -80,6 +80,22 @@ impl StreamLogStoreBackend {
         }
     }
 
+    fn append_puts(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        rows: &[(StreamTableRowId, StreamTableRow)],
+    ) -> Result<()> {
+        match self {
+            Self::Memory(store) => {
+                store.append_puts(table_id, user_id, rows).map_err(map_stream_error)
+            },
+            Self::File(store) => {
+                store.append_puts(table_id, user_id, rows).map_err(map_stream_error)
+            },
+        }
+    }
+
     fn read_in_time_range(
         &self,
         table_id: &TableId,
@@ -209,6 +225,33 @@ impl StreamTableStore {
     /// Append a row.
     pub fn put(&self, key: &StreamTableRowId, entity: &StreamTableRow) -> Result<()> {
         self.log_store.append_row(&self.table_id, key.user_id(), key, entity)
+    }
+
+    /// Append many rows, encoding and writing per user/segment in one pass.
+    pub fn put_batch(&self, rows: &[(StreamTableRowId, StreamTableRow)]) -> Result<()> {
+        match rows {
+            [] => Ok(()),
+            [(key, entity)] => self.put(key, entity),
+            _ => {
+                let first_user = rows[0].0.user_id();
+                if rows.iter().all(|(id, _)| id.user_id() == first_user) {
+                    return self.log_store.append_puts(&self.table_id, first_user, rows);
+                }
+
+                let mut by_user: HashMap<UserId, Vec<(StreamTableRowId, StreamTableRow)>> =
+                    HashMap::new();
+                for (id, row) in rows {
+                    by_user
+                        .entry(id.user_id().clone())
+                        .or_default()
+                        .push((id.clone(), row.clone()));
+                }
+                for (user_id, user_rows) in by_user {
+                    self.log_store.append_puts(&self.table_id, &user_id, &user_rows)?;
+                }
+                Ok(())
+            },
+        }
     }
 
     /// Flush all buffered segment writers to the OS page cache.
@@ -497,6 +540,28 @@ mod tests {
         let retrieved = store.get(&key).unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap(), row);
+    }
+
+    #[test]
+    fn test_stream_table_store_put_batch() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let store = create_test_store(temp_dir.path());
+        let user_id = UserId::new("user1");
+        let rows: Vec<(StreamTableRowId, StreamTableRow)> = (0..8)
+            .map(|i| {
+                let seq = 300 + i;
+                (
+                    StreamTableRowId::new(user_id.clone(), SeqId::new(seq)),
+                    create_test_row(&user_id, seq),
+                )
+            })
+            .collect();
+
+        store.put_batch(&rows).unwrap();
+        for (key, row) in &rows {
+            let retrieved = store.get(key).unwrap().expect("row present");
+            assert_eq!(retrieved, *row);
+        }
     }
 
     #[test]

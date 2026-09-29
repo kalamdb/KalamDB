@@ -28,6 +28,7 @@ pub mod indexed_store; // Phase 15: Automatic secondary index management
 mod persist;
 pub mod raft_storage; // Phase 17: Raft log/meta persistence
 pub mod storage_trait;
+mod write_coalesce;
 
 #[cfg(feature = "rocksdb")]
 pub use backends::rocksdb::{RocksDBBackend, RocksDbInit};
@@ -61,6 +62,7 @@ pub use raft_storage::{
 pub use storage_trait::{
     Operation, Partition, StorageBackend, StorageBackendAsync, StorageError, StorageStats,
 };
+pub use write_coalesce::with_write_coalesce;
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

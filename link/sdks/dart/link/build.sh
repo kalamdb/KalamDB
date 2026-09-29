@@ -297,6 +297,7 @@ build_web() {
       --out-dir "$web_out_dir" \
       --out-name kalam_link_dart \
       --no-opt \
+      --no-pack \
       --profile release-dist
   ) || {
     fail "Web WASM build failed"

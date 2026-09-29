@@ -22,7 +22,9 @@
 //! # Core Types
 //!
 //! - **`TableDefinition`**: Complete table schema (columns, options, versioning)
-//! - **`ColumnDefinition`**: Individual column schema (name, type, constraints)
+//! - **`ColumnDefinition`**: Individual column schema (name, type, constraints). Named `CREATE
+//!   TYPE` columns reuse the same struct via `named_type_id` / [`crate::LogicalTypeRef`] — they are
+//!   not a parallel schema crate.
 //! - **`SchemaVersion`**: Schema evolution tracking (version, changes, timestamp)
 //! - **`TableOptions`**: Type-specific settings (User, Shared, Stream, System)
 //! - **`TableType`**: Table category (User, Shared, Stream, System)

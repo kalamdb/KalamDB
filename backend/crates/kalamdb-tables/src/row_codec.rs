@@ -9,8 +9,8 @@ use kalamdb_commons::{
 };
 use kalamdb_serialization::{
     decode_shared_row, decode_shared_row_selected, decode_user_row, decode_user_row_selected,
-    encode_shared_row, encode_user_row, storage_schema_from_table, StorageDataType, StorageField,
-    StorageSchema,
+    encode_shared_row, encode_user_row, storage_schema_from_table,
+    storage_schema_from_table_with_arrow, StorageDataType, StorageField, StorageSchema,
 };
 use kalamdb_store::{EntityCodec, StorageError};
 
@@ -21,6 +21,16 @@ fn map_ser(err: kalamdb_serialization::SerializationError) -> StorageError {
 /// Build a storage schema from a catalog table definition.
 pub fn storage_schema_for_table(table: &TableDefinition) -> Result<Arc<StorageSchema>, String> {
     storage_schema_from_table(table).map(Arc::new).map_err(|err| err.to_string())
+}
+
+/// Build a storage schema using a resolved Arrow overlay for named TypeId columns.
+pub fn storage_schema_for_table_with_arrow(
+    table: &TableDefinition,
+    arrow: &datafusion::arrow::datatypes::Schema,
+) -> Result<Arc<StorageSchema>, String> {
+    storage_schema_from_table_with_arrow(table, arrow)
+        .map(Arc::new)
+        .map_err(|err| err.to_string())
 }
 
 /// Empty schema for DROP / cleanup paths that never encode or decode rows.

@@ -143,7 +143,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 
         let implicit_table_id = table_id.clone();
         let app_for_type = Arc::clone(&self.app_context);
-        if let Err(error) = run_blocking(move || {
+        match run_blocking(move || {
             crate::catalog_type::ensure_implicit_row_type(
                 &app_for_type.system_tables().catalog_stores(),
                 &implicit_table_id,
@@ -152,10 +152,22 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
         })
         .await
         {
-            log::error!(
-                "failed to catalog implicit row type for {}: {error}",
-                table_id.full_name()
-            );
+            Ok(type_id) => {
+                if let Err(error) =
+                    crate::catalog_type::replicate_stored_type(&self.app_context, &type_id).await
+                {
+                    log::error!(
+                        "failed to replicate implicit row type for {}: {error}",
+                        table_id.full_name()
+                    );
+                }
+            },
+            Err(error) => {
+                log::error!(
+                    "failed to catalog implicit row type for {}: {error}",
+                    table_id.full_name()
+                );
+            },
         }
 
         Ok(ExecutionResult::Success { message })
@@ -244,6 +256,7 @@ mod tests {
             table_type,
             schema,
             column_defaults: std::collections::HashMap::new(),
+            column_type_refs: std::collections::HashMap::new(),
             primary_key_column: Some("id".to_string()),
             storage_id: None,
             use_user_storage: false,

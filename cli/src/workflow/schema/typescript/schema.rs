@@ -103,7 +103,7 @@ pub(super) fn render_schema_source(
             needs_sql:       snapshot_has_default_column(snapshot),
             drizzle_imports: drizzle_imports(snapshot),
             decls:           schema_decls(snapshot, names, procedures),
-            tables:          table_decls(snapshot),
+            tables:          table_decls(snapshot, names),
         },
     )
 }
@@ -263,7 +263,7 @@ fn field_decls(fields: &[ContractField], names: &AssignedNames) -> Vec<FieldDecl
         .collect()
 }
 
-fn table_decls(snapshot: &ContractSnapshot) -> Vec<TableDecl> {
+fn table_decls(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<TableDecl> {
     snapshot
         .tables
         .values()
@@ -281,15 +281,22 @@ fn table_decls(snapshot: &ContractSnapshot) -> Vec<TableDecl> {
                 .iter()
                 .map(|field| ColumnDecl {
                     name: field.name.clone(),
-                    expr: drizzle_column(field),
+                    expr: drizzle_column(field, names),
                 })
                 .collect(),
         })
         .collect()
 }
 
-const DRIZZLE_HELPER_ORDER: &[&str] =
-    &["integer", "text", "timestamp", "boolean", "jsonb", "bigint"];
+const DRIZZLE_HELPER_ORDER: &[&str] = &[
+    "integer",
+    "text",
+    "timestamp",
+    "boolean",
+    "jsonb",
+    "bigint",
+    "customType",
+];
 
 fn snapshot_has_file_column(snapshot: &ContractSnapshot) -> bool {
     snapshot.tables.values().any(|table| table.fields.iter().any(is_file_column))
@@ -329,7 +336,7 @@ fn drizzle_column_helper(field: &ContractField) -> &'static str {
         return "file";
     }
     if field.type_id.is_some() {
-        return "jsonb";
+        return "customType";
     }
     match field.type_name.to_ascii_uppercase().as_str() {
         "BOOLEAN" | "BOOL" => "boolean",
@@ -341,13 +348,21 @@ fn drizzle_column_helper(field: &ContractField) -> &'static str {
     }
 }
 
-fn drizzle_column(field: &ContractField) -> String {
+fn drizzle_column(field: &ContractField, names: &AssignedNames) -> String {
     let name = escape_double_quoted_string(&field.name);
     let helper = drizzle_column_helper(field);
     let mut expr = match helper {
         "file" => format!("file(\"{name}\")"),
         "bigint" => format!("bigint(\"{name}\", {{ mode: \"bigint\" }})"),
         "timestamp" => format!("timestamp(\"{name}\", {{ mode: \"date\" }})"),
+        "customType" => {
+            let ident = field
+                .type_id
+                .as_ref()
+                .map(|id| names.type_ident(id.as_str()))
+                .unwrap_or("never");
+            format!("customType<{{ data: {ident} }}>({{ dataType: () => 'struct' }})(\"{name}\")")
+        },
         _ => format!("{helper}(\"{name}\")"),
     };
     if field.has_default {

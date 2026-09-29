@@ -16,10 +16,10 @@ mod topic_partition_selector;
 
 pub use ack_request::AckRequest;
 pub use ack_response::AckResponse;
-pub use consume_request::ConsumeRequest;
+pub use consume_request::{clamp_consume_limit, ConsumeRequest, MAX_CONSUME_LIMIT};
 pub use consume_response::ConsumeResponse;
 pub use error_response::TopicErrorResponse;
-pub use latest_offsets_request::LatestOffsetsRequest;
+pub use latest_offsets_request::{LatestOffsetsRequest, MAX_LATEST_OFFSET_PARTITIONS};
 pub use latest_offsets_response::LatestOffsetsResponse;
 pub use start_position::StartPosition;
 pub use topic_message::TopicMessage;

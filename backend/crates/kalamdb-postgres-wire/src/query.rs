@@ -282,10 +282,10 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             .session_extensions()
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
-        let params = portal_parameters_to_scalar_values(
-            portal,
-            &portal.statement.statement.parameter_types,
-        )?;
+        let params = {
+            let _span = kalamdb_observability::kdb_info_span_entered!("wire.bind");
+            portal_parameters_to_scalar_values(portal, &portal.statement.statement.parameter_types)?
+        };
         let mut responses = self
             .execute_cached_with_format(
                 &state,

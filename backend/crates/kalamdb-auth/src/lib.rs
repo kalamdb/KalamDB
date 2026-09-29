@@ -6,7 +6,6 @@
 
 mod oidc;
 
-pub mod authorization;
 pub mod errors;
 pub mod helpers;
 pub mod models;

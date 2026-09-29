@@ -560,6 +560,23 @@ impl MetaStateMachine {
                     message: if applied { "applied" } else { "conflict" }.into(),
                 })
             },
+            MetaCommand::UpsertCatalogType {
+                catalog_type,
+                fields,
+            } => {
+                log::debug!("MetaStateMachine: UpsertCatalogType {}", catalog_type.type_id);
+                if let Some(ref a) = applier {
+                    a.upsert_catalog_type(&catalog_type, &fields).await?;
+                }
+                Ok(MetaResponse::Ok)
+            },
+            MetaCommand::DropCatalogType { type_id } => {
+                log::debug!("MetaStateMachine: DropCatalogType {}", type_id);
+                if let Some(ref a) = applier {
+                    a.drop_catalog_type(&type_id).await?;
+                }
+                Ok(MetaResponse::Ok)
+            },
             MetaCommand::ActivateFunctionRevision {
                 module,
                 revision,

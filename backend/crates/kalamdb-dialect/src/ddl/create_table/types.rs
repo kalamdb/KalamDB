@@ -6,6 +6,8 @@ use kalamdb_commons::{
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 
+use crate::ddl::create_type::TypeReference;
+
 /// Unified CREATE TABLE statement that works for USER, SHARED, and STREAM tables
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateTableStatement {
@@ -17,6 +19,8 @@ pub struct CreateTableStatement {
     pub table_type:              TableType,
     /// Arrow schema for the table
     pub schema:                  Arc<Schema>,
+    /// Named / array type references keyed by column name (bind-time TypeId lookup).
+    pub column_type_refs:        HashMap<String, TypeReference>,
     /// Column default values (column_name -> default_spec)
     pub column_defaults:         HashMap<String, ColumnDefault>,
     /// PRIMARY KEY column name (if detected)

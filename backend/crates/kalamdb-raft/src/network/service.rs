@@ -6,15 +6,19 @@
 //! - Raft consensus RPCs (vote, append_entries, install_snapshot)
 //! - Client proposal forwarding (forward proposals from followers to leader)
 
-use std::{io::ErrorKind, time::Duration};
+use std::{convert::Infallible, io::ErrorKind, time::Duration};
 
-use kalamdb_pg::{KalamPgService, PgServiceServer};
+use http::Request as HttpRequest;
 use tokio::{sync::oneshot, time::sleep};
 use tonic::{
+    body::Body as GrpcBody,
+    server::NamedService,
+    service::Routes,
     transport::{Certificate, Identity, ServerTlsConfig},
     Request, Response, Status,
 };
 use tonic_prost::ProstCodec;
+use tower::{Service, ServiceExt};
 
 /// Raft RPC request message
 #[derive(Clone, PartialEq, prost::Message)]
@@ -425,11 +429,35 @@ impl raft_server::Raft for RaftService {
 /// are hosted on the same gRPC port.
 ///
 /// Returns an error if the server fails to start (e.g., port already in use).
+/// Routes for one extra gRPC service, without a custom fallback.
+///
+/// The Raft listener already owns the unimplemented fallback. Merging two
+/// routers that both set a fallback panics, so optional services must be
+/// built with this helper.
+pub fn named_service_routes<S>(svc: S) -> Routes
+where
+    S: Service<HttpRequest<GrpcBody>, Error = Infallible>
+        + NamedService
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    S::Response: axum::response::IntoResponse,
+    S::Future: Send + 'static,
+{
+    let path = format!("/{}/{{*rest}}", S::NAME);
+    let router = axum::Router::new().route_service(
+        path.as_str(),
+        svc.map_request(|request: HttpRequest<axum::body::Body>| request.map(GrpcBody::new)),
+    );
+    Routes::from(router)
+}
+
 pub async fn start_rpc_server(
     manager: Arc<RaftManager>,
     advertise_addr: String,
     cluster_handler: Arc<dyn super::cluster_handler::ClusterMessageHandler>,
-    pg_service: Option<Arc<KalamPgService>>,
+    extra_routes: Option<Routes>,
 ) -> Result<(), crate::RaftError> {
     // Extract port from advertise_addr (e.g., "kalamdb-node1:2910" -> 9090)
     let port = advertise_addr.rsplit(':').next().ok_or_else(|| {
@@ -519,16 +547,13 @@ pub async fn start_rpc_server(
             }
         }
 
-        let server_builder = server_builder.add_service(raft_server).add_service(cluster_server);
+        let mut routes = Routes::new(raft_server).add_service(cluster_server);
+        if let Some(extra_routes) = extra_routes {
+            let merged = routes.into_axum_router().merge(extra_routes.into_axum_router());
+            routes = Routes::from(merged);
+        }
 
-        let result = if let Some(pg_service) = pg_service {
-            server_builder
-                .add_service(PgServiceServer::new(pg_service.as_ref().clone()))
-                .serve_with_incoming(incoming)
-                .await
-        } else {
-            server_builder.serve_with_incoming(incoming).await
-        };
+        let result = server_builder.add_routes(routes).serve_with_incoming(incoming).await;
 
         if let Err(e) = result {
             log::error!("Raft RPC server error on {}: {}", bind_addr_clone, e);

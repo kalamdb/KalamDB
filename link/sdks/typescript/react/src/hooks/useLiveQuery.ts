@@ -7,7 +7,7 @@ import {
   type LiveQueryDescriptor,
   type RowData,
 } from '@kalamdb/client';
-import type { InferSelectModel, Table } from 'drizzle-orm';
+import type { InferSelectModel, SQLWrapper, Table } from 'drizzle-orm';
 import { useKalamClient } from '../context.js';
 import type {
   DrizzleLiveQueryOptions,
@@ -147,8 +147,9 @@ async function resolveDescriptor(
   const drizzle = options as DrizzleLiveQueryOptions<Table, unknown>;
   const orm = await loadOrm();
   return orm.compileLiveTableDescriptor(drizzle.table, {
-    where: drizzle.where?.(drizzle.table),
-    orderBy: drizzle.orderBy?.(drizzle.table),
+    // App SQL objects are runtime-compatible; don't require drizzle's private SQL class.
+    where: drizzle.where?.(drizzle.table) as SQLWrapper | undefined,
+    orderBy: drizzle.orderBy?.(drizzle.table) as SQLWrapper | SQLWrapper[] | undefined,
     limit: drizzle.limit,
     getKey: drizzle.getKey,
   }) as LiveQueryDescriptor<unknown>;

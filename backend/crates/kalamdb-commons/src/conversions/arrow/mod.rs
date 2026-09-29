@@ -5,3 +5,6 @@ pub mod types;
 
 #[cfg(feature = "conversions")]
 pub mod json;
+
+#[cfg(feature = "conversions")]
+pub mod project;

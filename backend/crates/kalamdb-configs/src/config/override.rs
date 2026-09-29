@@ -113,6 +113,7 @@ impl ServerConfig {
     /// - KALAMDB_RPC_TLS_REQUIRE_CLIENT_CERT: Override rpc_tls.require_client_cert
     /// - KALAMDB_SERVER_WORKERS: Override server.workers (actix-web worker threads)
     /// - KALAMDB_ENABLE_PGWIRE: Override postgres_wire.enabled ("true" | "false")
+    /// - KALAMDB_ENABLE_PG_EXTENSION: Override pg_extension.enabled ("true" | "false")
     /// - KALAMDB_PGWIRE_HOST: Override postgres_wire.host
     /// - KALAMDB_PGWIRE_PORT: Override postgres_wire.port
     ///
@@ -127,6 +128,7 @@ impl ServerConfig {
         self.apply_storage_env_overrides();
         self.apply_cluster_env_overrides()?;
         self.apply_postgres_wire_env_overrides();
+        self.apply_pg_extension_env_overrides();
         self.apply_rpc_tls_env_overrides();
         Ok(())
     }
@@ -145,6 +147,16 @@ impl ServerConfig {
         if let Ok(value) = env::var("KALAMDB_PGWIRE_PORT") {
             if let Ok(port) = value.parse() {
                 self.postgres_wire.port = port;
+            }
+        }
+    }
+
+    fn apply_pg_extension_env_overrides(&mut self) {
+        if let Ok(value) = env::var("KALAMDB_ENABLE_PG_EXTENSION") {
+            if value.eq_ignore_ascii_case("true") || value == "1" {
+                self.pg_extension.enabled = true;
+            } else if value.eq_ignore_ascii_case("false") || value == "0" {
+                self.pg_extension.enabled = false;
             }
         }
     }
@@ -463,6 +475,28 @@ mod tests {
         assert_eq!(config.server.port, 3900);
 
         env::remove_var("KALAMDB_SERVER_PORT");
+    }
+
+    #[test]
+    fn test_pg_extension_is_disabled_unless_enabled() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_ENABLE_PG_EXTENSION");
+
+        let config = ServerConfig::default();
+        assert!(!config.pg_extension.enabled);
+
+        env::set_var("KALAMDB_ENABLE_PG_EXTENSION", "true");
+        let mut enabled = ServerConfig::default();
+        enabled.apply_env_overrides().unwrap();
+        assert!(enabled.pg_extension.enabled);
+
+        env::set_var("KALAMDB_ENABLE_PG_EXTENSION", "false");
+        let mut disabled = ServerConfig::default();
+        disabled.pg_extension.enabled = true;
+        disabled.apply_env_overrides().unwrap();
+        assert!(!disabled.pg_extension.enabled);
+
+        env::remove_var("KALAMDB_ENABLE_PG_EXTENSION");
     }
 
     #[test]

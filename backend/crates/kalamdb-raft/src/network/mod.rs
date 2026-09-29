@@ -38,6 +38,6 @@ pub use models::{
 };
 pub use network::{RaftChannelPool, RaftNetwork, RaftNetworkFactory};
 pub use service::{
-    raft_client::RaftClient, start_rpc_server, ClientProposalRequest, ClientProposalResponse,
-    RaftService,
+    named_service_routes, raft_client::RaftClient, start_rpc_server, ClientProposalRequest,
+    ClientProposalResponse, RaftService,
 };
