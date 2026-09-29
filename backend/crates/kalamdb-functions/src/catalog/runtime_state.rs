@@ -27,6 +27,8 @@ pub struct FunctionRuntimeState {
     engine:        OnceLock<Result<Arc<FunctionEngine>, String>>,
     engine_config: EngineConfig,
     active:        Arc<arc_swap::ArcSwap<ActiveFunctionSet>>,
+    /// Serializes catalog snapshots so a slower rebuild cannot publish over a newer one.
+    rebuild:       tokio::sync::Mutex<()>,
     staged:        dashmap::DashMap<TransactionId, Vec<StagedTopicPublish>>,
     active_runs:   dashmap::DashMap<String, ActiveProcedureRunSnapshot>,
     lifecycle:     crate::engine::lifecycle::LifecycleSlot,
@@ -44,6 +46,7 @@ impl FunctionRuntimeState {
             engine: OnceLock::new(),
             engine_config,
             active: Arc::new(arc_swap::ArcSwap::from_pointee(ActiveFunctionSet::empty())),
+            rebuild: tokio::sync::Mutex::new(()),
             staged: dashmap::DashMap::new(),
             active_runs: dashmap::DashMap::new(),
             lifecycle: Arc::new(arc_swap::ArcSwapOption::empty()),
@@ -73,6 +76,11 @@ impl FunctionRuntimeState {
 
     pub fn active_set(&self) -> Arc<ActiveFunctionSet> {
         self.active.load_full()
+    }
+
+    /// Lock held for the whole active-set rebuild, including catalog reads.
+    pub fn rebuild_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.rebuild
     }
 
     pub fn publish_active_set(&self, set: ActiveFunctionSet) {

@@ -96,11 +96,13 @@ impl ClusterService for ClusterServiceImpl {
         let req = request.into_inner();
 
         // Spawn on a separate task so long-running SQL execution does not block
-        // the tonic worker thread handling other gRPC requests.
+        // the tonic worker thread handling other gRPC requests. Abort that task
+        // if this RPC is dropped: a bare JoinHandle detaches, which would leave
+        // a forwarded procedure running after the follower's client disconnected.
         let handler = Arc::clone(&self.handler);
-        let result = tokio::task::spawn(async move { handler.handle_forward_sql(req).await })
-            .await
-            .map_err(|e| Status::internal(format!("Task join error: {}", e)))?;
+        let task = tokio::task::spawn(async move { handler.handle_forward_sql(req).await });
+        let _abort = ForwardSqlAbort(task.abort_handle());
+        let result = task.await.map_err(|e| Status::internal(format!("Task join error: {}", e)))?;
 
         match result {
             Ok(payload) => Ok(Response::new(ForwardSqlResponse {
@@ -157,6 +159,19 @@ impl ClusterService for ClusterServiceImpl {
                 }))
             },
         }
+    }
+}
+
+/// Aborts the forwarded SQL task when the gRPC handler future is dropped.
+///
+/// Aborting a task that has already finished does nothing. Keep the guard
+/// declared after the `JoinHandle` so the guard drops first and abort runs
+/// before the handle detaches the task.
+struct ForwardSqlAbort(tokio::task::AbortHandle);
+
+impl Drop for ForwardSqlAbort {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

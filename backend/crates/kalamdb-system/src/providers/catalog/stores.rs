@@ -450,6 +450,23 @@ impl CatalogStores {
         Ok(None)
     }
 
+    /// Drop a type that raft already accepted. Skips the reference check and
+    /// succeeds when this replica already removed the row.
+    pub fn drop_type_applied(&self, type_id: &TypeId) -> Result<(), SystemError> {
+        if self.get_type(type_id)?.is_none() {
+            let field_keys = self
+                .list_type_fields(type_id)?
+                .into_iter()
+                .map(|field| field.type_field_id)
+                .collect::<Vec<_>>();
+            if !field_keys.is_empty() {
+                self.type_fields.delete_batch(&field_keys)?;
+            }
+            return Ok(());
+        }
+        self.force_drop_type(type_id)
+    }
+
     pub fn drop_type(&self, type_id: &TypeId) -> Result<(), SystemError> {
         if self.get_type(type_id)?.is_none() {
             return Err(SystemError::NotFound(format!("type not found: {type_id}")));

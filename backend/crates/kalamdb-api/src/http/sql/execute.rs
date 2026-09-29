@@ -24,7 +24,7 @@
 //! - `EXECUTE AS USER` prefix detection uses a fixed-length slice comparison instead of uppercasing
 //!   the entire input string.
 
-use std::{sync::Arc, time::Instant};
+use std::{future::Future, sync::Arc, time::Instant};
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
@@ -36,6 +36,7 @@ use kalamdb_core::{
 use kalamdb_jobs::health_monitor::record_activity_now;
 use kalamdb_raft::GroupId;
 use kalamdb_session::AuthSession;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
@@ -50,7 +51,7 @@ use super::{
         PreparedApiExecutionStatement,
     },
 };
-use crate::limiter::RateLimiter;
+use crate::{http::client_cancel::HttpClientCancel, limiter::RateLimiter};
 
 #[inline]
 fn batch_requires_request_id(prepared_statements: &[PreparedApiExecutionStatement]) -> bool {
@@ -227,8 +228,13 @@ pub async fn execute_sql_v1(
     // node is a follower for the target group (non-file path). A node may be
     // Meta leader while another node leads the relevant data shard, so this
     // check must not be gated by Meta leadership.
+    //
+    // One connection token covers this forward and the statement below
+    // (query, insert, update, transaction, or CALL). Dropping the future is
+    // what stops the work, including a procedure running inside CALL.
+    let cancel = client_cancel_token(&http_req);
     if !files_present {
-        if let Some(response) = forward_sql_if_follower(
+        let forward = forward_sql_if_follower(
             &http_req,
             &sql,
             &params_json,
@@ -237,10 +243,11 @@ pub async fn execute_sql_v1(
             &prepared_statements,
             exec_ctx.user_id(),
             exec_ctx.request_id(),
-        )
-        .await
-        {
-            return response;
+        );
+        match await_unless_client_gone(cancel.clone(), forward).await {
+            Err(response) => return response,
+            Ok(Some(response)) => return response,
+            Ok(None) => {},
         }
     }
 
@@ -276,7 +283,7 @@ pub async fn execute_sql_v1(
     };
     if file_upload_request {
         let schema_registry = app_context.schema_registry();
-        return execute_file_upload_path(
+        let upload = execute_file_upload_path(
             is_multipart,
             files,
             &required_files,
@@ -290,8 +297,10 @@ pub async fn execute_sql_v1(
             params,
             &schema_registry,
             start_time,
-        )
-        .await;
+        );
+        return match await_unless_client_gone(cancel, upload).await {
+            Ok(response) | Err(response) => response,
+        };
     }
 
     // Build the forwarding request for the batch path (needed for
@@ -304,7 +313,7 @@ pub async fn execute_sql_v1(
         namespace_id,
     };
 
-    execute_batch_path(
+    let batch = execute_batch_path(
         &prepared_statements,
         app_context.get_ref(),
         sql_executor.get_ref(),
@@ -315,6 +324,33 @@ pub async fn execute_sql_v1(
         &http_req,
         &req_for_forward,
         start_time,
+    );
+    match await_unless_client_gone(cancel, batch).await {
+        Ok(response) | Err(response) => response,
+    }
+}
+
+fn client_cancel_token(http_req: &HttpRequest) -> Option<CancellationToken> {
+    http_req.conn_data::<HttpClientCancel>().map(HttpClientCancel::token)
+}
+
+async fn await_unless_client_gone<T>(
+    cancel: Option<CancellationToken>,
+    work: impl Future<Output = T>,
+) -> Result<T, HttpResponse> {
+    let Some(cancel) = cancel else {
+        return Ok(work.await);
+    };
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(client_disconnected_response()),
+        value = work => Ok(value),
+    }
+}
+
+fn client_disconnected_response() -> HttpResponse {
+    HttpResponse::build(
+        actix_web::http::StatusCode::from_u16(499).expect("499 is a valid status code"),
     )
-    .await
+    .body("client disconnected")
 }

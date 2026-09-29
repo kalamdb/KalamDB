@@ -122,13 +122,14 @@ impl IndexedSubscriberRelation {
         new_row: &Row,
         old_row: Option<&Row>,
     ) -> Vec<SubscriptionHandle> {
+        let Some(columns) = self.keyed.get(table_id).map(|entry| Arc::clone(entry.value())) else {
+            return self.broadcast_handles(table_id);
+        };
+
         let mut candidates = HashSet::new();
         if let Some(bucket) = self.broadcast.get(table_id) {
             extend_candidates(&mut candidates, bucket.value());
         }
-        let Some(columns) = self.keyed.get(table_id).map(|entry| Arc::clone(entry.value())) else {
-            return self.resolve_candidates(candidates);
-        };
 
         extend_row_candidates(&mut candidates, &columns, new_row);
         if let Some(old_row) = old_row {
@@ -157,6 +158,19 @@ impl IndexedSubscriberRelation {
         shrink_dashmap_if_sparse(&self.subscribers);
         shrink_dashmap_if_sparse(&self.broadcast);
         shrink_dashmap_if_sparse(&self.keyed);
+    }
+
+    fn broadcast_handles(&self, table_id: &TableId) -> Vec<SubscriptionHandle> {
+        let Some(bucket) = self.broadcast.get(table_id) else {
+            return Vec::new();
+        };
+        let mut handles = Vec::with_capacity(bucket.len());
+        for entry in bucket.iter() {
+            if let Some(subscriber) = self.subscribers.get(entry.key()) {
+                handles.push(subscriber.handle.clone());
+            }
+        }
+        handles
     }
 
     fn resolve_candidates(&self, candidates: HashSet<LiveQueryId>) -> Vec<SubscriptionHandle> {

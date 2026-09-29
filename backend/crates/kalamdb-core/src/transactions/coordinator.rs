@@ -481,22 +481,22 @@ impl TransactionCoordinator {
             return Ok(());
         };
 
-        let current_node_id = self.app_context.executor().node_id();
         let result = match handle.raft_binding {
             TransactionRaftBinding::LocalSingleNode => Ok(()),
             TransactionRaftBinding::UnboundCluster => {
-                let current_leader_node_id = self.current_leader_for_group(group_id);
-                if current_leader_node_id == Some(current_node_id) {
-                    handle.raft_binding = TransactionRaftBinding::BoundCluster {
-                        group_id,
-                        leader_node_id: current_node_id,
-                    };
-                    Ok(())
-                } else {
-                    Err(KalamDbError::NotLeader {
-                        leader_addr: current_leader_node_id
-                            .and_then(|node_id| self.leader_addr_for_node(node_id)),
-                    })
+                // Procedure calls execute on the meta leader. That node is often
+                // a follower of the data shard that owns the table. Bind to the
+                // data leader anyway: commit forwards the Raft proposal there,
+                // and a leadership change still aborts the transaction.
+                match self.current_leader_for_group(group_id) {
+                    Some(leader_node_id) => {
+                        handle.raft_binding = TransactionRaftBinding::BoundCluster {
+                            group_id,
+                            leader_node_id,
+                        };
+                        Ok(())
+                    },
+                    None => Err(KalamDbError::NotLeader { leader_addr: None }),
                 }
             },
             TransactionRaftBinding::BoundCluster {
@@ -726,16 +726,6 @@ impl TransactionCoordinator {
         let executor = self.app_context.executor();
         let raft_executor = executor.as_any().downcast_ref::<RaftExecutor>()?;
         raft_executor.manager().current_leader(group_id)
-    }
-
-    fn leader_addr_for_node(&self, node_id: NodeId) -> Option<String> {
-        self.app_context
-            .executor()
-            .get_cluster_info()
-            .nodes
-            .iter()
-            .find(|node| node.node_id == node_id)
-            .map(|node| node.api_addr.clone())
     }
 
     fn ensure_bound_leadership_is_current(

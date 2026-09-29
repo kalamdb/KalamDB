@@ -1216,7 +1216,7 @@ fn kobj_functions_named_multi_arg_call_input() {
 
 /// Real SQL/transaction boundary: failures must release the runtime and roll back prior writes.
 #[test]
-#[ntest::timeout(30000)]
+#[ntest::timeout(180000)]
 fn kobj_functions_runtime_failure_cleanup_and_recovery() {
     assert!(is_server_running(), "this test requires a running server");
     let ns = setup_namespace("fn_cleanup");

@@ -59,6 +59,8 @@ tracing = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+tokio-util = { workspace = true }
+libc = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
 openidconnect = { workspace = true }

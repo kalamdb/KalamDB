@@ -94,6 +94,48 @@ pub(crate) mod cluster_common {
         crate::common::cluster_urls_config_order()
     }
 
+    /// Exclusive lock for tests that fill the process-wide function admission pool.
+    ///
+    /// nextest runs cases in separate processes, so a `static` mutex cannot
+    /// serialize them. The file is removed when the guard drops.
+    pub struct FunctionPoolLock {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for FunctionPoolLock {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    pub fn lock_function_pool() -> FunctionPoolLock {
+        let path = std::env::temp_dir().join("kalamdb-function-pool-e2e.lock");
+        let started = std::time::Instant::now();
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return FunctionPoolLock { path },
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        let stale =
+                            meta.modified().ok().and_then(|modified| modified.elapsed().ok());
+                        if stale.is_some_and(|age| age > Duration::from_secs(180)) {
+                            let _ = std::fs::remove_file(&path);
+                            continue;
+                        }
+                    }
+                    if started.elapsed() > Duration::from_secs(180) {
+                        panic!(
+                            "timed out waiting for the function pool lock at {}",
+                            path.display()
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                },
+                Err(err) => panic!("function pool lock {}: {err}", path.display()),
+            }
+        }
+    }
+
     /// Shared tokio runtime for cluster tests
     pub fn cluster_runtime() -> &'static tokio::runtime::Runtime {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -1073,6 +1115,10 @@ mod cluster_test_failover;
 mod cluster_test_final_consistency;
 #[path = "cluster/cluster_test_flush.rs"]
 mod cluster_test_flush;
+#[path = "cluster/cluster_test_function_runtime.rs"]
+mod cluster_test_function_runtime;
+#[path = "cluster/cluster_test_functions.rs"]
+mod cluster_test_functions;
 #[path = "cluster/cluster_test_leader_jobs.rs"]
 mod cluster_test_leader_jobs;
 #[path = "cluster/cluster_test_multi_node_smoke.rs"]

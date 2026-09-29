@@ -19,7 +19,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
-    models::{rows::row::Row, NamespaceId, TableId, TransactionId, UserId},
+    models::{rows::row::Row, NamespaceId, ReadContext, TableId, TransactionId, UserId},
     quote_sql_identifier,
     schemas::TableType,
     try_pk_bucket_key, PkBucketKey, Role, SystemTable,
@@ -1074,10 +1074,15 @@ impl SqlExecutor {
     }
 
     fn isolated_stream_exec_ctx(exec_ctx: &ExecutionContext) -> ExecutionContext {
+        // Procedure SQL runs on the meta leader, which is often a follower of the
+        // user shard. Stream DML waits until that shard applies the entry locally
+        // before returning, so the read in the same procedure must use that replica
+        // instead of failing the leader check.
         exec_ctx
             .clone()
             .without_transaction_id()
             .with_request_id(format!("stream-{}", Uuid::now_v7()))
+            .with_read_context(ReadContext::Internal)
     }
 
     async fn execute_table_dml(

@@ -5,15 +5,39 @@
 //! live subscribers, rollback visibility, and schema evolution while clients are
 //! already subscribed.
 
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 
 use crate::common::*;
 
+thread_local! {
+    static BATCH_REQUEST_IDS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
 fn execute_http_as_root(sql: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let request_id = BATCH_REQUEST_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        let request_id = format!("reactive-{}-{}", std::process::id(), ids.len());
+        ids.push(request_id.clone());
+        request_id
+    });
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(execute_sql_via_http_as_root(sql))
+    let base_url = if is_cluster_mode() {
+        leader_url().unwrap_or_else(|| server_url().to_string())
+    } else {
+        server_url().to_string()
+    };
+    runtime.block_on(execute_sql_via_http_on_url(
+        default_username(),
+        default_password(),
+        &base_url,
+        sql,
+        Some(&request_id),
+    ))
 }
 
 fn assert_success(response: &Value, context: &str) {
@@ -91,23 +115,15 @@ fn wait_for_subscription_value(
     .into())
 }
 
-fn json_count_is_zero(output: &str) -> bool {
-    let Ok(parsed) = parse_json_from_cli_output(output) else {
+fn http_count_is_zero(response: &Value) -> bool {
+    let Some(cell) = response.pointer("/results/0/rows/0/0") else {
         return false;
     };
-    let Some(rows) = get_rows_as_hashmaps(&parsed) else {
-        return false;
-    };
-
-    rows.first()
-        .and_then(|row| row.get("cnt"))
-        .map(extract_typed_value)
-        .and_then(|value| match value {
-            Value::Number(number) => number.as_i64(),
-            Value::String(value) => value.parse::<i64>().ok(),
-            _ => None,
-        })
-        == Some(0)
+    match cell {
+        Value::Number(number) => number.as_i64() == Some(0),
+        Value::String(value) => value.parse::<i64>().ok() == Some(0),
+        _ => false,
+    }
 }
 
 #[ntest::timeout(180000)]
@@ -116,6 +132,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     if !require_server_running() {
         return;
     }
+    BATCH_REQUEST_IDS.with(|ids| ids.borrow_mut().clear());
 
     let namespace = generate_unique_namespace("reactive_workflow");
     let conversations = format!("{}.conversations", namespace);
@@ -357,15 +374,34 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         stream_rows
     );
 
-    let active_transactions = execute_sql_as_root_via_client_json(
-        "SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch'",
-    )
-    .expect("system.transactions should be readable by root");
-    assert!(
-        json_count_is_zero(&active_transactions),
-        "explicit transaction cleanup should leave no active SqlBatch transaction: {}",
-        active_transactions
+    let request_ids = BATCH_REQUEST_IDS.with(|ids| ids.borrow().clone());
+    assert!(!request_ids.is_empty(), "expected explicit batch request ids");
+    let owners = request_ids
+        .iter()
+        .map(|id| format!("'sql-req-{id}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let active_sql = format!(
+        "SELECT COUNT(*) AS cnt FROM system.transactions WHERE origin = 'SqlBatch' AND owner_id \
+         IN ({owners})"
     );
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    for url in get_available_server_urls() {
+        let active_transactions = runtime
+            .block_on(execute_sql_via_http_on_url(
+                default_username(),
+                default_password(),
+                &url,
+                &active_sql,
+                None,
+            ))
+            .unwrap_or_else(|err| panic!("system.transactions on {url}: {err}"));
+        assert!(
+            http_count_is_zero(&active_transactions),
+            "explicit transaction cleanup should leave no active SqlBatch transaction on {url}: \
+             {active_transactions}"
+        );
+    }
 
     message_listener.stop().ok();
     conversation_listener.stop().ok();

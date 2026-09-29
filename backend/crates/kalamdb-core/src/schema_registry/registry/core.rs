@@ -606,6 +606,10 @@ impl SchemaRegistry {
                     table_arc,
                 )?);
                 self.insert_cached(table_id.clone(), Arc::clone(&data));
+                if let Err(error) = self.bind_dml_provider(table_id, &data) {
+                    self.table_cache.remove(table_id);
+                    return Err(error);
+                }
                 Ok(Some(data))
             },
             None => Ok(None),
@@ -770,6 +774,21 @@ impl SchemaRegistry {
 
         let upper = name.to_uppercase();
         scalar_functions.get(&upper).map(Arc::clone)
+    }
+
+    /// Attach the DML provider when a cached definition was loaded without one.
+    fn bind_dml_provider(
+        &self,
+        table_id: &TableId,
+        cached: &CachedTableData,
+    ) -> Result<(), KalamDbError> {
+        if cached.get_provider().is_some() || cached.table.table_type == TableType::System {
+            return Ok(());
+        }
+        let kalam_provider = self.create_table_provider(cached.table.as_ref())?;
+        let table_provider = Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
+        cached.set_provider(Arc::clone(&table_provider));
+        self.register_with_datafusion(table_id, table_provider)
     }
 
     /// Internal helper to create a KalamTableProvider based on table definition
@@ -1121,15 +1140,34 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    /// Get a cached DataFusion provider for a table
+    /// Get a cached DataFusion provider for a table.
+    ///
+    /// A catalog hit can hydrate the definition without a provider (cache
+    /// eviction, or a reader that loaded the row before CREATE finished
+    /// binding one). Rebuild the DML provider in that case.
     pub fn get_provider(&self, table_id: &TableId) -> Option<Arc<dyn TableProvider + Send + Sync>> {
-        let result = self.get(table_id).and_then(|cached| cached.get_provider());
-        if result.is_some() {
-            log::trace!("[SchemaRegistry] Retrieved provider for table {}", table_id);
-        } else {
+        let Some(cached) = self.get(table_id) else {
             log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
+            return None;
+        };
+        if let Some(provider) = cached.get_provider() {
+            log::trace!("[SchemaRegistry] Retrieved provider for table {}", table_id);
+            return Some(provider);
         }
-        result
+        if cached.table.table_type == TableType::System {
+            log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
+            return None;
+        }
+        match self.bind_dml_provider(table_id, &cached) {
+            Ok(()) => cached.get_provider().or_else(|| {
+                log::warn!("[SchemaRegistry] Provider NOT FOUND for table {}", table_id);
+                None
+            }),
+            Err(error) => {
+                log::error!("Failed to create provider for table {}: {}", table_id, error);
+                None
+            },
+        }
     }
 
     /// Register a provider with DataFusion's catalog
@@ -1298,12 +1336,16 @@ impl SchemaRegistry {
         match tables_provider.get_table_by_id(table_id)? {
             Some(table_def) => {
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(
+                let data = Arc::new(CachedTableData::from_table_definition(
                     app_ctx.as_ref(),
                     table_id,
                     table_arc.clone(),
-                )?;
-                self.insert_cached(table_id.clone(), Arc::new(data));
+                )?);
+                self.insert_cached(table_id.clone(), Arc::clone(&data));
+                if let Err(error) = self.bind_dml_provider(table_id, &data) {
+                    self.table_cache.remove(table_id);
+                    return Err(error);
+                }
                 Ok(Some(table_arc))
             },
             None => Ok(None),
@@ -1330,12 +1372,16 @@ impl SchemaRegistry {
         match tables_provider.get_table_by_id_async(table_id).await? {
             Some(table_def) => {
                 let table_arc = Arc::new(table_def);
-                let data = CachedTableData::from_table_definition(
+                let data = Arc::new(CachedTableData::from_table_definition(
                     app_ctx.as_ref(),
                     table_id,
                     table_arc.clone(),
-                )?;
-                self.insert_cached(table_id.clone(), Arc::new(data));
+                )?);
+                self.insert_cached(table_id.clone(), Arc::clone(&data));
+                if let Err(error) = self.bind_dml_provider(table_id, &data) {
+                    self.table_cache.remove(table_id);
+                    return Err(error);
+                }
                 Ok(Some(table_arc))
             },
             None => Ok(None),

@@ -36,8 +36,8 @@ pub async fn send_auth_error(mut session: Session, message: &str) -> Result<(), 
     let msg = WebSocketMessage::AuthError {
         message: message.to_string(),
     };
-    if let Ok(json) = serde_json::to_string(&msg) {
-        let _ = send_data(&mut session, json.as_bytes(), false).await;
+    if let Ok(json) = serde_json::to_vec(&msg) {
+        let _ = send_data(&mut session, json, false).await;
     }
     session
         .close(Some(CloseReason {
@@ -69,8 +69,8 @@ pub async fn send_json<T: serde::Serialize>(
     msg: &T,
     compress: bool,
 ) -> Result<(), ()> {
-    if let Ok(json) = serde_json::to_string(msg) {
-        send_data(session, json.as_bytes(), compress).await
+    if let Ok(json) = serde_json::to_vec(msg) {
+        send_data(session, json, compress).await
     } else {
         Err(())
     }
@@ -90,13 +90,15 @@ pub async fn send_wire_notification(
     let bytes = match serialization {
         SerializationType::MessagePack => {
             let bytes = notif.to_msgpack();
-            send_data_binary(session, &bytes, compress).await?;
-            bytes
+            let len = bytes.len();
+            send_data_binary(session, bytes, compress).await?;
+            len
         },
         SerializationType::Json => {
             let bytes = notif.to_json();
-            send_data(session, &bytes, compress).await?;
-            bytes
+            let len = bytes.len();
+            send_data(session, bytes, compress).await?;
+            len
         },
     };
 
@@ -106,7 +108,7 @@ pub async fn send_wire_notification(
         },
         ChangeType::Delete => notif.payload.old_values.as_ref().map_or(0, |rows| rows.len() as u64),
     };
-    record_subscription_delivery(change_count, bytes.len() as u64);
+    record_subscription_delivery(change_count, bytes as u64);
     Ok(())
 }
 
@@ -184,7 +186,7 @@ pub async fn send_message<T: serde::Serialize>(
         SerializationType::Json => send_json(session, msg, compress).await,
         SerializationType::MessagePack => {
             let bytes = rmp_serde::to_vec_named(msg).map_err(|_| ())?;
-            send_data_binary(session, &bytes, compress).await
+            send_data_binary(session, bytes, compress).await
         },
     }
 }
@@ -194,35 +196,26 @@ pub async fn send_message<T: serde::Serialize>(
 /// When `compress` is `true`, messages over 512 bytes are gzip compressed and
 /// sent as binary frames.  When `false`, the raw payload is always sent as a
 /// text frame, which is easier to inspect during development.
-async fn send_data(session: &mut Session, data: &[u8], compress: bool) -> Result<(), ()> {
-    // Fast path: no compression — send as Text frame directly without a
-    // UTF-8 round-trip. Callers only reach this path with bytes that they
-    // just produced from `serde_json`/`rmp_serde`, so they are already valid
-    // UTF-8 when `compress == false` and serialization chose the text branch.
+async fn send_data(session: &mut Session, data: Vec<u8>, compress: bool) -> Result<(), ()> {
+    // Fast path: no compression — reuse the encoded buffer as the text frame.
+    // `String::from_utf8` keeps the allocation when the bytes are valid UTF-8.
     if !compress {
-        // `String::from_utf8_lossy(..).into_owned()` previously allocated a
-        // fresh String and scanned every byte even for known-valid JSON. Use
-        // `from_utf8` and fall back to lossy only on the (never-observed)
-        // error path to stay defensive without paying the cost on the hot
-        // path.
-        let owned = match std::str::from_utf8(data) {
-            Ok(s) => s.to_owned(),
-            Err(_) => String::from_utf8_lossy(data).into_owned(),
+        let owned = match String::from_utf8(data) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
         };
         return session.text(owned).await.map_err(|_| ());
     }
 
-    let (payload, compressed) = maybe_compress(data);
+    let (payload, compressed) = maybe_compress(&data);
 
     if compressed && is_gzip(&payload) {
         // Send compressed data as binary frame
         session.binary(payload).await.map_err(|_| ())
     } else {
-        // Send uncompressed data as text frame. `maybe_compress` returned the
-        // original bytes unchanged, so they remain valid UTF-8 JSON.
-        let owned = match std::str::from_utf8(&payload) {
-            Ok(s) => s.to_owned(),
-            Err(_) => String::from_utf8_lossy(&payload).into_owned(),
+        let owned = match String::from_utf8(payload) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
         };
         session.text(owned).await.map_err(|_| ())
     }
@@ -231,11 +224,11 @@ async fn send_data(session: &mut Session, data: &[u8], compress: bool) -> Result
 /// Send binary data (msgpack or already-binary) with optional gzip compression.
 ///
 /// Always sends as a binary WebSocket frame (never text).
-async fn send_data_binary(session: &mut Session, data: &[u8], compress: bool) -> Result<(), ()> {
+async fn send_data_binary(session: &mut Session, data: Vec<u8>, compress: bool) -> Result<(), ()> {
     if !compress {
-        return session.binary(data.to_vec()).await.map_err(|_| ());
+        return session.binary(data).await.map_err(|_| ());
     }
 
-    let (payload, _compressed) = maybe_compress(data);
+    let (payload, _compressed) = maybe_compress(&data);
     session.binary(payload).await.map_err(|_| ())
 }

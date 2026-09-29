@@ -39,14 +39,16 @@ impl TypedStatementHandler<AlterTypeStatement> for AlterTypeHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "alter type")?;
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || persist_alter_type(&app, statement)).await
+        let (result, type_id) = run_blocking(move || persist_alter_type(&app, statement)).await?;
+        super::replicate_stored_type(&self.app_context, &type_id).await?;
+        Ok(result)
     }
 }
 
 fn persist_alter_type(
     app: &AppContext,
     statement: AlterTypeStatement,
-) -> Result<ExecutionResult, KalamDbError> {
+) -> Result<(ExecutionResult, TypeId), KalamDbError> {
     let stores = app.system_tables().catalog_stores();
     let catalog_type = stores
         .find_type(&statement.namespace_id, &statement.name)
@@ -77,7 +79,7 @@ fn persist_alter_type(
     related.extend(app.schema_registry().type_registry().dependent_type_ids(&type_id));
     app.schema_registry().type_registry().invalidate(&type_id);
     app.schema_registry().invalidate_tables_using_named_types(&related);
-    Ok(result)
+    Ok((result, type_id))
 }
 
 fn persist_attribute_op(

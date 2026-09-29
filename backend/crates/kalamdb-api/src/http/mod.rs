@@ -4,6 +4,7 @@
 //! instead of keeping them under a generic handlers bucket.
 
 pub mod auth;
+pub mod client_cancel;
 pub mod cluster;
 pub mod files;
 pub mod functions;

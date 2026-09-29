@@ -9,12 +9,15 @@ FOLLOWER_LIST="$SCRIPT_DIR/test-lists/cluster-followers.txt"
 RUN_FOLLOWERS=false
 USER_SUPPLIED_TEST=false
 USER_SUPPLIED_TEST_LIST=false
+USER_SUPPLIED_URL=false
+USER_SUPPLIED_CLUSTER_URLS=false
 PASSTHROUGH_ARGS=()
 
 show_help() {
     echo "Usage: $0 [--followers] [run-tests.sh options]"
     echo ""
-    echo "Runs only the CLI cluster integration target."
+    echo "Runs the CLI cluster integration tests in kalam-cli-e2e."
+    echo "Defaults to the local 3-node cluster at http://127.0.0.1:2901-2903."
     echo ""
     echo "Options:"
     echo "  --followers              Run the curated follower/replication bundle"
@@ -42,6 +45,28 @@ while [[ $# -gt 0 ]]; do
             shift
             if [[ $# -eq 0 ]]; then
                 echo "Error: $0 requires a value after --test"
+                exit 1
+            fi
+            PASSTHROUGH_ARGS+=("$1")
+            shift
+            ;;
+        -u|--url)
+            USER_SUPPLIED_URL=true
+            PASSTHROUGH_ARGS+=("$1")
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "Error: $0 requires a value after --url"
+                exit 1
+            fi
+            PASSTHROUGH_ARGS+=("$1")
+            shift
+            ;;
+        --cluster-urls|--urls)
+            USER_SUPPLIED_CLUSTER_URLS=true
+            PASSTHROUGH_ARGS+=("$1")
+            shift
+            if [[ $# -eq 0 ]]; then
+                echo "Error: $0 requires a value after --cluster-urls"
                 exit 1
             fi
             PASSTHROUGH_ARGS+=("$1")
@@ -81,13 +106,35 @@ fi
 
 CMD=(
     "$RUNNER"
-    --package kalam-cli
+    --package kalam-cli-e2e
     --server-type cluster
     --test-target cluster
 )
 
 if [ "$RUN_FOLLOWERS" = true ]; then
     CMD+=(--test-list "$FOLLOWER_LIST")
+elif [ "$USER_SUPPLIED_TEST" = false ] && [ "$USER_SUPPLIED_TEST_LIST" = false ]; then
+    # The e2e binary also contains smoke, auth, and CLI tests. This runner
+    # only executes the cluster suite unless the caller passes --test or --test-list.
+    CMD+=(--test cluster)
+fi
+
+DEFAULT_CLUSTER_URLS="http://127.0.0.1:2901,http://127.0.0.1:2902,http://127.0.0.1:2903"
+CLUSTER_URLS_VALUE="$DEFAULT_CLUSTER_URLS"
+if [ "$USER_SUPPLIED_CLUSTER_URLS" = true ]; then
+    for i in "${!PASSTHROUGH_ARGS[@]}"; do
+        case "${PASSTHROUGH_ARGS[$i]}" in
+            --cluster-urls|--urls)
+                CLUSTER_URLS_VALUE="${PASSTHROUGH_ARGS[$((i + 1))]}"
+                ;;
+        esac
+    done
+else
+    CMD+=(--cluster-urls "$DEFAULT_CLUSTER_URLS")
+fi
+
+if [ "$USER_SUPPLIED_URL" = false ]; then
+    CMD+=(--url "${CLUSTER_URLS_VALUE%%,*}")
 fi
 
 CMD+=("${PASSTHROUGH_ARGS[@]}")

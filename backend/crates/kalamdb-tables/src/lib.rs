@@ -45,6 +45,7 @@ pub mod error_extensions;
 pub mod manifest;
 pub mod rls;
 pub mod row_codec;
+pub mod scalar_index_sync;
 pub mod shared_tables;
 pub mod stream_tables;
 pub mod topics;
@@ -66,6 +67,7 @@ pub use row_codec::{
     empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow,
     SharedRowCodec, UserRowCodec,
 };
+pub use scalar_index_sync::sync_scalar_indexes;
 pub use shared_tables::{
     pk_index::{create_shared_table_pk_index, SharedTablePkIndex},
     shared_table_store::{

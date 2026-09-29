@@ -34,9 +34,21 @@ impl TypedStatementHandler<CommentOnStatement> for CommentOnHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "comment on")?;
+        let type_name = match &statement.target {
+            CommentOnTarget::Type { namespace_id, name } => {
+                Some((namespace_id.clone(), name.clone()))
+            },
+            CommentOnTarget::Procedure(_) => None,
+        };
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || persist_comment(&app.system_tables().catalog_stores(), statement))
-            .await
+        let result =
+            run_blocking(move || persist_comment(&app.system_tables().catalog_stores(), statement))
+                .await?;
+        if let Some((namespace_id, name)) = type_name {
+            crate::catalog_type::replicate_named_type(&self.app_context, &namespace_id, &name)
+                .await?;
+        }
+        Ok(result)
     }
 }
 

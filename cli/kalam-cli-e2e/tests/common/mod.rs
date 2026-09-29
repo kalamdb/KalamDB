@@ -2505,23 +2505,31 @@ pub async fn execute_sql_via_http_as(
     password: &str,
     sql: &str,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    // Get access token first
-    let token = get_access_token(username, password).await?;
-
-    let client = shared_http_client();
     let base_url = if is_cluster_mode() {
         leader_url().unwrap_or_else(|| server_url().to_string())
     } else {
         server_url().to_string()
     };
+    execute_sql_via_http_on_url(username, password, &base_url, sql, None).await
+}
 
-    let response = client
+pub async fn execute_sql_via_http_on_url(
+    username: &str,
+    password: &str,
+    base_url: &str,
+    sql: &str,
+    request_id: Option<&str>,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let token = get_access_token_for_url(base_url, username, password).await?;
+    let client = shared_http_client();
+    let mut request = client
         .post(format!("{}/v1/api/sql", base_url))
         .header("Authorization", format!("Bearer {}", token))
-        .timeout(Duration::from_secs(15))
-        .json(&json!({ "sql": sql }))
-        .send()
-        .await?;
+        .timeout(Duration::from_secs(15));
+    if let Some(request_id) = request_id {
+        request = request.header("X-Request-ID", request_id);
+    }
+    let response = request.json(&json!({ "sql": sql })).send().await?;
 
     let body = response.text().await?;
     let parsed: serde_json::Value = serde_json::from_str(&body)?;
@@ -2752,6 +2760,11 @@ fn is_idempotent_conflict(message: &str) -> bool {
 
 fn is_network_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
+    // Procedure deadlines finish the call. They are not transport failures, and
+    // retrying them re-runs the body on every cluster URL.
+    if lower.contains("invocation timed out") || lower.contains("procedure_timeout") {
+        return false;
+    }
     lower.contains("network error")
         || lower.contains("error sending request")
         || lower.contains("connection refused")

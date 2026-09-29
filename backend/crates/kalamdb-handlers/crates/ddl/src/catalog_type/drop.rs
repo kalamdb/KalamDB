@@ -40,19 +40,22 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
             ));
         }
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || {
+        let (result, dropped_id) = run_blocking(move || {
             let stores = app.system_tables().catalog_stores();
             let existing = stores
                 .find_type(&statement.namespace_id, &statement.name)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
             let Some(catalog_type) = existing else {
                 if statement.if_exists {
-                    return Ok(ExecutionResult::Success {
-                        message: format!(
-                            "Type {}.{} does not exist, skipping",
-                            statement.namespace_id, statement.name
-                        ),
-                    });
+                    return Ok((
+                        ExecutionResult::Success {
+                            message: format!(
+                                "Type {}.{} does not exist, skipping",
+                                statement.namespace_id, statement.name
+                            ),
+                        },
+                        None,
+                    ));
                 }
                 return Err(KalamDbError::NotFound(format!(
                     "type {}.{} not found",
@@ -75,14 +78,25 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
                 CatalogTypeKind::RowAlias | CatalogTypeKind::Composite | CatalogTypeKind::Enum => {
                 },
             }
+            let type_id = catalog_type.type_id.clone();
             stores
-                .drop_type(&catalog_type.type_id)
+                .drop_type(&type_id)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            Ok(ExecutionResult::Success {
-                message: format!("Type {} dropped", crate::catalog_type::type_alias(&catalog_type)),
-            })
+            Ok((
+                ExecutionResult::Success {
+                    message: format!(
+                        "Type {} dropped",
+                        crate::catalog_type::type_alias(&catalog_type)
+                    ),
+                },
+                Some(type_id),
+            ))
         })
-        .await
+        .await?;
+        if let Some(type_id) = dropped_id {
+            super::replicate_dropped_type(&self.app_context, type_id).await?;
+        }
+        Ok(result)
     }
 }
 

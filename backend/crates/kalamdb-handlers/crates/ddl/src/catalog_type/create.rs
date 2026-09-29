@@ -40,8 +40,12 @@ impl TypedStatementHandler<CreateTypeStatement> for CreateTypeHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         require_admin(context, "create type")?;
+        let namespace_id = statement.namespace_id.clone();
+        let name = statement.name.clone();
         let app = Arc::clone(&self.app_context);
-        run_blocking(move || persist_create_type(&app, statement)).await
+        let result = run_blocking(move || persist_create_type(&app, statement)).await?;
+        super::replicate_named_type(&self.app_context, &namespace_id, &name).await?;
+        Ok(result)
     }
 }
 

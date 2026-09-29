@@ -13,13 +13,13 @@ use chrono::{DateTime, Utc};
 use kalamdb_commons::{
     models::{
         schemas::{TableDefinition, TableType},
-        FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId, UserId,
+        FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId, TypeId, UserId,
     },
     TableId,
 };
 use kalamdb_system::{
     providers::jobs::models::Job, CatalogFunctionArtifact, CatalogFunctionModule,
-    CatalogFunctionRevision, JobStatus, Storage, User,
+    CatalogFunctionRevision, CatalogType, CatalogTypeField, JobStatus, Storage, User,
 };
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +211,15 @@ pub enum MetaCommand {
     },
     /// Independent CAS results, in input order. Appended for wire compatibility.
     CompareExchangeSchedules { updates: Vec<super::ScheduleUpdate> },
+    /// Persist a catalog type and its fields on every meta replica.
+    ///
+    /// Appended so existing log discriminants stay stable.
+    UpsertCatalogType {
+        catalog_type: CatalogType,
+        fields:       Vec<CatalogTypeField>,
+    },
+    /// Remove a catalog type on every meta replica. Missing types are a no-op.
+    DropCatalogType { type_id: TypeId },
 }
 
 impl MetaCommand {
@@ -241,6 +250,7 @@ impl MetaCommand {
             Self::CompareExchangeSchedule { .. } | Self::CompareExchangeSchedules { .. } => {
                 "schedule"
             },
+            Self::UpsertCatalogType { .. } | Self::DropCatalogType { .. } => "type",
         }
     }
 }

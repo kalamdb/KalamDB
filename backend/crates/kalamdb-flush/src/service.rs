@@ -46,6 +46,13 @@ pub struct ManifestService {
     /// layer to keep memory bounded for high-cardinality user tables.
     memory_cache: DashMap<ManifestId, Arc<ManifestCacheEntry>>,
 
+    /// `last_refreshed` of empty cache entries already compared with `manifest.json`.
+    ///
+    /// An empty cache must not hide a manifest file written by flush. The check runs once per
+    /// cache generation so tables that have never been flushed do not reread storage on every
+    /// query.
+    empty_storage_checks: DashMap<ManifestId, i64>,
+
     /// Per-scope flush serialization guards.
     ///
     /// Flushes for the same table/user scope must not race batch-number allocation or manifest
@@ -142,6 +149,7 @@ impl ManifestService {
     pub fn new(provider: Arc<ManifestTableProvider>, config: ManifestCacheSettings) -> Self {
         let service = Self {
             memory_cache: DashMap::with_capacity(config.max_entries.min(1024)),
+            empty_storage_checks: DashMap::with_capacity(128),
             flush_scope_locks: DashMap::with_capacity(128),
             active_compactions: Arc::new(DashSet::with_capacity(128)),
             provider,
@@ -210,15 +218,17 @@ impl ManifestService {
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let manifest_id = Self::manifest_id(table_id, user_id);
 
-        if let Some(entry) = self.memory_cache.get(&manifest_id) {
-            return Ok(Some(Arc::clone(entry.value())));
+        if let Some(cached) = self.memory_cache.get(&manifest_id) {
+            let entry = Arc::clone(cached.value());
+            drop(cached);
+            return self.entry_visible_to_readers(table_id, user_id, entry);
         }
 
         match self.provider.get_cache_entry(&manifest_id) {
             Ok(Some(entry)) => {
                 let entry = Arc::new(entry);
                 self.insert_memory_entry(manifest_id, Arc::clone(&entry));
-                Ok(Some(entry))
+                self.entry_visible_to_readers(table_id, user_id, entry)
             },
             Ok(None) => self.load_from_storage_and_hydrate(table_id, user_id),
             Err(StorageError::SerializationError(err)) => {
@@ -243,15 +253,17 @@ impl ManifestService {
     ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
         let manifest_id = Self::manifest_id(table_id, user_id);
 
-        if let Some(entry) = self.memory_cache.get(&manifest_id) {
-            return Ok(Some(Arc::clone(entry.value())));
+        if let Some(cached) = self.memory_cache.get(&manifest_id) {
+            let entry = Arc::clone(cached.value());
+            drop(cached);
+            return self.entry_visible_to_readers_async(table_id, user_id, entry).await;
         }
 
         match self.provider.get_cache_entry_async(&manifest_id).await {
             Ok(Some(entry)) => {
                 let entry = Arc::new(entry);
                 self.insert_memory_entry(manifest_id, Arc::clone(&entry));
-                Ok(Some(entry))
+                self.entry_visible_to_readers_async(table_id, user_id, entry).await
             },
             Ok(None) => self.load_from_storage_and_hydrate_async(table_id, user_id).await,
             Err(StorageError::SerializationError(err)) => {
@@ -266,6 +278,99 @@ impl ManifestService {
             },
             Err(err) => Err(err),
         }
+    }
+
+    /// Return a cached manifest, repairing it when storage has segments the cache dropped.
+    fn entry_visible_to_readers(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        entry: Arc<ManifestCacheEntry>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        if !entry.manifest.segments.is_empty() {
+            return Ok(Some(entry));
+        }
+
+        let manifest_id = Self::manifest_id(table_id, user_id);
+        if self
+            .empty_storage_checks
+            .get(&manifest_id)
+            .is_some_and(|checked_at| *checked_at == entry.last_refreshed)
+        {
+            return Ok(Some(entry));
+        }
+
+        match self.read_manifest_from_storage(table_id, user_id) {
+            Ok(Some(manifest)) if !manifest.segments.is_empty() => {
+                self.adopt_storage_manifest(manifest_id, &entry, manifest)
+            },
+            Ok(_) => {
+                self.empty_storage_checks.insert(manifest_id, entry.last_refreshed);
+                Ok(Some(entry))
+            },
+            Err(err) => {
+                warn!(
+                    "Manifest storage check failed for {}: {} (using cached empty manifest)",
+                    manifest_id.as_str(),
+                    err
+                );
+                Ok(Some(entry))
+            },
+        }
+    }
+
+    async fn entry_visible_to_readers_async(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+        entry: Arc<ManifestCacheEntry>,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        if !entry.manifest.segments.is_empty() {
+            return Ok(Some(entry));
+        }
+
+        let manifest_id = Self::manifest_id(table_id, user_id);
+        if self
+            .empty_storage_checks
+            .get(&manifest_id)
+            .is_some_and(|checked_at| *checked_at == entry.last_refreshed)
+        {
+            return Ok(Some(entry));
+        }
+
+        match self.read_manifest_from_storage_async(table_id, user_id).await {
+            Ok(Some(manifest)) if !manifest.segments.is_empty() => {
+                self.adopt_storage_manifest(manifest_id, &entry, manifest)
+            },
+            Ok(_) => {
+                self.empty_storage_checks.insert(manifest_id, entry.last_refreshed);
+                Ok(Some(entry))
+            },
+            Err(err) => {
+                warn!(
+                    "Manifest storage check failed for {}: {} (using cached empty manifest)",
+                    manifest_id.as_str(),
+                    err
+                );
+                Ok(Some(entry))
+            },
+        }
+    }
+
+    fn adopt_storage_manifest(
+        &self,
+        manifest_id: ManifestId,
+        entry: &ManifestCacheEntry,
+        manifest: Manifest,
+    ) -> Result<Option<Arc<ManifestCacheEntry>>, StorageError> {
+        self.empty_storage_checks.remove(&manifest_id);
+        let refreshed = ManifestCacheEntry::new(
+            manifest,
+            entry.etag.clone(),
+            chrono::Utc::now().timestamp_millis(),
+            entry.sync_state,
+        );
+        self.upsert_entry(manifest_id, refreshed).map(Some)
     }
 
     /// Count all cached manifest entries.
@@ -901,6 +1006,7 @@ impl ManifestService {
         manifest_id: ManifestId,
         entry: ManifestCacheEntry,
     ) -> Result<Arc<ManifestCacheEntry>, StorageError> {
+        self.empty_storage_checks.remove(&manifest_id);
         let inserted_new_entry = match self.cached_entry_snapshot(&manifest_id) {
             Ok(Some(old_entry)) => {
                 self.provider.update_cache_entry_with_old(
