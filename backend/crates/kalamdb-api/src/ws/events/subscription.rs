@@ -209,6 +209,11 @@ pub async fn handle_subscribe(
                 kalamdb_live::error::LiveError::PermissionDenied(_) => WsErrorCode::Unauthorized,
                 kalamdb_live::error::LiveError::NotFound(_) => WsErrorCode::NotFound,
                 kalamdb_live::error::LiveError::InvalidSql(_) => WsErrorCode::InvalidSql,
+                kalamdb_live::error::LiveError::InvalidOperation(message)
+                    if message.contains("stale resume cursor") =>
+                {
+                    WsErrorCode::CursorExpired
+                },
                 kalamdb_live::error::LiveError::InvalidOperation(_) => WsErrorCode::Unsupported,
                 _ => WsErrorCode::SubscriptionFailed,
             };

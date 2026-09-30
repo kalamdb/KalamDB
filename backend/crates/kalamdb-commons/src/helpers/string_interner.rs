@@ -75,12 +75,12 @@ pub fn intern(s: &str) -> Arc<str> {
 /// row.insert(SYSTEM_COLUMNS.row_id.clone(), "123".to_string());
 /// ```
 pub struct SystemColumns {
-    /// "_seq" column (Snowflake ID with embedded timestamp)
-    pub seq:           Arc<str>,
+    /// "_version" column (canonical row version)
+    pub version:       Arc<str>,
+    /// "_timestamp" column (STREAM ingestion time)
+    pub timestamp:     Arc<str>,
     /// "_deleted" column (soft delete flag)
     pub deleted:       Arc<str>,
-    /// "_commit_seq" column (committed snapshot visibility marker)
-    pub commit_seq:    Arc<str>,
     /// "user_id" column (user identifier in system tables)
     pub user_id:       Arc<str>,
     /// "namespace_id" column (namespace identifier)
@@ -97,9 +97,9 @@ pub struct SystemColumns {
 
 /// Global pre-interned system column names
 pub static SYSTEM_COLUMNS: Lazy<SystemColumns> = Lazy::new(|| SystemColumns {
-    seq:           intern(SystemColumnNames::SEQ),
+    version:       intern(SystemColumnNames::VERSION),
+    timestamp:     intern(SystemColumnNames::TIMESTAMP),
     deleted:       intern(SystemColumnNames::DELETED),
-    commit_seq:    intern(SystemColumnNames::COMMIT_SEQ),
     user_id:       intern("user_id"),
     namespace_id:  intern("namespace_id"),
     table_id:      intern("table_id"),
@@ -159,29 +159,22 @@ mod tests {
     #[test]
     fn test_system_columns_are_interned() {
         // Access system columns
-        let seq = SYSTEM_COLUMNS.seq.clone();
+        let version = SYSTEM_COLUMNS.version.clone();
         let deleted = SYSTEM_COLUMNS.deleted.clone();
-        let commit_seq = SYSTEM_COLUMNS.commit_seq.clone();
 
-        // Verify they have correct values
-        assert_eq!(seq.as_ref(), SystemColumnNames::SEQ);
+        assert_eq!(version.as_ref(), SystemColumnNames::VERSION);
         assert_eq!(deleted.as_ref(), SystemColumnNames::DELETED);
-        assert_eq!(commit_seq.as_ref(), SystemColumnNames::COMMIT_SEQ);
 
-        // Interning the same string should return the same Arc
-        let seq2 = intern(SystemColumnNames::SEQ);
-        assert!(Arc::ptr_eq(&seq, &seq2));
-        let commit_seq2 = intern(SystemColumnNames::COMMIT_SEQ);
-        assert!(Arc::ptr_eq(&commit_seq, &commit_seq2));
+        let version2 = intern(SystemColumnNames::VERSION);
+        assert!(Arc::ptr_eq(&version, &version2));
     }
 
     #[test]
     fn test_all_system_columns() {
         let cols = &*SYSTEM_COLUMNS;
 
-        assert_eq!(cols.seq.as_ref(), SystemColumnNames::SEQ);
+        assert_eq!(cols.version.as_ref(), SystemColumnNames::VERSION);
         assert_eq!(cols.deleted.as_ref(), SystemColumnNames::DELETED);
-        assert_eq!(cols.commit_seq.as_ref(), SystemColumnNames::COMMIT_SEQ);
         assert_eq!(cols.user_id.as_ref(), "user_id");
         assert_eq!(cols.namespace_id.as_ref(), "namespace_id");
         assert_eq!(cols.table_id.as_ref(), "table_id");

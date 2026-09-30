@@ -20,7 +20,7 @@ mod user_data;
 
 // Unified Meta commands
 // Data commands (split into separate files for better organization)
-pub use data_response::{commit_seq_from_log_position, DataResponse, TransactionApplyResult};
+pub use data_response::{assign_entry_versions, DataResponse, TransactionApplyResult};
 pub use meta::{MetaCommand, MetaResponse};
 pub use schedule_update::ScheduleUpdate;
 pub use shared_data::SharedDataCommand;

@@ -96,7 +96,7 @@ void main() {
     final applied = await store.applyAndCheckpoint(
       accountKey: 'server/user-a',
       subscriptionId: 'messages',
-      seq: const SeqId(10),
+      seq: const VersionId(10),
       apply: () => database
           .into(database.kalamRowStates)
           .insert(
@@ -117,7 +117,7 @@ void main() {
     );
 
     expect(applied, isTrue);
-    expect(checkpoint?.seq, const SeqId(10));
+    expect(checkpoint?.seq, const VersionId(10));
     expect(await database.select(database.kalamRowStates).get(), hasLength(1));
   });
 
@@ -126,14 +126,14 @@ void main() {
     await store.applyAndCheckpoint(
       accountKey: 'server/user-a',
       subscriptionId: 'messages',
-      seq: const SeqId(10),
+      seq: const VersionId(10),
       apply: () async => applyCount++,
     );
 
     final applied = await store.applyAndCheckpoint(
       accountKey: 'server/user-a',
       subscriptionId: 'messages',
-      seq: const SeqId(9),
+      seq: const VersionId(9),
       apply: () async => applyCount++,
     );
 
@@ -146,7 +146,7 @@ void main() {
       store.applyAndCheckpoint(
         accountKey: 'server/user-a',
         subscriptionId: 'messages',
-        seq: const SeqId(10),
+        seq: const VersionId(10),
         apply: () async {
           await database
               .into(database.kalamRowStates)

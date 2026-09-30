@@ -9,6 +9,7 @@
 //! User/Shared/Stream providers override it with actual batch-insert logic.
 
 use async_trait::async_trait;
+use kalamdb_commons::ids::VersionId;
 use datafusion::{datasource::TableProvider, scalar::ScalarValue};
 use kalamdb_commons::models::{rows::Row, UserId};
 
@@ -29,8 +30,13 @@ pub trait KalamTableProvider: TableProvider + Send + Sync {
     ///
     /// Default implementation returns an error for read-only tables (system tables).
     /// User/Shared/Stream providers override with `BaseTableProvider::insert_batch()`.
-    async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
-        let _ = (user_id, rows);
+    async fn insert_rows(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<usize, KalamDbError> {
+        let _ = (user_id, rows, versions);
         Err(KalamDbError::InvalidOperation(
             "INSERT not supported for this table type".into(),
         ))
@@ -44,8 +50,9 @@ pub trait KalamTableProvider: TableProvider + Send + Sync {
         &self,
         user_id: &UserId,
         rows: Vec<Row>,
+        versions: &[VersionId],
     ) -> Result<Vec<ScalarValue>, KalamDbError> {
-        let _count = self.insert_rows(user_id, rows).await?;
+        let _count = self.insert_rows(user_id, rows, versions).await?;
         Ok(Vec::new())
     }
 
@@ -57,8 +64,9 @@ pub trait KalamTableProvider: TableProvider + Send + Sync {
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
-        let _ = (user_id, pk_value, updates);
+        let _ = (user_id, pk_value, updates, version);
         Err(KalamDbError::InvalidOperation(
             "UPDATE not supported for this table type".into(),
         ))
@@ -71,8 +79,9 @@ pub trait KalamTableProvider: TableProvider + Send + Sync {
         &self,
         user_id: &UserId,
         pk_value: &str,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
-        let _ = (user_id, pk_value);
+        let _ = (user_id, pk_value, version);
         Err(KalamDbError::InvalidOperation(
             "DELETE not supported for this table type".into(),
         ))

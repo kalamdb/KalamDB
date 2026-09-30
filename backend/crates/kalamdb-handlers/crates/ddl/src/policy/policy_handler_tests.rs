@@ -211,7 +211,7 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .expect("seed rows");
 
@@ -326,7 +326,7 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
                 ("group_id".to_string(), ScalarValue::Utf8(Some("A".to_string()))),
             ])],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
     messages_provider
@@ -336,7 +336,7 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 ("id".to_string(), ScalarValue::Utf8(Some("message-1".to_string()))),
                 ("group_id".to_string(), ScalarValue::Utf8(Some("A".to_string()))),
             ])],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
 
@@ -436,11 +436,15 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 "user_id".to_string(),
                 ScalarValue::Utf8(Some("bob".to_string())),
             )]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .unwrap();
     assert!(members_provider
-        .patch_latest_commit_seq_by_pk("membership-1", 9_000)
+        .patch_latest_commit_seq_by_pk(
+            "membership-1",
+            kalamdb_commons::ids::VersionId::from(9_000_i64),
+        )
         .await
         .unwrap());
     let revoked = app_execution_context(&app_context, "alice", Role::User)
@@ -462,11 +466,15 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 "user_id".to_string(),
                 ScalarValue::Utf8(Some("alice".to_string())),
             )]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .unwrap();
     assert!(members_provider
-        .patch_latest_commit_seq_by_pk("membership-1", 9_500)
+        .patch_latest_commit_seq_by_pk(
+            "membership-1",
+            kalamdb_commons::ids::VersionId::from(9_500_i64),
+        )
         .await
         .unwrap());
     let granted_again = app_execution_context(&app_context, "alice", Role::User)
@@ -484,11 +492,15 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
             &system,
             "message-1",
             Row::from_vec(vec![("group_id".to_string(), ScalarValue::Utf8(Some("B".to_string())))]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .unwrap();
     assert!(messages_provider
-        .patch_latest_commit_seq_by_pk("message-1", 10_000)
+        .patch_latest_commit_seq_by_pk(
+            "message-1",
+            kalamdb_commons::ids::VersionId::from(10_000_i64),
+        )
         .await
         .unwrap());
     let latest = messages_provider
@@ -665,7 +677,7 @@ async fn omitted_policy_stays_default_deny_for_users() {
                 ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
                 ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
             ])],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
 
@@ -707,7 +719,7 @@ async fn client_or_true_cannot_bypass_row_local_rls() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -763,7 +775,7 @@ async fn nested_query_cannot_bypass_row_local_rls() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -823,7 +835,7 @@ async fn plan_cache_binds_current_user_after_lookup() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -916,7 +928,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
         ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
     ]);
     provider
-        .insert_rows(&UserId::new("system"), vec![alice_row.clone()])
+        .insert_rows(&UserId::new("system"), vec![alice_row.clone()], &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
 
@@ -984,7 +996,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
         ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
     ]);
     provider
-        .insert_rows(&UserId::new("system"), vec![alice_row.clone()])
+        .insert_rows(&UserId::new("system"), vec![alice_row.clone()], &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
 
@@ -1047,7 +1059,7 @@ async fn rejects_unbounded_not_owner_policy() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -1171,7 +1183,7 @@ async fn membership_policy_hides_rows_with_null_join_key() {
                     ("status".to_string(), ScalarValue::Utf8(Some("active".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
     messages_provider
@@ -1187,7 +1199,7 @@ async fn membership_policy_hides_rows_with_null_join_key() {
                     ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -1244,7 +1256,7 @@ async fn union_cannot_bypass_row_local_rls() {
                     ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64)])
         .await
         .unwrap();
 
@@ -1330,14 +1342,14 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
                 ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
                 ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
             ])],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
     let message_row = Row::from_vec(vec![
         ("id".to_string(), ScalarValue::Utf8(Some("message-1".to_string()))),
         ("group_id".to_string(), ScalarValue::Utf8(Some("group-a".to_string()))),
     ]);
-    messages_provider.insert_rows(&system, vec![message_row.clone()]).await.unwrap();
+    messages_provider.insert_rows(&system, vec![message_row.clone()], &[kalamdb_commons::ids::VersionId::from(1_i64)]).await.unwrap();
 
     CreatePolicyHandler::new(app_context.clone())
         .execute(
@@ -1360,7 +1372,14 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
         .unwrap();
     assert!(bound.authorizes(&message_row));
 
-    members_provider.delete_row_by_pk(&system, "membership-1").await.unwrap();
+    members_provider
+        .delete_row_by_pk(
+            &system,
+            "membership-1",
+            kalamdb_commons::ids::VersionId::from(2_i64),
+        )
+        .await
+        .unwrap();
 
     assert!(
         !bound.authorizes(&message_row),
@@ -1389,7 +1408,7 @@ async fn service_role_does_not_inherit_user_targeted_policies() {
                 ("id".to_string(), ScalarValue::Utf8(Some("doc-a".to_string()))),
                 ("owner_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
             ])],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64)])
         .await
         .unwrap();
 
@@ -1483,7 +1502,13 @@ async fn membership_bind_uses_indexed_principal_among_many_rows() {
         ("user_id".to_string(), ScalarValue::Utf8(Some("alice".to_string()))),
         ("group_id".to_string(), ScalarValue::Utf8(Some("B".to_string()))),
     ]));
-    members_provider.insert_rows(&system, member_rows).await.unwrap();
+    let member_versions: Vec<_> = (1..=member_rows.len())
+        .map(|index| kalamdb_commons::ids::VersionId::from(index as i64))
+        .collect();
+    members_provider
+        .insert_rows(&system, member_rows, &member_versions)
+        .await
+        .unwrap();
 
     messages_provider
         .insert_rows(
@@ -1502,7 +1527,7 @@ async fn membership_bind_uses_indexed_principal_among_many_rows() {
                     ("group_id".to_string(), ScalarValue::Utf8(Some("G0".to_string()))),
                 ]),
             ],
-        )
+            &[kalamdb_commons::ids::VersionId::from(1_i64), kalamdb_commons::ids::VersionId::from(2_i64), kalamdb_commons::ids::VersionId::from(3_i64)])
         .await
         .unwrap();
 

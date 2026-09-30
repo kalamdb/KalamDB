@@ -230,6 +230,10 @@ impl ClusterCoordinator for NoopClusterCoordinator {
 struct TestCommitSequence;
 
 impl CommitSequenceSource for TestCommitSequence {
+    fn frontier(&self, _group_id: kalamdb_sharding::GroupId) -> u64 {
+        0
+    }
+
     fn current_committed(&self) -> u64 {
         0
     }
@@ -387,6 +391,7 @@ async fn stream_provider_planning_stays_lightweight_until_execution() {
                 ("event_id", ScalarValue::Utf8(Some("evt-1".to_string()))),
                 ("payload", ScalarValue::Utf8(Some("hello".to_string()))),
             ]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .expect("insert row after planning");

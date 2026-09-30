@@ -18,7 +18,7 @@ use std::{
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::scalar_value_to_json,
-    ids::SeqId,
+    ids::VersionId,
     models::{rows::Row, TableId, UserId},
     websocket::{RowData, SharedChangePayload, WireNotification},
 };
@@ -29,7 +29,9 @@ use tokio::sync::mpsc;
 use super::models::LiveRoute;
 use super::{
     manager::ConnectionsManager,
-    models::{epoch_millis, ChangeNotification, ChangeType, SubscriptionHandle},
+    models::{
+        epoch_millis, Accept, ChangeNotification, ChangeType, ConnectionEvent, SubscriptionHandle,
+    },
 };
 use crate::{
     error::LiveError,
@@ -65,7 +67,7 @@ const SHARED_NOTIFY_CHUNK_SIZE: usize = 2_048;
 struct NotificationTask {
     user_id:      Option<UserId>,
     table_id:     TableId,
-    notification: ChangeNotification,
+    notification: Arc<ChangeNotification>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -94,38 +96,23 @@ impl PayloadCacheKey {
 }
 
 #[inline]
-fn extract_seq(change_notification: &ChangeNotification) -> Option<SeqId> {
+fn extract_seq(change_notification: &ChangeNotification) -> Option<VersionId> {
     use datafusion_common::ScalarValue;
-    change_notification
-        .row_data
-        .values
-        .get(SystemColumnNames::SEQ)
-        .and_then(|value| match value {
-            ScalarValue::Int64(Some(seq)) => Some(SeqId::from(*seq)),
-            ScalarValue::UInt64(Some(seq)) => Some(SeqId::from(*seq as i64)),
+    change_notification.row_data.values.get(SystemColumnNames::VERSION).and_then(
+        |value| match value {
+            ScalarValue::Int64(Some(seq)) => VersionId::try_from_i64(*seq).ok(),
+            ScalarValue::UInt64(Some(seq)) => VersionId::try_from_i64(*seq as i64).ok(),
             _ => None,
-        })
+        },
+    )
 }
 
 #[inline]
-fn extract_commit_seq(change_notification: &ChangeNotification) -> Option<u64> {
-    use datafusion_common::ScalarValue;
-    change_notification
-        .row_data
-        .values
-        .get(SystemColumnNames::COMMIT_SEQ)
-        .and_then(|value| match value {
-            ScalarValue::UInt64(Some(commit_seq)) => Some(*commit_seq),
-            ScalarValue::Int64(Some(commit_seq)) if *commit_seq >= 0 => Some(*commit_seq as u64),
-            _ => None,
-        })
-}
-
 fn projection_includes_column(projections: &Option<Arc<Vec<String>>>, column: &str) -> bool {
     match projections {
         None => true,
         Some(proj) => {
-            column == SystemColumnNames::SEQ
+            column == SystemColumnNames::VERSION
                 || proj.iter().any(|candidate| candidate.eq_ignore_ascii_case(column))
         },
     }
@@ -136,9 +123,6 @@ fn projection_includes_column(projections: &Option<Arc<Vec<String>>>, column: &s
 fn project_row(row: &Row, projections: &Option<Arc<Vec<String>>>) -> Result<RowData, LiveError> {
     let mut map = HashMap::new();
     for (col, sv) in &row.values {
-        if col == SystemColumnNames::COMMIT_SEQ {
-            continue;
-        }
         if projection_includes_column(projections, col) {
             let cell = scalar_value_to_json(sv)
                 .map_err(|e| LiveError::SerializationError(e.to_string()))?;
@@ -153,9 +137,6 @@ fn project_delete_identity(row: &Row, pk_columns: &[String]) -> Result<RowData, 
     for (column, value) in &row.values {
         if !column.starts_with('_') && !pk_columns.iter().any(|pk| pk.eq_ignore_ascii_case(column))
         {
-            continue;
-        }
-        if column == SystemColumnNames::COMMIT_SEQ {
             continue;
         }
         map.insert(
@@ -180,7 +161,8 @@ fn project_update_delta(
     let mut old_map = HashMap::new();
 
     // Always include _seq and PK columns
-    for key in std::iter::once(SystemColumnNames::SEQ).chain(pk_columns.iter().map(String::as_str))
+    for key in
+        std::iter::once(SystemColumnNames::VERSION).chain(pk_columns.iter().map(String::as_str))
     {
         if let Some(sv) = new_row.values.get(key) {
             new_map.insert(
@@ -331,31 +313,42 @@ fn as_visible_change(change_type: &ChangeType) -> VisibleChange {
 /// Try to deliver a notification to a subscriber, handling flow control.
 /// Returns `true` if the notification was sent to the channel.
 #[inline]
+fn signal_lapse(handle: &SubscriptionHandle) {
+    if !handle.runtime_metadata.claim_gap() {
+        return;
+    }
+    let _ = handle.event_tx.try_send(ConnectionEvent::SubscriptionLapsed {
+        subscription_id: Arc::clone(&handle.subscription_id),
+    });
+    log::warn!(
+        "Subscription {} missed a live change; client must resubscribe without a resume cursor",
+        handle.subscription_id
+    );
+}
+
 fn try_deliver(
     handle: &SubscriptionHandle,
     notification: Arc<WireNotification>,
-    seq_value: Option<SeqId>,
-    commit_seq: Option<u64>,
+    seq_value: Option<VersionId>,
     delivery_timestamp_ms: u64,
 ) -> bool {
+    if handle.runtime_metadata.is_gapped() {
+        return false;
+    }
+
     if let Some(flow_control) = handle.flow_control.as_ref() {
-        if !flow_control.is_initial_complete() {
-            if let Some(snapshot_commit_seq) = flow_control.snapshot_end_commit_seq() {
-                if let Some(commit_seq) = commit_seq {
-                    if commit_seq <= snapshot_commit_seq {
-                        return false;
-                    }
-                }
-            } else if let Some(snapshot_seq) = flow_control.snapshot_end_seq() {
-                if let Some(seq) = seq_value {
-                    if seq.as_i64() <= snapshot_seq {
-                        return false;
-                    }
-                }
-            }
-            flow_control.buffer_notification(Arc::clone(&notification), seq_value, commit_seq);
-            return false;
-        }
+        return match flow_control.accept(notification, seq_value, &handle.notification_tx) {
+            Accept::Stored | Accept::Covered => false,
+            Accept::Sent => {
+                handle.runtime_metadata.record_delivery_at(delivery_timestamp_ms);
+                true
+            },
+            Accept::Closed => false,
+            Accept::Failed => {
+                signal_lapse(handle);
+                false
+            },
+        };
     }
 
     match handle.notification_tx.try_send(notification) {
@@ -368,9 +361,10 @@ fn try_deliver(
             match e {
                 TrySendError::Full(_) => {
                     log::warn!(
-                        "Notification channel full for subscription_id={}, dropping notification",
+                        "Notification channel full for subscription_id={}; requesting resubscribe",
                         handle.subscription_id
                     );
+                    signal_lapse(handle);
                 },
                 TrySendError::Closed(_) => {
                     log::debug!(
@@ -407,6 +401,7 @@ impl NotificationService {
     /// Check if there are any subscribers for a given user and table
     pub fn has_subscribers(&self, user_id: &UserId, table_id: &TableId) -> bool {
         self.registry.has_subscriptions(user_id, table_id)
+            || self.registry.replay().tracking(Some(user_id), table_id)
     }
 
     pub fn new(registry: Arc<ConnectionsManager>) -> Arc<Self> {
@@ -509,6 +504,10 @@ impl NotificationService {
         table_id: TableId,
         notification: ChangeNotification,
     ) {
+        let notification = Arc::new(notification);
+        self.registry
+            .replay()
+            .record(user_id.as_ref(), &table_id, Arc::clone(&notification));
         let worker_idx = self.worker_index(user_id.as_ref(), &table_id);
         let task = NotificationTask {
             user_id,
@@ -522,13 +521,29 @@ impl NotificationService {
                     None => "shared".to_string(),
                 };
                 log::warn!(
-                    "Notification worker {} queue full for table={} owner_scope={}, dropping \
-                     notification",
+                    "Notification worker {} queue full for table={} owner_scope={}; lapsing \
+                     subscribers",
                     worker_idx,
                     task.table_id,
                     owner_scope
                 );
+                self.lapse_scope(task.user_id.as_ref(), &task.table_id);
             }
+        }
+    }
+
+    fn lapse_scope(&self, user_id: Option<&UserId>, table_id: &TableId) {
+        let handles = if let Some(user_id) = user_id {
+            self.registry
+                .get_subscriptions_for_table(user_id, table_id)
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect::<Vec<_>>()
+        } else {
+            self.registry.shared_handles_for_table(table_id)
+        };
+        for handle in handles {
+            signal_lapse(&handle);
         }
     }
 
@@ -561,7 +576,7 @@ impl NotificationService {
     /// fan-out via `tokio::spawn`.
     async fn dispatch_to_subscribers(
         table_id: &TableId,
-        change_notification: ChangeNotification,
+        change: Arc<ChangeNotification>,
         mut all_handles: Vec<SubscriptionHandle>,
     ) -> Result<usize, LiveError> {
         let handle_count = all_handles.len();
@@ -569,113 +584,52 @@ impl NotificationService {
             return Ok(0);
         }
 
-        let seq_value = extract_seq(&change_notification);
-        let commit_seq = extract_commit_seq(&change_notification);
+        let seq_value = extract_seq(change.as_ref());
         let delivery_timestamp_ms = epoch_millis();
-        let change_type = change_notification.change_type.clone();
-        let pk_columns = Arc::new(change_notification.pk_columns);
-        let new_row = Arc::new(change_notification.row_data);
-        let old_row = change_notification.old_data.map(Arc::new);
 
         if handle_count == 1 {
             let Some(handle) = all_handles.pop() else {
                 return Ok(0);
             };
-
-            return dispatch_one(
-                handle,
-                &new_row,
-                old_row.as_deref(),
-                &change_type,
-                &pk_columns,
-                seq_value,
-                commit_seq,
-                delivery_timestamp_ms,
-            );
+            return dispatch_change(handle, change.as_ref(), seq_value, delivery_timestamp_ms);
         }
 
-        // Small fan-out: inline dispatch directly from DashMap refs (no clone/spawn overhead)
         if handle_count <= SHARED_NOTIFY_CHUNK_SIZE {
-            return dispatch_chunk(
+            return dispatch_change_chunk(
                 all_handles,
-                &new_row,
-                old_row.as_deref(),
-                &change_type,
-                &pk_columns,
+                change.as_ref(),
                 seq_value,
-                commit_seq,
                 delivery_timestamp_ms,
             );
         }
 
-        // Large fan-out: spawn a task per chunk so the tokio runtime can
-        // parallelise delivery across its thread pool. When all subscribers
-        // are on the same table they hash to one notification worker —
-        // spawning is the only way to utilise multiple cores for the fan-out.
-        let table_id = table_id.clone();
+        // One worker owns a table. Chunks run in parallel so a large fan-out
+        // uses more than that worker's thread. Each chunk shares the same row.
         let mut tasks = Vec::new();
         let mut chunk_handles = Vec::with_capacity(SHARED_NOTIFY_CHUNK_SIZE);
-
         for handle in all_handles {
             chunk_handles.push(handle);
-
             if chunk_handles.len() < SHARED_NOTIFY_CHUNK_SIZE {
                 continue;
             }
-
             let ready_handles =
                 std::mem::replace(&mut chunk_handles, Vec::with_capacity(SHARED_NOTIFY_CHUNK_SIZE));
-            let new_row = Arc::clone(&new_row);
-            let old_row = old_row.as_ref().map(Arc::clone);
-            let change_type = change_type.clone();
-            let pk_columns = Arc::clone(&pk_columns);
-            let table_id = table_id.clone();
-
-            tasks.push(tokio::spawn(async move {
-                match dispatch_chunk(
-                    ready_handles,
-                    &new_row,
-                    old_row.as_deref(),
-                    &change_type,
-                    &pk_columns,
-                    seq_value,
-                    commit_seq,
-                    delivery_timestamp_ms,
-                ) {
-                    Ok(count) => count,
-                    Err(e) => {
-                        log::error!("Notification dispatch error for table {}: {}", table_id, e);
-                        0
-                    },
-                }
-            }));
+            tasks.push(spawn_dispatch_chunk(
+                ready_handles,
+                Arc::clone(&change),
+                table_id.clone(),
+                seq_value,
+                delivery_timestamp_ms,
+            ));
         }
-
         if !chunk_handles.is_empty() {
-            let new_row = Arc::clone(&new_row);
-            let old_row = old_row.as_ref().map(Arc::clone);
-            let change_type = change_type.clone();
-            let pk_columns = Arc::clone(&pk_columns);
-            let table_id = table_id.clone();
-
-            tasks.push(tokio::spawn(async move {
-                match dispatch_chunk(
-                    chunk_handles,
-                    &new_row,
-                    old_row.as_deref(),
-                    &change_type,
-                    &pk_columns,
-                    seq_value,
-                    commit_seq,
-                    delivery_timestamp_ms,
-                ) {
-                    Ok(count) => count,
-                    Err(e) => {
-                        log::error!("Notification dispatch error for table {}: {}", table_id, e);
-                        0
-                    },
-                }
-            }));
+            tasks.push(spawn_dispatch_chunk(
+                chunk_handles,
+                change,
+                table_id.clone(),
+                seq_value,
+                delivery_timestamp_ms,
+            ));
         }
 
         let mut total = 0usize;
@@ -684,9 +638,60 @@ impl NotificationService {
                 total += count;
             }
         }
-
         Ok(total)
     }
+}
+
+fn spawn_dispatch_chunk(
+    handles: Vec<SubscriptionHandle>,
+    change: Arc<ChangeNotification>,
+    table_id: TableId,
+    seq_value: Option<VersionId>,
+    delivery_timestamp_ms: u64,
+) -> tokio::task::JoinHandle<usize> {
+    tokio::spawn(async move {
+        match dispatch_change_chunk(handles, change.as_ref(), seq_value, delivery_timestamp_ms) {
+            Ok(count) => count,
+            Err(e) => {
+                log::error!("Notification dispatch error for table {}: {}", table_id, e);
+                0
+            },
+        }
+    })
+}
+
+fn dispatch_change(
+    handle: SubscriptionHandle,
+    change: &ChangeNotification,
+    seq_value: Option<VersionId>,
+    delivery_timestamp_ms: u64,
+) -> Result<usize, LiveError> {
+    dispatch_one(
+        handle,
+        &change.row_data,
+        change.old_data.as_ref(),
+        &change.change_type,
+        &change.pk_columns,
+        seq_value,
+        delivery_timestamp_ms,
+    )
+}
+
+fn dispatch_change_chunk(
+    handles: Vec<SubscriptionHandle>,
+    change: &ChangeNotification,
+    seq_value: Option<VersionId>,
+    delivery_timestamp_ms: u64,
+) -> Result<usize, LiveError> {
+    dispatch_chunk(
+        handles,
+        &change.row_data,
+        change.old_data.as_ref(),
+        &change.change_type,
+        &change.pk_columns,
+        seq_value,
+        delivery_timestamp_ms,
+    )
 }
 
 /// Dispatch notifications to a slice of subscribers.
@@ -701,8 +706,7 @@ fn dispatch_chunk(
     old_row: Option<&Row>,
     change_type: &ChangeType,
     pk_columns: &[String],
-    seq_value: Option<SeqId>,
-    commit_seq: Option<u64>,
+    seq_value: Option<VersionId>,
     delivery_timestamp_ms: u64,
 ) -> Result<usize, LiveError> {
     if handles.iter().all(|handle| {
@@ -725,7 +729,7 @@ fn dispatch_chunk(
                 payload:         Arc::clone(&payload),
             });
 
-            if try_deliver(&handle, notification, seq_value, commit_seq, delivery_timestamp_ms) {
+            if try_deliver(&handle, notification, seq_value, delivery_timestamp_ms) {
                 count += 1;
             }
         }
@@ -768,7 +772,7 @@ fn dispatch_chunk(
             payload,
         });
 
-        if try_deliver(&handle, notification, seq_value, commit_seq, delivery_timestamp_ms) {
+        if try_deliver(&handle, notification, seq_value, delivery_timestamp_ms) {
             count += 1;
         }
     }
@@ -782,8 +786,7 @@ fn dispatch_one(
     old_row: Option<&Row>,
     change_type: &ChangeType,
     pk_columns: &[String],
-    seq_value: Option<SeqId>,
-    commit_seq: Option<u64>,
+    seq_value: Option<VersionId>,
     delivery_timestamp_ms: u64,
 ) -> Result<usize, LiveError> {
     let Some((visible_change, payload_row, payload_old_row)) =
@@ -808,9 +811,36 @@ fn dispatch_one(
         &handle,
         notification,
         seq_value,
-        commit_seq,
         delivery_timestamp_ms,
     )))
+}
+
+/// Replay retained changes into a subscription that is still loading its snapshot.
+pub(crate) fn deliver_resume_events(
+    handle: SubscriptionHandle,
+    events: &[Arc<ChangeNotification>],
+) {
+    let delivery_timestamp_ms = epoch_millis();
+    for event in events {
+        if extract_seq(event).is_none() {
+            signal_lapse(&handle);
+            return;
+        }
+        if dispatch_one(
+            handle.clone(),
+            &event.row_data,
+            event.old_data.as_ref(),
+            &event.change_type,
+            &event.pk_columns,
+            extract_seq(event),
+            delivery_timestamp_ms,
+        )
+        .is_err()
+        {
+            signal_lapse(&handle);
+            return;
+        }
+    }
 }
 
 impl NotificationServiceTrait for NotificationService {
@@ -822,7 +852,10 @@ impl NotificationServiceTrait for NotificationService {
                 return true;
             }
         }
-        self.registry.has_shared_subscriptions(table_id)
+        if self.registry.has_shared_subscriptions(table_id) {
+            return true;
+        }
+        self.registry.replay().tracking(user_id, table_id)
     }
 
     fn notify_table_change(
@@ -872,7 +905,7 @@ mod tests {
         let mut values = BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
         values.insert("body".to_string(), ScalarValue::Utf8(Some(body.to_string())));
-        values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
+        values.insert(SystemColumnNames::VERSION.to_string(), ScalarValue::Int64(Some(seq)));
         Row::new(values)
     }
 
@@ -893,6 +926,7 @@ mod tests {
                 Arc::new(cols.into_iter().map(std::string::ToString::to_string).collect())
             }),
             notification_tx:  tx,
+            event_tx:         tokio::sync::mpsc::channel(1).0,
             flow_control:     Some(flow_control),
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM shared.events",
@@ -965,7 +999,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].get("id").is_some());
         assert!(rows[0].get("body").is_none());
-        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
+        assert!(rows[0].get(SystemColumnNames::VERSION).is_some());
 
         assert!(rx_skip.try_recv().is_err(), "filtered subscriber should not receive");
     }
@@ -987,9 +1021,10 @@ mod tests {
             subscriptions.push(make_shared_handle(&subscription_id, tx.clone(), flow, None, None));
         }
 
+        let change = ChangeNotification::insert(table_id.clone(), make_row(1, "probe", 1));
         let delivered = NotificationService::dispatch_to_subscribers(
             &table_id,
-            ChangeNotification::insert(table_id.clone(), make_row(1, "probe", 1)),
+            Arc::new(change),
             subscriptions,
         )
         .await
@@ -1049,7 +1084,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].get("id").is_some());
         assert!(rows[0].get("body").is_none());
-        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
+        assert!(rows[0].get(SystemColumnNames::VERSION).is_some());
     }
 
     #[tokio::test]
@@ -1092,7 +1127,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].get("id").is_some());
         assert!(rows[0].get("body").is_none());
-        assert!(rows[0].get(SystemColumnNames::SEQ).is_some());
+        assert!(rows[0].get(SystemColumnNames::VERSION).is_some());
     }
 
     #[tokio::test]
@@ -1110,7 +1145,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel(8);
         let flow = Arc::new(SubscriptionFlowControl::new());
-        flow.set_snapshot_end_seq(Some(SeqId::from(10)));
+        flow.set_snapshot_end_seq(Some(VersionId::try_from_i64(10).unwrap()));
 
         registry.index_shared_subscription(
             LiveQueryId::new(UserId::new("u3"), conn_id.clone(), "sub_buffer".to_string()),
@@ -1188,8 +1223,7 @@ mod tests {
             None,
             &ChangeType::Insert,
             &[],
-            Some(SeqId::from(9)),
-            None,
+            Some(VersionId::try_from_i64(9).unwrap()),
             epoch_millis(),
         )
         .expect("dispatch succeeds");
@@ -1226,8 +1260,7 @@ mod tests {
             Some(&old_row),
             &ChangeType::Update,
             &["id".to_string()],
-            Some(SeqId::from(11)),
-            None,
+            Some(VersionId::try_from_i64(11).unwrap()),
             epoch_millis(),
         )
         .unwrap();
@@ -1239,7 +1272,7 @@ mod tests {
         let old_values = json["old_values"].as_array().unwrap();
         assert_eq!(old_values.len(), 1);
         assert!(old_values[0].get("id").is_some());
-        assert!(old_values[0].get(SystemColumnNames::SEQ).is_some());
+        assert!(old_values[0].get(SystemColumnNames::VERSION).is_some());
         assert!(old_values[0].get("body").is_none());
     }
 
@@ -1257,8 +1290,7 @@ mod tests {
             None,
             &ChangeType::Delete,
             &["id".to_string()],
-            Some(SeqId::from(20)),
-            None,
+            Some(VersionId::try_from_i64(20).unwrap()),
             epoch_millis(),
         )
         .unwrap();
@@ -1299,8 +1331,7 @@ mod tests {
             None,
             &ChangeType::Insert,
             &[],
-            Some(SeqId::from(17)),
-            None,
+            Some(VersionId::try_from_i64(17).unwrap()),
             epoch_millis(),
         )
         .expect("dispatch succeeds");

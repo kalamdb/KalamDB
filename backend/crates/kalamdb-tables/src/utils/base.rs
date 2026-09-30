@@ -90,7 +90,7 @@ use datafusion::{
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::coerce_rows,
-    ids::SeqId,
+    ids::VersionId,
     models::{
         datatypes::KalamDataType,
         rows::{Row, RowMetadata},
@@ -163,7 +163,7 @@ where
 
     fn build_scan_context(&self, state: &dyn Session) -> Result<Self::ScanContext, KalamDbError>;
 
-    fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<u64>;
+    fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<VersionId>;
 
     fn allow_pk_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
         self.scan_snapshot_commit_seq(scan_context).is_none()
@@ -231,7 +231,7 @@ where
         &self,
         scan_context: &Self::ScanContext,
         filter: Option<&Expr>,
-        since_seq: Option<SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
@@ -241,7 +241,7 @@ where
         &self,
         scan_context: &Self::ScanContext,
         filter: Option<&Expr>,
-        since_seq: Option<SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
@@ -784,27 +784,46 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// - Strict subject scoping from the effective execution context
     /// - Per-request user scoping without per-user provider instances
     /// - Clean separation: executor handles auth/context, provider handles storage
-    async fn insert(&self, user_id: &UserId, row_data: Row) -> Result<K, KalamDbError>;
+    async fn insert(
+        &self,
+        user_id: &UserId,
+        row_data: Row,
+        version: VersionId,
+    ) -> Result<K, KalamDbError>;
 
     /// Insert multiple rows in a batch (optimized for bulk operations)
     ///
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
     /// * `rows` - Vector of Row objects
+    /// * `versions` - Canonical versions for each row (same length as `rows`)
     ///
     /// # Default Implementation
     /// Iterates over rows and calls insert() for each. Providers may override
     /// with batch-optimized implementation.
-    async fn insert_batch(&self, user_id: &UserId, rows: Vec<Row>) -> Result<Vec<K>, KalamDbError> {
+    async fn insert_batch(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<Vec<K>, KalamDbError> {
         // Coerce rows to match schema types (e.g. String -> Timestamp)
         // This ensures real-time events match the storage format
         let coerced_rows = coerce_rows(rows, &self.schema_ref()).map_err(|e| {
             KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
         })?;
 
+        if versions.len() != coerced_rows.len() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "versions length {} does not match rows length {}",
+                versions.len(),
+                coerced_rows.len()
+            )));
+        }
+
         let mut results = Vec::with_capacity(coerced_rows.len());
-        for row in coerced_rows {
-            results.push(self.insert(user_id, row).await?);
+        for (row, &version) in coerced_rows.into_iter().zip(versions.iter()) {
+            results.push(self.insert(user_id, row, version).await?);
         }
         Ok(results)
     }
@@ -825,6 +844,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         user_id: &UserId,
         key: &K,
         updates: Row,
+        version: VersionId,
     ) -> Result<Option<K>, KalamDbError>;
 
     /// Delete a row by key (appends tombstone with _deleted=true)
@@ -834,18 +854,31 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     /// # Arguments
     /// * `user_id` - Subject user ID for RLS
     /// * `key` - Storage key identifying the row
-    async fn delete(&self, user_id: &UserId, key: &K) -> Result<(), KalamDbError>;
+    async fn delete(
+        &self,
+        user_id: &UserId,
+        key: &K,
+        version: VersionId,
+    ) -> Result<(), KalamDbError>;
 
     /// Update multiple rows in a batch (default implementation).
     /// Returns only the keys that were actually modified (skips no-op updates).
-    async fn update_batch(
+        async fn update_batch(
         &self,
         user_id: &UserId,
         updates: Vec<(K, Row)>,
+        versions: &[VersionId],
     ) -> Result<Vec<K>, KalamDbError> {
+        if versions.len() != updates.len() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "versions length {} does not match updates length {}",
+                versions.len(),
+                updates.len()
+            )));
+        }
         let mut results = Vec::with_capacity(updates.len());
-        for (key, update) in updates {
-            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update).await? {
+        for ((key, update), &version) in updates.into_iter().zip(versions.iter()) {
+            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update, version).await? {
                 results.push(k);
             }
         }
@@ -853,10 +886,22 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     }
 
     /// Delete multiple rows in a batch (default implementation)
-    async fn delete_batch(&self, user_id: &UserId, keys: Vec<K>) -> Result<Vec<()>, KalamDbError> {
+    async fn delete_batch(
+        &self,
+        user_id: &UserId,
+        keys: Vec<K>,
+        versions: &[VersionId],
+    ) -> Result<Vec<()>, KalamDbError> {
+        if versions.len() != keys.len() {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "versions length {} does not match keys length {}",
+                versions.len(),
+                keys.len()
+            )));
+        }
         let mut results = Vec::with_capacity(keys.len());
-        for key in keys {
-            results.push(self.delete(user_id, &key).await?);
+        for (key, &version) in keys.into_iter().zip(versions.iter()) {
+            results.push(self.delete(user_id, &key, version).await?);
         }
         Ok(results)
     }
@@ -906,6 +951,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<Option<K>, KalamDbError>;
 
     /// Update a row by searching for matching ID field value
@@ -914,9 +960,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         user_id: &UserId,
         id_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<Option<K>, KalamDbError> {
         // Directly update by PK value - no need to find key first, then load row to extract PK
-        self.update_by_pk_value(user_id, id_value, updates).await
+        self.update_by_pk_value(user_id, id_value, updates, version).await
     }
 
     /// Delete a row by primary key value directly (no key lookup needed)
@@ -935,6 +982,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         &self,
         user_id: &UserId,
         pk_value: &str,
+        version: VersionId,
     ) -> Result<bool, KalamDbError>;
 
     /// Delete a row by searching for matching ID field value.
@@ -944,9 +992,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         &self,
         user_id: &UserId,
         id_value: &str,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
         // Directly delete by PK value - handles both hot and cold storage
-        self.delete_by_pk_value(user_id, id_value).await
+        self.delete_by_pk_value(user_id, id_value, version).await
     }
 
     // ===========================
@@ -1231,11 +1280,11 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         &self,
         user_id: &UserId,
         filter: Option<&Expr>,
-        since_seq: Option<SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<Vec<(K, V)>, KalamDbError>;
 
     /// Extract row fields from provider-specific value type
@@ -1389,17 +1438,69 @@ pub fn typed_pk_literal_from_filter(
     Some(pk_scalar)
 }
 
+
+/// Convert a pinned Raft log-index frontier into an inclusive [`VersionId`] bound.
+pub fn snapshot_bound_from_log_index(log_index: u64) -> Option<VersionId> {
+    use kalamdb_commons::ids::EntryVersionBound;
+    let bound = EntryVersionBound::try_from_log_index(log_index).ok()?;
+    if bound.is_empty() {
+        return None;
+    }
+    VersionId::try_from_raw(bound.as_u64()).ok()
+}
+
+/// Snapshot bound for an open transaction.
+///
+/// Log index `0` is an empty view: every committed row version is hidden.
+/// Absence of a transaction is represented by not calling this function.
+pub fn transaction_snapshot_bound(log_index: u64) -> Option<VersionId> {
+    if log_index == 0 {
+        return Some(VersionId::empty_snapshot());
+    }
+    snapshot_bound_from_log_index(log_index)
+}
+
+/// One row version inside a direct statement that is not staged through Raft.
+///
+/// Rows in the statement share `log_index` and take distinct ordinals so each
+/// version is a unique storage key.
+pub fn statement_row_version(log_index: u64, ordinal: u32) -> Result<VersionId, KalamDbError> {
+    let log_index = if log_index == 0 { 1 } else { log_index };
+    kalamdb_commons::ids::RaftVersionId::try_new(log_index, ordinal)
+        .map(|version| version.version())
+        .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))
+}
+
+/// Versions for a provider insert that is not staged through Raft.
+///
+/// One allocated log index covers the batch. Callers that already have a
+/// transaction context must stamp versions at commit instead.
+pub fn direct_insert_versions(
+    log_index: u64,
+    row_count: usize,
+) -> Result<Vec<VersionId>, KalamDbError> {
+    let mut versions = Vec::with_capacity(row_count);
+    for ordinal in 0..row_count {
+        let ordinal = u32::try_from(ordinal).map_err(|_| {
+            KalamDbError::InvalidOperation("insert batch exceeds version ordinal limit".to_string())
+        })?;
+        versions.push(statement_row_version(log_index, ordinal)?);
+    }
+    Ok(versions)
+}
+
 pub fn is_count_only_projection(projection: Option<&Vec<usize>>, filter: Option<&Expr>) -> bool {
     projection.is_some_and(|proj| proj.is_empty()) && filter.is_none()
 }
 
 fn prefers_scan_row_version<V: ScanRow>(candidate: &V, current: &V) -> bool {
-    prefers_version(
-        candidate.commit_seq_value(),
-        SeqId::from_i64(candidate.seq_value()),
-        current.commit_seq_value(),
-        SeqId::from_i64(current.seq_value()),
-    )
+    let Ok(candidate_version) = VersionId::try_from_i64(candidate.version_value()) else {
+        return false;
+    };
+    let Ok(current_version) = VersionId::try_from_i64(current.version_value()) else {
+        return true;
+    };
+    prefers_version(candidate_version, current_version)
 }
 
 fn prefers_scan_row_pair<K, V: ScanRow>(candidate: &(K, V), current: &(K, V)) -> bool {
@@ -1597,12 +1698,7 @@ where
             if latest
                 .as_ref()
                 .map(|current| {
-                    prefers_version(
-                        row_data.commit_seq,
-                        row_data.seq_id,
-                        current.commit_seq,
-                        current.seq_id,
-                    )
+                    prefers_version(row_data.version, current.version)
                 })
                 .unwrap_or(true)
             {
@@ -1634,7 +1730,7 @@ pub(crate) async fn resolve_latest_scan_from_futures<K, R, HotFuture, ColdFuture
     pk_name: &str,
     limit: Option<usize>,
     keep_deleted: bool,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_commit_seq: Option<VersionId>,
     hot_future: HotFuture,
     cold_future: ColdFuture,
     build_cold_row: Build,
@@ -1677,7 +1773,7 @@ where
 
 pub(crate) async fn count_resolved_rows_from_futures<HotFuture, ColdFuture>(
     pk_name: &str,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_commit_seq: Option<VersionId>,
     hot_future: HotFuture,
     cold_future: ColdFuture,
 ) -> Result<usize, KalamDbError>
@@ -2295,7 +2391,7 @@ where
 /// Compute the minimal set of column names needed from the Parquet cold path.
 ///
 /// When a query projects specific columns, we only need those columns plus
-/// system columns (`_seq`, `_deleted`) and the primary key for version resolution.
+/// system columns (`_version`, `_deleted`) and the primary key for version resolution.
 /// Returns `None` when all columns should be read (projection is None).
 pub fn compute_cold_columns(
     projection: Option<&Vec<usize>>,
@@ -2306,11 +2402,7 @@ pub fn compute_cold_columns(
     let mut col_set: HashSet<String> =
         proj.iter().map(|&i| schema.field(i).name().clone()).collect();
     // Always include columns required for version resolution
-    for sys_col in [
-        SystemColumnNames::SEQ,
-        SystemColumnNames::COMMIT_SEQ,
-        SystemColumnNames::DELETED,
-    ] {
+    for sys_col in [SystemColumnNames::VERSION, SystemColumnNames::DELETED] {
         col_set.insert(sys_col.to_string());
     }
     col_set.insert(pk_name.to_string());
@@ -2324,8 +2416,7 @@ pub fn compute_cold_columns(
 pub fn compute_metadata_only_cold_columns(pk_name: &str) -> Vec<String> {
     vec![
         pk_name.to_string(),
-        SystemColumnNames::SEQ.to_string(),
-        SystemColumnNames::COMMIT_SEQ.to_string(),
+        SystemColumnNames::VERSION.to_string(),
         SystemColumnNames::DELETED.to_string(),
     ]
 }
@@ -2497,20 +2588,24 @@ pub fn extract_embedding_vector(value: &ScalarValue, expected_dimensions: u32) -
 
 /// Build a notification row from any entity that has common MVCC fields.
 ///
-/// Both SharedTableRow and UserTableRow have `_seq`, `_commit_seq`, `_deleted`, and `fields`.
-/// This function avoids duplicating the notification row building logic.
-pub fn build_notification_row(fields: &Row, seq: SeqId, commit_seq: u64, deleted: bool) -> Row {
+/// Both SharedTableRow and UserTableRow have `_version`, `_deleted`, and `fields`.
+pub fn build_notification_row(fields: &Row, version: VersionId, deleted: bool) -> Row {
     let mut values = fields.values.clone();
-    values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq.as_i64())));
-    values.insert(SystemColumnNames::COMMIT_SEQ.to_string(), ScalarValue::UInt64(Some(commit_seq)));
+    values.insert(
+        SystemColumnNames::VERSION.to_string(),
+        ScalarValue::Int64(Some(version.as_i64())),
+    );
     values.insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
     Row::new(values)
 }
 
 /// Build a notification row for append-only stream tables.
-pub fn build_stream_notification_row(fields: &Row, seq: SeqId) -> Row {
+pub fn build_stream_notification_row(fields: &Row, version: VersionId) -> Row {
     let mut values = fields.values.clone();
-    values.insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq.as_i64())));
+    values.insert(
+        SystemColumnNames::VERSION.to_string(),
+        ScalarValue::Int64(Some(version.as_i64())),
+    );
     Row::new(values)
 }
 
@@ -2553,11 +2648,7 @@ mod tests {
             self.row
         }
 
-        fn seq_value(&self) -> i64 {
-            1
-        }
-
-        fn commit_seq_value(&self) -> u64 {
+        fn version_value(&self) -> i64 {
             1
         }
 
@@ -2611,8 +2702,7 @@ mod tests {
             columns,
             vec![
                 "id".to_string(),
-                SystemColumnNames::SEQ.to_string(),
-                SystemColumnNames::COMMIT_SEQ.to_string(),
+                SystemColumnNames::VERSION.to_string(),
                 SystemColumnNames::DELETED.to_string(),
             ]
         );
@@ -2631,8 +2721,7 @@ mod tests {
 
         assert!(columns.iter().any(|column| column == "id"));
         assert!(columns.iter().any(|column| column == "name"));
-        assert!(columns.iter().any(|column| column == SystemColumnNames::SEQ));
-        assert!(columns.iter().any(|column| column == SystemColumnNames::COMMIT_SEQ));
+        assert!(columns.iter().any(|column| column == SystemColumnNames::VERSION));
         assert!(columns.iter().any(|column| column == SystemColumnNames::DELETED));
     }
 

@@ -121,7 +121,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{rows::Row, NamespaceId, TableId, TableName},
         StorageKey, UserId,
     };
@@ -141,9 +141,8 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         UserTableRow {
             user_id:     user_id.clone(),
-            _seq:        SeqId::new(seq),
-            _commit_seq: 0,
-            fields:      Row::new(values),
+            _version:        VersionId::try_from_i64(seq).unwrap(),
+                        fields:      Row::new(values),
             _deleted:    false,
         }
     }
@@ -157,7 +156,7 @@ mod tests {
     #[test]
     fn test_user_table_store_put_get() {
         let store = create_test_store();
-        let key = UserTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let key = UserTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&UserId::new("user1"), 100);
 
         // Put and get
@@ -170,7 +169,7 @@ mod tests {
     #[test]
     fn test_user_table_store_delete() {
         let store = create_test_store();
-        let key = UserTableRowId::new(UserId::new("user1"), SeqId::new(200));
+        let key = UserTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(200).unwrap());
         let row = create_test_row(&UserId::new("user1"), 200);
 
         // Put, delete, verify
@@ -189,7 +188,7 @@ mod tests {
             for row_i in 1..=3 {
                 let key = UserTableRowId::new(
                     UserId::new(format!("user{}", user_i)),
-                    SeqId::new((user_i * 1000 + row_i) as i64),
+                    VersionId::try_from_i64((user_i * 1000 + row_i) as i64).unwrap(),
                 );
                 let row = create_test_row(
                     &UserId::new(&format!("user{}", user_i)),
@@ -211,7 +210,7 @@ mod tests {
         let store = new_user_table_store(backend.clone(), &table_id);
 
         let user_id = UserId::new("user1");
-        let start_key = UserTableRowId::new(user_id.clone(), SeqId::new(10));
+        let start_key = UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(10).unwrap());
         let prefix = UserTableRowId::user_prefix(&user_id);
 
         let _ = store.scan_with_raw_prefix(&prefix, Some(&start_key.storage_key()), 10).unwrap();
@@ -226,12 +225,12 @@ mod tests {
         let store = create_test_store();
 
         // User1's row
-        let key1 = UserTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let key1 = UserTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row1 = create_test_row(&UserId::new("user1"), 100);
         store.put(&key1, &row1).unwrap();
 
         // User2's row with same seq
-        let key2 = UserTableRowId::new(UserId::new("user2"), SeqId::new(100));
+        let key2 = UserTableRowId::new(UserId::new("user2"), VersionId::try_from_i64(100).unwrap());
         let row2 = create_test_row(&UserId::new("user2"), 100);
         store.put(&key2, &row2).unwrap();
 
@@ -251,7 +250,7 @@ mod tests {
         let store =
             new_indexed_user_table_store(Arc::clone(&backend), &table_id, "id", schema, &[], &[]);
         let user_id = UserId::new("user-alice");
-        let key = UserTableRowId::new(user_id.clone(), SeqId::new(100));
+        let key = UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&user_id, 100);
         store.insert(&key, &row).unwrap();
 
@@ -267,7 +266,7 @@ mod tests {
 
         let retrieved = store.get(&key).unwrap().unwrap();
         assert_eq!(retrieved.user_id, user_id);
-        assert_eq!(retrieved._seq, SeqId::new(100));
+        assert_eq!(retrieved._version, VersionId::try_from_i64(100).unwrap());
         assert_eq!(retrieved.fields.values.get("name"), row.fields.values.get("name"));
     }
 
@@ -316,12 +315,11 @@ mod tests {
             values.insert("name".to_string(), ScalarValue::Utf8(Some("msg".to_string())));
             store
                 .insert(
-                    &UserTableRowId::new(user_id.clone(), SeqId::new(seq)),
+                    &UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(seq).unwrap()),
                     &UserTableRow {
                         user_id,
-                        _seq: SeqId::new(seq),
-                        _commit_seq: 0,
-                        _deleted: false,
+                        _version: VersionId::try_from_i64(seq).unwrap(),
+                                                _deleted: false,
                         fields: Row::new(values),
                     },
                 )
@@ -374,12 +372,11 @@ mod tests {
         values.insert("conversation_id".to_string(), ScalarValue::Utf8(Some("room-a".to_string())));
         empty
             .insert(
-                &UserTableRowId::new(user_id.clone(), SeqId::new(10)),
+                &UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(10).unwrap()),
                 &UserTableRow {
                     user_id:     user_id.clone(),
-                    _seq:        SeqId::new(10),
-                    _commit_seq: 0,
-                    _deleted:    false,
+                    _version:        VersionId::try_from_i64(10).unwrap(),
+                                        _deleted:    false,
                     fields:      Row::new(values),
                 },
             )

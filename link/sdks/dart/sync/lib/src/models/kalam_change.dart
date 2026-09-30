@@ -13,6 +13,6 @@ final class KalamChange<T> {
 
   final KalamChangeKind kind;
   final String rowKey;
-  final SeqId seq;
+  final VersionId seq;
   final T? row;
 }

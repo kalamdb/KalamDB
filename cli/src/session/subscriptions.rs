@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::io::IsTerminal;
 
-use kalam_client::{SeqId, SubscriptionConfig, SubscriptionOptions};
+use kalam_client::{SubscriptionConfig, SubscriptionOptions, VersionId};
 use kalamdb_commons::{SqlSubscriptionDescriptor, SqlSubscriptionStatus};
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
@@ -171,10 +171,15 @@ impl CLISession {
                     eprintln!("Warning: Invalid batch_size value '{}', using default", value);
                 }
             } else if key == "from" || key == "from_seq_id" {
-                if let Ok(seq_id) = value.parse::<i64>() {
-                    options = options.with_from(SeqId::from(seq_id));
-                } else {
-                    eprintln!("Warning: Invalid from value '{}', using default", value);
+                match value
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|parsed| VersionId::try_from_i64(parsed).ok())
+                {
+                    Some(version) => options = options.with_from(version),
+                    None => eprintln!(
+                        "Warning: Invalid from value '{value}', expected a positive version decimal"
+                    ),
                 }
             } else {
                 eprintln!("Warning: Unknown option '{}', ignoring", key);

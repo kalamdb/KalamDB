@@ -28,7 +28,7 @@ use kalamdb_commons::{
         arrow_json_conversion::{coerce_rows, coerce_updates},
         parse_string_as_scalar,
     },
-    ids::SharedTableRowId,
+    ids::{SeqId, SharedTableRowId, VersionId},
     models::{rows::Row, OperationKind, UserId},
     websocket::ChangeNotification,
     NotLeaderError, PolicyCommand, TableId, TableType,
@@ -95,6 +95,11 @@ pub struct SharedTableProvider {
     pub(crate) authorization: SharedTableAuthorization,
 }
 
+
+fn version_from_commit_seq(commit_seq: u64, ordinal: u32) -> Result<VersionId, KalamDbError> {
+    crate::utils::base::statement_row_version(commit_seq, ordinal)
+}
+
 impl SharedTableProvider {
     fn session_state_with_rls_command(
         state: &dyn Session,
@@ -116,7 +121,7 @@ impl SharedTableProvider {
     async fn bind_authorization(
         &self,
         policies: &kalamdb_rls::BoundTablePolicies,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<kalamdb_rls::BoundAuthorization, KalamDbError> {
         self.authorization.bind_authorization(self, policies, snapshot_commit_seq).await
     }
@@ -136,7 +141,7 @@ impl SharedTableProvider {
         &self,
         policies: &kalamdb_rls::BoundTablePolicies,
         rows: &[Row],
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
         operation: &str,
     ) -> DataFusionResult<()> {
         self.authorization
@@ -151,7 +156,7 @@ impl SharedTableProvider {
         command: PolicyCommand,
         check: bool,
         rows: &[Row],
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<(), KalamDbError> {
         self.authorization
             .check_rows_authorized(self, user_id, role, command, check, rows, snapshot_commit_seq)
@@ -274,12 +279,7 @@ impl SharedTableProvider {
     ///
     /// This ensures notifications include all columns, not just user-defined fields.
     fn build_notification_row(entity: &SharedTableRow) -> Row {
-        base::build_notification_row(
-            &entity.fields,
-            entity._seq,
-            entity._commit_seq,
-            entity._deleted,
-        )
+        base::build_notification_row(&entity.fields, entity._version, entity._deleted)
     }
 
     fn build_delete_notification(&self, table_id: TableId, row: Row) -> ChangeNotification {
@@ -335,7 +335,7 @@ impl SharedTableProvider {
             &self.vector_columns,
             std::iter::once((seq, row)),
             |(_, row)| row,
-            |(seq, _), pk| SharedVectorHotOpId::new(*seq, pk.to_string()),
+            |(seq, _), pk| SharedVectorHotOpId::new(SeqId::from_i64(seq.as_i64()), pk.to_string()),
         )?;
         crate::utils::vector_staging::stage_vector_ops_by_column(
             &self.vector_stores,
@@ -359,7 +359,7 @@ impl SharedTableProvider {
             &self.vector_columns,
             entries.iter(),
             |(_, entity)| &entity.fields,
-            |(row_key, _), pk| SharedVectorHotOpId::new(*row_key, pk.to_string()),
+            |(row_key, _), pk| SharedVectorHotOpId::new(SeqId::from_i64(row_key.as_i64()), pk.to_string()),
         )?;
         crate::utils::vector_staging::stage_vector_ops_by_column(
             &self.vector_stores,
@@ -382,7 +382,7 @@ impl SharedTableProvider {
             self.core.table_id(),
             &self.vector_columns,
             pk,
-            |primary_key| SharedVectorHotOpId::new(seq, primary_key.to_string()),
+            |primary_key| SharedVectorHotOpId::new(SeqId::from_i64(seq.as_i64()), primary_key.to_string()),
         );
         crate::utils::vector_staging::stage_vector_ops_by_column(
             &self.vector_stores,
@@ -536,7 +536,7 @@ impl SharedTableProvider {
     pub async fn patch_commit_seq_for_row_key(
         &self,
         row_key: &SharedTableRowId,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<(), KalamDbError> {
         let mut row = self
             .store
@@ -548,7 +548,7 @@ impl SharedTableProvider {
                     row_key.as_i64()
                 ))
             })?;
-        row._commit_seq = commit_seq;
+        let _ = version; // version is assigned at insert; patch is a no-op
         self.store.insert_async(*row_key, row).await.map_err(|e| {
             KalamDbError::InvalidOperation(format!("Failed to patch commit_seq: {}", e))
         })
@@ -557,7 +557,7 @@ impl SharedTableProvider {
     pub async fn patch_latest_commit_seq_by_pk(
         &self,
         pk_value: &str,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
         let schema = self.schema_ref();
         let pk_field = schema.field_with_name(self.primary_key_field_name()).map_err(|e| {
@@ -571,7 +571,7 @@ impl SharedTableProvider {
             return Ok(false);
         };
 
-        self.patch_commit_seq_for_row_key(&row_key, commit_seq).await?;
+        self.patch_commit_seq_for_row_key(&row_key, version).await?;
         Ok(true)
     }
 
@@ -706,7 +706,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{NamespaceId, TableId, TableName},
     };
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -739,17 +739,16 @@ mod tests {
         pk_name: &str,
         pk_value: &str,
         deleted: bool,
-    ) -> (SeqId, SharedTableRow) {
+    ) -> (VersionId, SharedTableRow) {
         let mut fields = BTreeMap::new();
         fields.insert(pk_name.to_string(), ScalarValue::Utf8(Some(pk_value.to_string())));
 
-        let row_id = SeqId::new(seq);
+        let row_id = VersionId::try_from_i64(seq).unwrap();
         (
             row_id,
             SharedTableRow {
-                _seq:        row_id,
-                _commit_seq: 0,
-                _deleted:    deleted,
+                _version:        row_id,
+                                _deleted:    deleted,
                 fields:      Row::new(fields),
             },
         )
@@ -823,7 +822,7 @@ mod tests {
 
 #[derive(Clone)]
 pub struct SharedScanContext {
-    snapshot_commit_seq: Option<u64>,
+    snapshot_commit_seq: Option<VersionId>,
     policies:            kalamdb_rls::BoundTablePolicies,
 }
 
@@ -847,12 +846,14 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         let policies = self.bind_policies(user_id, role, command, false)?;
         Ok(SharedScanContext {
             snapshot_commit_seq: extract_transaction_query_context(state)
-                .map(|context| context.snapshot_commit_seq),
+                .and_then(|context| {
+                    crate::utils::base::transaction_snapshot_bound(context.snapshot_commit_seq())
+                }),
             policies,
         })
     }
 
-    fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<u64> {
+    fn scan_snapshot_commit_seq(&self, scan_context: &Self::ScanContext) -> Option<VersionId> {
         scan_context.snapshot_commit_seq
     }
 
@@ -916,7 +917,7 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         &self,
         scan_context: &Self::ScanContext,
         filter: Option<&Expr>,
-        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
@@ -939,7 +940,7 @@ impl DeferredMvccScanProvider<SharedTableRowId, SharedTableRow> for SharedTableP
         &self,
         scan_context: &Self::ScanContext,
         filter: Option<&Expr>,
-        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
@@ -986,11 +987,10 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         row_data: &crate::utils::version_resolution::ParquetRowData,
     ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         // Shared tables use SeqId as the key (no user_id scoping)
-        let row_key = row_data.seq_id;
+        let row_key = row_data.version;
         let row = SharedTableRow {
-            _seq:        row_data.seq_id,
-            _commit_seq: row_data.commit_seq,
-            _deleted:    row_data.deleted,
+            _version:        row_data.version,
+                        _deleted:    row_data.deleted,
             fields:      row_data.fields.clone(),
         };
         Ok(Some((row_key, row)))
@@ -1045,6 +1045,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self,
         _user_id: &UserId,
         row_data: Row,
+        version: VersionId,
     ) -> Result<SharedTableRowId, KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
@@ -1066,15 +1067,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             base::ensure_unique_pk_value(self, None, &row_data).await?;
 
             // Generate new SeqId via SystemColumnsService
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
 
             // Create SharedTableRow directly
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: 0,
+                _version: seq_id,
                 _deleted:    false,
                 fields:      row_data,
             };
@@ -1156,9 +1153,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self,
         _user_id: &UserId,
         rows: Vec<Row>,
+        versions: &[VersionId],
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
-        let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-        self.insert_batch_with_commit_seq(Some(_user_id), rows, commit_seq).await
+        self.insert_batch_with_versions(Some(_user_id), rows, versions).await
     }
 
     async fn update(
@@ -1166,6 +1163,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _user_id: &UserId,
         key: &SharedTableRowId,
         updates: Row,
+        version: VersionId,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Extract PK from prior row, then delegate to update_by_pk_value
@@ -1184,9 +1182,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 None,
                 *key,
                 |row_data| SharedTableRow {
-                    _seq:        row_data.seq_id,
-                    _commit_seq: row_data.commit_seq,
-                    _deleted:    row_data.deleted,
+                    _version:        row_data.version,
+                                        _deleted:    row_data.deleted,
                     fields:      row_data.fields,
                 },
             )
@@ -1202,7 +1199,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         base::validate_pk_update(self, None, &updates, &pk_value_scalar).await?;
 
         let pk_value_str = pk_value_scalar.to_string();
-        self.update_by_pk_value(_user_id, &pk_value_str, updates).await
+        self.update_by_pk_value(_user_id, &pk_value_str, updates, version).await
     }
 
     async fn update_by_pk_value(
@@ -1210,11 +1207,17 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         _user_id: &UserId,
         pk_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
-        self.update_by_pk_value_with_commit_seq(_user_id, pk_value, updates, 0).await
+        self.update_by_pk_value_with_version(_user_id, pk_value, updates, version).await
     }
 
-    async fn delete(&self, _user_id: &UserId, key: &SharedTableRowId) -> Result<(), KalamDbError> {
+    async fn delete(
+        &self,
+        _user_id: &UserId,
+        key: &SharedTableRowId,
+        version: VersionId,
+    ) -> Result<(), KalamDbError> {
         // IGNORE user_id parameter - no RLS for shared tables
         // Extract PK from prior row, then delegate to delete_by_pk_value
         let pk_name = self.primary_key_field_name().to_string();
@@ -1231,9 +1234,8 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
                 None,
                 *key,
                 |row_data| SharedTableRow {
-                    _seq:        row_data.seq_id,
-                    _commit_seq: row_data.commit_seq,
-                    _deleted:    row_data.deleted,
+                    _version:        row_data.version,
+                                        _deleted:    row_data.deleted,
                     fields:      row_data.fields,
                 },
             )
@@ -1246,7 +1248,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         })?;
         let pk_value_str = pk_value_scalar.to_string();
 
-        self.delete_by_pk_value(_user_id, &pk_value_str).await?;
+        self.delete_by_pk_value(_user_id, &pk_value_str, version).await?;
         Ok(())
     }
 
@@ -1254,8 +1256,9 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self,
         _user_id: &UserId,
         pk_value: &str,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
-        self.delete_by_pk_value_with_commit_seq(_user_id, pk_value, 0).await
+        self.delete_by_pk_value_with_version(_user_id, pk_value, version).await
     }
 
     async fn scan_rows(
@@ -1273,11 +1276,11 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
         &self,
         _user_id: &UserId,
         filter: Option<&Expr>,
-        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         self.scan_with_version_resolution_to_kvs_result_async(
             filter,
@@ -1301,18 +1304,18 @@ impl SharedTableProvider {
     async fn scan_with_version_resolution_to_kvs_result_async(
         &self,
         filter: Option<&Expr>,
-        since_seq: Option<kalamdb_commons::ids::SeqId>,
+        since_seq: Option<VersionId>,
         limit: Option<usize>,
         keep_deleted: bool,
         cold_columns: Option<&[String]>,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
         include_diagnostics: bool,
     ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
 
         base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
-        let start_key = since_seq.map(|seq| kalamdb_commons::ids::SeqId::from(seq.as_i64() + 1));
+        let start_key = since_seq.and_then(|seq| VersionId::try_from_i64(seq.as_i64().saturating_add(1)).ok());
         let scan_limit = base::calculate_scan_limit(limit);
         let pk_name = self.primary_key_field_name();
         let hot_future = async {
@@ -1393,7 +1396,7 @@ impl SharedTableProvider {
     /// `_seq`, `_deleted`, and the PK used for MVCC winner selection.
     async fn count_resolved_rows_async(
         &self,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<usize, KalamDbError> {
         use kalamdb_commons::models::rows::RowMetadata;
 
@@ -1415,10 +1418,9 @@ impl SharedTableProvider {
             let hot_metadata = hot_rows
                 .into_iter()
                 .map(|(_key, row)| RowMetadata {
-                    seq:        row._seq,
-                    commit_seq: row._commit_seq,
+                    version:   row._version,
                     deleted:    row._deleted,
-                    pk_bucket:  pk_bucket_key_from_row(&row.fields, &pk_name_clone, row._seq),
+                    pk_bucket:  pk_bucket_key_from_row(&row.fields, &pk_name_clone, row._version),
                 })
                 .collect();
             Ok::<_, KalamDbError>(hot_metadata)
@@ -1442,6 +1444,7 @@ impl SharedTableProvider {
         &self,
         row_data: Row,
         validate_unique_pk: bool,
+        version: VersionId,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
@@ -1464,14 +1467,10 @@ impl SharedTableProvider {
                 base::ensure_unique_pk_value(self, None, &row_data).await?;
             }
 
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
 
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: 0,
+                _version: seq_id,
                 _deleted:    false,
                 fields:      row_data,
             };
@@ -1518,22 +1517,24 @@ impl SharedTableProvider {
     pub async fn insert_deferred(
         &self,
         row_data: Row,
+        version: VersionId,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, true).await
+        self.insert_deferred_internal(row_data, true, version).await
     }
 
     pub async fn insert_deferred_prevalidated(
         &self,
         row_data: Row,
+        version: VersionId,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, false).await
+        self.insert_deferred_internal(row_data, false, version).await
     }
 
     async fn persist_insert_batch_rows(
         &self,
         rows: Vec<Row>,
+        versions: &[VersionId],
         validate_unique_pk: bool,
-        commit_seq: u64,
     ) -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
         if rows.is_empty() {
             return Ok(Vec::new());
@@ -1647,58 +1648,34 @@ impl SharedTableProvider {
             )?;
         }
 
-        let sys_cols = self.core.services.system_columns.clone();
-        let seq_ids = sys_cols.generate_seq_ids(row_count).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("SeqId batch generation failed: {}", e))
-        })?;
+        if versions.len() != row_count {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "version count {} does not match row count {}",
+                versions.len(),
+                row_count
+            )));
+        }
 
         let mut entries: Vec<(SharedTableRowId, SharedTableRow)> = Vec::with_capacity(row_count);
 
-        for (row_data, seq_id) in coerced_rows.into_iter().zip(seq_ids.into_iter()) {
+        for (row_data, version) in coerced_rows.into_iter().zip(versions.iter().copied()) {
             entries.push((
-                seq_id,
+                version,
                 SharedTableRow {
-                    _seq:        seq_id,
-                    _commit_seq: commit_seq,
-                    _deleted:    false,
-                    fields:      row_data,
+                    _version: version,
+                    _deleted: false,
+                    fields:   row_data,
                 },
             ));
         }
 
         let store = self.store.clone();
-        let entries = if row_count <= 1 {
-            let _rocksdb_span =
-                kalamdb_observability::kdb_info_span_entered!("table.rocksdb_insert");
-            store.insert_batch(&entries).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to batch insert shared table rows: {}",
-                    e
-                ))
-            })?;
-            entries
-        } else {
-            kalamdb_observability::kdb_await_in_info_span!(
-                async {
-                    Ok::<_, KalamDbError>(tokio::task::spawn_blocking(
-                        move || -> Result<Vec<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
-                            store.insert_batch(&entries).map_err(|e| {
-                                KalamDbError::InvalidOperation(format!(
-                                    "Failed to batch insert shared table rows: {}",
-                                    e
-                                ))
-                            })?;
-                            Ok(entries)
-                        },
-                    )
-                    .await
-                    .map_err(|e| {
-                        KalamDbError::InvalidOperation(format!("spawn_blocking error: {}", e))
-                    })??)
-                },
-                "table.rocksdb_insert"
-            )?
-        };
+        store.insert_batch(&entries).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "Failed to batch insert table rows: {}",
+                e
+            ))
+        })?;
 
         if let Err(e) = self.stage_vector_upsert_batch(&entries).await {
             log::warn!(
@@ -1727,11 +1704,11 @@ impl SharedTableProvider {
         Ok(entries)
     }
 
-    pub async fn insert_batch_with_commit_seq(
+    pub async fn insert_batch_with_versions(
         &self,
         actor_user_id: Option<&UserId>,
         rows: Vec<Row>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<Vec<SharedTableRowId>, KalamDbError> {
         let row_count = rows.len();
         let span = tracing::debug_span!(
@@ -1741,7 +1718,7 @@ impl SharedTableProvider {
             row_count
         );
         async move {
-            let entries = self.persist_insert_batch_rows(rows, true, commit_seq).await?;
+            let entries = self.persist_insert_batch_rows(rows, versions, true).await?;
             let row_keys: Vec<SharedTableRowId> =
                 entries.iter().map(|(row_key, _)| *row_key).collect();
 
@@ -1787,15 +1764,15 @@ impl SharedTableProvider {
     pub async fn insert_batch_deferred_prevalidated(
         &self,
         rows: Vec<Row>,
+        versions: &[VersionId],
     ) -> Result<Vec<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
-        let commit_seq = self.core.services.commit_sequence_source.allocate_next();
-        self.insert_batch_deferred_prevalidated_with_commit_seq(rows, commit_seq).await
+        self.insert_batch_deferred_prevalidated_with_versions(rows, versions).await
     }
 
-    pub async fn insert_batch_deferred_prevalidated_with_commit_seq(
+    pub async fn insert_batch_deferred_prevalidated_with_versions(
         &self,
         rows: Vec<Row>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<Vec<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         let row_count = rows.len();
         let span = tracing::debug_span!(
@@ -1806,7 +1783,7 @@ impl SharedTableProvider {
             deferred_side_effects = true
         );
         async move {
-            let entries = self.persist_insert_batch_rows(rows, false, commit_seq).await?;
+            let entries = self.persist_insert_batch_rows(rows, versions, false).await?;
 
             let notification_service = self.core.services.notification_service.clone();
             let table_id = self.core.table_id().clone();
@@ -1836,7 +1813,7 @@ impl SharedTableProvider {
         &self,
         pk_value: &str,
         updates: Row,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.update",
@@ -1902,13 +1879,10 @@ impl SharedTableProvider {
                 return Ok(None);
             }
 
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
+
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: commit_seq,
+                _version: seq_id,
                 _deleted:    false,
                 fields:      new_fields,
             };
@@ -1961,7 +1935,7 @@ impl SharedTableProvider {
     pub async fn delete_by_pk_value_deferred(
         &self,
         pk_value: &str,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.delete",
@@ -1996,14 +1970,10 @@ impl SharedTableProvider {
                 }
             };
 
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
 
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: commit_seq,
+                _version: seq_id,
                 _deleted:    true,
                 fields:      Row::new(latest_row.fields.values.clone()),
             };
@@ -2135,8 +2105,9 @@ impl TableProvider for SharedTableProvider {
         let check_policies = self
             .bind_policies(user_id, role, PolicyCommand::Insert, true)
             .map_err(|error| DataFusionError::Execution(error.to_string()))?;
-        let snapshot_commit_seq =
-            extract_transaction_query_context(state).map(|context| context.snapshot_commit_seq);
+        let snapshot_commit_seq = extract_transaction_query_context(state).and_then(|context| {
+            crate::utils::base::transaction_snapshot_bound(context.snapshot_commit_seq())
+        });
         self.ensure_rows_authorized(&check_policies, &rows, snapshot_commit_seq, "WITH CHECK")
             .await?;
         if let Some(transaction_query_context) = extract_transaction_query_context(state) {
@@ -2152,11 +2123,15 @@ impl TableProvider for SharedTableProvider {
             return crate::utils::datafusion_dml::rows_affected_plan(state, inserted).await;
         }
 
+        let versions = crate::utils::base::direct_insert_versions(
+            self.core.services.commit_sequence_source.allocate_next(),
+            rows.len(),
+        )
+        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         let inserted = self
-            .insert_batch(user_id, rows)
+            .insert_batch_with_versions(Some(&user_id), rows, &versions)
             .await
-            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
         crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -2200,6 +2175,7 @@ impl TableProvider for SharedTableProvider {
         let commit_seq = transaction_query_context
             .is_none()
             .then(|| self.core.services.commit_sequence_source.allocate_next());
+        let mut ordinal = 0u32;
         let mut staged_mutations =
             transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
 
@@ -2227,12 +2203,14 @@ impl TableProvider for SharedTableProvider {
                 continue;
             }
 
+            let version = version_from_commit_seq(
+                commit_seq.expect("commit_seq must exist for direct DELETE"),
+                ordinal,
+            )
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            ordinal = ordinal.saturating_add(1);
             if self
-                .delete_by_pk_value_with_commit_seq(
-                    user_id,
-                    &pk_value,
-                    commit_seq.expect("commit_seq must exist for direct DELETE"),
-                )
+                .delete_by_pk_value_with_version(user_id, &pk_value, version)
                 .await
                 .map_err(|e| DataFusionError::Execution(e.to_string()))?
             {
@@ -2311,8 +2289,9 @@ impl TableProvider for SharedTableProvider {
         let mut seen = HashSet::new();
         let mut updated: u64 = 0;
         let transaction_query_context = extract_transaction_query_context(state);
-        let snapshot_commit_seq =
-            transaction_query_context.map(|context| context.snapshot_commit_seq);
+        let snapshot_commit_seq = transaction_query_context.and_then(|context| {
+            crate::utils::base::transaction_snapshot_bound(context.snapshot_commit_seq())
+        });
         let check_authorization = self
             .bind_authorization(&check_policies, snapshot_commit_seq)
             .await
@@ -2320,6 +2299,7 @@ impl TableProvider for SharedTableProvider {
         let commit_seq = transaction_query_context
             .is_none()
             .then(|| self.core.services.commit_sequence_source.allocate_next());
+        let mut ordinal = 0u32;
         let mut staged_mutations =
             transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
 
@@ -2374,13 +2354,14 @@ impl TableProvider for SharedTableProvider {
                     continue;
                 }
 
+                let version = version_from_commit_seq(
+                    commit_seq.expect("commit_seq must exist for direct UPDATE"),
+                    ordinal,
+                )
+                .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                ordinal = ordinal.saturating_add(1);
                 let result = self
-                    .update_by_pk_value_with_commit_seq(
-                        user_id,
-                        &pk_value,
-                        evaluated_updates,
-                        commit_seq.expect("commit_seq must exist for direct UPDATE"),
-                    )
+                    .update_by_pk_value_with_version(user_id, &pk_value, evaluated_updates, version)
                     .await
                     .map_err(|e| DataFusionError::Execution(e.to_string()))?;
                 if result.is_some() {
@@ -2412,9 +2393,14 @@ impl TableProvider for SharedTableProvider {
 // KalamTableProvider: extends TableProvider with KalamDB-specific DML
 #[async_trait]
 impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
-    async fn insert_rows(&self, user_id: &UserId, rows: Vec<Row>) -> Result<usize, KalamDbError> {
+    async fn insert_rows(
+        &self,
+        user_id: &UserId,
+        rows: Vec<Row>,
+        versions: &[VersionId],
+    ) -> Result<usize, KalamDbError> {
         self.ensure_shared_write_leader().await?;
-        let keys = self.insert_batch(user_id, rows).await?;
+        let keys = self.insert_batch(user_id, rows, versions).await?;
         Ok(keys.len())
     }
 
@@ -2423,10 +2409,11 @@ impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
         self.ensure_shared_write_leader().await?;
 
-        match self.update_by_pk_value(user_id, pk_value, updates).await {
+        match self.update_by_pk_value(user_id, pk_value, updates, version).await {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false), // no-op: row unchanged
             Err(KalamDbError::NotFound(_)) => Ok(false),
@@ -2438,30 +2425,32 @@ impl crate::utils::dml_provider::KalamTableProvider for SharedTableProvider {
         &self,
         user_id: &UserId,
         pk_value: &str,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
         self.ensure_shared_write_leader().await?;
 
-        self.delete_by_pk_value(user_id, pk_value).await
+        self.delete_by_pk_value(user_id, pk_value, version).await
     }
 
     async fn insert_rows_returning(
         &self,
         user_id: &UserId,
         rows: Vec<Row>,
+        versions: &[VersionId],
     ) -> Result<Vec<ScalarValue>, KalamDbError> {
         self.ensure_shared_write_leader().await?;
-        let keys = self.insert_batch(user_id, rows).await?;
+        let keys = self.insert_batch(user_id, rows, versions).await?;
         Ok(keys.into_iter().map(|k| ScalarValue::Int64(Some(k.as_i64()))).collect())
     }
 }
 
 impl SharedTableProvider {
-    async fn update_by_pk_value_with_commit_seq(
+    async fn update_by_pk_value_with_version(
         &self,
         _user_id: &UserId,
         pk_value: &str,
         updates: Row,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<Option<SharedTableRowId>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.update",
@@ -2540,13 +2529,10 @@ impl SharedTableProvider {
                 return Ok(None);
             }
 
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
+
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: commit_seq,
+                _version: seq_id,
                 _deleted:    false,
                 fields:      new_fields,
             };
@@ -2613,11 +2599,11 @@ impl SharedTableProvider {
         .await
     }
 
-    async fn delete_by_pk_value_with_commit_seq(
+    async fn delete_by_pk_value_with_version(
         &self,
         _user_id: &UserId,
         pk_value: &str,
-        commit_seq: u64,
+        version: VersionId,
     ) -> Result<bool, KalamDbError> {
         let span = tracing::debug_span!(
             "table.delete",
@@ -2663,17 +2649,13 @@ impl SharedTableProvider {
                 }
             };
 
-            let sys_cols = self.core.services.system_columns.clone();
-            let seq_id = sys_cols.generate_seq_id().map_err(|e| {
-                KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e))
-            })?;
+            let seq_id = version;
 
             // Preserve ALL fields in the tombstone
             let values = latest_row.fields.values.clone();
 
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: commit_seq,
+                _version: seq_id,
                 _deleted:    true,
                 fields:      Row::new(values),
             };

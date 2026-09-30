@@ -129,7 +129,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{rows::Row, NamespaceId, TableId, TableName},
         StorageKey,
     };
@@ -148,9 +148,8 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(seq)));
         SharedTableRow {
-            _seq:        SeqId::new(seq),
-            _commit_seq: 0,
-            fields:      Row::new(values),
+            _version:        VersionId::try_from_i64(seq).unwrap(),
+                        fields:      Row::new(values),
             _deleted:    false,
         }
     }
@@ -164,7 +163,7 @@ mod tests {
     #[test]
     fn test_shared_table_store_put_get() {
         let store = create_test_store();
-        let key = SeqId::new(100);
+        let key = VersionId::try_from_i64(100).unwrap();
         let row = create_test_row(100, "Public Data");
 
         // Put and get
@@ -176,7 +175,7 @@ mod tests {
     #[test]
     fn test_shared_table_store_delete() {
         let store = create_test_store();
-        let key = SeqId::new(200);
+        let key = VersionId::try_from_i64(200).unwrap();
         let row = create_test_row(200, "test");
 
         // Put, delete, verify
@@ -191,7 +190,7 @@ mod tests {
 
         // Insert multiple rows
         for i in 1..=5 {
-            let key = SeqId::new(i as i64 * 100);
+            let key = VersionId::try_from_i64(i as i64 * 100).unwrap();
             let row = create_test_row(i as i64 * 100, &format!("item_{}", i));
             store.put(&key, &row).unwrap();
         }
@@ -207,7 +206,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
         let store = new_shared_table_store(backend.clone(), &table_id);
 
-        let prefix_key = SeqId::new(100);
+        let prefix_key = VersionId::try_from_i64(100).unwrap();
         let prefix = prefix_key.storage_key();
 
         let _ = store.scan_with_raw_prefix(&prefix, None, 10).unwrap();
@@ -227,7 +226,7 @@ mod tests {
         ]);
         let store =
             new_indexed_shared_table_store(Arc::clone(&backend), &table_id, "id", schema, &[], &[]);
-        let key = SeqId::new(100);
+        let key = VersionId::try_from_i64(100).unwrap();
         let row = create_test_row(100, "Public Data");
         store.insert(&key, &row).unwrap();
 
@@ -238,7 +237,7 @@ mod tests {
         assert_eq!(&raw[0..4], b"KOBJ");
 
         let retrieved = store.get(&key).unwrap().unwrap();
-        assert_eq!(retrieved._seq, key);
+        assert_eq!(retrieved._version, key);
         assert_eq!(retrieved.fields.values.get("name"), row.fields.values.get("name"));
     }
 
@@ -287,11 +286,10 @@ mod tests {
             values.insert("name".to_string(), ScalarValue::Utf8(Some("msg".to_string())));
             store
                 .insert(
-                    &SeqId::new(seq),
+                    &VersionId::try_from_i64(seq).unwrap(),
                     &SharedTableRow {
-                        _seq:        SeqId::new(seq),
-                        _commit_seq: 0,
-                        _deleted:    false,
+                        _version:        VersionId::try_from_i64(seq).unwrap(),
+                                                _deleted:    false,
                         fields:      Row::new(values),
                     },
                 )
@@ -366,11 +364,10 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some("msg".to_string())));
         store
             .insert(
-                &SeqId::new(10),
+                &VersionId::try_from_i64(10).unwrap(),
                 &SharedTableRow {
-                    _seq:        SeqId::new(10),
-                    _commit_seq: 0,
-                    _deleted:    false,
+                    _version:        VersionId::try_from_i64(10).unwrap(),
+                                        _deleted:    false,
                     fields:      Row::new(values),
                 },
             )
@@ -427,11 +424,10 @@ mod tests {
             values.insert("group_id".to_string(), ScalarValue::Utf8(Some(group_id.to_string())));
             store
                 .insert(
-                    &SeqId::new(seq),
+                    &VersionId::try_from_i64(seq).unwrap(),
                     &SharedTableRow {
-                        _seq:        SeqId::new(seq),
-                        _commit_seq: 0,
-                        _deleted:    false,
+                        _version:        VersionId::try_from_i64(seq).unwrap(),
+                                                _deleted:    false,
                         fields:      Row::new(values),
                     },
                 )

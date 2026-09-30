@@ -5,14 +5,14 @@
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering},
         Arc, OnceLock,
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use kalamdb_commons::{
-    ids::SeqId,
+    ids::VersionId,
     models::{ConnectionId, ConnectionInfo, LiveQueryId, TableId, UserId},
     websocket::{CompressionType, ProtocolOptions, SerializationType, WireNotification},
     Role,
@@ -37,9 +37,11 @@ pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 100;
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 128;
 
 /// Maximum pending control events per connection.
-/// Only a few event kinds exist (auth timeout, heartbeat timeout, shutdown),
-/// so a small queue is sufficient and reduces fixed per-connection footprint.
-pub const EVENT_CHANNEL_CAPACITY: usize = 1;
+///
+/// Auth timeout, heartbeat timeout, shutdown, and a subscription lapse each
+/// need a slot. A full data channel must still be able to report that the
+/// client has to resubscribe.
+pub const EVENT_CHANNEL_CAPACITY: usize = 8;
 
 /// Maximum buffered notifications per subscription while initial snapshot loading is in progress.
 ///
@@ -74,6 +76,9 @@ pub enum ConnectionEvent {
     HeartbeatTimeout,
     /// Server is shutting down - close connection gracefully
     Shutdown,
+    /// This subscription missed a change. The client must resubscribe
+    /// without a resume cursor and replace its local snapshot.
+    SubscriptionLapsed { subscription_id: Arc<str> },
 }
 
 /// Routing handle stored in subscription indices.
@@ -92,6 +97,8 @@ pub struct SubscriptionHandle {
     pub projections:      Option<Arc<Vec<String>>>,
     /// Shared notification channel
     pub notification_tx:  NotificationSender,
+    /// Control channel used to report a delivery gap for this subscription.
+    pub event_tx:         EventSender,
     /// Flow control for initial load buffering and snapshot gating.
     /// None means the subscription was created without initial data.
     pub flow_control:     Option<Arc<SubscriptionFlowControl>>,
@@ -102,11 +109,12 @@ pub struct SubscriptionHandle {
 /// In-memory metadata tracked for active subscriptions only.
 #[derive(Debug)]
 pub struct SubscriptionRuntimeMetadata {
-    query:          Arc<str>,
-    options_json:   Option<Arc<str>>,
-    created_at_ms:  i64,
-    last_update_ms: AtomicI64,
-    changes:        AtomicI64,
+    query:           Arc<str>,
+    options_json:    Option<Arc<str>>,
+    created_at_ms:   i64,
+    last_update_ms:  AtomicI64,
+    changes:         AtomicI64,
+    delivery_gapped: AtomicBool,
 }
 
 impl SubscriptionRuntimeMetadata {
@@ -117,7 +125,21 @@ impl SubscriptionRuntimeMetadata {
             created_at_ms,
             last_update_ms: AtomicI64::new(created_at_ms),
             changes: AtomicI64::new(0),
+            delivery_gapped: AtomicBool::new(false),
         }
+    }
+
+    /// Returns true the first time delivery for this subscription becomes incomplete.
+    #[inline]
+    pub fn claim_gap(&self) -> bool {
+        self.delivery_gapped
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    #[inline]
+    pub fn is_gapped(&self) -> bool {
+        self.delivery_gapped.load(Ordering::Acquire)
     }
 
     #[inline]
@@ -157,148 +179,197 @@ impl SubscriptionRuntimeMetadata {
     }
 }
 
-/// Buffered notification with optional SeqId ordering key
+/// One change held until the snapshot has been handed to the client.
 #[derive(Debug, Clone)]
 pub struct BufferedNotification {
-    pub seq:          Option<SeqId>,
-    pub commit_seq:   Option<u64>,
+    pub seq:          Option<VersionId>,
     pub notification: Arc<WireNotification>,
 }
 
-/// Flow control for subscription initial load gating
+/// Result of offering one change to a subscription.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Accept {
+    /// Kept until the snapshot handoff.
+    Stored,
+    /// Already inside the snapshot.
+    Covered,
+    /// Written to the live channel.
+    Sent,
+    /// The subscriber is gone.
+    Closed,
+    /// A change cannot be delivered. The client must take a fresh snapshot.
+    Failed,
+}
+
+const PHASE_CATCHUP: u8 = 0;
+const PHASE_LIVE: u8 = 1;
+const PHASE_FAILED: u8 = 2;
+
+#[derive(Debug)]
+struct Gate {
+    snapshot_end: Option<i64>,
+    pending:      VecDeque<BufferedNotification>,
+}
+
+/// Catch-up buffer for one subscription.
+///
+/// After the snapshot prefix is queued, `phase` is live and later sends only
+/// touch the channel. The mutex stays on the catch-up path so that prefix
+/// cannot be overtaken.
 #[derive(Debug)]
 pub struct SubscriptionFlowControl {
-    snapshot_end_seq:        AtomicI64,
-    snapshot_end_commit_seq: AtomicU64,
-    has_snapshot:            AtomicBool,
-    has_commit_snapshot:     AtomicBool,
-    initial_complete:        AtomicBool,
-    buffer:                  Mutex<VecDeque<BufferedNotification>>,
+    phase: AtomicU8,
+    gate:  Mutex<Gate>,
 }
 
 impl SubscriptionFlowControl {
     pub fn new() -> Self {
         Self {
-            snapshot_end_seq:        AtomicI64::new(0),
-            snapshot_end_commit_seq: AtomicU64::new(0),
-            has_snapshot:            AtomicBool::new(false),
-            has_commit_snapshot:     AtomicBool::new(false),
-            initial_complete:        AtomicBool::new(false),
-            buffer:                  Mutex::new(VecDeque::new()),
+            phase: AtomicU8::new(PHASE_CATCHUP),
+            gate:  Mutex::new(Gate {
+                snapshot_end: None,
+                pending:      VecDeque::new(),
+            }),
         }
     }
 
-    pub fn set_snapshot_end_seq(&self, snapshot_end_seq: Option<SeqId>) {
-        self.set_snapshot_boundaries(snapshot_end_seq, None);
-    }
-
-    pub fn set_snapshot_boundaries(
-        &self,
-        snapshot_end_seq: Option<SeqId>,
-        snapshot_end_commit_seq: Option<u64>,
-    ) {
-        if let Some(seq) = snapshot_end_seq {
-            self.snapshot_end_seq.store(seq.as_i64(), Ordering::Release);
-            self.has_snapshot.store(true, Ordering::Release);
-        } else {
-            self.has_snapshot.store(false, Ordering::Release);
-        }
-
-        if let Some(commit_seq) = snapshot_end_commit_seq {
-            self.snapshot_end_commit_seq.store(commit_seq, Ordering::Release);
-            self.has_commit_snapshot.store(true, Ordering::Release);
-        } else {
-            self.has_commit_snapshot.store(false, Ordering::Release);
-        }
-
-        if snapshot_end_seq.is_some() || snapshot_end_commit_seq.is_some() {
-            let max_seq = snapshot_end_seq.map(|seq| seq.as_i64());
-            let mut buffer = self.buffer.lock();
-            buffer.retain(|item| match item.seq {
-                Some(item_seq) if snapshot_end_commit_seq.is_none() => {
-                    max_seq.map(|seq| item_seq.as_i64() > seq).unwrap_or(true)
-                },
-                _ => match (snapshot_end_commit_seq, item.commit_seq) {
-                    (Some(max_commit), Some(item_commit)) => item_commit > max_commit,
-                    _ => true,
-                },
-            });
+    pub fn set_snapshot_end_seq(&self, snapshot_end_seq: Option<VersionId>) {
+        let mut gate = self.gate.lock();
+        gate.snapshot_end = snapshot_end_seq.map(|version| version.as_i64());
+        if let Some(end) = gate.snapshot_end {
+            gate.pending
+                .retain(|item| item.seq.is_none_or(|version| version.as_i64() > end));
         }
     }
 
-    pub fn snapshot_end_seq(&self) -> Option<i64> {
-        if self.has_snapshot.load(Ordering::Acquire) {
-            Some(self.snapshot_end_seq.load(Ordering::Acquire))
-        } else {
-            None
-        }
-    }
-
-    pub fn snapshot_end_commit_seq(&self) -> Option<u64> {
-        if self.has_commit_snapshot.load(Ordering::Acquire) {
-            Some(self.snapshot_end_commit_seq.load(Ordering::Acquire))
-        } else {
-            None
-        }
-    }
-
-    pub fn is_initial_complete(&self) -> bool {
-        self.initial_complete.load(Ordering::Acquire)
-    }
-
-    pub fn mark_initial_complete(&self) {
-        self.initial_complete.store(true, Ordering::Release);
-    }
-
-    pub fn buffer_notification(
+    /// Offer a change. Once live, this does not take the catch-up mutex.
+    pub fn accept(
         &self,
         notification: Arc<WireNotification>,
-        seq: Option<SeqId>,
-        commit_seq: Option<u64>,
-    ) {
-        let mut buffer = self.buffer.lock();
-        if buffer.len() >= MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION {
-            buffer.pop_front();
+        seq: Option<VersionId>,
+        tx: &NotificationSender,
+    ) -> Accept {
+        match self.phase.load(Ordering::Acquire) {
+            PHASE_FAILED => return Accept::Failed,
+            PHASE_LIVE => return send_live(&self.phase, notification, tx),
+            _ => {},
         }
-        buffer.push_back(BufferedNotification {
-            seq,
-            commit_seq,
-            notification,
-        });
+
+        let mut gate = self.gate.lock();
+        match self.phase.load(Ordering::Acquire) {
+            PHASE_FAILED => Accept::Failed,
+            PHASE_LIVE => send_live(&self.phase, notification, tx),
+            _ => {
+                let result = queue_change(&mut gate, notification, seq);
+                if result == Accept::Failed {
+                    self.phase.store(PHASE_FAILED, Ordering::Release);
+                }
+                result
+            },
+        }
+    }
+
+    /// Move the catch-up prefix onto the live channel, then accept live sends.
+    pub fn finish(&self, tx: &NotificationSender) -> Result<usize, ()> {
+        let mut gate = self.gate.lock();
+        if self.phase.load(Ordering::Acquire) == PHASE_FAILED {
+            return Err(());
+        }
+        let pending = take_pending(&mut gate.pending);
+        let mut sent = 0usize;
+        for item in pending {
+            match send_live(&self.phase, item.notification, tx) {
+                Accept::Sent => sent += 1,
+                Accept::Failed => return Err(()),
+                Accept::Closed => {
+                    self.phase.store(PHASE_FAILED, Ordering::Release);
+                    return Ok(sent);
+                },
+                Accept::Stored | Accept::Covered => {},
+            }
+        }
+        self.phase.store(PHASE_LIVE, Ordering::Release);
+        Ok(sent)
+    }
+
+    /// Test and pre-completed subscriptions skip catch-up.
+    pub fn mark_initial_complete(&self) {
+        let mut gate = self.gate.lock();
+        gate.pending.clear();
+        gate.pending.shrink_to_fit();
+        self.phase.store(PHASE_LIVE, Ordering::Release);
+    }
+
+    pub fn is_gapped(&self) -> bool {
+        self.phase.load(Ordering::Acquire) == PHASE_FAILED
+    }
+
+    pub fn buffer_notification(&self, notification: Arc<WireNotification>, seq: Option<VersionId>) {
+        let mut gate = self.gate.lock();
+        if queue_change(&mut gate, notification, seq) == Accept::Failed {
+            self.phase.store(PHASE_FAILED, Ordering::Release);
+        }
     }
 
     pub fn drain_buffered_notifications(&self) -> Vec<BufferedNotification> {
-        let mut buffer = self.buffer.lock();
-        // Sort in-place via contiguous slice, then drain — avoids a second Vec allocation
-        let slice = buffer.make_contiguous();
-        slice.sort_by(|a, b| {
-            let commit_order = match (a.commit_seq, b.commit_seq) {
-                (Some(a_commit), Some(b_commit)) => a_commit.cmp(&b_commit),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            };
-            if commit_order != std::cmp::Ordering::Equal {
-                return commit_order;
-            }
-
-            match (a.seq, b.seq) {
-                (Some(a_seq), Some(b_seq)) => a_seq.as_i64().cmp(&b_seq.as_i64()),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        });
-        let drained: Vec<BufferedNotification> = buffer.drain(..).collect();
-        buffer.shrink_to_fit();
-        drained
+        let mut gate = self.gate.lock();
+        take_pending(&mut gate.pending)
     }
 
     pub fn release_buffer(&self) {
-        let mut buffer = self.buffer.lock();
-        buffer.clear();
-        buffer.shrink_to_fit();
+        let mut gate = self.gate.lock();
+        gate.pending.clear();
+        gate.pending.shrink_to_fit();
     }
+}
+
+fn queue_change(
+    gate: &mut Gate,
+    notification: Arc<WireNotification>,
+    seq: Option<VersionId>,
+) -> Accept {
+    if let (Some(end), Some(version)) = (gate.snapshot_end, seq) {
+        if version.as_i64() <= end {
+            return Accept::Covered;
+        }
+    }
+    if seq.is_some_and(|version| gate.pending.iter().any(|item| item.seq == Some(version))) {
+        return Accept::Stored;
+    }
+    if gate.pending.len() >= MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION {
+        gate.pending.clear();
+        return Accept::Failed;
+    }
+    gate.pending.push_back(BufferedNotification { seq, notification });
+    Accept::Stored
+}
+
+fn send_live(
+    phase: &AtomicU8,
+    notification: Arc<WireNotification>,
+    tx: &NotificationSender,
+) -> Accept {
+    match tx.try_send(notification) {
+        Ok(()) => Accept::Sent,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            phase.store(PHASE_FAILED, Ordering::Release);
+            Accept::Failed
+        },
+        Err(mpsc::error::TrySendError::Closed(_)) => Accept::Closed,
+    }
+}
+
+fn take_pending(pending: &mut VecDeque<BufferedNotification>) -> Vec<BufferedNotification> {
+    let slice = pending.make_contiguous();
+    slice.sort_by(|left, right| match (left.seq, right.seq) {
+        (Some(left_seq), Some(right_seq)) => left_seq.cmp(&right_seq),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    let drained: Vec<BufferedNotification> = pending.drain(..).collect();
+    pending.shrink_to_fit();
+    drained
 }
 
 /// Optional initial-load state for subscriptions that fetch a snapshot.
@@ -306,8 +377,8 @@ impl SubscriptionFlowControl {
 pub struct InitialLoadState {
     /// Batch size for initial data loading
     pub batch_size:              usize,
-    /// Snapshot boundary SeqId for consistent batch loading
-    pub snapshot_end_seq:        Option<SeqId>,
+    /// Snapshot boundary VersionId for consistent batch loading
+    pub snapshot_end_seq:        Option<VersionId>,
     /// Deterministic snapshot boundary for reconnects across followers
     pub snapshot_end_commit_seq: Option<u64>,
     /// Current batch number for pagination tracking (0-indexed)
@@ -592,7 +663,11 @@ impl ConnectionState {
     }
 
     /// Update snapshot_end_seq for a subscription.
-    pub fn update_snapshot_end_seq(&self, subscription_id: &str, snapshot_end_seq: Option<SeqId>) {
+    pub fn update_snapshot_end_seq(
+        &self,
+        subscription_id: &str,
+        snapshot_end_seq: Option<VersionId>,
+    ) {
         self.update_snapshot_boundaries(subscription_id, snapshot_end_seq, None);
     }
 
@@ -600,16 +675,14 @@ impl ConnectionState {
     pub fn update_snapshot_boundaries(
         &self,
         subscription_id: &str,
-        snapshot_end_seq: Option<SeqId>,
+        snapshot_end_seq: Option<VersionId>,
         snapshot_end_commit_seq: Option<u64>,
     ) {
         if let Some(sub) = self.subscriptions.write().get_mut(subscription_id) {
             if let Some(initial_load) = sub.initial_load.as_mut() {
                 initial_load.snapshot_end_seq = snapshot_end_seq;
                 initial_load.snapshot_end_commit_seq = snapshot_end_commit_seq;
-                initial_load
-                    .flow_control
-                    .set_snapshot_boundaries(snapshot_end_seq, snapshot_end_commit_seq);
+                initial_load.flow_control.set_snapshot_end_seq(snapshot_end_seq);
             }
         }
     }
@@ -634,28 +707,33 @@ impl ConnectionState {
         let Some(flow_control) = flow_control else {
             return 0;
         };
-        // Map guard dropped before sending.
 
-        flow_control.mark_initial_complete();
-        let buffered = flow_control.drain_buffered_notifications();
-
-        let mut sent = 0usize;
         let delivery_timestamp_ms = epoch_millis();
-        for item in buffered {
-            if let Err(e) = self.notification_tx.try_send(item.notification) {
-                if matches!(e, mpsc::error::TrySendError::Full(_)) {
-                    log::warn!(
-                        "Notification channel full while flushing buffered notifications for {}",
-                        subscription_id
-                    );
-                    break;
+        match flow_control.finish(&self.notification_tx) {
+            Ok(sent) => {
+                for _ in 0..sent {
+                    runtime_metadata.record_delivery_at(delivery_timestamp_ms);
                 }
-            } else {
-                runtime_metadata.record_delivery_at(delivery_timestamp_ms);
-                sent += 1;
-            }
+                sent
+            },
+            Err(()) => {
+                self.signal_subscription_lapse(subscription_id, &runtime_metadata);
+                0
+            },
         }
-        sent
+    }
+
+    fn signal_subscription_lapse(
+        &self,
+        subscription_id: &str,
+        runtime_metadata: &SubscriptionRuntimeMetadata,
+    ) {
+        if !runtime_metadata.claim_gap() {
+            return;
+        }
+        let _ = self.event_tx.try_send(ConnectionEvent::SubscriptionLapsed {
+            subscription_id: Arc::from(subscription_id),
+        });
     }
 
     /// Increment current batch number for a subscription and return the new value.
@@ -714,26 +792,49 @@ mod tests {
     fn test_subscription_flow_control_limits_buffer_growth() {
         let flow_control = SubscriptionFlowControl::new();
 
-        for seq in 1..=2_048 {
+        for seq in 1..=(MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION as i64) {
             flow_control.buffer_notification(
                 make_notification("sub-1"),
-                Some(SeqId::from(seq)),
-                None,
+                Some(VersionId::try_from_i64(seq).unwrap()),
             );
         }
-
-        let buffered = flow_control.drain_buffered_notifications();
-
-        assert_eq!(
-            buffered.len(),
-            MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION,
-            "buffered notifications should be capped to avoid unbounded per-subscription growth"
+        flow_control.buffer_notification(
+            make_notification("sub-1"),
+            Some(
+                VersionId::try_from_i64(MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION as i64 + 1)
+                    .unwrap(),
+            ),
         );
-        assert_eq!(
-            buffered.first().and_then(|item| item.seq),
-            Some(SeqId::from((2_048 - MAX_BUFFERED_NOTIFICATIONS_PER_SUBSCRIPTION + 1) as i64))
+
+        assert!(
+            flow_control.is_gapped(),
+            "overflow must not keep a prefix that skips older changes"
         );
-        assert_eq!(buffered.last().and_then(|item| item.seq), Some(SeqId::from(2_048)));
+        assert!(
+            flow_control.drain_buffered_notifications().is_empty(),
+            "a gapped buffer is dropped instead of delivered with a hole"
+        );
+    }
+
+    #[test]
+    fn test_finish_sends_catchup_before_later_live_changes() {
+        let flow_control = SubscriptionFlowControl::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        flow_control.buffer_notification(
+            make_notification("sub-ordered"),
+            Some(VersionId::try_from_i64(3).unwrap()),
+        );
+        assert_eq!(flow_control.finish(&tx).expect("handoff"), 1);
+        assert_eq!(
+            flow_control.accept(
+                make_notification("sub-ordered"),
+                Some(VersionId::try_from_i64(4).unwrap()),
+                &tx,
+            ),
+            Accept::Sent
+        );
+        assert_eq!(rx.try_recv().expect("prefix").subscription_id.as_ref(), "sub-ordered");
+        assert!(rx.try_recv().is_ok(), "live change follows the prefix");
     }
 
     #[test]
@@ -742,18 +843,15 @@ mod tests {
 
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
-            Some(SeqId::from(9)),
-            None,
+            Some(VersionId::try_from_i64(9).unwrap()),
         );
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
-            Some(SeqId::from(3)),
-            None,
+            Some(VersionId::try_from_i64(3).unwrap()),
         );
         flow_control.buffer_notification(
             make_notification("sub-ordered"),
-            Some(SeqId::from(6)),
-            None,
+            Some(VersionId::try_from_i64(6).unwrap()),
         );
 
         let buffered = flow_control.drain_buffered_notifications();
@@ -771,8 +869,7 @@ mod tests {
         for seq in 1..=32 {
             flow_control.buffer_notification(
                 make_notification("sub-release"),
-                Some(SeqId::from(seq)),
-                None,
+                Some(VersionId::try_from_i64(seq).unwrap()),
             );
         }
 

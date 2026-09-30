@@ -31,7 +31,7 @@ use super::{
     KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
 };
 use crate::{
-    applier::SharedDataApplier, commit_seq_from_log_position, DataResponse, GroupId, RaftCommand,
+    applier::SharedDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand,
     RaftError, SharedDataCommand,
 };
 
@@ -68,6 +68,13 @@ impl SharedApplyCommand {
         match self {
             Self::Shared(command) => command.required_meta_index(),
             Self::TransactionCommit { .. } => 0,
+        }
+    }
+
+    fn row_slot_count(&self) -> usize {
+        match self {
+            Self::Shared(command) => command.row_slot_count(),
+            Self::TransactionCommit { mutations, .. } => mutations.len(),
         }
     }
 }
@@ -183,8 +190,18 @@ impl SharedDataStateMachine {
 
         for pending in drained {
             let cmd = Self::decode_apply_command(&pending.command_bytes)?;
-            let commit_seq = commit_seq_from_log_position(self.group_id(), pending.log_index);
-            let _ = self.apply_decoded_command(cmd, commit_seq).await?;
+            let versions = match assign_entry_versions(pending.log_index, cmd.row_slot_count()) {
+                Ok(versions) => versions,
+                Err(error) => {
+                    log::warn!(
+                        "SharedDataStateMachine[{}]: rejecting buffered entry: {}",
+                        self.shard,
+                        error
+                    );
+                    continue;
+                }
+            };
+            let _ = self.apply_decoded_command(cmd, &versions).await?;
             log::debug!(
                 "SharedDataStateMachine[{}]: Applied buffered command log_index={}",
                 self.shard,
@@ -220,7 +237,7 @@ impl SharedDataStateMachine {
     async fn apply_command(
         &self,
         cmd: SharedDataCommand,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         // Get applier reference
         let applier = {
@@ -256,7 +273,7 @@ impl SharedDataStateMachine {
                             actor_user_id.as_ref(),
                             &rows,
                             &encoded_fields,
-                            commit_seq,
+                            versions,
                         )
                         .await
                     {
@@ -302,7 +319,7 @@ impl SharedDataStateMachine {
                             actor_user_id.as_ref(),
                             &updates,
                             filter.as_deref(),
-                            commit_seq,
+                            versions,
                         )
                         .await
                     {
@@ -340,7 +357,7 @@ impl SharedDataStateMachine {
 
                 let rows_affected = if let Some(ref a) = applier {
                     match a
-                        .delete(&table_id, actor_user_id.as_ref(), pk_values.as_deref(), commit_seq)
+                        .delete(&table_id, actor_user_id.as_ref(), pk_values.as_deref(), versions)
                         .await
                     {
                         Ok(count) => count,
@@ -392,14 +409,14 @@ impl SharedDataStateMachine {
     async fn apply_decoded_command(
         &self,
         cmd: SharedApplyCommand,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         match cmd {
-            SharedApplyCommand::Shared(command) => self.apply_command(command, commit_seq).await,
+            SharedApplyCommand::Shared(command) => self.apply_command(command, versions).await,
             SharedApplyCommand::TransactionCommit {
                 transaction_id,
                 mutations,
-            } => self.apply_transaction_commit(transaction_id, mutations, commit_seq).await,
+            } => self.apply_transaction_commit(transaction_id, mutations, versions).await,
         }
     }
 
@@ -407,7 +424,7 @@ impl SharedDataStateMachine {
         &self,
         transaction_id: TransactionId,
         mutations: Vec<StagedMutation>,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         if mutations.iter().any(|mutation| mutation.table_type != TableType::Shared) {
             return Ok(DataResponse::error(
@@ -424,7 +441,7 @@ impl SharedDataStateMachine {
             return Ok(DataResponse::error("No applier set, transaction commit not persisted"));
         };
 
-        match applier.apply_transaction_batch(&transaction_id, &mutations, commit_seq).await {
+        match applier.apply_transaction_batch(&transaction_id, &mutations, versions).await {
             Ok(result) => {
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 Ok(DataResponse::TransactionCommitted(result))
@@ -499,8 +516,17 @@ impl KalamStateMachine for SharedDataStateMachine {
         }
 
         // Apply current command
-        let commit_seq = commit_seq_from_log_position(self.group_id(), index);
-        let response = self.apply_decoded_command(cmd, commit_seq).await?;
+        let versions = match assign_entry_versions(index, cmd.row_slot_count()) {
+            Ok(versions) => versions,
+            Err(error) => {
+                return Ok(ApplyResult::ok_with_data(
+                    crate::codec::command_codec::encode_data_response(&DataResponse::error(
+                        error.to_string(),
+                    ))?,
+                ));
+            }
+        };
+        let response = self.apply_decoded_command(cmd, &versions).await?;
 
         // Update last applied
         self.last_applied_index.store(index, Ordering::Release);
@@ -622,7 +648,7 @@ mod tests {
             _actor_user_id: Option<&UserId>,
             rows: &[Row],
             encoded_fields: &[Vec<u8>],
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(rows.len().max(encoded_fields.len()))
         }
@@ -633,7 +659,7 @@ mod tests {
             _actor_user_id: Option<&UserId>,
             _updates: &[Row],
             _filter: Option<&str>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -643,7 +669,7 @@ mod tests {
             _table_id: &TableId,
             _actor_user_id: Option<&UserId>,
             _pk_values: Option<&[String]>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -652,11 +678,11 @@ mod tests {
             &self,
             _transaction_id: &TransactionId,
             mutations: &[StagedMutation],
-            commit_seq: u64,
+            versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
                 rows_affected: mutations.len(),
-                commit_seq,
+                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
                 manifest_updates: 0,
                 publisher_events: 0,
@@ -672,7 +698,7 @@ mod tests {
             actor_user_id: Option<&UserId>,
             rows: &[Row],
             encoded_fields: &[Vec<u8>],
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             self.actor_records.lock().push((OperationKind::Insert, actor_user_id.cloned()));
             Ok(rows.len().max(encoded_fields.len()))
@@ -684,7 +710,7 @@ mod tests {
             actor_user_id: Option<&UserId>,
             _updates: &[Row],
             _filter: Option<&str>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             self.actor_records.lock().push((OperationKind::Update, actor_user_id.cloned()));
             Ok(1)
@@ -695,7 +721,7 @@ mod tests {
             _table_id: &TableId,
             actor_user_id: Option<&UserId>,
             _pk_values: Option<&[String]>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             self.actor_records.lock().push((OperationKind::Delete, actor_user_id.cloned()));
             Ok(1)
@@ -705,11 +731,11 @@ mod tests {
             &self,
             _transaction_id: &TransactionId,
             mutations: &[StagedMutation],
-            commit_seq: u64,
+            versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
                 rows_affected: mutations.len(),
-                commit_seq,
+                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
                 manifest_updates: 0,
                 publisher_events: 0,
@@ -880,10 +906,7 @@ mod tests {
                 match response {
                     DataResponse::TransactionCommitted(result) => {
                         assert_eq!(result.rows_affected, 1);
-                        assert_eq!(
-                            result.commit_seq,
-                            commit_seq_from_log_position(GroupId::DataSharedShard(0), 1)
-                        );
+                        assert_eq!(result.log_index, 1);
                     },
                     other => panic!("unexpected response: {:?}", other),
                 }

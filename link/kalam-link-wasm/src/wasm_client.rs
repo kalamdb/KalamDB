@@ -12,7 +12,6 @@ use link_common::{
         ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
         SubscriptionOptions, SubscriptionRequest,
     },
-    SeqId,
 };
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
@@ -241,7 +240,10 @@ fn send_ws_message_traced(
     Ok(())
 }
 
-fn next_batch_message(subscription_id: &str, last_seq_id: Option<SeqId>) -> ClientMessage {
+fn next_batch_message(
+    subscription_id: &str,
+    last_seq_id: Option<link_common::VersionId>,
+) -> ClientMessage {
     ClientMessage::NextBatch {
         subscription_id: subscription_id.to_string(),
         last_seq_id,
@@ -251,7 +253,7 @@ fn next_batch_message(subscription_id: &str, last_seq_id: Option<SeqId>) -> Clie
 fn send_next_batch_traced(
     ws: &WebSocket,
     subscription_id: &str,
-    last_seq_id: Option<SeqId>,
+    last_seq_id: Option<link_common::VersionId>,
     serialization: SerializationType,
     on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>,
 ) -> Result<(), JsValue> {
@@ -426,11 +428,11 @@ struct SubscriptionDispatch {
     payload:           Option<String>,
     resolve_subscribe: Option<js_sys::Function>,
     reject_subscribe:  Option<(js_sys::Function, String)>,
-    next_batch:        Option<(String, Option<SeqId>)>,
+    next_batch:        Option<(String, Option<link_common::VersionId>)>,
 }
 
 impl SubscriptionDispatch {
-    fn invoke(self) -> Option<(String, Option<SeqId>)> {
+    fn invoke(self) -> Option<(String, Option<link_common::VersionId>)> {
         if let Some(cb) = self.callback {
             if let Some(payload) = self.payload {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
@@ -1249,10 +1251,10 @@ impl KalamClient {
         *self.is_reconnecting.borrow()
     }
 
-    /// Get the last received seq_id for a subscription
+    /// Get the last received version for a subscription
     ///
     /// Useful for debugging or manual resumption tracking
-    #[wasm_bindgen(js_name = getLastSeqId)]
+    #[wasm_bindgen(js_name = getLastVersionId)]
     pub fn get_last_seq_id(&self, subscription_id: String) -> Option<String> {
         self.subscription_state
             .borrow()

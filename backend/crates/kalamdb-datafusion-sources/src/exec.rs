@@ -36,7 +36,7 @@ use datafusion::{
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::arrow_value_to_scalar,
-    ids::SeqId,
+    ids::VersionId,
     models::rows::{Row, RowMetadata, SharedTableRow},
 };
 pub use kalamdb_commons::{
@@ -93,56 +93,36 @@ pub fn projected_schema(
     }
 }
 
-/// Shared MVCC version ordering: `(commit_seq, seq_id)` with `commit_seq` as
-/// the primary sort key and `seq_id` as the tiebreaker.
-pub fn version_ordering<S>(
-    candidate_commit_seq: u64,
-    candidate_seq: S,
-    current_commit_seq: u64,
-    current_seq: S,
-) -> Ordering
-where
-    S: Ord,
-{
-    candidate_commit_seq
-        .cmp(&current_commit_seq)
-        .then_with(|| candidate_seq.cmp(&current_seq))
+/// Shared MVCC version ordering: a single [`VersionId`] comparison.
+///
+/// Greater version wins regardless of hot/cold tier. Equal versions are one row.
+pub fn version_ordering(candidate: VersionId, current: VersionId) -> Ordering {
+    candidate.cmp(&current)
 }
 
 /// Return `true` when the candidate version should replace the current one.
-pub fn prefers_version<S>(
-    candidate_commit_seq: u64,
-    candidate_seq: S,
-    current_commit_seq: u64,
-    current_seq: S,
-) -> bool
-where
-    S: Ord,
-{
-    version_ordering(candidate_commit_seq, candidate_seq, current_commit_seq, current_seq).is_gt()
+pub fn prefers_version(candidate: VersionId, current: VersionId) -> bool {
+    version_ordering(candidate, current).is_gt()
 }
 
 /// Shared version candidate used by metadata-first MVCC merge helpers.
-pub struct VersionCandidate<P, S> {
-    pub pk_key:     PkBucketKey,
-    pub commit_seq: u64,
-    pub seq_id:     S,
-    pub deleted:    bool,
-    pub payload:    P,
+pub struct VersionCandidate<P> {
+    pub pk_key:  PkBucketKey,
+    pub version: VersionId,
+    pub deleted: bool,
+    pub payload: P,
 }
 
-impl<P, S> VersionCandidate<P, S> {
+impl<P> VersionCandidate<P> {
     pub fn new(
         pk_key: impl Into<PkBucketKey>,
-        commit_seq: u64,
-        seq_id: S,
+        version: VersionId,
         deleted: bool,
         payload: P,
     ) -> Self {
         Self {
             pk_key: pk_key.into(),
-            commit_seq,
-            seq_id,
+            version,
             deleted,
             payload,
         }
@@ -155,33 +135,22 @@ pub enum SelectedVersion<H, C> {
     Cold(C),
 }
 
-enum Candidate<H, C, S> {
-    Hot(VersionMeta<H, S>),
-    Cold(VersionMeta<C, S>),
+enum Candidate<H, C> {
+    Hot(VersionMeta<H>),
+    Cold(VersionMeta<C>),
 }
 
-struct VersionMeta<P, S> {
-    commit_seq: u64,
-    seq_id:     S,
-    deleted:    bool,
-    payload:    P,
+struct VersionMeta<P> {
+    version: VersionId,
+    deleted: bool,
+    payload: P,
 }
 
-impl<H, C, S> Candidate<H, C, S>
-where
-    S: Copy,
-{
-    fn commit_seq(&self) -> u64 {
+impl<H, C> Candidate<H, C> {
+    fn version(&self) -> VersionId {
         match self {
-            Candidate::Hot(candidate) => candidate.commit_seq,
-            Candidate::Cold(candidate) => candidate.commit_seq,
-        }
-    }
-
-    fn seq_id(&self) -> S {
-        match self {
-            Candidate::Hot(candidate) => candidate.seq_id,
-            Candidate::Cold(candidate) => candidate.seq_id,
+            Candidate::Hot(candidate) => candidate.version,
+            Candidate::Cold(candidate) => candidate.version,
         }
     }
 
@@ -194,32 +163,27 @@ where
 }
 
 #[inline]
-fn is_visible_at_snapshot(commit_seq: u64, snapshot_commit_seq: Option<u64>) -> bool {
-    snapshot_commit_seq.is_none_or(|snapshot| commit_seq <= snapshot)
+fn is_visible_at_snapshot(version: VersionId, snapshot_version: Option<VersionId>) -> bool {
+    // Inclusive upper bound: apply BEFORE winner selection so a visible older
+    // version (e.g. log-index 490) can beat a hidden newer one (501).
+    snapshot_version.is_none_or(|snapshot| version <= snapshot)
 }
 
 #[inline]
-fn consider_candidate<H, C, S>(
-    best: &mut HashMap<PkBucketKey, Candidate<H, C, S>>,
+fn consider_candidate<H, C>(
+    best: &mut HashMap<PkBucketKey, Candidate<H, C>>,
     pk_key: PkBucketKey,
-    candidate: Candidate<H, C, S>,
-    snapshot_commit_seq: Option<u64>,
-) where
-    S: Ord + Copy,
-{
-    if !is_visible_at_snapshot(candidate.commit_seq(), snapshot_commit_seq) {
+    candidate: Candidate<H, C>,
+    snapshot_version: Option<VersionId>,
+) {
+    if !is_visible_at_snapshot(candidate.version(), snapshot_version) {
         return;
     }
 
     match best.entry(pk_key) {
         std::collections::hash_map::Entry::Occupied(mut entry) => {
             let current = entry.get();
-            if prefers_version(
-                candidate.commit_seq(),
-                candidate.seq_id(),
-                current.commit_seq(),
-                current.seq_id(),
-            ) {
+            if prefers_version(candidate.version(), current.version()) {
                 entry.insert(candidate);
             }
         },
@@ -232,27 +196,30 @@ fn consider_candidate<H, C, S>(
 /// Select the latest visible version for each primary-key bucket while keeping
 /// cold inputs metadata-only until the caller decides which winners to
 /// materialize.
-pub fn select_latest_versions<H, C, S, HI, CI>(
+///
+/// Snapshot visibility is applied before choosing the winner. Same
+/// [`VersionId`] on hot and cold collapses to one row (first seen wins on
+/// equality, which is hot because hot is scanned first). Greater version wins
+/// regardless of tier. A tombstone winner hides the row unless `keep_deleted`.
+pub fn select_latest_versions<H, C, HI, CI>(
     hot_candidates: HI,
     cold_candidates: CI,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_version: Option<VersionId>,
     keep_deleted: bool,
 ) -> Vec<SelectedVersion<H, C>>
 where
-    HI: IntoIterator<Item = VersionCandidate<H, S>>,
-    CI: IntoIterator<Item = VersionCandidate<C, S>>,
-    S: Ord + Copy,
+    HI: IntoIterator<Item = VersionCandidate<H>>,
+    CI: IntoIterator<Item = VersionCandidate<C>>,
 {
     let hot_iter = hot_candidates.into_iter();
     let cold_iter = cold_candidates.into_iter();
     let estimated_capacity = hot_iter.size_hint().0.saturating_add(cold_iter.size_hint().0).max(64);
-    let mut best: HashMap<PkBucketKey, Candidate<H, C, S>> =
+    let mut best: HashMap<PkBucketKey, Candidate<H, C>> =
         HashMap::with_capacity(estimated_capacity);
 
     for VersionCandidate {
         pk_key,
-        commit_seq,
-        seq_id,
+        version,
         deleted,
         payload,
     } in hot_iter
@@ -261,19 +228,17 @@ where
             &mut best,
             pk_key,
             Candidate::Hot(VersionMeta {
-                commit_seq,
-                seq_id,
+                version,
                 deleted,
                 payload,
             }),
-            snapshot_commit_seq,
+            snapshot_version,
         );
     }
 
     for VersionCandidate {
         pk_key,
-        commit_seq,
-        seq_id,
+        version,
         deleted,
         payload,
     } in cold_iter
@@ -282,12 +247,11 @@ where
             &mut best,
             pk_key,
             Candidate::Cold(VersionMeta {
-                commit_seq,
-                seq_id,
+                version,
                 deleted,
                 payload,
             }),
-            snapshot_commit_seq,
+            snapshot_version,
         );
     }
 
@@ -307,34 +271,28 @@ where
 /// Parsed representation of a Parquet row used for MVCC version resolution.
 #[derive(Debug, Clone)]
 pub struct ParquetRowData {
-    pub seq_id:     SeqId,
-    pub commit_seq: u64,
-    pub deleted:    bool,
-    pub fields:     Row,
+    pub version: VersionId,
+    pub deleted: bool,
+    pub fields:  Row,
 }
 
 /// Minimal row surface required by the shared MVCC merge helpers.
 pub trait VersionedRow {
-    fn seq_id(&self) -> SeqId;
-    fn commit_seq(&self) -> u64;
+    fn version(&self) -> VersionId;
     fn deleted(&self) -> bool;
     fn pk_value(&self, pk_name: &str) -> Option<String>;
 
     fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
         match self.pk_value(pk_name) {
             Some(value) if !value.is_empty() => PkBucketKey::Text(value),
-            _ => PkBucketKey::Seq(self.seq_id().as_i64()),
+            _ => PkBucketKey::Version(self.version().as_i64()),
         }
     }
 }
 
 impl VersionedRow for SharedTableRow {
-    fn seq_id(&self) -> SeqId {
-        self._seq
-    }
-
-    fn commit_seq(&self) -> u64 {
-        self._commit_seq
+    fn version(&self) -> VersionId {
+        self._version
     }
 
     fn deleted(&self) -> bool {
@@ -343,23 +301,19 @@ impl VersionedRow for SharedTableRow {
 
     fn pk_value(&self, pk_name: &str) -> Option<String> {
         match self.pk_bucket_key(pk_name) {
-            PkBucketKey::Seq(_) => None,
+            PkBucketKey::Version(_) => None,
             key => Some(key.to_string()),
         }
     }
 
     fn pk_bucket_key(&self, pk_name: &str) -> PkBucketKey {
-        pk_bucket_key_from_row(&self.fields, pk_name, self._seq)
+        pk_bucket_key_from_row(&self.fields, pk_name, self._version)
     }
 }
 
 impl VersionedRow for RowMetadata {
-    fn seq_id(&self) -> SeqId {
-        self.seq
-    }
-
-    fn commit_seq(&self) -> u64 {
-        self.commit_seq
+    fn version(&self) -> VersionId {
+        self.version
     }
 
     fn deleted(&self) -> bool {
@@ -368,7 +322,7 @@ impl VersionedRow for RowMetadata {
 
     fn pk_value(&self, _pk_name: &str) -> Option<String> {
         match &self.pk_bucket {
-            PkBucketKey::Seq(_) => None,
+            PkBucketKey::Version(_) => None,
             key => Some(key.to_string()),
         }
     }
@@ -386,14 +340,13 @@ pub fn version_candidate_from_row<R, P>(
     pk_name: &str,
     row: &R,
     payload: P,
-) -> VersionCandidate<P, SeqId>
+) -> VersionCandidate<P>
 where
     R: VersionedRow,
 {
     VersionCandidate::new(
         candidate_pk_key(pk_name, row),
-        row.commit_seq(),
-        row.seq_id(),
+        row.version(),
         row.deleted(),
         payload,
     )
@@ -403,7 +356,7 @@ pub fn count_merged_rows<R, I, J>(
     pk_name: &str,
     hot_rows: I,
     cold_rows: J,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_version: Option<VersionId>,
 ) -> usize
 where
     I: IntoIterator<Item = R>,
@@ -413,7 +366,7 @@ where
     select_latest_versions(
         hot_rows.into_iter().map(|row| version_candidate_from_row(pk_name, &row, ())),
         cold_rows.into_iter().map(|row| version_candidate_from_row(pk_name, &row, ())),
-        snapshot_commit_seq,
+        snapshot_version,
         false,
     )
     .len()
@@ -423,11 +376,11 @@ pub fn count_resolved_from_metadata(
     pk_name: &str,
     hot_metadata: Vec<RowMetadata>,
     cold_batch: &RecordBatch,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_version: Option<VersionId>,
 ) -> DataFusionResult<usize> {
     let cold_metadata = parquet_batch_to_metadata(cold_batch, pk_name)?;
 
-    Ok(count_merged_rows(pk_name, hot_metadata, cold_metadata, snapshot_commit_seq))
+    Ok(count_merged_rows(pk_name, hot_metadata, cold_metadata, snapshot_version))
 }
 
 pub fn merge_versioned_rows<K, R, I, J>(
@@ -435,7 +388,7 @@ pub fn merge_versioned_rows<K, R, I, J>(
     hot_rows: I,
     cold_rows: J,
     keep_deleted: bool,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_version: Option<VersionId>,
 ) -> Vec<(K, R)>
 where
     I: IntoIterator<Item = (K, R)>,
@@ -446,19 +399,17 @@ where
     select_latest_versions(
         hot_rows.into_iter().map(|(key, row)| {
             let pk_key = candidate_pk_key(pk_name, &row);
-            let commit_seq = row.commit_seq();
-            let seq_id = row.seq_id();
+            let version = row.version();
             let deleted = row.deleted();
-            VersionCandidate::new(pk_key, commit_seq, seq_id, deleted, (key, row))
+            VersionCandidate::new(pk_key, version, deleted, (key, row))
         }),
         cold_rows.into_iter().map(|(key, row)| {
             let pk_key = candidate_pk_key(pk_name, &row);
-            let commit_seq = row.commit_seq();
-            let seq_id = row.seq_id();
+            let version = row.version();
             let deleted = row.deleted();
-            VersionCandidate::new(pk_key, commit_seq, seq_id, deleted, (key, row))
+            VersionCandidate::new(pk_key, version, deleted, (key, row))
         }),
-        snapshot_commit_seq,
+        snapshot_version,
         keep_deleted,
     )
     .into_iter()
@@ -473,7 +424,7 @@ pub fn resolve_latest_kvs_from_cold_batch<K, R, I, F>(
     hot_rows: I,
     cold_batch: &RecordBatch,
     keep_deleted: bool,
-    snapshot_commit_seq: Option<u64>,
+    snapshot_version: Option<VersionId>,
     build_cold_row: F,
 ) -> DataFusionResult<Vec<(K, R)>>
 where
@@ -486,21 +437,20 @@ where
     let winners = select_latest_versions(
         hot_rows.into_iter().map(|(key, row)| {
             let pk_key = candidate_pk_key(pk_name, &row);
-            let commit_seq = row.commit_seq();
-            let seq_id = row.seq_id();
+            let version = row.version();
             let deleted = row.deleted();
-            VersionCandidate::new(pk_key, commit_seq, seq_id, deleted, (key, row))
+            VersionCandidate::new(pk_key, version, deleted, (key, row))
         }),
-        (0..cold_batch.num_rows()).map(|row_idx| {
-            VersionCandidate::new(
-                decoder.pk_bucket_at(row_idx),
-                decoder.commit_seq_at(row_idx),
-                decoder.seq_at(row_idx),
+        (0..cold_batch.num_rows()).filter_map(|row_idx| {
+            let version = decoder.version_at(row_idx).ok()?;
+            Some(VersionCandidate::new(
+                decoder.pk_bucket_at(row_idx, version),
+                version,
                 decoder.deleted_at(row_idx),
                 row_idx,
-            )
+            ))
         }),
-        snapshot_commit_seq,
+        snapshot_version,
         keep_deleted,
     );
 
@@ -544,7 +494,7 @@ pub fn parquet_batch_to_metadata(
     let decoder = ParquetBatchDecoder::new(batch, Some(pk_name))?;
     let mut rows = Vec::with_capacity(batch.num_rows());
     for row_idx in 0..batch.num_rows() {
-        rows.push(decoder.metadata_at(row_idx));
+        rows.push(decoder.metadata_at(row_idx)?);
     }
 
     Ok(rows)
@@ -555,8 +505,7 @@ pub fn parquet_batch_to_metadata(
 #[derive(Debug)]
 pub struct ParquetBatchDecoder<'a> {
     batch:                &'a RecordBatch,
-    seq_array:            &'a Int64Array,
-    commit_seq_array:     Option<&'a UInt64Array>,
+    version_array:        &'a Int64Array,
     deleted_array:        Option<&'a BooleanArray>,
     pk_column:            Option<PkColumn<'a>>,
     value_column_indices: Vec<usize>,
@@ -607,20 +556,20 @@ fn downcast_pk_column(batch: &RecordBatch, idx: usize) -> PkColumn<'_> {
 #[inline]
 fn null_or_key<T>(
     is_null: bool,
-    seq: SeqId,
+    version: VersionId,
     value: T,
     to_key: impl FnOnce(T) -> PkBucketKey,
 ) -> PkBucketKey {
     if is_null {
-        PkBucketKey::Seq(seq.as_i64())
+        PkBucketKey::Version(version.as_i64())
     } else {
         to_key(value)
     }
 }
 
-fn utf8_pk_bucket(is_null: bool, value: &str, seq: SeqId) -> PkBucketKey {
+fn utf8_pk_bucket(is_null: bool, value: &str, version: VersionId) -> PkBucketKey {
     if is_null || value.is_empty() {
-        PkBucketKey::Seq(seq.as_i64())
+        PkBucketKey::Version(version.as_i64())
     } else {
         PkBucketKey::Text(value.to_owned())
     }
@@ -629,49 +578,42 @@ fn utf8_pk_bucket(is_null: bool, value: &str, seq: SeqId) -> PkBucketKey {
 impl<'a> ParquetBatchDecoder<'a> {
     pub fn new(batch: &'a RecordBatch, pk_name: Option<&str>) -> DataFusionResult<Self> {
         let schema = batch.schema();
-        let seq_idx = schema
+        let version_idx = schema
             .fields()
             .iter()
-            .position(|field| field.name() == SystemColumnNames::SEQ)
+            .position(|field| field.name() == SystemColumnNames::VERSION)
             .ok_or_else(|| {
-                DataFusionError::Execution("Missing _seq column in Parquet batch".to_string())
+                DataFusionError::Execution("Missing _version column in Parquet batch".to_string())
             })?;
         let deleted_idx = schema
             .fields()
             .iter()
             .position(|field| field.name() == SystemColumnNames::DELETED);
-        let commit_seq_idx = schema
-            .fields()
-            .iter()
-            .position(|field| field.name() == SystemColumnNames::COMMIT_SEQ);
         let pk_idx =
             pk_name.and_then(|name| schema.fields().iter().position(|field| field.name() == name));
 
-        let seq_array =
-            batch.column(seq_idx).as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                DataFusionError::Execution("_seq column is not Int64Array".to_string())
+        let version_array =
+            batch.column(version_idx).as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
+                DataFusionError::Execution("_version column is not Int64Array".to_string())
             })?;
         let deleted_array =
             deleted_idx.and_then(|idx| batch.column(idx).as_any().downcast_ref::<BooleanArray>());
-        let commit_seq_array =
-            commit_seq_idx.and_then(|idx| batch.column(idx).as_any().downcast_ref::<UInt64Array>());
         let pk_column = pk_idx.map(|idx| downcast_pk_column(batch, idx));
         let value_column_indices = schema
             .fields()
             .iter()
             .enumerate()
             .filter(|(_, field)| {
-                field.name() != SystemColumnNames::SEQ
-                    && field.name() != SystemColumnNames::COMMIT_SEQ
+                field.name() != SystemColumnNames::VERSION
                     && field.name() != SystemColumnNames::DELETED
+                    && field.name() != SystemColumnNames::TIMESTAMP
             })
             .map(|(idx, _)| idx)
             .collect();
 
         Ok(Self {
             batch,
-            seq_array,
-            commit_seq_array,
+            version_array,
             deleted_array,
             pk_column,
             value_column_indices,
@@ -679,8 +621,10 @@ impl<'a> ParquetBatchDecoder<'a> {
     }
 
     #[inline]
-    fn seq_at(&self, row_idx: usize) -> SeqId {
-        SeqId::from_i64(self.seq_array.value(row_idx))
+    fn version_at(&self, row_idx: usize) -> DataFusionResult<VersionId> {
+        VersionId::try_from_i64(self.version_array.value(row_idx)).map_err(|error| {
+            DataFusionError::Execution(format!("invalid _version in Parquet batch: {error}"))
+        })
     }
 
     #[inline]
@@ -691,79 +635,71 @@ impl<'a> ParquetBatchDecoder<'a> {
     }
 
     #[inline]
-    fn commit_seq_at(&self, row_idx: usize) -> u64 {
-        self.commit_seq_array
-            .and_then(|array| (!array.is_null(row_idx)).then(|| array.value(row_idx)))
-            .unwrap_or(0)
-    }
-
-    #[inline]
-    fn pk_bucket_at(&self, row_idx: usize) -> PkBucketKey {
-        let seq = self.seq_at(row_idx);
+    fn pk_bucket_at(&self, row_idx: usize, version: VersionId) -> PkBucketKey {
         let Some(pk_column) = self.pk_column else {
-            return PkBucketKey::Seq(seq.as_i64());
+            return PkBucketKey::Version(version.as_i64());
         };
 
         match pk_column {
             PkColumn::Int8(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::Int(i64::from(value))
                 })
             },
             PkColumn::Int16(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::Int(i64::from(value))
                 })
             },
             PkColumn::Int32(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::Int(i64::from(value))
                 })
             },
             PkColumn::Int64(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), PkBucketKey::Int)
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), PkBucketKey::Int)
             },
             PkColumn::UInt8(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::UInt(u64::from(value))
                 })
             },
             PkColumn::UInt16(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::UInt(u64::from(value))
                 })
             },
             PkColumn::UInt32(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), |value| {
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), |value| {
                     PkBucketKey::UInt(u64::from(value))
                 })
             },
             PkColumn::UInt64(array) => {
-                null_or_key(array.is_null(row_idx), seq, array.value(row_idx), PkBucketKey::UInt)
+                null_or_key(array.is_null(row_idx), version, array.value(row_idx), PkBucketKey::UInt)
             },
             PkColumn::Utf8(array) => {
-                utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), seq)
+                utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), version)
             },
             PkColumn::LargeUtf8(array) => {
-                utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), seq)
+                utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), version)
             },
             PkColumn::Generic(idx) => {
-                pk_bucket_key_from_array(self.batch.column(idx).as_ref(), row_idx, seq)
+                pk_bucket_key_from_array(self.batch.column(idx).as_ref(), row_idx, version)
             },
         }
     }
 
-    pub fn metadata_at(&self, row_idx: usize) -> RowMetadata {
-        RowMetadata {
-            seq:        self.seq_at(row_idx),
-            commit_seq: self.commit_seq_at(row_idx),
-            deleted:    self.deleted_at(row_idx),
-            pk_bucket:  self.pk_bucket_at(row_idx),
-        }
+    pub fn metadata_at(&self, row_idx: usize) -> DataFusionResult<RowMetadata> {
+        let version = self.version_at(row_idx)?;
+        Ok(RowMetadata {
+            version,
+            deleted:   self.deleted_at(row_idx),
+            pk_bucket: self.pk_bucket_at(row_idx, version),
+        })
     }
 
     pub fn row_at(&self, row_idx: usize) -> DataFusionResult<ParquetRowData> {
-        let metadata = self.metadata_at(row_idx);
+        let metadata = self.metadata_at(row_idx)?;
         let mut values = BTreeMap::new();
         let schema = self.batch.schema();
 
@@ -786,10 +722,9 @@ impl<'a> ParquetBatchDecoder<'a> {
         }
 
         Ok(ParquetRowData {
-            seq_id:     metadata.seq,
-            commit_seq: metadata.commit_seq,
-            deleted:    metadata.deleted,
-            fields:     Row::new(values),
+            version: metadata.version,
+            deleted: metadata.deleted,
+            fields:  Row::new(values),
         })
     }
 }

@@ -23,7 +23,6 @@ use crate::{
     event_handlers::EventHandlers,
     models::{ChangeEvent, ConnectionOptions, SubscriptionInfo, SubscriptionOptions},
     timeouts::KalamLinkTimeouts,
-    SeqId,
 };
 
 mod reconnect;
@@ -69,7 +68,7 @@ impl SharedSubscriptionControl {
         &self,
         id: String,
         generation: u64,
-        seq_id: SeqId,
+        seq_id: crate::VersionId,
         advance_resume: bool,
     ) {
         let _ = self
@@ -404,7 +403,7 @@ mod tests {
 
         for index in 0..1_100 {
             let mut entry = make_test_entry("SELECT 1");
-            entry.last_seq_id = Some(SeqId::from(index + 1));
+            entry.last_seq_id = Some(crate::VersionId::from((index as i64) + 1));
             registry::cache_entry_seq(&mut cache, format!("sub-{index}"), &entry);
         }
 

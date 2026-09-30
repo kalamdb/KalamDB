@@ -15,10 +15,9 @@ use crate::{
     seq_tracking,
     subscription::final_resume_seq,
     timeouts::KalamLinkTimeouts,
-    SeqId,
 };
 
-pub(super) type SubscriptionReady = Result<(u64, Option<SeqId>)>;
+pub(super) type SubscriptionReady = Result<(u64, Option<crate::VersionId>)>;
 type SubscriptionReadySender = oneshot::Sender<SubscriptionReady>;
 
 /// Retain enough recently closed cursors for intentional ID reuse without allowing
@@ -32,7 +31,7 @@ pub(super) fn now_ms() -> u64 {
 
 pub(super) fn snapshot_subscriptions(
     subs: &HashMap<String, SubEntry>,
-    seq_id_cache: &HashMap<String, SeqId>,
+    seq_id_cache: &HashMap<String, crate::VersionId>,
 ) -> Vec<SubscriptionInfo> {
     let mut out: Vec<SubscriptionInfo> = subs
         .iter()
@@ -62,12 +61,28 @@ pub(super) fn snapshot_subscriptions(
     out
 }
 
-pub(super) fn effective_entry_seq(entry: &SubEntry) -> Option<SeqId> {
+pub(super) fn effective_entry_seq(entry: &SubEntry) -> Option<crate::VersionId> {
     final_resume_seq(entry.last_seq_id, entry.consumed_seq_id)
 }
 
+pub(super) fn forget_resume_cursor(
+    entry: &mut SubEntry,
+    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    id: &str,
+) {
+    entry.last_seq_id = None;
+    entry.consumed_seq_id = None;
+    entry.options.from = None;
+    seq_id_cache.remove(id);
+}
+
+pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
+    code.eq_ignore_ascii_case("CURSOR_EXPIRED")
+        || message.to_ascii_lowercase().contains("stale resume cursor")
+}
+
 pub(super) fn cache_entry_seq(
-    seq_id_cache: &mut HashMap<String, SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::VersionId>,
     id: impl Into<String>,
     entry: &SubEntry,
 ) {
@@ -85,8 +100,8 @@ pub(super) fn cache_entry_seq(
 
 pub(super) fn merge_resume_from(
     options: &mut SubscriptionOptions,
-    inherited_seq: Option<SeqId>,
-) -> Option<SeqId> {
+    inherited_seq: Option<crate::VersionId>,
+) -> Option<crate::VersionId> {
     let effective_from = match (options.from, inherited_seq) {
         (Some(explicit), Some(cached)) => Some(explicit.max(cached)),
         (explicit, cached) => explicit.or(cached),
@@ -108,7 +123,7 @@ pub(super) fn should_send_subscription_options(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn register_subscription_entry(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::VersionId>,
     next_generation: &mut u64,
     timeouts: &KalamLinkTimeouts,
     id: String,
@@ -117,7 +132,7 @@ pub(super) fn register_subscription_entry(
     request_initial_data: bool,
     event_tx: mpsc::Sender<Result<ChangeEvent>>,
     result_tx: SubscriptionReadySender,
-) -> (u64, Option<SeqId>) {
+) -> (u64, Option<crate::VersionId>) {
     let effective_from = merge_resume_from(&mut options, seq_id_cache.remove(&id));
     let generation = *next_generation;
     *next_generation += 1;
@@ -147,7 +162,7 @@ pub(super) fn register_subscription_entry(
 
 pub(super) fn remove_subscription_entry(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::VersionId>,
     id: &str,
     generation: Option<u64>,
 ) -> Option<SubEntry> {
@@ -169,7 +184,7 @@ pub(super) fn remove_subscription_entry(
 pub(super) fn advance_entry_progress(
     entry: &mut SubEntry,
     generation: u64,
-    seq_id: SeqId,
+    seq_id: crate::VersionId,
     advance_resume: bool,
 ) {
     if entry.generation != generation {
@@ -284,7 +299,7 @@ pub(super) enum ConnCmd {
     Progress {
         id:             String,
         generation:     u64,
-        seq_id:         SeqId,
+        seq_id:         crate::VersionId,
         advance_resume: bool,
     },
     ListSubscriptions {
@@ -300,9 +315,9 @@ pub(super) struct SubEntry {
     pub(super) options: SubscriptionOptions,
     pub(super) request_initial_data: bool,
     pub(super) event_tx: mpsc::Sender<Result<ChangeEvent>>,
-    pub(super) last_seq_id: Option<SeqId>,
-    pub(super) consumed_seq_id: Option<SeqId>,
-    pub(super) batch_seq_id: Option<SeqId>,
+    pub(super) last_seq_id: Option<crate::VersionId>,
+    pub(super) consumed_seq_id: Option<crate::VersionId>,
+    pub(super) batch_seq_id: Option<crate::VersionId>,
     pub(super) is_loading: bool,
     pub(super) generation: u64,
     pub(super) created_at_ms: u64,

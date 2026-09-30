@@ -76,7 +76,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{rows::Row, UserId},
     };
 
@@ -91,11 +91,10 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
 
-        let key = UserTableRowId::new(user_id.clone(), SeqId::new(seq));
+        let key = UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(seq).unwrap());
         let row = UserTableRow {
             user_id:     user_id.clone(),
-            _seq:        SeqId::new(seq),
-            _commit_seq: 0,
+            _version: VersionId::try_from_i64(seq).unwrap(),
             _deleted:    false,
             fields:      Row::new(values),
         };

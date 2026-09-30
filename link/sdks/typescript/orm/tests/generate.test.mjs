@@ -70,7 +70,7 @@ describe('generateSchema', () => {
   });
 
   it('filters out underscore-prefixed columns', () => {
-    assert.ok(!fullSchema.includes("_seq:"));
+    assert.ok(!fullSchema.includes("_version:"));
     assert.ok(!fullSchema.includes("_deleted:"));
   });
 

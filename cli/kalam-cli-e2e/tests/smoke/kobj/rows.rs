@@ -58,7 +58,7 @@ fn kobj_user_row_round_trip_and_sentinel_values() {
     if let Some(uid) = cell_str(row, "user_id") {
         assert_eq!(uid, user, "user_id must reconstruct from the storage key");
     }
-    assert!(cell_i64(row, "_seq").unwrap_or(0) > 0, "_seq must exist and be valid");
+    assert!(cell_i64(row, "_version").unwrap_or(0) > 0, "_version must exist and be valid");
 }
 
 #[ntest::timeout(180000)]
@@ -332,7 +332,7 @@ fn kobj_shared_crud_and_upsert() {
     ));
     let row = &query_rows(&format!("SELECT * FROM {full} WHERE id = 1"))[0];
     assert_eq!(cell_str(row, "body").as_deref(), Some("hello"));
-    assert!(cell_i64(row, "_seq").unwrap_or(0) > 0);
+    assert!(cell_i64(row, "_version").unwrap_or(0) > 0);
     assert!(!cell_bool(row, "_deleted").unwrap_or(false));
 
     exec(&format!("UPDATE {full} SET body = 'updated' WHERE id = 1"));
@@ -383,20 +383,22 @@ fn kobj_stream_seq_reconstruction_and_burst() {
     exec(&format!("INSERT INTO {full} (event_id, payload) VALUES {values}"));
 
     let rows =
-        query_rows(&format!("SELECT event_id, payload, _seq FROM {full} ORDER BY _seq LIMIT 1000"));
+        query_rows(&format!(
+            "SELECT event_id, payload, _version FROM {full} ORDER BY _version LIMIT 1000"
+        ));
     assert_eq!(rows.len(), 100);
     let mut last_seq = 0i64;
     let mut seen = std::collections::HashSet::new();
     for (i, row) in rows.iter().enumerate() {
-        let seq = cell_i64(row, "_seq").expect("_seq missing");
-        assert!(seq > last_seq, "_seq must strictly increase: {last_seq} -> {seq}");
+        let seq = cell_i64(row, "_version").expect("_version missing");
+        assert!(seq > last_seq, "_version must strictly increase: {last_seq} -> {seq}");
         last_seq = seq;
-        assert!(seen.insert(seq), "duplicate _seq {seq}");
+        assert!(seen.insert(seq), "duplicate _version {seq}");
         assert_eq!(cell_str(row, "payload").as_deref(), Some(format!("p-{}", i + 1).as_str()));
     }
     assert_eq!(count_sql(&format!("SELECT COUNT(*) AS n FROM {full} LIMIT 1000")), 100);
     assert_eq!(
-        count_sql(&format!("SELECT COUNT(DISTINCT _seq) AS n FROM {full} LIMIT 1000")),
+        count_sql(&format!("SELECT COUNT(DISTINCT _version) AS n FROM {full} LIMIT 1000")),
         100
     );
 }

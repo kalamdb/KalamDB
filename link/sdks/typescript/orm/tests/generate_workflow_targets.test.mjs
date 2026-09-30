@@ -7,7 +7,7 @@ import { getKalamTableConfig, kSystemColumns, kTable } from '@kalamdb/orm';
 import { integer, text } from 'drizzle-orm/pg-core';
 
 export const app_users = kTable.user("app.users", {
-  ...kSystemColumns(["_seq","_deleted"] as const),
+  ...kSystemColumns(["_version","_deleted"] as const),
   id: integer("id").primaryKey(),
   email: text("email").notNull(),
 }, { systemColumns: true });

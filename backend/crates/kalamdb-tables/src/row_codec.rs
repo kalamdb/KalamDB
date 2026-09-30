@@ -69,8 +69,14 @@ impl UserRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.seq, ordinals)
-            .map_err(map_ser)
+        decode_user_row_selected(
+            bytes,
+            &self.schema,
+            key.user_id.clone(),
+            key.version,
+            ordinals,
+        )
+        .map_err(map_ser)
     }
 }
 
@@ -90,7 +96,7 @@ impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
         key: &UserTableRowId,
         bytes: &[u8],
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row(bytes, &self.schema, key.user_id.clone(), key.seq).map_err(map_ser)
+        decode_user_row(bytes, &self.schema, key.user_id.clone(), key.version).map_err(map_ser)
     }
 
     fn decode_selected(
@@ -99,8 +105,14 @@ impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.seq, ordinals)
-            .map_err(map_ser)
+        decode_user_row_selected(
+            bytes,
+            &self.schema,
+            key.user_id.clone(),
+            key.version,
+            ordinals,
+        )
+        .map_err(map_ser)
     }
 }
 
@@ -122,7 +134,7 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         _key: &SharedTableRowId,
         entity: &SharedTableRow,
     ) -> kalamdb_store::storage_trait::Result<Vec<u8>> {
-        encode_shared_row(entity._commit_seq, entity._deleted, &entity.fields, &self.schema)
+        encode_shared_row(entity._deleted, &entity.fields, &self.schema)
             .map(|encoded| encoded.into_bytes())
             .map_err(map_ser)
     }
@@ -132,11 +144,10 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         key: &SharedTableRowId,
         bytes: &[u8],
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        let (seq, commit_seq, deleted, fields) =
+        let (version, deleted, fields) =
             decode_shared_row(bytes, &self.schema, *key).map_err(map_ser)?;
         Ok(SharedTableRow {
-            _seq: seq,
-            _commit_seq: commit_seq,
+            _version: version,
             _deleted: deleted,
             fields,
         })
@@ -148,11 +159,10 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        let (seq, commit_seq, deleted, fields) =
+        let (version, deleted, fields) =
             decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)?;
         Ok(SharedTableRow {
-            _seq: seq,
-            _commit_seq: commit_seq,
+            _version: version,
             _deleted: deleted,
             fields,
         })

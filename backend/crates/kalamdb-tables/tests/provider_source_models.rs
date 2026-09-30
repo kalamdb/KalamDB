@@ -262,6 +262,10 @@ struct TestCommitSequence {
 }
 
 impl CommitSequenceSource for TestCommitSequence {
+    fn frontier(&self, _group_id: kalamdb_sharding::GroupId) -> u64 {
+        self.current.load(Ordering::Relaxed)
+    }
+
     fn current_committed(&self) -> u64 {
         self.current.load(Ordering::Relaxed)
     }
@@ -522,7 +526,7 @@ fn overlay_context(
 
     TransactionQueryContext::new(
         transaction_id,
-        1,
+        Arc::new(std::sync::atomic::AtomicU64::new(1)),
         Arc::new(overlay),
         Arc::new(NoopMutationSink),
         Arc::new(AllowAllAccessValidator),
@@ -566,6 +570,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
                 ("event_id", ScalarValue::Utf8(Some("evt-1".to_string()))),
                 ("payload", ScalarValue::Utf8(Some("hello".to_string()))),
             ]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .expect("seed stream row");
@@ -630,15 +635,14 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     ));
 
     let user_id = UserId::new("user-owner");
-    let seq = kalamdb_commons::ids::SeqId::from_i64(1);
+    let seq = kalamdb_commons::ids::VersionId::from(1);
     store
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq),
             &UserTableRow {
                 user_id:     user_id.clone(),
-                _seq:        seq,
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        seq,
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
@@ -714,9 +718,8 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
             &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
             &UserTableRow {
                 user_id:     root_user.clone(),
-                _seq:        1.into(),
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        1.into(),
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
@@ -729,9 +732,8 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
             &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
             &UserTableRow {
                 user_id:     dba_user.clone(),
-                _seq:        2.into(),
-                _commit_seq: 2,
-                _deleted:    false,
+                _version:        2.into(),
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(2))),
                     ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
@@ -791,9 +793,8 @@ async fn user_provider_delete_only_tombstones_subject_row() {
             &kalamdb_commons::ids::UserTableRowId::new(root_user.clone(), 1.into()),
             &UserTableRow {
                 user_id:     root_user.clone(),
-                _seq:        1.into(),
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        1.into(),
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("root-row".to_string()))),
@@ -806,9 +807,8 @@ async fn user_provider_delete_only_tombstones_subject_row() {
             &kalamdb_commons::ids::UserTableRowId::new(dba_user.clone(), 2.into()),
             &UserTableRow {
                 user_id:     dba_user.clone(),
-                _seq:        2.into(),
-                _commit_seq: 2,
-                _deleted:    false,
+                _version:        2.into(),
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("jamal-row".to_string()))),
@@ -818,7 +818,7 @@ async fn user_provider_delete_only_tombstones_subject_row() {
         .expect("seed dba row");
 
     let (deleted_row_key, _) = provider
-        .delete_by_pk_value_deferred(&dba_user, "1", 3)
+        .delete_by_pk_value_deferred(&dba_user, "1", kalamdb_commons::ids::VersionId::from(3_i64))
         .await
         .expect("delete dba row")
         .expect("delete produced tombstone");
@@ -872,15 +872,14 @@ async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     );
 
     let user_id = UserId::new("user-owner");
-    let seq = kalamdb_commons::ids::SeqId::from_i64(1);
+    let seq = kalamdb_commons::ids::VersionId::from(1);
     store
         .insert(
             &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq),
             &UserTableRow {
                 user_id:     user_id.clone(),
-                _seq:        seq,
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        seq,
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
@@ -938,14 +937,13 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
         Arc::clone(&store),
     ));
 
-    let seq = kalamdb_commons::ids::SeqId::from_i64(1);
+    let seq = kalamdb_commons::ids::VersionId::from(1);
     store
         .insert(
             &seq,
             &SharedTableRow {
-                _seq:        seq,
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        seq,
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
@@ -1014,14 +1012,13 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
         Arc::clone(&store),
     );
 
-    let seq = kalamdb_commons::ids::SeqId::from_i64(1);
+    let seq = kalamdb_commons::ids::VersionId::from(1);
     store
         .insert(
             &seq,
             &SharedTableRow {
-                _seq:        seq,
-                _commit_seq: 1,
-                _deleted:    false,
+                _version:        seq,
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("name", ScalarValue::Utf8(Some("committed".to_string()))),
@@ -1082,14 +1079,13 @@ async fn shared_provider_conversation_filter_seeks_scalar_index() {
 
     for seq in 1_i64..=40 {
         let conversation_id = if seq <= 20 { 1_i64 } else { 2_i64 };
-        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        let row_id = kalamdb_commons::ids::VersionId::from(seq);
         store
             .insert(
                 &row_id,
                 &SharedTableRow {
-                    _seq:        row_id,
-                    _commit_seq: seq as u64,
-                    _deleted:    false,
+                    _version:        row_id,
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
@@ -1147,14 +1143,13 @@ async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
     ));
 
     for seq in [2_i64, 10, 20, 30] {
-        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        let row_id = kalamdb_commons::ids::VersionId::from(seq);
         store
             .insert(
                 &row_id,
                 &SharedTableRow {
-                    _seq:        row_id,
-                    _commit_seq: seq as u64,
-                    _deleted:    false,
+                    _version:        row_id,
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(1))),
@@ -1209,14 +1204,13 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
     ));
 
     for seq in 1_i64..=20 {
-        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        let row_id = kalamdb_commons::ids::VersionId::from(seq);
         store
             .insert(
                 &row_id,
                 &SharedTableRow {
-                    _seq:        row_id,
-                    _commit_seq: seq as u64,
-                    _deleted:    false,
+                    _version:        row_id,
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(1))),
@@ -1230,14 +1224,13 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
     // Repeated scalar hits for one PK must expand its history only once.
     // Include a tombstone so winner selection must also suppress a deleted PK.
     for (seq, id, deleted) in [(21_i64, 1_i64, false), (22, 1, false), (23, 2, true)] {
-        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        let row_id = kalamdb_commons::ids::VersionId::from(seq);
         store
             .insert(
                 &row_id,
                 &SharedTableRow {
-                    _seq:        row_id,
-                    _commit_seq: seq as u64,
-                    _deleted:    deleted,
+                    _version:        row_id,
+                                        _deleted:    deleted,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(id))),
                         ("conversation_id", ScalarValue::Int64(Some(1))),
@@ -1249,14 +1242,13 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
     }
 
     // MVCC UPDATE appends a new seq. The old conversation_id index key remains.
-    let updated_seq = kalamdb_commons::ids::SeqId::from_i64(24);
+    let updated_seq = kalamdb_commons::ids::VersionId::from(24);
     store
         .insert(
             &updated_seq,
             &SharedTableRow {
-                _seq:        updated_seq,
-                _commit_seq: 24,
-                _deleted:    false,
+                _version:        updated_seq,
+                                _deleted:    false,
                 fields:      row(vec![
                     ("id", ScalarValue::Int64(Some(1))),
                     ("conversation_id", ScalarValue::Int64(Some(2))),
@@ -1315,15 +1307,14 @@ async fn user_provider_conversation_filter_seeks_scalar_index() {
     let user_id = UserId::new("user-owner");
     for seq in 1_i64..=40 {
         let conversation_id = if seq <= 20 { 1_i64 } else { 2_i64 };
-        let row_id = kalamdb_commons::ids::SeqId::from_i64(seq);
+        let row_id = kalamdb_commons::ids::VersionId::from(seq);
         store
             .insert(
                 &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), row_id),
                 &UserTableRow {
                     user_id:     user_id.clone(),
-                    _seq:        row_id,
-                    _commit_seq: seq as u64,
-                    _deleted:    false,
+                    _version:        row_id,
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("conversation_id", ScalarValue::Int64(Some(conversation_id))),
@@ -1461,9 +1452,8 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
                 &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq.into()),
                 &UserTableRow {
                     user_id:     user_id.clone(),
-                    _seq:        seq.into(),
-                    _commit_seq: 1,
-                    _deleted:    false,
+                    _version:        seq.into(),
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("name", ScalarValue::Utf8(Some("before".to_string()))),
@@ -1530,9 +1520,13 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             .unwrap();
         let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
         assert!(!latest._deleted);
-        assert!(latest._commit_seq > 0);
+        assert!(latest._version.as_i64() > 0);
         assert_eq!(latest.fields.get("name"), Some(&ScalarValue::Utf8(Some("after".to_string()))));
-        assert_eq!(*update_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+        assert_eq!(
+            update_commit.get_or_insert(latest._version).as_u64() >> 16,
+            latest._version.as_u64() >> 16,
+            "rows in one statement share a log index and take distinct ordinals"
+        );
     }
     let before = recording.batch_calls();
     let plan = TableProvider::update(
@@ -1556,8 +1550,12 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             .unwrap();
         let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
         assert!(latest._deleted);
-        assert!(latest._commit_seq > update_commit.unwrap());
-        assert_eq!(*delete_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+        assert!(latest._version > update_commit.unwrap());
+        assert_eq!(
+            delete_commit.get_or_insert(latest._version).as_u64() >> 16,
+            latest._version.as_u64() >> 16,
+            "rows in one statement share a log index and take distinct ordinals"
+        );
     }
 }
 
@@ -1593,9 +1591,8 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             .insert(
                 &seq.into(),
                 &SharedTableRow {
-                    _seq:        seq.into(),
-                    _commit_seq: 1,
-                    _deleted:    false,
+                    _version:        seq.into(),
+                                        _deleted:    false,
                     fields:      row(vec![
                         ("id", ScalarValue::Int64(Some(seq))),
                         ("name", ScalarValue::Utf8(Some("before".to_string()))),
@@ -1661,9 +1658,13 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             store.find_best_index_for_filter_expr(None, &col("id").eq(lit(id))).unwrap();
         let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
         assert!(!latest._deleted);
-        assert!(latest._commit_seq > 0);
+        assert!(latest._version.as_i64() > 0);
         assert_eq!(latest.fields.get("name"), Some(&ScalarValue::Utf8(Some("after".to_string()))));
-        assert_eq!(*update_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+        assert_eq!(
+            update_commit.get_or_insert(latest._version).as_u64() >> 16,
+            latest._version.as_u64() >> 16,
+            "rows in one statement share a log index and take distinct ordinals"
+        );
     }
     let before = recording.batch_calls();
     let plan = TableProvider::update(
@@ -1686,7 +1687,11 @@ async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
             store.find_best_index_for_filter_expr(None, &col("id").eq(lit(id))).unwrap();
         let (_, latest) = store.get_latest_by_index_prefix(0, &prefix).unwrap().unwrap();
         assert!(latest._deleted);
-        assert!(latest._commit_seq > update_commit.unwrap());
-        assert_eq!(*delete_commit.get_or_insert(latest._commit_seq), latest._commit_seq);
+        assert!(latest._version > update_commit.unwrap());
+        assert_eq!(
+            delete_commit.get_or_insert(latest._version).as_u64() >> 16,
+            latest._version.as_u64() >> 16,
+            "rows in one statement share a log index and take distinct ordinals"
+        );
     }
 }

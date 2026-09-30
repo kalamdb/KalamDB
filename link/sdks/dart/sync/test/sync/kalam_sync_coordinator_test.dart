@@ -13,7 +13,7 @@ final class FakeTransport implements KalamSyncTransport {
         ({
           String id,
           String sql,
-          SeqId? from,
+          VersionId? from,
           int? batchSize,
           List<Object?>? params,
         })
@@ -32,7 +32,7 @@ final class FakeTransport implements KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   }) {
@@ -115,7 +115,7 @@ void main() {
     await store.applyAndCheckpoint(
       accountKey: 'server/user-a',
       subscriptionId: 'messages',
-      seq: const SeqId(41),
+      seq: const VersionId(41),
       apply: () => null,
     );
 
@@ -127,7 +127,7 @@ void main() {
       ),
     );
 
-    expect(transport.calls.single.from, const SeqId(41));
+    expect(transport.calls.single.from, const VersionId(41));
   });
 
   test('commits an ordered batch before acknowledging its sequence', () async {
@@ -153,7 +153,7 @@ void main() {
               accountKey: 'server/user-a',
               subscriptionId: 'messages',
             ))?.seq,
-            const SeqId(2),
+            const VersionId(2),
             reason: 'transport progress must follow the SQLite commit',
           );
           acknowledged.complete();
@@ -168,7 +168,7 @@ void main() {
         accountKey: 'server/user-a',
         subscriptionId: 'messages',
       ))?.seq,
-      const SeqId(2),
+      const VersionId(2),
     );
   });
 
@@ -182,7 +182,7 @@ void main() {
         id: 'messages',
         sql: 'SELECT * FROM app.messages',
         apply: (change) {
-          if (change.seq == const SeqId(1)) throw StateError('decode failed');
+          if (change.seq == const VersionId(1)) throw StateError('decode failed');
         },
       ),
     );
@@ -222,7 +222,7 @@ void main() {
               maximumConcurrentApplies < concurrentApplies
               ? concurrentApplies
               : maximumConcurrentApplies;
-          if (change.seq == const SeqId(1)) {
+          if (change.seq == const VersionId(1)) {
             firstStarted.complete();
             await releaseFirst.future;
           }
@@ -289,7 +289,7 @@ void main() {
         accountKey: 'server/user-a',
         subscriptionId: 'conversations',
       ))?.seq,
-      const SeqId(9),
+      const VersionId(9),
     );
   });
 
@@ -316,7 +316,7 @@ void main() {
     transport.streams['messages']!.add(
       KalamRemoteBatch(
         changes: [_change(1), _change(2)],
-        checkpoint: const SeqId(2),
+        checkpoint: const VersionId(2),
         acknowledge: () async => acknowledged.complete(),
       ),
     );
@@ -358,13 +358,13 @@ void main() {
           accountKey: 'server/user-a',
           subscriptionId: 'messages',
         ))?.seq,
-        const SeqId(5),
+        const VersionId(5),
       );
 
       transport.connections.add(KalamTransportConnection.connected);
       await _eventually(() => transport.calls.length == 2);
 
-      expect(transport.calls.last.from, const SeqId(5));
+      expect(transport.calls.last.from, const VersionId(5));
     },
     timeout: const Timeout(Duration(seconds: 5)),
   );
@@ -408,12 +408,12 @@ void main() {
           accountKey: 'server/user-a',
           subscriptionId: 'messages',
         ))?.seq,
-        const SeqId(7),
+        const VersionId(7),
       );
 
       transport.connections.add(KalamTransportConnection.connected);
       await _eventually(() => transport.calls.length == 2);
-      expect(transport.calls.last.from, const SeqId(7));
+      expect(transport.calls.last.from, const VersionId(7));
     },
     timeout: const Timeout(Duration(seconds: 5)),
   );
@@ -572,11 +572,11 @@ void main() {
         changes: [
           const KalamRemoteChange(
             kind: KalamChangeKind.insert,
-            seq: SeqId(4),
+            seq: VersionId(4),
             row: {'id': 'conversation:c1', 'target_id': 'c1'},
           ),
         ],
-        checkpoint: const SeqId(4),
+        checkpoint: const VersionId(4),
         acknowledge: () async => acknowledged.complete(),
       ),
     );
@@ -592,7 +592,7 @@ void main() {
         accountKey: 'server/user-a',
         subscriptionId: 'mailbox',
       ))?.seq,
-      const SeqId(4),
+      const VersionId(4),
     );
 
     await runner.flush();
@@ -603,7 +603,7 @@ void main() {
     await store.applyAndCheckpoint(
       accountKey: 'server/user-a',
       subscriptionId: 'messages',
-      seq: const SeqId(41),
+      seq: const VersionId(41),
       apply: () => null,
     );
     await coordinator.subscribe(
@@ -613,7 +613,7 @@ void main() {
         apply: (_) {},
       ),
     );
-    expect(transport.calls.single.from, const SeqId(41));
+    expect(transport.calls.single.from, const VersionId(41));
 
     transport.streams['messages']!.addError(
       const KalamSubscriptionException('CURSOR_EXPIRED', 'stale from'),
@@ -658,8 +658,8 @@ void main() {
 KalamRemoteChange _change(int seq) {
   return KalamRemoteChange(
     kind: KalamChangeKind.insert,
-    seq: SeqId(seq),
-    row: {'id': 'message-$seq', '_seq': seq},
+    seq: VersionId(seq),
+    row: {'id': 'message-$seq', '_version': seq},
   );
 }
 
@@ -669,7 +669,7 @@ KalamRemoteBatch _batch(
 }) {
   return KalamRemoteBatch(
     changes: [for (final seq in sequences) _change(seq)],
-    checkpoint: sequences.isEmpty ? null : SeqId(sequences.last),
+    checkpoint: sequences.isEmpty ? null : VersionId(sequences.last),
     acknowledge: acknowledge ?? () async {},
   );
 }

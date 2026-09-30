@@ -65,6 +65,29 @@ impl ColdScanPruning {
 #[derive(Debug, Default)]
 pub struct ManifestAccessPlanner;
 
+fn non_null_missing_column(
+    data_type: &datafusion::arrow::datatypes::DataType,
+    len: usize,
+) -> Arc<dyn datafusion::arrow::array::Array> {
+    use datafusion::arrow::{
+        array::{ArrayRef, BooleanArray, Int32Array, Int64Array, StringArray},
+        datatypes::DataType,
+    };
+
+    let array: ArrayRef = match data_type {
+        DataType::Boolean => Arc::new(BooleanArray::from(vec![false; len])),
+        DataType::Int32 => Arc::new(Int32Array::from(vec![0_i32; len])),
+        DataType::Int64 => Arc::new(Int64Array::from(vec![0_i64; len])),
+        DataType::Utf8 => Arc::new(StringArray::from(vec![""; len])),
+        _ => datafusion::arrow::array::new_empty_array(data_type),
+    };
+    if array.len() == len {
+        array
+    } else {
+        datafusion::arrow::array::new_null_array(data_type, len)
+    }
+}
+
 impl ManifestAccessPlanner {
     pub fn new() -> Self {
         Self
@@ -245,7 +268,7 @@ impl ManifestAccessPlanner {
                     }
                     if let Some((min_seq, max_seq)) = seq_range_for_read {
                         read_options =
-                            read_options.with_seq_range(SystemColumnNames::SEQ, min_seq, max_seq);
+                            read_options.with_seq_range(SystemColumnNames::VERSION, min_seq, max_seq);
                     }
                     if let Some((column, value)) = bloom {
                         read_options = read_options.with_column_bloom_values(column, [value]);
@@ -377,6 +400,10 @@ impl ManifestAccessPlanner {
         _table_id: &TableId,
         _schema_registry: &dyn SchemaRegistryTrait<Error = KalamDbError>,
     ) -> Result<RecordBatch, KalamDbError> {
+        if batch.num_rows() == 0 {
+            return Ok(RecordBatch::new_empty(current_schema.clone()));
+        }
+
         let batch_schema = batch.schema();
 
         // If schemas are identical, no projection needed
@@ -416,12 +443,21 @@ impl ManifestAccessPlanner {
                         ))?;
                     projected_columns.push(casted);
                 }
-            } else {
-                // Column didn't exist in old schema - create NULL array
+            } else if current_field.name() == SystemColumnNames::VERSION {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "parquet batch for {} is missing {}",
+                    _table_id, current_field.name()
+                )));
+            } else if current_field.is_nullable() {
                 use datafusion::arrow::array::{new_null_array, ArrayRef};
                 let null_array: ArrayRef =
                     new_null_array(current_field.data_type(), batch.num_rows());
                 projected_columns.push(null_array);
+            } else {
+                projected_columns.push(non_null_missing_column(
+                    current_field.data_type(),
+                    batch.num_rows(),
+                ));
 
                 // log::trace!(
                 //     "[Schema Evolution] Column '{}' not in old schema v{}, filled with NULLs",

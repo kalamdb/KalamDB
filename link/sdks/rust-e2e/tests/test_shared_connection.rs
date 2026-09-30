@@ -21,7 +21,7 @@ use kalam_client::{
     auth::AuthProvider,
     seq_tracking::{extract_max_seq, row_seq},
     ChangeEvent, ConnectionOptions, EventHandlers, KalamCellValue, KalamLinkClient,
-    KalamLinkTimeouts, LiveRowsConfig, LiveRowsEvent, SeqId, SubscriptionConfig,
+    KalamLinkTimeouts, LiveRowsConfig, LiveRowsEvent, VersionId, SubscriptionConfig,
     SubscriptionOptions,
 };
 use tokio::time::{sleep, timeout, Instant};
@@ -114,9 +114,14 @@ async fn ensure_table(client: &KalamLinkClient, table: &str) {
     panic!("timed out waiting for table {} to become queryable: {}", table, last_err);
 }
 
-async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {
+async fn query_max_seq(client: &KalamLinkClient, table: &str) -> VersionId {
     let result = client
-        .execute_query(&format!("SELECT MAX(_seq) AS max_seq FROM {}", table), None, None, None)
+        .execute_query(
+            &format!("SELECT MAX(_version) AS max_seq FROM {}", table),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("max seq query should succeed");
 
@@ -124,7 +129,7 @@ async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {
         .get_i64("max_seq")
         .unwrap_or_else(|| panic!("max seq query should return a value for {}", table));
 
-    SeqId::from_i64(max_seq)
+    VersionId::try_from_i64(max_seq).expect("max version")
 }
 
 fn change_event_rows(event: &ChangeEvent) -> Option<&[HashMap<String, KalamCellValue>]> {
@@ -140,7 +145,7 @@ fn row_id(row: &HashMap<String, KalamCellValue>) -> Option<&str> {
     row.get("id").and_then(|value| value.as_str())
 }
 
-fn event_last_seq(event: &ChangeEvent) -> Option<SeqId> {
+fn event_last_seq(event: &ChangeEvent) -> Option<VersionId> {
     match event {
         ChangeEvent::Ack { batch_control, .. }
         | ChangeEvent::InitialDataBatch { batch_control, .. } => batch_control.last_seq_id,
@@ -152,7 +157,7 @@ fn event_last_seq(event: &ChangeEvent) -> Option<SeqId> {
     }
 }
 
-fn assert_event_rows_strictly_after(event: &ChangeEvent, from: SeqId, context: &str) {
+fn assert_event_rows_strictly_after(event: &ChangeEvent, from: VersionId, context: &str) {
     let Some(rows) = change_event_rows(event) else {
         return;
     };
@@ -175,8 +180,8 @@ fn assert_event_rows_strictly_after(event: &ChangeEvent, from: SeqId, context: &
 fn collect_ids_and_track_seq(
     event: &ChangeEvent,
     ids: &mut Vec<String>,
-    max_seq: &mut Option<SeqId>,
-    strict_from: Option<SeqId>,
+    max_seq: &mut Option<VersionId>,
+    strict_from: Option<VersionId>,
     context: &str,
 ) {
     if let Some(from) = strict_from {
@@ -1565,7 +1570,7 @@ async fn test_client_subscriptions_lists_active_subs() {
     client.disconnect().await;
 }
 
-/// Verify `client.subscriptions()` tracks lastSeqId after receiving events.
+/// Verify `client.subscriptions()` tracks lastVersionId after receiving events.
 #[tokio::test]
 async fn test_client_subscriptions_tracks_last_seq_id() {
     let client = match create_test_client() {
@@ -1723,7 +1728,7 @@ async fn test_close_resubscribe_resumes_from_last_seq_id() {
 
     // Drain until we see the baseline row in initial data.
     let mut first_ids = Vec::<String>::new();
-    let mut first_max_seq: Option<SeqId> = None;
+    let mut first_max_seq: Option<VersionId> = None;
     for _ in 0..6 {
         match timeout(Duration::from_millis(2000), sub.next()).await {
             Ok(Some(Ok(ev))) => {
@@ -1809,7 +1814,7 @@ async fn test_close_resubscribe_resumes_from_last_seq_id() {
     let mut sub2 = client.live_events_with_config(config2).await.expect("second subscribe");
 
     let mut second_ids = Vec::<String>::new();
-    let mut second_max_seq: Option<SeqId> = Some(latest_seq);
+    let mut second_max_seq: Option<VersionId> = Some(latest_seq);
 
     for _ in 0..12 {
         match timeout(Duration::from_millis(2000), sub2.next()).await {
@@ -1925,7 +1930,7 @@ async fn test_close_resubscribe_with_explicit_from_uses_max() {
     let mut sub = client.live_events_with_config(config).await.expect("first subscribe with from");
 
     let mut first_ids = Vec::<String>::new();
-    let mut first_max_seq: Option<SeqId> = Some(from_seq);
+    let mut first_max_seq: Option<VersionId> = Some(from_seq);
 
     for _ in 0..10 {
         match timeout(Duration::from_millis(2000), sub.next()).await {
@@ -1978,7 +1983,7 @@ async fn test_close_resubscribe_with_explicit_from_uses_max() {
         .expect("second subscribe (no from)");
 
     let mut second_ids = Vec::<String>::new();
-    let mut second_max_seq: Option<SeqId> = Some(cached_seq);
+    let mut second_max_seq: Option<VersionId> = Some(cached_seq);
 
     for _ in 0..10 {
         match timeout(Duration::from_millis(2000), sub2.next()).await {
@@ -2057,7 +2062,7 @@ async fn test_disconnect_reconnect_resubscribe_resumes_seq_id() {
     let mut sub = client.live_events_with_config(config).await.expect("first subscribe");
 
     let mut seen_ids = Vec::<String>::new();
-    let mut max_seq: Option<SeqId> = None;
+    let mut max_seq: Option<VersionId> = None;
 
     for _ in 0..8 {
         match timeout(Duration::from_millis(2000), sub.next()).await {
@@ -2105,7 +2110,7 @@ async fn test_disconnect_reconnect_resubscribe_resumes_seq_id() {
     let mut sub2 = client.live_events_with_config(config2).await.expect("re-subscribe with from");
 
     let mut second_ids = Vec::<String>::new();
-    let mut second_max_seq: Option<SeqId> = Some(last_seq);
+    let mut second_max_seq: Option<VersionId> = Some(last_seq);
 
     for _ in 0..10 {
         match timeout(Duration::from_millis(2000), sub2.next()).await {

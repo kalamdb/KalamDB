@@ -216,7 +216,7 @@ mod tests {
         )
         .expect("Failed to create TableDefinition");
 
-        // Inject system columns (_seq, _deleted) to match runtime tables.
+        // Inject system columns (_version, _deleted) to match runtime tables.
         app_ctx
             .system_columns_service()
             .add_system_columns(&mut table_def)

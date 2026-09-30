@@ -118,7 +118,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
         ("col_smallint", "SmallInt"),
         ("col_file", "File"),
         // System columns
-        ("_seq", "BigInt"),
+        ("_version", "BigInt"),
         ("_deleted", "Boolean"),
     ];
 

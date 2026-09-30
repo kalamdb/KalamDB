@@ -698,7 +698,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     let all_with_deleted = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, value, _seq, _deleted FROM {}.user_items WHERE _deleted = true OR \
+                "SELECT id, value, _version, _deleted FROM {}.user_items WHERE _deleted = true OR \
                  _deleted = false",
                 ns
             ),
@@ -714,7 +714,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     let max_seq = server
         .execute_sql_as_user(
             &format!(
-                "SELECT MAX(_seq) as max_seq FROM {}.user_items WHERE id = 25 OR _deleted = true",
+                "SELECT MAX(_version) as max_seq FROM {}.user_items WHERE id = 25 OR _deleted = true",
                 ns
             ),
             "flush_user",
@@ -724,7 +724,7 @@ async fn test_user_table_pk_index_update_after_flush() {
 
     let select_after = server
         .execute_sql_as_user(
-            &format!("SELECT id, value, _seq FROM {}.user_items WHERE id = 25", ns),
+            &format!("SELECT id, value, _version FROM {}.user_items WHERE id = 25", ns),
             "flush_user",
         )
         .await;
@@ -734,7 +734,7 @@ async fn test_user_table_pk_index_update_after_flush() {
     println!("📊 Row count: {}, rows: {:?}", rows.len(), rows);
     assert_eq!(rows.len(), 1, "Expected 1 row after update");
     let value = rows[0].get("value").unwrap().as_i64().unwrap();
-    let seq = rows[0].get("_seq");
+    let seq = rows[0].get("_version");
     println!("📊 value={}, _seq={:?}", value, seq);
     assert_eq!(value, 9999, "Expected updated value 9999");
 

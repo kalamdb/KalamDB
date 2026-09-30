@@ -27,11 +27,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use kalamdb_commons::{
-    ids::{SeqId, SnowflakeGenerator},
-    schemas::TableType,
-    TableId,
-};
+use kalamdb_commons::{schemas::TableType, TableId};
+#[cfg(test)]
+use kalamdb_commons::ids::VersionId;
 #[cfg(test)]
 use kalamdb_core::schema_registry::TablesSchemaRegistryAdapter;
 use kalamdb_core::{
@@ -97,18 +95,13 @@ impl StreamEvictionExecutor {
     }
 }
 
-fn compute_cutoff_window(ttl_seconds: u64) -> Result<(u64, SeqId), KalamDbError> {
+fn compute_cutoff_millis(ttl_seconds: u64) -> Result<u64, KalamDbError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .into_invalid_operation("System time error")?
         .as_millis() as u64;
     let ttl_ms = ttl_seconds.saturating_mul(1000);
-    let cutoff_ms = now.saturating_sub(ttl_ms);
-    let normalized_cutoff = cutoff_ms.max(SnowflakeGenerator::DEFAULT_EPOCH);
-    let cutoff_seq = SeqId::max_id_for_timestamp(normalized_cutoff).map_err(|e| {
-        KalamDbError::InvalidOperation(format!("Failed to compute cutoff snowflake id: {}", e))
-    })?;
-    Ok((cutoff_ms, cutoff_seq))
+    Ok(now.saturating_sub(ttl_ms))
 }
 
 #[async_trait]
@@ -144,7 +137,7 @@ impl JobExecutor for StreamEvictionExecutor {
                 ))
             })?;
         let store = stream_provider.store_arc();
-        let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(params.ttl_seconds)?;
+        let cutoff_ms = compute_cutoff_millis(params.ttl_seconds)?;
 
         tokio::task::spawn_blocking(move || store.has_logs_before(cutoff_ms))
             .await
@@ -177,7 +170,7 @@ impl JobExecutor for StreamEvictionExecutor {
         ));
 
         // Calculate cutoff time for eviction (records created before this time are expired)
-        let (cutoff_ms, _cutoff_seq) = compute_cutoff_window(ttl_seconds)?;
+        let cutoff_ms = compute_cutoff_millis(ttl_seconds)?;
 
         ctx.log_info(&format!(
             "Cutoff time: {}ms (records with timestamp < {} are expired)",
@@ -434,14 +427,15 @@ mod tests {
         count
     }
 
-    fn stream_row(user: &UserId, seq: SeqId) -> StreamTableRow {
+    fn stream_row(user: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let mut values = BTreeMap::new();
         values.insert("event_id".to_string(), ScalarValue::Utf8(Some("old-event".to_string())));
         values.insert("payload".to_string(), ScalarValue::Utf8(Some("expired".to_string())));
         StreamTableRow {
-            user_id: user.clone(),
-            _seq:    seq,
-            fields:  Row::new(values),
+            user_id:    user.clone(),
+            _version:   version,
+            _timestamp: timestamp,
+            fields:     Row::new(values),
         }
     }
 
@@ -504,11 +498,19 @@ mod tests {
         // Insert a couple of rows
         let user = UserId::new("user-ttl");
         provider
-            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap())
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "hello"})).unwrap(),
+                VersionId::from(1_i64),
+            )
             .await
             .expect("insert evt1");
         provider
-            .insert(&user, json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap())
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt2", "payload": "world"})).unwrap(),
+                VersionId::from(2_i64),
+            )
             .await
             .expect("insert evt2");
 
@@ -561,11 +563,9 @@ mod tests {
 
         let user = UserId::new("user-file-ttl");
         let old_ts = (Utc::now().timestamp_millis() as u64).saturating_sub(3 * 60 * 1000);
-        let old_seq = SeqId::new(
-            SnowflakeGenerator::max_id_for_timestamp(old_ts).expect("max_id_for_timestamp failed"),
-        );
-        let row_id = StreamTableRowId::new(user.clone(), old_seq);
-        let row = stream_row(&user, old_seq);
+        let version = VersionId::try_from_local_sequence(1).unwrap();
+        let row_id = StreamTableRowId::new(user.clone(), version);
+        let row = stream_row(&user, version, old_ts as i64);
         let store = harness.provider.store_arc();
         store.put(&row_id, &row).expect("put old file-backed row");
         store.flush().expect("flush file-backed row");
@@ -625,7 +625,11 @@ mod tests {
         let user = UserId::new("user-prevalidate-no-expired");
         harness
             .provider
-            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap())
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "fresh"})).unwrap(),
+                VersionId::from(1_i64),
+            )
             .await
             .expect("insert fresh row");
 
@@ -652,7 +656,11 @@ mod tests {
         let user = UserId::new("user-prevalidate-expired");
         harness
             .provider
-            .insert(&user, json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap())
+            .insert(
+                &user,
+                json_to_row(&json!({"event_id": "evt1", "payload": "expired"})).unwrap(),
+                VersionId::from(1_i64),
+            )
             .await
             .expect("insert expired row");
 

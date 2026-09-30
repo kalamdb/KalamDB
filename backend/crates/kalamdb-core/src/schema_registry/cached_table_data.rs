@@ -185,7 +185,7 @@ impl CachedTableData {
     /// flush operations. Returns (bloom_filter_columns, indexed_columns).
     ///
     /// - bloom_filter_columns: PRIMARY KEY + equality-friendly scalar index columns
-    /// - indexed_columns: those columns plus `_seq` for segment stats extraction
+    /// - indexed_columns: those columns plus `_version` for segment stats extraction
     fn compute_indexed_columns(table_def: &TableDefinition) -> (Vec<String>, Vec<(u64, String)>) {
         let mut bloom_filter_columns = Vec::new();
         let mut indexed_columns = Vec::new();
@@ -226,7 +226,7 @@ impl CachedTableData {
             }
         }
 
-        indexed_columns.push((0, SystemColumnNames::SEQ.to_string()));
+        indexed_columns.push((0, SystemColumnNames::VERSION.to_string()));
 
         (bloom_filter_columns, indexed_columns)
     }
@@ -329,7 +329,7 @@ impl CachedTableData {
         &self.bloom_filter_columns
     }
 
-    /// Get cached indexed columns with column_id (PK + scalar indexes + `_seq`)
+    /// Get cached indexed columns with column_id (PK + scalar indexes + `_version`)
     ///
     /// Returns (column_id, column_name) pairs for columns that need
     /// row-group statistics in Parquet files. Column IDs are stable
@@ -418,7 +418,7 @@ mod tests {
             cached.indexed_columns(),
             &[
                 (1, "id".to_string()),
-                (0, SystemColumnNames::SEQ.to_string())
+                (0, SystemColumnNames::VERSION.to_string())
             ]
         );
     }
@@ -459,7 +459,7 @@ mod tests {
             &[
                 (1, "id".to_string()),
                 (2, "conversation_id".to_string()),
-                (0, SystemColumnNames::SEQ.to_string())
+                (0, SystemColumnNames::VERSION.to_string())
             ]
         );
     }

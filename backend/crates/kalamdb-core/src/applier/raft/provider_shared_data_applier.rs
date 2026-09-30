@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kalamdb_commons::{
+    ids::VersionId,
     models::{rows::Row, TransactionId, UserId},
     TableId,
 };
@@ -42,7 +43,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         actor_user_id: Option<&UserId>,
         rows: &[Row],
         encoded_fields: &[Vec<u8>],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         let rows = {
             let _decode_span = kalamdb_observability::kdb_info_span_entered!("raft.decode_rows");
@@ -59,7 +60,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
 
         self.executor
             .dml()
-            .insert_shared_data_with_commit_seq(table_id, actor_user_id, &rows, commit_seq)
+            .insert_shared_data_with_versions(table_id, actor_user_id, &rows, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -70,18 +71,18 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         actor_user_id: Option<&UserId>,
         updates: &[Row],
         filter: Option<&str>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         log::debug!("ProviderSharedDataApplier: Updating {} ({} rows)", table_id, updates.len());
 
         self.executor
             .dml()
-            .update_shared_data_with_commit_seq(
+            .update_shared_data_with_versions(
                 table_id,
                 actor_user_id,
                 updates,
                 filter,
-                commit_seq,
+                versions,
             )
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
@@ -92,13 +93,13 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         log::debug!("ProviderSharedDataApplier: Deleting from {}", table_id);
 
         self.executor
             .dml()
-            .delete_shared_data_with_commit_seq(table_id, actor_user_id, pk_values, commit_seq)
+            .delete_shared_data_with_versions(table_id, actor_user_id, pk_values, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -107,11 +108,11 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         &self,
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<TransactionApplyResult, RaftError> {
         self.executor
             .dml()
-            .apply_shared_transaction_batch_with_commit_seq(transaction_id, mutations, commit_seq)
+            .apply_shared_transaction_batch_with_versions(transaction_id, mutations, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }

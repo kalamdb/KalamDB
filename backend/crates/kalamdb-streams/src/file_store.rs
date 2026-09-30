@@ -146,17 +146,22 @@ impl FileStreamLogStore {
         self.segments.len()
     }
 
+    /// Append a delete into the window of the original put.
+    ///
+    /// `timestamp_millis` must be the original record's `_timestamp`, not the
+    /// delete's wall-clock time.
     pub fn append_delete(
         &self,
         table_id: &TableId,
         user_id: &UserId,
         row_id: &StreamTableRowId,
+        timestamp_millis: i64,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let ts = row_id.seq().timestamp_millis();
+        let ts = timestamp_millis.max(0) as u64;
         let window_start = self.window_start_ms(ts);
         let path = self.log_path(user_id, window_start);
-        let encoded = self.encode_delete_frame(row_id)?;
+        let encoded = self.encode_delete_frame(row_id, timestamp_millis)?;
         self.append_encoded_bytes(&path, &encoded, 1)
     }
 
@@ -168,7 +173,7 @@ impl FileStreamLogStore {
         row: &StreamTableRow,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let ts = row_id.seq().timestamp_millis();
+        let ts = row._timestamp.max(0) as u64;
         let window_start = self.window_start_ms(ts);
         let path = self.log_path(user_id, window_start);
         let encoded = self.encode_put_frame(row_id, row)?;
@@ -188,15 +193,15 @@ impl FileStreamLogStore {
         }
 
         let mut by_segment: HashMap<PathBuf, Vec<usize>> = HashMap::new();
-        for (i, (row_id, _)) in rows.iter().enumerate() {
-            let ts = row_id.seq().timestamp_millis();
+        for (i, (_, row)) in rows.iter().enumerate() {
+            let ts = row._timestamp.max(0) as u64;
             let window_start = self.window_start_ms(ts);
             let path = self.log_path(user_id, window_start);
             by_segment.entry(path).or_default().push(i);
         }
 
         for (path, mut indices) in by_segment {
-            indices.sort_by_key(|&i| rows[i].0.seq().as_i64());
+            indices.sort_by_key(|&i| rows[i].0.version().as_i64());
             let mut encoded = Vec::new();
             for &i in &indices {
                 let frame = self.encode_put_frame(&rows[i].0, &rows[i].1)?;
@@ -470,16 +475,22 @@ impl FileStreamLogStore {
             .map_err(|e| StreamLogError::Serialization(e.to_string()))?
             .into_bytes();
         let persisted = PersistedStreamLogRecord::Put {
-            row_id: row_id.clone(),
+            row_id:    row_id.clone(),
+            timestamp: row._timestamp,
             payload,
         };
         kalamdb_serialization::encode_stream_frame(&persisted)
             .map_err(|e| StreamLogError::Serialization(e.to_string()))
     }
 
-    fn encode_delete_frame(&self, row_id: &StreamTableRowId) -> Result<Vec<u8>> {
+    fn encode_delete_frame(
+        &self,
+        row_id: &StreamTableRowId,
+        timestamp_millis: i64,
+    ) -> Result<Vec<u8>> {
         let persisted = PersistedStreamLogRecord::Delete {
-            row_id: row_id.clone(),
+            row_id:    row_id.clone(),
+            timestamp: timestamp_millis,
         };
         kalamdb_serialization::encode_stream_frame(&persisted)
             .map_err(|e| StreamLogError::Serialization(e.to_string()))
@@ -487,17 +498,24 @@ impl FileStreamLogStore {
 
     fn hydrate_record(&self, persisted: PersistedStreamLogRecord) -> Result<StreamLogRecord> {
         match persisted {
-            PersistedStreamLogRecord::Put { row_id, payload } => {
+            PersistedStreamLogRecord::Put {
+                row_id,
+                timestamp,
+                payload,
+            } => {
                 let row = kalamdb_serialization::decode_stream_row(
                     &payload,
                     &self.schema,
                     row_id.user_id.clone(),
-                    row_id.seq,
+                    row_id.version(),
+                    timestamp,
                 )
                 .map_err(|e| StreamLogError::Serialization(e.to_string()))?;
                 Ok(StreamLogRecord::Put { row_id, row })
             },
-            PersistedStreamLogRecord::Delete { row_id } => Ok(StreamLogRecord::Delete { row_id }),
+            PersistedStreamLogRecord::Delete { row_id, timestamp } => {
+                Ok(StreamLogRecord::Delete { row_id, timestamp })
+            },
         }
     }
 
@@ -676,8 +694,8 @@ impl FileStreamLogStore {
             let should_continue = self.visit_records(&entry.path, |record| {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
-                        let seq = row_id.seq().as_i64();
-                        if deleted.contains(&seq) {
+                        let version = row_id.version().as_i64();
+                        if deleted.contains(&version) {
                             return Ok(true);
                         }
                         results.push((row_id, row));
@@ -685,10 +703,10 @@ impl FileStreamLogStore {
                             return Ok(false);
                         }
                     },
-                    StreamLogRecord::Delete { row_id } => {
-                        let seq = row_id.seq().as_i64();
-                        deleted.insert(seq);
-                        results.retain(|(existing_id, _)| existing_id.seq().as_i64() != seq);
+                    StreamLogRecord::Delete { row_id, timestamp: _ } => {
+                        let version = row_id.version().as_i64();
+                        deleted.insert(version);
+                        results.retain(|(existing_id, _)| existing_id.version().as_i64() != version);
                     },
                 }
                 Ok(true)
@@ -739,8 +757,8 @@ impl FileStreamLogStore {
             for record in records.into_iter().rev() {
                 match record {
                     StreamLogRecord::Put { row_id, row } => {
-                        let seq = row_id.seq().as_i64();
-                        if deleted.contains(&seq) {
+                        let version = row_id.version().as_i64();
+                        if deleted.contains(&version) {
                             continue;
                         }
                         results.push((row_id, row));
@@ -748,8 +766,8 @@ impl FileStreamLogStore {
                             return Ok(results);
                         }
                     },
-                    StreamLogRecord::Delete { row_id } => {
-                        deleted.insert(row_id.seq().as_i64());
+                    StreamLogRecord::Delete { row_id, timestamp: _ } => {
+                        deleted.insert(row_id.version().as_i64());
                     },
                 }
             }
@@ -767,7 +785,7 @@ impl StreamLogStore for FileStreamLogStore {
         rows: HashMap<StreamTableRowId, StreamTableRow>,
     ) -> Result<()> {
         let mut ordered: Vec<(StreamTableRowId, StreamTableRow)> = rows.into_iter().collect();
-        ordered.sort_by_key(|(row_id, _)| row_id.seq().as_i64());
+        ordered.sort_by_key(|(row_id, _)| row_id.version().as_i64());
         self.append_puts(table_id, user_id, &ordered)
     }
 
@@ -820,7 +838,7 @@ mod tests {
     use chrono::{Datelike, TimeZone, Timelike};
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::{SeqId, SnowflakeGenerator, StreamTableRowId},
+        ids::{StreamTableRowId, VersionId},
         models::{rows::Row, NamespaceId, StreamTableRow, TableId, TableName, UserId},
     };
     use kalamdb_serialization::StorageSchema;
@@ -842,10 +860,8 @@ mod tests {
         path
     }
 
-    fn seq_from_timestamp(ts_ms: u64) -> SeqId {
-        let id =
-            SnowflakeGenerator::max_id_for_timestamp(ts_ms).expect("max_id_for_timestamp failed");
-        SeqId::new(id)
+    fn version_from_local(sequence: u64) -> VersionId {
+        VersionId::try_from_local_sequence(sequence).expect("local version")
     }
 
     fn window_start_ms(bucket: StreamTimeBucket, ts_ms: u64) -> u64 {
@@ -887,12 +903,13 @@ mod tests {
         }
     }
 
-    fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
+    fn build_row(user_id: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
         StreamTableRow {
-            user_id: user_id.clone(),
-            _seq:    seq,
-            fields:  Row::new(values),
+            user_id:    user_id.clone(),
+            _version:   version,
+            _timestamp: timestamp,
+            fields:     Row::new(values),
         }
     }
 
@@ -927,14 +944,14 @@ mod tests {
         let old_ts = now_ms.saturating_sub(3 * 60 * 60 * 1000);
         let new_ts = now_ms.saturating_sub(10 * 60 * 1000);
 
-        let old_seq = seq_from_timestamp(old_ts);
-        let new_seq = seq_from_timestamp(new_ts);
-        let old_id = StreamTableRowId::new(user_id.clone(), old_seq);
-        let new_id = StreamTableRowId::new(user_id.clone(), new_seq);
+        let old_version = version_from_local(1);
+        let new_version = version_from_local(2);
+        let old_id = StreamTableRowId::new(user_id.clone(), old_version);
+        let new_id = StreamTableRowId::new(user_id.clone(), new_version);
 
         let mut rows = HashMap::new();
-        rows.insert(old_id.clone(), build_row(&user_id, old_seq));
-        rows.insert(new_id.clone(), build_row(&user_id, new_seq));
+        rows.insert(old_id.clone(), build_row(&user_id, old_version, old_ts as i64));
+        rows.insert(new_id.clone(), build_row(&user_id, new_version, new_ts as i64));
 
         store.append_rows(&table_id, &user_id, rows).expect("append_rows failed");
 
@@ -1002,10 +1019,11 @@ mod tests {
             let tid = table_id.clone();
             handles.push(std::thread::spawn(move || {
                 let user_id = UserId::new(format!("user-{}", i));
+                let now_ms = chrono::Utc::now().timestamp_millis();
                 for j in 0..writes_per_user {
-                    let seq = SeqId::new((i * 10000 + j + 1) as i64);
-                    let row_id = StreamTableRowId::new(user_id.clone(), seq);
-                    let row = build_row(&user_id, seq);
+                    let version = version_from_local((i * 10000 + j + 1) as u64);
+                    let row_id = StreamTableRowId::new(user_id.clone(), version);
+                    let row = build_row(&user_id, version, now_ms);
                     store.append_row(&tid, &user_id, &row_id, &row).unwrap();
                 }
             }));
@@ -1047,11 +1065,12 @@ mod tests {
         );
 
         let user_count = MAX_OPEN_SEGMENTS + 64;
+        let now_ms = chrono::Utc::now().timestamp_millis();
         for i in 0..user_count {
             let user_id = UserId::new(format!("user-{}", i));
-            let seq = SeqId::new((i + 1) as i64);
-            let row_id = StreamTableRowId::new(user_id.clone(), seq);
-            let row = build_row(&user_id, seq);
+            let version = version_from_local((i + 1) as u64);
+            let row_id = StreamTableRowId::new(user_id.clone(), version);
+            let row = build_row(&user_id, version, now_ms);
             store.append_row(&table_id, &user_id, &row_id, &row).unwrap();
         }
 
@@ -1081,9 +1100,9 @@ mod tests {
         );
 
         let user_id = UserId::new("user-flush");
-        let seq = SeqId::new(42);
-        let row_id = StreamTableRowId::new(user_id.clone(), seq);
-        let row = build_row(&user_id, seq);
+        let version = version_from_local(42);
+        let row_id = StreamTableRowId::new(user_id.clone(), version);
+        let row = build_row(&user_id, version, chrono::Utc::now().timestamp_millis());
         store.append_row(&table_id, &user_id, &row_id, &row).unwrap();
 
         assert_eq!(store.open_segment_count(), 1);
@@ -1116,17 +1135,18 @@ mod tests {
 
         let user_id = UserId::new("user-batch");
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
-        let seqs = [
+        let timestamps = [
             now_ms.saturating_sub(2_000),
             now_ms.saturating_sub(1_000),
             now_ms,
         ];
-        let rows: Vec<(StreamTableRowId, StreamTableRow)> = seqs
+        let rows: Vec<(StreamTableRowId, StreamTableRow)> = timestamps
             .into_iter()
-            .map(|ts| {
-                let seq = seq_from_timestamp(ts);
-                let row_id = StreamTableRowId::new(user_id.clone(), seq);
-                let row = build_row(&user_id, seq);
+            .enumerate()
+            .map(|(idx, ts)| {
+                let version = version_from_local((idx + 1) as u64);
+                let row_id = StreamTableRowId::new(user_id.clone(), version);
+                let row = build_row(&user_id, version, ts as i64);
                 (row_id, row)
             })
             .collect();

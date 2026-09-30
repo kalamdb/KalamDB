@@ -276,6 +276,17 @@ final class KalamSyncStore {
         );
   }
 
+  Future<void> deleteCachedRows({
+    required String accountKey,
+    required String tableId,
+  }) {
+    return (database.delete(database.kalamCachedRows)..where(
+          (row) =>
+              row.accountKey.equals(accountKey) & row.tableId.equals(tableId),
+        ))
+        .go();
+  }
+
   Future<void> deleteCachedRow({
     required String accountKey,
     required String tableId,
@@ -294,7 +305,7 @@ final class KalamSyncStore {
     required String accountKey,
     required String tableId,
     required String rowKey,
-    required SeqId seq,
+    required VersionId seq,
   }) {
     return database.transaction(() async {
       final existing = await _readStoredRowState(
@@ -404,7 +415,7 @@ final class KalamSyncStore {
     return KalamCheckpoint(
       accountKey: stored.accountKey,
       subscriptionId: stored.subscriptionId,
-      seq: SeqId.parse(stored.seq),
+      seq: VersionId.parse(stored.seq),
       updatedAt: stored.updatedAt.toUtc(),
     );
   }
@@ -415,7 +426,7 @@ final class KalamSyncStore {
   Future<bool> applyAndCheckpoint({
     required String accountKey,
     required String subscriptionId,
-    required SeqId seq,
+    required VersionId seq,
     required FutureOr<Object?> Function() apply,
   }) {
     return database.transaction(() async {

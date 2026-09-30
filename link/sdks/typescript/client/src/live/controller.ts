@@ -1,7 +1,7 @@
 import type { KalamDBClient } from '../client.js';
 import type { RowData } from '../cell_value.js';
 import type { LiveCheckpoint, LiveOptions, SubscriptionErrorEvent, Unsubscribe } from '../types.js';
-import type { SeqId } from '../seq_id.js';
+import type { VersionId } from '../version_id.js';
 import type { LiveQueryDescriptor } from './descriptor.js';
 import { projectLiveRows } from './projection.js';
 
@@ -13,7 +13,7 @@ export interface LiveQueryControllerSnapshot<TRow> {
   connected: boolean;
   status: LiveQueryControllerStatus;
   error?: Error;
-  lastSeqId?: SeqId;
+  lastVersionId?: VersionId;
 }
 
 export type LiveQueryControllerListener<TRow> = (snapshot: LiveQueryControllerSnapshot<TRow>) => void;
@@ -143,7 +143,7 @@ export class LiveQueryController<TRow = RowData> {
         this.options.onError?.(event);
       },
       onCheckpoint: (checkpoint) => {
-        this.setSnapshot({ lastSeqId: checkpoint.lastSeqId });
+        this.setSnapshot({ lastVersionId: checkpoint.lastVersionId });
         this.options.onCheckpoint?.(checkpoint);
       },
     };

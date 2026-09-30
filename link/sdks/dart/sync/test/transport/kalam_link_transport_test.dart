@@ -6,7 +6,7 @@ void main() {
     final changes = KalamLinkTransport.decodeEvent(
       InitialDataBatch(
         subscriptionId: 'messages',
-        rowsJson: const ['{"id":"message-1","text":"hello","_seq":12}'],
+        rowsJson: const ['{"id":"message-1","text":"hello","_version":12}'],
         batchNum: 1,
         hasMore: false,
         status: 'ok',
@@ -14,7 +14,7 @@ void main() {
     );
 
     expect(changes.single.initial, isTrue);
-    expect(changes.single.seq, const SeqId(12));
+    expect(changes.single.seq, const VersionId(12));
     expect(changes.single.row, {'id': 'message-1', 'text': 'hello'});
   });
 
@@ -23,15 +23,15 @@ void main() {
       InsertEvent(
         subscriptionId: 'messages',
         rowsJson: const [
-          '{"id":"message-2","_seq":2}',
-          '{"id":"message-1","_seq":1}',
+          '{"id":"message-2","_version":2}',
+          '{"id":"message-1","_version":1}',
         ],
       ),
     );
 
     expect(changes.map((change) => change.seq), [
-      const SeqId(1),
-      const SeqId(2),
+      const VersionId(1),
+      const VersionId(2),
     ]);
   });
 
@@ -39,8 +39,8 @@ void main() {
     final change = KalamLinkTransport.decodeEvent(
       UpdateEvent(
         subscriptionId: 'messages',
-        rowsJson: const ['{"id":"message-1","text":"new","_seq":2}'],
-        oldRowsJson: const ['{"id":"message-1","text":"old","_seq":1}'],
+        rowsJson: const ['{"id":"message-1","text":"new","_version":2}'],
+        oldRowsJson: const ['{"id":"message-1","text":"old","_version":1}'],
       ),
     ).single;
 

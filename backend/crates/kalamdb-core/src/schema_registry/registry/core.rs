@@ -814,14 +814,14 @@ impl SchemaRegistry {
         let table_id = table_def.table_id();
         let column_defaults = self.build_column_defaults(table_def);
 
-        // Resolve PK field (required for User/Shared; Stream falls back to _seq)
+        // Resolve PK field (required for User/Shared; Stream falls back to `_version`)
         let pk_field = match table_def.table_type {
             TableType::Stream => table_def
                 .columns
                 .iter()
                 .find(|c| c.is_primary_key)
                 .map(|c| c.column_name.clone())
-                .unwrap_or_else(|| SystemColumnNames::SEQ.to_string()),
+                .unwrap_or_else(|| SystemColumnNames::VERSION.to_string()),
             _ => table_def
                 .columns
                 .iter()

@@ -6,34 +6,24 @@ use crate::{
     object::{decode_envelope, ObjectKind},
 };
 
-/// Visibility fields without decoding nested user columns.
+/// Tombstone flag without decoding nested user columns.
 ///
-/// Identity is not stored in the payload; reconstruct it from the RocksDB key.
+/// `_version` is not stored in the payload; reconstruct it from the RocksDB key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowMetadata {
-    pub commit_seq: u64,
-    pub deleted:    bool,
+    pub deleted: bool,
 }
 
-/// Decode commit_seq / deleted without walking nested STRUCT/List columns.
+/// Decode the tombstone flag without walking nested STRUCT/List columns.
 pub fn decode_row_metadata(bytes: &[u8]) -> Result<RowMetadata> {
-    let (_header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    if header.flags & crate::object::FLAG_VERSION_IN_KEY == 0 {
+        return Err(crate::error::SerializationError::Decode(
+            "unsupported row format: legacy commit sequence header".to_string(),
+        ));
+    }
     let mut reader = Reader::new(payload);
-    let _version = reader.u16()?;
-    let commit_bytes = [
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-    ];
-    let commit_seq = u64::from_le_bytes(commit_bytes);
+    let _schema_version = reader.u16()?;
     let deleted = reader.u8()? != 0;
-    Ok(RowMetadata {
-        commit_seq,
-        deleted,
-    })
+    Ok(RowMetadata { deleted })
 }

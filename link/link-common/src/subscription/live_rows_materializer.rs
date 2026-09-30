@@ -1,7 +1,7 @@
 use super::{LiveRowsConfig, LiveRowsEvent};
 use crate::{
     models::{ChangeEvent, KalamCellValue, RowData},
-    seq_tracking, SeqId,
+    seq_tracking,
 };
 
 /// Stateful reducer that materializes the current row set from change events.
@@ -160,7 +160,7 @@ impl LiveRowsMaterializer {
     }
 }
 
-fn last_seq_id_for_event(event: &ChangeEvent) -> Option<SeqId> {
+fn last_seq_id_for_event(event: &ChangeEvent) -> Option<crate::VersionId> {
     match event {
         ChangeEvent::Ack { batch_control, .. } => batch_control.last_seq_id,
         ChangeEvent::InitialDataBatch {

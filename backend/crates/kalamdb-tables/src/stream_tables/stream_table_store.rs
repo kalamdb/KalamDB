@@ -11,7 +11,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use kalamdb_commons::{
-    ids::{SeqId, StreamTableRowId},
+    ids::{StreamTableRowId, VersionId},
     models::{StreamTableRow, UserId},
     storage::Partition,
     TableId,
@@ -130,13 +130,18 @@ impl StreamLogStoreBackend {
         table_id: &TableId,
         user_id: &UserId,
         key: &StreamTableRowId,
+        timestamp_millis: i64,
     ) -> Result<()> {
         match self {
             Self::Memory(store) => {
-                store.append_delete(table_id, user_id, key).map_err(map_stream_error)
+                store
+                    .append_delete(table_id, user_id, key, timestamp_millis)
+                    .map_err(map_stream_error)
             },
             Self::File(store) => {
-                store.append_delete(table_id, user_id, key).map_err(map_stream_error)
+                store
+                    .append_delete(table_id, user_id, key, timestamp_millis)
+                    .map_err(map_stream_error)
             },
         }
     }
@@ -266,12 +271,12 @@ impl StreamTableStore {
 
     /// Retrieve a row by key.
     pub fn get(&self, key: &StreamTableRowId) -> Result<Option<StreamTableRow>> {
-        let ts = key.seq().timestamp_millis();
+        // Do not derive time from VersionId; scan the user partition and match the key.
         let rows = self.log_store.read_in_time_range(
             &self.table_id,
             key.user_id(),
-            ts,
-            ts,
+            0,
+            u64::MAX,
             MAX_SCAN_LIMIT,
         )?;
         Ok(rows.get(key).cloned())
@@ -279,7 +284,12 @@ impl StreamTableStore {
 
     /// Delete a row by key (append tombstone).
     pub fn delete(&self, key: &StreamTableRowId) -> Result<()> {
-        self.log_store.append_delete(&self.table_id, key.user_id(), key)
+        let timestamp_millis = self
+            .get(key)?
+            .map(|row| row._timestamp)
+            .unwrap_or(0);
+        self.log_store
+            .append_delete(&self.table_id, key.user_id(), key, timestamp_millis)
     }
 
     /// Delete old logs for this table before a timestamp.
@@ -331,25 +341,26 @@ impl StreamTableStore {
     pub fn scan_user(
         &self,
         user_id: &UserId,
-        start_seq: Option<SeqId>,
+        start_seq: Option<VersionId>,
         limit: usize,
     ) -> Result<Vec<(StreamTableRowId, StreamTableRow)>> {
         if limit == 0 {
             return Ok(Vec::new());
         }
 
-        let start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        // Version bounds are not time bounds; scan by time then filter by VersionId.
         let rows = self.log_store.read_in_time_range(
             &self.table_id,
             user_id,
-            start_time,
+            0,
             u64::MAX,
-            limit,
+            MAX_SCAN_LIMIT,
         )?;
 
         let mut vec: Vec<(StreamTableRowId, StreamTableRow)> = rows
             .into_iter()
-            .filter(|(key, _)| start_seq.map(|seq| key.seq() >= seq).unwrap_or(true))
+            .filter(|(key, _)| start_seq.map(|seq| key.version() >= seq).unwrap_or(true))
+            .take(limit)
             .collect();
         vec.sort_by(|(a, _), (b, _)| a.cmp(b));
         Ok(vec)
@@ -377,7 +388,7 @@ impl StreamTableStore {
     pub fn scan_user_streaming(
         &self,
         user_id: &UserId,
-        start_seq: Option<SeqId>,
+        start_seq: Option<VersionId>,
         limit: usize,
         ttl_ms: Option<u64>,
         now_ms: u64,
@@ -386,9 +397,9 @@ impl StreamTableStore {
             return Ok(Vec::new());
         }
 
-        let mut start_time = start_seq.map(|seq| seq.timestamp_millis()).unwrap_or(0);
+        let mut start_time: u64 = 0;
         if let Some(ttl) = ttl_ms {
-            start_time = start_time.max(now_ms.saturating_sub(ttl).saturating_add(1));
+            start_time = now_ms.saturating_sub(ttl).saturating_add(1);
         }
         let read_limit = if start_seq.is_some() {
             MAX_SCAN_LIMIT
@@ -413,14 +424,14 @@ impl StreamTableStore {
         for (key, row) in sorted {
             // Filter by start_seq
             if let Some(seq) = start_seq {
-                if key.seq() < seq {
+                if key.version() < seq {
                     continue;
                 }
             }
 
-            // TTL filtering: skip expired rows
+            // TTL filtering: skip expired rows (use ingestion _timestamp, not VersionId)
             if let Some(ttl) = ttl_ms {
-                let row_ts = key.seq().timestamp_millis();
+                let row_ts = row._timestamp as u64;
                 if row_ts + ttl <= now_ms {
                     continue; // Row has expired
                 }
@@ -443,7 +454,7 @@ impl StreamTableStore {
     pub async fn scan_user_streaming_async(
         &self,
         user_id: &UserId,
-        start_seq: Option<SeqId>,
+        start_seq: Option<VersionId>,
         limit: usize,
         ttl_ms: Option<u64>,
         now_ms: u64,
@@ -516,9 +527,10 @@ mod tests {
         values.insert("event".to_string(), ScalarValue::Utf8(Some("click".to_string())));
         values.insert("data".to_string(), ScalarValue::Int64(Some(123)));
         StreamTableRow {
-            user_id: user_id.clone(),
-            _seq:    SeqId::new(seq),
-            fields:  Row::new(values),
+            user_id:    user_id.clone(),
+            _version:   VersionId::try_from_i64(seq).unwrap(),
+            _timestamp: 1_700_000_000_000,
+            fields:     Row::new(values),
         }
     }
 
@@ -533,7 +545,7 @@ mod tests {
     fn test_stream_table_store_put_get() {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
-        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&UserId::new("user1"), 100);
 
         store.put(&key, &row).unwrap();
@@ -551,7 +563,7 @@ mod tests {
             .map(|i| {
                 let seq = 300 + i;
                 (
-                    StreamTableRowId::new(user_id.clone(), SeqId::new(seq)),
+                    StreamTableRowId::new(user_id.clone(), VersionId::try_from_i64(seq).unwrap()),
                     create_test_row(&user_id, seq),
                 )
             })
@@ -568,7 +580,7 @@ mod tests {
     fn test_stream_table_store_delete() {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
-        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(200));
+        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(200).unwrap());
         let row = create_test_row(&UserId::new("user1"), 200);
 
         store.put(&key, &row).unwrap();
@@ -585,7 +597,7 @@ mod tests {
             for seq_i in 1..=3 {
                 let key = StreamTableRowId::new(
                     UserId::new(format!("user{}", user_i)),
-                    SeqId::new((user_i * 1000 + seq_i) as i64),
+                    VersionId::try_from_i64((user_i * 1000 + seq_i) as i64).unwrap(),
                 );
                 let row = create_test_row(
                     &UserId::new(&format!("user{}", user_i)),
@@ -606,16 +618,16 @@ mod tests {
         let user_id = UserId::new("user1");
 
         for i in 0..10 {
-            let key = StreamTableRowId::new(user_id.clone(), SeqId::new(100 + i));
+            let key = StreamTableRowId::new(user_id.clone(), VersionId::try_from_i64(100 + i).unwrap());
             let row = create_test_row(&user_id, 100 + i);
             store.put(&key, &row).unwrap();
         }
 
-        let start_seq = SeqId::new(105);
+        let start_seq = VersionId::try_from_i64(105).unwrap();
         let results = store.scan_user_streaming(&user_id, Some(start_seq), 3, None, 0).unwrap();
 
         assert_eq!(results.len(), 3);
-        assert!(results.iter().all(|(key, _)| key.seq() >= start_seq));
+        assert!(results.iter().all(|(key, _)| key.version() >= start_seq));
     }
 
     #[test]
@@ -630,7 +642,7 @@ mod tests {
             storage_mode:      StreamTableStorageMode::File,
         };
 
-        let key = StreamTableRowId::new(UserId::new("user1"), SeqId::new(100));
+        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&UserId::new("user1"), 100);
 
         let store = new_stream_table_store(&table_id, config.clone(), test_schema());

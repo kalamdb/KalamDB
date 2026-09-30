@@ -44,7 +44,7 @@
 
 import { FileRef } from './file_ref.js';
 import { decodeBase64ToBytes } from './helpers/base64.js';
-import { SeqId } from './seq_id.js';
+import { VersionId } from './version_id.js';
 import type { JsonValue } from './types.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -255,27 +255,18 @@ export class KalamCellValue {
   }
 
   /**
-   * Return the value as a `SeqId`, or `null` for SQL NULL / non-numeric.
+   * Return the value as a `VersionId`, or `null` for SQL NULL / non-numeric.
    *
-   * Use this for `_seq` columns or any Snowflake-based sequence ID.
-   *
-   * @example
-   * ```typescript
-   * const seq = row._seq.asSeqId();
-   * if (seq) {
-   *   console.log(seq.timestampMillis()); // when the row was written
-   *   console.log(seq.workerId());        // which worker generated it
-   * }
-   * ```
+   * Use this for `_version`. The result is an opaque integer, not a timestamp.
    */
-  asSeqId(): SeqId | null {
+  asVersionId(): VersionId | null {
     if (this.isNull()) return null;
     try {
-      if (typeof this.#raw === 'number') return SeqId.from(this.#raw);
-      if (typeof this.#raw === 'bigint') return SeqId.from(this.#raw);
-      if (typeof this.#raw === 'string') return SeqId.from(this.#raw.trim());
+      if (typeof this.#raw === 'number') return VersionId.from(this.#raw);
+      if (typeof this.#raw === 'bigint') return VersionId.from(this.#raw);
+      if (typeof this.#raw === 'string') return VersionId.from(this.#raw.trim());
     } catch {
-      // not parseable as SeqId
+      // not parseable as VersionId
     }
     return null;
   }

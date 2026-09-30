@@ -13,7 +13,7 @@ import { buildAuthHeader } from './auth.js';
 import { resolveAuthProviderWithRetry } from './helpers/auth_provider_retry.js';
 import {
   defaultRowKey,
-  lastSeqIdFromSubscriptionEvent,
+  lastVersionIdFromSubscriptionEvent,
   type NormalizedSubscriptionEvent,
   normalizeLiveEventsOptions,
   normalizeLiveOptions,
@@ -51,7 +51,7 @@ import type {
 } from './types.js';
 
 import { LogLevel } from './types.js';
-import { SeqId } from './seq_id.js';
+import { VersionId } from './version_id.js';
 import { LiveQueryController } from './live/controller.js';
 import type { LiveQueryControllerOptions } from './live/controller.js';
 import type { LiveQueryDescriptor } from './live/descriptor.js';
@@ -747,13 +747,13 @@ export class KalamDBClient {
     return this.wasmClient!.isReconnecting();
   }
 
-  /** Last received sequence ID for a subscription */
-  getLastSeqId(subscriptionId: string): import('./seq_id.js').SeqId | undefined {
+  /** Last received row version for a subscription */
+  getLastVersionId(subscriptionId: string): import('./version_id.js').VersionId | undefined {
     this.requireInit();
-    const raw = this.wasmClient!.getLastSeqId(subscriptionId);
+    const raw = this.wasmClient!.getLastVersionId(subscriptionId);
     if (raw === null || raw === undefined) return undefined;
     try {
-      return SeqId.from(raw);
+      return VersionId.from(raw);
     } catch {
       return undefined;
     }
@@ -1485,7 +1485,7 @@ export class KalamDBClient {
         }
         callback(event);
         if ('subscription_id' in event) {
-          this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, lastSeqIdFromSubscriptionEvent(event));
+          this.emitLiveCheckpoint(onCheckpoint, event.subscription_id, lastVersionIdFromSubscriptionEvent(event));
         }
       },
     );
@@ -1505,7 +1505,7 @@ export class KalamDBClient {
         rows?: unknown;
         code?: string;
         message?: string;
-        last_seq_id?: string | number | SeqId | null;
+        last_seq_id?: string | number | VersionId | null;
       }),
       (event) => {
         if (event.type === 'error') {
@@ -1527,20 +1527,20 @@ export class KalamDBClient {
   private emitLiveCheckpoint(
     onCheckpoint: ((checkpoint: LiveCheckpoint) => void) | undefined,
     subscriptionId: string,
-    lastSeqId?: SeqId,
+    lastVersionId?: VersionId,
   ): void {
     if (!onCheckpoint) {
       return;
     }
 
-    const checkpoint = lastSeqId ?? this.getLastSeqId(subscriptionId);
+    const checkpoint = lastVersionId ?? this.getLastVersionId(subscriptionId);
     if (!checkpoint) {
       return;
     }
 
     onCheckpoint({
       subscriptionId,
-      lastSeqId: checkpoint,
+      lastVersionId: checkpoint,
     });
   }
 

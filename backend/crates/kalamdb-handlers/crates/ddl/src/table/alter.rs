@@ -1419,7 +1419,7 @@ mod tests {
     async fn create_index_persists_and_backfills() {
         use datafusion::scalar::ScalarValue;
         use kalamdb_commons::{
-            ids::SeqId,
+            ids::VersionId,
             models::{rows::Row, UserTableRow},
             UserId,
         };
@@ -1468,17 +1468,16 @@ mod tests {
             &table.columns,
         );
         let user_id = UserId::new("alice");
-        let seq = SeqId::new(1);
+        let version = VersionId::try_from_i64(1).expect("version");
         let mut values = std::collections::BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
         values.insert("conversation_id".to_string(), ScalarValue::Utf8(Some("room-1".to_string())));
         store
             .insert(
-                &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), seq),
+                &kalamdb_commons::ids::UserTableRowId::new(user_id.clone(), version),
                 &UserTableRow {
                     user_id,
-                    _seq: seq,
-                    _commit_seq: 1,
+                    _version: version,
                     _deleted: false,
                     fields: Row::new(values),
                 },

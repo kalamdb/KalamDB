@@ -68,6 +68,7 @@ final class KalamTableBinding<T> {
   final KalamRowUpsert<T> _upsertLocal;
   final KalamRowDelete _deleteLocal;
   final KalamReplicaOverlay<T> _overlay;
+  var _applyingSnapshot = false;
 
   Stream<List<T>> watch() =>
       watchWithSyncState().map((rows) => rows.map((row) => row.value).toList());
@@ -167,7 +168,18 @@ final class KalamTableBinding<T> {
   }
 
   /// Applies one decoded transport row inside the coordinator's transaction.
-  Future<void> applyRemoteChange(KalamRemoteChange remote) {
+  Future<void> applyRemoteChange(KalamRemoteChange remote) async {
+    if (remote.initial) {
+      if (!_applyingSnapshot) {
+        _applyingSnapshot = true;
+        await store.deleteCachedRows(
+          accountKey: accountKey,
+          tableId: spec.tableId,
+        );
+      }
+    } else {
+      _applyingSnapshot = false;
+    }
     final row = spec.decode(remote.row);
     return _applyChange(
       KalamChange(

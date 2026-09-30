@@ -1331,7 +1331,7 @@ impl AppContext {
     /// Get the system columns service (Phase 12, US5, T027)
     ///
     /// Returns an Arc reference to the SystemColumnsService that manages
-    /// all system column operations (_seq, _deleted).
+    /// all system column operations (_version, _deleted).
     pub fn system_columns_service(&self) -> Arc<crate::schema_registry::SystemColumnsService> {
         self.system_columns_service.clone()
     }

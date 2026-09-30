@@ -314,7 +314,7 @@ impl SubscribeStatement {
 ///
 /// Unknown options are rejected with an error to catch typos early.
 fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> {
-    use kalamdb_commons::ids::SeqId;
+    use kalamdb_commons::ids::VersionId;
 
     let options_str = options_str.trim();
 
@@ -359,7 +359,7 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
                     let seq_val = value
                         .parse::<i64>()
                         .map_err(|_| format!("Invalid from value: {}", value))?;
-                    from = Some(SeqId::new(seq_val));
+                    from = VersionId::try_from_i64(seq_val).ok();
                 },
                 _ => {
                     return Err(format!(
@@ -606,30 +606,30 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_with_from() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=12345)").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.options.from, Some(SeqId::new(12345)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
         assert!(stmt.options.batch_size.is_none());
         assert!(stmt.options.last_rows.is_none());
     }
 
     #[test]
     fn test_parse_subscribe_with_from_seq_id_alias() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345)")
                 .unwrap();
-        assert_eq!(stmt.options.from, Some(SeqId::new(12345)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
     }
 
     #[test]
     fn test_parse_subscribe_with_multiple_options() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt = SubscribeStatement::parse(
             "SUBSCRIBE TO app.messages OPTIONS (last_rows=50, batch_size=50, from=999)",
@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.last_rows, Some(50));
         assert_eq!(stmt.options.batch_size, Some(50));
-        assert_eq!(stmt.options.from, Some(SeqId::new(999)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(999).unwrap()));
     }
 
     #[test]
@@ -685,12 +685,12 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_negative_from() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         // Negative seq_id should be valid (might be used for special cases)
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=-1)").unwrap();
-        assert_eq!(stmt.options.from, Some(SeqId::new(-1)));
+        assert_eq!(stmt.options.from, None /* negative versions rejected */);
     }
 
     #[test]

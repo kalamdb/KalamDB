@@ -841,7 +841,15 @@ pub(crate) async fn try_batch_inserts_in_transaction(
         let snapshot_commit_seq = app_context
             .transaction_coordinator()
             .get_handle(transaction_id)
-            .map(|handle| handle.snapshot_commit_seq);
+            .and_then(|handle| handle.snapshot_commit_seq())
+            .and_then(|log_index| {
+                kalamdb_commons::ids::RaftVersionId::try_new(
+                    log_index,
+                    kalamdb_commons::ids::MAX_ORDINAL,
+                )
+                .ok()
+                .map(|packed| packed.version())
+            });
         provider
             .check_rows_authorized(
                 exec_ctx.user_id(),

@@ -1,6 +1,6 @@
 //! Visibility metadata for count/version-resolution scans.
 
-use crate::{ids::SeqId, PkBucketKey};
+use crate::{ids::VersionId, PkBucketKey};
 
 /// Lightweight metadata extracted from a table row without full field data.
 ///
@@ -8,8 +8,7 @@ use crate::{ids::SeqId, PkBucketKey};
 /// (PK dedup + tombstone filtering) does not need the full row map.
 #[derive(Debug, Clone)]
 pub struct RowMetadata {
-    pub seq:        SeqId,
-    pub commit_seq: u64,
-    pub deleted:    bool,
-    pub pk_bucket:  PkBucketKey,
+    pub version:   VersionId,
+    pub deleted:   bool,
+    pub pk_bucket: PkBucketKey,
 }

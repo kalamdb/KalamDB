@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::registry::{
-    cache_entry_seq, clear_startup_deadline, effective_entry_seq, now_ms, refresh_startup_deadline,
-    resolve_subscription_key, SubEntry,
+    cache_entry_seq, clear_startup_deadline, effective_entry_seq, forget_resume_cursor,
+    is_expired_resume, now_ms, refresh_startup_deadline, resolve_subscription_key, SubEntry,
 };
 use crate::{
     connection::{send_client_message, send_next_batch_request_with_format, WebSocketStream},
@@ -12,7 +12,6 @@ use crate::{
     },
     subscription::{batch_envelope, filter_replayed_event, subscription_start_ready},
     timeouts::KalamLinkTimeouts,
-    SeqId,
 };
 
 pub(super) async fn send_subscribe(
@@ -47,7 +46,7 @@ pub(super) async fn route_event(
     event: ChangeEvent,
     ws: &mut WebSocketStream,
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, SeqId>,
+    seq_id_cache: &mut HashMap<String, crate::VersionId>,
     timeouts: &KalamLinkTimeouts,
     serialization: SerializationType,
 ) {
@@ -125,6 +124,9 @@ pub(super) async fn route_event(
                     }
                 },
                 ChangeEvent::Error { code, message, .. } => {
+                    if is_expired_resume(code, message) {
+                        forget_resume_cursor(entry, seq_id_cache, key_str);
+                    }
                     clear_startup_deadline(entry);
                     if let Some(result_tx) = entry.pending_result_tx.take() {
                         let _ = result_tx.send(Err(KalamLinkError::WebSocketError(format!(

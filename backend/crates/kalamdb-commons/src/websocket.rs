@@ -294,6 +294,9 @@ pub struct ChangeNotification {
     pub old_data:    Option<Row>,    // For UPDATE notifications
     pub row_id:      Option<String>, // For DELETE notifications (hard delete)
     pub pk_columns:  Vec<String>,    // Primary key column name(s) for UPDATE delta
+    /// Acting user for topic publish. Live fanout still uses the owner scope.
+    #[serde(default, skip_serializing)]
+    pub actor_user_id: Option<UserId>,
 }
 
 impl ChangeNotification {
@@ -306,7 +309,14 @@ impl ChangeNotification {
             old_data: None,
             row_id: None,
             pk_columns: vec![],
+            actor_user_id: None,
         }
+    }
+
+    /// Attach the user who performed the change for topic publish.
+    pub fn with_actor(mut self, actor_user_id: Option<UserId>) -> Self {
+        self.actor_user_id = actor_user_id;
+        self
     }
 
     /// Create an UPDATE notification with old and new values.
@@ -326,6 +336,7 @@ impl ChangeNotification {
             old_data: Some(old_data),
             row_id: None,
             pk_columns,
+            actor_user_id: None,
         }
     }
 
@@ -338,6 +349,7 @@ impl ChangeNotification {
             old_data: None,
             row_id: None,
             pk_columns: vec![],
+            actor_user_id: None,
         }
     }
 
@@ -353,6 +365,7 @@ impl ChangeNotification {
             old_data: None,
             row_id: Some(row_id),
             pk_columns: vec![],
+            actor_user_id: None,
         }
     }
 }
@@ -763,13 +776,16 @@ mod tests {
 
     #[test]
     fn test_next_batch_request() {
-        use crate::{ids::SeqId, websocket::ClientMessage};
+        use crate::{ids::VersionId, websocket::ClientMessage};
 
-        let msg = ClientMessage::next_batch("sub-1".to_string(), Some(SeqId::new(100)));
+        let msg = ClientMessage::next_batch(
+            "sub-1".to_string(),
+            Some(VersionId::try_from_i64(100).unwrap()),
+        );
         let json = serde_json::to_string(&msg).unwrap();
 
         assert!(json.contains("\"type\":\"next_batch\""));
-        assert!(json.contains("\"last_seq_id\":100"));
+        assert!(json.contains("\"last_seq_id\":\"100\""));
     }
 
     #[test]
