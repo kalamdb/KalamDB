@@ -252,14 +252,27 @@ pub async fn await_user_leader(app_ctx: &Arc<AppContext>, user_id: &str) {
 }
 
 pub async fn await_shared_leader(app_ctx: &Arc<AppContext>) {
-    for _attempt in 0..100 {
-        if app_ctx.is_leader_for_shared().await {
-            return;
+    let shared_shards = app_ctx
+        .config()
+        .cluster
+        .as_ref()
+        .map(|cluster| cluster.shared_shards.max(1))
+        .unwrap_or(1);
+    for shard in 0..shared_shards {
+        let mut ready = false;
+        for _attempt in 0..100 {
+            if app_ctx
+                .executor()
+                .is_leader(kalamdb_sharding::GroupId::DataSharedShard(shard))
+                .await
+            {
+                ready = true;
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
         }
-        sleep(Duration::from_millis(50)).await;
+        assert!(ready, "shared shard leader not ready for shard {shard}");
     }
-
-    panic!("shared shard leader not ready");
 }
 
 pub async fn open_session(service: &KalamPgService, _session_id: &str) -> String {

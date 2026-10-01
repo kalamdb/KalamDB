@@ -69,14 +69,8 @@ impl UserRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(
-            bytes,
-            &self.schema,
-            key.user_id.clone(),
-            key.version,
-            ordinals,
-        )
-        .map_err(map_ser)
+        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.version, ordinals)
+            .map_err(map_ser)
     }
 }
 
@@ -105,14 +99,8 @@ impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(
-            bytes,
-            &self.schema,
-            key.user_id.clone(),
-            key.version,
-            ordinals,
-        )
-        .map_err(map_ser)
+        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.version, ordinals)
+            .map_err(map_ser)
     }
 }
 

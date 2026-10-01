@@ -40,7 +40,15 @@ export type FieldFlags = FieldFlag[];
 
 export type BatchStatus = 'loading' | 'loading_batch' | 'ready';
 
+export interface VersionDomain {
+  history_incarnation: string;
+  table_id: string;
+  scope_id: number;
+  partition_id: number | null;
+}
+
 export interface BatchControl {
+  version_domain?: VersionDomain;
   batch_num: number;
   has_more: boolean;
   status: BatchStatus;
@@ -201,6 +209,8 @@ export type ServerMessage =
  * the wire format expected by the underlying transport.
  */
 export interface LiveStreamOptions {
+  /** Preserve the subscription ack domain when resuming a SHARED table. */
+  versionDomain?: VersionDomain;
   /** Hint for server-side batch sizing during the initial data load. */
   batchSize?: number;
   /** Number of newest rows to rewind before live changes begin. */

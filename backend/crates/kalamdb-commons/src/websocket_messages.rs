@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::VersionId,
+    ids::{VersionDomain, VersionId},
     models::{KalamCellValue, Role, SchemaField, UserId},
     websocket_protocol::ProtocolOptions,
 };
@@ -35,21 +35,25 @@ pub enum BatchStatus {
 /// Batch control metadata for paginated initial data loading.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchControl {
+    /// Preserve this envelope alongside SHARED row versions for safe resumption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_domain: Option<VersionDomain>,
     /// Current batch number (0-indexed).
-    pub batch_num:   u32,
+    pub batch_num:      u32,
     /// Whether more batches are available to fetch.
-    pub has_more:    bool,
+    pub has_more:       bool,
     /// Loading status for the subscription.
-    pub status:      BatchStatus,
+    pub status:         BatchStatus,
     /// The version of the last row in this batch (used for subsequent requests).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seq_id: Option<VersionId>,
+    pub last_seq_id:    Option<VersionId>,
 }
 
 impl BatchControl {
     /// Create a batch control for the first batch (batch_num=0).
     pub fn first(has_more: bool) -> Self {
         Self {
+            version_domain: None,
             batch_num: 0,
             has_more,
             status: if has_more {
@@ -64,6 +68,7 @@ impl BatchControl {
     /// Create a batch control for a subsequent batch (batch_num > 0).
     pub fn subsequent(batch_num: u32, has_more: bool) -> Self {
         Self {
+            version_domain: None,
             batch_num,
             has_more,
             status: if has_more {
@@ -90,6 +95,7 @@ impl BatchControl {
         };
 
         Self {
+            version_domain: None,
             batch_num,
             has_more,
             status,
@@ -101,6 +107,9 @@ impl BatchControl {
 /// Options for live query subscriptions.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SubscriptionOptions {
+    /// Required with `from` for SHARED tables; copied from the subscription ack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_domain:     Option<VersionDomain>,
     /// Hint for server-side batch sizing during initial data load.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size:         Option<usize>,
@@ -136,6 +145,12 @@ impl SubscriptionOptions {
     /// Resume from a specific row version.
     pub fn with_from(mut self, version: VersionId) -> Self {
         self.from = Some(version);
+        self
+    }
+
+    /// Attach the version domain that owns `from`. Shared tables reject a cursor without it.
+    pub fn with_version_domain(mut self, domain: VersionDomain) -> Self {
+        self.version_domain = Some(domain);
         self
     }
 

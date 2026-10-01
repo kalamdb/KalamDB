@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use super::registry::{
     cache_entry_seq, clear_startup_deadline, effective_entry_seq, forget_resume_cursor,
-    is_expired_resume, now_ms, refresh_startup_deadline, resolve_subscription_key, SubEntry,
+    is_expired_resume, now_ms, refresh_startup_deadline, resolve_subscription_key, ResumeCache,
+    SubEntry,
 };
 use crate::{
     connection::{send_client_message, send_next_batch_request_with_format, WebSocketStream},
@@ -46,7 +47,7 @@ pub(super) async fn route_event(
     event: ChangeEvent,
     ws: &mut WebSocketStream,
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
     timeouts: &KalamLinkTimeouts,
     serialization: SerializationType,
 ) {
@@ -76,6 +77,12 @@ pub(super) async fn route_event(
     if let Some(batch) = batch_envelope(&event) {
         if let Some(key) = matched_key.as_ref() {
             if let Some(entry) = subs.get_mut(key.as_str(&incoming_sub_id)) {
+                if let ChangeEvent::Ack { batch_control, .. } = &event {
+                    if let Some(domain) = batch_control.version_domain.clone() {
+                        entry.options.version_domain = Some(domain.clone());
+                        resume_cache.remember_domain(&entry.sql, domain);
+                    }
+                }
                 if let Some(seq_id) = batch.last_seq_id {
                     entry.batch_seq_id = Some(seq_id);
                 }
@@ -125,7 +132,7 @@ pub(super) async fn route_event(
                 },
                 ChangeEvent::Error { code, message, .. } => {
                     if is_expired_resume(code, message) {
-                        forget_resume_cursor(entry, seq_id_cache, key_str);
+                        forget_resume_cursor(entry, resume_cache, key_str);
                     }
                     clear_startup_deadline(entry);
                     if let Some(result_tx) = entry.pending_result_tx.take() {
@@ -158,7 +165,7 @@ pub(super) async fn route_event(
 
         if remove_after_send {
             if let Some(entry) = subs.remove(key_str) {
-                cache_entry_seq(seq_id_cache, key_str, &entry);
+                cache_entry_seq(resume_cache, key_str, &entry);
             }
         }
 

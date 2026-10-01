@@ -205,7 +205,9 @@ pub async fn execute_sql_v1(
         }) {
             if !app_context.executor().is_leader(target_group).await {
                 let leader_addr = match target_group {
-                    GroupId::DataSharedShard(_) => app_context.leader_addr_for_shared().await,
+                    GroupId::DataSharedShard(_) => {
+                        app_context.leader_addr_for_group(target_group).await
+                    },
                     GroupId::DataUserShard(_) => {
                         app_context.leader_addr_for_user(exec_ctx.user_id()).await
                     },

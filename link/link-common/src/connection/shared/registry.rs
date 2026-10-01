@@ -17,6 +17,128 @@ use crate::{
     timeouts::KalamLinkTimeouts,
 };
 
+/// Sequence cursor plus the version domain required to resume a shared table.
+#[derive(Clone, Debug)]
+pub(crate) struct CachedResume {
+    pub seq:               Option<crate::VersionId>,
+    pub version_domain:    Option<kalamdb_commons::ids::VersionDomain>,
+    /// Cursor stored for this subscription id. A different id for the same SQL
+    /// is a new snapshot unless the caller passes `from`.
+    pub same_subscription: bool,
+}
+
+#[derive(Default)]
+struct ResumeMaps {
+    by_id:  HashMap<String, CachedResume>,
+    by_sql: HashMap<String, CachedResume>,
+}
+
+/// Resume cursors that outlive one socket. Capped so subscription churn cannot grow without bound.
+#[derive(Default)]
+pub(crate) struct ResumeCache {
+    maps: std::sync::Mutex<ResumeMaps>,
+}
+
+impl ResumeCache {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ResumeMaps> {
+        self.maps.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(super) fn closed_cursors(&self) -> Vec<(String, crate::VersionId)> {
+        self.lock()
+            .by_id
+            .iter()
+            .filter_map(|(id, cursor)| cursor.seq.map(|seq| (id.clone(), seq)))
+            .collect()
+    }
+
+    pub(super) fn peek(&self, id: &str, sql: &str) -> Option<CachedResume> {
+        let maps = self.lock();
+        Self::lookup(&maps, id, sql)
+    }
+
+    /// Drop the id cursor so a closed subscription leaves the snapshot, and keep the SQL
+    /// domain so a later subscription of the same query can still resume.
+    pub(super) fn take_for_subscribe(&self, id: &str, sql: &str) -> Option<CachedResume> {
+        let mut maps = self.lock();
+        if maps.by_id.contains_key(id) {
+            let mut cursor = maps.by_id.remove(id).expect("id cursor");
+            if cursor.version_domain.is_none() {
+                cursor.version_domain =
+                    maps.by_sql.get(sql).and_then(|cached| cached.version_domain.clone());
+            }
+            cursor.same_subscription = true;
+            return Some(cursor);
+        }
+        maps.by_sql.get(sql).cloned()
+    }
+
+    pub(super) fn forget(&self, id: &str, sql: &str) {
+        let mut maps = self.lock();
+        maps.by_id.remove(id);
+        maps.by_sql.remove(sql);
+    }
+
+    pub(super) fn remember_domain(&self, sql: &str, domain: kalamdb_commons::ids::VersionDomain) {
+        let mut maps = self.lock();
+        Self::upsert(&mut maps.by_sql, sql, None, Some(domain));
+    }
+
+    pub(super) fn remember_closed(
+        &self,
+        id: &str,
+        sql: &str,
+        seq: crate::VersionId,
+        domain: Option<kalamdb_commons::ids::VersionDomain>,
+    ) {
+        let mut maps = self.lock();
+        Self::upsert(&mut maps.by_id, id, Some(seq), domain.clone());
+        Self::upsert(&mut maps.by_sql, sql, Some(seq), domain);
+    }
+
+    fn lookup(maps: &ResumeMaps, id: &str, sql: &str) -> Option<CachedResume> {
+        if let Some(mut cursor) = maps.by_id.get(id).cloned() {
+            if cursor.version_domain.is_none() {
+                cursor.version_domain =
+                    maps.by_sql.get(sql).and_then(|cached| cached.version_domain.clone());
+            }
+            cursor.same_subscription = true;
+            return Some(cursor);
+        }
+        maps.by_sql.get(sql).cloned()
+    }
+
+    fn upsert(
+        map: &mut HashMap<String, CachedResume>,
+        key: &str,
+        seq: Option<crate::VersionId>,
+        domain: Option<kalamdb_commons::ids::VersionDomain>,
+    ) {
+        if let Some(existing) = map.get_mut(key) {
+            if seq.is_some() {
+                existing.seq = seq;
+            }
+            if domain.is_some() {
+                existing.version_domain = domain;
+            }
+            return;
+        }
+        if map.len() >= MAX_CACHED_SUBSCRIPTION_CURSORS {
+            if let Some(evicted) = map.keys().next().cloned() {
+                map.remove(&evicted);
+            }
+        }
+        map.insert(
+            key.to_string(),
+            CachedResume {
+                seq,
+                version_domain: domain,
+                same_subscription: false,
+            },
+        );
+    }
+}
+
 pub(super) type SubscriptionReady = Result<(u64, Option<crate::VersionId>)>;
 type SubscriptionReadySender = oneshot::Sender<SubscriptionReady>;
 
@@ -31,7 +153,7 @@ pub(super) fn now_ms() -> u64 {
 
 pub(super) fn snapshot_subscriptions(
     subs: &HashMap<String, SubEntry>,
-    seq_id_cache: &HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
 ) -> Vec<SubscriptionInfo> {
     let mut out: Vec<SubscriptionInfo> = subs
         .iter()
@@ -45,8 +167,8 @@ pub(super) fn snapshot_subscriptions(
         })
         .collect();
 
-    for (id, &seq) in seq_id_cache {
-        if !subs.contains_key(id) {
+    for (id, seq) in resume_cache.closed_cursors() {
+        if !subs.contains_key(&id) {
             out.push(SubscriptionInfo {
                 id:                 id.clone(),
                 query:              String::new(),
@@ -65,15 +187,12 @@ pub(super) fn effective_entry_seq(entry: &SubEntry) -> Option<crate::VersionId> 
     final_resume_seq(entry.last_seq_id, entry.consumed_seq_id)
 }
 
-pub(super) fn forget_resume_cursor(
-    entry: &mut SubEntry,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
-    id: &str,
-) {
+pub(super) fn forget_resume_cursor(entry: &mut SubEntry, resume_cache: &ResumeCache, id: &str) {
     entry.last_seq_id = None;
     entry.consumed_seq_id = None;
     entry.options.from = None;
-    seq_id_cache.remove(id);
+    entry.options.version_domain = None;
+    resume_cache.forget(id, &entry.sql);
 }
 
 pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
@@ -81,32 +200,33 @@ pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
         || message.to_ascii_lowercase().contains("stale resume cursor")
 }
 
-pub(super) fn cache_entry_seq(
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
-    id: impl Into<String>,
-    entry: &SubEntry,
-) {
+pub(super) fn cache_entry_seq(resume_cache: &ResumeCache, id: &str, entry: &SubEntry) {
     if let Some(seq) = effective_entry_seq(entry) {
-        let id = id.into();
-        if !seq_id_cache.contains_key(&id) && seq_id_cache.len() >= MAX_CACHED_SUBSCRIPTION_CURSORS
-        {
-            if let Some(evicted_id) = seq_id_cache.keys().next().cloned() {
-                seq_id_cache.remove(&evicted_id);
-            }
-        }
-        seq_id_cache.insert(id, seq);
+        resume_cache.remember_closed(id, &entry.sql, seq, entry.options.version_domain.clone());
     }
 }
 
 pub(super) fn merge_resume_from(
     options: &mut SubscriptionOptions,
-    inherited_seq: Option<crate::VersionId>,
+    inherited: Option<&CachedResume>,
 ) -> Option<crate::VersionId> {
-    let effective_from = match (options.from, inherited_seq) {
-        (Some(explicit), Some(cached)) => Some(explicit.max(cached)),
-        (explicit, cached) => explicit.or(cached),
+    // Omitting `from` resumes only the same subscription id. A new id for the
+    // same SQL is a fresh snapshot, so rows written while disconnected stay visible.
+    let inherited_seq = inherited.and_then(|cursor| cursor.seq);
+    let effective_from = match options.from {
+        Some(explicit) => Some(match inherited_seq {
+            Some(cached) => explicit.max(cached),
+            None => explicit,
+        }),
+        None if inherited.is_some_and(|cursor| cursor.same_subscription) => inherited_seq,
+        None => None,
     };
     options.from = effective_from;
+    if effective_from.is_some() && options.version_domain.is_none() {
+        if let Some(domain) = inherited.and_then(|cursor| cursor.version_domain.clone()) {
+            options.version_domain = Some(domain);
+        }
+    }
     effective_from
 }
 
@@ -118,12 +238,13 @@ pub(super) fn should_send_subscription_options(
         || options.batch_size.is_some()
         || options.last_rows.is_some()
         || options.from.is_some()
+        || options.version_domain.is_some()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn register_subscription_entry(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
     next_generation: &mut u64,
     timeouts: &KalamLinkTimeouts,
     id: String,
@@ -133,7 +254,8 @@ pub(super) fn register_subscription_entry(
     event_tx: mpsc::Sender<Result<ChangeEvent>>,
     result_tx: SubscriptionReadySender,
 ) -> (u64, Option<crate::VersionId>) {
-    let effective_from = merge_resume_from(&mut options, seq_id_cache.remove(&id));
+    let inherited = resume_cache.take_for_subscribe(&id, &sql);
+    let effective_from = merge_resume_from(&mut options, inherited.as_ref());
     let generation = *next_generation;
     *next_generation += 1;
 
@@ -162,7 +284,7 @@ pub(super) fn register_subscription_entry(
 
 pub(super) fn remove_subscription_entry(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
     id: &str,
     generation: Option<u64>,
 ) -> Option<SubEntry> {
@@ -177,7 +299,7 @@ pub(super) fn remove_subscription_entry(
     }
 
     subs.remove(id).inspect(|entry| {
-        cache_entry_seq(seq_id_cache, id, entry);
+        cache_entry_seq(resume_cache, id, entry);
     })
 }
 

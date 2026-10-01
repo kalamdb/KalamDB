@@ -233,6 +233,7 @@ mod tests {
 
     fn make_batch_control(batch_num: u32, has_more: bool, status: BatchStatus) -> BatchControl {
         BatchControl {
+            version_domain: None,
             batch_num,
             has_more,
             status,

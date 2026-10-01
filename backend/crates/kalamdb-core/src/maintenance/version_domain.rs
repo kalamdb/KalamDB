@@ -35,7 +35,9 @@ impl std::fmt::Display for FreshDomainImportError {
 /// Plan a fresh version-domain import.
 ///
 /// This does not read or delete stored rows. Consent only unlocks the plan.
-pub fn plan_fresh_domain_import(confirm: bool) -> Result<&'static [&'static str], FreshDomainImportError> {
+pub fn plan_fresh_domain_import(
+    confirm: bool,
+) -> Result<&'static [&'static str], FreshDomainImportError> {
     if !confirm {
         return Err(FreshDomainImportError::ConsentRequired);
     }
@@ -48,10 +50,7 @@ mod tests {
 
     #[test]
     fn import_refuses_without_consent() {
-        assert_eq!(
-            plan_fresh_domain_import(false),
-            Err(FreshDomainImportError::ConsentRequired)
-        );
+        assert_eq!(plan_fresh_domain_import(false), Err(FreshDomainImportError::ConsentRequired));
     }
 
     #[test]

@@ -34,6 +34,25 @@ mod tests {
     }
 
     #[test]
+    fn shared_catalog_ownership_survives_durable_codec() {
+        let mut table = kalamdb_commons::schemas::TableDefinition::new_with_defaults(
+            "app".into(),
+            "owned".into(),
+            kalamdb_commons::TableType::Shared,
+            vec![],
+            None,
+        )
+        .unwrap();
+        if let kalamdb_commons::schemas::TableOptions::Shared(options) = &mut table.table_options {
+            options.shared_shard_id = 3;
+            options.history_incarnation = "history-a".into();
+        }
+        let decoded: kalamdb_commons::schemas::TableDefinition =
+            decode(&encode(&table).unwrap()).unwrap();
+        assert_eq!(decoded, table);
+    }
+
+    #[test]
     fn test_encode_decode_roundtrip() {
         let data = TestData {
             id:   42,

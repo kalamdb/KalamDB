@@ -13,7 +13,7 @@ use std::{
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::VersionId,
+    ids::{VersionId, VersionDomain},
     models::{TableId, UserId},
     websocket::ChangeNotification,
 };
@@ -37,6 +37,7 @@ struct ReplayEvent {
 }
 
 struct ScopeLog {
+    domain: Option<VersionDomain>,
     /// Exclusive resume floor. A cursor `from` is covered when `from >= covered_from`
     /// and every later commit is still queued.
     covered_from:   Option<VersionId>,
@@ -50,6 +51,7 @@ struct ScopeLog {
 impl ScopeLog {
     fn new() -> Self {
         Self {
+            domain: None,
             covered_from:   None,
             discarded:      false,
             empty_snapshot: false,
@@ -149,6 +151,18 @@ impl ReplayState {
     }
 }
 
+/// How a resume cursor relates to the retained log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResumeCursor {
+    /// Every commit after the cursor is still queued.
+    Replay,
+    /// The cursor is older than an intact snapshot floor. Rows after it can be
+    /// read from storage, and later commits stay in the log.
+    Snapshot,
+    /// The log lost commits after the cursor, or this table was never tracked.
+    Expired,
+}
+
 /// Process-local resume log. Memory is capped per table and across tables.
 pub(crate) struct ReplayLog {
     inner: Mutex<ReplayState>,
@@ -161,12 +175,47 @@ impl ReplayLog {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn begin(&self, user_id: Option<&UserId>, table_id: &TableId) {
         let mut inner = self.inner.lock();
         inner.begin(ScopeKey {
             user_id:  user_id.cloned(),
             table_id: table_id.clone(),
         });
+    }
+
+    /// A recreated or moved table must never inherit an earlier replay buffer.
+    pub(crate) fn bind_domain(&self, user_id: Option<&UserId>, table_id: &TableId, domain: Option<&VersionDomain>) {
+        let mut inner = self.inner.lock();
+        let key = ScopeKey { user_id: user_id.cloned(), table_id: table_id.clone() };
+        inner.begin(key.clone());
+        let scope = inner.scopes.get_mut(&key).expect("scope initialized");
+        if scope.domain.as_ref() != domain {
+            *scope = ScopeLog::new();
+            scope.domain = domain.cloned();
+        }
+    }
+
+    pub(crate) fn classify_cursor(
+        &self,
+        user_id: Option<&UserId>,
+        table_id: &TableId,
+        from: VersionId,
+    ) -> ResumeCursor {
+        let inner = self.inner.lock();
+        let Some(scope) = inner.scopes.get(&ScopeKey {
+            user_id:  user_id.cloned(),
+            table_id: table_id.clone(),
+        }) else {
+            return ResumeCursor::Expired;
+        };
+        if scope.covers(from) {
+            return ResumeCursor::Replay;
+        }
+        if scope.discarded || scope.covered_from.is_none() {
+            return ResumeCursor::Expired;
+        }
+        ResumeCursor::Snapshot
     }
 
     pub(crate) fn tracking(&self, user_id: Option<&UserId>, table_id: &TableId) -> bool {
@@ -281,7 +330,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
         constants::SystemColumnNames,
-        ids::VersionId,
+        ids::{VersionId, VersionDomain},
         models::{rows::Row, NamespaceId, TableId, TableName, UserId},
         websocket::ChangeNotification,
     };
@@ -297,6 +346,20 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(version)));
         values.insert(SystemColumnNames::VERSION.to_string(), ScalarValue::Int64(Some(version)));
         Arc::new(ChangeNotification::insert(table(), Row::new(values)))
+    }
+
+    #[test]
+    fn changing_history_discards_replay_floor() {
+        let log = ReplayLog::new();
+        let table = TableId::new("app".into(), "events".into());
+        let domain = VersionDomain::new("first", table.clone(), 0);
+        let version = VersionId::try_from_raw(65536).unwrap();
+        log.bind_domain(None, &table, Some(&domain));
+        log.note_snapshot(None, &table, version);
+        assert_eq!(log.classify_cursor(None, &table, version), ResumeCursor::Replay);
+        let changed = VersionDomain::new("second", table.clone(), 0);
+        log.bind_domain(None, &table, Some(&changed));
+        assert_eq!(log.classify_cursor(None, &table, version), ResumeCursor::Expired);
     }
 
     #[test]

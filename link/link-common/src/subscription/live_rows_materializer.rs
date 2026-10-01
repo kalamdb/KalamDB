@@ -211,6 +211,7 @@ mod tests {
 
     fn batch_control(status: BatchStatus) -> BatchControl {
         BatchControl {
+            version_domain: None,
             batch_num: 1,
             has_more: false,
             status,

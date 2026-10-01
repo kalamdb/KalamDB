@@ -21,7 +21,7 @@ use super::{
         advance_entry_progress, cache_entry_seq, clear_startup_deadline, effective_entry_seq,
         merge_resume_from, next_startup_deadline, register_subscription_entry,
         remove_subscription_entry, reset_startup_deadline, should_send_subscription_options,
-        snapshot_subscriptions, ConnCmd, SubEntry,
+        snapshot_subscriptions, ConnCmd, ResumeCache, SubEntry,
     },
     routing::{route_event, send_subscribe, send_unsubscribe},
 };
@@ -287,13 +287,13 @@ async fn route_event_and_refresh_connection(
     event: crate::models::ChangeEvent,
     ws: &mut WebSocketStream,
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
     timeouts: &KalamLinkTimeouts,
     serialization: SerializationType,
     connected: &Arc<AtomicBool>,
     event_handlers: &EventHandlers,
 ) {
-    route_event(event, ws, subs, seq_id_cache, timeouts, serialization).await;
+    route_event(event, ws, subs, resume_cache, timeouts, serialization).await;
     if all_resumes_ready(subs) {
         mark_connected(connected, event_handlers);
     }
@@ -301,7 +301,7 @@ async fn route_event_and_refresh_connection(
 
 async fn handle_startup_timeouts(
     subs: &mut HashMap<String, SubEntry>,
-    seq_id_cache: &mut HashMap<String, crate::VersionId>,
+    resume_cache: &ResumeCache,
     ws_stream: &mut Option<WebSocketStream>,
     connected: &Arc<AtomicBool>,
     timeouts: &KalamLinkTimeouts,
@@ -330,7 +330,7 @@ async fn handle_startup_timeouts(
             );
             log::warn!("[kalam-sdk] {}", message);
             clear_startup_deadline(&mut entry);
-            cache_entry_seq(seq_id_cache, id.as_str(), &entry);
+            cache_entry_seq(resume_cache, id.as_str(), &entry);
             if let Some(result_tx) = entry.pending_result_tx.take() {
                 let _ = result_tx.send(Err(KalamLinkError::TimeoutError(message)));
             } else {
@@ -375,9 +375,9 @@ pub(super) async fn connection_task(
     connected: Arc<AtomicBool>,
     reconnect_attempts: Arc<AtomicU32>,
     ready_tx: Option<oneshot::Sender<Result<()>>>,
+    resume_cache: Arc<ResumeCache>,
 ) {
     let mut subs: HashMap<String, SubEntry> = HashMap::new();
-    let mut seq_id_cache: HashMap<String, crate::VersionId> = HashMap::new();
     let mut ws_stream: Option<WebSocketStream> = None;
     let mut shutdown_requested = false;
     let mut shutdown_completed: Option<oneshot::Sender<()>> = None;
@@ -450,7 +450,7 @@ pub(super) async fn connection_task(
                 _ = &mut startup_sleep => {
                     if handle_startup_timeouts(
                         &mut subs,
-                        &mut seq_id_cache,
+                        &resume_cache,
                         &mut ws_stream,
                         &connected,
                         &timeouts,
@@ -487,7 +487,7 @@ pub(super) async fn connection_task(
                                 if let Some(mut old_entry) =
                                     remove_subscription_entry(
                                         &mut subs,
-                                        &mut seq_id_cache,
+                                        &resume_cache,
                                         &id,
                                         None,
                                     )
@@ -497,9 +497,10 @@ pub(super) async fn connection_task(
                                     }
                                 }
                             }
-                            let inherited_seq = seq_id_cache.get(&id).copied();
+                            let inherited = resume_cache.peek(&id, &sql);
                             let mut send_options = options.clone();
-                            let effective_from = merge_resume_from(&mut send_options, inherited_seq);
+                            let effective_from =
+                                merge_resume_from(&mut send_options, inherited.as_ref());
                             let wire_options = should_send_subscription_options(
                                 request_initial_data,
                                 &send_options,
@@ -509,7 +510,7 @@ pub(super) async fn connection_task(
                             if result.is_ok() {
                                 register_subscription_entry(
                                     &mut subs,
-                                    &mut seq_id_cache,
+                                    &resume_cache,
                                     &mut next_generation,
                                     &timeouts,
                                     id.clone(),
@@ -527,7 +528,7 @@ pub(super) async fn connection_task(
                             if let Some(mut entry) =
                                 remove_subscription_entry(
                                     &mut subs,
-                                    &mut seq_id_cache,
+                                    &resume_cache,
                                     &id,
                                     generation,
                                 )
@@ -560,7 +561,7 @@ pub(super) async fn connection_task(
                             }
                         },
                         Some(ConnCmd::ListSubscriptions { result_tx }) => {
-                            let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
+                            let _ = result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
                         },
                         Some(ConnCmd::Shutdown { completed }) => {
                             shutdown_completed = completed;
@@ -614,7 +615,7 @@ pub(super) async fn connection_task(
                                         event,
                                         ws,
                                         &mut subs,
-                                        &mut seq_id_cache,
+                                        &resume_cache,
                                         &timeouts,
                                         negotiated_ser,
                                         &connected,
@@ -649,7 +650,7 @@ pub(super) async fn connection_task(
                                                 event,
                                                 ws,
                                                 &mut subs,
-                                                &mut seq_id_cache,
+                                                &resume_cache,
                                                 &timeouts,
                                                 negotiated_ser,
                                                 &connected,
@@ -671,7 +672,7 @@ pub(super) async fn connection_task(
                                                         event,
                                                         ws,
                                                         &mut subs,
-                                                        &mut seq_id_cache,
+                                                        &resume_cache,
                                                         &timeouts,
                                                         negotiated_ser,
                                                         &connected,
@@ -745,12 +746,8 @@ pub(super) async fn connection_task(
                         )));
                     },
                     Some(ConnCmd::Unsubscribe { id, generation }) => {
-                        let _ = remove_subscription_entry(
-                            &mut subs,
-                            &mut seq_id_cache,
-                            &id,
-                            generation,
-                        );
+                        let _ =
+                            remove_subscription_entry(&mut subs, &resume_cache, &id, generation);
                     },
                     Some(ConnCmd::Progress {
                         id,
@@ -763,7 +760,7 @@ pub(super) async fn connection_task(
                         }
                     },
                     Some(ConnCmd::ListSubscriptions { result_tx }) => {
-                        let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
+                        let _ = result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
                     },
                     Some(ConnCmd::Shutdown { completed }) => {
                         if let Some(completed) = completed {
@@ -786,7 +783,7 @@ pub(super) async fn connection_task(
                     ));
                     let error_message = "Max reconnection attempts reached".to_string();
                     for (id, mut entry) in subs.drain() {
-                        cache_entry_seq(&mut seq_id_cache, id.as_str(), &entry);
+                        cache_entry_seq(&resume_cache, id.as_str(), &entry);
                         if let Some(result_tx) = entry.pending_result_tx.take() {
                             let _ = result_tx
                                 .send(Err(KalamLinkError::WebSocketError(error_message.clone())));
@@ -803,12 +800,8 @@ pub(super) async fn connection_task(
                                 )));
                             },
                             Some(ConnCmd::Unsubscribe { id, .. }) => {
-                                let _ = remove_subscription_entry(
-                                    &mut subs,
-                                    &mut seq_id_cache,
-                                    &id,
-                                    None,
-                                );
+                                let _ =
+                                    remove_subscription_entry(&mut subs, &resume_cache, &id, None);
                             },
                             Some(ConnCmd::Progress {
                                 id,
@@ -827,7 +820,7 @@ pub(super) async fn connection_task(
                             },
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
                                 let _ =
-                                    result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
+                                    result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
                             },
                             Some(ConnCmd::Shutdown { completed }) => {
                                 if let Some(completed) = completed {
@@ -864,7 +857,7 @@ pub(super) async fn connection_task(
                                     if let Some(mut old_entry) =
                                         remove_subscription_entry(
                                             &mut subs,
-                                            &mut seq_id_cache,
+                                            &resume_cache,
                                             &id,
                                             None,
                                         )
@@ -876,7 +869,7 @@ pub(super) async fn connection_task(
                                 }
                                 register_subscription_entry(
                                     &mut subs,
-                                    &mut seq_id_cache,
+                                    &resume_cache,
                                     &mut next_generation,
                                     &timeouts,
                                     id,
@@ -891,7 +884,7 @@ pub(super) async fn connection_task(
                                 if let Some(mut entry) =
                                     remove_subscription_entry(
                                         &mut subs,
-                                        &mut seq_id_cache,
+                                        &resume_cache,
                                         &id,
                                         generation,
                                     )
@@ -917,7 +910,7 @@ pub(super) async fn connection_task(
                                 }
                             },
                             Some(ConnCmd::ListSubscriptions { result_tx }) => {
-                                let _ = result_tx.send(snapshot_subscriptions(&subs, &seq_id_cache));
+                                let _ = result_tx.send(snapshot_subscriptions(&subs, &resume_cache));
                             },
                             Some(ConnCmd::Shutdown { completed }) => {
                                 shutdown_completed = completed;

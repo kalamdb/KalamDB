@@ -21,8 +21,8 @@ use kalam_client::{
     auth::AuthProvider,
     seq_tracking::{extract_max_seq, row_seq},
     ChangeEvent, ConnectionOptions, EventHandlers, KalamCellValue, KalamLinkClient,
-    KalamLinkTimeouts, LiveRowsConfig, LiveRowsEvent, VersionId, SubscriptionConfig,
-    SubscriptionOptions,
+    KalamLinkTimeouts, LiveRowsConfig, LiveRowsEvent, SubscriptionConfig, SubscriptionOptions,
+    VersionDomain, VersionId,
 };
 use tokio::time::{sleep, timeout, Instant};
 
@@ -130,6 +130,60 @@ async fn query_max_seq(client: &KalamLinkClient, table: &str) -> VersionId {
         .unwrap_or_else(|| panic!("max seq query should return a value for {}", table));
 
     VersionId::try_from_i64(max_seq).expect("max version")
+}
+
+/// Open a live subscription long enough for the server to retain a resume
+/// window, then close it. Later inserts stay replayable for a `from` cursor.
+fn note_version_domain(event: &ChangeEvent, slot: &mut Option<VersionDomain>) {
+    if slot.is_some() {
+        return;
+    }
+    let domain = match event {
+        ChangeEvent::Ack { batch_control, .. }
+        | ChangeEvent::InitialDataBatch { batch_control, .. } => {
+            batch_control.version_domain.clone()
+        },
+        _ => None,
+    };
+    if domain.is_some() {
+        *slot = domain;
+    }
+}
+
+fn resume_options(seq: VersionId, domain: VersionDomain) -> SubscriptionOptions {
+    SubscriptionOptions::new().with_from(seq).with_version_domain(domain)
+}
+
+async fn prime_resume_window(table: &str, ids: &[&str]) -> VersionDomain {
+    let client = create_test_client().expect("prime resume client");
+    client.connect().await.expect("prime resume connect");
+    let mut sub = client
+        .live_events_with_config(SubscriptionConfig::new(
+            "prime-resume-window",
+            format!("SELECT id, value FROM {table}"),
+        ))
+        .await
+        .expect("prime resume subscribe");
+
+    let mut seen = Vec::<String>::new();
+    let mut max_seq = None;
+    let mut domain = None;
+    for _ in 0..12 {
+        if ids.iter().all(|id| seen.iter().any(|seen_id| seen_id == id)) && domain.is_some() {
+            break;
+        }
+        if let Ok(Some(Ok(event))) = timeout(Duration::from_millis(1000), sub.next()).await {
+            note_version_domain(&event, &mut domain);
+            collect_ids_and_track_seq(&event, &mut seen, &mut max_seq, None, "prime resume");
+        }
+    }
+    assert!(
+        ids.iter().all(|id| seen.iter().any(|seen_id| seen_id == id)),
+        "prime resume missed {ids:?}; saw {seen:?}"
+    );
+    sub.close().await.ok();
+    client.disconnect().await;
+    domain.expect("shared resume window should publish a version domain")
 }
 
 fn change_event_rows(event: &ChangeEvent) -> Option<&[HashMap<String, KalamCellValue>]> {
@@ -872,6 +926,7 @@ async fn test_fresh_subscribe_with_from_fails_on_any_stale_seq_row() {
         .await
         .expect("insert baseline B");
 
+    let domain = prime_resume_window(&table, &[baseline_a, baseline_b]).await;
     let max_seq = query_max_seq(&observer, &table).await;
 
     let resumed = create_test_client().expect("create resumed client");
@@ -879,7 +934,7 @@ async fn test_fresh_subscribe_with_from_fails_on_any_stale_seq_row() {
 
     let mut config =
         SubscriptionConfig::new("resume-from-fresh", format!("SELECT id, value FROM {}", table));
-    config.options = Some(SubscriptionOptions::new().with_from(max_seq));
+    config.options = Some(resume_options(max_seq, domain));
 
     let mut resumed_sub =
         resumed.live_events_with_config(config).await.expect("subscribe with from");
@@ -1362,25 +1417,34 @@ async fn test_multiple_subscriptions_with_distinct_from_values_fail_fast_on_stal
     let mut from_a = None;
     let mut from_b = None;
     let mut from_c = None;
+    let mut domain_a = None;
+    let mut domain_b = None;
+    let mut domain_c = None;
 
     for _ in 0..12 {
         if ids_a.iter().any(|id| id == baseline_a)
             && ids_b.iter().any(|id| id == baseline_b)
             && ids_c.iter().any(|id| id == baseline_c)
+            && domain_a.is_some()
+            && domain_b.is_some()
+            && domain_c.is_some()
         {
             break;
         }
 
         if let Ok(Some(Ok(ev))) = timeout(Duration::from_millis(1200), baseline_sub_a.next()).await
         {
+            note_version_domain(&ev, &mut domain_a);
             collect_ids_and_track_seq(&ev, &mut ids_a, &mut from_a, None, "multi baseline A");
         }
         if let Ok(Some(Ok(ev))) = timeout(Duration::from_millis(1200), baseline_sub_b.next()).await
         {
+            note_version_domain(&ev, &mut domain_b);
             collect_ids_and_track_seq(&ev, &mut ids_b, &mut from_b, None, "multi baseline B");
         }
         if let Ok(Some(Ok(ev))) = timeout(Duration::from_millis(1200), baseline_sub_c.next()).await
         {
+            note_version_domain(&ev, &mut domain_c);
             collect_ids_and_track_seq(&ev, &mut ids_c, &mut from_c, None, "multi baseline C");
         }
     }
@@ -1391,6 +1455,9 @@ async fn test_multiple_subscriptions_with_distinct_from_values_fail_fast_on_stal
     let from_a = from_a.expect("baseline A max seq should be captured");
     let from_b = from_b.expect("baseline B max seq should be captured");
     let from_c = from_c.expect("baseline C max seq should be captured");
+    let domain_a = domain_a.expect("baseline A version domain");
+    let domain_b = domain_b.expect("baseline B version domain");
+    let domain_c = domain_c.expect("baseline C version domain");
 
     baseline_sub_a.close().await.ok();
     baseline_sub_b.close().await.ok();
@@ -1421,17 +1488,17 @@ async fn test_multiple_subscriptions_with_distinct_from_values_fail_fast_on_stal
         "multi-from-resumed-a",
         format!("SELECT id, value FROM {}", table_a),
     );
-    config_a.options = Some(SubscriptionOptions::new().with_from(from_a));
+    config_a.options = Some(resume_options(from_a, domain_a));
     let mut config_b = SubscriptionConfig::new(
         "multi-from-resumed-b",
         format!("SELECT id, value FROM {}", table_b),
     );
-    config_b.options = Some(SubscriptionOptions::new().with_from(from_b));
+    config_b.options = Some(resume_options(from_b, domain_b));
     let mut config_c = SubscriptionConfig::new(
         "multi-from-resumed-c",
         format!("SELECT id, value FROM {}", table_c),
     );
-    config_c.options = Some(SubscriptionOptions::new().with_from(from_c));
+    config_c.options = Some(resume_options(from_c, domain_c));
 
     let mut resumed_a =
         resumed.live_events_with_config(config_a).await.expect("subscribe resumed A");
@@ -1907,6 +1974,7 @@ async fn test_close_resubscribe_with_explicit_from_uses_max() {
         .await
         .expect("insert base-b");
 
+    let domain = prime_resume_window(&table, &["base-a", "base-b"]).await;
     let from_seq = query_max_seq(&writer, &table).await;
 
     // Insert another row AFTER the from_seq checkpoint.
@@ -1925,7 +1993,7 @@ async fn test_close_resubscribe_with_explicit_from_uses_max() {
 
     let sub_id = "resume-from-max-test";
     let mut config = SubscriptionConfig::new(sub_id, format!("SELECT id, value FROM {}", table));
-    config.options = Some(SubscriptionOptions::new().with_from(from_seq));
+    config.options = Some(resume_options(from_seq, domain));
 
     let mut sub = client.live_events_with_config(config).await.expect("first subscribe with from");
 

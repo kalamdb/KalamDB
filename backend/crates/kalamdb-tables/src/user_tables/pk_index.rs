@@ -93,10 +93,10 @@ mod tests {
 
         let key = UserTableRowId::new(user_id.clone(), VersionId::try_from_i64(seq).unwrap());
         let row = UserTableRow {
-            user_id:     user_id.clone(),
+            user_id:  user_id.clone(),
             _version: VersionId::try_from_i64(seq).unwrap(),
-            _deleted:    false,
-            fields:      Row::new(values),
+            _deleted: false,
+            fields:   Row::new(values),
         };
         (key, row)
     }

@@ -82,10 +82,7 @@ async fn multi_row_insert_statement_uses_one_internal_commit() {
     assert!(matches!(result, ExecutionResult::Inserted { rows_affected: 2 }));
 
     let (first_row, second_row) = load_user_rows(&app_ctx, &table_id, &user_id, 1, 2).await;
-    assert_eq!(
-        first_row._version.as_u64() >> 16,
-        second_row._version.as_u64() >> 16
-    );
+    assert_eq!(first_row._version.as_u64() >> 16, second_row._version.as_u64() >> 16);
     assert_ne!(first_row._version, second_row._version);
 }
 
@@ -145,10 +142,7 @@ async fn explicit_transaction_keeps_multiple_inserts_in_one_commit() {
     execute_ok(&executor, &exec_ctx, "COMMIT").await;
 
     let (first_row, second_row) = load_user_rows(&app_ctx, &table_id, &user_id, 1, 2).await;
-    assert_eq!(
-        first_row._version.as_u64() >> 16,
-        second_row._version.as_u64() >> 16
-    );
+    assert_eq!(first_row._version.as_u64() >> 16, second_row._version.as_u64() >> 16);
     assert_ne!(first_row._version, second_row._version);
 }
 

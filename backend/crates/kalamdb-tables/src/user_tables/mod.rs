@@ -1,16 +1,11 @@
-//! User tables module - Store types only
+//! User tables: per-user MVCC storage, primary-key index, and the SQL provider.
 //!
-//! **Phase 13.6**: Provider moved to crate::utils::UserTableProvider
-//! **Phase 13.6**: DML handlers deleted (logic in providers)
-//! **Phase 13.7**: Flush logic moved to crate::utils::flush::UserTableFlushJob
-//!
-//! This module now contains ONLY:
-//! - UserTableStore (EntityStore-based storage)
-//! - UserTableRow (data structure)
-//! - UserTablePkIndex (PK secondary index for efficient lookups)
-//! - UserTableIndexedStore (IndexedEntityStore with PK index)
+//! The provider is split under `provider/` (storage, scan, DML, SQL). User scope
+//! stays on this module's keys and writes. Hot primary-key checks shared with
+//! shared tables live in `crate::versioned`.
 
 pub mod pk_index;
+#[path = "provider/mod.rs"]
 pub mod user_table_provider;
 pub mod user_table_store;
 

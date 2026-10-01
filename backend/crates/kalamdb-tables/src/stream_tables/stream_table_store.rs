@@ -133,16 +133,12 @@ impl StreamLogStoreBackend {
         timestamp_millis: i64,
     ) -> Result<()> {
         match self {
-            Self::Memory(store) => {
-                store
-                    .append_delete(table_id, user_id, key, timestamp_millis)
-                    .map_err(map_stream_error)
-            },
-            Self::File(store) => {
-                store
-                    .append_delete(table_id, user_id, key, timestamp_millis)
-                    .map_err(map_stream_error)
-            },
+            Self::Memory(store) => store
+                .append_delete(table_id, user_id, key, timestamp_millis)
+                .map_err(map_stream_error),
+            Self::File(store) => store
+                .append_delete(table_id, user_id, key, timestamp_millis)
+                .map_err(map_stream_error),
         }
     }
 
@@ -284,10 +280,7 @@ impl StreamTableStore {
 
     /// Delete a row by key (append tombstone).
     pub fn delete(&self, key: &StreamTableRowId) -> Result<()> {
-        let timestamp_millis = self
-            .get(key)?
-            .map(|row| row._timestamp)
-            .unwrap_or(0);
+        let timestamp_millis = self.get(key)?.map(|row| row._timestamp).unwrap_or(0);
         self.log_store
             .append_delete(&self.table_id, key.user_id(), key, timestamp_millis)
     }
@@ -545,7 +538,8 @@ mod tests {
     fn test_stream_table_store_put_get() {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
-        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
+        let key =
+            StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&UserId::new("user1"), 100);
 
         store.put(&key, &row).unwrap();
@@ -580,7 +574,8 @@ mod tests {
     fn test_stream_table_store_delete() {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = create_test_store(temp_dir.path());
-        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(200).unwrap());
+        let key =
+            StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(200).unwrap());
         let row = create_test_row(&UserId::new("user1"), 200);
 
         store.put(&key, &row).unwrap();
@@ -618,7 +613,8 @@ mod tests {
         let user_id = UserId::new("user1");
 
         for i in 0..10 {
-            let key = StreamTableRowId::new(user_id.clone(), VersionId::try_from_i64(100 + i).unwrap());
+            let key =
+                StreamTableRowId::new(user_id.clone(), VersionId::try_from_i64(100 + i).unwrap());
             let row = create_test_row(&user_id, 100 + i);
             store.put(&key, &row).unwrap();
         }
@@ -642,7 +638,8 @@ mod tests {
             storage_mode:      StreamTableStorageMode::File,
         };
 
-        let key = StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
+        let key =
+            StreamTableRowId::new(UserId::new("user1"), VersionId::try_from_i64(100).unwrap());
         let row = create_test_row(&UserId::new("user1"), 100);
 
         let store = new_stream_table_store(&table_id, config.clone(), test_schema());

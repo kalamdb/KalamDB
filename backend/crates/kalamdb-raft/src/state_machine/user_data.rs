@@ -27,8 +27,8 @@ use super::{
     KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
 };
 use crate::{
-    applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand,
-    RaftError, UserDataCommand,
+    applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
+    UserDataCommand,
 };
 
 /// Snapshot data for UserDataStateMachine
@@ -46,8 +46,9 @@ struct UserDataSnapshot {
 enum UserApplyCommand {
     User(UserDataCommand),
     TransactionCommit {
-        transaction_id: TransactionId,
-        mutations:      Vec<StagedMutation>,
+        required_meta_index: u64,
+        transaction_id:      TransactionId,
+        mutations:           Vec<StagedMutation>,
     },
 }
 
@@ -55,7 +56,10 @@ impl UserApplyCommand {
     fn required_meta_index(&self) -> u64 {
         match self {
             Self::User(command) => command.required_meta_index(),
-            Self::TransactionCommit { .. } => 0,
+            Self::TransactionCommit {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
         }
     }
 
@@ -180,7 +184,7 @@ impl UserDataStateMachine {
                         error
                     );
                     continue;
-                }
+                },
             };
             let _ = self.apply_decoded_command(cmd, &versions).await?;
             log::debug!(
@@ -274,9 +278,7 @@ impl UserDataStateMachine {
                 log::debug!("UserDataStateMachine[{}]: Update {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a
-                        .update(&table_id, &user_id, &updates, filter.as_deref(), versions)
-                        .await
+                    match a.update(&table_id, &user_id, &updates, filter.as_deref(), versions).await
                     {
                         Ok(count) => count,
                         Err(e) => {
@@ -341,9 +343,11 @@ impl UserDataStateMachine {
 
         match crate::codec::command_codec::decode_raft_command(command)? {
             RaftCommand::TransactionCommit {
+                required_meta_index,
                 transaction_id,
                 mutations,
             } => Ok(UserApplyCommand::TransactionCommit {
+                required_meta_index,
                 transaction_id,
                 mutations,
             }),
@@ -362,6 +366,7 @@ impl UserDataStateMachine {
         match cmd {
             UserApplyCommand::User(command) => self.apply_command(command, versions).await,
             UserApplyCommand::TransactionCommit {
+                required_meta_index: _,
                 transaction_id,
                 mutations,
             } => self.apply_transaction_commit(transaction_id, mutations, versions).await,
@@ -469,7 +474,7 @@ impl KalamStateMachine for UserDataStateMachine {
                         error.to_string(),
                     ))?,
                 ));
-            }
+            },
         };
         let response = self.apply_decoded_command(cmd, &versions).await?;
 
@@ -616,11 +621,11 @@ mod tests {
             versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
-                rows_affected: mutations.len(),
-                log_index: versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
+                rows_affected:      mutations.len(),
+                log_index:          versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
-                manifest_updates: 0,
-                publisher_events: 0,
+                manifest_updates:   0,
+                publisher_events:   0,
             })
         }
     }
@@ -652,8 +657,9 @@ mod tests {
         let table_id = TableId::new(NamespaceId::default(), "users".into());
 
         let cmd = RaftCommand::TransactionCommit {
-            transaction_id: transaction_id.clone(),
-            mutations:      vec![StagedMutation::new(
+            required_meta_index: 0,
+            transaction_id:      transaction_id.clone(),
+            mutations:           vec![StagedMutation::new(
                 transaction_id,
                 table_id,
                 TableType::User,

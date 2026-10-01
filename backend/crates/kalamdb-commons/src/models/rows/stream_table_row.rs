@@ -10,13 +10,13 @@ use crate::{ids::VersionId, models::UserId};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StreamTableRow {
     /// User who owns this event
-    pub user_id:     UserId,
+    pub user_id:    UserId,
     /// Canonical row version. Maps to SQL column `_version`.
-    pub _version:    VersionId,
+    pub _version:   VersionId,
     /// Server ingestion time in UTC epoch milliseconds. Maps to SQL column `_timestamp`.
-    pub _timestamp:  i64,
+    pub _timestamp: i64,
     /// All event data (serialized as JSON map)
-    pub fields:      Row,
+    pub fields:     Row,
 }
 
 impl From<StreamTableRow> for KTableRow {

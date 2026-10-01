@@ -1548,6 +1548,7 @@ export class KalamDBClient {
     return {
       ...(options.batchSize !== undefined ? { batchSize: options.batchSize } : {}),
       ...(options.lastRows !== undefined ? { lastRows: options.lastRows } : {}),
+      ...(options.versionDomain !== undefined ? { versionDomain: options.versionDomain } : {}),
       ...(options.from !== undefined ? { from: options.from } : {}),
       ...(options.autoFetchBatches !== undefined ? { autoFetchBatches: options.autoFetchBatches } : {}),
     };

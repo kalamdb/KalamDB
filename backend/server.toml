@@ -518,7 +518,7 @@ api_addr = "0.0.0.0:2900"
 user_shards = 8
 # 
 # # Number of shared data shards (default: 1)
-# shared_shards = 1
+# shared_shards = 4
 # 
 # # Raft heartbeat interval in milliseconds (default: 250)
 # heartbeat_interval_ms = 250

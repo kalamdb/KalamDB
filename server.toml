@@ -424,8 +424,9 @@ node_id = 1
 # # Number of user data shards (default: 32)
 user_shards = 32
 # 
-# # Number of shared data shards (default: 1)
-# shared_shards = 1
+# # Number of shared data shards (default: 4). Existing tables keep their
+# # persisted owner when this count changes.
+# shared_shards = 4
 # 
 # # Raft heartbeat interval in milliseconds (default: 250)
 # heartbeat_interval_ms = 250

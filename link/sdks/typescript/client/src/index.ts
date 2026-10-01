@@ -54,6 +54,7 @@ export {
 } from './types.js';
 
 export type {
+  VersionDomain,
   BatchControl,
   BatchStatus,
   ChangeTypeRaw,

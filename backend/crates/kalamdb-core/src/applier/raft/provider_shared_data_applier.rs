@@ -13,7 +13,7 @@ use kalamdb_commons::{
     models::{rows::Row, TransactionId, UserId},
     TableId,
 };
-use kalamdb_raft::{RaftError, SharedDataApplier, TransactionApplyResult};
+use kalamdb_raft::{GroupId, RaftError, SharedDataApplier, TransactionApplyResult};
 use kalamdb_transactions::StagedMutation;
 
 use crate::{app_context::AppContext, applier::executor::CommandExecutorImpl};
@@ -37,6 +37,18 @@ impl ProviderSharedDataApplier {
 
 #[async_trait]
 impl SharedDataApplier for ProviderSharedDataApplier {
+    fn shared_shard_id(&self, table_id: &TableId) -> Result<u32, RaftError> {
+        match self
+            .executor
+            .app_context()
+            .shared_group_id(table_id)
+            .map_err(|error| RaftError::provider(error.to_string()))?
+        {
+            GroupId::DataSharedShard(shard) => Ok(shard),
+            _ => Err(RaftError::InvalidState("Expected shared owner".into())),
+        }
+    }
+
     async fn insert(
         &self,
         table_id: &TableId,
@@ -70,6 +82,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         updates: &[Row],
+        pk_values: Option<&[String]>,
         filter: Option<&str>,
         versions: &[VersionId],
     ) -> Result<usize, RaftError> {
@@ -81,6 +94,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
                 table_id,
                 actor_user_id,
                 updates,
+                pk_values,
                 filter,
                 versions,
             )

@@ -6,10 +6,11 @@
 
 use std::{cmp::Ordering, fmt, mem::size_of};
 
-use thiserror::Error;
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
+
+use super::VersionDomain;
 
 /// Usable ordinal width in a Raft-backed [`VersionId`].
 pub const ORDINAL_BITS: u32 = 16;
@@ -35,13 +36,6 @@ pub struct VersionId(u64);
 /// Raft-packed version. Log index and ordinal are only available on this type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RaftVersionId(VersionId);
-
-/// History plus the stable group or stream partition that owns a [`VersionId`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct VersionDomain {
-    pub history_incarnation: u64,
-    pub scope_id:            u64,
-}
 
 /// Inclusive upper bound of one Raft entry. This is frontier metadata, not a row version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -180,17 +174,11 @@ impl RaftVersionId {
     }
 }
 
-impl VersionDomain {
-    pub fn new(history_incarnation: u64, scope_id: u64) -> Self {
-        Self { history_incarnation, scope_id }
-    }
-}
-
 /// Compare two versions only when they share a domain.
 pub fn same_domain_cmp(
-    left_domain: VersionDomain,
+    left_domain: &VersionDomain,
     left: VersionId,
-    right_domain: VersionDomain,
+    right_domain: &VersionDomain,
     right: VersionId,
 ) -> Result<Ordering, VersionError> {
     if left_domain != right_domain {
@@ -341,10 +329,7 @@ mod tests {
     fn ordinal_bounds_and_slot_count() {
         assert!(RaftVersionId::try_new(1, 0).is_ok());
         assert!(RaftVersionId::try_new(1, 65_535).is_ok());
-        assert_eq!(
-            RaftVersionId::try_new(1, 65_536).unwrap_err(),
-            VersionError::OrdinalOutOfRange
-        );
+        assert_eq!(RaftVersionId::try_new(1, 65_536).unwrap_err(), VersionError::OrdinalOutOfRange);
         assert!(check_entry_slot_count(65_536).is_ok());
         assert_eq!(
             check_entry_slot_count(65_537).unwrap_err(),
@@ -354,10 +339,7 @@ mod tests {
 
     #[test]
     fn log_index_bounds_stay_non_negative() {
-        assert_eq!(
-            RaftVersionId::try_new(0, 0).unwrap_err(),
-            VersionError::LogIndexOutOfRange
-        );
+        assert_eq!(RaftVersionId::try_new(0, 0).unwrap_err(), VersionError::LogIndexOutOfRange);
         let max = RaftVersionId::try_new(MAX_LOG_INDEX, MAX_ORDINAL).unwrap();
         assert_eq!(max.version().as_u64(), i64::MAX as u64);
         assert_eq!(max.version().as_i64(), i64::MAX);
@@ -365,10 +347,7 @@ mod tests {
             RaftVersionId::try_new(MAX_LOG_INDEX + 1, 0).unwrap_err(),
             VersionError::LogIndexOutOfRange
         );
-        assert_eq!(
-            VersionId::try_from_raw(0).unwrap_err(),
-            VersionError::EmptyVersion
-        );
+        assert_eq!(VersionId::try_from_raw(0).unwrap_err(), VersionError::EmptyVersion);
         assert_eq!(
             VersionId::try_from_raw((i64::MAX as u64) + 1).unwrap_err(),
             VersionError::SignedOverflow
@@ -377,15 +356,15 @@ mod tests {
 
     #[test]
     fn domain_mismatch_is_not_a_global_prefix() {
-        let domain_a = VersionDomain::new(1, 10);
-        let domain_b = VersionDomain::new(1, 11);
+        let domain_a = VersionDomain::new("1", crate::TableId::new("app".into(), "a".into()), 10);
+        let domain_b = VersionDomain::new("1", crate::TableId::new("app".into(), "a".into()), 11);
         let version = RaftVersionId::try_new(500, 0).unwrap().version();
         assert_eq!(
-            same_domain_cmp(domain_a, version, domain_b, version).unwrap_err(),
+            same_domain_cmp(&domain_a, version, &domain_b, version).unwrap_err(),
             VersionError::DomainMismatch
         );
         assert_eq!(
-            same_domain_cmp(domain_a, version, domain_a, version).unwrap(),
+            same_domain_cmp(&domain_a, version, &domain_a, version).unwrap(),
             Ordering::Equal
         );
     }

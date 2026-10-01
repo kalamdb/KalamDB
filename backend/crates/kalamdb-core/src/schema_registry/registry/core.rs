@@ -21,7 +21,7 @@ use kalamdb_commons::{
     conversions::json_value_to_scalar,
     datatypes::KalamDataType,
     models::{schemas::TableDefinition, StorageId, TableId, TableVersionId, TypeId},
-    schemas::{ColumnDefault, ColumnDefinition, TableType},
+    schemas::{ColumnDefault, ColumnDefinition, TableOptions, TableType},
     SystemTable,
 };
 use kalamdb_live::models::ChangeNotification;
@@ -358,6 +358,14 @@ impl SchemaRegistry {
         expected: &TableDefinition,
     ) -> TableDefinition {
         let mut upgraded = expected.clone();
+        if let (TableOptions::Shared(current_options), TableOptions::Shared(upgraded_options)) =
+            (&current.table_options, &mut upgraded.table_options)
+        {
+            upgraded_options.shared_shard_id = current_options.shared_shard_id;
+            upgraded_options
+                .history_incarnation
+                .clone_from(&current_options.history_incarnation);
+        }
         upgraded.schema_version = current.schema_version.saturating_add(1);
         upgraded.created_at = current.created_at;
         upgraded.updated_at = Utc::now();

@@ -87,6 +87,13 @@ impl DdlExecutor {
                             e
                         ))
                     })?;
+                if let Some(previous) = &previous {
+                    if previous.shared_version_domain() != table_def.shared_version_domain() {
+                        return Err(ApplierError::Validation(
+                            "ALTER TABLE cannot change shared ownership or version history".into(),
+                        ));
+                    }
+                }
                 // Index keys live in each replica's RocksDB. Backfill before the
                 // new schema is published so a reader never sees the index empty.
                 kalamdb_tables::sync_scalar_indexes(

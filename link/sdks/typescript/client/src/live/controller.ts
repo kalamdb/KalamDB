@@ -18,7 +18,7 @@ export interface LiveQueryControllerSnapshot<TRow> {
 
 export type LiveQueryControllerListener<TRow> = (snapshot: LiveQueryControllerSnapshot<TRow>) => void;
 
-export interface LiveQueryControllerOptions<TRow> extends Pick<LiveOptions<TRow>, 'batchSize' | 'lastRows' | 'from' | 'autoFetchBatches'> {
+export interface LiveQueryControllerOptions<TRow> extends Pick<LiveOptions<TRow>, 'batchSize' | 'lastRows' | 'from' | 'versionDomain' | 'autoFetchBatches'> {
   onError?: (event: SubscriptionErrorEvent) => void;
   onCheckpoint?: (checkpoint: LiveCheckpoint) => void;
 }
@@ -131,6 +131,7 @@ export class LiveQueryController<TRow = RowData> {
       ...(this.descriptor.getKey ? { getKey: this.descriptor.getKey } : {}),
       ...(this.options.batchSize !== undefined ? { batchSize: this.options.batchSize } : {}),
       ...(this.options.lastRows !== undefined ? { lastRows: this.options.lastRows } : {}),
+      ...(this.options.versionDomain !== undefined ? { versionDomain: this.options.versionDomain } : {}),
       ...(this.options.from !== undefined ? { from: this.options.from } : {}),
       ...(this.options.autoFetchBatches !== undefined ? { autoFetchBatches: this.options.autoFetchBatches } : {}),
       onError: (event) => {

@@ -23,9 +23,13 @@ STREAM rows add `_timestamp` (UTC epoch milliseconds) for window placement and T
 
 A transaction snapshot is the materialized frontier of one group, captured at the first data access in that group. Explicit transactions that span groups are rejected. Hot and cold copies of a row share the `VersionId` assigned at commit. Flush and compaction do not allocate a new one.
 
-Live resume uses an opaque decimal token bound to domain, history, and scope. Old Snowflake cursors are rejected.
+SHARED table creation persists one `shared_shard_id` and a fresh `history_incarnation` before the Meta proposal. The clustered default is four shared Raft groups; standalone uses one. All data operations resolve the persisted owner through the catalog-backed resolver. Placement hashing is used only for new tables, so increasing the configured count never remaps existing data. Legacy tables remain on shard zero. An unavailable owner fails closed.
 
-Pre-production data moves only through an explicit consenting export/import into a fresh domain. Startup does not delete or rewrite stored rows.
+Live resume pairs the opaque decimal version (`options.from`) with `options.version_domain`, copied from `batch_control.version_domain` in the subscription acknowledgement. The domain binds exact table identity, history incarnation, owner group, and a reserved partition identity. Cross-table, cross-group, old-history and missing-domain SHARED cursors are rejected. Recreated tables clear their prior in-memory replay buffer. Numeric versions from different domains cannot be compared with `same_domain_cmp`.
+
+The owner is retained by schema changes and durable metadata/snapshot serialization. ALTER cannot migrate ownership or rotate history. DML and transaction proposals carry a metadata watermark so replicas apply owner metadata first. Shared state machines reject wrong-owner mutations and wrong-group snapshots. Explicit transactions spanning owner groups are rejected before proposal. Tables sharing a group may interleave and have gaps in their version histories.
+
+Pre-production data moves only through an explicit consenting export/import into a fresh domain. Startup does not delete or rewrite stored rows. A future intentional move onto another Raft group must rotate `history_incarnation`. Old resume tokens and old domain comparisons become invalid. The system does not silently rehash existing tables when `shared_shards` grows.
 
 ## Consequences
 

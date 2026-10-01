@@ -4029,16 +4029,17 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
+checksum = "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "futures-channel",
  "futures-util",
  "http 1.4.0",
  "http-body",
+ "httparse",
  "hyper",
  "ipnet",
  "libc",
@@ -7424,9 +7425,9 @@ dependencies = [
 
 [[package]]
 name = "pgwire"
-version = "0.41.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c667f8f4046889d52ed11e17aae954b1816d3df48dd23bdebcf199cef332df93"
+checksum = "f3a2ed730d49a39ab87b1901ba193c1b205de5fc528e1ddca5502fc079454fd8"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -8608,9 +8609,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",

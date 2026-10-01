@@ -148,9 +148,9 @@ mod tests {
         values.insert("name".to_string(), ScalarValue::Utf8(Some(name.to_string())));
         values.insert("id".to_string(), ScalarValue::Int64(Some(seq)));
         SharedTableRow {
-            _version:        VersionId::try_from_i64(seq).unwrap(),
-                        fields:      Row::new(values),
-            _deleted:    false,
+            _version: VersionId::try_from_i64(seq).unwrap(),
+            fields:   Row::new(values),
+            _deleted: false,
         }
     }
 
@@ -288,9 +288,9 @@ mod tests {
                 .insert(
                     &VersionId::try_from_i64(seq).unwrap(),
                     &SharedTableRow {
-                        _version:        VersionId::try_from_i64(seq).unwrap(),
-                                                _deleted:    false,
-                        fields:      Row::new(values),
+                        _version: VersionId::try_from_i64(seq).unwrap(),
+                        _deleted: false,
+                        fields:   Row::new(values),
                     },
                 )
                 .unwrap();
@@ -366,9 +366,9 @@ mod tests {
             .insert(
                 &VersionId::try_from_i64(10).unwrap(),
                 &SharedTableRow {
-                    _version:        VersionId::try_from_i64(10).unwrap(),
-                                        _deleted:    false,
-                    fields:      Row::new(values),
+                    _version: VersionId::try_from_i64(10).unwrap(),
+                    _deleted: false,
+                    fields:   Row::new(values),
                 },
             )
             .unwrap();
@@ -426,9 +426,9 @@ mod tests {
                 .insert(
                     &VersionId::try_from_i64(seq).unwrap(),
                     &SharedTableRow {
-                        _version:        VersionId::try_from_i64(seq).unwrap(),
-                                                _deleted:    false,
-                        fields:      Row::new(values),
+                        _version: VersionId::try_from_i64(seq).unwrap(),
+                        _deleted: false,
+                        fields:   Row::new(values),
                     },
                 )
                 .unwrap();

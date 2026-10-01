@@ -308,10 +308,11 @@ mod tests {
                 row
             }],
             batch_control:   crate::models::BatchControl {
-                batch_num:   0,
-                has_more:    true,
-                status:      crate::models::BatchStatus::Loading,
-                last_seq_id: Some(VersionId::from(10)),
+                version_domain: None,
+                batch_num:      0,
+                has_more:       true,
+                status:         crate::models::BatchStatus::Loading,
+                last_seq_id:    Some(VersionId::from(10)),
             },
         };
 

@@ -267,8 +267,11 @@ impl ManifestAccessPlanner {
                         read_options = read_options.with_columns(cols);
                     }
                     if let Some((min_seq, max_seq)) = seq_range_for_read {
-                        read_options =
-                            read_options.with_seq_range(SystemColumnNames::VERSION, min_seq, max_seq);
+                        read_options = read_options.with_seq_range(
+                            SystemColumnNames::VERSION,
+                            min_seq,
+                            max_seq,
+                        );
                     }
                     if let Some((column, value)) = bloom {
                         read_options = read_options.with_column_bloom_values(column, [value]);
@@ -446,7 +449,8 @@ impl ManifestAccessPlanner {
             } else if current_field.name() == SystemColumnNames::VERSION {
                 return Err(KalamDbError::InvalidOperation(format!(
                     "parquet batch for {} is missing {}",
-                    _table_id, current_field.name()
+                    _table_id,
+                    current_field.name()
                 )));
             } else if current_field.is_nullable() {
                 use datafusion::arrow::array::{new_null_array, ArrayRef};
@@ -454,10 +458,8 @@ impl ManifestAccessPlanner {
                     new_null_array(current_field.data_type(), batch.num_rows());
                 projected_columns.push(null_array);
             } else {
-                projected_columns.push(non_null_missing_column(
-                    current_field.data_type(),
-                    batch.num_rows(),
-                ));
+                projected_columns
+                    .push(non_null_missing_column(current_field.data_type(), batch.num_rows()));
 
                 // log::trace!(
                 //     "[Schema Evolution] Column '{}' not in old schema v{}, filled with NULLs",

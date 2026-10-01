@@ -40,8 +40,10 @@ pub enum RaftCommand {
     SharedData(SharedDataCommand),
     /// Atomically replay an explicit transaction inside a single data group.
     TransactionCommit {
-        transaction_id: TransactionId,
-        mutations:      Vec<StagedMutation>,
+        #[serde(default)]
+        required_meta_index: u64,
+        transaction_id:      TransactionId,
+        mutations:           Vec<StagedMutation>,
     },
 }
 

@@ -182,7 +182,8 @@ mod tests {
     #[test]
     fn test_user_table_row_id_ordering() {
         // Critical test: verify lexicographic ordering is correct
-        let alice = UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
+        let alice =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
         let bob = UserTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(50).unwrap());
 
         // "alice" < "bob" lexicographically, so alice's key should sort first
@@ -204,7 +205,8 @@ mod tests {
         // This tests the bug that was fixed: "bob" (3 chars) vs "alice" (5 chars)
         // Previously, bob would sort before alice due to length-first encoding
         let bob = UserTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(100).unwrap());
-        let alice = UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
+        let alice =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
 
         // "alice" < "bob" lexicographically
         assert!(

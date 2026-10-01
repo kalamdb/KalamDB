@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 /// Default number of user data shards
 pub const DEFAULT_USER_SHARDS: u32 = 32;
 
-/// Default number of shared data shards (future: increase for scale)
-pub const DEFAULT_SHARED_SHARDS: u32 = 1;
+/// Clustered default shared-data Raft groups. Standalone uses one group.
+pub const DEFAULT_SHARED_SHARDS: u32 = 4;
 
 /// Identifies a Raft group in the Multi-Raft architecture.
 ///

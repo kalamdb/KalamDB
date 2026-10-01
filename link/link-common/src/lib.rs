@@ -50,7 +50,7 @@ pub use error::{KalamLinkError, Result};
 #[cfg(feature = "client-core")]
 pub use event_handlers::{ConnectionError, DisconnectReason, EventHandlers, MessageDirection};
 #[cfg(feature = "client-core")]
-pub use kalamdb_commons::ids::VersionId;
+pub use kalamdb_commons::ids::{VersionDomain, VersionId};
 #[cfg(feature = "client-core")]
 pub use kalamdb_commons::Role;
 pub use kalamdb_commons::{TableId, UserId};

@@ -213,7 +213,7 @@ impl ClusterCoordinator for NoopClusterCoordinator {
         true
     }
 
-    async fn is_leader_for_shared(&self) -> bool {
+    async fn is_leader_for_shared(&self, _table_id: &TableId) -> bool {
         true
     }
 
@@ -221,7 +221,7 @@ impl ClusterCoordinator for NoopClusterCoordinator {
         None
     }
 
-    async fn leader_addr_for_shared(&self) -> Option<String> {
+    async fn leader_addr_for_shared(&self, _table_id: &TableId) -> Option<String> {
         None
     }
 }

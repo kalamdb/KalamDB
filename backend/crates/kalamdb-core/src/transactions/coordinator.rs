@@ -705,7 +705,7 @@ impl TransactionCoordinator {
                     table_id
                 ))
             })?),
-            TableType::Shared => router.shared_group_id(),
+            TableType::Shared => self.app_context.shared_group_id(table_id)?,
             TableType::Stream => {
                 return Err(KalamDbError::InvalidOperation(
                     "stream tables are not supported inside explicit transactions".to_string(),

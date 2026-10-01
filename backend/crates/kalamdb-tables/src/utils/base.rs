@@ -863,7 +863,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
     /// Update multiple rows in a batch (default implementation).
     /// Returns only the keys that were actually modified (skips no-op updates).
-        async fn update_batch(
+    async fn update_batch(
         &self,
         user_id: &UserId,
         updates: Vec<(K, Row)>,
@@ -878,7 +878,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
         }
         let mut results = Vec::with_capacity(updates.len());
         for ((key, update), &version) in updates.into_iter().zip(versions.iter()) {
-            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update, version).await? {
+            if let Some(k) = BaseTableProvider::update(self, user_id, &key, update, version).await?
+            {
                 results.push(k);
             }
         }
@@ -1200,8 +1201,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
                         }
                     },
                     TableType::Shared => {
-                        if !coordinator.is_leader_for_shared().await {
-                            let leader_addr = coordinator.leader_addr_for_shared().await;
+                        if !coordinator.is_leader_for_shared(self.table_id()).await {
+                            let leader_addr =
+                                coordinator.leader_addr_for_shared(self.table_id()).await;
                             return Err(KalamDbError::NotLeader { leader_addr });
                         }
                     },
@@ -1437,7 +1439,6 @@ pub fn typed_pk_literal_from_filter(
 
     Some(pk_scalar)
 }
-
 
 /// Convert a pinned Raft log-index frontier into an inclusive [`VersionId`] bound.
 pub fn snapshot_bound_from_log_index(log_index: u64) -> Option<VersionId> {
@@ -1697,9 +1698,7 @@ where
             // Keep the row with the highest (commit_seq, seq) version.
             if latest
                 .as_ref()
-                .map(|current| {
-                    prefers_version(row_data.version, current.version)
-                })
+                .map(|current| prefers_version(row_data.version, current.version))
                 .unwrap_or(true)
             {
                 latest = Some(row_data);

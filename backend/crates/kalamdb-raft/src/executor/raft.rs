@@ -176,18 +176,11 @@ impl CommandExecutor for RaftExecutor {
     }
 
     async fn execute_shared_data(&self, mut cmd: SharedDataCommand) -> Result<DataResponse> {
-        // DML commands (INSERT/UPDATE/DELETE) don't need Meta watermark waiting.
-        // The table's existence and schema were validated BEFORE building the command.
-        // Raft ordering guarantees DDL (CREATE TABLE) is applied before subsequent DML.
-        //
-        // See spec 021 section 5.4.1 "Watermark Nuance" for detailed analysis.
-        cmd.set_required_meta_index(0);
+        // Owner metadata must be applied on followers before the data entry.
+        cmd.set_required_meta_index(self.manager.current_meta_index());
 
-        let router = ShardRouter::new(
-            self.manager.config().user_shards,
-            self.manager.config().shared_shards,
-        );
-        let response = self.manager.propose_shared_data(router.shared_shard_id(), cmd).await?;
+        let shard = self.manager.shared_shard_id(cmd.table_id())?;
+        let response = self.manager.propose_shared_data(shard, cmd).await?;
 
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context

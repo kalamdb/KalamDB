@@ -22,11 +22,11 @@ pub struct UserTableRow {
 impl From<UserTableRow> for KTableRow {
     fn from(row: UserTableRow) -> Self {
         KTableRow {
-            user_id:     row.user_id,
-            _version:    row._version,
-            _timestamp:  None,
-            _deleted:    row._deleted,
-            fields:      row.fields,
+            user_id:    row.user_id,
+            _version:   row._version,
+            _timestamp: None,
+            _deleted:   row._deleted,
+            fields:     row.fields,
         }
     }
 }

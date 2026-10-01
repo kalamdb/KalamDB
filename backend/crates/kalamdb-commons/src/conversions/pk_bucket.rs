@@ -117,7 +117,11 @@ pub fn try_pk_bucket_key_from_array(array: &dyn Array, row_idx: usize) -> Option
 }
 
 /// Read a PK bucket from an Arrow array using the same encoding as [`pk_bucket_key_from_scalar`].
-pub fn pk_bucket_key_from_array(array: &dyn Array, row_idx: usize, version: VersionId) -> PkBucketKey {
+pub fn pk_bucket_key_from_array(
+    array: &dyn Array,
+    row_idx: usize,
+    version: VersionId,
+) -> PkBucketKey {
     match read_pk_bucket_from_array(array, row_idx) {
         Some(PkBucketKey::Text(text)) if text.is_empty() => PkBucketKey::Version(version.as_i64()),
         Some(key) => key,

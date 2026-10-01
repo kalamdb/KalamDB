@@ -714,7 +714,8 @@ async fn test_user_table_pk_index_update_after_flush() {
     let max_seq = server
         .execute_sql_as_user(
             &format!(
-                "SELECT MAX(_version) as max_seq FROM {}.user_items WHERE id = 25 OR _deleted = true",
+                "SELECT MAX(_version) as max_seq FROM {}.user_items WHERE id = 25 OR _deleted = \
+                 true",
                 ns
             ),
             "flush_user",

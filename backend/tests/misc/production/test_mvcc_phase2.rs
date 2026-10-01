@@ -313,7 +313,10 @@ async fn test_user_table_row_structure() {
     // Query with all columns including system columns
     let response = server
         .execute_sql_as_user(
-            &format!("SELECT record_id, title, priority, _version, _deleted FROM {}.user_records", ns),
+            &format!(
+                "SELECT record_id, title, priority, _version, _deleted FROM {}.user_records",
+                ns
+            ),
             "user1",
         )
         .await;
@@ -341,9 +344,12 @@ async fn test_user_table_row_structure() {
     assert_eq!(row.get("_deleted").unwrap().as_bool(), Some(false), "_deleted should be false");
 
     // Note: user_id is NOT exposed in query results (internal to storage key)
-    // UserTableRow structure: { user_id: UserId, _version: SeqId, _deleted: bool, fields: JsonValue }
+    // UserTableRow structure: { user_id: UserId, _version: SeqId, _deleted: bool, fields: JsonValue
+    // }
 
-    println!("✅ T054: UserTableRow structure verified (user_id internal, _version, _deleted, fields)");
+    println!(
+        "✅ T054: UserTableRow structure verified (user_id internal, _version, _deleted, fields)"
+    );
 }
 
 /// T055: INSERT to shared table → verify SharedTableRow structure (_version, _deleted, fields only)
@@ -395,7 +401,10 @@ async fn test_shared_table_row_structure() {
     // Query with all columns including system columns (as system user)
     let response = server
         .execute_sql_as_user(
-            &format!("SELECT config_key, value, enabled, _version, _deleted FROM {}.shared_config", ns),
+            &format!(
+                "SELECT config_key, value, enabled, _version, _deleted FROM {}.shared_config",
+                ns
+            ),
             "system",
         )
         .await;
@@ -632,7 +641,10 @@ async fn test_incremental_sync_version_threshold() {
     );
 
     let returned_version = parse_i64(rows[0].get("_version").unwrap());
-    assert!(returned_version > threshold_version, "Returned _version should be greater than threshold");
+    assert!(
+        returned_version > threshold_version,
+        "Returned _version should be greater than threshold"
+    );
 
     println!("✅ T062: Incremental sync with WHERE _version > X works correctly");
 }
@@ -756,7 +768,10 @@ async fn test_rocksdb_range_scan_efficiency() {
 
     // Get initial _version
     let response = server
-        .execute_sql_as_user(&format!("SELECT id, value, _version FROM {}.versioned_data", ns), "user1")
+        .execute_sql_as_user(
+            &format!("SELECT id, value, _version FROM {}.versioned_data", ns),
+            "user1",
+        )
         .await;
 
     let rows = response.rows_as_maps();
@@ -801,7 +816,10 @@ async fn test_rocksdb_range_scan_efficiency() {
     assert_eq!(parse_i64(rows[0].get("value").unwrap()), 3, "Should return latest value");
 
     let returned_version = parse_i64(rows[0].get("_version").unwrap());
-    assert!(returned_version > initial_version, "Returned _version should be > initial_version");
+    assert!(
+        returned_version > initial_version,
+        "Returned _version should be > initial_version"
+    );
 
     println!("✅ T064: RocksDB range scan with _version > threshold works efficiently");
 }

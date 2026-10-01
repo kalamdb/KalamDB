@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{
     conversions::arrow_json_conversion::json_to_row,
-    ids::{VersionId, UserTableRowId},
+    ids::{UserTableRowId, VersionId},
     models::{schemas::TableType, TableId, UserId},
 };
 use kalamdb_store::EntityStore;
@@ -75,10 +75,10 @@ pub fn append_version_sync_with_deps(
 
             // Create UserTableRow
             let entity = UserTableRow {
-                user_id:     user_id.clone(),
+                user_id:  user_id.clone(),
                 _version: seq_id,
-                                _deleted:    deleted,
-                fields:      json_to_row(&fields).ok_or_else(|| {
+                _deleted: deleted,
+                fields:   json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )
@@ -109,8 +109,8 @@ pub fn append_version_sync_with_deps(
             // Create SharedTableRow
             let entity = SharedTableRow {
                 _version: seq_id,
-                                _deleted:    deleted,
-                fields:      json_to_row(&fields).ok_or_else(|| {
+                _deleted: deleted,
+                fields:   json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )

@@ -4,7 +4,7 @@
 
 KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, user data, and shared data across nodes. The Raft layer lives in [backend/crates/kalamdb-raft](../../backend/crates/kalamdb-raft/src/lib.rs) and is accessed through the `CommandExecutor` abstraction so handlers do not branch on cluster vs standalone mode.
 
-- **Multi-group layout**: 1 unified metadata group, 32 user-data shards, 1 shared-data shard by default. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](../../backend/crates/kalamdb-sharding/src/lib.rs), and group ID decoding accepts the configured user/shared shard ranges.
+- **Multi-group layout**: 1 unified metadata group, 32 user-data shards, and 4 shared-data shards by default in clustered mode. Standalone uses one shared group. Group identity and sharding helpers live in [backend/crates/kalamdb-sharding/src](../../backend/crates/kalamdb-sharding/src/lib.rs), and group ID decoding accepts the configured user/shared shard ranges.
 - **Command path**: Handler → `CommandExecutor` (`DirectExecutor` in standalone or `RaftExecutor` in cluster) → `RaftManager` → `RaftGroup` → OpenRaft log → State machine → Applier → storage/provider.
 - **Replication modes**: `Quorum` (fast, default) or `All` (wait for every member to apply) configured via `ReplicationMode` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
 - **Transport**: gRPC service in [backend/crates/kalamdb-raft/src/network/service.rs](../../backend/crates/kalamdb-raft/src/network/service.rs) handles Raft RPCs and follower→leader proposal forwarding.
@@ -13,8 +13,8 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 ## Topology & Sharding
 
 - Group IDs encode role and shard: `Meta`, `DataUserShard(n)`, `DataSharedShard(n)`. Numeric IDs are stable for OpenRaft membership and RPC routing.
-- User data routing: `hash(user_id) % user_shards` (default 32). Shared tables currently always use shard 0. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](../../backend/crates/kalamdb-sharding/src/lib.rs).
-- Table-level helpers: `ShardRouter::route_table` / `table_shard_id` hash `TableId` when table-scoped routing is needed.
+- User data routing: `hash(user_id) % user_shards` (default 32). A non-partitioned SHARED table belongs to exactly one persisted `DataSharedShard`. `ShardRouter::place_shared_table` hashes `TableId` only when the table is created. Later reads, writes, live barriers, and transactions use `shared_group_id` from catalog metadata (`shared_shard_id`). Raising `shared_shards` does not move existing tables. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](../../backend/crates/kalamdb-sharding/src/lib.rs).
+- `_version` is ordered only inside its `VersionDomain` (history incarnation, table, owning group, and a reserved partition id). The same numeric version in two groups is not one global order.
 
 ## Command Flow (Cluster Mode)
 
@@ -56,7 +56,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 
 Implemented in [backend/crates/kalamdb-raft/src/manager/raft_manager.rs](../../backend/crates/kalamdb-raft/src/manager/raft_manager.rs).
 
-- **Construction**: Creates 1 meta group + N user shards + M shared shards (defaults 32/1). Each group is a `RaftGroup` wrapping its own storage and network factory; the manager injects a shared channel pool into every factory so peer transports are reused across groups.
+- **Construction**: Creates 1 meta group + N user shards + M shared shards (clustered defaults 32/4). Each group is a `RaftGroup` wrapping its own storage and network factory; the manager injects a shared channel pool into every factory so peer transports are reused across groups.
 - **Start**: Registers configured peers with every group, starts the RPC server, then starts all Raft groups with OpenRaft configs (heartbeat/election timeouts from `RaftManagerConfig`).
 - **Bootstrap (first node)**: `initialize_cluster` seeds every group with this node as the sole voter, then optionally adds peers as learners and promotes them.
 - **Adding nodes**: `add_node` registers a learner in every group, waits for catch-up per group, then promotes to voter.
@@ -104,7 +104,7 @@ Responses are serialized FlexBuffers payloads returned after apply.
 
 - Peer registry: `RaftManager::register_peer` plumbs peer addresses into every `RaftGroup` so OpenRaft can dial peers via the network factory.
 - Leader discovery: `current_leader` is per-group; followers respond to forwarded proposals with leader hints. HTTP SQL write forwarding uses the target data group directly when possible. `RaftExecutor::get_cluster_info` aggregates OpenRaft metrics for UI/diagnostics.
-- Shard mapping: user shard via user_id hash; shared shard fixed to 0. Default counts exposed as `DEFAULT_USER_DATA_SHARDS` and `DEFAULT_SHARED_DATA_SHARDS` in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
+- Shard mapping: user shard via user_id hash. Each SHARED table persists one owner shard at creation; reads and writes resolve that owner and do not rehash. The clustered default is four shared groups (`DEFAULT_SHARED_DATA_SHARDS`); standalone keeps one. Defaults live in [backend/crates/kalamdb-raft/src/manager/config.rs](../../backend/crates/kalamdb-raft/src/manager/config.rs).
 
 ## Operational Notes & Limitations
 

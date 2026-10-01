@@ -17,6 +17,11 @@ use crate::{RaftError, TransactionApplyResult};
 /// a data command. All nodes (leader and followers) call this.
 #[async_trait]
 pub trait SharedDataApplier: Send + Sync {
+    /// Resolve persisted catalog ownership; missing metadata must fail closed.
+    fn shared_shard_id(&self, table_id: &TableId) -> Result<u32, RaftError> {
+        Err(RaftError::InvalidState(format!("No owner resolver for '{}'", table_id)))
+    }
+
     /// Insert rows into a shared table
     ///
     /// # Arguments
@@ -49,6 +54,7 @@ pub trait SharedDataApplier: Send + Sync {
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         updates: &[kalamdb_commons::models::rows::Row],
+        pk_values: Option<&[String]>,
         filter: Option<&str>,
         versions: &[VersionId],
     ) -> Result<usize, RaftError>;
@@ -83,6 +89,11 @@ pub struct NoOpSharedDataApplier;
 
 #[async_trait]
 impl SharedDataApplier for NoOpSharedDataApplier {
+    fn shared_shard_id(&self, _table_id: &TableId) -> Result<u32, RaftError> {
+        // This explicit no-op fixture models legacy tables owned by shard zero.
+        Ok(0)
+    }
+
     async fn insert(
         &self,
         _table_id: &TableId,
@@ -99,6 +110,7 @@ impl SharedDataApplier for NoOpSharedDataApplier {
         _table_id: &TableId,
         _actor_user_id: Option<&UserId>,
         _updates: &[kalamdb_commons::models::rows::Row],
+        _pk_values: Option<&[String]>,
         _filter: Option<&str>,
         _versions: &[VersionId],
     ) -> Result<usize, RaftError> {
@@ -168,6 +180,7 @@ mod tests {
             _table_id: &TableId,
             _actor_user_id: Option<&UserId>,
             _updates: &[kalamdb_commons::models::rows::Row],
+            _pk_values: Option<&[String]>,
             _filter: Option<&str>,
             _versions: &[VersionId],
         ) -> Result<usize, RaftError> {
@@ -217,7 +230,7 @@ mod tests {
         let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
 
         assert_eq!(applier.insert(&table_id, None, &[], &[], &[]).await.unwrap(), 0);
-        assert_eq!(applier.update(&table_id, None, &[], None, &[]).await.unwrap(), 0);
+        assert_eq!(applier.update(&table_id, None, &[], None, None, &[]).await.unwrap(), 0);
         assert_eq!(applier.delete(&table_id, None, None, &[]).await.unwrap(), 0);
     }
 }

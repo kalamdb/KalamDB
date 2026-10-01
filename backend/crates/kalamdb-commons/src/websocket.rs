@@ -288,12 +288,12 @@ pub enum Notification {
 /// Change notification for live query subscribers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeNotification {
-    pub change_type: ChangeType,
-    pub table_id:    crate::models::TableId,
-    pub row_data:    Row,
-    pub old_data:    Option<Row>,    // For UPDATE notifications
-    pub row_id:      Option<String>, // For DELETE notifications (hard delete)
-    pub pk_columns:  Vec<String>,    // Primary key column name(s) for UPDATE delta
+    pub change_type:   ChangeType,
+    pub table_id:      crate::models::TableId,
+    pub row_data:      Row,
+    pub old_data:      Option<Row>,    // For UPDATE notifications
+    pub row_id:        Option<String>, // For DELETE notifications (hard delete)
+    pub pk_columns:    Vec<String>,    // Primary key column name(s) for UPDATE delta
     /// Acting user for topic publish. Live fanout still uses the owner scope.
     #[serde(default, skip_serializing)]
     pub actor_user_id: Option<UserId>,

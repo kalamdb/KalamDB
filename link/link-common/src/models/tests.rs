@@ -355,10 +355,11 @@ fn test_client_message_subscribe_with_resume() {
 fn test_batch_control_with_seq_id() {
     let seq_id = VersionId::from(999i64);
     let batch_control = BatchControl {
-        batch_num:   0,
-        has_more:    true,
-        status:      BatchStatus::Loading,
-        last_seq_id: Some(seq_id),
+        version_domain: None,
+        batch_num:      0,
+        has_more:       true,
+        status:         BatchStatus::Loading,
+        last_seq_id:    Some(seq_id),
     };
 
     let json = serde_json::to_string(&batch_control).unwrap();
@@ -371,10 +372,11 @@ fn test_batch_control_with_seq_id() {
 #[test]
 fn test_batch_control_ready_status() {
     let batch_control = BatchControl {
-        batch_num:   5,
-        has_more:    false,
-        status:      BatchStatus::Ready,
-        last_seq_id: Some(VersionId::from(1000i64)),
+        version_domain: None,
+        batch_num:      5,
+        has_more:       false,
+        status:         BatchStatus::Ready,
+        last_seq_id:    Some(VersionId::from(1000i64)),
     };
 
     let json = serde_json::to_string(&batch_control).unwrap();
@@ -539,10 +541,11 @@ fn test_change_event_helpers() {
         subscription_id: "sub-1".to_string(),
         total_rows:      0,
         batch_control:   BatchControl {
-            batch_num:   0,
-            has_more:    false,
-            status:      BatchStatus::Ready,
-            last_seq_id: None,
+            version_domain: None,
+            batch_num:      0,
+            has_more:       false,
+            status:         BatchStatus::Ready,
+            last_seq_id:    None,
         },
         schema:          vec![SchemaField {
             name:      "id".to_string(),

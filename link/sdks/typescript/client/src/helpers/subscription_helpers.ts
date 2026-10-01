@@ -2,6 +2,7 @@ import { KalamCellValue, wrapRowMap } from '../cell_value.js';
 import type { RowData } from '../cell_value.js';
 import { VersionId } from '../version_id.js';
 import type {
+  VersionDomain,
   LiveEventsOptions,
   LiveOptions,
   LiveStreamOptions,
@@ -11,12 +12,12 @@ import type {
 
 export function normalizeLiveStreamOptions(
   options?: LiveStreamOptions,
-): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
+): { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   if (!options) {
     return undefined;
   }
 
-  const normalized: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
+  const normalized: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
 
   if (options.batchSize !== undefined) {
     normalized.batch_size = options.batchSize;
@@ -25,6 +26,8 @@ export function normalizeLiveStreamOptions(
   if (options.lastRows !== undefined) {
     normalized.last_rows = options.lastRows;
   }
+
+  if (options.versionDomain !== undefined) normalized.version_domain = options.versionDomain;
 
   if (options.from !== undefined) {
     normalized.from = options.from instanceof VersionId ? options.from.toString() : VersionId.from(options.from).toString();
@@ -175,14 +178,14 @@ export function normalizeLiveOptions<T>(
 ): {
   limit?: number;
   key_columns?: string[];
-  subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
+  subscription_options?: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
 } | undefined {
   const keyColumns = normalizeLiveKeyColumns(options);
   const streamOptions = normalizeLiveStreamOptions(options);
   const normalized: {
     limit?: number;
     key_columns?: string[];
-    subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
+    subscription_options?: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
   } = {};
 
   if (options.limit !== undefined) {
@@ -202,7 +205,7 @@ export function normalizeLiveOptions<T>(
 
 export function normalizeLiveEventsOptions(
   options?: LiveEventsOptions,
-): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
+): { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   return normalizeLiveStreamOptions(options);
 }
 

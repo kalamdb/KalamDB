@@ -70,8 +70,10 @@ describe('generateSchema', () => {
   });
 
   it('filters out underscore-prefixed columns', () => {
-    assert.ok(!fullSchema.includes("_version:"));
-    assert.ok(!fullSchema.includes("_deleted:"));
+    const declaresHiddenColumn = fullSchema
+      .split('\n')
+      .some((line) => /^\s*(?:"_version"|_version|"_deleted"|_deleted):/.test(line));
+    assert.equal(declaresHiddenColumn, false);
   });
 
   it('maps FILE columns to file() with @kalamdb/orm import', () => {
