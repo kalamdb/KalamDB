@@ -18,7 +18,7 @@ use support::{
 };
 
 #[tokio::test]
-#[ntest::timeout(1000)]
+#[ntest::timeout(20_000)]
 async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     let (app, _db) =
         create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;

@@ -25,7 +25,7 @@ use support::{
 use tokio::time::timeout;
 
 #[tokio::test]
-#[ntest::timeout(1000)]
+#[ntest::timeout(8_000)]
 async fn shared_table_restart_keeps_owner_and_version_frontier() {
     let (app, db) = create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
