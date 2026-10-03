@@ -50,7 +50,9 @@ async fn test_single_node_cluster_startup() {
     // Check that we're the leader for all groups (single node = always leader)
     assert!(manager.is_leader(GroupId::Meta));
     assert!(manager.is_leader(GroupId::DataUserShard(0)));
-    assert!(manager.is_leader(GroupId::DataSharedShard(0)));
+    for shard in 0..manager.shared_shards() {
+        assert!(manager.is_leader(GroupId::DataSharedShard(shard)));
+    }
 
     println!("✅ Single-node cluster started successfully!");
     println!("   - Node ID: {}", manager.node_id());

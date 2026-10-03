@@ -53,13 +53,19 @@ pub async fn start_database(
     );
     if !output.is_agent() {
         let details = super::server_details::ServerDetails::read(&prepared.layout)?;
-        output.fields(&[
-            ("Server", prepared.record.url.clone()),
+        let binary = server_binary_label(&prepared);
+        let mut fields = Vec::with_capacity(6);
+        fields.push(("Server", prepared.record.url.clone()));
+        if let Some(binary) = binary {
+            fields.push(("Binary", binary));
+        }
+        fields.extend([
             ("Config", prepared.layout.config_path.display().to_string()),
             ("Data", prepared.record.data_dir.display().to_string()),
             ("Logs", prepared.record.log_path.display().to_string()),
             ("User", "root".into()),
         ]);
+        output.fields(&fields);
         output.bootstrap_password(
             details
                 .bootstrap_password
@@ -73,4 +79,16 @@ pub async fn start_database(
         output.detail(format!("Stop server: kalam down{scope}"));
     }
     Ok(())
+}
+
+fn server_binary_label(prepared: &super::prepare::PreparedServer) -> Option<String> {
+    let path = if prepared.program.as_os_str().is_empty() {
+        prepared.record.exe.clone()?
+    } else {
+        prepared.program.clone()
+    };
+    if path.as_os_str().is_empty() || !path.is_file() {
+        return None;
+    }
+    Some(crate::workflow::dev::server::format_server_binary(&path))
 }

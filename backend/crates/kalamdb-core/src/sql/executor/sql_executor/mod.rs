@@ -868,7 +868,7 @@ impl SqlExecutor {
 
         Ok(Some(TransactionQueryContext::new(
             transaction_id.clone(),
-            handle.snapshot_commit_seq,
+            Arc::clone(&handle.snapshot_log_index),
             Arc::new(crate::transactions::CoordinatorOverlayView::new(
                 Arc::clone(&coordinator),
                 transaction_id.clone(),
@@ -2854,6 +2854,10 @@ mod tests {
                         ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
                         ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                     ]),
+                ],
+                &[
+                    kalamdb_commons::ids::VersionId::from(1_i64),
+                    kalamdb_commons::ids::VersionId::from(2_i64),
                 ],
             )
             .await

@@ -12,7 +12,7 @@ use datafusion::arrow::{
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::SeqId,
+    ids::{SeqId, VersionId},
     models::rows::{choose_max_stored_scalar, choose_min_stored_scalar},
     pk_bucket_key_from_array,
     schemas::{TableCompression, TableType},
@@ -112,8 +112,8 @@ struct CompactedWriteResult {
     filename:     String,
     row_count:    u64,
     size_bytes:   u64,
-    min_seq:      kalamdb_commons::ids::SeqId,
-    max_seq:      kalamdb_commons::ids::SeqId,
+    min_version:      kalamdb_commons::ids::VersionId,
+    max_version:      kalamdb_commons::ids::VersionId,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
@@ -296,8 +296,9 @@ pub async fn compact_small_segments(
             write.filename.clone(),
             write.filename.clone(),
             write.column_stats.clone(),
-            write.min_seq,
-            write.max_seq,
+            // SegmentMetadata still stores SeqId until kalamdb-system migrates.
+            SeqId::from(write.min_version.as_i64()),
+            SeqId::from(write.max_version.as_i64()),
             write.row_count,
             write.size_bytes,
             selection.schema_version,
@@ -433,7 +434,7 @@ async fn collect_latest_versions(
     let mut latest_versions = HashMap::new();
     let columns_to_read = [
         primary_key_field,
-        SystemColumnNames::SEQ,
+        SystemColumnNames::VERSION,
         SystemColumnNames::DELETED,
     ];
 
@@ -488,7 +489,7 @@ async fn collect_latest_versions(
             };
 
             let pk_idx = required_column_index(&batch, primary_key_field)?;
-            let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
+            let seq_idx = required_column_index(&batch, SystemColumnNames::VERSION)?;
             let deleted_idx = optional_column_index(&batch, SystemColumnNames::DELETED);
 
             for row_idx in 0..batch.num_rows() {
@@ -532,7 +533,7 @@ async fn find_deleted_keys_that_mask_older_cold_rows(
         return Ok(HashSet::new());
     }
 
-    let columns_to_read = [primary_key_field, SystemColumnNames::SEQ];
+    let columns_to_read = [primary_key_field, SystemColumnNames::VERSION];
     let mut preserve_deleted_keys = HashSet::new();
 
     for segment in older_segments {
@@ -586,7 +587,7 @@ async fn find_deleted_keys_that_mask_older_cold_rows(
             };
 
             let pk_idx = required_column_index(&batch, primary_key_field)?;
-            let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
+            let seq_idx = required_column_index(&batch, SystemColumnNames::VERSION)?;
             for row_idx in 0..batch.num_rows() {
                 let seq = seq_at(&batch, seq_idx, row_idx)?;
                 let pk_value = primary_key_at(&batch, pk_idx, row_idx, seq)?;
@@ -723,13 +724,13 @@ async fn write_compacted_winners(
         .await
         .into_flush_error("Failed to write compacted Parquet temp file")?;
 
-    let (min_seq, max_seq) = accumulator.seq_range()?;
+    let (min_version, max_version) = accumulator.version_range()?;
     Ok(Some(CompactedWriteResult {
         filename: compact_filename,
         row_count: accumulator.row_count,
         size_bytes: put_result.size as u64,
-        min_seq,
-        max_seq,
+        min_version,
+        max_version,
         column_stats: accumulator.column_stats,
     }))
 }
@@ -742,7 +743,7 @@ fn filter_latest_live_rows(
     emitted_keys: &mut HashSet<PkBucketKey>,
 ) -> Result<Option<RecordBatch>> {
     let pk_idx = required_column_index(&batch, primary_key_field)?;
-    let seq_idx = required_column_index(&batch, SystemColumnNames::SEQ)?;
+    let seq_idx = required_column_index(&batch, SystemColumnNames::VERSION)?;
     let deleted_idx = optional_column_index(&batch, SystemColumnNames::DELETED);
     let mut selected_indices = Vec::new();
 
@@ -801,7 +802,7 @@ fn optional_column_index(batch: &RecordBatch, column_name: &str) -> Option<usize
 fn seq_at(batch: &RecordBatch, seq_idx: usize, row_idx: usize) -> Result<i64> {
     let seq_col = batch.column(seq_idx);
     if seq_col.is_null(row_idx) {
-        return Err(FlushError::InvalidOperation("Compaction input row has NULL _seq".to_string()));
+        return Err(FlushError::InvalidOperation("Compaction input row has NULL _version".to_string()));
     }
 
     if let Some(array) = seq_col.as_any().downcast_ref::<Int64Array>() {
@@ -811,14 +812,14 @@ fn seq_at(batch: &RecordBatch, seq_idx: usize, row_idx: usize) -> Result<i64> {
         let value = array.value(row_idx);
         return i64::try_from(value).map_err(|_| {
             FlushError::InvalidOperation(format!(
-                "Compaction input _seq value {} exceeds i64 range",
+                "Compaction input _version value {} exceeds i64 range",
                 value
             ))
         });
     }
 
     Err(FlushError::InvalidOperation(format!(
-        "Compaction input _seq column has unsupported type {:?}",
+        "Compaction input _version column has unsupported type {:?}",
         seq_col.data_type()
     )))
 }
@@ -852,40 +853,40 @@ fn primary_key_at(
     Ok(pk_bucket_key_from_array(
         batch.column(pk_idx).as_ref(),
         row_idx,
-        SeqId::from_i64(seq),
+        VersionId::try_from_i64(seq).expect("compaction version"),
     ))
 }
 
 #[derive(Default)]
 struct CompactionWriteAccumulator {
     row_count:    u64,
-    min_seq:      Option<kalamdb_commons::ids::SeqId>,
-    max_seq:      Option<kalamdb_commons::ids::SeqId>,
+    min_version:      Option<kalamdb_commons::ids::VersionId>,
+    max_version:      Option<kalamdb_commons::ids::VersionId>,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
 impl CompactionWriteAccumulator {
     fn observe(&mut self, batch: &RecordBatch, indexed_columns: &[(u64, String)]) {
         self.row_count = self.row_count.saturating_add(batch.num_rows() as u64);
-        let (batch_min_seq, batch_max_seq) = FlushManifestHelper::extract_seq_range(batch);
-        self.min_seq = Some(
-            self.min_seq
-                .map_or(batch_min_seq, |current| std::cmp::min(current, batch_min_seq)),
+        let (batch_min_version, batch_max_version) = FlushManifestHelper::extract_version_range(batch);
+        self.min_version = Some(
+            self.min_version
+                .map_or(batch_min_version, |current| std::cmp::min(current, batch_min_version)),
         );
-        self.max_seq = Some(
-            self.max_seq
-                .map_or(batch_max_seq, |current| std::cmp::max(current, batch_max_seq)),
+        self.max_version = Some(
+            self.max_version
+                .map_or(batch_max_version, |current| std::cmp::max(current, batch_max_version)),
         );
 
         let batch_stats = FlushManifestHelper::extract_column_stats(batch, indexed_columns);
         merge_column_stats(&mut self.column_stats, batch_stats);
     }
 
-    fn seq_range(&self) -> Result<(kalamdb_commons::ids::SeqId, kalamdb_commons::ids::SeqId)> {
-        match (self.min_seq, self.max_seq) {
-            (Some(min_seq), Some(max_seq)) => Ok((min_seq, max_seq)),
+    fn version_range(&self) -> Result<(kalamdb_commons::ids::VersionId, kalamdb_commons::ids::VersionId)> {
+        match (self.min_version, self.max_version) {
+            (Some(min_version), Some(max_version)) => Ok((min_version, max_version)),
             _ => Err(FlushError::InvalidOperation(
-                "Compaction wrote rows but did not observe a _seq range".to_string(),
+                "Compaction wrote rows but did not observe a _version range".to_string(),
             )),
         }
     }
@@ -940,7 +941,7 @@ mod tests {
                 format!("segment-{}", index),
                 format!("batch-{}.parquet", index),
                 HashMap::new(),
-                SeqId::from((index * 10) as i64),
+                SeqId::from((index * 10 + 1) as i64),
                 SeqId::from((index * 10 + 9) as i64),
                 *row_count,
                 1024,

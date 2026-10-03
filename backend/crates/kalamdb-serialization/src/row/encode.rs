@@ -1,6 +1,6 @@
 //! Encode table rows as ordinal nested values inside a KOBJ row envelope.
 //!
-//! Identity (`user_id`, `_seq`) is not written. Reconstruct it from the RocksDB key.
+//! Identity (`user_id`, `_version`) is not written. Reconstruct it from the RocksDB key.
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::models::rows::{Row, RowEnvelope, StreamTableRow, UserTableRow};
@@ -12,47 +12,47 @@ use super::{
 };
 use crate::{
     error::{Result, SerializationError},
-    object::{encode_envelope_with_flags, EncodedObject, ObjectKind, FLAG_COLUMN_OFFSETS},
+    object::{
+        encode_envelope_with_flags, EncodedObject, ObjectKind, FLAG_COLUMN_OFFSETS,
+        FLAG_VERSION_IN_KEY,
+    },
 };
 
 /// Encode a user-table row using schema ordinals. Nested STRUCT/List recurse in the value codec.
 pub fn encode_user_row(row: &UserTableRow, schema: &StorageSchema) -> Result<EncodedObject> {
-    encode_row_body(row._commit_seq, row._deleted, RowValues::Map(&row.fields), schema)
+    encode_row_body(row._deleted, RowValues::Map(&row.fields), schema)
 }
 
 /// Encode a user-table row from schema-aligned columns with no name lookup.
 pub fn encode_user_row_from_columns(
-    commit_seq: u64,
     deleted: bool,
     columns: &[ScalarValue],
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
-    encode_row_body(commit_seq, deleted, RowValues::Columns(columns), schema)
+    encode_row_body(deleted, RowValues::Columns(columns), schema)
 }
 
 /// Encode a [`RowEnvelope`] as a KOBJ row.
 pub fn encode_row_envelope(
-    commit_seq: u64,
     deleted: bool,
     envelope: &RowEnvelope,
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
-    encode_user_row_from_columns(commit_seq, deleted, &envelope.columns, schema)
+    encode_user_row_from_columns(deleted, &envelope.columns, schema)
 }
 
-/// Encode a shared-table row (identity lives on the SeqId key).
+/// Encode a shared-table row. `_version` lives on the key.
 pub fn encode_shared_row(
-    commit_seq: u64,
     deleted: bool,
     fields: &Row,
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
-    encode_row_body(commit_seq, deleted, RowValues::Map(fields), schema)
+    encode_row_body(deleted, RowValues::Map(fields), schema)
 }
 
-/// Encode a stream-table row. Streams have no `_commit_seq` / `_deleted`; both are stored as 0.
+/// Encode a stream-table row. `_version` and `_timestamp` are not repeated in the value header.
 pub fn encode_stream_row(row: &StreamTableRow, schema: &StorageSchema) -> Result<EncodedObject> {
-    encode_row_body(0, false, RowValues::Map(&row.fields), schema)
+    encode_row_body(false, RowValues::Map(&row.fields), schema)
 }
 
 /// Encode only ordinal field values (no KOBJ envelope, no commit metadata).
@@ -80,17 +80,20 @@ enum RowValues<'a> {
 }
 
 fn encode_row_body(
-    commit_seq: u64,
     deleted: bool,
     fields: RowValues<'_>,
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
     let mut payload = Vec::new();
     write_u16(&mut payload, schema.version);
-    payload.extend_from_slice(&commit_seq.to_le_bytes());
     write_u8(&mut payload, u8::from(deleted));
     encode_fields_indexed(&mut payload, fields, schema)?;
-    encode_envelope_with_flags(ObjectKind::Row, schema.version, FLAG_COLUMN_OFFSETS, &payload)
+    encode_envelope_with_flags(
+        ObjectKind::Row,
+        schema.version,
+        FLAG_COLUMN_OFFSETS | FLAG_VERSION_IN_KEY,
+        &payload,
+    )
 }
 
 fn encode_fields_sequential(

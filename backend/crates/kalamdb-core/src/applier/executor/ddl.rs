@@ -87,6 +87,13 @@ impl DdlExecutor {
                             e
                         ))
                     })?;
+                if let Some(previous) = &previous {
+                    if previous.shared_version_domain() != table_def.shared_version_domain() {
+                        return Err(ApplierError::Validation(
+                            "ALTER TABLE cannot change shared ownership or version history".into(),
+                        ));
+                    }
+                }
                 // Index keys live in each replica's RocksDB. Backfill before the
                 // new schema is published so a reader never sees the index empty.
                 kalamdb_tables::sync_scalar_indexes(
@@ -216,7 +223,7 @@ mod tests {
         )
         .expect("Failed to create TableDefinition");
 
-        // Inject system columns (_seq, _deleted) to match runtime tables.
+        // Inject system columns (_version, _deleted) to match runtime tables.
         app_ctx
             .system_columns_service()
             .add_system_columns(&mut table_def)

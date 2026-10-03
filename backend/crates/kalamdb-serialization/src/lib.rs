@@ -64,12 +64,11 @@ impl ObjectEncoder {
 
     pub fn encode_shared_row(
         &mut self,
-        commit_seq: u64,
         deleted: bool,
         fields: &kalamdb_commons::models::rows::Row,
         schema: &StorageSchema,
     ) -> Result<EncodedObject> {
-        encode_shared_row(commit_seq, deleted, fields, schema)
+        encode_shared_row(deleted, fields, schema)
     }
 
     pub fn encode_stream_row(

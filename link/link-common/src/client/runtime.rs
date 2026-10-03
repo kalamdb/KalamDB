@@ -5,6 +5,7 @@ use super::{KalamLinkClient, KalamLinkClientBuilder};
 use crate::consumer::ConsumerBuilder;
 use crate::{
     auth::{AuthProvider, ResolvedAuth},
+    connection::SharedResumeCache,
     error::{KalamLinkError, Result},
     event_handlers::EventHandlers,
     models::{
@@ -45,6 +46,7 @@ impl KalamLinkClient {
             event_handlers: self.event_handlers.clone(),
             shared_resolved_auth: Arc::clone(&self.shared_resolved_auth),
             connection: Arc::new(tokio::sync::Mutex::new(None)),
+            resume_cache: Arc::new(SharedResumeCache::default()),
         }
     }
 
@@ -255,6 +257,7 @@ impl KalamLinkClient {
                 self.timeouts.clone(),
                 self.connection_options.clone(),
                 self.event_handlers.clone(),
+                Arc::clone(&self.resume_cache),
             )
             .await?,
         );

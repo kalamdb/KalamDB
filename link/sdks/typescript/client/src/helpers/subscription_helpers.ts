@@ -1,7 +1,8 @@
 import { KalamCellValue, wrapRowMap } from '../cell_value.js';
 import type { RowData } from '../cell_value.js';
-import { SeqId } from '../seq_id.js';
+import { VersionId } from '../version_id.js';
 import type {
+  VersionDomain,
   LiveEventsOptions,
   LiveOptions,
   LiveStreamOptions,
@@ -11,12 +12,12 @@ import type {
 
 export function normalizeLiveStreamOptions(
   options?: LiveStreamOptions,
-): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
+): { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   if (!options) {
     return undefined;
   }
 
-  const normalized: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
+  const normalized: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } = {};
 
   if (options.batchSize !== undefined) {
     normalized.batch_size = options.batchSize;
@@ -26,8 +27,10 @@ export function normalizeLiveStreamOptions(
     normalized.last_rows = options.lastRows;
   }
 
+  if (options.versionDomain !== undefined) normalized.version_domain = options.versionDomain;
+
   if (options.from !== undefined) {
-    normalized.from = options.from instanceof SeqId ? options.from.toString() : SeqId.from(options.from).toString();
+    normalized.from = options.from instanceof VersionId ? options.from.toString() : VersionId.from(options.from).toString();
   }
 
   if (options.autoFetchBatches !== undefined) {
@@ -48,7 +51,7 @@ export type LiveRowsWasmEvent = {
   rows?: RowData[];
   code?: string;
   message?: string;
-  last_seq_id?: SeqId;
+  last_seq_id?: VersionId;
 };
 
 export interface LocalSubscriptionMetadata {
@@ -92,25 +95,25 @@ export function normalizeSubscriptionEvent(event: ServerMessage): NormalizedSubs
   return normalized;
 }
 
-export function lastSeqIdFromSubscriptionEvent(event: NormalizedSubscriptionEvent): SeqId | undefined {
+export function lastVersionIdFromSubscriptionEvent(event: NormalizedSubscriptionEvent): VersionId | undefined {
   if ('batch_control' in event) {
-    const batchControl = event.batch_control as { last_seq_id?: string | number | SeqId | null } | undefined;
-    const batchSeqId = normalizeWireSeqId(batchControl?.last_seq_id);
-    if (batchSeqId) {
-      return batchSeqId;
+    const batchControl = event.batch_control as { last_seq_id?: string | number | VersionId | null } | undefined;
+    const batchVersionId = normalizeWireVersionId(batchControl?.last_seq_id);
+    if (batchVersionId) {
+      return batchVersionId;
     }
   }
 
-  return maxSeqIdFromRows(event.rows) ?? maxSeqIdFromRows(event.old_values);
+  return maxVersionIdFromRows(event.rows) ?? maxVersionIdFromRows(event.old_values);
 }
 
-function maxSeqIdFromRows(rows: RowData[] | undefined): SeqId | undefined {
-  let max: SeqId | undefined;
+function maxVersionIdFromRows(rows: RowData[] | undefined): VersionId | undefined {
+  let max: VersionId | undefined;
   for (const row of rows ?? []) {
     const cell = row._seq;
     const seqId = cell instanceof KalamCellValue
-      ? cell.asSeqId()
-      : normalizeWireSeqId(cell as string | number | SeqId | null | undefined);
+      ? cell.asVersionId()
+      : normalizeWireVersionId(cell as string | number | VersionId | null | undefined);
     if (seqId && (!max || seqId.compareTo(max) > 0)) {
       max = seqId;
     }
@@ -125,9 +128,9 @@ export function normalizeLiveRowsWasmEvent(event: {
   rows?: unknown;
   code?: string;
   message?: string;
-  last_seq_id?: string | number | SeqId | null;
+  last_seq_id?: string | number | VersionId | null;
 }): LiveRowsWasmEvent {
-  const lastSeqId = normalizeWireSeqId(event.last_seq_id);
+  const lastSeqId = normalizeWireVersionId(event.last_seq_id);
 
   return {
     type: event.type,
@@ -158,13 +161,13 @@ export function normalizeLiveKeyColumns<T>(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function normalizeWireSeqId(value: string | number | SeqId | null | undefined): SeqId | undefined {
+function normalizeWireVersionId(value: string | number | VersionId | null | undefined): VersionId | undefined {
   if (value === null || value === undefined) {
     return undefined;
   }
 
   try {
-    return value instanceof SeqId ? value : SeqId.from(value);
+    return value instanceof VersionId ? value : VersionId.from(value);
   } catch {
     return undefined;
   }
@@ -175,14 +178,14 @@ export function normalizeLiveOptions<T>(
 ): {
   limit?: number;
   key_columns?: string[];
-  subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
+  subscription_options?: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
 } | undefined {
   const keyColumns = normalizeLiveKeyColumns(options);
   const streamOptions = normalizeLiveStreamOptions(options);
   const normalized: {
     limit?: number;
     key_columns?: string[];
-    subscription_options?: { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
+    subscription_options?: { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean };
   } = {};
 
   if (options.limit !== undefined) {
@@ -202,7 +205,7 @@ export function normalizeLiveOptions<T>(
 
 export function normalizeLiveEventsOptions(
   options?: LiveEventsOptions,
-): { batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
+): { version_domain?: VersionDomain; batch_size?: number; last_rows?: number; from?: string; auto_fetch_batches?: boolean } | undefined {
   return normalizeLiveStreamOptions(options);
 }
 
@@ -310,7 +313,7 @@ export function readSubscriptionInfos(
       id: subscription.id,
       tableName: subscription.query ?? local?.tableName ?? '',
       createdAt: new Date(local?.createdAtMs ?? 0),
-      lastSeqId: parseSeqId(subscription.lastSeqId),
+      lastVersionId: parseVersionId(subscription.lastSeqId),
       closed: subscription.closed ?? false,
     };
   });
@@ -352,18 +355,18 @@ function localSubscriptionInfos(
     id,
     tableName: local.tableName,
     createdAt: new Date(local.createdAtMs),
-    lastSeqId: undefined,
+    lastVersionId: undefined,
     closed: false,
   }));
 }
 
-function parseSeqId(raw?: string): SeqId | undefined {
+function parseVersionId(raw?: string): VersionId | undefined {
   if (!raw) {
     return undefined;
   }
 
   try {
-    return SeqId.from(raw);
+    return VersionId.from(raw);
   } catch {
     return undefined;
   }

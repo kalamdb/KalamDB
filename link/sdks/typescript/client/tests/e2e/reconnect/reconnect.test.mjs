@@ -66,7 +66,7 @@ function hasRowId(events, expectedId) {
 
 function assertRowsStrictlyAfter(events, from, context) {
   for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
+    const seq = row._seq?.asVersionId?.();
     if (!seq) {
       continue;
     }
@@ -80,7 +80,7 @@ function assertRowsStrictlyAfter(events, from, context) {
 function assertNoDuplicateSeqRows(events, context) {
   const seen = new Set();
   for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
+    const seq = row._seq?.asVersionId?.();
     if (!seq) {
       continue;
     }
@@ -401,11 +401,11 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
       await waitFor(() => hasRowId(baselineEvents, baselineA) && hasRowId(baselineEvents, baselineB));
       await waitFor(() => {
         const sub = client.getSubscriptions().find((entry) => entry.tableName === sql);
-        return !!sub?.lastSeqId;
+        return !!sub?.lastVersionId;
       });
 
-      const checkpoint = client.getSubscriptions().find((entry) => entry.tableName === sql)?.lastSeqId;
-      assert.ok(checkpoint, 'baseline subscription should expose lastSeqId checkpoint');
+      const checkpoint = client.getSubscriptions().find((entry) => entry.tableName === sql)?.lastVersionId;
+      assert.ok(checkpoint, 'baseline subscription should expose lastVersionId checkpoint');
 
       await stopBaseline();
 
@@ -425,7 +425,7 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
         await waitFor(() => hasRowId(resumedEvents, fresh));
         await waitFor(() => {
           const sub = client.getSubscriptions().find((entry) => entry.tableName === sql);
-          return !!sub?.lastSeqId && sub.lastSeqId.compareTo(checkpoint) > 0;
+          return !!sub?.lastVersionId && sub.lastVersionId.compareTo(checkpoint) > 0;
         });
 
         assertRowsStrictlyAfter(resumedEvents, checkpoint, 'liveEvents(from)');
@@ -776,9 +776,9 @@ describe('Reconnect & Resume E2E replay coverage', { timeout: 120_000 }, () => {
 
       await waitFor(() => {
         const sub = basicClient.getSubscriptions().find((entry) => entry.tableName === sql);
-        return !!sub?.lastSeqId;
+        return !!sub?.lastVersionId;
       });
-      const checkpoint = basicClient.getSubscriptions().find((entry) => entry.tableName === sql)?.lastSeqId;
+      const checkpoint = basicClient.getSubscriptions().find((entry) => entry.tableName === sql)?.lastVersionId;
       assert.ok(checkpoint, 'expected checkpoint before re-login');
 
       await stopPre();

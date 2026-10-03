@@ -308,7 +308,7 @@ impl OperationService {
         let coordinator = self.app_context.transaction_coordinator();
         Ok(Some(TransactionQueryContext::new(
             transaction_id.clone(),
-            handle.snapshot_commit_seq,
+            Arc::clone(&handle.snapshot_log_index),
             Arc::new(CoordinatorOverlayView::new(Arc::clone(&coordinator), transaction_id.clone())),
             Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
             Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),

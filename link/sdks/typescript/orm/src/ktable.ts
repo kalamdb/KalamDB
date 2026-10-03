@@ -6,7 +6,7 @@ import { boolean, pgSchema, pgTable, text } from 'drizzle-orm/pg-core';
 
 export type KalamTableType = 'shared' | 'user' | 'stream' | 'system';
 
-export type KalamSystemColumnName = '_seq' | '_deleted' | '_commit_seq';
+export type KalamSystemColumnName = '_version' | '_deleted' | '_timestamp';
 
 export interface KalamTableOptions {
 	/**
@@ -16,9 +16,8 @@ export interface KalamTableOptions {
 	tableType?: KalamTableType;
 
 	/**
-	 * Adds KalamDB-owned columns to the Drizzle table shape. `true` adds the public MVCC columns for
-	 * the table kind (`_seq` plus `_deleted` for shared/user tables, `_seq` for streams). Use `all`
-	 * only for diagnostics because `_commit_seq` is internal replication metadata.
+	 * Adds KalamDB-owned columns to the Drizzle table shape. `true` adds `_version` and `_deleted`
+	 * for shared and user tables, and `_version` for streams. `all` also adds `_timestamp`.
 	 */
 	systemColumns?: boolean | 'all' | readonly KalamSystemColumnName[];
 }
@@ -52,11 +51,11 @@ type ExtraConfigArray<TTableName extends string, TColumnsMap extends ColumnMap> 
 type ExtraConfigObject<TTableName extends string, TColumnsMap extends ColumnMap> = (
 	self: BuildExtraConfigColumns<TTableName, TColumnsMap, 'pg'>,
 ) => PgTableExtraConfig;
-type SeqSystemColumnBuilders = { _seq: ReturnType<typeof text> };
+type VersionSystemColumnBuilders = { _version: ReturnType<typeof text> };
 type DeletedSystemColumnBuilders = { _deleted: ReturnType<typeof boolean> };
-type CommitSeqSystemColumnBuilders = { _commit_seq: ReturnType<typeof text> };
-type PublicVersionSystemColumnBuilders = SeqSystemColumnBuilders & DeletedSystemColumnBuilders;
-type AllSystemColumnBuilders = PublicVersionSystemColumnBuilders & CommitSeqSystemColumnBuilders;
+type TimestampSystemColumnBuilders = { _timestamp: ReturnType<typeof text> };
+type PublicVersionSystemColumnBuilders = VersionSystemColumnBuilders & DeletedSystemColumnBuilders;
+type AllSystemColumnBuilders = PublicVersionSystemColumnBuilders & TimestampSystemColumnBuilders;
 type KalamTableWithOptions = {
 	<TTableName extends string, TColumnsMap extends ColumnMap>(
 		name: TTableName,
@@ -86,9 +85,9 @@ type KalamTableFactory = KalamTableKindFactory & {
 
 export const kalamTableConfigSymbol: unique symbol = Symbol.for('kalamdb.orm.tableConfig') as never;
 
-const DEFAULT_VERSIONED_COLUMNS: readonly KalamSystemColumnName[] = ['_seq', '_deleted'];
-const STREAM_COLUMNS: readonly KalamSystemColumnName[] = ['_seq'];
-const ALL_SYSTEM_COLUMNS: readonly KalamSystemColumnName[] = ['_seq', '_deleted', '_commit_seq'];
+const DEFAULT_VERSIONED_COLUMNS: readonly KalamSystemColumnName[] = ['_version', '_deleted'];
+const STREAM_COLUMNS: readonly KalamSystemColumnName[] = ['_version'];
+const ALL_SYSTEM_COLUMNS: readonly KalamSystemColumnName[] = ['_version', '_deleted', '_timestamp'];
 let kalamOrmConfig: KalamOrmConfig = {};
 
 function normalizeNamespace(namespace?: string): string | undefined {
@@ -221,9 +220,9 @@ export function getKalamTableConfig(table: Table): KalamTableConfig | undefined 
 }
 
 export function kSystemColumns(): PublicVersionSystemColumnBuilders;
-export function kSystemColumns(names: readonly ['_seq']): SeqSystemColumnBuilders;
-export function kSystemColumns(names: readonly ['_seq', '_deleted']): PublicVersionSystemColumnBuilders;
-export function kSystemColumns(names: readonly ['_seq', '_deleted', '_commit_seq']): AllSystemColumnBuilders;
+export function kSystemColumns(names: readonly ['_version']): VersionSystemColumnBuilders;
+export function kSystemColumns(names: readonly ['_version', '_deleted']): PublicVersionSystemColumnBuilders;
+export function kSystemColumns(names: readonly ['_version', '_deleted', '_timestamp']): AllSystemColumnBuilders;
 export function kSystemColumns(names: readonly KalamSystemColumnName[]): ColumnMap;
 export function kSystemColumns(names: readonly KalamSystemColumnName[] = DEFAULT_VERSIONED_COLUMNS): ColumnMap {
 	return buildSystemColumns(names);

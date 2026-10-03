@@ -9,14 +9,16 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kalamdb_commons::models::{
     rows::Row,
-    schemas::{TableDefinition, TableType},
+    schemas::{TableDefinition, TableOptions, TableType},
     NamespaceId, StorageId, TableId, TransactionId, UserId,
 };
 use kalamdb_raft::{
     DataResponse, GroupId, MetaCommand, RaftExecutor, SharedDataCommand, UserDataCommand,
 };
+use kalamdb_sharding::ShardRouter;
 use kalamdb_system::{Storage, User};
 use kalamdb_transactions::StagedMutation;
+use uuid::Uuid;
 
 use super::{error::ApplierError, executor::CommandExecutorImpl};
 use crate::app_context::AppContext;
@@ -127,13 +129,22 @@ pub trait UnifiedApplier: Send + Sync {
         rows: Vec<Row>,
     ) -> Result<DataResponse, ApplierError>;
 
-    /// Update rows in a shared table
+    /// Update one shared-table primary key.
     async fn update_shared_data(
         &self,
         table_id: TableId,
         actor_user_id: Option<UserId>,
         updates: Vec<Row>,
         filter: Option<String>,
+    ) -> Result<DataResponse, ApplierError>;
+
+    /// Update many shared-table primary keys in one Raft entry.
+    async fn update_shared_rows(
+        &self,
+        table_id: TableId,
+        actor_user_id: Option<UserId>,
+        pk_values: Vec<String>,
+        updates: Vec<Row>,
     ) -> Result<DataResponse, ApplierError>;
 
     /// Delete rows from a shared table
@@ -286,6 +297,14 @@ impl UnifiedApplier for RaftApplier {
         table_type: TableType,
         table_def: TableDefinition,
     ) -> Result<String, ApplierError> {
+        let mut table_def = table_def;
+        if let TableOptions::Shared(options) = &mut table_def.table_options {
+            let router = ShardRouter::from_optional_cluster_config(
+                self.executor.app_context().config().cluster.as_ref(),
+            );
+            options.shared_shard_id = router.place_shared_table(&table_id);
+            options.history_incarnation = Uuid::new_v4().to_string();
+        }
         let cmd = MetaCommand::CreateTable {
             table_id,
             table_type,
@@ -486,13 +505,43 @@ impl UnifiedApplier for RaftApplier {
         updates: Vec<Row>,
         filter: Option<String>,
     ) -> Result<DataResponse, ApplierError> {
+        if updates.len() != 1 {
+            return Err(ApplierError::Validation(
+                "shared update of one primary key requires exactly one update row".into(),
+            ));
+        }
         let raft_cmd = SharedDataCommand::Update {
             required_meta_index: 0, // Will be set by RaftExecutor
             transaction_id: None,
             actor_user_id,
             table_id,
             updates,
+            pk_values: None,
             filter,
+        };
+        self.execute_shared_data_cmd(raft_cmd).await
+    }
+
+    async fn update_shared_rows(
+        &self,
+        table_id: TableId,
+        actor_user_id: Option<UserId>,
+        pk_values: Vec<String>,
+        updates: Vec<Row>,
+    ) -> Result<DataResponse, ApplierError> {
+        if pk_values.is_empty() || pk_values.len() != updates.len() {
+            return Err(ApplierError::Validation(
+                "shared update requires one update row per primary key".into(),
+            ));
+        }
+        let raft_cmd = SharedDataCommand::Update {
+            required_meta_index: 0,
+            transaction_id: None,
+            actor_user_id,
+            table_id,
+            updates,
+            pk_values: Some(pk_values),
+            filter: None,
         };
         self.execute_shared_data_cmd(raft_cmd).await
     }

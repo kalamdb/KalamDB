@@ -82,7 +82,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::{ids::SeqId, models::rows::Row};
+    use kalamdb_commons::{ids::VersionId, models::rows::Row};
 
     use super::*;
 
@@ -91,12 +91,11 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(id_value)));
         values.insert("name".to_string(), ScalarValue::Utf8(Some("Test".to_string())));
 
-        let key = SeqId::new(seq);
+        let key = VersionId::try_from_i64(seq).unwrap();
         let row = SharedTableRow {
-            _seq:        SeqId::new(seq),
-            _commit_seq: 0,
-            _deleted:    false,
-            fields:      Row::new(values),
+            _version: VersionId::try_from_i64(seq).unwrap(),
+            _deleted: false,
+            fields:   Row::new(values),
         };
         (key, row)
     }

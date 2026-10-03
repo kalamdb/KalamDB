@@ -1,6 +1,6 @@
 //! Bloom Filter for PRIMARY KEY columns test (FR-054, FR-055)
 //!
-//! Tests that Bloom filters are generated for PRIMARY KEY columns + _seq system column.
+//! Tests that Bloom filters are generated for PRIMARY KEY columns + _version system column.
 //! This enables efficient point query filtering (WHERE id = X) by skipping batch files
 //! where the Bloom filter indicates "definitely not present".
 
@@ -54,7 +54,7 @@ fn create_test_batch_with_bloom_size(schema: Arc<Schema>, num_rows: usize) -> Re
     .unwrap()
 }
 
-/// Test that Bloom filters are generated for PRIMARY KEY column + _seq
+/// Test that Bloom filters are generated for PRIMARY KEY column + _version
 #[test]
 fn test_bloom_filter_for_primary_key_column() {
     let temp_dir = env::temp_dir().join("kalamdb_bloom_filter_pk_test");
@@ -65,19 +65,19 @@ fn test_bloom_filter_for_primary_key_column() {
     let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_pk");
 
-    // Schema with PRIMARY KEY column "id" + _seq system column
+    // Schema with PRIMARY KEY column "id" + _version system column
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),   // PRIMARY KEY
         Field::new("name", DataType::Utf8, true),   // Regular column
-        Field::new("_seq", DataType::Int64, false), // System column
+        Field::new("_version", DataType::Int64, false), // System column
     ]));
 
     // Create a batch with 1024 rows (minimum for bloom filters)
     let batch = create_test_batch_with_bloom_size(schema.clone(), 1024);
 
-    // Write Parquet file with Bloom filters on PRIMARY KEY ("id") and _seq
+    // Write Parquet file with Bloom filters on PRIMARY KEY ("id") and _version
     let file_path = "with_pk_bloom.parquet";
-    let bloom_filter_columns = vec!["id".to_string(), "_seq".to_string()];
+    let bloom_filter_columns = vec!["id".to_string(), "_version".to_string()];
     let result = storage_cached.write_parquet_sync(
         TableType::Shared,
         &table_id,
@@ -103,7 +103,7 @@ fn test_bloom_filter_for_primary_key_column() {
     // Get first row group metadata
     let row_group = metadata.row_group(0);
 
-    // Find column indexes for "id" and "_seq"
+    // Find column indexes for "id" and "_version"
     let id_col_idx = row_group
         .columns()
         .iter()
@@ -113,8 +113,8 @@ fn test_bloom_filter_for_primary_key_column() {
     let seq_col_idx = row_group
         .columns()
         .iter()
-        .position(|col| col.column_path().string() == "_seq")
-        .expect("System column '_seq' should exist");
+        .position(|col| col.column_path().string() == "_version")
+        .expect("System column '_version' should exist");
 
     // Verify "id" column has Bloom filter (FR-055: indexed columns)
     let id_col_metadata = row_group.column(id_col_idx);
@@ -123,11 +123,11 @@ fn test_bloom_filter_for_primary_key_column() {
         "PRIMARY KEY column 'id' should have Bloom filter (FR-055)"
     );
 
-    // Verify "_seq" column has Bloom filter (FR-054: default columns)
+    // Verify "_version" column has Bloom filter (FR-054: default columns)
     let seq_col_metadata = row_group.column(seq_col_idx);
     assert!(
         seq_col_metadata.bloom_filter_offset().is_some(),
-        "System column '_seq' should have Bloom filter (FR-054)"
+        "System column '_version' should have Bloom filter (FR-054)"
     );
 
     // Verify "name" column does NOT have Bloom filter (not PRIMARY KEY)
@@ -157,12 +157,12 @@ fn test_bloom_filter_for_composite_primary_key() {
     let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_composite");
 
-    // Schema with composite PRIMARY KEY (user_id, order_id) + _seq
+    // Schema with composite PRIMARY KEY (user_id, order_id) + _version
     let schema = Arc::new(Schema::new(vec![
         Field::new("user_id", DataType::Int64, false), // PRIMARY KEY part 1
         Field::new("order_id", DataType::Int64, false), // PRIMARY KEY part 2
         Field::new("amount", DataType::Int64, true),   // Regular column
-        Field::new("_seq", DataType::Int64, false),    // System column
+        Field::new("_version", DataType::Int64, false),    // System column
     ]));
 
     // Create batch with 1024 rows (minimum for bloom filters)
@@ -183,12 +183,12 @@ fn test_bloom_filter_for_composite_primary_key() {
     )
     .unwrap();
 
-    // Write Parquet file with Bloom filters on both PK columns + _seq
+    // Write Parquet file with Bloom filters on both PK columns + _version
     let file_path = "with_composite_pk_bloom.parquet";
     let bloom_filter_columns = vec![
         "user_id".to_string(),
         "order_id".to_string(),
-        "_seq".to_string(),
+        "_version".to_string(),
     ];
     let result = storage_cached.write_parquet_sync(
         TableType::Shared,
@@ -232,15 +232,15 @@ fn test_bloom_filter_for_composite_primary_key() {
         "order_id (PRIMARY KEY part 2) should have Bloom filter"
     );
 
-    // Verify _seq has Bloom filter
+    // Verify _version has Bloom filter
     let seq_idx = row_group
         .columns()
         .iter()
-        .position(|col| col.column_path().string() == "_seq")
-        .expect("_seq column should exist");
+        .position(|col| col.column_path().string() == "_version")
+        .expect("_version column should exist");
     assert!(
         row_group.column(seq_idx).bloom_filter_offset().is_some(),
-        "_seq (system column) should have Bloom filter"
+        "_version (system column) should have Bloom filter"
     );
 
     // Verify amount does NOT have Bloom filter (not PRIMARY KEY)
@@ -268,10 +268,10 @@ fn test_bloom_filter_default_behavior() {
     let storage_cached = StorageCached::with_default_timeouts(storage);
     let table_id = TableId::from_strings("test", "bloom_default");
 
-    // Schema with PRIMARY KEY + _seq
+    // Schema with PRIMARY KEY + _version
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),
-        Field::new("_seq", DataType::Int64, false),
+        Field::new("_version", DataType::Int64, false),
     ]));
 
     // Create batch with 1024 rows
@@ -314,11 +314,11 @@ fn test_bloom_filter_default_behavior() {
     let seq_idx = row_group
         .columns()
         .iter()
-        .position(|col| col.column_path().string() == "_seq")
+        .position(|col| col.column_path().string() == "_version")
         .unwrap();
     assert!(
         row_group.column(seq_idx).bloom_filter_offset().is_none(),
-        "_seq should NOT have Bloom filter when None is passed"
+        "_version should NOT have Bloom filter when None is passed"
     );
 
     let id_idx = row_group
@@ -347,7 +347,7 @@ fn test_bloom_filter_for_scalar_index_column() {
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int64, false),
         Field::new("conversation_id", DataType::Utf8, false),
-        Field::new("_seq", DataType::Int64, false),
+        Field::new("_version", DataType::Int64, false),
     ]));
 
     let num_rows = 1024;

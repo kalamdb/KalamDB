@@ -162,20 +162,26 @@ fn resolve_kalamdb_server_bin_from_version(
         return Err(CLIError::ConfigurationError(dev_kalamdb_server_bin_missing(&path)));
     }
 
-    if let Some(path) = current_exe.as_deref().and_then(colocated_server_binary_path) {
-        return Ok(path);
+    let colocated = current_exe.as_deref().and_then(colocated_server_binary_path);
+    let versioned = crate::workflow::instance::versioned_server_binary_path(version);
+    let unversioned = managed_server_binary_path();
+    // A release install puts `kalam` in `~/.kalam/bin/`, so the leftover
+    // unversioned `kalamdb-server` beside it looks colocated. The pinned
+    // `bin/<version>/` install is the binary `up` and `dev` should launch.
+    if let Some(path) = colocated.as_ref() {
+        if !paths_same_file(path, &unversioned) {
+            return Ok(path.clone());
+        }
     }
 
-    let versioned = crate::workflow::instance::versioned_server_binary_path(version);
     if versioned.is_file() {
         return Ok(versioned);
     }
 
-    let managed_path = managed_server_binary_path();
-    if managed_path.is_file() {
-        match read_server_binary_version(&managed_path) {
+    if unversioned.is_file() {
+        match read_server_binary_version(&unversioned) {
             Ok(Some(found)) if found != version => {},
-            Ok(_) | Err(_) => return Ok(managed_path),
+            Ok(_) | Err(_) => return Ok(unversioned),
         }
     }
 
@@ -351,7 +357,81 @@ fn install_server_payload_for_version(extracted_root: &Path, version: &str) -> R
         copy_file_with_executable_bit(&file, &target)?;
     }
 
+    publish_current_managed_server(&binary_path)?;
     Ok(binary_path)
+}
+
+/// Point `~/.kalam/bin/kalamdb-server` at the version just installed.
+///
+/// `kalam update` used to leave this unversioned file untouched, so `kalam up`
+/// and `PATH` kept launching the previous server.
+fn publish_current_managed_server(versioned_binary: &Path) -> Result<()> {
+    let current = managed_server_binary_path();
+    if paths_same_file(&current, versioned_binary) {
+        return Ok(());
+    }
+    if let Some(parent) = current.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to create managed server install dir '{}': {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    if current.symlink_metadata().is_ok() {
+        fs::remove_file(&current).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to replace managed server '{}': {error}",
+                current.display()
+            ))
+        })?;
+    }
+
+    link_current_managed_server(&current, versioned_binary)
+}
+
+fn link_current_managed_server(current: &Path, versioned_binary: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let version_dir =
+            versioned_binary.parent().and_then(|dir| dir.file_name()).ok_or_else(|| {
+                CLIError::FileError(format!(
+                    "managed server '{}' is missing a version directory",
+                    versioned_binary.display()
+                ))
+            })?;
+        let relative = PathBuf::from(version_dir).join(server_binary_name());
+        std::os::unix::fs::symlink(&relative, current).map_err(|error| {
+            CLIError::FileError(format!(
+                "failed to link managed server '{}' to '{}': {error}",
+                current.display(),
+                relative.display()
+            ))
+        })?;
+        return Ok(());
+    }
+    #[cfg(not(unix))]
+    {
+        copy_file_with_executable_bit(versioned_binary, current)
+    }
+}
+
+fn paths_same_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// `version path`, or just the path when the binary does not report a version.
+pub fn format_server_binary(path: &Path) -> String {
+    match read_server_binary_version(path) {
+        Ok(Some(version)) => format!("{version} {}", path.display()),
+        _ => path.display().to_string(),
+    }
 }
 
 fn collect_files_recursively(root: &Path) -> Result<Vec<PathBuf>> {
@@ -579,6 +659,44 @@ mod tests {
             ),
             Some("0.5.2-rc.1".to_string())
         );
+    }
+
+    #[test]
+    fn resolve_prefers_versioned_server_over_stale_binary_next_to_installed_cli() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let bin_dir = home.join(".kalam/bin");
+        let cli_bin = bin_dir.join("kalam");
+        let stale = bin_dir.join("kalamdb-server");
+        let versioned = bin_dir.join("0.7.1/kalamdb-server");
+        std::fs::create_dir_all(versioned.parent().unwrap()).unwrap();
+        std::fs::write(&cli_bin, "#!/bin/sh\n").unwrap();
+        std::fs::write(&stale, "#!/bin/sh\n").unwrap();
+        std::fs::write(&versioned, "#!/bin/sh\n").unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let original_userprofile = std::env::var_os("USERPROFILE");
+        let original_server_bin = std::env::var_os("KALAMDB_SERVER_BIN");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        std::env::remove_var("KALAMDB_SERVER_BIN");
+
+        let resolved = resolve_kalamdb_server_bin_from_version(Some(cli_bin), "0.7.1")
+            .expect("resolve versioned install");
+        assert_eq!(resolved, versioned);
+
+        match original_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match original_server_bin {
+            Some(value) => std::env::set_var("KALAMDB_SERVER_BIN", value),
+            None => std::env::remove_var("KALAMDB_SERVER_BIN"),
+        }
     }
 
     #[test]

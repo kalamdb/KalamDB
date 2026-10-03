@@ -1,7 +1,7 @@
 //! Offline API surface tests — no running server required.
 
 use kalam_client::{
-    AuthProvider, AutoOffsetReset, FileUpload, KalamCellValue, LiveRowsConfig, QueryParam, SeqId,
+    AuthProvider, AutoOffsetReset, FileUpload, KalamCellValue, LiveRowsConfig, QueryParam,
     SubscriptionConfig, SubscriptionOptions, TopicConsumer,
 };
 
@@ -18,11 +18,11 @@ fn subscription_options_builder_sets_fields() {
     let options = SubscriptionOptions::new()
         .with_batch_size(100)
         .with_last_rows(50)
-        .with_from(SeqId::from(42_i64));
+        .with_from(kalam_client::VersionId::from(42_i64));
 
     assert_eq!(options.batch_size, Some(100));
     assert_eq!(options.last_rows, Some(50));
-    assert_eq!(options.from, Some(SeqId::from(42_i64)));
+    assert_eq!(options.from, Some(kalam_client::VersionId::from(42_i64)));
 }
 
 #[test]

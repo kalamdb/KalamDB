@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    ids::SeqId,
+    ids::{VersionId, VersionDomain},
     models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId},
     schemas::{SchemaField, TableDefinition},
     websocket::SubscriptionRequest,
@@ -49,6 +49,16 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
+    fn validate_resume_domain(expected: Option<&VersionDomain>, supplied: Option<&VersionDomain>, resuming: bool) -> Result<(), LiveError> {
+        if (resuming && expected.is_some() && supplied != expected)
+            || (supplied.is_some() && supplied != expected) {
+            return Err(LiveError::InvalidOperation(
+                "stale resume cursor domain mismatch; resubscribe without a resume token".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_table_subscription_permission(
         user_role: Role,
         table_def: &TableDefinition,
@@ -271,6 +281,11 @@ impl LiveQueryManager {
             }
         }
 
+        let version_domain = table_def.shared_version_domain();
+        let supplied = request.options.as_ref().and_then(|options| options.version_domain.as_ref());
+        let resuming = initial_data_options.as_ref().is_some_and(|options| options.since_seq.is_some());
+        Self::validate_resume_domain(version_domain.as_ref(), supplied, resuming)?;
+
         // Determine batch size
         let batch_size = request
             .options
@@ -301,6 +316,14 @@ impl LiveQueryManager {
         // Extract column projections from SELECT clause (None = SELECT *, all columns)
         let projections = parsed_query.projections.clone();
 
+        let scope_user = match table_def.table_type {
+            kalamdb_commons::TableType::Shared => None,
+            _ => Some(user_id.clone()),
+        };
+        if initial_data_options.is_some() {
+            self.registry.replay().bind_domain(scope_user.as_ref(), &table_id, version_domain.as_ref());
+        }
+
         // Register the subscription
         let live_id = self
             .register_subscription(
@@ -323,10 +346,35 @@ impl LiveQueryManager {
         // system.live and the in-memory registry.
         let initial_data = if let Some(mut fetch_options) = initial_data_options {
             let fetch_result: Result<InitialDataResult, LiveError> = async {
-                // Compute snapshot boundary (MAX(_seq)) before initial load unless a
+                if let Some(from) = fetch_options.since_seq {
+                    match self.registry.replay().classify_cursor(
+                        scope_user.as_ref(),
+                        &table_id,
+                        from,
+                    ) {
+                        crate::replay_log::ResumeCursor::Replay => {
+                            return self.resume_from_replay(
+                                connection_state,
+                                request,
+                                &table_id,
+                                scope_user.as_ref(),
+                                from,
+                            );
+                        },
+                        crate::replay_log::ResumeCursor::Expired => {
+                            return Err(LiveError::InvalidOperation(
+                                "stale resume cursor expired; resubscribe without a resume token"
+                                    .into(),
+                            ));
+                        },
+                        crate::replay_log::ResumeCursor::Snapshot => {},
+                    }
+                }
+
+                // Compute snapshot boundary (MAX(_version)) before initial load unless a
                 // reconnect already supplied the original boundary.
-                let snapshot_seq = if let Some(snapshot_seq) = fetch_options.until_seq {
-                    snapshot_seq
+                let snapshot_version = if let Some(snapshot_version) = fetch_options.until_seq {
+                    Some(snapshot_version)
                 } else {
                     self.initial_data_fetcher
                         .compute_snapshot_end_seq(
@@ -338,31 +386,25 @@ impl LiveQueryManager {
                             where_clause.as_deref(),
                         )
                         .await?
-                        .unwrap_or_else(|| SeqId::from(0))
                 };
 
-                let snapshot_commit_seq = if fetch_options.until_commit_seq.is_some() {
-                    fetch_options.until_commit_seq
+                if let Some(snapshot_version) = snapshot_version {
+                    self.registry.replay().note_snapshot(
+                        scope_user.as_ref(),
+                        &table_id,
+                        snapshot_version,
+                    );
                 } else {
-                    self.initial_data_fetcher
-                        .compute_snapshot_end_commit_seq(
-                            &live_id,
-                            user_role,
-                            &table_id,
-                            table_def.table_type,
-                            &fetch_options,
-                            where_clause.as_deref(),
-                        )
-                        .await?
-                };
+                    self.registry.replay().note_empty(scope_user.as_ref(), &table_id);
+                }
 
-                fetch_options.until_seq = Some(snapshot_seq);
-                fetch_options.until_commit_seq = snapshot_commit_seq;
+                fetch_options.until_seq = snapshot_version;
+                fetch_options.until_commit_seq = None;
                 self.subscription_service.update_snapshot_boundaries(
                     connection_state,
                     &request.id,
-                    Some(snapshot_seq),
-                    snapshot_commit_seq,
+                    snapshot_version,
+                    None,
                 );
 
                 self.initial_data_fetcher
@@ -410,9 +452,53 @@ impl LiveQueryManager {
         let schema = Self::build_subscription_schema(&table_def, projections.as_deref());
 
         Ok(SubscriptionResult {
+            version_domain,
             live_id,
             initial_data,
             schema,
+        })
+    }
+
+    fn resume_from_replay(
+        &self,
+        connection_state: &SharedConnectionState,
+        request: &SubscriptionRequest,
+        table_id: &TableId,
+        scope_user: Option<&UserId>,
+        from: VersionId,
+    ) -> Result<InitialDataResult, LiveError> {
+        if !self.registry.replay().covers(scope_user, table_id, from) {
+            return Err(LiveError::InvalidOperation(
+                "stale resume cursor expired; resubscribe without a resume token".into(),
+            ));
+        }
+
+        self.subscription_service.update_snapshot_boundaries(
+            connection_state,
+            &request.id,
+            Some(from),
+            None,
+        );
+        let events = self
+            .registry
+            .replay()
+            .changes_after(scope_user, table_id, from)
+            .unwrap_or_default();
+        let handle = match scope_user {
+            Some(user_id) => self.registry.user_subscription_handle(user_id, table_id, &request.id),
+            None => self.registry.shared_subscription_handle(table_id, &request.id),
+        };
+        if let Some(handle) = handle {
+            crate::notification::deliver_resume_events(handle, &events);
+        }
+
+        Ok(InitialDataResult {
+            rows:                    Vec::new(),
+            last_seq:                Some(from),
+            last_commit_seq:         None,
+            has_more:                false,
+            snapshot_end_seq:        Some(from),
+            snapshot_end_commit_seq: None,
         })
     }
 
@@ -423,7 +509,7 @@ impl LiveQueryManager {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        since_seq: Option<SeqId>,
+        since_seq: Option<VersionId>,
     ) -> Result<InitialDataResult, LiveError> {
         // Get subscription state from connection
         let sub_state = connection_state.get_subscription(subscription_id).ok_or_else(|| {
@@ -563,6 +649,23 @@ mod tests {
         TableId::new(NamespaceId::from("shared"), TableName::from("events"))
     }
 
+    #[test]
+    fn shared_resume_rejects_missing_cross_table_cross_shard_and_old_history_domains() {
+        let expected = shared_table_def().shared_version_domain().unwrap();
+        assert!(LiveQueryManager::validate_resume_domain(Some(&expected), None, true).is_err());
+        assert!(LiveQueryManager::validate_resume_domain(Some(&expected), None, false).is_ok());
+        assert!(LiveQueryManager::validate_resume_domain(Some(&expected), Some(&expected), true).is_ok());
+        let mut wrong = vec![expected.clone(); 4];
+        wrong[0].table_id = TableId::new("other".into(), "events".into());
+        wrong[1].scope_id += 1;
+        wrong[2].history_incarnation = "old".into();
+        wrong[3].partition_id = Some(1);
+        for supplied in wrong {
+            assert!(LiveQueryManager::validate_resume_domain(Some(&expected), Some(&supplied), true).is_err());
+        }
+        assert!(LiveQueryManager::validate_resume_domain(None, Some(&expected), true).is_err());
+    }
+
     fn shared_table_def() -> TableDefinition {
         TableDefinition {
             namespace_id:   NamespaceId::from("shared"),
@@ -572,6 +675,8 @@ mod tests {
             schema_version: 1,
             next_column_id: 1,
             table_options:  TableOptions::Shared(SharedTableOptions {
+                shared_shard_id: 0,
+                history_incarnation: String::new(),
                 storage_id:   kalamdb_commons::StorageId::from("default"),
                 access_level: None,
                 flush_policy: None,

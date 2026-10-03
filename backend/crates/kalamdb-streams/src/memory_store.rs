@@ -71,14 +71,17 @@ impl MemoryStreamLogStore {
     }
 
     /// Append a delete record for a row.
+    ///
+    /// `timestamp_millis` must be the original record's `_timestamp`.
     pub fn append_delete(
         &self,
         table_id: &TableId,
         _user_id: &UserId,
         row_id: &StreamTableRowId,
+        timestamp_millis: i64,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let key = self.make_key(row_id);
+        let key = Self::make_key_with_timestamp(row_id, timestamp_millis);
         let mut state = self
             .state
             .write()
@@ -88,7 +91,8 @@ impl MemoryStreamLogStore {
             .insert(
                 key,
                 StreamLogRecord::Delete {
-                    row_id: row_id.clone(),
+                    row_id:    row_id.clone(),
+                    timestamp: timestamp_millis,
                 },
             )
             .is_none();
@@ -107,7 +111,7 @@ impl MemoryStreamLogStore {
         row: &StreamTableRow,
     ) -> Result<()> {
         self.ensure_table(table_id)?;
-        let key = self.make_key(row_id);
+        let key = Self::make_key_with_timestamp(row_id, row._timestamp);
         let user_id = row_id.user_id().clone();
         let mut state = self
             .state
@@ -148,7 +152,7 @@ impl MemoryStreamLogStore {
 
         for (row_id, row) in rows {
             let user_id = row_id.user_id().clone();
-            let key = self.make_key(row_id);
+            let key = Self::make_key_with_timestamp(row_id, row._timestamp);
             let was_new = state
                 .data
                 .insert(
@@ -249,18 +253,18 @@ impl MemoryStreamLogStore {
         Ok(())
     }
 
-    fn make_key(&self, row_id: &StreamTableRowId) -> RowKey {
+    fn make_key_with_timestamp(row_id: &StreamTableRowId, timestamp_millis: i64) -> RowKey {
         let user_id = row_id.user_id().as_str().to_string();
-        let ts = row_id.seq().timestamp_millis();
-        // Keep numeric sequence ordering inside the BTreeMap so oldest/newest
+        let ts = timestamp_millis.max(0) as u64;
+        // Keep numeric version ordering inside the BTreeMap so oldest/newest
         // iteration semantics remain correct when multiple rows share a timestamp.
-        let seq_bytes = row_id.seq().as_i64().to_be_bytes().to_vec();
-        (user_id, ts, seq_bytes)
+        let version_bytes = row_id.version().as_i64().to_be_bytes().to_vec();
+        (user_id, ts, version_bytes)
     }
 
-    fn seq_from_key(seq_bytes: &[u8]) -> i64 {
+    fn version_from_key(version_bytes: &[u8]) -> i64 {
         let mut buf = [0u8; 8];
-        buf.copy_from_slice(seq_bytes);
+        buf.copy_from_slice(version_bytes);
         i64::from_be_bytes(buf)
     }
 
@@ -332,8 +336,8 @@ impl MemoryStreamLogStore {
 
             match record {
                 StreamLogRecord::Put { row_id, row } => {
-                    let seq = Self::seq_from_key(seq_bytes);
-                    if deleted.contains(&seq) {
+                    let version = Self::version_from_key(seq_bytes);
+                    if deleted.contains(&version) {
                         continue;
                     }
                     results.push((row_id.clone(), row.clone()));
@@ -341,11 +345,11 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _ } => {
-                    let seq = Self::seq_from_key(seq_bytes);
-                    deleted.insert(seq);
+                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                    let version = Self::version_from_key(seq_bytes);
+                    deleted.insert(version);
                     // Remove from results if already added
-                    results.retain(|(existing_id, _)| existing_id.seq().as_i64() != seq);
+                    results.retain(|(existing_id, _)| existing_id.version().as_i64() != version);
                 },
             }
         }
@@ -374,8 +378,8 @@ impl MemoryStreamLogStore {
 
             match record {
                 StreamLogRecord::Put { row_id, row } => {
-                    let seq = Self::seq_from_key(seq_bytes);
-                    if deleted.contains(&seq) {
+                    let version = Self::version_from_key(seq_bytes);
+                    if deleted.contains(&version) {
                         continue;
                     }
                     results.push((row_id.clone(), row.clone()));
@@ -383,9 +387,9 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _ } => {
-                    let seq = Self::seq_from_key(seq_bytes);
-                    deleted.insert(seq);
+                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                    let version = Self::version_from_key(seq_bytes);
+                    deleted.insert(version);
                 },
             }
         }
@@ -441,18 +445,23 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{rows::Row, NamespaceId, TableName},
     };
 
     use super::*;
 
-    fn build_row(user_id: &UserId, seq: SeqId) -> StreamTableRow {
+    fn version(sequence: u64) -> VersionId {
+        VersionId::try_from_local_sequence(sequence).expect("local version")
+    }
+
+    fn build_row(user_id: &UserId, version: VersionId, timestamp: i64) -> StreamTableRow {
         let values: BTreeMap<String, ScalarValue> = BTreeMap::new();
         StreamTableRow {
-            user_id: user_id.clone(),
-            _seq:    seq,
-            fields:  Row::new(values),
+            user_id:    user_id.clone(),
+            _version:   version,
+            _timestamp: timestamp,
+            fields:     Row::new(values),
         }
     }
 
@@ -467,14 +476,14 @@ mod tests {
         let table_id = store.table_id().clone();
         let user_id = UserId::new("user-1");
 
-        let seq1 = SeqId::new(1000);
-        let seq2 = SeqId::new(2000);
-        let row_id1 = StreamTableRowId::new(user_id.clone(), seq1);
-        let row_id2 = StreamTableRowId::new(user_id.clone(), seq2);
+        let v1 = version(1);
+        let v2 = version(2);
+        let row_id1 = StreamTableRowId::new(user_id.clone(), v1);
+        let row_id2 = StreamTableRowId::new(user_id.clone(), v2);
 
         let mut rows = HashMap::new();
-        rows.insert(row_id1.clone(), build_row(&user_id, seq1));
-        rows.insert(row_id2.clone(), build_row(&user_id, seq2));
+        rows.insert(row_id1.clone(), build_row(&user_id, v1, 1_000));
+        rows.insert(row_id2.clone(), build_row(&user_id, v2, 2_000));
 
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
@@ -488,17 +497,16 @@ mod tests {
         let table_id = store.table_id().clone();
         let user_id = UserId::new("user-1");
 
-        let seq = SeqId::new(1000);
-        let row_id = StreamTableRowId::new(user_id.clone(), seq);
+        let v = version(1);
+        let row_id = StreamTableRowId::new(user_id.clone(), v);
+        let timestamp = 1_000i64;
 
         let mut rows = HashMap::new();
-        rows.insert(row_id.clone(), build_row(&user_id, seq));
+        rows.insert(row_id.clone(), build_row(&user_id, v, timestamp));
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
-        // Delete the row
-        store.append_delete(&table_id, &user_id, &row_id).unwrap();
+        store.append_delete(&table_id, &user_id, &row_id, timestamp).unwrap();
 
-        // Should not find the deleted row
         let result = store.read_with_limit(&table_id, &user_id, 10).unwrap();
         assert!(result.is_empty());
     }
@@ -509,22 +517,20 @@ mod tests {
         let table_id = store.table_id().clone();
         let user_id = UserId::new("user-1");
 
-        // Create rows with different timestamps
-        let seq1 = SeqId::new(100); // ts ~0
-        let seq2 = SeqId::new(1000000); // ts ~238
-        let seq3 = SeqId::new(5000000); // ts ~1192
+        let v1 = version(1);
+        let v2 = version(2);
+        let v3 = version(3);
 
-        let row_id1 = StreamTableRowId::new(user_id.clone(), seq1);
-        let row_id2 = StreamTableRowId::new(user_id.clone(), seq2);
-        let row_id3 = StreamTableRowId::new(user_id.clone(), seq3);
+        let row_id1 = StreamTableRowId::new(user_id.clone(), v1);
+        let row_id2 = StreamTableRowId::new(user_id.clone(), v2);
+        let row_id3 = StreamTableRowId::new(user_id.clone(), v3);
 
         let mut rows = HashMap::new();
-        rows.insert(row_id1.clone(), build_row(&user_id, seq1));
-        rows.insert(row_id2.clone(), build_row(&user_id, seq2));
-        rows.insert(row_id3.clone(), build_row(&user_id, seq3));
+        rows.insert(row_id1.clone(), build_row(&user_id, v1, 100));
+        rows.insert(row_id2.clone(), build_row(&user_id, v2, 1_000_000));
+        rows.insert(row_id3.clone(), build_row(&user_id, v3, 5_000_000));
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
-        // Read all
         let result = store.read_in_time_range(&table_id, &user_id, 0, u64::MAX, 100).unwrap();
         assert_eq!(result.len(), 3);
     }
@@ -536,31 +542,27 @@ mod tests {
         let user_id = UserId::new("user-1");
 
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
-        let old_ts = now_ms.saturating_sub(3 * 60 * 60 * 1000); // 3 hours ago
-        let new_ts = now_ms.saturating_sub(10 * 60 * 1000); // 10 mins ago
+        let old_ts = now_ms.saturating_sub(3 * 60 * 60 * 1000);
+        let new_ts = now_ms.saturating_sub(10 * 60 * 1000);
 
-        // We need to create SeqIds that encode these timestamps
-        // SeqId timestamp is extracted as (id >> 22) + EPOCH, so we need id = (ts - EPOCH) << 22
-        let old_seq = SeqId::new((((old_ts.saturating_sub(SeqId::EPOCH)) as i64) << 22) | 1);
-        let new_seq = SeqId::new((((new_ts.saturating_sub(SeqId::EPOCH)) as i64) << 22) | 1);
+        let old_version = version(1);
+        let new_version = version(2);
 
-        let old_row_id = StreamTableRowId::new(user_id.clone(), old_seq);
-        let new_row_id = StreamTableRowId::new(user_id.clone(), new_seq);
+        let old_row_id = StreamTableRowId::new(user_id.clone(), old_version);
+        let new_row_id = StreamTableRowId::new(user_id.clone(), new_version);
 
         let mut rows = HashMap::new();
-        rows.insert(old_row_id.clone(), build_row(&user_id, old_seq));
-        rows.insert(new_row_id.clone(), build_row(&user_id, new_seq));
+        rows.insert(old_row_id.clone(), build_row(&user_id, old_version, old_ts as i64));
+        rows.insert(new_row_id.clone(), build_row(&user_id, new_version, new_ts as i64));
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
         assert_eq!(store.len().unwrap(), 2);
         assert!(store.has_logs_before(now_ms.saturating_sub(60 * 60 * 1000)).unwrap());
 
-        // Delete logs older than 1 hour
         let deleted =
             store.delete_old_logs_with_count(now_ms.saturating_sub(60 * 60 * 1000)).unwrap();
         assert!(deleted >= 1);
 
-        // Should have only the new row left
         assert_eq!(store.len().unwrap(), 1);
     }
 
@@ -572,14 +574,14 @@ mod tests {
         let user1 = UserId::new("user-1");
         let user2 = UserId::new("user-2");
 
-        let seq = SeqId::new(1000);
+        let v = version(1);
 
         let mut rows1 = HashMap::new();
-        rows1.insert(StreamTableRowId::new(user1.clone(), seq), build_row(&user1, seq));
+        rows1.insert(StreamTableRowId::new(user1.clone(), v), build_row(&user1, v, 1_000));
         store.append_rows(&table_id, &user1, rows1).unwrap();
 
         let mut rows2 = HashMap::new();
-        rows2.insert(StreamTableRowId::new(user2.clone(), seq), build_row(&user2, seq));
+        rows2.insert(StreamTableRowId::new(user2.clone(), v), build_row(&user2, v, 1_000));
         store.append_rows(&table_id, &user2, rows2).unwrap();
 
         let users = store.list_user_ids().unwrap();
@@ -592,11 +594,11 @@ mod tests {
         let table_id = store.table_id().clone();
         let user_id = UserId::new("user-1");
 
-        let seq = SeqId::new(1000);
-        let row_id = StreamTableRowId::new(user_id.clone(), seq);
+        let v = version(1);
+        let row_id = StreamTableRowId::new(user_id.clone(), v);
 
         let mut rows = HashMap::new();
-        rows.insert(row_id, build_row(&user_id, seq));
+        rows.insert(row_id, build_row(&user_id, v, 1_000));
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
         assert!(!store.is_empty().unwrap());
@@ -612,18 +614,18 @@ mod tests {
         let store = MemoryStreamLogStore::with_table_id_and_limit(table_id.clone(), 2);
         let user_id = UserId::new("user-1");
 
-        let seq1 = SeqId::new(1000);
-        let seq2 = SeqId::new(2000);
-        let seq3 = SeqId::new(3000);
+        let v1 = version(1);
+        let v2 = version(2);
+        let v3 = version(3);
 
-        let row_id1 = StreamTableRowId::new(user_id.clone(), seq1);
-        let row_id2 = StreamTableRowId::new(user_id.clone(), seq2);
-        let row_id3 = StreamTableRowId::new(user_id.clone(), seq3);
+        let row_id1 = StreamTableRowId::new(user_id.clone(), v1);
+        let row_id2 = StreamTableRowId::new(user_id.clone(), v2);
+        let row_id3 = StreamTableRowId::new(user_id.clone(), v3);
 
         let mut rows = HashMap::new();
-        rows.insert(row_id1.clone(), build_row(&user_id, seq1));
-        rows.insert(row_id2.clone(), build_row(&user_id, seq2));
-        rows.insert(row_id3.clone(), build_row(&user_id, seq3));
+        rows.insert(row_id1.clone(), build_row(&user_id, v1, 1_000));
+        rows.insert(row_id2.clone(), build_row(&user_id, v2, 2_000));
+        rows.insert(row_id3.clone(), build_row(&user_id, v3, 3_000));
 
         store.append_rows(&table_id, &user_id, rows).unwrap();
 
@@ -644,23 +646,23 @@ mod tests {
 
         let mut user1_rows = HashMap::new();
         user1_rows.insert(
-            StreamTableRowId::new(user1.clone(), SeqId::new(1000)),
-            build_row(&user1, SeqId::new(1000)),
+            StreamTableRowId::new(user1.clone(), version(1)),
+            build_row(&user1, version(1), 1_000),
         );
         user1_rows.insert(
-            StreamTableRowId::new(user1.clone(), SeqId::new(2000)),
-            build_row(&user1, SeqId::new(2000)),
+            StreamTableRowId::new(user1.clone(), version(2)),
+            build_row(&user1, version(2), 2_000),
         );
         user1_rows.insert(
-            StreamTableRowId::new(user1.clone(), SeqId::new(3000)),
-            build_row(&user1, SeqId::new(3000)),
+            StreamTableRowId::new(user1.clone(), version(3)),
+            build_row(&user1, version(3), 3_000),
         );
         store.append_rows(&table_id, &user1, user1_rows).unwrap();
 
         let mut user2_rows = HashMap::new();
         user2_rows.insert(
-            StreamTableRowId::new(user2.clone(), SeqId::new(4000)),
-            build_row(&user2, SeqId::new(4000)),
+            StreamTableRowId::new(user2.clone(), version(4)),
+            build_row(&user2, version(4), 4_000),
         );
         store.append_rows(&table_id, &user2, user2_rows).unwrap();
 

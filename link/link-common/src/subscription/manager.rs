@@ -14,7 +14,7 @@ use crate::{
     seq_tracking,
     subscription::{buffer_event, event_progress, SubscriptionAckMode},
     timeouts::KalamLinkTimeouts,
-    SeqId,
+    VersionId,
 };
 
 /// Manages WebSocket subscriptions for real-time change notifications.
@@ -53,9 +53,9 @@ pub struct SubscriptionManager {
     /// Whether initial data is still loading.
     is_loading:       bool,
     /// Original `from` cursor used to open this subscription, if any.
-    resume_from:      Option<SeqId>,
+    resume_from:      Option<VersionId>,
     /// Highest progress delivered to the consumer, acknowledged or not.
-    delivered_seq_id: Option<SeqId>,
+    delivered_seq_id: Option<crate::VersionId>,
     ack_mode:         SubscriptionAckMode,
     timeouts:         KalamLinkTimeouts,
     closed:           bool,
@@ -70,7 +70,7 @@ impl SubscriptionManager {
         event_rx: mpsc::Receiver<Result<ChangeEvent>>,
         shared_control: SharedSubscriptionControl,
         generation: u64,
-        resume_from: Option<SeqId>,
+        resume_from: Option<VersionId>,
         ack_mode: SubscriptionAckMode,
         timeouts: &KalamLinkTimeouts,
     ) -> Self {
@@ -164,7 +164,7 @@ impl SubscriptionManager {
     }
 
     /// Advance explicit subscription progress after durable consumer work commits.
-    pub async fn acknowledge(&mut self, seq_id: SeqId) -> Result<()> {
+    pub async fn acknowledge(&mut self, seq_id: VersionId) -> Result<()> {
         if self.ack_mode != SubscriptionAckMode::Explicit {
             return Err(crate::error::KalamLinkError::ConfigurationError(
                 "explicit acknowledgement is not enabled for this subscription".to_string(),
@@ -304,14 +304,15 @@ mod tests {
             rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
-                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));
                 row
             }],
             batch_control:   crate::models::BatchControl {
-                batch_num:   0,
-                has_more:    true,
-                status:      crate::models::BatchStatus::Loading,
-                last_seq_id: Some(SeqId::from_i64(10)),
+                version_domain: None,
+                batch_num:      0,
+                has_more:       true,
+                status:         crate::models::BatchStatus::Loading,
+                last_seq_id:    Some(VersionId::from(10)),
             },
         };
 
@@ -321,7 +322,7 @@ mod tests {
             rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("seed"));
-                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));
                 row
             }],
         });
@@ -339,7 +340,7 @@ mod tests {
             rows:            vec![{
                 let mut row = std::collections::HashMap::new();
                 row.insert("id".to_string(), crate::models::KalamCellValue::text("one"));
-                row.insert("_seq".to_string(), crate::models::KalamCellValue::text("10"));
+                row.insert("_version".to_string(), crate::models::KalamCellValue::text("10"));
                 row
             }],
         });
@@ -348,8 +349,8 @@ mod tests {
         assert!(matches!(event, ChangeEvent::Insert { .. }));
         assert_eq!(sub.resume_from, None, "delivery must not acknowledge progress");
 
-        sub.acknowledge(SeqId::from_i64(10)).await.expect("acknowledge");
-        assert_eq!(sub.resume_from, Some(SeqId::from_i64(10)));
+        sub.acknowledge(VersionId::from(10)).await.expect("acknowledge");
+        assert_eq!(sub.resume_from, Some(VersionId::from(10)));
     }
 
     #[tokio::test]
@@ -358,7 +359,7 @@ mod tests {
         sub.ack_mode = SubscriptionAckMode::Explicit;
 
         let error = sub
-            .acknowledge(SeqId::from_i64(11))
+            .acknowledge(VersionId::from(11))
             .await
             .expect_err("undelivered sequence must fail");
 

@@ -7,7 +7,7 @@
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::SeqId,
+    ids::VersionId,
     models::{TableId, TransactionId, UserId},
     websocket::ChangeNotification,
 };
@@ -48,7 +48,7 @@ pub struct FanoutDispatchPlan {
     pub change_count:         usize,
     pub projection_groups:    usize,
     pub serialization_groups: usize,
-    pub seq_upper_bound:      Option<SeqId>,
+    pub seq_upper_bound:      Option<VersionId>,
     pub notifications:        Vec<ChangeNotification>,
 }
 
@@ -77,13 +77,14 @@ impl FanoutDispatchPlan {
     }
 
     fn observe_notification_seq(&mut self, notification: &ChangeNotification) {
-        let seq_value = notification.row_data.values.get(SystemColumnNames::SEQ).and_then(
-            |value| match value {
-                ScalarValue::Int64(Some(seq)) => Some(SeqId::from(*seq)),
-                ScalarValue::UInt64(Some(seq)) => Some(SeqId::from(*seq as i64)),
-                _ => None,
-            },
-        );
+        let seq_value =
+            notification.row_data.values.get(SystemColumnNames::VERSION).and_then(|value| {
+                match value {
+                    ScalarValue::Int64(Some(seq)) => VersionId::try_from_i64(*seq).ok(),
+                    ScalarValue::UInt64(Some(seq)) => VersionId::try_from_i64(*seq as i64).ok(),
+                    _ => None,
+                }
+            });
 
         if let Some(seq_value) = seq_value {
             match self.seq_upper_bound {

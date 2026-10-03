@@ -17,6 +17,7 @@ use datafusion::{
 };
 use futures_util::TryStreamExt;
 use kalamdb_commons::{
+    constants::SystemColumnNames,
     conversions::arrow_json_conversion::json_rows_to_arrow_batch,
     models::{rows::Row, UserId},
     try_pk_bucket_key, try_pk_bucket_key_from_typed_string, PkBucketKey, TableId,
@@ -321,7 +322,7 @@ fn finalize_overlay_rows(
             }
         } else {
             row_index_by_pk.insert(pk_key, rows.len());
-            rows.push(Some(entry.payload.clone()));
+            rows.push(Some(overlay_payload_without_invented_version(&entry.payload)));
         }
     }
 
@@ -369,8 +370,17 @@ fn extract_primary_key(row: &Row, primary_key_column: &str) -> DataFusionResult<
 
 fn merge_row(base: &mut Row, overlay: &Row) {
     for (column_name, value) in &overlay.values {
+        if column_name == SystemColumnNames::VERSION {
+            continue;
+        }
         base.values.insert(column_name.clone(), value.clone());
     }
+}
+
+fn overlay_payload_without_invented_version(payload: &Row) -> Row {
+    let mut row = payload.clone();
+    row.values.remove(SystemColumnNames::VERSION);
+    row
 }
 
 #[cfg(test)]
@@ -470,6 +480,85 @@ mod tests {
         assert_eq!(
             rows[1].values.get("name"),
             Some(&ScalarValue::Utf8(Some("inserted".to_string())))
+        );
+    }
+
+    #[test]
+    fn overlay_update_keeps_base_version_and_insert_omits_invented_version() {
+        use kalamdb_commons::constants::SystemColumnNames;
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, true),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let base_version = 42_i64;
+        let base_batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(Int64Array::from(vec![Some(base_version)])),
+                Arc::new(StringArray::from(vec![Some("before")])),
+            ],
+        )
+        .expect("base batch");
+
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let mut overlay = TransactionOverlay::new(transaction_id.clone());
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id: transaction_id.clone(),
+            mutation_order: 0,
+            table_id:       table_id.clone(),
+            table_type:     TableType::Shared,
+            user_id:        None,
+            operation_kind: OperationKind::Update,
+            primary_key:    "1".to_string(),
+            payload:        row(&[
+                ("name", ScalarValue::Utf8(Some("after".to_string()))),
+                (SystemColumnNames::VERSION, ScalarValue::Int64(Some(99))),
+            ]),
+            tombstone:      false,
+        });
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id,
+            mutation_order: 1,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
+            operation_kind: OperationKind::Insert,
+            primary_key: "2".to_string(),
+            payload: row(&[
+                ("id", ScalarValue::Int64(Some(2))),
+                ("name", ScalarValue::Utf8(Some("inserted".to_string()))),
+                (SystemColumnNames::VERSION, ScalarValue::Int64(Some(7))),
+            ]),
+            tombstone: false,
+        });
+
+        let merged = merge_batches_with_overlay(
+            &schema,
+            &table_id,
+            "id",
+            &overlay,
+            None,
+            &[base_batch],
+            None,
+            None,
+        )
+        .expect("merged batch");
+        let rows = record_batch_to_rows(&merged).expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].values.get(SystemColumnNames::VERSION),
+            Some(&ScalarValue::Int64(Some(base_version)))
+        );
+        assert!(
+            rows[1].values.get(SystemColumnNames::VERSION).is_none()
+                || matches!(
+                    rows[1].values.get(SystemColumnNames::VERSION),
+                    Some(ScalarValue::Int64(None) | ScalarValue::Null)
+                )
         );
     }
 

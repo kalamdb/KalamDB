@@ -9,14 +9,14 @@
 
 use std::collections::HashMap;
 
-use kalam_client::{ConnectionOptions, SeqId, SubscriptionOptions};
+use kalam_client::{ConnectionOptions, SubscriptionOptions, VersionId};
 
 /// Simulates the subscription state tracking done by the WASM client
 #[allow(dead_code)]
 struct MockSubscriptionState {
     sql:         String,
     options:     SubscriptionOptions,
-    last_seq_id: Option<SeqId>,
+    last_seq_id: Option<VersionId>,
 }
 
 /// Test that we can track and resume from last seq_id
@@ -33,12 +33,12 @@ fn test_seq_id_tracking_for_resume() {
     assert!(state.last_seq_id.is_none());
 
     // Simulate receiving events and tracking seq_id
-    state.last_seq_id = Some(SeqId::from(1000i64));
-    assert_eq!(state.last_seq_id, Some(SeqId::from(1000i64)));
+    state.last_seq_id = Some(VersionId::from(1000i64));
+    assert_eq!(state.last_seq_id, Some(VersionId::from(1000i64)));
 
     // More events...
-    state.last_seq_id = Some(SeqId::from(2000i64));
-    assert_eq!(state.last_seq_id, Some(SeqId::from(2000i64)));
+    state.last_seq_id = Some(VersionId::from(2000i64));
+    assert_eq!(state.last_seq_id, Some(VersionId::from(2000i64)));
 
     // On reconnection, we should resume from this seq_id
     let reconnect_options = if let Some(seq_id) = state.last_seq_id {
@@ -48,7 +48,7 @@ fn test_seq_id_tracking_for_resume() {
     };
 
     assert!(reconnect_options.has_resume_seq_id());
-    assert_eq!(reconnect_options.from, Some(SeqId::from(2000i64)));
+    assert_eq!(reconnect_options.from, Some(VersionId::from(2000i64)));
 }
 
 /// Test multiple subscription tracking (like in the WASM client)
@@ -77,12 +77,12 @@ fn test_multiple_subscriptions_seq_id_tracking() {
 
     // Receive events for sub-1
     if let Some(state) = subscriptions.get_mut("sub-1") {
-        state.last_seq_id = Some(SeqId::from(5000i64));
+        state.last_seq_id = Some(VersionId::from(5000i64));
     }
 
     // Receive events for sub-2
     if let Some(state) = subscriptions.get_mut("sub-2") {
-        state.last_seq_id = Some(SeqId::from(3000i64));
+        state.last_seq_id = Some(VersionId::from(3000i64));
     }
 
     // On reconnection, each subscription resumes from its own seq_id
@@ -91,9 +91,9 @@ fn test_multiple_subscriptions_seq_id_tracking() {
             let reconnect_opts = state.options.clone().with_from_seq_id(seq_id);
 
             if id == "sub-1" {
-                assert_eq!(reconnect_opts.from, Some(SeqId::from(5000i64)));
+                assert_eq!(reconnect_opts.from, Some(VersionId::from(5000i64)));
             } else if id == "sub-2" {
-                assert_eq!(reconnect_opts.from, Some(SeqId::from(3000i64)));
+                assert_eq!(reconnect_opts.from, Some(VersionId::from(3000i64)));
             }
         }
     }
@@ -164,12 +164,12 @@ fn test_full_reconnection_workflow() {
     let sub_opts = SubscriptionOptions::new().with_batch_size(100);
 
     // Track subscription state
-    let mut last_seq_id: Option<SeqId> = None;
+    let mut last_seq_id: Option<VersionId> = None;
     let mut reconnect_attempt = 0u32;
     let mut is_reconnecting = false;
 
     // Simulate: connection established, receiving events
-    last_seq_id = Some(SeqId::from(12345i64));
+    last_seq_id = Some(VersionId::from(12345i64));
 
     // Simulate: connection lost
     is_reconnecting = true;
@@ -200,7 +200,7 @@ fn test_full_reconnection_workflow() {
             };
 
             assert!(reconnect_sub_opts.has_resume_seq_id());
-            assert_eq!(reconnect_sub_opts.from, Some(SeqId::from(12345i64)));
+            assert_eq!(reconnect_sub_opts.from, Some(VersionId::from(12345i64)));
         }
 
         // Verify delay calculation

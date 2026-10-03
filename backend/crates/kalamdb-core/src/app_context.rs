@@ -16,7 +16,7 @@ use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
     models::{NamespaceId, TransactionOrigin, UserId},
-    NodeId,
+    NodeId, TableId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_filestore::{StorageCached, StorageRegistry};
@@ -39,6 +39,7 @@ use once_cell::sync::OnceCell;
 
 use crate::{
     applier::UnifiedApplier,
+    error::KalamDbError,
     job_waker::JobWaker,
     live_adapters::SchemaRegistryLookup,
     metrics::runtime::collect_runtime_metrics,
@@ -1255,30 +1256,32 @@ impl AppContext {
             .map(|node| node.api_addr.clone())
     }
 
-    /// Check if this node is the leader for shared data
-    ///
-    /// Shared tables are stored in a dedicated shard (currently shard 0).
-    /// This method checks if the current node is the leader for that shard.
-    ///
-    /// In standalone mode (single-node), this always returns `true`.
-    pub async fn is_leader_for_shared(&self) -> bool {
-        if !self.is_cluster_mode() {
-            return true;
-        }
-        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
-        let group_id = router.shared_group_id();
+    /// Resolve persisted ownership from the schema cache. Never hash existing tables.
+    pub fn shared_group_id(&self, table_id: &TableId) -> Result<GroupId, KalamDbError> {
+        let cached = self.schema_registry().get(table_id).ok_or_else(|| {
+            KalamDbError::InvalidOperation(format!("Unknown shared table '{}'", table_id))
+        })?;
+        ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref())
+            .shared_group_id(&cached.table)
+            .map_err(KalamDbError::InvalidOperation)
+    }
+
+    pub async fn is_leader_for_shared(&self, table_id: &TableId) -> bool {
+        let Ok(group_id) = self.shared_group_id(table_id) else {
+            return false;
+        };
         self.executor.is_leader(group_id).await
     }
 
-    /// Get the API address of the current leader for shared data
-    ///
-    /// Returns `None` if the leader is unknown or address not available.
-    pub async fn leader_addr_for_shared(&self) -> Option<String> {
-        let router = ShardRouter::from_optional_cluster_config(self.config.cluster.as_ref());
-        let group_id = router.shared_group_id();
+    pub async fn leader_addr_for_shared(&self, table_id: &TableId) -> Option<String> {
+        let group_id = self.shared_group_id(table_id).ok()?;
+        self.leader_addr_for_group(group_id).await
+    }
+
+    pub async fn leader_addr_for_group(&self, group_id: GroupId) -> Option<String> {
         let leader_node_id = self.executor.get_leader(group_id).await?;
-        let cluster_info = self.executor.get_cluster_info();
-        cluster_info
+        self.executor
+            .get_cluster_info()
             .nodes
             .iter()
             .find(|node| node.node_id == leader_node_id)
@@ -1331,7 +1334,7 @@ impl AppContext {
     /// Get the system columns service (Phase 12, US5, T027)
     ///
     /// Returns an Arc reference to the SystemColumnsService that manages
-    /// all system column operations (_seq, _deleted).
+    /// all system column operations (_version, _deleted).
     pub fn system_columns_service(&self) -> Arc<crate::schema_registry::SystemColumnsService> {
         self.system_columns_service.clone()
     }
@@ -1521,15 +1524,68 @@ impl ClusterCoordinator for AppContext {
         self.is_leader_for_user(user_id).await
     }
 
-    async fn is_leader_for_shared(&self) -> bool {
-        self.is_leader_for_shared().await
+    async fn is_leader_for_shared(&self, table_id: &TableId) -> bool {
+        self.is_leader_for_shared(table_id).await
     }
 
     async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String> {
         self.leader_addr_for_user(user_id).await
     }
 
-    async fn leader_addr_for_shared(&self) -> Option<String> {
-        self.leader_addr_for_shared().await
+    async fn leader_addr_for_shared(&self, table_id: &TableId) -> Option<String> {
+        self.leader_addr_for_shared(table_id).await
+    }
+
+    fn replicates_shared_writes(&self) -> bool {
+        // Unstarted Raft (unit-test contexts) keeps the local provider path.
+        // After `RaftManager::start`, autocommit SHARED DML proposes to the owner group.
+        let executor = self.executor();
+        executor
+            .as_any()
+            .downcast_ref::<kalamdb_raft::RaftExecutor>()
+            .is_some_and(|raft| raft.manager().is_started())
+    }
+
+    async fn propose_shared_insert(
+        &self,
+        table_id: &TableId,
+        actor_user_id: &UserId,
+        rows: Vec<kalamdb_commons::models::rows::Row>,
+    ) -> Result<usize, String> {
+        let response = self
+            .applier()
+            .insert_shared_data(table_id.clone(), Some(actor_user_id.clone()), rows)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(response.rows_affected())
+    }
+
+    async fn propose_shared_update(
+        &self,
+        table_id: &TableId,
+        actor_user_id: &UserId,
+        pk_values: Vec<String>,
+        updates: Vec<kalamdb_commons::models::rows::Row>,
+    ) -> Result<usize, String> {
+        let response = self
+            .applier()
+            .update_shared_rows(table_id.clone(), Some(actor_user_id.clone()), pk_values, updates)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(response.rows_affected())
+    }
+
+    async fn propose_shared_delete(
+        &self,
+        table_id: &TableId,
+        actor_user_id: &UserId,
+        pk_values: Vec<String>,
+    ) -> Result<usize, String> {
+        let response = self
+            .applier()
+            .delete_shared_data(table_id.clone(), Some(actor_user_id.clone()), Some(pk_values))
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(response.rows_affected())
     }
 }

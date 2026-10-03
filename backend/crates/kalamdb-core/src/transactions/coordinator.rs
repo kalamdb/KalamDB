@@ -73,14 +73,12 @@ impl TransactionCoordinator {
         origin: TransactionOrigin,
     ) -> Result<TransactionId, KalamDbError> {
         let transaction_id = TransactionId::new(Uuid::now_v7().to_string());
-        let snapshot_commit_seq = self.commit_sequence_tracker.current_committed();
         let handle = TransactionHandle::new(
             transaction_id.clone(),
             owner_key,
             Arc::clone(&owner_id),
             origin,
             self.initial_raft_binding(),
-            snapshot_commit_seq,
             Instant::now(),
         );
 
@@ -372,8 +370,6 @@ impl TransactionCoordinator {
         let (notifications_sent, manifest_updates, publisher_events) =
             response.committed_side_effect_counts().unwrap_or((0, 0, 0));
 
-        self.commit_sequence_tracker.observe_committed(committed_commit_seq);
-
         self.active_by_owner.remove(&owner_key);
 
         let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
@@ -382,6 +378,9 @@ impl TransactionCoordinator {
                 transaction_id
             )));
         };
+        if let TransactionRaftBinding::BoundCluster { group_id, .. } = sealed_handle.raft_binding {
+            self.commit_sequence_tracker.observe_committed(group_id, committed_commit_seq);
+        }
         sealed_handle.mark_state(TransactionState::Committed);
         crate::functions::flush_staged_publishes(self.app_context.as_ref(), transaction_id)?;
 
@@ -517,6 +516,10 @@ impl TransactionCoordinator {
 
         match result {
             Ok(()) => {
+                if let Some(group_id) = self.resolve_group_id(table_id, table_type, user_id)? {
+                    self.commit_sequence_tracker
+                        .pin_snapshot(group_id, handle.snapshot_log_index.as_ref());
+                }
                 handle.touch();
                 Ok(())
             },
@@ -545,7 +548,7 @@ impl TransactionCoordinator {
                     write_count:          handle.write_count,
                     write_bytes:          handle.write_bytes,
                     touched_tables_count: handle.touched_tables.len(),
-                    snapshot_commit_seq:  handle.snapshot_commit_seq,
+                    snapshot_commit_seq:  handle.snapshot_commit_seq().unwrap_or(0),
                     origin:               handle.origin,
                 })
             })
@@ -693,10 +696,6 @@ impl TransactionCoordinator {
         table_type: TableType,
         user_id: Option<&UserId>,
     ) -> Result<Option<GroupId>, KalamDbError> {
-        if !self.app_context.is_cluster_mode() {
-            return Ok(None);
-        }
-
         let router =
             ShardRouter::from_optional_cluster_config(self.app_context.config().cluster.as_ref());
         let group_id = match table_type {
@@ -706,7 +705,7 @@ impl TransactionCoordinator {
                     table_id
                 ))
             })?),
-            TableType::Shared => router.shared_group_id(),
+            TableType::Shared => self.app_context.shared_group_id(table_id)?,
             TableType::Stream => {
                 return Err(KalamDbError::InvalidOperation(
                     "stream tables are not supported inside explicit transactions".to_string(),

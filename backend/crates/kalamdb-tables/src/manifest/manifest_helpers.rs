@@ -5,7 +5,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::SeqId,
+    ids::VersionId,
     models::{schemas::TableType, UserId},
 };
 
@@ -77,13 +77,13 @@ pub async fn load_row_from_parquet_by_seq<T, F>(
     table_type: TableType,
     schema: &SchemaRef,
     user_id: Option<&UserId>,
-    seq_id: SeqId,
+    seq_id: VersionId,
     build_row: F,
 ) -> Result<Option<T>, KalamDbError>
 where
     F: FnOnce(ParquetRowData) -> T,
 {
-    let filter: Expr = col(SystemColumnNames::SEQ).eq(lit(seq_id.as_i64()));
+    let filter: Expr = col(SystemColumnNames::VERSION).eq(lit(seq_id.as_i64()));
     let batch = scan_parquet_files_as_batch_async(
         core,
         core.table_id(),
@@ -97,7 +97,7 @@ where
     let rows = parquet_batch_to_rows(&batch)?;
 
     for row_data in rows.into_iter() {
-        if row_data.seq_id == seq_id {
+        if row_data.version == seq_id {
             return Ok(Some(build_row(row_data)));
         }
     }

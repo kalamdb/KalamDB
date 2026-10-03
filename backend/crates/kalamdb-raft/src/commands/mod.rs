@@ -20,7 +20,7 @@ mod user_data;
 
 // Unified Meta commands
 // Data commands (split into separate files for better organization)
-pub use data_response::{commit_seq_from_log_position, DataResponse, TransactionApplyResult};
+pub use data_response::{assign_entry_versions, DataResponse, TransactionApplyResult};
 pub use meta::{MetaCommand, MetaResponse};
 pub use schedule_update::ScheduleUpdate;
 pub use shared_data::SharedDataCommand;
@@ -40,8 +40,10 @@ pub enum RaftCommand {
     SharedData(SharedDataCommand),
     /// Atomically replay an explicit transaction inside a single data group.
     TransactionCommit {
-        transaction_id: TransactionId,
-        mutations:      Vec<StagedMutation>,
+        #[serde(default)]
+        required_meta_index: u64,
+        transaction_id:      TransactionId,
+        mutations:           Vec<StagedMutation>,
     },
 }
 

@@ -17,7 +17,7 @@ pub mod websocket;
 
 // Re-export the shared connection type for crate-internal use.
 #[cfg(feature = "tokio-runtime")]
-pub(crate) use shared::{SharedConnection, SharedSubscriptionControl};
+pub(crate) use shared::{SharedConnection, SharedResumeCache, SharedSubscriptionControl};
 #[cfg(feature = "tokio-runtime")]
 pub(crate) use websocket::{
     apply_ws_auth_headers, authenticate_ws, connect_with_optional_local_bind, decode_ws_payload,

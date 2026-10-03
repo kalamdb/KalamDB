@@ -58,11 +58,11 @@ describe('kTable', () => {
     const columns = getTableColumns(messages);
     const config = getKalamTableConfig(messages);
 
-    assert.ok(columns._seq);
+    assert.ok(columns._version);
     assert.ok(columns._deleted);
-    assert.equal(columns._seq.name, '_seq');
+    assert.equal(columns._version.name, '_version');
     assert.equal(columns._deleted.name, '_deleted');
-    assert.deepEqual(config.systemColumns, ['_seq', '_deleted']);
+    assert.deepEqual(config.systemColumns, ['_version', '_deleted']);
   });
 
   it('uses stream-safe defaults for system columns', () => {
@@ -74,9 +74,9 @@ describe('kTable', () => {
     const columns = getTableColumns(events);
     const config = getKalamTableConfig(events);
 
-    assert.ok(columns._seq);
+    assert.ok(columns._version);
     assert.equal(columns._deleted, undefined);
-    assert.deepEqual(config.systemColumns, ['_seq']);
+    assert.deepEqual(config.systemColumns, ['_version']);
   });
 
   it('keeps explicit system-column helper available for Drizzle-first schemas', () => {
@@ -89,7 +89,7 @@ describe('kTable', () => {
     const columns = getTableColumns(audit);
     const config = getKalamTableConfig(audit);
 
-    assert.ok(columns._seq);
+    assert.ok(columns._version);
     assert.ok(columns._deleted);
     assert.equal(config.tableType, 'shared');
     assert.deepEqual(config.systemColumns, []);
@@ -103,6 +103,6 @@ describe('kTable', () => {
 
     const columns = getTableColumns(table);
     assert.ok(columns.id);
-    assert.ok(columns._seq);
+    assert.ok(columns._version);
   });
 });

@@ -20,9 +20,9 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-import type { SeqId as TypedSeqId } from './seq_id.js';
+import type { VersionId as TypedVersionId } from './version_id.js';
 
-type WireSeqId = TypedSeqId | number | string;
+type WireVersionId = TypedVersionId | number | string;
 type WireRowData = Record<string, JsonValue>;
 
 type CompressionType = 'none' | 'gzip';
@@ -33,19 +33,26 @@ interface ProtocolOptions {
   compression: CompressionType;
 }
 
-// SeqId: SDK-level typed wrapper (replaces WASM's plain `number` alias)
-export { SeqId } from './seq_id.js';
+export { VersionId } from './version_id.js';
 
 export type FieldFlag = 'pk' | 'nn' | 'uq';
 export type FieldFlags = FieldFlag[];
 
 export type BatchStatus = 'loading' | 'loading_batch' | 'ready';
 
+export interface VersionDomain {
+  history_incarnation: string;
+  table_id: string;
+  scope_id: number;
+  partition_id: number | null;
+}
+
 export interface BatchControl {
+  version_domain?: VersionDomain;
   batch_num: number;
   has_more: boolean;
   status: BatchStatus;
-  last_seq_id?: WireSeqId;
+  last_seq_id?: WireVersionId;
 }
 
 export type ChangeTypeRaw = 'insert' | 'update' | 'delete';
@@ -198,16 +205,18 @@ export type ServerMessage =
 /**
  * Type-safe live stream controls exposed by the SDK.
  *
- * The SDK accepts a real `SeqId` for resume checkpoints and normalizes it to
+ * The SDK accepts a real `VersionId` for resume checkpoints and normalizes it to
  * the wire format expected by the underlying transport.
  */
 export interface LiveStreamOptions {
+  /** Preserve the subscription ack domain when resuming a SHARED table. */
+  versionDomain?: VersionDomain;
   /** Hint for server-side batch sizing during the initial data load. */
   batchSize?: number;
   /** Number of newest rows to rewind before live changes begin. */
   lastRows?: number;
   /** Resume from a specific sequence ID. */
-  from?: WireSeqId;
+  from?: WireVersionId;
   /** Request every initial-data batch automatically when the server has more rows. */
   autoFetchBatches?: boolean;
 }
@@ -323,7 +332,7 @@ export type SubscriptionErrorEvent = Extract<
  */
 export interface LiveCheckpoint {
   subscriptionId: string;
-  lastSeqId: TypedSeqId;
+  lastVersionId: TypedVersionId;
 }
 
 /**
@@ -378,7 +387,7 @@ export interface LiveOptions<T> extends LiveStreamOptions {
   /**
    * Optional checkpoint callback invoked after a snapshot has been applied.
    *
-   * Use this to persist the latest `SeqId` for later resume without reading
+   * Use this to persist the latest `VersionId` for later resume without reading
    * subscription metadata manually.
    */
   onCheckpoint?: (checkpoint: LiveCheckpoint) => void;
@@ -480,8 +489,8 @@ export interface SubscriptionInfo {
   tableName: string;
   /** Timestamp when subscription was created */
   createdAt: Date;
-  /** Last received sequence ID (for resume on reconnect), if any */
-  lastSeqId?: import('./seq_id.js').SeqId;
+  /** Last received row version (for resume on reconnect), if any */
+  lastVersionId?: import('./version_id.js').VersionId;
   /** Whether this subscription has been closed */
   closed: boolean;
 }

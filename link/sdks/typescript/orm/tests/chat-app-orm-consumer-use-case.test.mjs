@@ -29,7 +29,7 @@ test('ORM use case 01: chat app tables generate as shared user stream and runCon
 
   assert.equal(getKalamTableConfig(rooms).tableType, 'shared');
   assert.equal(getKalamTableConfig(messages).tableType, 'user');
-  assert.deepEqual(getKalamTableConfig(events).systemColumns, ['_seq']);
+  assert.deepEqual(getKalamTableConfig(events).systemColumns, ['_version']);
 
   const schema = await generateSchema(createSchemaClient([
     tableInfo('chat', 'rooms', 'Shared', [column('id', 'Text', { ordinal: 1, primary: true, nullable: false }), column('title', 'Text', { ordinal: 2, nullable: false })]),

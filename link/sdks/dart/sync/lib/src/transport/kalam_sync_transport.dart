@@ -11,7 +11,7 @@ abstract interface class KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   });

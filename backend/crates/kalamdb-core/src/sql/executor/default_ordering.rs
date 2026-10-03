@@ -4,7 +4,7 @@
 //! return results in a consistent order, even when no explicit ORDER BY is specified.
 //!
 //! **Note**: System tables (system.*) and information_schema tables do NOT get
-//! default ordering applied, as they don't have the _seq system column.
+//! default ordering applied, as they don't have the `_version` system column.
 //!
 //! This is critical for:
 //! 1. **Pagination consistency**: Users expect the same order across paginated requests
@@ -12,7 +12,7 @@
 //! 3. **Deterministic results**: Same query should always return same row order
 //!
 //! The default ordering is by primary key columns in ASC order.
-//! If no primary key is defined, we fall back to _seq (system sequence column).
+//! If no primary key is defined, we fall back to `_version`.
 
 use std::sync::Arc;
 
@@ -125,7 +125,7 @@ fn table_id_from_qualified_scan(
 
 /// Get the default sort columns for a user/shared/stream table
 ///
-/// Returns primary key columns if defined, otherwise falls back to _seq.
+/// Returns primary key columns if defined, otherwise falls back to `_version`.
 /// This function assumes system tables have already been filtered out.
 async fn get_default_sort_columns(
     app_context: &Arc<AppContext>,
@@ -153,9 +153,9 @@ async fn get_default_sort_columns(
             ));
         }
 
-        // Fallback: use _seq system column (user/shared/stream tables always have this)
+        // Fallback: use `_version` (user/shared/stream tables always have this)
         return Ok(Some(vec![SortExpr::new(
-            datafusion::logical_expr::col(SystemColumnNames::SEQ),
+            datafusion::logical_expr::col(SystemColumnNames::VERSION),
             true,  // ascending
             false, // nulls_first
         )]));
@@ -197,9 +197,9 @@ fn sort_columns_in_schema(sort_exprs: &[SortExpr], plan: &LogicalPlan) -> bool {
 /// This function:
 /// 1. Checks if the plan already has an ORDER BY clause
 /// 2. Extracts the table reference from the plan
-/// 3. Skips system namespace tables (no _seq column)
+/// 3. Skips system namespace tables (no `_version` column)
 /// 4. Looks up primary key columns from the schema registry
-/// 5. Wraps the plan with a Sort node using those columns (or _seq fallback)
+/// 5. Wraps the plan with a Sort node using those columns (or `_version` fallback)
 ///
 /// # Arguments
 /// * `plan` - The LogicalPlan to potentially wrap with ORDER BY
@@ -228,7 +228,7 @@ pub async fn apply_default_order_by(
         },
     };
 
-    // Skip system namespace tables - they don't have _seq column
+    // Skip system namespace tables - they don't have `_version`
     if table_id.namespace_id().is_system_namespace() {
         log::trace!(
             target: "sql::ordering",

@@ -1,6 +1,7 @@
 import {
   FileRef,
   LiveQueryController,
+  VersionId,
   type KalamDBClient,
   type LiveCallback,
   type LiveOptions,
@@ -30,7 +31,10 @@ export function createDemoClient(): KalamDBClient {
     persistState();
     for (const listener of listeners) {
       listener.callback(mapLiveRows(selectRows(listener.sql), listener.options));
-      listener.options.onCheckpoint?.({ subscriptionId: tableNameFromSql(listener.sql), lastSeqId: { toString: () => String(Date.now()) } as never });
+      listener.options.onCheckpoint?.({
+        subscriptionId: tableNameFromSql(listener.sql),
+        lastVersionId: VersionId.from(Date.now()),
+      });
     }
   };
 

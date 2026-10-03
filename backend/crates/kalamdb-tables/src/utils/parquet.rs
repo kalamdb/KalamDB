@@ -260,9 +260,13 @@ fn cold_scan_pruning(
     filter: Option<&Expr>,
     table_def: Option<&TableDefinition>,
 ) -> ColdScanPruning {
-    let (min_seq, max_seq) = filter.map(extract_seq_bounds_from_filter).unwrap_or((None, None));
-    let seq_range = match (min_seq, max_seq) {
-        (Some(min), Some(max)) => Some((min, max)),
+    let (min_version, max_version) =
+        filter.map(extract_seq_bounds_from_filter).unwrap_or((None, None));
+    let seq_range = match (min_version, max_version) {
+        (Some(min), Some(max)) => Some((
+            kalamdb_commons::ids::SeqId::from_i64(min.as_i64()),
+            kalamdb_commons::ids::SeqId::from_i64(max.as_i64()),
+        )),
         _ => None,
     };
     let mut pruning = ColdScanPruning {
@@ -280,7 +284,7 @@ fn cold_scan_pruning(
     let mut pk_bloom = None;
     let mut scalar_bloom = None;
     for (name, value) in extract_equality_predicates(filter) {
-        if name == SystemColumnNames::SEQ {
+        if name == SystemColumnNames::VERSION {
             continue;
         }
         let Some(column) = table.columns.iter().find(|column| column.column_name == name) else {

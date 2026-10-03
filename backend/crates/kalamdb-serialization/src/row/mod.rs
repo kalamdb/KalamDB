@@ -39,7 +39,7 @@ mod tests {
     };
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
-        ids::SeqId,
+        ids::VersionId,
         models::{
             rows::{Row, StreamTableRow, UserTableRow},
             UserId,
@@ -107,8 +107,7 @@ mod tests {
         values.insert("tags".to_string(), utf8_list(&["vip", "west"]));
         UserTableRow {
             user_id:     UserId::new("user-1"),
-            _seq:        SeqId::from_i64(100),
-            _commit_seq: 3,
+            _version:        VersionId::try_from_i64(100).unwrap(),
             _deleted:    false,
             fields:      Row { values },
         }
@@ -126,11 +125,10 @@ mod tests {
             "nested struct must not be JSON-encoded"
         );
         let decoded =
-            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._seq).unwrap();
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._version).unwrap();
         assert_eq!(decoded.user_id, row.user_id);
-        assert_eq!(decoded._seq, row._seq);
-        assert_eq!(decoded._commit_seq, row._commit_seq);
-        assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
+        assert_eq!(decoded._version, row._version);
+                assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
         assert_eq!(decoded.fields.values.get("customer"), row.fields.values.get("customer"));
         assert_eq!(decoded.fields.values.get("tags"), row.fields.values.get("tags"));
     }
@@ -158,8 +156,7 @@ mod tests {
         values.insert("customer".to_string(), struct_scalar(1, "lin"));
         let row = UserTableRow {
             user_id:     UserId::new("user-2"),
-            _seq:        SeqId::from_i64(1),
-            _commit_seq: 1,
+            _version:        VersionId::try_from_i64(1).unwrap(),
             _deleted:    false,
             fields:      Row { values },
         };
@@ -178,7 +175,7 @@ mod tests {
             )],
         );
         let decoded =
-            decode_user_row(encoded.as_slice(), &new_schema, row.user_id.clone(), row._seq)
+            decode_user_row(encoded.as_slice(), &new_schema, row.user_id.clone(), row._version)
                 .unwrap();
         let ScalarValue::Struct(struct_array) = decoded.fields.values.get("customer").unwrap()
         else {
@@ -197,7 +194,6 @@ mod tests {
             "user_id must not be stored in the row value"
         );
         let meta = decode_row_metadata(encoded.as_slice()).unwrap();
-        assert_eq!(meta.commit_seq, 3);
         assert!(!meta.deleted);
     }
 
@@ -219,15 +215,14 @@ mod tests {
         fields.insert("vec".to_string(), scalar);
         let row = UserTableRow {
             user_id:     UserId::new("user-emb"),
-            _seq:        SeqId::from_i64(1),
-            _commit_seq: 1,
+            _version:        VersionId::try_from_i64(1).unwrap(),
             _deleted:    true,
             fields:      Row { values: fields },
         };
 
         let encoded = encode_user_row(&row, &schema).unwrap();
         let decoded =
-            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._seq).unwrap();
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._version).unwrap();
         let decoded_vec = decoded.fields.values.get("vec").expect("vec");
         assert!(matches!(decoded_vec, ScalarValue::FixedSizeList(_)));
     }
@@ -239,8 +234,7 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::IntervalYearMonth(Some(1)));
         let row = UserTableRow {
             user_id:     UserId::new("user-3"),
-            _seq:        SeqId::from_i64(1),
-            _commit_seq: 1,
+            _version:        VersionId::try_from_i64(1).unwrap(),
             _deleted:    false,
             fields:      Row { values },
         };
@@ -256,37 +250,37 @@ mod tests {
         values.insert("id".to_string(), ScalarValue::Int64(Some(42)));
         let fields = Row { values };
 
-        let encoded = encode_shared_row(9, true, &fields, &schema).unwrap();
-        let (seq, commit_seq, deleted, decoded_fields) =
-            decode_shared_row(encoded.as_slice(), &schema, SeqId::from_i64(77)).unwrap();
-        assert_eq!(seq, SeqId::from_i64(77));
-        assert_eq!(commit_seq, 9);
+        let version = VersionId::try_from_i64(77).unwrap();
+        let encoded = encode_shared_row(true, &fields, &schema).unwrap();
+        let (decoded_version, deleted, decoded_fields) =
+            decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
+        assert_eq!(decoded_version, version);
         assert!(deleted);
         assert_eq!(decoded_fields.values.get("id"), fields.values.get("id"));
 
-        let selected =
-            decode_shared_row_selected(encoded.as_slice(), &schema, SeqId::from_i64(77), &[0])
-                .unwrap();
-        assert_eq!(selected.0, SeqId::from_i64(77));
-        assert_eq!(selected.1, 9);
-        assert!(selected.2);
-        assert_eq!(selected.3.values.get("id"), fields.values.get("id"));
+        let selected = decode_shared_row_selected(encoded.as_slice(), &schema, version, &[0]).unwrap();
+        assert_eq!(selected.0, version);
+        assert!(selected.1);
+        assert_eq!(selected.2.values.get("id"), fields.values.get("id"));
 
         let stream = StreamTableRow {
-            user_id: UserId::new("owner"),
-            _seq:    SeqId::from_i64(5),
-            fields:  fields.clone(),
+            user_id:    UserId::new("owner"),
+            _version:   VersionId::try_from_i64(5).unwrap(),
+            _timestamp: 1_700_000_000_000,
+            fields:     fields.clone(),
         };
         let encoded = encode_stream_row(&stream, &schema).unwrap();
         let decoded = decode_stream_row(
             encoded.as_slice(),
             &schema,
             UserId::new("owner"),
-            SeqId::from_i64(5),
+            VersionId::try_from_i64(5).unwrap(),
+            stream._timestamp,
         )
         .unwrap();
         assert_eq!(decoded.user_id.as_str(), "owner");
-        assert_eq!(decoded._seq, SeqId::from_i64(5));
+        assert_eq!(decoded._version, VersionId::try_from_i64(5).unwrap());
+        assert_eq!(decoded._timestamp, stream._timestamp);
         assert_eq!(decoded.fields.values.get("id"), fields.values.get("id"));
     }
 
@@ -304,15 +298,14 @@ mod tests {
         values.insert("gone".to_string(), ScalarValue::Utf8(Some("drop-me".to_string())));
         let row = UserTableRow {
             user_id:     UserId::new("user-x"),
-            _seq:        SeqId::from_i64(1),
-            _commit_seq: 1,
+            _version:        VersionId::try_from_i64(1).unwrap(),
             _deleted:    false,
             fields:      Row { values },
         };
         let encoded = encode_user_row(&row, &wide).unwrap();
         let narrow = StorageSchema::new(1, vec![StorageField::new("id", StorageDataType::Int64)]);
         let decoded =
-            decode_user_row(encoded.as_slice(), &narrow, UserId::new("user-x"), SeqId::from_i64(1))
+            decode_user_row(encoded.as_slice(), &narrow, UserId::new("user-x"), VersionId::try_from_i64(1).unwrap())
                 .unwrap();
         assert_eq!(decoded.fields.values.get("id"), Some(&ScalarValue::Int64(Some(1))));
         assert!(!decoded.fields.values.contains_key("gone"));
@@ -332,8 +325,7 @@ mod tests {
         values.insert("quantity".to_string(), ScalarValue::Int32(Some(5)));
         let row = UserTableRow {
             user_id:     UserId::new("user-x"),
-            _seq:        SeqId::from_i64(1),
-            _commit_seq: 1,
+            _version:        VersionId::try_from_i64(1).unwrap(),
             _deleted:    false,
             fields:      Row { values },
         };
@@ -349,7 +341,7 @@ mod tests {
             encoded.as_slice(),
             &int64_schema,
             UserId::new("user-x"),
-            SeqId::from_i64(1),
+            VersionId::try_from_i64(1).unwrap(),
         )
         .unwrap();
         assert_eq!(decoded.fields.values.get("quantity"), Some(&ScalarValue::Int64(Some(5))));
@@ -359,16 +351,19 @@ mod tests {
     fn new_rows_set_column_offset_flag() {
         let encoded = encode_user_row(&sample_row(), &orders_schema()).unwrap();
         let flags = u16::from_le_bytes([encoded.as_slice()[9], encoded.as_slice()[10]]);
-        assert_eq!(flags, crate::object::FLAG_COLUMN_OFFSETS);
+        assert_eq!(
+            flags,
+            crate::object::FLAG_COLUMN_OFFSETS | crate::object::FLAG_VERSION_IN_KEY
+        );
     }
 
     #[test]
-    fn legacy_sequential_rows_still_decode() {
+    fn legacy_commit_seq_header_is_rejected() {
         let schema = orders_schema();
         let row = sample_row();
         let mut payload = Vec::new();
         payload.extend_from_slice(&schema.version.to_le_bytes());
-        payload.extend_from_slice(&row._commit_seq.to_le_bytes());
+        payload.extend_from_slice(&3u64.to_le_bytes());
         payload.push(u8::from(row._deleted));
         payload.extend_from_slice(&encode_row_fields(&row.fields, &schema).unwrap());
         let encoded = crate::object::encode_envelope(
@@ -377,22 +372,9 @@ mod tests {
             &payload,
         )
         .unwrap();
-        let flags = u16::from_le_bytes([encoded.as_slice()[9], encoded.as_slice()[10]]);
-        assert_eq!(flags, 0);
-        let decoded =
-            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._seq).unwrap();
-        assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
-        assert_eq!(decoded.fields.values.get("customer"), row.fields.values.get("customer"));
-        let selected = decode_user_row_selected(
-            encoded.as_slice(),
-            &schema,
-            row.user_id.clone(),
-            row._seq,
-            &[0],
-        )
-        .unwrap();
-        assert_eq!(selected.fields.values.get("id"), row.fields.values.get("id"));
-        assert!(!selected.fields.values.contains_key("customer"));
+        let err = decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._version)
+            .unwrap_err();
+        assert!(err.to_string().contains("legacy commit sequence"));
     }
 
     #[test]
@@ -404,12 +386,11 @@ mod tests {
             encoded.as_slice(),
             &schema,
             row.user_id.clone(),
-            row._seq,
+            row._version,
             &[0, 2],
         )
         .unwrap();
-        assert_eq!(decoded._commit_seq, row._commit_seq);
-        assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
+                assert_eq!(decoded.fields.values.get("id"), row.fields.values.get("id"));
         assert_eq!(decoded.fields.values.get("tags"), row.fields.values.get("tags"));
         assert!(!decoded.fields.values.contains_key("customer"));
     }
@@ -425,11 +406,10 @@ mod tests {
         ];
         let from_map = encode_user_row(&row, &schema).unwrap();
         let from_cols =
-            encode_user_row_from_columns(row._commit_seq, row._deleted, &columns, &schema).unwrap();
+            encode_user_row_from_columns(row._deleted, &columns, &schema).unwrap();
         assert_eq!(from_map.as_slice(), from_cols.as_slice());
         let envelope = kalamdb_commons::models::rows::RowEnvelope::new(columns);
-        let from_envelope =
-            encode_row_envelope(row._commit_seq, row._deleted, &envelope, &schema).unwrap();
+        let from_envelope = encode_row_envelope(row._deleted, &envelope, &schema).unwrap();
         assert_eq!(from_map.as_slice(), from_envelope.as_slice());
     }
 }

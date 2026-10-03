@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kalamdb_commons::{
+    ids::VersionId,
     models::{rows::Row, TransactionId, UserId},
     TableId,
 };
@@ -42,7 +43,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         user_id: &UserId,
         rows: &[Row],
         encoded_fields: &[Vec<u8>],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         let rows = crate::applier::ordinal_dml::decode_insert_rows(
             self.executor.app_context(),
@@ -61,7 +62,7 @@ impl UserDataApplier for ProviderUserDataApplier {
 
         self.executor
             .dml()
-            .insert_user_data_with_commit_seq(table_id, user_id, &rows, commit_seq)
+            .insert_user_data_with_versions(table_id, user_id, &rows, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -72,7 +73,7 @@ impl UserDataApplier for ProviderUserDataApplier {
         user_id: &UserId,
         updates: &[Row],
         filter: Option<&str>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         log::debug!(
             "ProviderUserDataApplier: Updating {} for user {} ({} rows)",
@@ -83,7 +84,7 @@ impl UserDataApplier for ProviderUserDataApplier {
 
         self.executor
             .dml()
-            .update_user_data_with_commit_seq(table_id, user_id, updates, filter, commit_seq)
+            .update_user_data_with_versions(table_id, user_id, updates, filter, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -93,13 +94,13 @@ impl UserDataApplier for ProviderUserDataApplier {
         table_id: &TableId,
         user_id: &UserId,
         pk_values: Option<&[String]>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, RaftError> {
         log::debug!("ProviderUserDataApplier: Deleting from {} for user {}", table_id, user_id);
 
         self.executor
             .dml()
-            .delete_user_data_with_commit_seq(table_id, user_id, pk_values, commit_seq)
+            .delete_user_data_with_versions(table_id, user_id, pk_values, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }
@@ -108,11 +109,11 @@ impl UserDataApplier for ProviderUserDataApplier {
         &self,
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<TransactionApplyResult, RaftError> {
         self.executor
             .dml()
-            .apply_user_transaction_batch_with_commit_seq(transaction_id, mutations, commit_seq)
+            .apply_user_transaction_batch_with_versions(transaction_id, mutations, versions)
             .await
             .map_err(|e| RaftError::provider(e.to_string()))
     }

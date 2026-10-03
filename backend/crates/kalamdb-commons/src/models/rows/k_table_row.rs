@@ -1,38 +1,28 @@
 use serde::{Deserialize, Serialize};
 
 use super::row::Row;
-use crate::{ids::SeqId, models::UserId};
+use crate::{ids::VersionId, models::UserId};
 
-/// Unified table row model for User and Stream tables
-///
-/// **Phase 13: Provider Consolidation**
-/// - Unifies UserTableRow and StreamTableRow
-/// - Used by BaseTableProvider::snapshot_rows
+/// Unified table row model for user and stream tables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KTableRow {
-    pub user_id:     UserId,
-    pub _seq:        SeqId,
-    #[serde(default)]
-    pub _commit_seq: u64,
-    /// Soft delete flag (always false for stream tables)
-    pub _deleted:    bool,
+    pub user_id:    UserId,
+    pub _version:   VersionId,
+    /// Present for STREAM rows. USER rows leave this empty.
+    pub _timestamp: Option<i64>,
+    /// Soft delete flag. Stream TTL eviction does not use this flag.
+    pub _deleted:   bool,
     /// Row data (JSON)
-    pub fields:      Row,
+    pub fields:     Row,
 }
 
 impl KTableRow {
-    pub fn new(
-        user_id: UserId,
-        _seq: SeqId,
-        _commit_seq: u64,
-        fields: Row,
-        _deleted: bool,
-    ) -> Self {
+    pub fn new(user_id: UserId, version: VersionId, fields: Row, deleted: bool) -> Self {
         Self {
             user_id,
-            _seq,
-            _commit_seq,
-            _deleted,
+            _version: version,
+            _timestamp: None,
+            _deleted: deleted,
             fields,
         }
     }

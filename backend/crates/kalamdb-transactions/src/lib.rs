@@ -22,7 +22,9 @@ pub mod write_set;
 
 pub use access::{TransactionAccessError, TransactionAccessValidator};
 pub use binding::TransactionRaftBinding;
-pub use commit_sequence::{CommitSequenceSource, CommitSequenceTracker};
+pub use commit_sequence::{
+    CommitSequenceSource, CommitSequenceTracker, SNAPSHOT_UNSET,
+};
 pub use engine::{TransactionEngine, TransactionEngineError, TransactionEngineResult};
 pub use handle::TransactionHandle;
 pub use metrics::ActiveTransactionMetric;

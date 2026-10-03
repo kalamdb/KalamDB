@@ -12,8 +12,10 @@ use link_common::{
         ChangeEvent, ClientMessage, ConnectionOptions, SerializationType, ServerMessage,
         SubscriptionOptions, SubscriptionRequest,
     },
-    SeqId,
+    VersionDomain,
 };
+
+const MAX_LEARNED_DOMAINS: usize = 1_024;
 use serde::Serialize;
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
@@ -131,6 +133,8 @@ pub struct KalamClient {
     default_namespace:  Rc<RefCell<Option<String>>>,
     /// Negotiated serialization format for this WebSocket connection.
     negotiated_ser:     Rc<Cell<SerializationType>>,
+    /// Version domains learned from subscription acks, keyed by SQL.
+    learned_domains:    Rc<RefCell<HashMap<String, VersionDomain>>>,
 }
 
 impl KalamClient {
@@ -143,6 +147,13 @@ impl KalamClient {
     ) -> Result<String, JsValue> {
         if !self.is_connected() {
             return Err(JsValue::from_str("Not connected to server. Call connect() first."));
+        }
+
+        let mut subscription_options = subscription_options;
+        if subscription_options.from.is_some() && subscription_options.version_domain.is_none() {
+            if let Some(domain) = self.learned_domains.borrow().get(&sql).cloned() {
+                subscription_options.version_domain = Some(domain);
+            }
         }
 
         let subscription_id = format!(
@@ -217,6 +228,7 @@ impl KalamClient {
             auth_provider_cb: Rc::new(RefCell::new(None)),
             default_namespace: Rc::new(RefCell::new(None)),
             negotiated_ser: Rc::new(Cell::new(SerializationType::Json)),
+            learned_domains: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 }
@@ -241,7 +253,10 @@ fn send_ws_message_traced(
     Ok(())
 }
 
-fn next_batch_message(subscription_id: &str, last_seq_id: Option<SeqId>) -> ClientMessage {
+fn next_batch_message(
+    subscription_id: &str,
+    last_seq_id: Option<link_common::VersionId>,
+) -> ClientMessage {
     ClientMessage::NextBatch {
         subscription_id: subscription_id.to_string(),
         last_seq_id,
@@ -251,7 +266,7 @@ fn next_batch_message(subscription_id: &str, last_seq_id: Option<SeqId>) -> Clie
 fn send_next_batch_traced(
     ws: &WebSocket,
     subscription_id: &str,
-    last_seq_id: Option<SeqId>,
+    last_seq_id: Option<link_common::VersionId>,
     serialization: SerializationType,
     on_send_cb: &Rc<RefCell<Option<js_sys::Function>>>,
 ) -> Result<(), JsValue> {
@@ -426,11 +441,11 @@ struct SubscriptionDispatch {
     payload:           Option<String>,
     resolve_subscribe: Option<js_sys::Function>,
     reject_subscribe:  Option<(js_sys::Function, String)>,
-    next_batch:        Option<(String, Option<SeqId>)>,
+    next_batch:        Option<(String, Option<link_common::VersionId>)>,
 }
 
 impl SubscriptionDispatch {
-    fn invoke(self) -> Option<(String, Option<SeqId>)> {
+    fn invoke(self) -> Option<(String, Option<link_common::VersionId>)> {
         if let Some(cb) = self.callback {
             if let Some(payload) = self.payload {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&payload));
@@ -516,8 +531,23 @@ fn resolve_subscription_key<'a>(
     }
 }
 
+fn remember_learned_domain(
+    learned_domains: &RefCell<HashMap<String, VersionDomain>>,
+    sql: &str,
+    domain: VersionDomain,
+) {
+    let mut domains = learned_domains.borrow_mut();
+    if !domains.contains_key(sql) && domains.len() >= MAX_LEARNED_DOMAINS {
+        if let Some(evicted) = domains.keys().next().cloned() {
+            domains.remove(&evicted);
+        }
+    }
+    domains.insert(sql.to_string(), domain);
+}
+
 fn dispatch_subscription_server_message(
     subscriptions: &Rc<RefCell<HashMap<String, SubscriptionState>>>,
+    learned_domains: &RefCell<HashMap<String, VersionDomain>>,
     event: &ServerMessage,
 ) -> Option<SubscriptionDispatch> {
     let subscription_id = subscription_id_from_server_message(event)?;
@@ -561,7 +591,12 @@ fn dispatch_subscription_server_message(
             }
 
             match event {
-                ServerMessage::SubscriptionAck { .. } => {
+                ServerMessage::SubscriptionAck { batch_control, .. } => {
+                    if let Some(domain) = batch_control.version_domain.clone() {
+                        let sql = state.sql.clone();
+                        state.options.version_domain = Some(domain.clone());
+                        remember_learned_domain(learned_domains, &sql, domain);
+                    }
                     if state.awaiting_initial_response {
                         state.awaiting_initial_response = false;
                         state.pending_subscribe_reject = None;
@@ -783,6 +818,7 @@ fn schedule_auto_reconnect(
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
+    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
 ) {
     let (delay, disable_compression) = {
         let opts = connection_options.borrow();
@@ -869,6 +905,8 @@ fn schedule_auto_reconnect(
         let next_on_receive = Rc::clone(&on_receive_cb);
         let next_on_send = Rc::clone(&on_send_cb);
         let next_negotiated_ser = Rc::clone(&negotiated_ser);
+        let reconnect_learned_domains = Rc::clone(&learned_domains);
+        let next_learned_domains = Rc::clone(&learned_domains);
         let reconnect_error_url = reconnect_url.clone();
         let reconnect_error_auth = reconnect_auth.clone();
 
@@ -897,6 +935,7 @@ fn schedule_auto_reconnect(
                     install_runtime_message_handler(
                         &ws,
                         Rc::clone(&reconnect_subscription_state),
+                        Rc::clone(&reconnect_learned_domains),
                         Rc::clone(&reconnect_on_receive),
                         Rc::clone(&reconnect_on_send),
                         Rc::clone(&reconnect_negotiated_ser),
@@ -923,6 +962,7 @@ fn schedule_auto_reconnect(
                         Rc::clone(&next_on_receive),
                         Rc::clone(&next_on_send),
                         Rc::clone(&next_negotiated_ser),
+                        Rc::clone(&next_learned_domains),
                     );
                     resubscribe_all(
                         Rc::clone(&reconnect_ws_ref),
@@ -958,6 +998,7 @@ fn schedule_auto_reconnect(
                         next_on_receive,
                         next_on_send,
                         next_negotiated_ser,
+                        next_learned_domains,
                     );
                 },
             }
@@ -1054,6 +1095,7 @@ fn install_runtime_disconnect_handlers(
 fn install_runtime_message_handler(
     ws: &WebSocket,
     subscriptions: Rc<RefCell<HashMap<String, SubscriptionState>>>,
+    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
@@ -1081,7 +1123,9 @@ fn install_runtime_message_handler(
         })();
 
         if let Some(event) = event {
-            if let Some(dispatch) = dispatch_subscription_server_message(&subscriptions, &event) {
+            if let Some(dispatch) =
+                dispatch_subscription_server_message(&subscriptions, &learned_domains, &event)
+            {
                 if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
                     let _ = send_next_batch_traced(
                         &ws_for_next_batch,
@@ -1249,10 +1293,10 @@ impl KalamClient {
         *self.is_reconnecting.borrow()
     }
 
-    /// Get the last received seq_id for a subscription
+    /// Get the last received version for a subscription
     ///
     /// Useful for debugging or manual resumption tracking
-    #[wasm_bindgen(js_name = getLastSeqId)]
+    #[wasm_bindgen(js_name = getLastVersionId)]
     pub fn get_last_seq_id(&self, subscription_id: String) -> Option<String> {
         self.subscription_state
             .borrow()
@@ -1669,6 +1713,7 @@ impl KalamClient {
         // T063K: Implement WebSocket onmessage handler to parse events and invoke registered
         // callbacks
         let subscriptions = Rc::clone(&self.subscription_state);
+        let learned_domains = Rc::clone(&self.learned_domains);
         let auth_resolve_clone = auth_resolve.clone();
         let auth_reject_clone2 = auth_reject.clone();
         let auth_handled = Rc::new(RefCell::new(!requires_auth)); // Already handled if anonymous
@@ -1764,7 +1809,9 @@ impl KalamClient {
                 }
             }
 
-            if let Some(dispatch) = dispatch_subscription_server_message(&subscriptions, &event) {
+            if let Some(dispatch) =
+                dispatch_subscription_server_message(&subscriptions, &learned_domains, &event)
+            {
                 if let Some((subscription_id, last_seq_id)) = dispatch.invoke() {
                     let _ = send_next_batch_traced(
                         &ws_for_next_batch,
@@ -2535,6 +2582,7 @@ impl KalamClient {
             Rc::clone(&self.on_receive_cb),
             Rc::clone(&self.on_send_cb),
             Rc::clone(&self.negotiated_ser),
+            Rc::clone(&self.learned_domains),
         );
     }
 }
@@ -2557,6 +2605,7 @@ fn install_auto_reconnect_listener(
     on_receive_cb: Rc<RefCell<Option<js_sys::Function>>>,
     on_send_cb: Rc<RefCell<Option<js_sys::Function>>>,
     negotiated_ser: Rc<Cell<SerializationType>>,
+    learned_domains: Rc<RefCell<HashMap<String, VersionDomain>>>,
 ) {
     let source_ws = ws.clone();
     let onclose_reconnect = Closure::wrap(Box::new(move |_e: CloseEvent| {
@@ -2583,6 +2632,7 @@ fn install_auto_reconnect_listener(
             Rc::clone(&on_receive_cb),
             Rc::clone(&on_send_cb),
             Rc::clone(&negotiated_ser),
+            Rc::clone(&learned_domains),
         );
     }) as Box<dyn FnMut(CloseEvent)>);
 

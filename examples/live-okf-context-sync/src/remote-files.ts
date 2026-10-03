@@ -71,7 +71,7 @@ export async function fetchRemoteFileVersion(
   relativePath: string,
 ): Promise<RemoteFileVersion | null> {
   const rows = await client.queryAll(
-    `SELECT path, _seq FROM ${TABLE} WHERE path = $1`,
+    `SELECT path, _version FROM ${TABLE} WHERE path = $1`,
     [relativePath],
   );
   const row = rows[0];
@@ -81,7 +81,7 @@ export async function fetchRemoteFileVersion(
 
   return {
     path: row.path?.asString() ?? relativePath,
-    seq: row._seq?.asSeqId()?.toString() ?? row._seq?.asString() ?? null,
+    seq: row._version?.asVersionId()?.toString() ?? row._version?.asString() ?? null,
   };
 }
 

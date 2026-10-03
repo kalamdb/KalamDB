@@ -21,7 +21,7 @@ use kalamdb_commons::{
     conversions::json_value_to_scalar,
     datatypes::KalamDataType,
     models::{schemas::TableDefinition, StorageId, TableId, TableVersionId, TypeId},
-    schemas::{ColumnDefault, ColumnDefinition, TableType},
+    schemas::{ColumnDefault, ColumnDefinition, TableOptions, TableType},
     SystemTable,
 };
 use kalamdb_live::models::ChangeNotification;
@@ -358,6 +358,14 @@ impl SchemaRegistry {
         expected: &TableDefinition,
     ) -> TableDefinition {
         let mut upgraded = expected.clone();
+        if let (TableOptions::Shared(current_options), TableOptions::Shared(upgraded_options)) =
+            (&current.table_options, &mut upgraded.table_options)
+        {
+            upgraded_options.shared_shard_id = current_options.shared_shard_id;
+            upgraded_options
+                .history_incarnation
+                .clone_from(&current_options.history_incarnation);
+        }
         upgraded.schema_version = current.schema_version.saturating_add(1);
         upgraded.created_at = current.created_at;
         upgraded.updated_at = Utc::now();
@@ -814,14 +822,14 @@ impl SchemaRegistry {
         let table_id = table_def.table_id();
         let column_defaults = self.build_column_defaults(table_def);
 
-        // Resolve PK field (required for User/Shared; Stream falls back to _seq)
+        // Resolve PK field (required for User/Shared; Stream falls back to `_version`)
         let pk_field = match table_def.table_type {
             TableType::Stream => table_def
                 .columns
                 .iter()
                 .find(|c| c.is_primary_key)
                 .map(|c| c.column_name.clone())
-                .unwrap_or_else(|| SystemColumnNames::SEQ.to_string()),
+                .unwrap_or_else(|| SystemColumnNames::VERSION.to_string()),
             _ => table_def
                 .columns
                 .iter()

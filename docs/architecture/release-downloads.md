@@ -212,9 +212,14 @@ verification when checksums are unavailable.
 Server binary resolution is ordered:
 
 1. `KALAMDB_SERVER_BIN`, if explicitly configured and pointing to a file.
-2. A `kalamdb-server` binary colocated with the running CLI.
-3. The managed binary under the Kalam config directory.
-4. `kalamdb-server` on `PATH`.
+2. A `kalamdb-server` binary colocated with the running CLI, except the unversioned
+   `~/.kalam/bin/kalamdb-server` that sits next to an installed `kalam`.
+3. The pinned install at `~/.kalam/bin/<version>/kalamdb-server`.
+4. That unversioned `~/.kalam/bin/kalamdb-server` when its reported version matches.
+5. `kalamdb-server` on `PATH`.
+
+`kalam update` installs the server into `~/.kalam/bin/<version>/` and points
+`~/.kalam/bin/kalamdb-server` at that binary. `kalam up` prints the binary it started.
 
 If no server binary is found, interactive `kalam dev` prompts the user before downloading the
 managed server. Non-interactive runs fail with guidance instead of downloading silently.
@@ -235,8 +240,9 @@ Managed server downloads use the same `release_download` helpers as CLI updates:
 - symlink-safe file discovery
 - executable-bit preserving copy
 
-The server install path copies the primary `kalamdb-server` payload to the managed binary path and
-copies supporting files, such as Windows runtime DLLs, into the same managed install directory.
+The server install path copies the primary `kalamdb-server` payload to
+`~/.kalam/bin/<version>/kalamdb-server` and copies supporting files, such as Windows runtime DLLs,
+into that same version directory. It also points `~/.kalam/bin/kalamdb-server` at the new binary.
 
 Because `KALAMDB_SERVER_RELEASE_BASE_URL` uses the shared release base URL helper, it follows the
 same localhost-only override rule as CLI updates.

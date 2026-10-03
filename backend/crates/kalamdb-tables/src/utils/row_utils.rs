@@ -12,7 +12,7 @@ use datafusion::{
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-    ids::SeqId,
+    ids::VersionId,
     models::{rows::Row, ReadContext, Role, UserId},
 };
 use kalamdb_session_datafusion::{
@@ -25,8 +25,8 @@ use crate::{error::KalamDbError, error_extensions::KalamDbResultExt};
 
 static SYSTEM_USER_ID: Lazy<UserId> = Lazy::new(|| UserId::from("_system"));
 
-fn is_seq_column(expr: &Expr) -> bool {
-    matches!(expr, Expr::Column(col) if col.name == SystemColumnNames::SEQ)
+fn is_version_column(expr: &Expr) -> bool {
+    matches!(expr, Expr::Column(col) if col.name == SystemColumnNames::VERSION)
 }
 
 fn extract_i64_literal(expr: &Expr) -> Option<i64> {
@@ -47,15 +47,15 @@ fn invert_comparison_operator(op: Operator) -> Option<Operator> {
     }
 }
 
-fn normalize_seq_comparison(
+fn normalize_version_comparison(
     binary: &datafusion::logical_expr::BinaryExpr,
 ) -> Option<(Operator, i64)> {
-    if is_seq_column(&binary.left) {
+    if is_version_column(&binary.left) {
         let value = extract_i64_literal(&binary.right)?;
         return Some((binary.op, value));
     }
 
-    if is_seq_column(&binary.right) {
+    if is_version_column(&binary.right) {
         let value = extract_i64_literal(&binary.left)?;
         let op = invert_comparison_operator(binary.op)?;
         return Some((op, value));
@@ -65,16 +65,16 @@ fn normalize_seq_comparison(
 }
 
 /// Shared core state for all table providers
-/// Returns (since_seq, until_seq)
-/// since_seq is exclusive (>), until_seq is inclusive (<=)
-/// For equality (_seq = X), returns (X-1, X) to match exactly that value
-pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<SeqId>) {
+/// Returns (since_version, until_version).
+/// since_version is exclusive (>), until_version is inclusive (<=).
+/// For equality (_version = X), returns a window that matches that value.
+pub fn extract_version_bounds_from_filter(expr: &Expr) -> (Option<VersionId>, Option<VersionId>) {
     match expr {
         Expr::BinaryExpr(binary) => match binary.op {
             Operator::And => {
                 // Combine bounds from AND expressions
-                let (min_l, max_l) = extract_seq_bounds_from_filter(&binary.left);
-                let (min_r, max_r) = extract_seq_bounds_from_filter(&binary.right);
+                let (min_l, max_l) = extract_version_bounds_from_filter(&binary.left);
+                let (min_r, max_r) = extract_version_bounds_from_filter(&binary.right);
 
                 let min = match (min_l, min_r) {
                     (Some(a), Some(b)) => Some(if a > b { a } else { b }), // Max of mins
@@ -92,31 +92,31 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
                 (min, max)
             },
             Operator::Eq | Operator::Gt | Operator::GtEq | Operator::Lt | Operator::LtEq => {
-                let (op, val) = match normalize_seq_comparison(binary) {
+                let (op, val) = match normalize_version_comparison(binary) {
                     Some(result) => result,
                     None => return (None, None),
                 };
 
                 match op {
                     Operator::Eq => {
-                        let since = val.saturating_sub(1);
-                        (Some(SeqId::from(since)), Some(SeqId::from(val)))
+                        let since = VersionId::try_from_i64(val.saturating_sub(1)).ok();
+                        (since, VersionId::try_from_i64(val).ok())
                     },
                     Operator::Gt | Operator::GtEq => {
-                        let since = if op == Operator::Gt {
+                        let since_raw = if op == Operator::Gt {
                             val
                         } else {
                             val.saturating_sub(1)
                         };
-                        (Some(SeqId::from(since)), None)
+                        (VersionId::try_from_i64(since_raw).ok(), None)
                     },
                     Operator::Lt | Operator::LtEq => {
-                        let until = if op == Operator::Lt {
+                        let until_raw = if op == Operator::Lt {
                             val.saturating_sub(1)
                         } else {
                             val
                         };
-                        (None, Some(SeqId::from(until)))
+                        (None, VersionId::try_from_i64(until_raw).ok())
                     },
                     _ => (None, None),
                 }
@@ -125,6 +125,11 @@ pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<SeqId>, Option<Seq
         },
         _ => (None, None),
     }
+}
+
+/// Legacy name kept for call sites still importing the old helper.
+pub fn extract_seq_bounds_from_filter(expr: &Expr) -> (Option<VersionId>, Option<VersionId>) {
+    extract_version_bounds_from_filter(expr)
 }
 
 /// Collect `col = literal` predicates from an equality or AND tree.
@@ -207,22 +212,17 @@ pub fn extract_full_user_context(
     })
 }
 
-/// Helper function to inject system columns (_seq, _deleted) into Row values
+/// Helper function to inject system columns (`_version`, `_deleted`) into Row values
 pub fn inject_system_columns(
     schema: &SchemaRef,
     row: &mut Row,
-    seq_value: i64,
-    commit_seq_value: u64,
+    version_value: i64,
     deleted_value: bool,
 ) {
-    if schema.field_with_name(SystemColumnNames::SEQ).is_ok() {
-        row.values
-            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq_value)));
-    }
-    if schema.field_with_name(SystemColumnNames::COMMIT_SEQ).is_ok() {
+    if schema.field_with_name(SystemColumnNames::VERSION).is_ok() {
         row.values.insert(
-            SystemColumnNames::COMMIT_SEQ.to_string(),
-            ScalarValue::UInt64(Some(commit_seq_value)),
+            SystemColumnNames::VERSION.to_string(),
+            ScalarValue::Int64(Some(version_value)),
         );
     }
     if schema.field_with_name(SystemColumnNames::DELETED).is_ok() {
@@ -238,8 +238,7 @@ pub trait ScanRow {
     fn row(&self) -> &Row;
     /// Take ownership of the inner Row, avoiding a clone when consuming.
     fn into_row(self) -> Row;
-    fn seq_value(&self) -> i64;
-    fn commit_seq_value(&self) -> u64;
+    fn version_value(&self) -> i64;
     fn deleted_flag(&self) -> bool;
 }
 
@@ -252,12 +251,8 @@ impl ScanRow for crate::SharedTableRow {
         self.fields
     }
 
-    fn seq_value(&self) -> i64 {
-        self._seq.as_i64()
-    }
-
-    fn commit_seq_value(&self) -> u64 {
-        self._commit_seq
+    fn version_value(&self) -> i64 {
+        self._version.as_i64()
     }
 
     fn deleted_flag(&self) -> bool {
@@ -274,12 +269,8 @@ impl ScanRow for crate::UserTableRow {
         self.fields
     }
 
-    fn seq_value(&self) -> i64 {
-        self._seq.as_i64()
-    }
-
-    fn commit_seq_value(&self) -> u64 {
-        self._commit_seq
+    fn version_value(&self) -> i64 {
+        self._version.as_i64()
     }
 
     fn deleted_flag(&self) -> bool {
@@ -296,12 +287,8 @@ impl ScanRow for crate::StreamTableRow {
         self.fields
     }
 
-    fn seq_value(&self) -> i64 {
-        self._seq.as_i64()
-    }
-
-    fn commit_seq_value(&self) -> u64 {
-        0
+    fn version_value(&self) -> i64 {
+        self._version.as_i64()
     }
 
     fn deleted_flag(&self) -> bool {
@@ -338,8 +325,7 @@ where
 
     let mut rows: Vec<Row> = Vec::with_capacity(kvs.len());
     for (_key, row) in kvs {
-        let seq = row.seq_value();
-        let commit_seq = row.commit_seq_value();
+        let version = row.version_value();
         let deleted = row.deleted_flag();
         let mut extra = Row::new(BTreeMap::new());
         enrich_row(&mut extra, &row);
@@ -347,7 +333,7 @@ where
         if !extra.values.is_empty() {
             materialized.values.extend(extra.values);
         }
-        inject_system_columns(schema, &mut materialized, seq, commit_seq, deleted);
+        inject_system_columns(schema, &mut materialized, version, deleted);
         rows.push(materialized);
     }
 

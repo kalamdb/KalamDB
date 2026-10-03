@@ -4,12 +4,12 @@ use std::collections::VecDeque;
 #[cfg(any(feature = "tokio-runtime", test))]
 use crate::models::BatchStatus;
 #[cfg(any(feature = "client-core", test))]
-use crate::{models::ChangeEvent, seq_tracking, SeqId};
+use crate::{models::ChangeEvent, seq_tracking, VersionId};
 
 #[cfg(any(feature = "tokio-runtime", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EventProgress {
-    pub(crate) seq_id:         SeqId,
+    pub(crate) seq_id:         VersionId,
     pub(crate) advance_resume: bool,
 }
 
@@ -18,7 +18,7 @@ pub(crate) struct EventProgress {
 pub(crate) struct BatchEnvelope {
     pub(crate) status:      BatchStatus,
     pub(crate) has_more:    bool,
-    pub(crate) last_seq_id: Option<SeqId>,
+    pub(crate) last_seq_id: Option<VersionId>,
 }
 
 #[cfg(any(feature = "tokio-runtime", test))]
@@ -69,9 +69,9 @@ pub(crate) fn event_progress(event: &ChangeEvent) -> Option<EventProgress> {
 
 #[cfg(any(feature = "tokio-runtime", test))]
 pub(crate) fn final_resume_seq(
-    requested_from: Option<SeqId>,
-    consumed_seq_id: Option<SeqId>,
-) -> Option<SeqId> {
+    requested_from: Option<VersionId>,
+    consumed_seq_id: Option<VersionId>,
+) -> Option<VersionId> {
     match (requested_from, consumed_seq_id) {
         (Some(requested), Some(consumed)) => Some(requested.max(consumed)),
         (requested, consumed) => requested.or(consumed),
@@ -81,7 +81,7 @@ pub(crate) fn final_resume_seq(
 #[cfg(any(feature = "client-core", test))]
 pub fn filter_replayed_event(
     event: ChangeEvent,
-    resume_from: Option<SeqId>,
+    resume_from: Option<VersionId>,
 ) -> Option<ChangeEvent> {
     let Some(from) = resume_from else {
         return Some(event);
@@ -188,7 +188,7 @@ pub(crate) fn buffer_event(
     event_queue: &mut VecDeque<ChangeEvent>,
     buffered_changes: &mut Vec<ChangeEvent>,
     is_loading: &mut bool,
-    resume_from: Option<SeqId>,
+    resume_from: Option<VersionId>,
     event: ChangeEvent,
 ) {
     let Some(event) = filter_replayed_event(event, resume_from) else {
@@ -225,6 +225,7 @@ mod tests {
 
     fn batch_control(status: BatchStatus) -> BatchControl {
         BatchControl {
+            version_domain: None,
             batch_num: 1,
             has_more: false,
             status,
@@ -235,7 +236,7 @@ mod tests {
     fn row(id: &str, seq: i64) -> RowData {
         let mut row = RowData::new();
         row.insert("id".to_string(), KalamCellValue::text(id));
-        row.insert("_seq".to_string(), KalamCellValue::text(seq.to_string()));
+        row.insert("_version".to_string(), KalamCellValue::text(seq.to_string()));
         row
     }
 
@@ -246,7 +247,7 @@ mod tests {
             old_rows:        vec![row("1", 10)],
         };
 
-        assert!(filter_replayed_event(event, Some(SeqId::from_i64(10))).is_none());
+        assert!(filter_replayed_event(event, Some(VersionId::from(10))).is_none());
     }
 
     #[test]
@@ -260,7 +261,7 @@ mod tests {
         assert_eq!(
             event_progress(&event),
             Some(EventProgress {
-                seq_id:         SeqId::from_i64(11),
+                seq_id:         VersionId::from(11),
                 advance_resume: false,
             })
         );
@@ -269,7 +270,7 @@ mod tests {
     #[test]
     fn progress_marks_loading_initial_batch_without_advancing_resume() {
         let mut control = batch_control(BatchStatus::LoadingBatch);
-        control.last_seq_id = Some(SeqId::from_i64(21));
+        control.last_seq_id = Some(VersionId::from(21));
         let event = ChangeEvent::InitialDataBatch {
             subscription_id: "sub-1".to_string(),
             rows:            Vec::new(),
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(
             event_progress(&event),
             Some(EventProgress {
-                seq_id:         SeqId::from_i64(21),
+                seq_id:         VersionId::from(21),
                 advance_resume: false,
             })
         );

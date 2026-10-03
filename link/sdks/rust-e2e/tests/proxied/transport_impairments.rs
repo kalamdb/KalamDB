@@ -8,7 +8,7 @@ use crate::common::tcp_proxy::TcpDisconnectProxy;
 
 async fn wait_for_row_after_checkpoint(
     sub: &mut kalam_client::SubscriptionManager,
-    checkpoint: kalam_client::SeqId,
+    checkpoint: kalam_client::VersionId,
     expected_ids: &[&str],
     forbidden_ids: &[&str],
     context: &str,

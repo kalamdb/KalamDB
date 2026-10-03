@@ -110,9 +110,46 @@ pub trait ClusterCoordinator: Send + Sync {
 
     async fn is_leader_for_user(&self, user_id: &UserId) -> bool;
 
-    async fn is_leader_for_shared(&self) -> bool;
+    async fn is_leader_for_shared(&self, table_id: &TableId) -> bool;
 
     async fn leader_addr_for_user(&self, user_id: &UserId) -> Option<String>;
 
-    async fn leader_addr_for_shared(&self) -> Option<String>;
+    async fn leader_addr_for_shared(&self, table_id: &TableId) -> Option<String>;
+
+    /// Production coordinators propose SHARED autocommit DML to the owner group.
+    fn replicates_shared_writes(&self) -> bool {
+        false
+    }
+
+    /// Replicate an autocommit insert. The default refuses so a test double
+    /// keeps the local provider path.
+    async fn propose_shared_insert(
+        &self,
+        _table_id: &TableId,
+        _actor_user_id: &UserId,
+        _rows: Vec<kalamdb_commons::models::rows::Row>,
+    ) -> Result<usize, String> {
+        Err("shared autocommit insert is not replicated through this coordinator".into())
+    }
+
+    /// Replicate an autocommit update. One entry covers every final row.
+    async fn propose_shared_update(
+        &self,
+        _table_id: &TableId,
+        _actor_user_id: &UserId,
+        _pk_values: Vec<String>,
+        _updates: Vec<kalamdb_commons::models::rows::Row>,
+    ) -> Result<usize, String> {
+        Err("shared autocommit update is not replicated through this coordinator".into())
+    }
+
+    /// Replicate an autocommit delete. One entry covers every final row.
+    async fn propose_shared_delete(
+        &self,
+        _table_id: &TableId,
+        _actor_user_id: &UserId,
+        _pk_values: Vec<String>,
+    ) -> Result<usize, String> {
+        Err("shared autocommit delete is not replicated through this coordinator".into())
+    }
 }

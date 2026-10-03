@@ -2017,7 +2017,7 @@ mod tests {
             let user_id = UserId::from("u_123");
             let manifest = create_test_manifest(&table_id, Some(&user_id));
 
-            let ((), ops) = kalamdb_store::with_write_coalesce(async {
+            let ((), batch) = kalamdb_store::with_write_coalesce(async {
                 service.stage_before_flush(&table_id, Some(&user_id), &manifest).unwrap();
                 service.mark_pending_write(&table_id, Some(&user_id)).unwrap();
             })
@@ -2028,7 +2028,7 @@ mod tests {
                 "coalesced pending index must not be visible until commit"
             );
 
-            backend.batch(ops).unwrap();
+            backend.batch(batch.ops).unwrap();
             assert!(
                 service.has_pending_writes(&table_id, Some(&user_id)).unwrap(),
                 "user-scoped first write must land in the pending index after coalesced commit"

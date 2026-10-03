@@ -12,7 +12,7 @@ import initWasm from '../dist/wasm/kalam_client.js';
 
 import {
   KalamCellValue,
-  SeqId,
+  VersionId,
   wrapRowMap,
   KalamRow,
 } from '../dist/src/index.js';
@@ -431,101 +431,88 @@ describe('edge cases', () => {
 });
 
 /* ================================================================== */
-/*  SeqId                                                              */
+/*  VersionId                                                              */
 /* ================================================================== */
 
-describe('SeqId', () => {
+describe('VersionId', () => {
   it('creates from number', () => {
-    const seq = SeqId.from(123456789);
+    const seq = VersionId.from(123456789);
     assert.equal(seq.toString(), '123456789');
     assert.equal(seq.toNumber(), 123456789);
   });
 
   it('creates from bigint', () => {
-    const seq = SeqId.from(123456789n);
+    const seq = VersionId.from(123456789n);
     assert.equal(seq.toBigInt(), 123456789n);
   });
 
   it('creates from string', () => {
-    const seq = SeqId.from('123456789');
+    const seq = VersionId.from('123456789');
     assert.equal(seq.toNumber(), 123456789);
   });
 
   it('zero() returns value 0', () => {
-    const seq = SeqId.zero();
+    const seq = VersionId.zero();
     assert.equal(seq.toNumber(), 0);
     assert.equal(seq.toBigInt(), 0n);
   });
 
-  it('extracts Snowflake fields', () => {
-    const timestampOffset = 5000n;
-    const workerId = 7n;
-    const sequence = 21n;
-    const id = (timestampOffset << 22n) | (workerId << 12n) | sequence;
-    const seq = SeqId.from(id);
-
-    assert.equal(seq.timestampMillis(), Number(SeqId.EPOCH + timestampOffset));
-    assert.equal(seq.workerId(), 7);
-    assert.equal(seq.sequence(), 21);
-  });
-
-  it('toDate returns a Date', () => {
-    const seq = SeqId.from(1000n << 22n);
-    const d = seq.toDate();
-    assert.ok(d instanceof Date);
-    assert.equal(d.getTime(), Number(SeqId.EPOCH + 1000n));
+  it('keeps values above 2^53 as a decimal string', () => {
+    const seq = VersionId.from('9007199254740993');
+    assert.equal(seq.toString(), '9007199254740993');
+    assert.equal(seq.toJSON(), '9007199254740993');
   });
 
   it('equals compares values', () => {
-    assert.ok(SeqId.from(42).equals(SeqId.from(42n)));
-    assert.ok(!SeqId.from(42).equals(SeqId.from(43)));
+    assert.ok(VersionId.from(42).equals(VersionId.from(42n)));
+    assert.ok(!VersionId.from(42).equals(VersionId.from(43)));
   });
 
   it('compareTo orders correctly', () => {
-    const a = SeqId.from(10);
-    const b = SeqId.from(20);
+    const a = VersionId.from(10);
+    const b = VersionId.from(20);
     assert.ok(a.compareTo(b) < 0);
     assert.ok(b.compareTo(a) > 0);
     assert.equal(a.compareTo(a), 0);
   });
 
-  it('toJSON returns number', () => {
-    const seq = SeqId.from(42);
+  it('toJSON returns a decimal string', () => {
+    const seq = VersionId.from(42);
     const json = JSON.stringify({ seq });
-    assert.equal(json, '{"seq":42}');
+    assert.equal(json, '{"seq":"42"}');
   });
 
   it('throws on invalid input', () => {
-    assert.throws(() => SeqId.from('abc'));
-    assert.throws(() => SeqId.from(''));
-    assert.throws(() => SeqId.from(NaN));
-    assert.throws(() => SeqId.from(1.5));
+    assert.throws(() => VersionId.from('abc'));
+    assert.throws(() => VersionId.from(''));
+    assert.throws(() => VersionId.from(NaN));
+    assert.throws(() => VersionId.from(1.5));
   });
 });
 
 /* ================================================================== */
-/*  KalamCellValue.asSeqId()                                           */
+/*  KalamCellValue.asVersionId()                                           */
 /* ================================================================== */
 
-describe('KalamCellValue.asSeqId()', () => {
-  it('converts number to SeqId', () => {
-    const seq = KalamCellValue.from(42).asSeqId();
+describe('KalamCellValue.asVersionId()', () => {
+  it('converts number to VersionId', () => {
+    const seq = KalamCellValue.from(42).asVersionId();
     assert.ok(seq !== null);
     assert.equal(seq.toNumber(), 42);
   });
 
-  it('converts string to SeqId', () => {
-    const seq = KalamCellValue.from('99').asSeqId();
+  it('converts string to VersionId', () => {
+    const seq = KalamCellValue.from('99').asVersionId();
     assert.ok(seq !== null);
     assert.equal(seq.toNumber(), 99);
   });
 
   it('returns null for non-numeric string', () => {
-    assert.equal(KalamCellValue.from('abc').asSeqId(), null);
+    assert.equal(KalamCellValue.from('abc').asVersionId(), null);
   });
 
   it('returns null for null', () => {
-    assert.equal(KalamCellValue.from(null).asSeqId(), null);
+    assert.equal(KalamCellValue.from(null).asVersionId(), null);
   });
 });
 

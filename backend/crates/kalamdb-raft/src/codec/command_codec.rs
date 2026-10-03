@@ -454,10 +454,11 @@ mod tests {
     #[test]
     fn raft_transaction_commit_roundtrip() {
         let command = RaftCommand::TransactionCommit {
-            transaction_id: kalamdb_commons::models::TransactionId::new(
+            required_meta_index: 0,
+            transaction_id:      kalamdb_commons::models::TransactionId::new(
                 "01960f7b-3d15-7d6d-b26c-7e4db6f25f8d",
             ),
-            mutations:      vec![StagedMutation::new(
+            mutations:           vec![StagedMutation::new(
                 kalamdb_commons::models::TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d"),
                 TableId::new(NamespaceId::from("ns"), TableName::from("items")),
                 TableType::Shared,
@@ -473,6 +474,7 @@ mod tests {
         let decoded = decode_raft_command(&bytes).expect("decode raft command");
         match decoded {
             RaftCommand::TransactionCommit {
+                required_meta_index: _,
                 transaction_id,
                 mutations,
             } => {

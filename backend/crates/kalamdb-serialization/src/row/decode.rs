@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    ids::SeqId,
+    ids::VersionId,
     models::{
         rows::{Row, StreamTableRow, UserTableRow},
         UserId,
@@ -17,7 +17,7 @@ use super::{
 };
 use crate::{
     error::{Result, SerializationError},
-    object::{decode_envelope, ObjectKind, FLAG_COLUMN_OFFSETS},
+    object::{decode_envelope, ObjectKind, FLAG_COLUMN_OFFSETS, FLAG_VERSION_IN_KEY},
 };
 
 /// Decode a user-table row. Identity comes from the storage key.
@@ -27,13 +27,12 @@ pub fn decode_user_row(
     bytes: &[u8],
     schema: &StorageSchema,
     user_id: UserId,
-    seq: SeqId,
+    version: VersionId,
 ) -> Result<UserTableRow> {
     let decoded = decode_row_body(bytes, schema)?;
     Ok(UserTableRow {
         user_id,
-        _seq: seq,
-        _commit_seq: decoded.commit_seq,
+        _version: version,
         _deleted: decoded.deleted,
         fields: decoded.fields,
     })
@@ -47,38 +46,37 @@ pub fn decode_user_row_selected(
     bytes: &[u8],
     schema: &StorageSchema,
     user_id: UserId,
-    seq: SeqId,
+    version: VersionId,
     ordinals: &[usize],
 ) -> Result<UserTableRow> {
     let decoded = decode_row_body_selected(bytes, schema, ordinals)?;
     Ok(UserTableRow {
         user_id,
-        _seq: seq,
-        _commit_seq: decoded.commit_seq,
+        _version: version,
         _deleted: decoded.deleted,
         fields: decoded.fields,
     })
 }
 
-/// Decode a shared-table row body. `seq` is reconstructed from the storage key.
+/// Decode a shared-table row body. `version` is reconstructed from the storage key.
 pub fn decode_shared_row(
     bytes: &[u8],
     schema: &StorageSchema,
-    seq: SeqId,
-) -> Result<(SeqId, u64, bool, Row)> {
+    version: VersionId,
+) -> Result<(VersionId, bool, Row)> {
     let decoded = decode_row_body(bytes, schema)?;
-    Ok((seq, decoded.commit_seq, decoded.deleted, decoded.fields))
+    Ok((version, decoded.deleted, decoded.fields))
 }
 
 /// Decode only the requested schema ordinals from a shared-table row.
 pub fn decode_shared_row_selected(
     bytes: &[u8],
     schema: &StorageSchema,
-    seq: SeqId,
+    version: VersionId,
     ordinals: &[usize],
-) -> Result<(SeqId, u64, bool, Row)> {
+) -> Result<(VersionId, bool, Row)> {
     let decoded = decode_row_body_selected(bytes, schema, ordinals)?;
-    Ok((seq, decoded.commit_seq, decoded.deleted, decoded.fields))
+    Ok((version, decoded.deleted, decoded.fields))
 }
 
 /// Decode a stream-table row. Identity comes from the storage key.
@@ -86,42 +84,38 @@ pub fn decode_stream_row(
     bytes: &[u8],
     schema: &StorageSchema,
     user_id: UserId,
-    seq: SeqId,
+    version: VersionId,
+    timestamp_millis: i64,
 ) -> Result<StreamTableRow> {
     let decoded = decode_row_body(bytes, schema)?;
     Ok(StreamTableRow {
         user_id,
-        _seq: seq,
+        _version: version,
+        _timestamp: timestamp_millis,
         fields: decoded.fields,
     })
 }
 
 pub(crate) struct DecodedSlots {
-    pub commit_seq: u64,
-    pub deleted:    bool,
-    pub fields:     Vec<ScalarValue>,
+    pub deleted: bool,
+    pub fields:  Vec<ScalarValue>,
 }
 
 pub(crate) struct DecodedRow {
-    commit_seq: u64,
-    deleted:    bool,
-    fields:     Row,
+    deleted: bool,
+    fields:  Row,
 }
 
 pub(crate) fn decode_row_body_slots(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedSlots> {
     let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
     let mut reader = Reader::new(payload);
-    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
+    let deleted = read_row_header(&mut reader, schema, header.flags)?;
     let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
     let fields = decode_slot_fields(&mut reader, schema, indexed)?;
     if !reader.is_empty() {
         return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
     }
-    Ok(DecodedSlots {
-        commit_seq,
-        deleted,
-        fields,
-    })
+    Ok(DecodedSlots { deleted, fields })
 }
 
 fn decode_slot_fields(
@@ -166,9 +160,8 @@ pub fn decode_row_fields(bytes: &[u8], schema: &StorageSchema) -> Result<Row> {
 pub(crate) fn decode_row_body(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedRow> {
     let slots = decode_row_body_slots(bytes, schema)?;
     Ok(DecodedRow {
-        commit_seq: slots.commit_seq,
-        deleted:    slots.deleted,
-        fields:     slots_to_named_row(schema, &slots.fields),
+        deleted: slots.deleted,
+        fields:  slots_to_named_row(schema, &slots.fields),
     })
 }
 
@@ -193,17 +186,22 @@ fn decode_row_body_selected(
 ) -> Result<DecodedRow> {
     let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
     let mut reader = Reader::new(payload);
-    let (commit_seq, deleted) = read_row_header(&mut reader, schema)?;
+    let deleted = read_row_header(&mut reader, schema, header.flags)?;
     let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
     let fields = decode_selected_fields(&mut reader, schema, indexed, ordinals)?;
-    Ok(DecodedRow {
-        commit_seq,
-        deleted,
-        fields,
-    })
+    Ok(DecodedRow { deleted, fields })
 }
 
-fn read_row_header(reader: &mut Reader<'_>, schema: &StorageSchema) -> Result<(u64, bool)> {
+fn read_row_header(
+    reader: &mut Reader<'_>,
+    schema: &StorageSchema,
+    flags: u16,
+) -> Result<bool> {
+    if flags & FLAG_VERSION_IN_KEY == 0 {
+        return Err(SerializationError::Decode(
+            "unsupported row format: legacy commit sequence header".to_string(),
+        ));
+    }
     let stored_version = reader.u16()?;
     if stored_version > schema.version {
         return Err(SerializationError::Decode(format!(
@@ -211,19 +209,7 @@ fn read_row_header(reader: &mut Reader<'_>, schema: &StorageSchema) -> Result<(u
             schema.version
         )));
     }
-    let commit_bytes = [
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-        reader.u8()?,
-    ];
-    let commit_seq = u64::from_le_bytes(commit_bytes);
-    let deleted = reader.u8()? != 0;
-    Ok((commit_seq, deleted))
+    Ok(reader.u8()? != 0)
 }
 
 fn decode_fields(reader: &mut Reader<'_>, schema: &StorageSchema, indexed: bool) -> Result<Row> {

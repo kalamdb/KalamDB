@@ -188,7 +188,7 @@ stop.set()
 events = await client.live_events(
     "SELECT * FROM chat.messages WHERE thread_id = 1",
     last_rows=50,
-    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_seq_id"]),
+    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_version_id"]),
 )
 
 async for event in events:
@@ -216,7 +216,7 @@ live_rows = await client.live(
     last_rows=20,
     limit=20,
     key_columns=["id"],
-    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_seq_id"]),
+    on_checkpoint=lambda checkpoint: save_resume_token(checkpoint["last_version_id"]),
 )
 
 async for rows in live_rows:

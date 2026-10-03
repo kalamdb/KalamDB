@@ -226,10 +226,10 @@ function resolveGeneratedSystemColumns(
 ): readonly KalamSystemColumnName[] {
   if (!value) return [];
   if (Array.isArray(value)) return value;
-  if (value === 'all') return ['_seq', '_deleted', '_commit_seq'];
-  if (tableType === 'stream') return ['_seq'];
+  if (value === 'all') return ['_version', '_deleted', '_timestamp'];
+  if (tableType === 'stream') return ['_version'];
   if (tableType === 'system') return [];
-  return ['_seq', '_deleted'];
+  return ['_version', '_deleted'];
 }
 
 function renderSystemColumnsSpread(columns: readonly KalamSystemColumnName[]): string | undefined {

@@ -77,12 +77,12 @@ void main() {
           );
 
           // Capture checkpoint
-          SeqId? checkpoint;
+          VersionId? checkpoint;
           await waitForAsyncCondition(() async {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              if (s.lastSeqId != null) {
-                checkpoint = s.lastSeqId;
+              if (s.lastVersionId != null) {
+                checkpoint = s.lastVersionId;
                 return true;
               }
             }
@@ -216,14 +216,14 @@ void main() {
               changeEventsContainRowId(evC, preC));
 
           // Capture checkpoints
-          SeqId? cpA, cpB, cpC;
+          VersionId? cpA, cpB, cpC;
           await waitForAsyncCondition(() async {
             final allSubs = await client.getSubscriptions();
             for (final s in allSubs) {
-              if (s.lastSeqId != null) {
-                if (s.query.contains(tblA)) cpA = s.lastSeqId;
-                if (s.query.contains(tblB)) cpB = s.lastSeqId;
-                if (s.query.contains(tblC)) cpC = s.lastSeqId;
+              if (s.lastVersionId != null) {
+                if (s.query.contains(tblA)) cpA = s.lastVersionId;
+                if (s.query.contains(tblB)) cpB = s.lastVersionId;
+                if (s.query.contains(tblC)) cpC = s.lastVersionId;
               }
             }
             return cpA != null && cpB != null && cpC != null;
@@ -364,12 +364,12 @@ void main() {
               () => changeEventsContainRowId(preEvents, preId));
 
           // Capture checkpoint
-          SeqId? checkpoint;
+          VersionId? checkpoint;
           await waitForAsyncCondition(() async {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              if (s.lastSeqId != null) {
-                checkpoint = s.lastSeqId;
+              if (s.lastVersionId != null) {
+                checkpoint = s.lastVersionId;
                 return true;
               }
             }
