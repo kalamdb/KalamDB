@@ -1,110 +1,63 @@
-# Contract: Parser Architecture
+# Contract: Shared PostgreSQL Parser Architecture
 
-**Feature**: 036-postgresql-sql-dialect  
-**Owner crate**: `kalamdb-dialect`  
-**Consumers**: `kalamdb-core` (execute/plan), `kalamdb-api` (HTTP SQL), `kalamdb-postgres-wire`
+**Owner**: `kalamdb-dialect` | **Consumers**: core, HTTP, wire, subscription and stored-SQL execution
 
-## Public parse API
+## Public API and immutable result
 
-One function parses a SQL string into statements:
-
-```text
-parse_sql_statements(sql: &str) -> Result<Vec<ParsedStatement>, DialectError>
+```rust
+// Logical signatures; each model has its own source file.
+parse_sql_statements(sql: Arc<str>) -> Result<Vec<ParsedStatement>, DialectError>
+parse_sql_expression(sql: Arc<str>) -> Result<Expr, DialectError>
+classify(statement: &ParsedStatement) -> SqlStatementClass
 ```
 
-Rules:
+Expression parsing is only for independently submitted expression input, never a substring extracted from a statement already being parsed. Nested expressions use the active parser cursor. Classification produces a small payload-free category (query/DML/DDL/session/transaction/Kalam), not a second command AST. It does not resolve names, inspect roles, parse text, or mutate the AST. Existing `SqlStatementKind` variants contain context-bound domain payloads: build those only during AST-to-domain binding against the current execution context, then authorize. Never fabricate a default namespace while parsing or cache a bound TableId as context-free syntax.
 
-- Lexer/parser dialect is `KalamDbDialect` (PostgreSQL + intercepts). No `GenericDialect` classify path.
-- Semicolon splitting uses the PostgreSQL tokenizer (dollar quotes, quoted identifiers).
-- Each `ParsedStatement` includes `SqlStatementKind` plus AST and/or `KalamExtension`.
-- Classifier MUST NOT call `FooStatement::parse(&str)` for commands listed in spec FR-003.
+`ParsedStatement` contains original source, a source span and exactly one `StatementPayload`: `Sql(Box<sqlparser::ast::Statement>)`, `PostgresCompat(PostgresCompatStatement)`, or `Kalam(KalamStatement)`. `kind` is derived rather than independently mutable. Prepared metadata retains `Arc<ParsedStatement>`; binds and authorization state are not stored in the shared syntax node.
 
-## KalamDbDialect
+## One tokenizer and one parser cursor
 
-```text
-struct KalamDbDialect { inner: PostgreSqlDialect }
+`KalamParser` owns one sqlparser `Parser` configured with `KalamDbDialect`. Tokenize once with upstream Tokenizer and hand the located token vector to `Parser::with_tokens_with_locations`; avoid raw SQL dependency logging from `try_with_sql`. Preserve parser options/unescaping and recursion protection. It consumes all statements and their delimiters directly; batch splitting must not independently lex and then reparse each text fragment. Preserve original spans despite comments and escaped strings. Empty/comment-only batches are empty results. Extended-wire Parse requires one statement; simple wire/HTTP batches permit multiple with existing transactional behavior.
 
-impl Dialect for KalamDbDialect {
-  fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>>;
-  -- forward remaining Dialect methods to inner unless a keyword hook is required
-}
+The dialect delegates PostgreSQL `dialect()` identity, lexical/capability methods, expression hooks, operator precedence and identifier quoting. Dialect defaults are not automatically PostgreSQL defaults. Verify delegation against upstream PostgreSQL fixtures. Parser options must not independently enable unregistered syntax such as trailing commas.
+
+Custom grammar uses token lookahead, exact keyword sequences and Parser helpers. Dispatch must not claim keyword spellings inside quoted identifiers, comments, literals, or dollar bodies. Lookahead distinguishing topic triggers from table triggers must not consume tokens on fallback. Never attempt every custom parser or retry after a standard SQL parse failure.
+
+## Upstream hook limitation and custom nodes
+
+The real trait signature is:
+
+```rust
+fn parse_statement(&self, parser: &mut Parser)
+    -> Option<Result<sqlparser::ast::Statement, ParserError>>;
 ```
 
-`parse_statement` MUST:
+Use it only where the result is faithfully representable as an upstream node. For arbitrary storage/topic/subscription commands or PostgreSQL procedure/user forms not represented upstream, the wrapper directly returns a typed owned variant using the same `Parser`. Do not return sentinel SQL nodes, stash per-parse payload on a shared dialect, fork sqlparser, or serialize custom nodes into SQL for reparsing.
 
-1. Peek tokens.
-2. If prefix is a colliding or Kalam-only command, parse it here (`Some(...)`).
-3. Otherwise `None` (PostgreSQL default).
+Register all command families in one exhaustive typed dispatch surface in the dialect crate. Each command parser/model stays in its own owning module. Required families include all existing storage/flush/compact/manifest, cluster, subscription, topic/consumer/ack/retention, trigger, schedule, backup/restore/export, jobs/live-query, namespace aliases, USE/DESCRIBE/SHOW aliases and user/role extras. Existing parser inventory, not only this minimum list, determines completeness.
 
-Intercept prefixes (minimum):
+## AST planning and prepared statements
 
-- `CREATE USER` / `ALTER USER` / `DROP USER` (identity; reject `CREATE USER TABLE`)
-- `CREATE PROCEDURE` / `DROP PROCEDURE` (034 body)
-- `CREATE TRIGGER` when `ON TOPIC` follows
-- `CREATE NAMESPACE` / `DROP NAMESPACE`
-- `CREATE SHARED TABLE` / `CREATE STREAM TABLE`
-- `CREATE STORAGE` / `ALTER STORAGE` / `DROP STORAGE` / `STORAGE`
-- `CLUSTER`
-- `SUBSCRIBE` / `UNSUBSCRIBE`
-- `CREATE TOPIC` / `DROP TOPIC` / topic variants as documented
-- `CREATE SCHEDULE` / `DROP SCHEDULE`
-- `KILL JOB` / `KILL LIVE QUERY`
-- Backup/restore/export command prefixes as documented today
+Core maps `StatementPayload::Sql(ast)` into DataFusion's `parser::Statement::Statement(ast)` and calls `SessionState::statement_to_plan`. Owned DDL/compatibility/Kalam nodes go to typed handlers. DataFusion 55.1 already provides this interface. The parser crate must not depend on the DataFusion planner.
 
-Returning `Some` MUST produce either:
+`SessionConfig` uses `datafusion.sql_parser.dialect = postgresql` as a defensive internal default. User SQL must never reach `SessionContext::sql`, `sql_to_statement` or `create_logical_plan` with its original or regenerated text. Config/SET paths reject alternate-dialect selection, including resets/aliases that could restore a permissive default. Internal SQL, if unavoidable, enters the same shared parser; no allowlist for raw user SQL.
 
-- a sqlparser `Statement` that downstream converters already handle, or
-- a parse error.
+Use one permission-aware planning context for parameter and result inference. Bind typed values without textual substitution. Prepared cache identity/invalidation includes principal, tenant, role/permission changes, ordered search path, catalog/schema versions and statement identity. On invalidation reuse the syntax tree and rebind/replan; recheck authorization. Cloning a tree for a consuming planner API is allowed and measured; serializing/reparsing is forbidden. A definition change/new submission creates a new parse lifetime; ordinary binds/retries do not.
 
-Kalam-only payloads that sqlparser cannot represent SHOULD be stored on `ParsedStatement.extension` by the crate’s parse wrapper (the wrapper may finish parsing with `Parser` helper methods, then map to `KalamExtension` without putting Kalam variants into sqlparser’s enum).
+## Sessions, nested SQL and authorization
 
-## Mapping layer
+Transport adapters supply session context; they do not classify SET/SHOW/transactions with string prefixes. Existing backend session managers own state changes. Ordered search-path resolution must be shared by planning, DDL, catalog helpers and authorization. Missing privileges cannot be bypassed by quoted names, aliases, CTEs, views, UNIONs or search-path shadowing.
 
-`ast::Statement` / `KalamExtension` → existing domain types:
+Views store parsed queries by definition version when cached. SQL embedded in procedures/schedules and SQL submitted by procedure host APIs use this parser; JavaScript or other non-SQL bodies remain opaque to the SQL parser. A dynamic SQL submission has its own parse lifetime. Subscriptions consume the same query/expression representation with the existing live-query restrictions.
 
-| Upstream / intercept | Existing type |
-|----------------------|---------------|
-| `Statement::CreateSchema` | `CreateSchemaStatement` |
-| `Statement::CreateTable` + WITH TYPE | `CreateTableStatement` |
-| `Statement::CreateIndex` | `CreateIndexStatement` |
-| `Statement::Drop` (table) | `DropTableStatement` |
-| `Statement::Call` | `CallStatement` |
-| `Statement::Set` / `Use` / search_path | existing search-path / use types |
-| `Statement::Grant` / `Revoke` | grant types including EXECUTE |
-| `Statement::Comment` | `CommentStatement` |
-| `Statement::CreatePolicy` | policy types |
-| Intercept CREATE USER | existing user command types |
-| Intercept CREATE PROCEDURE | 034 procedure AST |
-| Intercept STORAGE/… | existing extension structs |
+## Errors and safety limits
 
-## DataFusion
+One error includes category, original span and safe command name. Categories: SqlSyntax, UnsupportedFeature, RemovedSyntax, ExtensionSyntax, Authorization, ResourceLimit. Wire/HTTP/WS map equivalent categories; positions are original character positions, not rewritten byte offsets. Errors/logs must not expose passwords or protected object details. Preserve existing recursion limit (currently 512), request size limits and bounded parser resource behavior.
 
-`kalamdb-core` session: `datafusion.sql_parser.dialect = postgresql`.
+## Required deletion and guards
 
-MUST NOT set `duckdb`. MUST NOT expose a session/GUC that switches public dialect.
+Delete old raw-prefix dispatch, per-command fresh tokenizers, Generic/DuckDB production parser selection and AST-to-text-to-AST paths after cutover. A CI guard inventories parser constructors and DataFusion text-planning calls with documented narrow exceptions for tests/reference fixtures only. Runtime parse counters prove one parse per statement and no reparse for cached binds/retries. Unit guards supplement, not replace, cross-transport execution tests.
 
-DataFusion may parse SQL again for planning. Kalam MUST NOT parse with a third homemade lexer before handing SQL to DataFusion.
+## Mandatory efficiency/security/deletion contract
 
-## Deleted APIs (MUST NOT remain as parsers)
-
-- `ExtensionStatement::parse` string-prefix dispatcher
-- `ddl/parsing.rs` helpers used to parse full statements from leftovers
-- Per-command `Tokenizer::new` loops for `CREATE USER` / CALL / schema
-- Classifier `GenericDialect` + remainder parse for FR-003 statements
-
-## Contributor rule
-
-New standard SQL: converter from `sqlparser::ast::Statement` only.  
-New Kalam SQL: `KalamDbDialect::parse_statement` intercept + mapper.  
-Forbidden: `sql.trim().to_uppercase().starts_with("CREATE FOO")` for either.
-
-## Tests the architecture MUST have
-
-- `CREATE USER alice WITH PASSWORD 'x'` → user kind, not table
-- `CREATE USER TABLE t (id INT)` → removed-syntax error
-- `CREATE SCHEMA s` and `CREATE NAMESPACE s` → same kind
-- `CREATE TABLE t (id INT) WITH (TYPE = 'USER')` → user table
-- `CALL foo(1)` with preceding `-- comment` → call kind
-- `STORAGE FLUSH TABLE "MixedCase"` → extension with quoted name preserved
-- `array_transform(arr, x -> x)` → removed/unsupported syntax (dialect or planner)
-- Classify then execute uses PostgreSQL dialect only (no duckdb setting)
+Follow [efficiency-security-cleanup.md](efficiency-security-cleanup.md) for upstream helper reuse, scoped source retention, bounded caches, safe Rust, typed binding, secret-safe logging, per-command parse counters and removal of obsolete paths. It applies equally to `Sql`, `PostgresCompat` and `Kalam` payloads. A separate submitted SQL body gets its own admitted parse lifetime; a predicate or option already in the active token stream never does.
