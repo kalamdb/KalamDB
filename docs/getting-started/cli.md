@@ -641,8 +641,9 @@ kalam dev --exec "npm test"
 kalam down               # stop the database; keep data
 ```
 
-`kalam up` prints the server URL, server.toml path, data folder, log file, and
-initial root login credentials. Existing databases retain their current password.
+`kalam up` prints the server URL, the `kalamdb-server` binary and version it
+started, the server.toml path, data folder, log file, and initial root login
+credentials. Existing databases retain their current password.
 Passwords are omitted from JSON/agent output and saved workflow logs.
 `kalam logs` prints the selected log file before reading it; `--follow` and
 `--tail` follow new lines until Ctrl+C. Managed console output is captured in

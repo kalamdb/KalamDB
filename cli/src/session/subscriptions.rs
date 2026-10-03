@@ -178,7 +178,8 @@ impl CLISession {
                 {
                     Some(version) => options = options.with_from(version),
                     None => eprintln!(
-                        "Warning: Invalid from value '{value}', expected a positive version decimal"
+                        "Warning: Invalid from value '{value}', expected a positive version \
+                         decimal"
                     ),
                 }
             } else {
