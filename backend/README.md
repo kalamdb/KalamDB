@@ -97,7 +97,7 @@ Deploy KalamDB in a production-ready Docker container:
 
 ```bash
 cd docker/build
-docker build -f Dockerfile -t jamals86/kalamdb:latest ../..
+docker build -f Dockerfile -t kalamdb/kalamdb:latest ../..
 cd ../run/single
 docker-compose up -d
 ```
