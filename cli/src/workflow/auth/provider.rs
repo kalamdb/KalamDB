@@ -38,6 +38,10 @@ pub(crate) fn load_project_profile_token(
         }
     }
 
+    if credentials.is_expired() {
+        return Ok(None);
+    }
+
     Ok(Some(credentials.jwt_token))
 }
 
@@ -50,6 +54,7 @@ pub(crate) fn resolve_workflow_auth_provider(
     }
 
     if let Some(profile) = resolve_kalam_profile(&ctx.project_root)? {
+        let mut expired_for_this_server = false;
         if let Ok(store) = open_credentials_store() {
             if let Ok(Some(credentials)) = store.get_credentials(&profile) {
                 if credentials
@@ -65,12 +70,17 @@ pub(crate) fn resolve_workflow_auth_provider(
                         environment.url
                     )));
                 }
+                if credentials.is_expired() {
+                    expired_for_this_server = true;
+                }
             }
         }
-        return Err(CLIError::ConfigurationError(format!(
-            "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam \
-             login --instance {profile}`"
-        )));
+        if !expired_for_this_server {
+            return Err(CLIError::ConfigurationError(format!(
+                "profile '{profile}' from .env was not found in ~/.kalam credentials; run `kalam \
+                 login --instance {profile}`"
+            )));
+        }
     }
 
     if ctx.config.dev.auto_start_db {

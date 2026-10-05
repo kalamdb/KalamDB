@@ -394,10 +394,16 @@ impl CLISession {
             eprintln!("{} {}", "Instance:".cyan().bold(), instance.green().bold());
             eprintln!("{} {}", "Server:".cyan().bold(), self.server_url.green());
             eprintln!("{} {}", "User:".cyan().bold(), user.green().bold());
+            if let Some(namespace) = self.current_namespace_label_if_set() {
+                eprintln!("{} {}", "Namespace:".cyan().bold(), namespace.green().bold());
+            }
         } else {
             eprintln!("Instance: {}", instance);
             eprintln!("Server: {}", self.server_url);
             eprintln!("User: {}", user);
+            if let Some(namespace) = self.current_namespace_label_if_set() {
+                eprintln!("Namespace: {}", namespace);
+            }
         }
         eprintln!();
     }

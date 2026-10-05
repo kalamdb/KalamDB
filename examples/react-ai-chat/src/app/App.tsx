@@ -5,12 +5,12 @@ import { getExampleClient, isExampleDemoMode } from './client';
 import { Aside } from './components/Aside';
 import { Conversation } from './components/Conversation';
 import {
-  reactAiChatApprovalActions as approvalActions,
-  reactAiChatConversations as conversations,
-  reactAiChatMessages as messages,
-  reactAiChatTypingTokens as typingTokens,
+  approvalActions,
+  conversations,
+  messages,
+  typingTokens,
 } from './generated/kalam';
-import type { ReactAiChatConversations as ConversationRow } from './generated/kalam';
+import type { Conversations as ConversationRow } from './generated/kalam';
 
 const SELECTED_CONVERSATION_KEY = 'kalamdb-react-ai-chat-selected-v3';
 const DEFAULT_CONVERSATION_ID = 'project-alpha';

@@ -88,8 +88,10 @@ fn smoke_insert_returning_version_multi_row() {
     execute_sql_as_root_via_client(&ins_sql).expect("multi-row INSERT should succeed");
 
     // 3) Verify inserted rows have _version values
-    let seq_sql =
-        format!("SELECT _version FROM {} WHERE name IN ('row1', 'row2', 'row3') ORDER BY id", full);
+    let seq_sql = format!(
+        "SELECT _version FROM {} WHERE name IN ('row1', 'row2', 'row3') ORDER BY id",
+        full
+    );
     let result = execute_sql_as_root_via_client(&seq_sql).expect("SELECT _version should succeed");
     println!("[DEBUG] Multi-row _version query result: {}", result);
 
@@ -181,8 +183,8 @@ fn smoke_insert_returning_version_on_user_table() {
 
     // 3) Verify inserted row has _version value
     let seq_sql = format!("SELECT _version FROM {} WHERE note = 'user_note'", full);
-    let result =
-        execute_sql_as_root_via_client(&seq_sql).expect("SELECT _version on user table should succeed");
+    let result = execute_sql_as_root_via_client(&seq_sql)
+        .expect("SELECT _version on user table should succeed");
     println!("[DEBUG] User table _version query result: {}", result);
 
     assert!(

@@ -382,10 +382,9 @@ fn kobj_stream_seq_reconstruction_and_burst() {
     }
     exec(&format!("INSERT INTO {full} (event_id, payload) VALUES {values}"));
 
-    let rows =
-        query_rows(&format!(
-            "SELECT event_id, payload, _version FROM {full} ORDER BY _version LIMIT 1000"
-        ));
+    let rows = query_rows(&format!(
+        "SELECT event_id, payload, _version FROM {full} ORDER BY _version LIMIT 1000"
+    ));
     assert_eq!(rows.len(), 100);
     let mut last_seq = 0i64;
     let mut seen = std::collections::HashSet::new();

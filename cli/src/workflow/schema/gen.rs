@@ -10,7 +10,7 @@ use crate::{
         schema::{
             dart, load,
             model::{parse_language_list, LanguageTarget},
-            naming::{assign_names, NamingOptions},
+            naming::{assign_names_with_home, NamingOptions},
             output::SchemaEmitInput,
             procedures::ProcedureCatalog,
             rust, typescript,
@@ -45,6 +45,7 @@ pub fn generate_languages(
     }
 
     let (snapshot, hash) = load::compile_project_contract(project_root, config)?;
+    let home_schema = load::project_contract_namespace(config);
 
     let mut wrote_exports = false;
     for language in languages {
@@ -54,11 +55,12 @@ pub fn generate_languages(
                 "missing schema.targets.{key} in kalam.toml"
             )));
         };
-        let names = assign_names(
+        let names = assign_names_with_home(
             &snapshot,
             NamingOptions {
                 unqualified_names: target.unqualified_names,
             },
+            Some(home_schema),
         )?;
         let output_path = project_root.join(&target.output);
         let procedures = ProcedureCatalog::from_snapshot(&snapshot, &names);

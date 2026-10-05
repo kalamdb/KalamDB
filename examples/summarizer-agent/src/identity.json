@@ -1,0 +1,28 @@
+{
+  "types": {
+    "blog.blogs": {
+      "type_id": "blog.blogs",
+      "slots": {
+        "blog_id": 1,
+        "content": 2,
+        "created": 4,
+        "summary": 3,
+        "updated": 5
+      }
+    },
+    "blog.summarizer": {
+      "type_id": "blog.summarizer",
+      "slots": {}
+    },
+    "blog.summary_failures": {
+      "type_id": "blog.summary_failures",
+      "slots": {
+        "blog_id": 2,
+        "created": 4,
+        "error": 3,
+        "run_key": 1,
+        "updated": 5
+      }
+    }
+  }
+}

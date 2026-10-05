@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
 };
@@ -116,17 +117,87 @@ extern "C" {
     #[wasm_bindgen(js_name = "fetch")]
     fn global_fetch_with_request(request: &Request) -> js_sys::Promise;
 
-    /// Call `setTimeout(callback, delay)` from the global scope.
-    #[wasm_bindgen(js_name = "setTimeout")]
-    pub(crate) fn global_set_timeout(closure: &js_sys::Function, delay: i32) -> i32;
-
-    /// Call `setInterval(callback, delay)` from the global scope.
-    #[wasm_bindgen(js_name = "setInterval")]
-    pub(crate) fn global_set_interval(closure: &js_sys::Function, delay: i32) -> i32;
-
-    /// Call `clearInterval(id)` from the global scope.
+    /// Call `clearInterval(handle)`. Browsers accept a number. Node accepts the
+    /// `Timeout` object and ignores a coerced number.
     #[wasm_bindgen(js_name = "clearInterval")]
-    pub(crate) fn global_clear_interval(id: i32);
+    fn global_clear_interval_raw(handle: &JsValue);
+
+    /// `setTimeout` returns a number in browsers and a `Timeout` object in Node.
+    #[wasm_bindgen(js_name = "setTimeout")]
+    fn global_set_timeout_raw(closure: &js_sys::Function, delay: i32) -> JsValue;
+
+    /// `setInterval` returns a number in browsers and a `Timeout` object in Node.
+    #[wasm_bindgen(js_name = "setInterval")]
+    fn global_set_interval_raw(closure: &js_sys::Function, delay: i32) -> JsValue;
+}
+
+thread_local! {
+    /// Node timer handles keyed by `Number(timeout)`. `clearInterval` on Node
+    /// only accepts the original `Timeout` object, so the numeric id the rest
+    /// of the client stores is not enough to cancel the timer.
+    static TIMER_HANDLES: RefCell<Option<js_sys::Map>> = RefCell::new(None);
+}
+
+/// Browsers return a number from `setTimeout` / `setInterval`. Node returns a
+/// `Timeout` object. Callers keep an `i32`, and [`global_clear_interval`]
+/// resolves that id back to the original handle when Node returned an object.
+pub(crate) fn global_set_timeout(closure: &js_sys::Function, delay: i32) -> i32 {
+    timer_id(global_set_timeout_raw(closure, delay), false)
+}
+
+pub(crate) fn global_set_interval(closure: &js_sys::Function, delay: i32) -> i32 {
+    timer_id(global_set_interval_raw(closure, delay), true)
+}
+
+pub(crate) fn global_clear_interval(id: i32) {
+    if id < 0 {
+        return;
+    }
+    let key = JsValue::from_f64(id as f64);
+    let stored = TIMER_HANDLES.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|handles| handles.get(&key))
+            .filter(|handle| !handle.is_undefined())
+    });
+    if let Some(handle) = stored {
+        TIMER_HANDLES.with(|slot| {
+            if let Some(handles) = slot.borrow().as_ref() {
+                handles.delete(&key);
+            }
+        });
+        global_clear_interval_raw(&handle);
+        return;
+    }
+    global_clear_interval_raw(&key);
+}
+
+fn timer_id(value: JsValue, remember: bool) -> i32 {
+    if let Some(id) = value.as_f64() {
+        return id as i32;
+    }
+    let Some(id) = number_value(&value) else {
+        return -1;
+    };
+    if remember {
+        TIMER_HANDLES.with(|slot| {
+            let mut handles = slot.borrow_mut();
+            let handles = handles.get_or_insert_with(js_sys::Map::new);
+            let _ = handles.set(&JsValue::from_f64(id as f64), &value);
+        });
+    }
+    id
+}
+
+fn number_value(value: &JsValue) -> Option<i32> {
+    // `dyn_into::<Function>()` rejects some Node builtins, so coerce with a
+    // plain function instead of calling the global `Number` constructor.
+    let coerce = js_sys::Function::new_with_args("value", "return Number(value)");
+    coerce
+        .call1(&JsValue::UNDEFINED, value)
+        .ok()
+        .and_then(|coerced| coerced.as_f64())
+        .map(|id| id as i32)
 }
 
 /// Portable replacement for `window.fetch_with_request(req)`.

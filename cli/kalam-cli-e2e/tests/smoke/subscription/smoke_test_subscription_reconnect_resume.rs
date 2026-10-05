@@ -26,8 +26,8 @@
 use std::time::Duration;
 
 use kalam_client::{
-    models::ChangeEvent, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig, VersionId,
-    SubscriptionOptions,
+    models::ChangeEvent, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig,
+    SubscriptionOptions, VersionId,
 };
 
 use crate::common::*;

@@ -95,6 +95,19 @@ describe('kTable', () => {
     assert.deepEqual(config.systemColumns, []);
   });
 
+  it('uses Drizzle\'s default schema for public instead of pgSchema("public")', () => {
+    configureKalamOrm({});
+    const users = kTable('public.users', {
+      id: text('id').notNull(),
+    });
+    const config = getKalamTableConfig(users);
+    const compiled = new PgDialect().sqlToQuery(sql`select * from ${users}`.inlineParams());
+
+    assert.equal(config.qualifiedName, 'public.users');
+    assert.equal(config.namespace, 'public');
+    assert.equal(compiled.sql, 'select * from "users"');
+  });
+
   it('preserves Drizzle extra config as the third argument', () => {
     configureKalamOrm({});
     const table = kTable.shared('app.indexed', {

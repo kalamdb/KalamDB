@@ -203,10 +203,14 @@ function createKTable(defaultTableType?: KalamTableType) {
 		const resolvedTable = resolveTableName(name);
 		const systemColumns = normalizeSystemColumns(options);
 		const resolvedColumns = withSystemColumns(columns, systemColumns);
-		const table = resolvedTable.namespace
+		// Drizzle rejects pgSchema("public"); its default schema is already public.
+		const drizzleNamespace = resolvedTable.namespace && resolvedTable.namespace.toLowerCase() !== 'public'
+			? resolvedTable.namespace
+			: undefined;
+		const table = drizzleNamespace
 			? hasExtraConfig
-				? pgSchema(resolvedTable.namespace).table(resolvedTable.name, resolvedColumns as never, third as never)
-				: pgSchema(resolvedTable.namespace).table(resolvedTable.name, resolvedColumns as never)
+				? pgSchema(drizzleNamespace).table(resolvedTable.name, resolvedColumns as never, third as never)
+				: pgSchema(drizzleNamespace).table(resolvedTable.name, resolvedColumns as never)
 			: hasExtraConfig
 				? pgTable(resolvedTable.name, resolvedColumns as never, third as never)
 				: pgTable(resolvedTable.name, resolvedColumns as never);

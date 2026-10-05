@@ -95,6 +95,10 @@ When `kalam login` runs in an interactive terminal, it enters the normal SQL she
 # One command and exit
 kalam -c "SELECT * FROM information_schema.tables LIMIT 5;"
 
+# Inside a project, unqualified names use that project's namespace.
+# A local server signs in with the password in kalam/server/server.toml
+# when saved credentials are missing or expired.
+
 # File and exit
 kalam -f setup.sql
 ```
@@ -113,7 +117,7 @@ kalam --watch-schema --table app.messages --run "npm run schema:gen" --interval 
 
 - `--url`, `-u` – server URL
 - `--host`, `-H` and `--port`, `-p` – alternative to `--url`
-- `--instance` – credential instance name (default: `local`)
+- `--instance` – saved server from `kalam instances`. Inside a project, SQL uses that project unless you pass a name other than the default `local`
 - `--token` – JWT bearer token
 - `--user` / `--password` – user/password login
 - `--save-credentials` – save JWT token after login
@@ -251,17 +255,24 @@ kalam --subscribe "SELECT * FROM app.messages WHERE user_id = 'alice';"
 
 ### Multiple Instances
 
-```bash
-# Setup credentials for different environments
-kalam login --instance dev --user dev_user
-kalam login --instance staging --user staging_user
-kalam login --instance prod --user prod_admin
+Each saved name is one server. `kalam dev` in a project directory keeps using that project's database. `--instance <name>` selects a different server from any directory, including SQL.
 
-# Switch between instances
-kalam --instance dev      # Connect to dev
-kalam --instance staging  # Connect to staging
-kalam --instance prod     # Connect to production
+```bash
+# Local project database
+kalam dev
+
+# Cloud server that signs users in with OIDC
+kalam login --oidc --instance prod --url https://db.example.com
+
+# SQL against that cloud server, even from inside the local project
+kalam --instance prod -c "SELECT current_user"
+
+# Another local project, using the name from `kalam instances`
+kalam status --instance analytics
+kalam --instance analytics -c "SELECT 1"
 ```
+
+A remote login needs its own name. Signing in to a cloud URL without `--instance <name>` is refused, so it cannot overwrite the default `local` profile or get sent to the project database by mistake. If the cloud server disables password login, `kalam login` and non-interactive `kalam -c` say to add `--oidc` and print the server they reached, instead of trying the project password. A saved token for that same server still works. `--url` and `--host` override `--instance`, and the CLI says which server the command is using. `kalam db`, `kalam deploy`, `kalam link`, and `kalam functions` stay on the project: passing `--instance` for a different server is an error instead of changing the local database. `kalam dev` prints the same distinction and keeps the project database. A stopped local server keeps the port it last used. If another server is running there, `kalam instances` says so, and SQL against the stopped name is refused instead of landing on the running database. SQL from a project whose configured URL belongs to a different running server is refused the same way. `kalam up --instance <name>` moves that server to a free port.
 
 ### Advanced Queries
 
@@ -670,7 +681,7 @@ Use `--local` or `--cloud` to filter, `--check` to probe cloud reachability,
 and `--json` for an `instances` array. Cloud endpoints are not contacted
 unless requested; saved authentication and reachability are separate.
 
-Names shown in the list can target lifecycle commands from any folder:
+Names shown in the list select that server from any folder. `kalam --instance <name>` runs SQL there and does not reuse the current project's namespace or root password. `kalam dev` is unchanged: it follows the project you are in. Lifecycle commands use the same name:
 
 ```bash
 kalam status --instance analytics

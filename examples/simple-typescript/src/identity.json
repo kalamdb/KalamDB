@@ -1,0 +1,15 @@
+{
+  "types": {
+    "demo.activity_feed": {
+      "type_id": "demo.activity_feed",
+      "slots": {
+        "actor": 4,
+        "created_at": 6,
+        "id": 1,
+        "level": 3,
+        "message": 5,
+        "service": 2
+      }
+    }
+  }
+}

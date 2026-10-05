@@ -217,7 +217,10 @@ fn test_project_workflow_schema_gen_from_sql() {
     assert!(dart.contains("contract_hash:"));
     assert!(dart.contains("import 'package:kalam_sync/kalam_sync.dart';"));
     assert!(dart.contains("KalamTableSpec<Users>"), "expected Users table spec");
-    assert!(dart.contains("tableId: 'users'"));
+    assert!(
+        dart.contains("tableId: 'schema_app.users'"),
+        "project namespace should qualify the Dart table id\n{dart}"
+    );
     assert!(
         !dart.to_lowercase().contains("placeholder"),
         "dart output should not be a placeholder"

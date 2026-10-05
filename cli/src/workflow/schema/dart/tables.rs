@@ -27,8 +27,10 @@ pub fn table_specs(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<Ta
         .values()
         .map(|table| {
             let class_name = names.type_ident(canonical_row_type_id(table)).to_string();
-            let const_name =
-                unique_ident(value_ident(&table.schema, &table.name, false), &mut used_const_names);
+            let const_name = unique_ident(
+                value_ident(&table.schema, &table.name, names.uses_local_name(&table.schema)),
+                &mut used_const_names,
+            );
             TableSpecContext {
                 const_name,
                 class_name,

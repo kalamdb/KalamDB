@@ -105,6 +105,7 @@ pub fn write_procedure_artifacts(
     schema_path: &Path,
     snapshot: &ContractSnapshot,
     hash: &str,
+    names: &AssignedNames,
     procedures: &ProcedureCatalog<'_>,
 ) -> Result<()> {
     if procedures.is_empty() {
@@ -145,7 +146,7 @@ pub fn write_procedure_artifacts(
     let bindings = discover_procedure_bindings(project_root, snapshot)?;
     write_text(
         &generated_dir.join("registry.ts"),
-        &generate_registry_source(hash, &bindings, &generated_dir)?,
+        &generate_registry_source(hash, &bindings, &generated_dir, Some(names))?,
     )?;
     Ok(())
 }
@@ -243,6 +244,7 @@ pub fn generate_registry_source(
     hash: &str,
     bindings: &[ProcedureBinding],
     generated_dir: &Path,
+    names: Option<&AssignedNames>,
 ) -> Result<String> {
     let implemented: Vec<&ProcedureBinding> =
         bindings.iter().filter(|binding| binding.implemented).collect();
@@ -259,7 +261,11 @@ pub fn generate_registry_source(
                     format!(
                         "{} as {}",
                         binding.export_name,
-                        value_ident(&binding.schema, &binding.name, false)
+                        value_ident(
+                            &binding.schema,
+                            &binding.name,
+                            names.is_some_and(|assigned| assigned.uses_local_name(&binding.schema)),
+                        )
                     )
                 })
                 .collect::<Vec<_>>()
@@ -271,7 +277,11 @@ pub fn generate_registry_source(
         .iter()
         .map(|binding| RegistryProcedure {
             routine_id: escape_double_quoted_string(&binding.routine_id),
-            ident:      value_ident(&binding.schema, &binding.name, false),
+            ident:      value_ident(
+                &binding.schema,
+                &binding.name,
+                names.is_some_and(|assigned| assigned.uses_local_name(&binding.schema)),
+            ),
         })
         .collect();
     render_schema_gen_file(

@@ -20,7 +20,10 @@ pub use down::stop_database;
 pub use instance_kind::InstanceKind;
 pub use instance_state::InstanceState;
 pub use instance_summary::InstanceSummary;
-pub use instances::{list_instances, resolve_instance_name, show_cloud_instance_status};
+pub use instances::{
+    endpoint_key, find_instance, instance_catalog, list_instances, other_running_instance,
+    resolve_instance_name, show_cloud_instance_status,
+};
 pub use instances_options::InstancesOptions;
 pub use logs::{print_database_logs, LogsOptions};
 pub use prepare::{attach_or_start_managed_server, clear_managed_data, prepare_managed_server};

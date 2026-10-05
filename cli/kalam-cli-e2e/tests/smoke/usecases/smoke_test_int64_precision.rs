@@ -101,7 +101,10 @@ fn smoke_int64_precision_preserved_as_string() {
     let content = extract_typed_value(content);
     assert_eq!(content.as_str(), Some("test_precision"), "content should be 'test_precision'");
 
-    println!("✓ Int64 precision test passed: _version={}, big_value={}", seq_str, big_value_str);
+    println!(
+        "✓ Int64 precision test passed: _version={}, big_value={}",
+        seq_str, big_value_str
+    );
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();

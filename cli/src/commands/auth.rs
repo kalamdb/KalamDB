@@ -151,6 +151,27 @@ pub(crate) async fn resolve_auth_context(
         return Ok(None);
     };
 
+    if creds
+        .server_url
+        .as_deref()
+        .is_some_and(|saved| !crate::connect::endpoints_match_servers(saved, &server_url))
+    {
+        let saved = creds.server_url.as_deref().unwrap_or(server_url.as_str());
+        eprintln!(
+            "Saved login for instance '{}' points at {saved}, not {server_url}.",
+            cli.instance
+        );
+        if cli.instance == "local" {
+            eprintln!(
+                "The default name cannot be selected with `--instance local`. Sign that server in \
+                 under its own name: `kalam login --oidc --instance <name> --url {saved}`."
+            );
+        } else {
+            eprintln!("Run `kalam --instance {}` to use that server.", cli.instance);
+        }
+        return Ok(None);
+    }
+
     if creds.is_expired() {
         if refresh_expired && creds.can_refresh() {
             let refresh_server_url = creds.server_url.clone().unwrap_or_else(|| server_url.clone());
@@ -197,7 +218,8 @@ pub(crate) async fn resolve_auth_context(
         }
 
         return Err(CLIError::ConfigurationError(format!(
-            "Stored credentials for '{}' have expired. Run `kalam login --instance {}`.",
+            "Stored credentials for '{}' have expired. Run `kalam login --instance {}`. Add \
+             `--oidc` when this server uses an identity provider.",
             cli.instance, cli.instance
         )));
     }
@@ -280,6 +302,41 @@ pub(crate) async fn fetch_current_user(
     })
 }
 
+fn require_named_remote_instance(cli: &Cli, server_url: &str) -> Result<()> {
+    if cli.explicit_instance().is_some() || crate::connect::is_localhost_server(server_url) {
+        return Ok(());
+    }
+    Err(CLIError::ConfigurationError(format!(
+        "{server_url} is outside this project. Name it before signing in, for example `kalam \
+         login --instance prod --url {server_url}`. Add `--oidc` when the server uses an identity \
+         provider. `kalam dev` in a project directory keeps using that project's database."
+    )))
+}
+
+fn refuse_to_overwrite_other_server(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+    server_url: &str,
+) -> Result<()> {
+    if cli.explicit_instance().is_some() {
+        return Ok(());
+    }
+    let Ok(Some(existing)) = credential_store.get_credentials(&cli.instance) else {
+        return Ok(());
+    };
+    let Some(saved) = existing.server_url.as_deref() else {
+        return Ok(());
+    };
+    if crate::connect::endpoints_match_servers(saved, server_url) {
+        return Ok(());
+    }
+    Err(CLIError::ConfigurationError(format!(
+        "Instance '{}' is already signed in to {saved}. This login would replace it with \
+         {server_url}. Use a different `--instance` name, or `kalam logout --instance {}` first.",
+        cli.instance, cli.instance
+    )))
+}
+
 pub async fn handle_login(
     cli: &Cli,
     args: &LoginArgs,
@@ -290,6 +347,9 @@ pub async fn handle_login(
     }
 
     let server_url = resolve_server_url(cli, credential_store)?;
+    require_named_remote_instance(cli, &server_url)?;
+    refuse_to_overwrite_other_server(cli, credential_store, &server_url)?;
+    println!("Server: {server_url}");
     reject_local_login_when_disabled(cli, &server_url).await?;
     let user = if let Some(user) = &cli.user {
         user.clone()
@@ -342,6 +402,7 @@ pub async fn handle_login(
     if !args.no_save {
         println!("Credentials saved: {}", credential_store.path().display());
     }
+    print_remote_instance_hint(cli, &server_url);
     println!("Access token expires: {}", login_response.expires_at);
     if let Some(refresh_expires_at) = login_response.refresh_expires_at {
         println!("Refresh token expires: {}", refresh_expires_at);
@@ -360,11 +421,24 @@ pub async fn handle_login(
 async fn reject_local_login_when_disabled(cli: &Cli, server_url: &str) -> Result<()> {
     let client = api_http_client(cli.timeout)?;
     match fetch_login_options(&client, server_url).await {
-        Ok(options) if !options.local.enabled => Err(CLIError::ConfigurationError(
-            "local username/password login is disabled; use `kalam login --oidc`".to_string(),
-        )),
+        Ok(options) if !options.local.enabled => Err(CLIError::ConfigurationError(format!(
+            "username/password login is disabled on {server_url}; use `kalam login --oidc \
+             --instance {} --url {server_url}`",
+            cli.instance
+        ))),
         _ => Ok(()),
     }
+}
+
+fn print_remote_instance_hint(cli: &Cli, server_url: &str) {
+    if crate::connect::is_localhost_server(server_url) {
+        return;
+    }
+    println!(
+        "Use `kalam --instance {}` for SQL against this server from any directory.",
+        cli.instance
+    );
+    println!("`kalam dev` in a project directory still uses that project's database.");
 }
 
 async fn handle_oidc_login(
@@ -373,12 +447,17 @@ async fn handle_oidc_login(
     credential_store: &mut FileCredentialStore,
 ) -> Result<LoginCommandResult> {
     let server_url = resolve_server_url(cli, credential_store)?;
+    require_named_remote_instance(cli, &server_url)?;
+    refuse_to_overwrite_other_server(cli, credential_store, &server_url)?;
+    println!("Server: {server_url}");
     let api_client = api_http_client(cli.timeout)?;
     let login_options = fetch_login_options(&api_client, &server_url).await?;
-    let oidc = login_options
-        .oidc
-        .filter(|oidc| oidc.enabled)
-        .ok_or_else(|| CLIError::ConfigurationError("OIDC login is not enabled".to_string()))?;
+    let oidc = login_options.oidc.filter(|oidc| oidc.enabled).ok_or_else(|| {
+        CLIError::ConfigurationError(format!(
+            "OIDC login is not enabled on {server_url}. Pass `--url <server>` for the cloud \
+             instance, and `--instance <name>` so it stays separate from this project's database."
+        ))
+    })?;
 
     let session = if args.no_browser {
         let device_flow = oidc.device_flow.as_ref();
@@ -444,6 +523,7 @@ async fn handle_oidc_login(
     if !args.no_save {
         println!("Credentials saved: {}", credential_store.path().display());
     }
+    print_remote_instance_hint(cli, &server_url);
     println!("Access token expires: {}", session.expires_at);
 
     if should_continue_to_session_after_login_in_current_terminal() {

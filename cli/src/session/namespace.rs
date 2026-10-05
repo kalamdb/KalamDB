@@ -15,6 +15,14 @@ impl CLISession {
         format!("ns:{}", self.effective_namespace())
     }
 
+    pub(in crate::session) fn current_namespace_label_if_set(&self) -> Option<&str> {
+        self.current_namespace.as_ref().map(NamespaceId::as_str)
+    }
+
+    pub fn set_current_namespace(&mut self, namespace: NamespaceId) {
+        self.current_namespace = Some(namespace);
+    }
+
     pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<NamespaceId> {
         let trimmed = Self::strip_leading_sql_comments(sql).trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
