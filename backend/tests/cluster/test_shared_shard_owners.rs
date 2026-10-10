@@ -32,17 +32,16 @@ async fn shared_owners_agree_across_replicas() -> Result<()> {
         .shared_shards;
     assert_eq!(shared_shards, 4, "the e2e cluster runs four shared Raft groups");
 
-    let namespace = format!("shared_owners_{}", std::process::id());
-    let create_ns = cluster.nodes[0].execute_sql(&format!("CREATE NAMESPACE {namespace}")).await?;
-    assert_eq!(create_ns.status, ResponseStatus::Success, "{create_ns:?}");
-
     let mut owners = Vec::new();
     for index in 0..8 {
-        let sql =
-            format!("CREATE SHARED TABLE {namespace}.t{index} (id BIGINT PRIMARY KEY, name TEXT)");
+        let namespace = format!("shared_owners_{}_{index}", std::process::id());
+        let create_ns =
+            cluster.nodes[0].execute_sql(&format!("CREATE NAMESPACE {namespace}")).await?;
+        assert_eq!(create_ns.status, ResponseStatus::Success, "{create_ns:?}");
+        let sql = format!("CREATE SHARED TABLE {namespace}.t (id BIGINT PRIMARY KEY, name TEXT)");
         let created = cluster.nodes[0].execute_sql(&sql).await?;
         assert_eq!(created.status, ResponseStatus::Success, "{created:?}");
-        let table = TableId::new(NamespaceId::new(&namespace), format!("t{index}").into());
+        let table = TableId::new(NamespaceId::new(&namespace), "t".into());
         let mut agreed = None;
         for _ in 0..50 {
             let resolved: Vec<_> = cluster
@@ -72,12 +71,10 @@ async fn shared_owners_agree_across_replicas() -> Result<()> {
     );
 
     let (table, owner) = &owners[0];
-    let table_name = table.table_name();
+    let qualified = format!("{}.{}", table.namespace_id(), table.table_name());
     for id in 1..=20 {
         let inserted = cluster.nodes[0]
-            .execute_sql(&format!(
-                "INSERT INTO {namespace}.{table_name} (id, name) VALUES ({id}, 'row')"
-            ))
+            .execute_sql(&format!("INSERT INTO {qualified} (id, name) VALUES ({id}, 'row')"))
             .await?;
         assert_eq!(inserted.status, ResponseStatus::Success, "{inserted:?}");
     }
@@ -97,8 +94,7 @@ async fn shared_owners_agree_across_replicas() -> Result<()> {
         assert!(matched, "follower must apply the owner group's log through {leader_applied}");
     }
 
-    let versions_sql =
-        format!("SELECT _version FROM {namespace}.{table_name} ORDER BY _version LIMIT 100");
+    let versions_sql = format!("SELECT _version FROM {qualified} ORDER BY _version LIMIT 100");
     let mut lists = Vec::new();
     for node in &cluster.nodes {
         let response = node.execute_sql(&versions_sql).await?;

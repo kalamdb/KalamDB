@@ -36,10 +36,10 @@ impl TableProvider for StreamTableProvider {
         self.validate_transaction_table_access(state)?;
         self.ensure_leader_read(state)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
 
         let (user_id, _role) = extract_user_context(state)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
 
         let descriptor = self.scan_descriptor(projection, filters, limit);
         let combined_filter = combined_filter(filters);
@@ -130,7 +130,7 @@ impl TableProvider for StreamTableProvider {
         let inserted = self
             .insert_batch(&user_id, rows, &versions)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -177,7 +177,7 @@ impl TableProvider for StreamTableProvider {
             if self
                 .delete_by_pk_value(user_id, &pk_value, VersionId::try_from_i64(1).expect("placeholder"))
                 .await
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?
+                .map_err(crate::error::into_datafusion)?
             {
                 deleted += 1;
             }

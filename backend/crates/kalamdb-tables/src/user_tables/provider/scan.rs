@@ -251,8 +251,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
                 std::slice::from_ref(&row_data),
-            )
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+            )?;
 
             // Validate PRIMARY KEY uniqueness if user provided PK value
             base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;

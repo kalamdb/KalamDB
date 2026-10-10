@@ -214,7 +214,7 @@ impl SharedTableProvider {
             KalamDbError::NotLeader { leader_addr } => {
                 DataFusionError::External(Box::new(NotLeaderError::new(leader_addr)))
             },
-            other => DataFusionError::Execution(other.to_string()),
+            other => crate::error::into_datafusion(other),
         })
     }
 
@@ -364,7 +364,7 @@ impl SharedTableProvider {
         row_data: crate::utils::version_resolution::ParquetRowData,
     ) -> DataFusionResult<(SharedTableRowId, SharedTableRow)> {
         self.construct_row_from_parquet_data(base::system_user_id(), &row_data)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?
+            .map_err(crate::error::into_datafusion)?
             .ok_or_else(|| {
                 DataFusionError::Execution("missing shared row from parquet data".to_string())
             })

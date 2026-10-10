@@ -138,6 +138,14 @@ fn function_http_status(
 ) -> (actix_web::http::StatusCode, &'static str) {
     use actix_web::http::StatusCode;
     use kalamdb_functions::FunctionErrorCode;
+    if let kalamdb_core::error::KalamDbError::Coded(coded) = error {
+        let leaf = coded.leaf_code();
+        if let Some(code) = leaf.client_code() {
+            let status =
+                StatusCode::from_u16(leaf.http_status()).unwrap_or(StatusCode::BAD_REQUEST);
+            return (status, code);
+        }
+    }
     let Some(code) = error.function_error_code() else {
         return (StatusCode::BAD_REQUEST, "INVALID_ARGUMENTS");
     };
@@ -256,12 +264,8 @@ fn bind_json_value(
     value: &Value,
     parameter: Option<&kalamdb_system::CatalogRoutineParameter>,
 ) -> Result<RoutineValue, String> {
-    let routine = json_to_routine_value(value, parameter_data_type(parameter).as_ref())
-        .map_err(|error| error.to_string())?;
-    let json = routine_value_as_json(&routine).unwrap_or(Value::Null);
-    let bytes = kalamdb_serialization::encode_function_value("rest", &json)
-        .map_err(|error| error.to_string())?;
-    Ok(routine.with_transfer(bytes::Bytes::from(bytes), "rest"))
+    json_to_routine_value(value, parameter_data_type(parameter).as_ref())
+        .map_err(|error| error.to_string())
 }
 
 fn parameter_data_type(
@@ -289,7 +293,7 @@ mod tests {
         models::{NamespaceId, RoutineId, RoutineParameterId},
         KalamDataType,
     };
-    use kalamdb_core::error::KalamDbError;
+    use kalamdb_core::{error::KalamDbError, functions::routine_value_as_json};
     use kalamdb_functions::{FunctionErrorCode, FunctionsError};
     use kalamdb_system::CatalogRoutineParameter;
     use serde_json::json;
@@ -346,30 +350,20 @@ mod tests {
     }
 
     #[test]
-    fn rest_json_encodes_function_transfer_once() {
+    fn rest_json_reaches_v8_as_json_sql() {
         let value = serde_json::json!(7);
         let routine = super::bind_json_value(&value, None).unwrap();
-        assert!(routine.transfer.is_some());
-        assert_eq!(routine.contract_hash.as_deref(), Some("rest"));
-        let decoded = kalamdb_serialization::decode_function_value(
-            routine.transfer.as_ref().unwrap(),
-            "rest",
-        )
-        .unwrap();
-        assert_eq!(decoded, value);
+        assert!(routine.transfer.is_none());
+        assert_eq!(routine_value_as_json(&routine), Some(value));
     }
 
     #[test]
-    fn rest_object_transfer_encodes_object_not_string() {
+    fn rest_object_reaches_v8_as_an_object() {
         let value = serde_json::json!({"city": "Paris"});
         let routine = super::bind_json_value(&value, None).unwrap();
-        let decoded = kalamdb_serialization::decode_function_value(
-            routine.transfer.as_ref().unwrap(),
-            "rest",
-        )
-        .unwrap();
+        let decoded = routine_value_as_json(&routine).expect("json object");
         assert_eq!(decoded["city"], "Paris");
-        assert!(decoded.is_object(), "REST composite args must transfer as objects: {decoded}");
+        assert!(decoded.is_object(), "REST composite args must reach V8 as objects: {decoded}");
     }
 
     #[test]
@@ -382,11 +376,7 @@ mod tests {
         let args = bind_json_args(&payload, &parameters).expect("whole-body JSON bind");
         assert_eq!(args.len(), 1);
         assert!(args[0].json_sql);
-        let decoded = kalamdb_serialization::decode_function_value(
-            args[0].transfer.as_ref().unwrap(),
-            "rest",
-        )
-        .unwrap();
+        let decoded = routine_value_as_json(&args[0]).expect("json body");
         assert_eq!(decoded["conversationId"], "c1");
         assert_eq!(decoded["text"], "hello");
     }
@@ -398,11 +388,7 @@ mod tests {
             "body": { "conversationId": "c1", "text": "hello" }
         });
         let args = bind_json_args(&payload, &parameters).expect("named JSON bind");
-        let decoded = kalamdb_serialization::decode_function_value(
-            args[0].transfer.as_ref().unwrap(),
-            "rest",
-        )
-        .unwrap();
+        let decoded = routine_value_as_json(&args[0]).expect("named json body");
         assert_eq!(decoded["conversationId"], "c1");
     }
 

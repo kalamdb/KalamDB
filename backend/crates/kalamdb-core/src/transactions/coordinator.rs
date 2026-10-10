@@ -354,9 +354,10 @@ impl TransactionCoordinator {
                     sealed_handle.mark_state(TransactionState::Aborted);
                 }
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
-                return Err(KalamDbError::InvalidOperation(format!(
-                    "failed to commit transaction '{}': {}",
-                    transaction_id, error
+                let source = error.into_coded();
+                return Err(KalamDbError::Coded(source.with_context(
+                    kalamdb_commons::ErrorCode::CommitFailed,
+                    [kalamdb_commons::ErrorArg::text(transaction_id.to_string())],
                 )));
             },
         };

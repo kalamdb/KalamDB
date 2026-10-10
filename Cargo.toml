@@ -89,7 +89,7 @@ anyhow = "1.0.104"
 log = "0.4.34"
 
 # Async runtime
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal", "parking_lot"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "io-std", "net", "signal", "parking_lot"] }
 tokio-netem = "0.1.1"
 tokio-stream = { version = "0.1.19", features = ["net"] }
 
@@ -112,7 +112,7 @@ quinn-proto = { version = "0.11.19", default-features = false }
 rustls-webpki = { version = "0.103.15", default-features = false }
 
 # Time handling
-croner = "4.0"
+croner = "4.0.1"
 chrono-tz = "0.10"
 chrono = { version = "0.4.45", features = ["serde"] }
 
@@ -122,20 +122,21 @@ chrono = { version = "0.4.45", features = ["serde"] }
 rocksdb = { version = "0.25.0", default-features = false, features = ["lz4", "zstd", "multi-threaded-cf", "bindgen-runtime"] }
 
 # Apache Arrow ecosystem
-# IMPORTANT: arrow, arrow-schema and parquet MUST match the version used by DataFusion.
-# DataFusion 55.0.0 resolves to Arrow 59.2.0; mixing Arrow families pulls a second
-# arrow_array crate into the graph and causes FixedSizeListArray type mismatches.
-# Upgrade DataFusion first before bumping Arrow/Parquet beyond this family.
-arrow = { version = "59.2.0", default-features = false }
-arrow-ipc = { version = "59.2.0", default-features = false }
-arrow-schema = { version = "59.2.0" }
-datafusion = { version = "55.1.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions", "unicode_expressions"] }
-datafusion-datasource = { version = "55.1.0", default-features = false }
-datafusion-common = { version = "55.1.0", default-features = false }
-datafusion-expr = { version = "55.1.0" }
+# Bump the four DataFusion crates together, then `cargo update -p datafusion`.
+# Arrow, Parquet, and sqlparser are lower bounds only. DataFusion's own
+# requirements are the ceiling, so those crates follow a DataFusion bump
+# without an edit here. A caret pin such as "59.2.0" would cap them below
+# the next Arrow major and force a second edit.
+arrow = { version = ">=59.2.0", default-features = false }
+arrow-ipc = { version = ">=59.2.0", default-features = false }
+arrow-schema = { version = ">=59.2.0" }
+datafusion = { version = "55.2.0", default-features = false, features = ["sql", "parquet", "recursive_protection", "nested_expressions", "unicode_expressions"] }
+datafusion-datasource = { version = "55.2.0", default-features = false }
+datafusion-common = { version = "55.2.0", default-features = false }
+datafusion-expr = { version = "55.2.0" }
 datafusion-functions-json = { path = "vendor/datafusion-functions-json" }
-sqlparser = { version = "0.62.0" }
-parquet = { version = "59.2.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
+sqlparser = { version = ">=0.62.0" }
+parquet = { version = ">=59.2.0", default-features = false, features = ["snap", "zstd", "arrow", "async"] }
 
 # Web framework
 actix-web = { version = "4.15.0", features = ["http2"] }
@@ -148,8 +149,8 @@ actix-rt = { version = "2.15.0", features = ["macros", "net", "signal"] }
 actix-files = "0.7.0"
 actix-multipart = "0.8.5"
 
-# UUID generation
-uuid = { version = "1.26.1", features = ["v4", "v7", "serde"] }
+# UUID generation 
+uuid = { version = "1.28.0", features = ["v4", "v7", "serde"] }
 
 # NanoID generation (21-char URL-safe unique IDs)
 nanoid = "0.5.0"
@@ -242,19 +243,19 @@ pgwire = { version = "0.41.1", default-features = false, features = ["server-api
 bytes = "1.12.1"
 http-body = "1.1.0"
 http-body-util = "0.1.5"
-cc = "1.5.1"
+cc = "1.6.0"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 syn = { version = "3.0.6", features = ["full", "extra-traits"] }
 
 # Object storage abstraction (S3/GCS/Azure/local)
-object_store = { version = "0.13.2" }
+object_store = { version = "0.14.2" }
  
 # Vector ANN engines
-usearch = "2.26.2"
+usearch = "2.26.4"
 
 parking_lot = "0.12"
-tokio-util = "0.7.19"
+tokio-util = "0.7.20"
 hex = "0.4"
 hmac = "0.13.0"
 sha2 = "0.11.0"
@@ -264,22 +265,22 @@ oxc_parser = "=0.139.0"
 oxc_span = "=0.139.0"
 storekey = "0.11"
 moka = { version = "0.12.16", features = ["future", "sync"] }
-ntest = "0.9.5"
+ntest = "0.10.0"
 ipnet = "2.12.2"
 wasm-bindgen = { version = "0.2.129" }
 wasm-bindgen-futures = { version = "0.4.79" }
 js-sys = { version = "0.3.105" }
-libc = "0.2.186"
+libc = "0.2.190"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 web-sys = { version = "0.3.106" }
 tsify = { version = "0.5.6", default-features = false, features = ["js"] }
 serde-wasm-bindgen = "0.6.5"
 flate2 = "1.1.10"
 tar = "0.4.46"
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
 miniz_oxide = "0.9.1"
 flutter_rust_bridge = "=2.13.0"
-rust-embed = { version = "8.11.0", features = ["compression", "include-exclude"] }
+rust-embed = { version = "8.13.0", features = ["compression", "include-exclude"] }
 mime_guess = "2.0"
 kalamdb-configs = { path = "backend/crates/kalamdb-configs" }
 # Keep default-features false here so kalam-client-e2e cannot re-enable
@@ -297,9 +298,9 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "fm
 tracing-actix-web = "0.7.25"
 tracing-log = "0.2"
 tracing-opentelemetry = "0.34.0"
-opentelemetry = "0.33.0"
-opentelemetry_sdk = { version = "0.33.0", features = ["trace", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["trace", "grpc-tonic", "http-proto"] }
+opentelemetry = "0.33.1"
+opentelemetry_sdk = { version = "0.33.1", features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["trace", "grpc-tonic", "http-proto"] }
 
 # Release profile: balanced for production use (good performance + reasonable size)
 [profile.release]

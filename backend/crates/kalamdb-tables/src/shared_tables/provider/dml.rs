@@ -69,8 +69,7 @@ impl SharedTableProvider {
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
                 std::slice::from_ref(&row_data),
-            )
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+            )?;
 
             if validate_unique_pk {
                 base::ensure_unique_pk_value(self, None, &row_data).await?;
@@ -160,8 +159,7 @@ impl SharedTableProvider {
         crate::utils::datafusion_dml::validate_not_null_with_set(
             self.core.non_null_columns(),
             &coerced_rows,
-        )
-        .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+        )?;
 
         let row_count = coerced_rows.len();
 
@@ -470,8 +468,7 @@ impl SharedTableProvider {
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
                 &[new_fields.clone()],
-            )
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+            )?;
 
             if new_fields == latest_row.fields {
                 tracing::debug!(

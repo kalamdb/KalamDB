@@ -265,8 +265,7 @@ impl UserTableProvider {
         crate::utils::datafusion_dml::validate_not_null_with_set(
             self.core.non_null_columns(),
             &coerced_rows,
-        )
-        .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+        )?;
 
         let row_count = coerced_rows.len();
 
@@ -521,7 +520,7 @@ impl UserTableProvider {
         row_data: crate::utils::version_resolution::ParquetRowData,
     ) -> DataFusionResult<(UserTableRowId, UserMvccRow)> {
         self.construct_row_from_parquet_data(user_id, &row_data)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?
+            .map_err(crate::error::into_datafusion)?
             .map(|(row_id, row)| (row_id, UserMvccRow(row)))
             .ok_or_else(|| {
                 DataFusionError::Execution("missing user row from parquet data".to_string())

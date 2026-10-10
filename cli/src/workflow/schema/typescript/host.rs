@@ -18,7 +18,7 @@ use crate::{
             naming::{method_ident, namespace_object_ident, value_ident, AssignedNames},
             output::{remove_if_exists, write_text, GeneratedHeader, GENERATED_HEADER},
             procedure_bindings::{discover_procedure_bindings, ProcedureBinding},
-            procedures::ProcedureCatalog,
+            procedures::{ProcedureCatalog, ProcedureSpec},
         },
     },
 };
@@ -95,9 +95,11 @@ struct ProcedureScaffoldContext<'a> {
 
 #[derive(Serialize)]
 struct InlineContext<'a> {
-    header: &'static str,
-    ident:  String,
-    body:   &'a str,
+    header:        &'static str,
+    ident:         String,
+    body:          &'a str,
+    request_ident: String,
+    result_ident:  String,
 }
 
 pub fn write_procedure_artifacts(
@@ -108,10 +110,22 @@ pub fn write_procedure_artifacts(
     names: &AssignedNames,
     procedures: &ProcedureCatalog<'_>,
 ) -> Result<()> {
+    let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
+    remove_stale_inline_shims(&generated_dir, procedures)?;
     if procedures.is_empty() {
         return Ok(());
     }
-    let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
+    let tsconfig = project_root.join(FUNCTIONS_DIR).join("tsconfig.json");
+    if !tsconfig.exists() {
+        write_text(
+            &tsconfig,
+            &render_schema_gen_file(
+                "typescript",
+                "functions/tsconfig.json",
+                &serde_json::json!({}),
+            )?,
+        )?;
+    }
     let schema_import = ts_relative_module(&generated_dir, schema_path);
     write_text(
         &generated_dir.join("runtime.d.ts"),
@@ -141,13 +155,42 @@ pub fn write_procedure_artifacts(
         {
             scaffold_procedure(project_root, spec.routine)?;
         }
-        write_inline_shim(&generated_dir, spec.routine)?;
+        write_inline_shim(&generated_dir, spec)?;
     }
     let bindings = discover_procedure_bindings(project_root, snapshot)?;
     write_text(
         &generated_dir.join("registry.ts"),
         &generate_registry_source(hash, &bindings, &generated_dir, Some(names))?,
     )?;
+    Ok(())
+}
+
+fn remove_stale_inline_shims(
+    generated_dir: &Path,
+    procedures: &ProcedureCatalog<'_>,
+) -> Result<()> {
+    let inline_dir = generated_dir.join("inline");
+    if !inline_dir.exists() {
+        return Ok(());
+    }
+    let expected: HashSet<String> = procedures
+        .procedures()
+        .iter()
+        .filter(|spec| spec.routine.body.is_some())
+        .map(|spec| format!("{}_{}.ts", spec.routine.schema, spec.routine.name))
+        .collect();
+    for entry in fs::read_dir(&inline_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("ts")
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| !expected.contains(name))
+            && fs::read_to_string(&path)?.starts_with(GENERATED_HEADER)
+        {
+            remove_if_exists(&path)?;
+        }
+    }
     Ok(())
 }
 
@@ -295,7 +338,8 @@ pub fn generate_registry_source(
     )
 }
 
-fn write_inline_shim(generated_dir: &Path, routine: &ContractRoutine) -> Result<()> {
+fn write_inline_shim(generated_dir: &Path, spec: &ProcedureSpec<'_>) -> Result<()> {
+    let routine = spec.routine;
     let Some(body) = routine.body.as_deref() else {
         return Ok(());
     };
@@ -308,6 +352,8 @@ fn write_inline_shim(generated_dir: &Path, routine: &ContractRoutine) -> Result<
             header: GENERATED_HEADER,
             ident,
             body,
+            request_ident: spec.request_ident(),
+            result_ident: spec.result_ident(),
         },
     )?;
     write_text(&path, &source)

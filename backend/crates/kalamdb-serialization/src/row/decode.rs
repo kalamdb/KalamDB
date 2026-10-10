@@ -171,10 +171,7 @@ fn slots_to_named_row(schema: &StorageSchema, slots: &[ScalarValue]) -> Row {
         if field.dropped {
             continue;
         }
-        values.insert(
-            field.name.clone(),
-            slots.get(index).cloned().unwrap_or(ScalarValue::Null),
-        );
+        values.insert(field.name.clone(), slots.get(index).cloned().unwrap_or(ScalarValue::Null));
     }
     Row { values }
 }
@@ -192,11 +189,7 @@ fn decode_row_body_selected(
     Ok(DecodedRow { deleted, fields })
 }
 
-fn read_row_header(
-    reader: &mut Reader<'_>,
-    schema: &StorageSchema,
-    flags: u16,
-) -> Result<bool> {
+fn read_row_header(reader: &mut Reader<'_>, schema: &StorageSchema, flags: u16) -> Result<bool> {
     if flags & FLAG_VERSION_IN_KEY == 0 {
         return Err(SerializationError::Decode(
             "unsupported row format: legacy commit sequence header".to_string(),

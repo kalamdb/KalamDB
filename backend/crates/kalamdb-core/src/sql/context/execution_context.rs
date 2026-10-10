@@ -3,7 +3,7 @@ use std::sync::Arc;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{models::ReadContext, NamespaceId, Role, TransactionId, UserId};
 use kalamdb_session::AuthSession;
-use kalamdb_session_datafusion::SessionUserContext;
+use kalamdb_session_datafusion::{install_extension, SessionUserContext};
 use once_cell::sync::OnceCell;
 
 /// Unified execution context for SQL queries
@@ -49,14 +49,7 @@ impl ExecutionContext {
         user_role: Role,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
-        Self {
-            auth_session: AuthSession::new(user_id, user_role),
-            namespace_id: None,
-            transaction_id: None,
-            allow_stream_autocommit: false,
-            base_session_context,
-            session_context_cache: Arc::new(OnceCell::new()),
-        }
+        Self::bare(AuthSession::new(user_id, user_role), None, base_session_context)
     }
 
     /// Create ExecutionContext from an existing AuthSession
@@ -64,14 +57,7 @@ impl ExecutionContext {
         auth_session: AuthSession,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
-        Self {
-            auth_session,
-            namespace_id: None,
-            transaction_id: None,
-            allow_stream_autocommit: false,
-            base_session_context,
-            session_context_cache: Arc::new(OnceCell::new()),
-        }
+        Self::bare(auth_session, None, base_session_context)
     }
 
     pub fn with_namespace(
@@ -80,9 +66,17 @@ impl ExecutionContext {
         namespace_id: NamespaceId,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
+        Self::bare(AuthSession::new(user_id, user_role), Some(namespace_id), base_session_context)
+    }
+
+    fn bare(
+        auth_session: AuthSession,
+        namespace_id: Option<NamespaceId>,
+        base_session_context: Arc<SessionContext>,
+    ) -> Self {
         Self {
-            auth_session: AuthSession::new(user_id, user_role),
-            namespace_id: Some(namespace_id),
+            auth_session,
+            namespace_id,
             transaction_id: None,
             allow_stream_autocommit: false,
             base_session_context,
@@ -179,14 +173,14 @@ impl ExecutionContext {
         auth_session.user_context.user_id = user_id;
         auth_session.user_context.role = role;
 
-        Self {
+        let mut ctx = Self::bare(
             auth_session,
-            namespace_id: self.namespace_id.clone(),
-            transaction_id: self.transaction_id.clone(),
-            allow_stream_autocommit: self.allow_stream_autocommit,
-            base_session_context: Arc::clone(&self.base_session_context),
-            session_context_cache: Arc::new(OnceCell::new()),
-        }
+            self.namespace_id.clone(),
+            Arc::clone(&self.base_session_context),
+        );
+        ctx.transaction_id = self.transaction_id.clone();
+        ctx.allow_stream_autocommit = self.allow_stream_autocommit;
+        ctx
     }
 
     /// Set the read context (client vs internal)
@@ -217,7 +211,7 @@ impl ExecutionContext {
             self.auth_session.read_context(),
         );
 
-        session_state.config_mut().options_mut().extensions.insert(session_user_context);
+        install_extension(&mut session_state, session_user_context);
 
         // Override default_schema if namespace_id is set on this context
         if let Some(ref ns) = self.namespace_id {
@@ -228,48 +222,16 @@ impl ExecutionContext {
         session_state
     }
 
-    fn build_user_session_context(&self) -> SessionContext {
-        let session_state = self.build_user_session_state();
-
-        // Create SessionContext from the per-user state
-        let ctx = SessionContext::new_with_state(session_state);
-
-        ctx
-    }
-
-    /// Create a per-request SessionContext with current user_id and role injected
+    /// Per-request session with the current user injected.
     ///
-    /// Clones the base SessionState and injects the current user_id and role into
-    /// config.extensions. The clone is relatively cheap (~1-2μs) because most fields are
-    /// Arc-wrapped.
-    ///
-    /// # What Gets Cloned
-    /// - session_id: String (~50 bytes)
-    /// - config: Arc<SessionConfig> (pointer copy)
-    /// - runtime_env: Arc<RuntimeEnv> (pointer copy)
-    /// - catalog_list: Arc<dyn CatalogList> (pointer copy)
-    /// - scalar_functions: HashMap<String, Arc<ScalarUDF>> (HashMap clone, Arc values)
-    /// - Total: ~1-2μs per request
-    ///
-    /// # Performance Impact
-    /// - At 10,000 QPS: 10-20ms/sec = 1-2% CPU overhead
-    /// - At 100,000 QPS: 100-200ms/sec = 10-20% CPU overhead
-    /// - Acceptable trade-off for clean user isolation
-    ///
-    /// # User Isolation
-    /// UserTableProvider and StreamTableProvider will read SessionUserContext from
-    /// state.config().options().extensions during scan() to filter data by user.
-    ///
-    /// # Namespace Handling
-    /// If `namespace_id` is set on this ExecutionContext, it will override the
-    /// default_schema in the session config. This allows clients to specify the
-    /// active namespace per-request.
-    ///
-    /// # Returns
-    /// SessionContext with user_id and role injected, ready for query execution
+    /// The first call builds one `SessionState` and caches it for this request.
+    /// Later calls clone that context. Shared catalogs and the runtime stay
+    /// behind `Arc`; `config_mut` copies config only when a caller changes it.
+    /// A namespace on this context overrides `default_schema`.
     pub fn create_session_with_user(&self) -> SessionContext {
-        let session = self.session_context_cache.get_or_init(|| self.build_user_session_context());
-
+        let session = self
+            .session_context_cache
+            .get_or_init(|| SessionContext::new_with_state(self.build_user_session_state()));
         session.clone()
     }
 
@@ -287,9 +249,9 @@ impl ExecutionContext {
     /// The current default namespace as a NamespaceId (defaults to "default")
     pub fn default_namespace(&self) -> NamespaceId {
         if let Some(session) = self.session_context_cache.get() {
-            let state = session.state();
-            let default_schema = state.config().options().catalog.default_schema.as_str();
-            return NamespaceId::from_session_schema(default_schema, self.namespace_id.as_ref());
+            let default_schema =
+                session.state_ref().read().config().options().catalog.default_schema.clone();
+            return NamespaceId::from_session_schema(&default_schema, self.namespace_id.as_ref());
         }
 
         self.namespace_id.clone().unwrap_or_default()

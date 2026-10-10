@@ -33,6 +33,10 @@ impl ConversionBudget {
         self.charge(value.length().saturating_mul(3))
     }
 
+    pub(crate) fn bytes(&mut self, len: usize) -> Result<()> {
+        self.charge(len)
+    }
+
     fn charge(&mut self, bytes: usize) -> Result<()> {
         self.remaining = self
             .remaining

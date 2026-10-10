@@ -102,10 +102,10 @@ fn nested_row() -> UserTableRow {
     values.insert("customer".to_string(), struct_scalar(7, "ada"));
     values.insert("tags".to_string(), utf8_list(&["vip", "west"]));
     UserTableRow {
-        user_id:     UserId::new("user-1"),
-        _version:    VersionId::try_from_i64(100).unwrap(),
-        _deleted:    false,
-        fields:      Row { values },
+        user_id:  UserId::new("user-1"),
+        _version: VersionId::try_from_i64(100).unwrap(),
+        _deleted: false,
+        fields:   Row { values },
     }
 }
 
@@ -118,10 +118,10 @@ fn scalar_row() -> UserTableRow {
         ScalarValue::Utf8(Some("hello from kalamdb 0.7".to_string())),
     );
     UserTableRow {
-        user_id:     UserId::new("user-1"),
-        _version:    VersionId::try_from_i64(100).unwrap(),
-        _deleted:    false,
-        fields:      Row { values },
+        user_id:  UserId::new("user-1"),
+        _version: VersionId::try_from_i64(100).unwrap(),
+        _deleted: false,
+        fields:   Row { values },
     }
 }
 

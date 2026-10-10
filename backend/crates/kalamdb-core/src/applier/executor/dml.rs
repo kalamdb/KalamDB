@@ -446,7 +446,7 @@ impl DmlExecutor {
             let row_ids = provider
                 .insert_batch_with_versions(user_id, rows.to_vec(), versions)
                 .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
+                .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -680,7 +680,7 @@ impl DmlExecutor {
             let row_ids = provider
                 .insert_batch_with_versions(actor_user_id, rows.to_vec(), versions)
                 .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
+                .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
             log::debug!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -895,12 +895,7 @@ impl DmlExecutor {
                         mutations.iter().map(|mutation| &mutation.payload).collect();
 
                     provider.validate_insert_batch_rows(user_id, batch_rows).await.map_err(
-                        |error| {
-                            ApplierError::Execution(format!(
-                                "Failed to insert batch row: {}",
-                                error
-                            ))
-                        },
+                        |error| ApplierError::from_table(error, "Failed to insert batch row"),
                     )?;
 
                     return Ok(());
@@ -965,9 +960,7 @@ impl DmlExecutor {
 
             table_base::ensure_unique_pk_value(provider, Some(&user_id), &mutation.payload)
                 .await
-                .map_err(|error| {
-                    ApplierError::Execution(format!("Failed to insert batch row: {}", error))
-                })?;
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
@@ -1029,9 +1022,7 @@ impl DmlExecutor {
 
             table_base::ensure_unique_pk_value(provider, None, &mutation.payload)
                 .await
-                .map_err(|error| {
-                    ApplierError::Execution(format!("Failed to insert batch row: {}", error))
-                })?;
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
@@ -1077,9 +1068,7 @@ impl DmlExecutor {
                             versions,
                         )
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch rows: {}", e))
-                        })?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
 
                     if applied.len() != mutations.len() {
                         return Err(ApplierError::Execution(format!(
@@ -1176,9 +1165,7 @@ impl DmlExecutor {
                     let (row_key, notification) = provider
                         .insert_deferred_prevalidated(&user_id, mutation.payload.clone(), version)
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch row: {}", e))
-                        })?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
                     Some((row_key, notification))
                 },
                 OperationKind::Update => provider
@@ -1275,9 +1262,7 @@ impl DmlExecutor {
                         versions,
                     )
                     .await
-                    .map_err(|e| {
-                        ApplierError::Execution(format!("Failed to insert batch rows: {}", e))
-                    })?;
+                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
 
                 if applied.len() != mutations.len() {
                     return Err(ApplierError::Execution(format!(
@@ -1367,9 +1352,7 @@ impl DmlExecutor {
                     let (row_key, notification) = provider
                         .insert_deferred_prevalidated(mutation.payload.clone(), version)
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch row: {}", e))
-                        })?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
                     Some((row_key, notification))
                 },
                 OperationKind::Update => provider

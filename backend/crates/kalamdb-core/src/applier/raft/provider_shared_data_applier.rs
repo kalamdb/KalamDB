@@ -16,7 +16,10 @@ use kalamdb_commons::{
 use kalamdb_raft::{GroupId, RaftError, SharedDataApplier, TransactionApplyResult};
 use kalamdb_transactions::StagedMutation;
 
-use crate::{app_context::AppContext, applier::executor::CommandExecutorImpl};
+use crate::{
+    app_context::AppContext,
+    applier::{error::ApplierError, executor::CommandExecutorImpl},
+};
 
 /// SharedDataApplier implementation using Unified Command Executor
 ///
@@ -74,7 +77,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
             .dml()
             .insert_shared_data_with_versions(table_id, actor_user_id, &rows, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn update(
@@ -99,7 +102,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
                 versions,
             )
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn delete(
@@ -115,7 +118,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
             .dml()
             .delete_shared_data_with_versions(table_id, actor_user_id, pk_values, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn apply_transaction_batch(
@@ -128,6 +131,6 @@ impl SharedDataApplier for ProviderSharedDataApplier {
             .dml()
             .apply_shared_transaction_batch_with_versions(transaction_id, mutations, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 }

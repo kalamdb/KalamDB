@@ -13,7 +13,7 @@ use std::{
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::{VersionId, VersionDomain},
+    ids::{VersionDomain, VersionId},
     models::{TableId, UserId},
     websocket::ChangeNotification,
 };
@@ -37,7 +37,7 @@ struct ReplayEvent {
 }
 
 struct ScopeLog {
-    domain: Option<VersionDomain>,
+    domain:         Option<VersionDomain>,
     /// Exclusive resume floor. A cursor `from` is covered when `from >= covered_from`
     /// and every later commit is still queued.
     covered_from:   Option<VersionId>,
@@ -51,7 +51,7 @@ struct ScopeLog {
 impl ScopeLog {
     fn new() -> Self {
         Self {
-            domain: None,
+            domain:         None,
             covered_from:   None,
             discarded:      false,
             empty_snapshot: false,
@@ -185,9 +185,17 @@ impl ReplayLog {
     }
 
     /// A recreated or moved table must never inherit an earlier replay buffer.
-    pub(crate) fn bind_domain(&self, user_id: Option<&UserId>, table_id: &TableId, domain: Option<&VersionDomain>) {
+    pub(crate) fn bind_domain(
+        &self,
+        user_id: Option<&UserId>,
+        table_id: &TableId,
+        domain: Option<&VersionDomain>,
+    ) {
         let mut inner = self.inner.lock();
-        let key = ScopeKey { user_id: user_id.cloned(), table_id: table_id.clone() };
+        let key = ScopeKey {
+            user_id:  user_id.cloned(),
+            table_id: table_id.clone(),
+        };
         inner.begin(key.clone());
         let scope = inner.scopes.get_mut(&key).expect("scope initialized");
         if scope.domain.as_ref() != domain {
@@ -330,7 +338,7 @@ mod tests {
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
         constants::SystemColumnNames,
-        ids::{VersionId, VersionDomain},
+        ids::{VersionDomain, VersionId},
         models::{rows::Row, NamespaceId, TableId, TableName, UserId},
         websocket::ChangeNotification,
     };

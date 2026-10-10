@@ -45,7 +45,7 @@ impl TableProvider for UserTableProvider {
         let table_overlay = extract_transaction_query_context(state)
             .and_then(|context| context.overlay_view.overlay_for_table(self.core.table_id()));
         let (user_id, _role) = extract_user_context(state)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
 
         self.base_scan_with_overlay(
             state,
@@ -96,11 +96,11 @@ impl TableProvider for UserTableProvider {
             self.core.services.commit_sequence_source.allocate_next(),
             rows.len(),
         )
-        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        .map_err(crate::error::into_datafusion)?;
         let inserted = self
             .insert_batch_with_versions(&user_id, rows, &versions)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -170,12 +170,12 @@ impl TableProvider for UserTableProvider {
                 commit_seq.expect("commit_seq must exist for direct DELETE"),
                 ordinal,
             )
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
             ordinal = ordinal.saturating_add(1);
             if self
                 .delete_by_pk_value_with_version(user_id, &pk_value, version)
                 .await
-                .map_err(|e| DataFusionError::Execution(e.to_string()))?
+                .map_err(crate::error::into_datafusion)?
             {
                 deleted += 1;
             }
@@ -279,12 +279,12 @@ impl TableProvider for UserTableProvider {
                     commit_seq.expect("commit_seq must exist for direct UPDATE"),
                     ordinal,
                 )
-                .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                .map_err(crate::error::into_datafusion)?;
                 ordinal = ordinal.saturating_add(1);
                 let result = self
                     .update_by_pk_value_with_version(user_id, &pk_value, evaluated_updates, version)
                     .await
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                    .map_err(crate::error::into_datafusion)?;
                 if result.is_some() {
                     updated += 1;
                 }
@@ -446,8 +446,7 @@ impl UserTableProvider {
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
                 &[new_fields.clone()],
-            )
-            .map_err(|e| KalamDbError::ConstraintViolation(e.to_string()))?;
+            )?;
 
             let seq_id = version;
 

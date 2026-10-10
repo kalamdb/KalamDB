@@ -40,9 +40,50 @@ pub enum ApplierError {
     /// Authorization failed
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
+
+    /// Structured error carried through Raft without rendering it early.
+    #[error(transparent)]
+    Coded(#[from] kalamdb_commons::CodedError),
 }
 
 impl ApplierError {
+    /// Keep a coded error intact. Other errors stay a provider string.
+    pub fn into_raft(self) -> kalamdb_raft::RaftError {
+        match self {
+            Self::Coded(error) => kalamdb_raft::RaftError::Coded(error),
+            other => kalamdb_raft::RaftError::provider(other.to_string()),
+        }
+    }
+
+    pub fn from_raft(error: kalamdb_raft::RaftError) -> Self {
+        match error {
+            kalamdb_raft::RaftError::Coded(error) => Self::Coded(error),
+            other => Self::Raft(other.to_string()),
+        }
+    }
+
+    pub fn from_raft_message(message: &str) -> Self {
+        match kalamdb_commons::CodedError::decode(message) {
+            Some(error) => Self::Coded(error),
+            None => Self::Raft(message.to_string()),
+        }
+    }
+
+    /// Keep a coded table error. Other table errors keep the existing prefix.
+    pub fn from_table(error: kalamdb_tables::TableError, prefix: &str) -> Self {
+        match error {
+            kalamdb_tables::TableError::Coded(coded) => Self::Coded(coded),
+            other => Self::Execution(format!("{prefix}: {other}")),
+        }
+    }
+
+    pub fn into_coded(self) -> kalamdb_commons::CodedError {
+        match self {
+            Self::Coded(error) => error,
+            other => kalamdb_commons::CodedError::detail(other.to_string()),
+        }
+    }
+
     /// Create a not found error
     pub fn not_found(resource_type: impl Into<String>, id: impl fmt::Display) -> Self {
         Self::NotFound {
@@ -64,6 +105,7 @@ impl From<crate::error::KalamDbError> for ApplierError {
                 id:            msg,
             },
             crate::error::KalamDbError::Unauthorized(msg) => ApplierError::Unauthorized(msg),
+            crate::error::KalamDbError::Coded(error) => ApplierError::Coded(error),
             other => ApplierError::Execution(other.to_string()),
         }
     }
@@ -80,6 +122,7 @@ impl From<ApplierError> for crate::error::KalamDbError {
                 crate::error::KalamDbError::AlreadyExists(format!("{} {}", resource_type, id))
             },
             ApplierError::Unauthorized(msg) => crate::error::KalamDbError::Unauthorized(msg),
+            ApplierError::Coded(error) => crate::error::KalamDbError::Coded(error),
             ApplierError::NoLeader => {
                 crate::error::KalamDbError::ExecutionError("No Raft leader available".to_string())
             },

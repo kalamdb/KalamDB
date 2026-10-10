@@ -59,6 +59,14 @@ impl DataResponse {
         }
     }
 
+    /// Store a Raft error. Coded errors keep their code and arguments.
+    pub fn from_raft_error(error: crate::error::RaftError) -> Self {
+        match error {
+            crate::error::RaftError::Coded(error) => Self::error(error.encode()),
+            other => Self::error(other.to_string()),
+        }
+    }
+
     /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
         !matches!(self, Self::Error { .. })

@@ -250,28 +250,34 @@ pub async fn parse_sql_payload(
     config: &FileUploadSettings,
 ) -> Result<ParsedSqlPayload, FileError> {
     match payload {
-        Either::Left(req) => Ok(ParsedSqlPayload {
-            sql:          req.sql.clone(),
-            params:       req.params.clone(),
-            namespace_id: req.namespace_id.clone(),
-            files:        None,
-            is_multipart: false,
-        }),
+        Either::Left(req) => {
+            let req = req.into_inner();
+            Ok(ParsedSqlPayload {
+                sql:          req.sql,
+                params:       req.params,
+                namespace_id: req.namespace_id,
+                files:        None,
+                is_multipart: false,
+            })
+        },
         Either::Right(multipart) => {
             let parsed = parse_multipart_request(multipart, config).await?;
             let params = match parsed.params_json {
                 Some(json_str) => {
-                    let json_val: serde_json::Value =
-                        serde_json::from_str(&json_str).map_err(|e| {
-                            FileError::new(
+                    match serde_json::from_str(&json_str).map_err(|e| {
+                        FileError::new(
+                            ErrorCode::InvalidParameter,
+                            format!("Invalid params JSON: {}", e),
+                        )
+                    })? {
+                        serde_json::Value::Array(values) => Some(values),
+                        _ => {
+                            return Err(FileError::new(
                                 ErrorCode::InvalidParameter,
-                                format!("Invalid params JSON: {}", e),
-                            )
-                        })?;
-                    let arr = json_val.as_array().ok_or_else(|| {
-                        FileError::new(ErrorCode::InvalidParameter, "Params must be a JSON array")
-                    })?;
-                    Some(arr.to_vec())
+                                "Params must be a JSON array",
+                            ));
+                        },
+                    }
                 },
                 None => None,
             };

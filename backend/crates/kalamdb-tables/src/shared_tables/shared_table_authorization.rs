@@ -280,7 +280,7 @@ impl SharedTableAuthorization {
         let authorization = self
             .bind_authorization(host, policies, snapshot_commit_seq)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         if authorization.authorizes_all(rows) {
             Ok(())
         } else {

@@ -1,11 +1,53 @@
 use std::any::Any;
 
-use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
+use datafusion::{
+    common::config::{ConfigEntry, ConfigExtension, ExtensionOptions},
+    execution::context::SessionState,
+};
 use kalamdb_commons::{
     models::{ReadContext, Role, UserId},
     PolicyCommand,
 };
 use kalamdb_session::UserContext;
+
+/// Install a config extension on a session state.
+///
+/// Callers share this so user, transaction, and diagnostics extensions are
+/// attached the same way.
+#[inline]
+pub fn install_extension<T: ConfigExtension>(state: &mut SessionState, extension: T) {
+    state.config_mut().options_mut().extensions.insert(extension);
+}
+
+macro_rules! empty_config_extension {
+    ($ty:ty, $prefix:literal) => {
+        impl ExtensionOptions for $ty {
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+
+            fn cloned(&self) -> Box<dyn ExtensionOptions> {
+                Box::new(self.clone())
+            }
+
+            fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
+                Ok(())
+            }
+
+            fn entries(&self) -> Vec<ConfigEntry> {
+                Vec::new()
+            }
+        }
+
+        impl ConfigExtension for $ty {
+            const PREFIX: &'static str = $prefix;
+        }
+    };
+}
 
 /// Session-level user context stored in DataFusion config extensions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -57,31 +99,7 @@ impl From<&UserContext> for SessionUserContext {
     }
 }
 
-impl ExtensionOptions for SessionUserContext {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn cloned(&self) -> Box<dyn ExtensionOptions> {
-        Box::new(self.clone())
-    }
-
-    fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
-        Ok(())
-    }
-
-    fn entries(&self) -> Vec<ConfigEntry> {
-        vec![]
-    }
-}
-
-impl ConfigExtension for SessionUserContext {
-    const PREFIX: &'static str = "kalamdb_user";
-}
+empty_config_extension!(SessionUserContext, "kalamdb_user");
 
 /// Per-operation RLS command used while a provider performs DML visibility scans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,31 +115,7 @@ impl Default for RlsCommandContext {
     }
 }
 
-impl ExtensionOptions for RlsCommandContext {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn cloned(&self) -> Box<dyn ExtensionOptions> {
-        Box::new(*self)
-    }
-
-    fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
-        Ok(())
-    }
-
-    fn entries(&self) -> Vec<ConfigEntry> {
-        vec![]
-    }
-}
-
-impl ConfigExtension for RlsCommandContext {
-    const PREFIX: &'static str = "kalamdb_rls_command";
-}
+empty_config_extension!(RlsCommandContext, "kalamdb_rls_command");
 
 /// Session flag used to opt into scan-level diagnostics for `EXPLAIN ANALYZE`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -141,28 +135,4 @@ impl ScanDiagnosticsContext {
     }
 }
 
-impl ExtensionOptions for ScanDiagnosticsContext {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn cloned(&self) -> Box<dyn ExtensionOptions> {
-        Box::new(*self)
-    }
-
-    fn set(&mut self, _key: &str, _value: &str) -> datafusion::common::Result<()> {
-        Ok(())
-    }
-
-    fn entries(&self) -> Vec<ConfigEntry> {
-        vec![]
-    }
-}
-
-impl ConfigExtension for ScanDiagnosticsContext {
-    const PREFIX: &'static str = "kalamdb_scan_diagnostics";
-}
+empty_config_extension!(ScanDiagnosticsContext, "kalamdb_scan_diagnostics");

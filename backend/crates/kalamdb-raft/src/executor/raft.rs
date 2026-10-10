@@ -169,7 +169,7 @@ impl CommandExecutor for RaftExecutor {
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
-            return Err(RaftError::Internal(message));
+            return Err(raft_error_from_response_message(message));
         }
 
         Ok(response)
@@ -185,7 +185,7 @@ impl CommandExecutor for RaftExecutor {
         // Check if the response is an error and convert to RaftError
         // Use Internal instead of Provider since the message already contains full context
         if let DataResponse::Error { message } = response {
-            return Err(RaftError::Internal(message));
+            return Err(raft_error_from_response_message(message));
         }
 
         Ok(response)
@@ -509,6 +509,13 @@ impl CommandExecutor for RaftExecutor {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+fn raft_error_from_response_message(message: String) -> RaftError {
+    match kalamdb_commons::CodedError::decode(&message) {
+        Some(error) => RaftError::Coded(error),
+        None => RaftError::Internal(message),
     }
 }
 

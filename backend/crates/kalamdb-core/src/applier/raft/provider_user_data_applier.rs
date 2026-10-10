@@ -16,7 +16,10 @@ use kalamdb_commons::{
 use kalamdb_raft::{RaftError, TransactionApplyResult, UserDataApplier};
 use kalamdb_transactions::StagedMutation;
 
-use crate::{app_context::AppContext, applier::executor::CommandExecutorImpl};
+use crate::{
+    app_context::AppContext,
+    applier::{error::ApplierError, executor::CommandExecutorImpl},
+};
 
 /// UserDataApplier implementation using Unified Command Executor
 ///
@@ -64,7 +67,7 @@ impl UserDataApplier for ProviderUserDataApplier {
             .dml()
             .insert_user_data_with_versions(table_id, user_id, &rows, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn update(
@@ -86,7 +89,7 @@ impl UserDataApplier for ProviderUserDataApplier {
             .dml()
             .update_user_data_with_versions(table_id, user_id, updates, filter, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn delete(
@@ -102,7 +105,7 @@ impl UserDataApplier for ProviderUserDataApplier {
             .dml()
             .delete_user_data_with_versions(table_id, user_id, pk_values, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 
     async fn apply_transaction_batch(
@@ -115,6 +118,6 @@ impl UserDataApplier for ProviderUserDataApplier {
             .dml()
             .apply_user_transaction_batch_with_versions(transaction_id, mutations, versions)
             .await
-            .map_err(|e| RaftError::provider(e.to_string()))
+            .map_err(ApplierError::into_raft)
     }
 }

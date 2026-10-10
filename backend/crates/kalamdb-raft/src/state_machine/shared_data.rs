@@ -299,7 +299,7 @@ impl SharedDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -347,7 +347,7 @@ impl SharedDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -384,7 +384,7 @@ impl SharedDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -473,7 +473,7 @@ impl SharedDataStateMachine {
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 Ok(DataResponse::TransactionCommitted(result))
             },
-            Err(error) => Ok(DataResponse::error(error.to_string())),
+            Err(error) => Ok(DataResponse::from_raft_error(error)),
         }
     }
 }

@@ -52,21 +52,33 @@ pub fn extract_full_user_context(
     Ok((&ctx.user_id, ctx.role, ctx.read_context))
 }
 
+fn access_denied(
+    namespace_id: NamespaceId,
+    table_name: TableName,
+    role: Role,
+    reason: &'static str,
+) -> SessionError {
+    SessionError::AccessDenied {
+        namespace_id,
+        table_name,
+        role,
+        reason: reason.to_string(),
+    }
+}
+
+fn deny_table(table_id: &TableId, role: Role, reason: &'static str) -> SessionError {
+    access_denied(table_id.namespace_id().clone(), table_id.table_name().clone(), role, reason)
+}
+
 pub fn check_system_table_access(
     session: &dyn Session,
     table_id: &TableId,
 ) -> Result<(), SessionError> {
     let role = extract_user_role(session);
-
     if can_access_system_table(role) {
         Ok(())
     } else {
-        Err(SessionError::AccessDenied {
-            namespace_id: table_id.namespace_id().clone(),
-            table_name: table_id.table_name().clone(),
-            role,
-            reason: "System tables require 'dba' or 'system' role.".to_string(),
-        })
+        Err(deny_table(table_id, role, "System tables require 'dba' or 'system' role."))
     }
 }
 
@@ -75,16 +87,10 @@ pub fn check_user_table_access(
     table_id: &TableId,
 ) -> Result<(), SessionError> {
     let role = extract_user_role(session);
-
     if can_access_user_table(role) {
         Ok(())
     } else {
-        Err(SessionError::AccessDenied {
-            namespace_id: table_id.namespace_id().clone(),
-            table_name: table_id.table_name().clone(),
-            role,
-            reason: "User tables require user/service or admin role".to_string(),
-        })
+        Err(deny_table(table_id, role, "User tables require user/service or admin role"))
     }
 }
 
@@ -93,16 +99,32 @@ pub fn check_user_table_write_access(
     table_id: &TableId,
 ) -> Result<(), SessionError> {
     let role = extract_user_role(session);
-
     if can_write_user_table(role) {
         Ok(())
     } else {
-        Err(SessionError::AccessDenied {
-            namespace_id: table_id.namespace_id().clone(),
-            table_name: table_id.table_name().clone(),
+        Err(deny_table(
+            table_id,
             role,
-            reason: "User table write denied due to insufficient privileges.".to_string(),
-        })
+            "User table write denied due to insufficient privileges.",
+        ))
+    }
+}
+
+fn check_shared_table_role(
+    session: &dyn Session,
+    table_def: &TableDefinition,
+    reason: &'static str,
+) -> Result<(), SessionError> {
+    let role = extract_user_role(session);
+    if matches!(role, Role::Anonymous) {
+        Err(access_denied(
+            table_def.namespace_id.clone(),
+            table_def.table_name.clone(),
+            role,
+            reason,
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -110,34 +132,14 @@ pub fn check_shared_table_access(
     session: &dyn Session,
     table_def: &TableDefinition,
 ) -> Result<(), SessionError> {
-    let role = extract_user_role(session);
-    if !matches!(role, Role::Anonymous) {
-        Ok(())
-    } else {
-        Err(SessionError::AccessDenied {
-            namespace_id: table_def.namespace_id.clone(),
-            table_name: table_def.table_name.clone(),
-            role,
-            reason: "Anonymous shared-table access is denied".to_string(),
-        })
-    }
+    check_shared_table_role(session, table_def, "Anonymous shared-table access is denied")
 }
 
 pub fn check_shared_table_write_access(
     session: &dyn Session,
     table_def: &TableDefinition,
 ) -> Result<(), SessionError> {
-    let role = extract_user_role(session);
-    if !matches!(role, Role::Anonymous) {
-        Ok(())
-    } else {
-        Err(SessionError::AccessDenied {
-            namespace_id: table_def.namespace_id.clone(),
-            table_name: table_def.table_name.clone(),
-            role,
-            reason: "Anonymous shared-table writes are denied".to_string(),
-        })
-    }
+    check_shared_table_role(session, table_def, "Anonymous shared-table writes are denied")
 }
 
 pub fn check_system_table_access_by_name(

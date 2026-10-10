@@ -579,10 +579,10 @@ impl UnifiedApplier for RaftApplier {
         let response = raft_mgr
             .propose_transaction_commit(group_id, transaction_id, mutations)
             .await
-            .map_err(|e| ApplierError::Raft(e.to_string()))?;
+            .map_err(ApplierError::from_raft)?;
 
         if let DataResponse::Error { message } = &response {
-            return Err(ApplierError::Raft(message.clone()));
+            return Err(ApplierError::from_raft_message(message));
         }
 
         Ok(response)

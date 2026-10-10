@@ -13,7 +13,7 @@ KalamDB uses a multi-Raft topology (OpenRaft 0.9) to replicate metadata, jobs, u
 ## Topology & Sharding
 
 - Group IDs encode role and shard: `Meta`, `DataUserShard(n)`, `DataSharedShard(n)`. Numeric IDs are stable for OpenRaft membership and RPC routing.
-- User data routing: `hash(user_id) % user_shards` (default 32). A non-partitioned SHARED table belongs to exactly one persisted `DataSharedShard`. `ShardRouter::place_shared_table` hashes `TableId` only when the table is created. Later reads, writes, live barriers, and transactions use `shared_group_id` from catalog metadata (`shared_shard_id`). Raising `shared_shards` does not move existing tables. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](../../backend/crates/kalamdb-sharding/src/lib.rs).
+- User data routing: `hash(user_id) % user_shards` (default 32). A non-partitioned SHARED table belongs to exactly one persisted `DataSharedShard`. `ShardRouter::place_shared_table` hashes the namespace only when the table is created, so shared tables in one namespace stay on one group. Later reads, writes, live barriers, and transactions use `shared_group_id` from catalog metadata (`shared_shard_id`). Raising `shared_shards` does not move existing tables. Helpers live in `ShardRouter` in [backend/crates/kalamdb-sharding/src/lib.rs](../../backend/crates/kalamdb-sharding/src/lib.rs).
 - `_version` is ordered only inside its `VersionDomain` (history incarnation, table, owning group, and a reserved partition id). The same numeric version in two groups is not one global order.
 
 ## Command Flow (Cluster Mode)

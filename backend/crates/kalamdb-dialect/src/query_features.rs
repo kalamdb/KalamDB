@@ -1,9 +1,8 @@
 //! General SQL query feature support for DataFusion-backed execution.
 //!
-//! KalamDB routes most SELECT statements directly to DataFusion 55, which provides
-//! SQL lambda array functions when the session uses the DuckDB SQL dialect
-//! (`datafusion.sql_parser.dialect = duckdb`). Subscription and live-query paths
-//! intentionally restrict the SQL surface and remain narrower.
+//! The session parser is PostgreSQL. DuckDB-only lambda syntax (`x -> expr`)
+//! is rejected on general SQL and on subscription SQL. Higher-order functions
+//! remain available to DataFusion when called without that syntax.
 
 /// DataFusion 55 query features supported in general SQL execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,12 +32,16 @@ impl GeneralQueryFeature {
 
 /// Returns `true` when the feature is available in general SQL execution.
 pub fn supports_general_query_feature(feature: GeneralQueryFeature) -> bool {
-    matches!(feature, GeneralQueryFeature::LambdaArrayFunctions)
+    match feature {
+        GeneralQueryFeature::LambdaArrayFunctions => false,
+    }
 }
 
 /// Returns `true` when the feature is available in subscription/live-query SQL.
 pub fn supports_subscription_query_feature(feature: GeneralQueryFeature) -> bool {
-    !supports_general_query_feature(feature)
+    match feature {
+        GeneralQueryFeature::LambdaArrayFunctions => false,
+    }
 }
 
 #[cfg(test)]
@@ -46,9 +49,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn general_queries_support_datafusion54_features() {
+    fn general_queries_reject_duckdb_lambda_syntax() {
         for feature in GeneralQueryFeature::ALL {
-            assert!(supports_general_query_feature(*feature));
+            assert!(!supports_general_query_feature(*feature));
         }
     }
 

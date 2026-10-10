@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    ids::{VersionId, VersionDomain},
+    ids::{VersionDomain, VersionId},
     models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId},
     schemas::{SchemaField, TableDefinition},
     websocket::SubscriptionRequest,
@@ -49,9 +49,14 @@ pub struct LiveQueryManager {
 }
 
 impl LiveQueryManager {
-    fn validate_resume_domain(expected: Option<&VersionDomain>, supplied: Option<&VersionDomain>, resuming: bool) -> Result<(), LiveError> {
+    fn validate_resume_domain(
+        expected: Option<&VersionDomain>,
+        supplied: Option<&VersionDomain>,
+        resuming: bool,
+    ) -> Result<(), LiveError> {
         if (resuming && expected.is_some() && supplied != expected)
-            || (supplied.is_some() && supplied != expected) {
+            || (supplied.is_some() && supplied != expected)
+        {
             return Err(LiveError::InvalidOperation(
                 "stale resume cursor domain mismatch; resubscribe without a resume token".into(),
             ));
@@ -283,7 +288,8 @@ impl LiveQueryManager {
 
         let version_domain = table_def.shared_version_domain();
         let supplied = request.options.as_ref().and_then(|options| options.version_domain.as_ref());
-        let resuming = initial_data_options.as_ref().is_some_and(|options| options.since_seq.is_some());
+        let resuming =
+            initial_data_options.as_ref().is_some_and(|options| options.since_seq.is_some());
         Self::validate_resume_domain(version_domain.as_ref(), supplied, resuming)?;
 
         // Determine batch size
@@ -321,7 +327,11 @@ impl LiveQueryManager {
             _ => Some(user_id.clone()),
         };
         if initial_data_options.is_some() {
-            self.registry.replay().bind_domain(scope_user.as_ref(), &table_id, version_domain.as_ref());
+            self.registry.replay().bind_domain(
+                scope_user.as_ref(),
+                &table_id,
+                version_domain.as_ref(),
+            );
         }
 
         // Register the subscription
@@ -654,14 +664,20 @@ mod tests {
         let expected = shared_table_def().shared_version_domain().unwrap();
         assert!(LiveQueryManager::validate_resume_domain(Some(&expected), None, true).is_err());
         assert!(LiveQueryManager::validate_resume_domain(Some(&expected), None, false).is_ok());
-        assert!(LiveQueryManager::validate_resume_domain(Some(&expected), Some(&expected), true).is_ok());
+        assert!(LiveQueryManager::validate_resume_domain(Some(&expected), Some(&expected), true)
+            .is_ok());
         let mut wrong = vec![expected.clone(); 4];
         wrong[0].table_id = TableId::new("other".into(), "events".into());
         wrong[1].scope_id += 1;
         wrong[2].history_incarnation = "old".into();
         wrong[3].partition_id = Some(1);
         for supplied in wrong {
-            assert!(LiveQueryManager::validate_resume_domain(Some(&expected), Some(&supplied), true).is_err());
+            assert!(LiveQueryManager::validate_resume_domain(
+                Some(&expected),
+                Some(&supplied),
+                true
+            )
+            .is_err());
         }
         assert!(LiveQueryManager::validate_resume_domain(None, Some(&expected), true).is_err());
     }
@@ -675,12 +691,12 @@ mod tests {
             schema_version: 1,
             next_column_id: 1,
             table_options:  TableOptions::Shared(SharedTableOptions {
-                shared_shard_id: 0,
+                shared_shard_id:     0,
                 history_incarnation: String::new(),
-                storage_id:   kalamdb_commons::StorageId::from("default"),
-                access_level: None,
-                flush_policy: None,
-                compression:  TableCompression::Snappy,
+                storage_id:          kalamdb_commons::StorageId::from("default"),
+                access_level:        None,
+                flush_policy:        None,
+                compression:         TableCompression::Snappy,
             }),
             table_comment:  None,
             scalar_indexes: Vec::new(),

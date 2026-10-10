@@ -1161,8 +1161,8 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
 
         let user_id = match self.provider_table_type() {
             TableType::User | TableType::Stream => {
-                let (user_id, _role, _read_context) = extract_full_user_context(state)
-                    .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                let (user_id, _role, _read_context) =
+                    extract_full_user_context(state).map_err(crate::error::into_datafusion)?;
                 Some(user_id)
             },
             TableType::Shared | TableType::System => None,
@@ -1311,7 +1311,7 @@ fn kalam_error_to_datafusion(error: KalamDbError) -> DataFusionError {
         KalamDbError::NotLeader { leader_addr } => {
             DataFusionError::External(Box::new(NotLeaderError::new(leader_addr)))
         },
-        other => DataFusionError::Execution(other.to_string()),
+        other => crate::error::into_datafusion(other),
     }
 }
 

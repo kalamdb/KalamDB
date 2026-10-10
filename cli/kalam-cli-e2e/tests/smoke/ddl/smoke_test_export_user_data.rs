@@ -571,7 +571,7 @@ fn smoke_export_download_zip_is_valid() {
         let mut all_names: Vec<String> = Vec::new();
         for idx in 0..zip.len() {
             let mut entry = zip.by_index(idx).expect("zip entry by index");
-            let name = entry.name().to_string();
+            let name = entry.name().expect("zip entry name").into_owned();
             all_names.push(name.clone());
             if !name.ends_with(".parquet") {
                 continue;
@@ -758,7 +758,7 @@ fn smoke_export_user_data_download_and_reimport() {
         let mut all_names: Vec<String> = Vec::new();
         for idx in 0..zip.len() {
             let mut entry = zip.by_index(idx).expect("zip entry by index");
-            let name = entry.name().to_string();
+            let name = entry.name().expect("zip entry name").into_owned();
             all_names.push(name.clone());
             if !name.ends_with(".parquet") {
                 continue;

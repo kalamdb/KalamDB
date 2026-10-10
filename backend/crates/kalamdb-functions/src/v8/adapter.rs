@@ -17,7 +17,9 @@ use super::{
     host_frames::HostFrames,
 };
 use crate::{
-    convert::{infer_v8_value, routine_to_v8, v8_to_routine},
+    convert::{
+        infer_v8_value, object_set, routine_to_v8, string_from_v8, string_to_v8, v8_to_routine,
+    },
     deadline::DeadlineGuard,
     error::{FunctionErrorCode, FunctionsError, Result},
     host::InvocationSource,
@@ -291,16 +293,14 @@ fn invoke_in_scope(
     bind_ctx(scope)?;
     v8::tc_scope!(let try_catch, scope);
     let global = try_catch.get_current_context().global(try_catch);
-    let name = v8::String::new(try_catch, "kalamInvoke")
-        .ok_or_else(|| FunctionsError::Invalid("kalamInvoke name".to_string()))?;
+    let name = string_to_v8(try_catch, "kalamInvoke")?;
     let func_value = global
         .get(try_catch, name.into())
         .ok_or_else(|| FunctionsError::Invalid("kalamInvoke is not defined".to_string()))?;
     let func = v8::Local::<v8::Function>::try_from(func_value)
         .map_err(|_| FunctionsError::Invalid("kalamInvoke is not a function".to_string()))?;
 
-    let procedure = v8::String::new(try_catch, procedure_id.as_str())
-        .ok_or_else(|| FunctionsError::Invalid("procedure name too large".to_string()))?;
+    let procedure = string_to_v8(try_catch, procedure_id.as_str())?;
     let js_args = v8::Array::new(try_catch, args.len() as i32);
     for (index, arg) in args.iter().enumerate() {
         let js_value = routine_to_v8(try_catch, arg)?;
@@ -348,8 +348,7 @@ fn invoke_in_scope(
 pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
     v8::tc_scope!(let try_catch, scope);
     let global = try_catch.get_current_context().global(try_catch);
-    let name = v8::String::new(try_catch, "__kalamMakeCtx")
-        .ok_or_else(|| FunctionsError::Invalid("__kalamMakeCtx name".to_string()))?;
+    let name = string_to_v8(try_catch, "__kalamMakeCtx")?;
     let func_value = global
         .get(try_catch, name.into())
         .ok_or_else(|| FunctionsError::Invalid("__kalamMakeCtx is not defined".to_string()))?;
@@ -359,8 +358,7 @@ pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
     let Some(ctx) = func.call(try_catch, recv, &[]) else {
         return Err(js_exception(try_catch));
     };
-    let ctx_name = v8::String::new(try_catch, "__kalamCtx")
-        .ok_or_else(|| FunctionsError::Invalid("__kalamCtx name".to_string()))?;
+    let ctx_name = string_to_v8(try_catch, "__kalamCtx")?;
     global
         .set(try_catch, ctx_name.into(), ctx)
         .ok_or_else(|| FunctionsError::Invalid("failed to bind __kalamCtx".to_string()))?;
@@ -370,8 +368,7 @@ pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
 fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
     // V8 WebAssembly.Memory bypasses the ArrayBuffer allocator. WASM needs its own bounded
     // runtime adapter; it must not provide an unaccounted memory path inside JavaScript.
-    let key = v8::String::new(scope, "WebAssembly")
-        .ok_or_else(|| FunctionsError::Invalid("WebAssembly name".into()))?;
+    let key = string_to_v8(scope, "WebAssembly")?;
     let undefined = v8::undefined(scope);
     scope
         .get_current_context()
@@ -418,8 +415,7 @@ pub(crate) fn bind_native(
     let global = scope.get_current_context().global(scope);
     let function = v8::Function::new(scope, callback)
         .ok_or_else(|| FunctionsError::Invalid(format!("failed to bind {name}")))?;
-    let key = v8::String::new(scope, name)
-        .ok_or_else(|| FunctionsError::Invalid(format!("{name} too large")))?;
+    let key = string_to_v8(scope, name)?;
     global
         .set(scope, key.into(), function.into())
         .ok_or_else(|| FunctionsError::Invalid(format!("failed to set {name}")))?;
@@ -447,15 +443,29 @@ pub(crate) fn host_error_value<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     error: &FunctionsError,
 ) -> v8::Local<'s, v8::Value> {
-    let message = v8::String::new(scope, &error.to_string())
-        .unwrap_or_else(|| v8::String::new(scope, "function host error").expect("fallback error"));
+    let (text, code, cause) = match error {
+        FunctionsError::Catalog {
+            code,
+            message,
+            detail,
+        } => {
+            let cause = detail.contains('\n').then(|| detail.clone());
+            (message.clone(), code.as_str(), cause)
+        },
+        other => (other.to_string(), other.code().as_str(), None),
+    };
+    let message = string_to_v8(scope, &text).unwrap_or_else(|_| {
+        string_to_v8(scope, "function host error").expect("fallback error fits in v8")
+    });
     let exception = v8::Exception::error(scope, message);
     if let Ok(object) = v8::Local::<v8::Object>::try_from(exception) {
-        if let (Some(key), Some(code)) = (
-            v8::String::new(scope, HOST_ERROR_CODE_KEY),
-            v8::String::new(scope, error.code().as_str()),
-        ) {
-            object.set(scope, key.into(), code.into());
+        if let Ok(code_value) = string_to_v8(scope, code) {
+            let _ = object_set(scope, object, HOST_ERROR_CODE_KEY, code_value.into());
+        }
+        if let Some(cause) = cause.as_deref() {
+            if let Ok(cause_value) = string_to_v8(scope, cause) {
+                let _ = object_set(scope, object, "cause", cause_value.into());
+            }
         }
     }
     exception
@@ -471,12 +481,22 @@ pub(crate) fn functions_error_from_value(
     value: v8::Local<v8::Value>,
 ) -> FunctionsError {
     if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
-        if let Some(key) = v8::String::new(scope, HOST_ERROR_CODE_KEY) {
+        if let Ok(key) = string_to_v8(scope, HOST_ERROR_CODE_KEY) {
             if let Some(code_val) = object.get(scope, key.into()) {
                 if !code_val.is_null_or_undefined() {
-                    let code = code_val.to_rust_string_lossy(scope);
+                    let code = string_from_v8(scope, code_val).unwrap_or_default();
                     if let Some(code) = FunctionErrorCode::parse(&code) {
                         return FunctionsError::from_code(code, exception_message(scope, object));
+                    }
+                    if let Some(code) = kalamdb_commons::ErrorCode::parse(&code) {
+                        let message = exception_message(scope, object);
+                        let detail = object_string_field(scope, object, "cause")
+                            .unwrap_or_else(|| message.clone());
+                        return FunctionsError::Catalog {
+                            code,
+                            message,
+                            detail,
+                        };
                     }
                 }
             }
@@ -489,11 +509,29 @@ pub(crate) fn functions_error_from_value(
     FunctionsError::Javascript(message)
 }
 
+fn object_string_field(
+    scope: &v8::PinScope,
+    object: v8::Local<v8::Object>,
+    name: &str,
+) -> Option<String> {
+    let key = string_to_v8(scope, name).ok()?;
+    let value = object.get(scope, key.into())?;
+    if value.is_null_or_undefined() {
+        return None;
+    }
+    let text = string_from_v8(scope, value).unwrap_or_default();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
 fn exception_message(scope: &v8::PinScope, object: v8::Local<v8::Object>) -> String {
-    if let Some(key) = v8::String::new(scope, "message") {
+    if let Ok(key) = string_to_v8(scope, "message") {
         if let Some(message) = object.get(scope, key.into()) {
             if !message.is_null_or_undefined() {
-                let text = message.to_rust_string_lossy(scope);
+                let text = string_from_v8(scope, message).unwrap_or_default();
                 if !text.is_empty() {
                     return text;
                 }
@@ -511,10 +549,7 @@ pub(crate) fn arg_string(
     if args.length() <= index {
         return String::new();
     }
-    args.get(index)
-        .to_string(scope)
-        .map(|value| value.to_rust_string_lossy(scope))
-        .unwrap_or_default()
+    string_from_v8(scope, args.get(index)).unwrap_or_default()
 }
 
 fn host_sql_removed(
@@ -569,7 +604,7 @@ fn host_http_header(
     let name = arg_string(scope, &args, 0);
     match current_host(scope).and_then(|host| host.http_request_header(&name)) {
         Ok(Some(value)) => {
-            if let Some(js) = v8::String::new(scope, &value) {
+            if let Ok(js) = string_to_v8(scope, &value) {
                 rv.set(js.into());
             }
         },
@@ -633,7 +668,7 @@ fn host_http_method(
     mut rv: v8::ReturnValue<v8::Value>,
 ) {
     let method = current_host(scope).map(|host| host.http_method()).unwrap_or_default();
-    if let Some(value) = v8::String::new(scope, &method) {
+    if let Ok(value) = string_to_v8(scope, &method) {
         rv.set(value.into());
     }
 }
@@ -644,7 +679,7 @@ fn host_http_path(
     mut rv: v8::ReturnValue<v8::Value>,
 ) {
     let path = current_host(scope).map(|host| host.http_path()).unwrap_or_default();
-    if let Some(value) = v8::String::new(scope, &path) {
+    if let Ok(value) = string_to_v8(scope, &path) {
         rv.set(value.into());
     }
 }
@@ -657,7 +692,7 @@ fn host_http_query(
     let name = arg_string(scope, &args, 0);
     match current_host(scope).and_then(|host| host.http_query(&name)) {
         Ok(Some(value)) => {
-            if let Some(js) = v8::String::new(scope, &value) {
+            if let Ok(js) = string_to_v8(scope, &value) {
                 rv.set(js.into());
             }
         },
@@ -674,7 +709,7 @@ fn host_parent(
     match current_host(scope) {
         Ok(host) => match host.parent_procedure() {
             Some(name) => {
-                if let Some(value) = v8::String::new(scope, &name) {
+                if let Ok(value) = string_to_v8(scope, &name) {
                     rv.set(value.into());
                 } else {
                     rv.set(v8::null(scope).into());
@@ -694,7 +729,7 @@ fn host_routine_map(
     let text = current_host(scope)
         .map(|host| host.routine_js_map())
         .unwrap_or_else(|_| "{}".to_string());
-    if let Some(value) = v8::String::new(scope, &text) {
+    if let Ok(value) = string_to_v8(scope, &text) {
         rv.set(value.into());
     }
 }
@@ -721,17 +756,27 @@ fn source_to_v8<'s, 'i>(
     let object = v8::Object::new(scope);
     match source {
         InvocationSource::Call => {
-            set_object_string(scope, &object, "kind", "call")?;
+            object_set(scope, object, "kind", string_to_v8(scope, "call")?.into())?;
         },
         InvocationSource::Schedule {
             schedule_id,
             run_id,
             scheduled_at,
         } => {
-            set_object_string(scope, &object, "kind", "schedule")?;
-            set_object_string(scope, &object, "scheduleId", schedule_id.as_str())?;
-            set_object_string(scope, &object, "runId", run_id)?;
-            set_object_number(scope, &object, "scheduledAt", *scheduled_at as f64)?;
+            object_set(scope, object, "kind", string_to_v8(scope, "schedule")?.into())?;
+            object_set(
+                scope,
+                object,
+                "scheduleId",
+                string_to_v8(scope, schedule_id.as_str())?.into(),
+            )?;
+            object_set(scope, object, "runId", string_to_v8(scope, run_id)?.into())?;
+            object_set(
+                scope,
+                object,
+                "scheduledAt",
+                v8::Number::new(scope, *scheduled_at as f64).into(),
+            )?;
         },
         InvocationSource::Topic {
             topic_name,
@@ -740,46 +785,20 @@ fn source_to_v8<'s, 'i>(
             offset,
             attempt,
         } => {
-            set_object_string(scope, &object, "kind", "topic")?;
-            set_object_string(scope, &object, "topicName", topic_name)?;
-            set_object_string(scope, &object, "eventId", event_id)?;
-            set_object_number(scope, &object, "partition", *partition as f64)?;
-            set_object_number(scope, &object, "offset", *offset as f64)?;
-            set_object_number(scope, &object, "attempt", *attempt as f64)?;
+            object_set(scope, object, "kind", string_to_v8(scope, "topic")?.into())?;
+            object_set(scope, object, "topicName", string_to_v8(scope, topic_name)?.into())?;
+            object_set(scope, object, "eventId", string_to_v8(scope, event_id)?.into())?;
+            object_set(
+                scope,
+                object,
+                "partition",
+                v8::Number::new(scope, *partition as f64).into(),
+            )?;
+            object_set(scope, object, "offset", v8::Number::new(scope, *offset as f64).into())?;
+            object_set(scope, object, "attempt", v8::Number::new(scope, *attempt as f64).into())?;
         },
     }
     Ok(object.into())
-}
-
-fn set_object_string(
-    scope: &mut v8::PinScope,
-    object: &v8::Local<v8::Object>,
-    key: &str,
-    value: &str,
-) -> Result<()> {
-    let key = v8::String::new(scope, key)
-        .ok_or_else(|| FunctionsError::Invalid("source key too large".to_string()))?;
-    let value = v8::String::new(scope, value)
-        .ok_or_else(|| FunctionsError::Invalid("source value too large".to_string()))?;
-    object
-        .set(scope, key.into(), value.into())
-        .ok_or_else(|| FunctionsError::Invalid("failed to set source field".to_string()))?;
-    Ok(())
-}
-
-fn set_object_number(
-    scope: &mut v8::PinScope,
-    object: &v8::Local<v8::Object>,
-    key: &str,
-    value: f64,
-) -> Result<()> {
-    let key = v8::String::new(scope, key)
-        .ok_or_else(|| FunctionsError::Invalid("source key too large".to_string()))?;
-    let number = v8::Number::new(scope, value);
-    object
-        .set(scope, key.into(), number.into())
-        .ok_or_else(|| FunctionsError::Invalid("failed to set source field".to_string()))?;
-    Ok(())
 }
 
 /// Parse `source` in a short-lived isolate. Does not run it.
@@ -794,10 +813,8 @@ pub fn compile_javascript_source(source: &str) -> Result<()> {
     let context = v8::Context::new(scope, Default::default());
     let mut scope = v8::ContextScope::new(scope, context);
     v8::tc_scope!(let try_catch, &mut scope);
-    let code = v8::String::new(try_catch, source)
-        .ok_or_else(|| FunctionsError::Invalid("javascript source too large".into()))?;
-    let origin_name = v8::String::new(try_catch, "inline.js")
-        .ok_or_else(|| FunctionsError::Invalid("javascript origin".into()))?;
+    let code = string_to_v8(try_catch, source)?;
+    let origin_name = string_to_v8(try_catch, "inline.js")?;
     let origin = ScriptOrigin::new(
         try_catch,
         origin_name.into(),
@@ -822,10 +839,8 @@ fn compile_and_run_cached<'s>(
     source: &str,
 ) -> Result<v8::Local<'s, v8::UnboundScript>> {
     v8::tc_scope!(let try_catch, scope);
-    let code = v8::String::new(try_catch, source)
-        .ok_or_else(|| FunctionsError::Invalid("module source too large".to_string()))?;
-    let origin_name = v8::String::new(try_catch, "module.js")
-        .ok_or_else(|| FunctionsError::Invalid("module origin name".into()))?;
+    let code = string_to_v8(try_catch, source)?;
+    let origin_name = string_to_v8(try_catch, "module.js")?;
     let origin = ScriptOrigin::new(
         try_catch,
         origin_name.into(),
@@ -867,10 +882,10 @@ pub(crate) fn js_exception(
 /// Prefer `Error.stack` so procedure logs carry the V8 output, not only `toString()`.
 pub(crate) fn format_js_exception(scope: &v8::PinScope, value: v8::Local<v8::Value>) -> String {
     if let Ok(object) = v8::Local::<v8::Object>::try_from(value) {
-        if let Some(key) = v8::String::new(scope, "stack") {
+        if let Ok(key) = string_to_v8(scope, "stack") {
             if let Some(stack) = object.get(scope, key.into()) {
                 if !stack.is_null_or_undefined() {
-                    let stack = stack.to_rust_string_lossy(scope);
+                    let stack = string_from_v8(scope, stack).unwrap_or_default();
                     if !stack.is_empty() {
                         return stack;
                     }
@@ -878,10 +893,7 @@ pub(crate) fn format_js_exception(scope: &v8::PinScope, value: v8::Local<v8::Val
             }
         }
     }
-    value
-        .to_string(scope)
-        .map(|text| text.to_rust_string_lossy(scope))
-        .unwrap_or_else(|| value.to_rust_string_lossy(scope))
+    string_from_v8(scope, value).unwrap_or_else(|_| value.to_rust_string_lossy(scope))
 }
 
 unsafe extern "C" fn near_heap_limit(

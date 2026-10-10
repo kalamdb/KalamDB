@@ -51,11 +51,7 @@ pub fn decode_payloads_to_arrow_batch(
     for payload in payloads {
         let decoded: DecodedSlots = decode_row_body_slots(payload, storage)?;
         for (output_index, slot) in live.iter().enumerate() {
-            let value = decoded
-                .fields
-                .get(*slot)
-                .cloned()
-                .unwrap_or(ScalarValue::Null);
+            let value = decoded.fields.get(*slot).cloned().unwrap_or(ScalarValue::Null);
             assert_nesting(&value, 0)?;
             columns[output_index].push(value);
         }
@@ -85,9 +81,7 @@ pub fn decode_payloads_to_arrow_batch(
 
 fn assert_nesting(value: &ScalarValue, depth: usize) -> Result<()> {
     if depth > MAX_NESTING {
-        return Err(SerializationError::Decode(
-            "decoded value exceeds max nesting".to_string(),
-        ));
+        return Err(SerializationError::Decode("decoded value exceeds max nesting".to_string()));
     }
     match value {
         ScalarValue::Struct(array) => {
@@ -128,9 +122,11 @@ mod tests {
             version: 1,
             fields:  vec![StorageField::new("id", StorageDataType::Int64)],
         };
-        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
-            arrow::datatypes::Field::new("id", arrow::datatypes::DataType::Int64, true),
-        ]));
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![arrow::datatypes::Field::new(
+            "id",
+            arrow::datatypes::DataType::Int64,
+            true,
+        )]));
         let batch = decode_payloads_to_arrow_batch(&storage, schema, &[]).unwrap();
         assert_eq!(batch.num_rows(), 0);
     }

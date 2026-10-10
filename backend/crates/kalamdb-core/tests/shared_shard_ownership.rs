@@ -26,17 +26,18 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     kalamdb_handlers::register_all_handlers(&registry, Arc::clone(&app), false);
     let executor = Arc::new(SqlExecutor::new(Arc::clone(&app), registry));
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE ownership").await;
     let mut tables = Vec::new();
     let mut owners = HashSet::new();
     for i in 0..16 {
+        let namespace = format!("own{i}");
+        execute_ok(&executor, &observer, &format!("CREATE NAMESPACE {namespace}")).await;
         execute_ok(
             &executor,
             &observer,
-            &format!("CREATE SHARED TABLE ownership.t{i} (id BIGINT PRIMARY KEY, name TEXT)"),
+            &format!("CREATE SHARED TABLE {namespace}.t (id BIGINT PRIMARY KEY, name TEXT)"),
         )
         .await;
-        let id = TableId::new(NamespaceId::new("ownership"), format!("t{i}").into());
+        let id = TableId::new(NamespaceId::new(namespace), "t".into());
         let owner = app.shared_group_id(&id).unwrap();
         owners.insert(owner);
         tables.push((id, owner));
@@ -97,13 +98,14 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         assert!(versions.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
+    execute_ok(&executor, &observer, "CREATE NAMESPACE ownhot").await;
     execute_ok(
         &executor,
         &observer,
-        "CREATE SHARED TABLE ownership.hot (id BIGINT PRIMARY KEY, name TEXT)",
+        "CREATE SHARED TABLE ownhot.hot (id BIGINT PRIMARY KEY, name TEXT)",
     )
     .await;
-    let hot = TableId::new(NamespaceId::new("ownership"), "hot".into());
+    let hot = TableId::new(NamespaceId::new("ownhot"), "hot".into());
     let hot_owner = app.shared_group_id(&hot).unwrap();
     let mut hot_tasks = Vec::new();
     for client in 0..50 {
@@ -117,7 +119,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
                     &executor,
                     &ctx,
                     &format!(
-                        "INSERT INTO ownership.hot (id, name) VALUES ({}, 'hot')",
+                        "INSERT INTO ownhot.hot (id, name) VALUES ({}, 'hot')",
                         20_000 + client * 20 + n
                     ),
                 )
@@ -132,7 +134,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     let hot_versions = versions_for(
         &executor,
         &observer,
-        "SELECT _version FROM ownership.hot ORDER BY _version LIMIT 1000",
+        "SELECT _version FROM ownhot.hot ORDER BY _version LIMIT 1000",
     )
     .await;
     assert_eq!(hot_versions.len(), 1000);
@@ -145,16 +147,13 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     execute_ok(
         &executor,
         &tx,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (1000, 'tx')", first.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (1000, 'tx')", qualified(first)),
     )
     .await;
     let error = execute_err(
         &executor,
         &tx,
-        &format!(
-            "INSERT INTO ownership.{} (id, name) VALUES (1001, 'tx')",
-            different.table_name()
-        ),
+        &format!("INSERT INTO {} (id, name) VALUES (1001, 'tx')", qualified(different)),
     )
     .await;
     assert!(error.contains("group") || error.contains("shard"), "{error}");
@@ -175,34 +174,34 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     execute_ok(
         &executor,
         &observer,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9000, 'a0')", left.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9000, 'a0')", qualified(&left)),
     )
     .await;
     execute_ok(
         &executor,
         &observer,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9001, 'b')", right.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9001, 'b')", qualified(&right)),
     )
     .await;
     execute_ok(
         &executor,
         &observer,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9002, 'a1')", left.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9002, 'a1')", qualified(&left)),
     )
     .await;
     let left_gap = versions_for(
         &executor,
         &observer,
         &format!(
-            "SELECT _version FROM ownership.{} WHERE id IN (9000, 9002) ORDER BY _version",
-            left.table_name()
+            "SELECT _version FROM {} WHERE id IN (9000, 9002) ORDER BY _version",
+            qualified(&left)
         ),
     )
     .await;
     let right_between = versions_for(
         &executor,
         &observer,
-        &format!("SELECT _version FROM ownership.{} WHERE id = 9001", right.table_name()),
+        &format!("SELECT _version FROM {} WHERE id = 9001", qualified(&right)),
     )
     .await;
     assert!(left_gap[0] < right_between[0] && right_between[0] < left_gap[1]);
@@ -211,26 +210,23 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         &executor,
         &observer,
         &format!(
-            "INSERT INTO ownership.{} (id, name) VALUES (9300, 'old'), (9301, 'old')",
-            left.table_name()
+            "INSERT INTO {} (id, name) VALUES (9300, 'old'), (9301, 'old')",
+            qualified(&left)
         ),
     )
     .await;
     execute_ok(
         &executor,
         &observer,
-        &format!(
-            "UPDATE ownership.{} SET name = 'bulk' WHERE id IN (9300, 9301)",
-            left.table_name()
-        ),
+        &format!("UPDATE {} SET name = 'bulk' WHERE id IN (9300, 9301)", qualified(&left)),
     )
     .await;
     let bulk = versions_for(
         &executor,
         &observer,
         &format!(
-            "SELECT _version FROM ownership.{} WHERE id IN (9300, 9301) ORDER BY _version",
-            left.table_name()
+            "SELECT _version FROM {} WHERE id IN (9300, 9301) ORDER BY _version",
+            qualified(&left)
         ),
     )
     .await;
@@ -242,51 +238,51 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     execute_ok(
         &executor,
         &observer,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9200, 'old')", left.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9200, 'old')", qualified(&left)),
     )
     .await;
     let inserted = versions_for(
         &executor,
         &observer,
-        &format!("SELECT _version FROM ownership.{} WHERE id = 9200", left.table_name()),
+        &format!("SELECT _version FROM {} WHERE id = 9200", qualified(&left)),
     )
     .await;
     execute_ok(
         &executor,
         &observer,
-        &format!("UPDATE ownership.{} SET name = 'new' WHERE id = 9200", left.table_name()),
+        &format!("UPDATE {} SET name = 'new' WHERE id = 9200", qualified(&left)),
     )
     .await;
     let updated = versions_for(
         &executor,
         &observer,
-        &format!("SELECT _version FROM ownership.{} WHERE id = 9200", left.table_name()),
+        &format!("SELECT _version FROM {} WHERE id = 9200", qualified(&left)),
     )
     .await;
     assert!(updated[0] > inserted[0]);
     execute_ok(
         &executor,
         &observer,
-        &format!("UPDATE ownership.{} SET name = 'newer' WHERE id = 9200", left.table_name()),
+        &format!("UPDATE {} SET name = 'newer' WHERE id = 9200", qualified(&left)),
     )
     .await;
     let updated_again = versions_for(
         &executor,
         &observer,
-        &format!("SELECT _version FROM ownership.{} WHERE id = 9200", left.table_name()),
+        &format!("SELECT _version FROM {} WHERE id = 9200", qualified(&left)),
     )
     .await;
     assert!(updated_again[0] > updated[0]);
     execute_ok(
         &executor,
         &observer,
-        &format!("DELETE FROM ownership.{} WHERE id = 9200", left.table_name()),
+        &format!("DELETE FROM {} WHERE id = 9200", qualified(&left)),
     )
     .await;
     let deleted = versions_for(
         &executor,
         &observer,
-        &format!("SELECT _version FROM ownership.{} WHERE id = 9200", left.table_name()),
+        &format!("SELECT _version FROM {} WHERE id = 9200", qualified(&left)),
     )
     .await;
     assert!(deleted.is_empty());
@@ -296,13 +292,13 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     execute_ok(
         &executor,
         &same,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9400, 'tx')", left.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9400, 'tx')", qualified(&left)),
     )
     .await;
     execute_ok(
         &executor,
         &same,
-        &format!("INSERT INTO ownership.{} (id, name) VALUES (9401, 'tx')", right.table_name()),
+        &format!("INSERT INTO {} (id, name) VALUES (9401, 'tx')", qualified(&right)),
     )
     .await;
     execute_ok(&executor, &same, "COMMIT").await;
@@ -310,7 +306,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         versions_for(
             &executor,
             &observer,
-            &format!("SELECT _version FROM ownership.{} WHERE id = 9400", left.table_name()),
+            &format!("SELECT _version FROM {} WHERE id = 9400", qualified(&left)),
         )
         .await
         .len(),
@@ -320,7 +316,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         versions_for(
             &executor,
             &observer,
-            &format!("SELECT _version FROM ownership.{} WHERE id = 9401", right.table_name()),
+            &format!("SELECT _version FROM {} WHERE id = 9401", qualified(&right)),
         )
         .await
         .len(),
@@ -361,6 +357,10 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         assert_eq!(stored.shared_version_domain(), before);
     }
     app.executor().shutdown().await.unwrap();
+}
+
+fn qualified(table: &TableId) -> String {
+    format!("{}.{}", table.namespace_id(), table.table_name())
 }
 
 async fn versions_for(executor: &SqlExecutor, observer: &ExecutionContext, sql: &str) -> Vec<i64> {

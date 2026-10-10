@@ -1319,3 +1319,239 @@ fn kobj_functions_runtime_concurrent_calls_preserve_inputs() {
     });
     exec(&format!("DROP NAMESPACE {ns} CASCADE"));
 }
+
+/// PocketBase hooks, Postgres functions, and Firebase callable transactions abort
+/// the whole unit when the function throws. A procedure must do the same: two
+/// shared tables in one namespace, a nested call, and a staged topic publish
+/// either all commit or all disappear. Bound parameters stay data. Transaction
+/// control inside the procedure is rejected.
+#[test]
+#[ntest::timeout(120000)]
+fn kobj_functions_throw_aborts_shared_writes_nested_call_and_topic() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_fnabort");
+    let rooms = format!("{ns}.rooms");
+    let members = format!("{ns}.members");
+    let notes = format!("{ns}.notes");
+    for table in [&rooms, &members, &notes] {
+        exec(&format!(
+            "CREATE TABLE {table} (id INT PRIMARY KEY, note TEXT) WITH (TYPE = 'SHARED')"
+        ));
+        grant_public_shared_table_access(table);
+        ready(table);
+    }
+    let topic = format!("{ns}.fnabort_events");
+    exec(&format!("CREATE TOPIC {topic}"));
+
+    create_js_procedure(
+        &ns,
+        "write_member",
+        "id INT, note TEXT",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {members} (id, note) VALUES ($1, $2)', [input.id, \
+             input.note]);"
+        ),
+    );
+    create_js_procedure(
+        &ns,
+        "commit_pair",
+        "id INT",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {rooms} (id, note) VALUES ($1, $2)', [input.id, \
+             'room']).then(function () {{ return ctx.functions.call('{ns}.write_member', {{ id: \
+             input.id, note: 'member' }}); }}).then(function () {{ return \
+             ctx.topics.publish('{topic}', {{ id: input.id }}); }});"
+        ),
+    );
+    create_js_procedure(
+        &ns,
+        "abort_pair",
+        "id INT",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {rooms} (id, note) VALUES ($1, $2)', [input.id, \
+             'room']).then(function () {{ return ctx.functions.call('{ns}.write_member', {{ id: \
+             input.id, note: 'member' }}); }}).then(function () {{ return \
+             ctx.topics.publish('{topic}', {{ id: input.id }}); }}).then(function () {{ throw new \
+             Error('abort-write'); }});"
+        ),
+    );
+    create_js_procedure(
+        &ns,
+        "save_note",
+        "id INT, note TEXT",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {notes} (id, note) VALUES ($1, $2)', [input.id, \
+             input.note]);"
+        ),
+    );
+    create_js_procedure(
+        &ns,
+        "commit_sql",
+        "id INT",
+        &format!(
+            "return ctx.db.execute('INSERT INTO {rooms} (id, note) VALUES ($1, $2)', [input.id, \
+             'ctl']).then(function () {{ return ctx.db.execute('COMMIT'); }});"
+        ),
+    );
+    create_js_procedure(&ns, "begin_sql", "", "return ctx.db.execute('BEGIN');");
+    create_js_procedure(&ns, "rollback_sql", "", "return ctx.db.execute('ROLLBACK');");
+
+    exec(&format!("CALL {ns}.commit_pair(1)"));
+    assert_eq!(count_sql(&format!("SELECT COUNT(*) FROM {rooms} WHERE id = 1")), 1);
+    assert_eq!(count_sql(&format!("SELECT COUNT(*) FROM {members} WHERE id = 1")), 1);
+    let published = query_rows(&format!("CONSUME FROM {topic} FROM EARLIEST LIMIT 10"));
+    assert!(!published.is_empty(), "committed publish must be visible: {published:?}");
+
+    let aborted = exec_err(&format!("CALL {ns}.abort_pair(2)"));
+    assert!(
+        aborted.to_ascii_lowercase().contains("abort-write"),
+        "thrown procedure must surface the exception: {aborted}"
+    );
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {rooms} WHERE id = 2")),
+        0,
+        "throw must roll back the parent shared insert"
+    );
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {members} WHERE id = 2")),
+        0,
+        "throw must roll back the nested procedure's shared insert"
+    );
+    let after_abort = query_rows(&format!("CONSUME FROM {topic} FROM EARLIEST LIMIT 10"));
+    assert_eq!(
+        after_abort.len(),
+        published.len(),
+        "throw must drop the staged topic publish: before={published:?} after={after_abort:?}"
+    );
+
+    let injected = format!("o'reilly'); DELETE FROM {notes}; --");
+    let sql_literal = injected.replace('\'', "''");
+    exec(&format!("CALL {ns}.save_note(1, '{sql_literal}')"));
+    let saved = query_rows(&format!("SELECT note FROM {notes} WHERE id = 1"));
+    assert_eq!(
+        cell_str(&saved[0], "note").as_deref(),
+        Some(injected.as_str()),
+        "bound text must be stored as data: {saved:?}"
+    );
+    assert_eq!(count_sql(&format!("SELECT COUNT(*) FROM {notes}")), 1);
+
+    for (call, needle) in [
+        (format!("CALL {ns}.commit_sql(3)"), "transaction control"),
+        (format!("CALL {ns}.begin_sql()"), "transaction control"),
+        (format!("CALL {ns}.rollback_sql()"), "transaction control"),
+    ] {
+        let error = exec_err(&call);
+        assert!(
+            error.to_ascii_lowercase().contains(needle),
+            "{call} must reject transaction control: {error}"
+        );
+    }
+    assert_eq!(
+        count_sql(&format!("SELECT COUNT(*) FROM {rooms} WHERE id = 3")),
+        0,
+        "rejected COMMIT must not leave the insert"
+    );
+    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+}
+
+/// Firebase and this runtime both cap nested calls. A shallow chain succeeds; a
+/// chain past max_depth (16) fails with the depth limit and does not hang.
+#[test]
+#[ntest::timeout(60000)]
+fn kobj_functions_nested_call_depth_limit() {
+    if skip_if_no_server() {
+        return;
+    }
+    let ns = setup_namespace("kobj_fndepth");
+    create_js_procedure(
+        &ns,
+        "deep",
+        "n INT",
+        &format!(
+            "if (input.n <= 0) return 'ok'; return ctx.functions.call('{ns}.deep', {{ n: input.n \
+             - 1 }});"
+        ),
+    );
+    let shallow = query_rows(&format!("CALL {ns}.deep(4)"));
+    let shallow_value = cell(&shallow[0], "result");
+    assert!(
+        shallow_value.as_str() == Some("ok") || shallow_value.to_string().contains("ok"),
+        "a short nested chain must succeed: {shallow:?}"
+    );
+    let too_deep = exec_err(&format!("CALL {ns}.deep(40)"));
+    let too_deep_lower = too_deep.to_ascii_lowercase();
+    assert!(
+        too_deep_lower.contains("depth") || too_deep_lower.contains("resource"),
+        "call depth past the runtime limit must fail: {too_deep}"
+    );
+    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+}
+
+/// Firebase background functions and PocketBase hooks retry a failed delivery.
+/// The first topic attempt throws; a later attempt inserts the row.
+#[test]
+#[ntest::timeout(60000)]
+fn kobj_functions_topic_trigger_retries_failed_attempt() {
+    if skip_if_no_server() {
+        return;
+    }
+    let (ns, _cleanup) = setup_ephemeral_namespace("kobj_fnretry");
+    let hits = format!("{ns}.retry_hits");
+    exec(&format!(
+        "CREATE TABLE {hits} (id INT PRIMARY KEY, note TEXT) WITH (TYPE = 'SHARED')"
+    ));
+    grant_public_shared_table_access(&hits);
+    ready(&hits);
+    let topic = format!("{ns}.retry_events");
+    exec(&format!("CREATE TOPIC {topic}"));
+    create_js_procedure(
+        &ns,
+        "on_retry",
+        "payload TEXT",
+        &format!(
+            "var payload = input && input.payload != null ? input.payload : input;\nif (typeof \
+             payload === 'string') {{ try {{ payload = JSON.parse(payload); }} catch (e) {{}} \
+             }}\nvar id = (payload && payload.id != null) ? payload.id : payload;\nif \
+             (!ctx.source || ctx.source.attempt < 2) throw new Error('retry-me');\nreturn \
+             ctx.db.execute('INSERT INTO {hits} (id, note) VALUES ($1, $2)', [id, 'ok']);"
+        ),
+    );
+    exec(&format!(
+        "CREATE TRIGGER {ns}.on_retry_event ON TOPIC {topic} EXECUTE PROCEDURE \
+         {ns}.on_retry(PAYLOAD) WITH (start = 'latest', retries = 3, retry_backoff = '100ms')"
+    ));
+    create_js_procedure(
+        &ns,
+        "publish_retry",
+        "p_id INT",
+        &format!(
+            "return ctx.topics.publish('{topic}', {{ id: input.p_id }}).then(function () {{ \
+             return input.p_id; }});"
+        ),
+    );
+    exec(&format!("CALL {ns}.publish_retry(7)"));
+    assert!(
+        wait_for_sql_count(&format!("SELECT COUNT(*) FROM {hits} WHERE id = 7"), 1),
+        "a failed trigger attempt must be retried until the handler succeeds"
+    );
+    let attempts = query_rows(&format!(
+        "SELECT attempt, status FROM system.trigger_attempts WHERE trigger_id = \
+         '{ns}.on_retry_event' ORDER BY attempt"
+    ));
+    assert!(
+        attempts.iter().any(|row| {
+            cell_i64(row, "attempt") == Some(1)
+                && cell_str(row, "status").as_deref() != Some("succeeded")
+        }),
+        "the first delivery must be recorded as a failure: {attempts:?}"
+    );
+    assert!(
+        attempts
+            .iter()
+            .any(|row| cell_str(row, "status").as_deref() == Some("succeeded")),
+        "a later delivery must succeed: {attempts:?}"
+    );
+    exec(&format!("ALTER TRIGGER {ns}.on_retry_event DISABLE"));
+}

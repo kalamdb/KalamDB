@@ -73,7 +73,7 @@ impl StreamScanSource {
                 }
             },
         )
-        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        .map_err(crate::error::into_datafusion)?;
 
         let batch = finalize_deferred_batch(
             batch,

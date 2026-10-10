@@ -82,7 +82,7 @@ impl TableProvider for SharedTableProvider {
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
         let check_policies = self
             .bind_policies(user_id, role, PolicyCommand::Insert, true)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         let snapshot_commit_seq = extract_transaction_query_context(state).and_then(|context| {
             crate::utils::base::transaction_snapshot_bound(context.snapshot_commit_seq())
         });
@@ -116,11 +116,11 @@ impl TableProvider for SharedTableProvider {
             self.core.services.commit_sequence_source.allocate_next(),
             rows.len(),
         )
-        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        .map_err(crate::error::into_datafusion)?;
         let inserted = self
             .insert_batch_with_versions(Some(&user_id), rows, &versions)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         crate::utils::datafusion_dml::rows_affected_plan(state, inserted.len() as u64).await
     }
 
@@ -207,12 +207,12 @@ impl TableProvider for SharedTableProvider {
                 let commit_seq = self.core.services.commit_sequence_source.allocate_next();
                 for pk_value in direct_pks {
                     let version = version_from_commit_seq(commit_seq, ordinal)
-                        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                        .map_err(crate::error::into_datafusion)?;
                     ordinal = ordinal.saturating_add(1);
                     if self
                         .delete_by_pk_value_with_version(user_id, &pk_value, version)
                         .await
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?
+                        .map_err(crate::error::into_datafusion)?
                     {
                         deleted += 1;
                     }
@@ -252,7 +252,7 @@ impl TableProvider for SharedTableProvider {
 
         let check_policies = self
             .bind_policies(user_id, role, PolicyCommand::Update, true)
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         let mut required_columns = vec![pk_column.clone()];
         for column_id in check_policies.required_column_ids() {
             if let Some(column) = self
@@ -297,7 +297,7 @@ impl TableProvider for SharedTableProvider {
         let check_authorization = self
             .bind_authorization(&check_policies, snapshot_commit_seq)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         let mut ordinal = 0u32;
         let mut staged_mutations =
             transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
@@ -373,7 +373,7 @@ impl TableProvider for SharedTableProvider {
                 let commit_seq = self.core.services.commit_sequence_source.allocate_next();
                 for (pk_value, evaluated_updates) in direct_updates {
                     let version = version_from_commit_seq(commit_seq, ordinal)
-                        .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+                        .map_err(crate::error::into_datafusion)?;
                     ordinal = ordinal.saturating_add(1);
                     let result = self
                         .update_by_pk_value_with_version(
@@ -383,7 +383,7 @@ impl TableProvider for SharedTableProvider {
                             version,
                         )
                         .await
-                        .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                        .map_err(crate::error::into_datafusion)?;
                     if result.is_some() {
                         updated += 1;
                     }

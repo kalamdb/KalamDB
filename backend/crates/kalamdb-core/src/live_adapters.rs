@@ -83,9 +83,9 @@ fn live_authorization_bind_error(error: TableError) -> LiveError {
     match error {
         TableError::NotFound(message) => LiveError::NotFound(message),
         TableError::TableNotFound(message) => LiveError::TableNotFound(message),
-        TableError::InvalidOperation(message)
-        | TableError::AlreadyExists(message)
-        | TableError::ConstraintViolation(message) => LiveError::InvalidOperation(message),
+        TableError::InvalidOperation(message) | TableError::AlreadyExists(message) => {
+            LiveError::InvalidOperation(message)
+        },
         TableError::Serialization(message) => LiveError::SerializationError(message),
         error => LiveError::ExecutionError(error.to_string()),
     }

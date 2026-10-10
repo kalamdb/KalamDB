@@ -15,8 +15,8 @@
 //!
 //! - `extract_file_placeholders` is called **once** in the handler; the result is passed into
 //!   `execute_file_upload_path` to avoid rescanning.
-//! - `req_for_forward` (clones `sql` + `params`) is built lazily — only when forwarding is actually
-//!   needed.
+//! - `req_for_forward` moves `sql` and `params` into the non-file path so a later leader forward
+//!   does not copy them again.
 //! - In the batch loop, `params` is **moved** on the last iteration instead of cloned, eliminating
 //!   one allocation per single-statement request (>90% of traffic).
 //! - Content-type detection uses ASCII-case-insensitive comparison without allocating a lowercase
@@ -163,7 +163,7 @@ pub async fn execute_sql_v1(
     let default_namespace = namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
-        .with_namespace_id(default_namespace.clone());
+        .with_namespace_id(default_namespace);
 
     // 5. Split, parse, and classify SQL statements once. FILE() uploads use light prepare
     // (classify + table extract only) because execute_file_upload_path fully prepares
@@ -295,7 +295,6 @@ pub async fn execute_sql_v1(
             &exec_ctx,
             &impersonation_service,
             &auth_username,
-            &default_namespace,
             params,
             &schema_registry,
             start_time,

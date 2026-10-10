@@ -108,8 +108,11 @@ impl ShardRouter {
     }
 
     /// Placement policy for NEW tables only. Persist the result before proposing CREATE.
+    ///
+    /// Tables in one namespace share a group so a procedure or row policy can
+    /// use them in one transaction. Distinct namespaces still spread across groups.
     pub fn place_shared_table(&self, table_id: &TableId) -> u32 {
-        self.hash_table_to_shard(table_id, self.num_shared_shards.max(1))
+        self.hash_to_shard(table_id.namespace_id().as_str(), self.num_shared_shards.max(1))
     }
 
     /// Resolve existing metadata without applying the placement policy again.
@@ -159,9 +162,9 @@ mod ownership_tests {
 
     use super::*;
 
-    fn table(name: &str) -> TableDefinition {
+    fn table(namespace: &str, name: &str) -> TableDefinition {
         TableDefinition::new_with_defaults(
-            "app".into(),
+            namespace.into(),
             name.into(),
             TableType::Shared,
             vec![],
@@ -177,7 +180,7 @@ mod ownership_tests {
         let mut distribution = [0usize; 4];
         let tables: Vec<_> = (0..2048)
             .map(|i| {
-                let mut table = table(&format!("t_{i}"));
+                let mut table = table(&format!("ns_{i}"), "rows");
                 let owner = original.place_shared_table(&table.table_id());
                 if let TableOptions::Shared(options) = &mut table.table_options {
                     options.shared_shard_id = owner;
@@ -204,7 +207,7 @@ mod ownership_tests {
     #[test]
     fn legacy_ownership_and_invalid_metadata_fail_closed() {
         let router = ShardRouter::new(8, 4);
-        let mut table = table("legacy");
+        let mut table = table("legacy_ns", "legacy");
         assert_eq!(router.shared_group_id(&table).unwrap(), GroupId::DataSharedShard(0));
         if let TableOptions::Shared(options) = &mut table.table_options {
             options.shared_shard_id = 4;
@@ -212,5 +215,15 @@ mod ownership_tests {
         assert!(router.shared_group_id(&table).is_err());
         table.table_type = TableType::User;
         assert!(router.shared_group_id(&table).is_err());
+    }
+
+    #[test]
+    fn one_namespace_shares_one_shared_group() {
+        let router = ShardRouter::new(8, 4);
+        let rooms = router.place_shared_table(&table("chat_demo", "rooms").table_id());
+        let members = router.place_shared_table(&table("chat_demo", "room_members").table_id());
+        let messages = router.place_shared_table(&table("chat_demo", "messages").table_id());
+        assert_eq!(rooms, members);
+        assert_eq!(rooms, messages);
     }
 }
