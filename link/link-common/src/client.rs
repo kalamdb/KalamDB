@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use crate::models::HealthCheckResponse;
 use crate::{
     auth::{AuthProvider, ResolvedAuth},
-    connection::SharedConnection,
+    connection::{SharedConnection, SharedResumeCache},
     event_handlers::EventHandlers,
     models::ConnectionOptions,
     query::{AuthRefreshCallback, QueryExecutor},
@@ -70,6 +70,8 @@ pub struct KalamLinkClient {
     shared_resolved_auth: Arc<RwLock<ResolvedAuth>>,
     /// Shared WebSocket connection — `None` until `connect()` is called.
     connection:           Arc<Mutex<Option<Arc<SharedConnection>>>>,
+    /// Version cursors learned from subscription acks. Survives disconnect.
+    resume_cache:         Arc<SharedResumeCache>,
 }
 
 /// Builder for configuring [`KalamLinkClient`] instances.

@@ -83,7 +83,7 @@ describe('CLI', () => {
     assert.ok(content.includes('"test_cli_gen.cli_options"'));
     assert.ok(!content.includes('export const cli_options = kTable'));
     assert.ok(!content.includes('system_users'));
-    assert.ok(content.includes('...kSystemColumns(["_seq","_deleted","_commit_seq"] as const),'));
+    assert.ok(content.includes('...kSystemColumns(["_version","_deleted","_timestamp"] as const),'));
     assert.ok(content.includes('bigint("id", { mode: "bigint" })'));
     assert.ok(!content.includes('$inferSelect'));
     assert.ok(!content.includes('$inferInsert'));
@@ -97,14 +97,14 @@ describe('CLI', () => {
       `--out ${outFile}`,
       '--namespace system,dba',
       '--namespace test_cli_gen',
-      '--include-system-columns _seq',
+      '--include-system-columns _version',
     ].join(' '));
 
     const content = readFileSync(outFile, 'utf-8');
     assert.ok(content.includes('system_users'));
     assert.ok(content.includes('dba_'));
     assert.ok(content.includes('test_cli_gen_'));
-    assert.ok(content.includes('...kSystemColumns(["_seq"] as const),'));
+    assert.ok(content.includes('...kSystemColumns(["_version"] as const),'));
   });
 
   it('rejects unsupported bigint mode before writing a schema', () => {
@@ -116,7 +116,7 @@ describe('CLI', () => {
 
   it('rejects unsupported system columns before writing a schema', () => {
     assert.throws(
-      () => execSync(`node ${cliPath} --url ${URL} --password ${PASS} --out ${outFile} --include-system-columns _seq,_tenant`, { stdio: 'pipe' }),
+      () => execSync(`node ${cliPath} --url ${URL} --password ${PASS} --out ${outFile} --include-system-columns _version,_tenant`, { stdio: 'pipe' }),
       /Unsupported system column/,
     );
   });

@@ -233,6 +233,7 @@ mod tests {
 
     fn make_batch_control(batch_num: u32, has_more: bool, status: BatchStatus) -> BatchControl {
         BatchControl {
+            version_domain: None,
             batch_num,
             has_more,
             status,
@@ -497,12 +498,12 @@ mod tests {
 
     #[test]
     fn subscription_info_from_native() {
-        use kalam_client::{models::SubscriptionInfo, SeqId};
+        use kalam_client::models::SubscriptionInfo;
 
         let native = SubscriptionInfo {
             id:                 "sub-42".to_string(),
             query:              "SELECT * FROM users".to_string(),
-            last_seq_id:        Some(SeqId::new(999)),
+            last_seq_id:        Some(kalam_client::VersionId::from(999_i64)),
             last_event_time_ms: Some(1700000000000),
             created_at_ms:      1700000000000,
             closed:             false,

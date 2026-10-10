@@ -49,8 +49,8 @@ fn smoke_int64_precision_preserved_as_string() {
     );
     execute_sql_as_root_via_client(&insert_sql).expect("insert should succeed");
 
-    // 3) Query via JSON endpoint and verify _seq is a string
-    let select_sql = format!("SELECT _seq, big_value, content FROM {}", full_table);
+    // 3) Query via JSON endpoint and verify large integers stay exact.
+    let select_sql = format!("SELECT _version, big_value, content FROM {}", full_table);
     let json_response =
         execute_sql_as_root_via_client_json(&select_sql).expect("select should succeed");
 
@@ -66,24 +66,15 @@ fn smoke_int64_precision_preserved_as_string() {
     let first_row = &rows[0];
 
     // Extract typed values from the response (server returns {"Int64": "value"} format)
-    let seq_value = first_row.get("_seq").expect("Expected _seq column");
+    let seq_value = first_row.get("_version").expect("Expected _version column");
     let seq_value = extract_typed_value(seq_value);
-
-    // Verify _seq is a string (since it's a Snowflake ID exceeding JS_MAX_SAFE_INTEGER)
-    assert!(
-        seq_value.is_string(),
-        "_seq should be serialized as a string for JS safety, got: {:?}",
-        seq_value
-    );
-
-    // Verify the string value is a valid numeric
-    let seq_str = seq_value.as_str().expect("_seq should be a string");
-    let seq_parsed: u64 = seq_str.parse().expect("_seq string should be a valid number");
-    assert!(
-        seq_parsed > JS_MAX_SAFE_INTEGER as u64,
-        "_seq should exceed JS_MAX_SAFE_INTEGER, got: {}",
-        seq_parsed
-    );
+    let seq_parsed: u64 = if let Some(text) = seq_value.as_str() {
+        text.parse().expect("_version string should be a valid number")
+    } else {
+        seq_value.as_u64().expect("_version should be a positive integer")
+    };
+    assert!(seq_parsed > 0, "_version should be assigned");
+    let seq_str = seq_parsed.to_string();
 
     // Extract and verify big_value
     let big_value = first_row.get("big_value").expect("Expected big_value column");
@@ -110,7 +101,10 @@ fn smoke_int64_precision_preserved_as_string() {
     let content = extract_typed_value(content);
     assert_eq!(content.as_str(), Some("test_precision"), "content should be 'test_precision'");
 
-    println!("✓ Int64 precision test passed: _seq={}, big_value={}", seq_str, big_value_str);
+    println!(
+        "✓ Int64 precision test passed: _version={}, big_value={}",
+        seq_str, big_value_str
+    );
 
     // Cleanup
     execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table)).ok();

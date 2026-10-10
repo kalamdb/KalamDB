@@ -46,13 +46,31 @@ pub fn prompt_for_draft_application(
 ) -> Result<DraftPromptDecision> {
     let summary = draft_summary_lines(draft_path);
     let draft_display = display_project_path(project_root, draft_path);
-    let mut context_lines = summary;
+    let sql = fs::read_to_string(draft_path).unwrap_or_default();
+    let dropped = crate::workflow::agent::destructive_schema_objects(&sql);
+    let mut context_lines = Vec::new();
+    if !dropped.is_empty() {
+        context_lines.push(format!(
+            "This draft drops {}. Applying it changes data already stored. Cancel leaves the \
+             database unchanged so you can edit schema.sql and run `kalam dev` again. Reset drops \
+             the namespace and rebuilds from schema.sql.",
+            dropped.join(", ")
+        ));
+    }
+    context_lines.extend(summary);
     context_lines.push(format!("Full changes: {draft_display}"));
-    run_workflow_modal_prompt(output, &DraftMigrationPrompt { context_lines })
+    run_workflow_modal_prompt(
+        output,
+        &DraftMigrationPrompt {
+            context_lines,
+            destructive: !dropped.is_empty(),
+        },
+    )
 }
 
 struct DraftMigrationPrompt {
     context_lines: Vec<String>,
+    destructive:   bool,
 }
 
 impl WorkflowModalPrompt for DraftMigrationPrompt {
@@ -81,12 +99,19 @@ impl WorkflowModalPrompt for DraftMigrationPrompt {
                 "Reset and rebuild",
                 "Drop the namespace, clear migrations, and apply schema.sql from scratch",
             ),
-            SelectOption::described("Cancel", "Stop kalam dev without applying this draft"),
+            SelectOption::described(
+                "Cancel",
+                "Leave the database unchanged. Edit schema.sql, then run kalam dev again",
+            ),
         ]
     }
 
     fn default_index(&self) -> usize {
-        0
+        if self.destructive {
+            2
+        } else {
+            0
+        }
     }
 
     fn decision_from_selected_index(&self, index: usize) -> Result<Self::Decision> {
@@ -174,6 +199,7 @@ fn summarize_create_table(lines: &[String], max_lines: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::prompts::WorkflowModalPrompt;
 
     #[test]
     fn summarize_limits_to_max_lines() {
@@ -199,9 +225,17 @@ mod tests {
     fn draft_prompt_maps_apply_reset_cancel() {
         let prompt = DraftMigrationPrompt {
             context_lines: vec!["CREATE TABLE users (id INTEGER);".into()],
+            destructive:   false,
         };
         assert_eq!(prompt.decision_from_selected_index(0).unwrap(), DraftPromptDecision::Apply);
         assert_eq!(prompt.decision_from_selected_index(1).unwrap(), DraftPromptDecision::Reset);
         assert_eq!(prompt.decision_from_selected_index(2).unwrap(), DraftPromptDecision::Cancel);
+        assert_eq!(prompt.default_index(), 0);
+
+        let destructive = DraftMigrationPrompt {
+            context_lines: Vec::new(),
+            destructive:   true,
+        };
+        assert_eq!(destructive.default_index(), 2);
     }
 }

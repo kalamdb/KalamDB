@@ -240,8 +240,8 @@ pub struct QueryResult {
 /// Error details for failed SQL execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorDetail {
-    /// Error code enum (type-safe)
-    pub code: ErrorCode,
+    /// Error code string. Catalog failures keep their commons code.
+    pub code: String,
 
     /// Human-readable error message
     pub message: String,
@@ -269,7 +269,7 @@ impl SqlResponse {
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code,
+                code:    code.as_str().to_string(),
                 message: message.to_string(),
                 details: None,
             }),
@@ -299,7 +299,7 @@ impl SqlResponse {
             results: Vec::new(),
             took,
             error: Some(ErrorDetail {
-                code,
+                code:    code.as_str().to_string(),
                 message: message.to_string(),
                 details: Some(details.to_string()),
             }),
@@ -321,6 +321,13 @@ impl SqlResponse {
         }
 
         Self::error_with_details(code, message, details, took)
+    }
+
+    pub(crate) fn with_catalog_code(mut self, catalog: Option<&'static str>) -> Self {
+        if let (Some(catalog), Some(error)) = (catalog, self.error.as_mut()) {
+            error.code = catalog.to_string();
+        }
+        self
     }
 }
 
@@ -519,6 +526,22 @@ mod tests {
     }
 
     #[test]
+    fn catalog_code_round_trips_in_sql_json() {
+        let response = SqlResponse::error(
+            ErrorCode::SqlExecutionError,
+            "column 'id' cannot be NULL (row 1)",
+            1.0,
+        )
+        .with_catalog_code(Some("NOT_NULL_VIOLATION"));
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("NOT_NULL_VIOLATION"), "{json}");
+        let parsed: SqlResponse = serde_json::from_str(&json).unwrap();
+        let error = parsed.error.expect("error");
+        assert_eq!(error.code, "NOT_NULL_VIOLATION");
+    }
+
+    #[test]
     fn test_non_admin_sql_errors_are_redacted() {
         let response = SqlResponse::error_with_details_for_privilege(
             ErrorCode::SqlExecutionError,
@@ -529,7 +552,7 @@ mod tests {
         );
 
         let error = response.error.expect("error response should include an error payload");
-        assert_eq!(error.code, ErrorCode::SqlExecutionError);
+        assert_eq!(error.code, ErrorCode::SqlExecutionError.as_str());
         assert_eq!(error.message, "SQL statement failed. Review the statement and try again.",);
         assert!(error.details.is_none());
     }
@@ -545,7 +568,7 @@ mod tests {
         );
 
         let error = response.error.expect("error response should include an error payload");
-        assert_eq!(error.code, ErrorCode::SqlExecutionError);
+        assert_eq!(error.code, ErrorCode::SqlExecutionError.as_str());
         assert_eq!(error.message, "Statement 1 failed: table 'secret.payroll' not found");
         assert_eq!(error.details.as_deref(), Some("SELECT * FROM secret.payroll"));
     }

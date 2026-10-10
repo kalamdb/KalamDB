@@ -79,6 +79,10 @@ pub enum RaftError {
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Structured error. Display renders the template; the payload stays the arguments.
+    #[error(transparent)]
+    Coded(#[from] kalamdb_commons::CodedError),
 }
 
 impl RaftError {

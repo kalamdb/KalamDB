@@ -405,7 +405,6 @@ pub(super) fn prepare_call(
         args,
     )?;
     let args = pack_named_call_input(&stores, &routine.routine_id, args)?;
-    let args = attach_transfer(&args, &revision.contract_hash);
     let frame = ProcedureFrame {
         routine_id: routine.routine_id.clone(),
         revision_id: revision.revision_id.clone(),
@@ -849,23 +848,6 @@ fn json_object_has_key(arg: &RoutineValue, key: &str) -> bool {
     }
 }
 
-fn attach_transfer(args: &[RoutineValue], contract_hash: &str) -> Vec<RoutineValue> {
-    args.iter()
-        .map(|arg| {
-            if arg.transfer.is_some() {
-                return arg.clone();
-            }
-            let Some(json) = json_for_transfer(arg) else {
-                return arg.clone();
-            };
-            match kalamdb_serialization::encode_function_value(contract_hash, &json) {
-                Ok(bytes) => arg.clone().with_transfer(bytes::Bytes::from(bytes), contract_hash),
-                Err(_) => arg.clone(),
-            }
-        })
-        .collect()
-}
-
 fn json_for_transfer(arg: &RoutineValue) -> Option<serde_json::Value> {
     routine_value_as_json(arg)
 }
@@ -937,12 +919,9 @@ mod tests {
     }
 
     #[test]
-    fn attach_transfer_encodes_json_sql_as_object_not_string() {
+    fn json_sql_named_input_reaches_v8_as_an_object() {
         let named = RoutineValue::json(ScalarValue::Utf8(Some(r#"{"msg":"hello"}"#.into())));
-        let packed = attach_transfer(&[named], "inline");
-        let bytes = packed[0].transfer.as_ref().expect("json_sql named input should transfer");
-        let decoded = kalamdb_serialization::decode_function_value(bytes, "inline")
-            .expect("decode named input transfer");
+        let decoded = json_for_transfer(&named).expect("json_sql named input");
         assert_eq!(decoded["msg"], "hello");
         assert!(decoded.is_object(), "V8 must receive an object so input.msg works: {decoded}");
     }
@@ -966,10 +945,7 @@ mod tests {
         let packed = RoutineValue::json(ScalarValue::Utf8(Some(
             serde_json::Value::Object(object).to_string(),
         )));
-        let transferred = attach_transfer(&[packed], "inline");
-        let bytes = transferred[0].transfer.as_ref().expect("named trigger input should transfer");
-        let decoded = kalamdb_serialization::decode_function_value(bytes, "inline")
-            .expect("decode named trigger transfer");
+        let decoded = json_for_transfer(&packed).expect("named trigger input");
         assert!(
             decoded["payload"].is_object(),
             "V8 must receive input.payload as an object so payload.role works: {decoded}"

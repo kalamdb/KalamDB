@@ -19,7 +19,7 @@ final class _CountingTransport implements KalamSyncTransport {
 
   final KalamLinkTransport delegate;
   final Map<String, List<int>> deliveredBatchSizes = {};
-  final Map<String, List<SeqId>> acknowledged = {};
+  final Map<String, List<VersionId>> acknowledged = {};
 
   @override
   Stream<KalamTransportConnection> get connectionStates =>
@@ -29,7 +29,7 @@ final class _CountingTransport implements KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   }) {

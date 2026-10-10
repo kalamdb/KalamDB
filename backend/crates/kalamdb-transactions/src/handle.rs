@@ -1,8 +1,15 @@
-use std::{collections::HashSet, sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
 use kalamdb_commons::models::{TableId, TransactionId, TransactionOrigin, TransactionState};
 
-use crate::{ExecutionOwnerKey, TransactionRaftBinding};
+use crate::{commit_sequence::SNAPSHOT_UNSET, ExecutionOwnerKey, TransactionRaftBinding};
 
 /// Hot transaction metadata kept separate from the staged write buffer.
 #[derive(Debug, Clone)]
@@ -13,7 +20,8 @@ pub struct TransactionHandle {
     pub origin:              TransactionOrigin,
     pub state:               TransactionState,
     pub raft_binding:        TransactionRaftBinding,
-    pub snapshot_commit_seq: u64,
+    /// Pinned group frontier (`SNAPSHOT_UNSET` until first data access).
+    pub snapshot_log_index:  Arc<AtomicU64>,
     pub started_at:          Instant,
     pub last_activity_at:    Instant,
     pub write_count:         usize,
@@ -29,7 +37,6 @@ impl TransactionHandle {
         owner_id: Arc<str>,
         origin: TransactionOrigin,
         raft_binding: TransactionRaftBinding,
-        snapshot_commit_seq: u64,
         now: Instant,
     ) -> Self {
         Self {
@@ -39,13 +46,24 @@ impl TransactionHandle {
             origin,
             state: TransactionState::OpenRead,
             raft_binding,
-            snapshot_commit_seq,
+            snapshot_log_index: Arc::new(AtomicU64::new(SNAPSHOT_UNSET)),
             started_at: now,
             last_activity_at: now,
             write_count: 0,
             write_bytes: 0,
             touched_tables: HashSet::new(),
             has_write_set: false,
+        }
+    }
+
+    /// Snapshot frontier pinned at first data access, or `None` if still unset.
+    #[inline]
+    pub fn snapshot_commit_seq(&self) -> Option<u64> {
+        let value = self.snapshot_log_index.load(Ordering::Acquire);
+        if value == SNAPSHOT_UNSET {
+            None
+        } else {
+            Some(value)
         }
     }
 

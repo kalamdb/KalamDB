@@ -15,6 +15,7 @@ categories = ["database"]
 once_cell = { workspace = true }
 hex = { workspace = true }
 thiserror = { workspace = true }
+smallvec = { workspace = true }
 datafusion-common = { workspace = true, optional = true, default-features = false }
 dashmap = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }

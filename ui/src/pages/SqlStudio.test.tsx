@@ -782,7 +782,7 @@ describe("SqlStudio page", () => {
 
     await waitFor(() => {
       expect(mockSubscribe).toHaveBeenCalledWith(
-        "SELECT * FROM default.events;",
+        "SELECT * FROM default.events",
         expect.any(Function),
         undefined,
       );

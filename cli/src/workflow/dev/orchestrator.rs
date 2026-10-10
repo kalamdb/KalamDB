@@ -517,7 +517,7 @@ async fn run_dev_session_inner(
             _ = time::sleep(Duration::from_millis(200)) => {
                 let finished = supervisor.reap_finished().await;
                 for (name, code) in &finished {
-                    output.status(format!("process {name} exited with code {code}"));
+                    report_dev_process_exit(output, name, *code);
                 }
                 match next_dev_loop_action_after_process_reap(
                     supervisor.count(),
@@ -525,7 +525,12 @@ async fn run_dev_session_inner(
                     *local_server_managed,
                 ) {
                     DevLoopAction::Continue => {
-                        if !finished.is_empty() && watch_enabled {
+                        if finished.iter().any(|(_, code)| *code != 0) && watch_enabled {
+                            output.status(
+                                "kalam dev is still watching schema.sql. The app process is not \
+                                 running.",
+                            );
+                        } else if !finished.is_empty() && watch_enabled {
                             output.status(
                                 "schema watch still active; kalam dev will keep running",
                             );
@@ -883,6 +888,20 @@ fn should_stop_managed_server(
 /// When schema watch is enabled and this session is not supervising the local
 /// server, a crashed app process must not tear down the session. The reused
 /// server is still available for schema apply.
+fn report_dev_process_exit(output: &WorkflowOutput, name: &str, code: i32) {
+    if code == 0 {
+        output.status(format!("process {name} exited"));
+        output.agent_event("KALAM_APP_EXITED", &[("name", name), ("code", "0")]);
+        return;
+    }
+    let code_label = code.to_string();
+    output.warn(format!(
+        "process {name} exited with code {code}. The database is still running. Fix the error \
+         above, then run `kalam dev` again."
+    ));
+    output.agent_event("KALAM_APP_EXITED", &[("name", name), ("code", &code_label)]);
+}
+
 fn next_dev_loop_action_after_process_reap(
     managed_count: usize,
     watch_enabled: bool,

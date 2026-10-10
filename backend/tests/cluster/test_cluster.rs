@@ -5,3 +5,4 @@
 // Include cluster test modules
 mod test_cluster_basic_operations;
 mod test_cluster_node_recovery_and_sync;
+mod test_shared_shard_owners;

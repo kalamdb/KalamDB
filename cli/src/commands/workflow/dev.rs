@@ -1,10 +1,11 @@
 use kalam_cli::{output::WorkflowDisplayMode, workflow::dev, CLIError, Result};
 
-use super::context::workflow_context;
+use super::context::{note_dev_keeps_project_database, workflow_context};
 use crate::args::{Cli, DevArgs, DevCommand};
 
 pub(super) async fn handle_dev(cli: &Cli, args: &DevArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), args.namespace.as_deref())?;
+    note_dev_keeps_project_database(cli, &ctx)?;
     if let Some(command) = args.exec.as_deref() {
         if args.command.is_some() {
             return Err(CLIError::ConfigurationError(

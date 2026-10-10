@@ -273,7 +273,7 @@ async fn e2e_ddl_alter_column_set_and_drop_not_null() {
         .await
         .expect_err("remote insert with NULL title should fail after SET NOT NULL");
     assert!(
-        insert_error.contains("null") || insert_error.contains("NOT NULL"),
+        insert_error.to_ascii_lowercase().contains("null"),
         "SET NOT NULL should reject NULL inserts remotely: {insert_error}"
     );
 

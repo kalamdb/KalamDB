@@ -48,7 +48,7 @@ DOCKER_DIR="$ROOT_DIR/docker/build"
 DIST_DIR="$ROOT_DIR/dist"
 REPO_OWNER="jamals86"
 REPO_NAME="KalamDB"
-DOCKERHUB_REPO="jamals86/kalamdb"
+DOCKERHUB_REPO="kalamdb/kalamdb"
 PROFILE="release-dist"
 CROSS_PROFILE="docker"  # Use docker profile for cross-compilation (less memory intensive)
 

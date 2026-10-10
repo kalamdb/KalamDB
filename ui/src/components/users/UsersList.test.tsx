@@ -124,4 +124,22 @@ describe("UsersList", () => {
     expect(screen.getByPlaceholderText(/search users/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /next users page/i })).toBeTruthy();
   });
+
+  it("shows the user id when the display name is missing or blank", () => {
+    mockUserPage = {
+      users: [
+        user({ user_id: "dev_01", name: null }),
+        user({ user_id: "dev_02", name: "   " }),
+      ],
+      hasMore: false,
+    };
+
+    render(<UsersList />);
+
+    const users = screen.getByRole("region", { name: /users list/i });
+    const missingName = within(users).getAllByText("dev_01");
+    const blankName = within(users).getAllByText("dev_02");
+    expect(missingName.length).toBeGreaterThanOrEqual(2);
+    expect(blankName.length).toBeGreaterThanOrEqual(2);
+  });
 });

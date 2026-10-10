@@ -25,8 +25,15 @@ task_local! {
     static COALESCE_ID: u64;
 }
 
+type PersistHook = Box<dyn FnOnce() + Send>;
+
 fn pending_map() -> &'static Mutex<HashMap<u64, Vec<Operation>>> {
     static MAP: OnceLock<Mutex<HashMap<u64, Vec<Operation>>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn hook_map() -> &'static Mutex<HashMap<u64, Vec<PersistHook>>> {
+    static MAP: OnceLock<Mutex<HashMap<u64, Vec<PersistHook>>>> = OnceLock::new();
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -39,14 +46,22 @@ struct CoalesceGuard(u64);
 impl Drop for CoalesceGuard {
     fn drop(&mut self) {
         lock_pending().remove(&self.0);
+        hook_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&self.0);
     }
+}
+
+/// Buffered storage operations plus effects that must run only after they persist.
+pub struct CoalescedBatch {
+    pub ops:           Vec<Operation>,
+    pub after_persist: Vec<PersistHook>,
 }
 
 /// Run `fut` while `put`/`batch` on participating backends append to one buffer.
 ///
-/// Returns the future's output and the buffered operations. The caller must
-/// commit with [`StorageBackend::batch`] (or discard them).
-pub async fn with_write_coalesce<F, T>(fut: F) -> (T, Vec<Operation>)
+/// Returns the future's output and the buffered operations. The caller commits
+/// with [`StorageBackend::batch`] only when the future succeeded, then runs
+/// `after_persist`. On failure both are discarded.
+pub async fn with_write_coalesce<F, T>(fut: F) -> (T, CoalescedBatch)
 where
     F: Future<Output = T>,
 {
@@ -54,12 +69,46 @@ where
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     lock_pending().insert(id, Vec::with_capacity(8));
+    hook_map()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(id, Vec::new());
     let guard = CoalesceGuard(id);
 
     let value = COALESCE_ID.scope(id, fut).await;
     let ops = lock_pending().remove(&id).unwrap_or_default();
+    let after_persist = hook_map()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&id)
+        .unwrap_or_default();
     drop(guard);
-    (value, ops)
+    (value, CoalescedBatch { ops, after_persist })
+}
+
+/// Run `hook` after the active coalesce batch persists.
+///
+/// Outside a coalesce session the hook runs immediately.
+pub fn defer_after_persist(hook: impl FnOnce() + Send + 'static) {
+    let mut hook = Some(hook);
+    let deferred = COALESCE_ID
+        .try_with(|id| {
+            let mut hooks = hook_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(pending) = hooks.get_mut(id) {
+                if let Some(hook) = hook.take() {
+                    pending.push(Box::new(hook));
+                }
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+    if !deferred {
+        if let Some(hook) = hook.take() {
+            hook();
+        }
+    }
 }
 
 /// Buffer a put if a coalesce session is active on this task.
@@ -130,17 +179,17 @@ mod tests {
 
         let writer = Arc::clone(&backend);
         let partition_for_write = partition.clone();
-        let (seen, ops) = with_write_coalesce(async move {
+        let (seen, batch) = with_write_coalesce(async move {
             writer.put(&partition_for_write, b"k", b"v").unwrap();
             writer.get(&partition_for_write, b"k").unwrap()
         })
         .await;
 
         assert_eq!(seen, None);
-        assert_eq!(ops.len(), 1);
+        assert_eq!(batch.ops.len(), 1);
         assert_eq!(backend.get(&partition, b"k").unwrap(), None);
 
-        backend.batch(ops).unwrap();
+        backend.batch(batch.ops).unwrap();
         assert_eq!(backend.get(&partition, b"k").unwrap(), Some(b"v".to_vec()));
     }
 
@@ -155,7 +204,7 @@ mod tests {
         let writer = Arc::clone(&backend);
         let hot_write = hot.clone();
         let raft_write = raft.clone();
-        let (_ok, ops) = with_write_coalesce(async move {
+        let (_ok, batch) = with_write_coalesce(async move {
             writer
                 .batch(vec![Operation::Put {
                     partition: hot_write.clone(),
@@ -168,13 +217,29 @@ mod tests {
         })
         .await;
 
-        assert_eq!(ops.len(), 2);
+        assert_eq!(batch.ops.len(), 2);
         assert_eq!(backend.get(&hot, b"row").unwrap(), None);
         assert_eq!(backend.get(&raft, b"log:1").unwrap(), None);
 
-        backend.batch(ops).unwrap();
+        backend.batch(batch.ops).unwrap();
         assert_eq!(backend.get(&hot, b"row").unwrap(), Some(b"table".to_vec()));
         assert_eq!(backend.get(&raft, b"log:1").unwrap(), Some(b"entry".to_vec()));
+    }
+
+    #[tokio::test]
+    async fn deferred_hook_is_not_part_of_the_buffered_batch() {
+        let mut ran = false;
+        let ((), batch) = with_write_coalesce(async {
+            defer_after_persist(|| {});
+        })
+        .await;
+        assert!(batch.ops.is_empty());
+        assert_eq!(batch.after_persist.len(), 1);
+        for hook in batch.after_persist {
+            hook();
+            ran = true;
+        }
+        assert!(ran);
     }
 
     #[test]

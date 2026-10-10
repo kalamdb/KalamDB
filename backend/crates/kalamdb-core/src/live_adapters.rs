@@ -83,9 +83,9 @@ fn live_authorization_bind_error(error: TableError) -> LiveError {
     match error {
         TableError::NotFound(message) => LiveError::NotFound(message),
         TableError::TableNotFound(message) => LiveError::TableNotFound(message),
-        TableError::InvalidOperation(message)
-        | TableError::AlreadyExists(message)
-        | TableError::ConstraintViolation(message) => LiveError::InvalidOperation(message),
+        TableError::InvalidOperation(message) | TableError::AlreadyExists(message) => {
+            LiveError::InvalidOperation(message)
+        },
         TableError::Serialization(message) => LiveError::SerializationError(message),
         error => LiveError::ExecutionError(error.to_string()),
     }
@@ -200,7 +200,12 @@ impl RaftApplyBarrierAdapter {
         Self { app_context }
     }
 
-    fn table_group(&self, table_type: TableType, user_id: &UserId) -> Option<GroupId> {
+    fn table_group(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: &UserId,
+    ) -> Option<GroupId> {
         let executor = self.app_context.executor();
         let raft_executor = executor.as_any().downcast_ref::<RaftExecutor>()?;
         let manager = raft_executor.manager();
@@ -210,7 +215,7 @@ impl RaftApplyBarrierAdapter {
             TableType::User | TableType::Stream => {
                 Some(GroupId::DataUserShard(router.user_shard_id(user_id)))
             },
-            TableType::Shared => Some(GroupId::DataSharedShard(router.shared_shard_id())),
+            TableType::Shared => self.app_context.shared_group_id(table_id).ok(),
             TableType::System => Some(GroupId::Meta),
         }
     }
@@ -220,11 +225,16 @@ impl RaftApplyBarrierAdapter {
 impl LiveApplyBarrier for RaftApplyBarrierAdapter {
     async fn wait_for_table_apply_barrier(
         &self,
-        _table_id: &TableId,
+        table_id: &TableId,
         table_type: TableType,
         user_id: &UserId,
     ) -> Result<(), LiveError> {
-        let Some(group_id) = self.table_group(table_type, user_id) else {
+        if table_type == TableType::Shared {
+            self.app_context
+                .shared_group_id(table_id)
+                .map_err(|e| LiveError::ExecutionError(e.to_string()))?;
+        }
+        let Some(group_id) = self.table_group(table_id, table_type, user_id) else {
             return Ok(());
         };
 

@@ -1237,6 +1237,21 @@ impl RaftManager {
         }
     }
 
+    /// All routing delegates to the catalog-backed applier shared by the state machines.
+    pub fn shared_shard_id(&self, table_id: &TableId) -> Result<u32, RaftError> {
+        let shard = self
+            .shared_data_shards
+            .first()
+            .ok_or_else(|| RaftError::InvalidState("No shared shards configured".into()))?
+            .storage()
+            .state_machine()
+            .resolve_shared_shard(table_id)?;
+        if shard >= self.shared_shards_count {
+            return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
+        }
+        Ok(shard)
+    }
+
     /// Propose a command to a shared data shard (with leader forwarding)
     ///
     /// If this node is a follower, the request is automatically forwarded to the leader.
@@ -1248,6 +1263,11 @@ impl RaftManager {
     ) -> Result<crate::DataResponse, RaftError> {
         if shard >= self.shared_shards_count {
             return Err(RaftError::InvalidGroup(format!("DataSharedShard({})", shard)));
+        }
+        if self.shared_shard_id(command.table_id())? != shard {
+            return Err(RaftError::InvalidGroup(
+                "Shared command proposed to a non-owning shard".into(),
+            ));
         }
         let cmd = crate::RaftCommand::SharedData(command);
         let response: crate::RaftResponse =
@@ -1276,6 +1296,7 @@ impl RaftManager {
         }
 
         let cmd = crate::RaftCommand::TransactionCommit {
+            required_meta_index: self.current_meta_index(),
             transaction_id,
             mutations,
         };
@@ -1382,7 +1403,9 @@ impl RaftManager {
                     })?;
                     GroupId::DataUserShard(router.user_shard_id(user_id))
                 },
-                TableType::Shared => GroupId::DataSharedShard(router.shared_shard_id()),
+                TableType::Shared => {
+                    GroupId::DataSharedShard(self.shared_shard_id(&mutation.table_id)?)
+                },
                 TableType::Stream => {
                     return Err(RaftError::InvalidState(
                         "stream tables are not supported in explicit transactions".to_string(),
@@ -2088,8 +2111,8 @@ mod tests {
         assert_eq!(manager.node_id(), NodeId::new(1));
         assert!(!manager.is_started());
 
-        // Should have 34 groups total by default: 1 meta + 32 user data + 1 shared
-        assert_eq!(manager.group_count(), 34);
+        // Should have 37 groups total by default: 1 meta + 32 user data + 4 shared
+        assert_eq!(manager.group_count(), 37);
     }
 
     #[test]
@@ -2097,11 +2120,13 @@ mod tests {
         let manager = RaftManager::new(test_config());
         let groups = manager.all_group_ids();
 
-        assert_eq!(groups.len(), 34);
+        assert_eq!(groups.len(), 37);
         assert!(groups.contains(&GroupId::Meta));
         assert!(groups.contains(&GroupId::DataUserShard(0)));
         assert!(groups.contains(&GroupId::DataUserShard(31)));
         assert!(groups.contains(&GroupId::DataSharedShard(0)));
+        assert!(groups.contains(&GroupId::DataSharedShard(3)));
+        assert!(!groups.contains(&GroupId::DataSharedShard(4)));
     }
 
     #[test]

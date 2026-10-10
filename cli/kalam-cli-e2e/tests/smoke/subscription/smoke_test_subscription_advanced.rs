@@ -393,7 +393,7 @@ fn smoke_subscription_resume_from_seq_id() {
                 if line.contains(&test_value) || line.contains("Insert") {
                     // Extract seq_id from the event (format: "_seq": Object {"Int64":
                     // String("123456789")})
-                    if let Some(start) = line.find("\"_seq\"") {
+                    if let Some(start) = line.find("\"_version\"") {
                         if let Some(seq_start) = line[start..].find("String(\"") {
                             let seq_portion = &line[start + seq_start + 8..];
                             if let Some(seq_end) = seq_portion.find("\"") {
@@ -974,10 +974,10 @@ fn smoke_subscription_column_projection() {
     // Verify InitialDataBatch had _seq (system column) along with username
     let has_seq_in_initial = initial_events
         .iter()
-        .any(|e| e.contains("InitialDataBatch") && e.contains("_seq"));
+        .any(|e| e.contains("InitialDataBatch") && e.contains("_version"));
     assert!(
         has_seq_in_initial,
-        "InitialDataBatch should contain _seq system column. Events: {:?}",
+        "InitialDataBatch should contain _version system column. Events: {:?}",
         initial_events
             .iter()
             .filter(|e| e.contains("InitialDataBatch"))

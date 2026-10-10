@@ -132,9 +132,9 @@ Outputs land in `results/*.txt`.
 
 Current GitHub release pins (`scripts/download-binaries.sh`):
 
-- TrailBase **v0.33.14**
-- PocketBase **v0.40.3**
-- SurrealDB **v3.2.4**
+- TrailBase **v0.34.4**
+- PocketBase **v0.40.5**
+- SurrealDB **v3.3.0**
 
 Re-run `./scripts/download-binaries.sh` after a pin bump; it refreshes `./bin`
 when the stamped version no longer matches.

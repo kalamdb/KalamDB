@@ -18,6 +18,8 @@
 
 use std::fmt;
 
+pub use crate::coded_error::{CodedError, ErrorArg, ErrorCode};
+
 /// Typed NOT_LEADER signal for cluster-mode forwarding.
 ///
 /// Table providers wrap this in `DataFusionError::External(Box::new(NotLeaderError { .. }))`

@@ -179,7 +179,7 @@ export class KalamClient {
      * @param {string} subscription_id
      * @returns {string | undefined}
      */
-    getLastSeqId(subscription_id) {
+    getLastVersionId(subscription_id) {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             const ptr0 = passStringToWasm0(subscription_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);

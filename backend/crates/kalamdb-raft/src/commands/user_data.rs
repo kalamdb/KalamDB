@@ -84,6 +84,21 @@ impl UserDataCommand {
         }
     }
 
+    /// Final row-version slots this command needs on apply.
+    pub fn row_slot_count(&self) -> usize {
+        match self {
+            UserDataCommand::Insert {
+                rows,
+                encoded_fields,
+                ..
+            } => rows.len().max(encoded_fields.len()),
+            UserDataCommand::Update { updates, .. } => updates.len().max(1),
+            UserDataCommand::Delete { pk_values, .. } => {
+                pk_values.as_ref().map(|values| values.len().max(1)).unwrap_or(1)
+            },
+        }
+    }
+
     /// Set the required_meta_index watermark for this command
     pub fn set_required_meta_index(&mut self, index: u64) {
         match self {

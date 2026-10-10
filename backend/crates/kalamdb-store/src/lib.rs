@@ -62,7 +62,7 @@ pub use raft_storage::{
 pub use storage_trait::{
     Operation, Partition, StorageBackend, StorageBackendAsync, StorageError, StorageStats,
 };
-pub use write_coalesce::with_write_coalesce;
+pub use write_coalesce::{defer_after_persist, with_write_coalesce, CoalescedBatch};
 
 // Make test_utils available for testing in dependent crates
 pub mod test_utils;

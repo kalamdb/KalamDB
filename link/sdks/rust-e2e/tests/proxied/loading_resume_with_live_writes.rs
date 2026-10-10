@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
 
 use kalam_client::{
-    models::BatchStatus, seq_tracking::row_seq, ChangeEvent, SeqId, SubscriptionConfig,
+    models::BatchStatus, seq_tracking::row_seq, ChangeEvent, VersionId, SubscriptionConfig,
     SubscriptionOptions,
 };
 use tokio::time::{sleep, timeout, Instant};
@@ -12,9 +12,9 @@ use crate::common::tcp_proxy::TcpDisconnectProxy;
 fn observe_loading_event(
     event: &ChangeEvent,
     seen_ids: &mut HashSet<String>,
-    seen_seqs: &mut HashSet<SeqId>,
-    max_seq: &mut Option<SeqId>,
-    strict_from: Option<SeqId>,
+    seen_seqs: &mut HashSet<VersionId>,
+    max_seq: &mut Option<VersionId>,
+    strict_from: Option<VersionId>,
     initial_batch_count: &mut u32,
     context: &str,
 ) {
@@ -131,7 +131,7 @@ async fn test_loading_snapshot_with_live_writes_resumes_without_duplicate_rows()
         }
 
         let mut seen_ids = HashSet::<String>::new();
-        let mut seen_seqs = HashSet::<SeqId>::new();
+        let mut seen_seqs = HashSet::<VersionId>::new();
         let mut delivered_seq = None;
         let mut initial_batch_count = 0u32;
         let mut inserted_during_loading = false;

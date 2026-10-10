@@ -78,7 +78,7 @@ pub async fn first_existing_pk_in_parquet_file(
 
     let columns_to_read = vec![
         pk_column.to_string(),
-        SystemColumnNames::SEQ.to_string(),
+        SystemColumnNames::VERSION.to_string(),
         SystemColumnNames::DELETED.to_string(),
     ];
     let options = ParquetReadOptions::new()
@@ -147,7 +147,7 @@ fn observe_pk_versions(
     wanted: &HashSet<PkBucketKey>,
     versions: &mut HashMap<PkBucketKey, (i64, bool)>,
 ) {
-    let seq_idx = batch.schema().index_of(SystemColumnNames::SEQ).ok();
+    let seq_idx = batch.schema().index_of(SystemColumnNames::VERSION).ok();
     let deleted_idx = batch.schema().index_of(SystemColumnNames::DELETED).ok();
     let Some(seq_i) = seq_idx else {
         return;
@@ -189,9 +189,11 @@ fn observe_pk_versions(
 
 fn extract_seq(col: &dyn Array, idx: usize) -> Option<i64> {
     if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
-        Some(arr.value(idx))
+        (!arr.is_null(idx) && arr.value(idx) > 0).then(|| arr.value(idx))
     } else {
-        col.as_any().downcast_ref::<UInt64Array>().map(|arr| arr.value(idx) as i64)
+        col.as_any().downcast_ref::<UInt64Array>().and_then(|arr| {
+            (!arr.is_null(idx) && arr.value(idx) > 0).then(|| arr.value(idx) as i64)
+        })
     }
 }
 

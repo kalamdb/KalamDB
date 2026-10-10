@@ -6,8 +6,12 @@ use kalamdb_core::app_context::AppContext;
 
 use super::{
     file_utils::parse_sql_payload,
-    models::{ErrorCode, ParsedSqlPayload, QueryRequest, SqlResponse},
+    models::{ErrorCode, FileError, ParsedSqlPayload, QueryRequest, SqlResponse},
 };
+
+fn payload_error_response(err: FileError, start_time: Instant) -> HttpResponse {
+    HttpResponse::BadRequest().json(SqlResponse::error(err.code, &err.message, took_ms(start_time)))
+}
 
 #[inline]
 pub(super) fn took_ms(start_time: Instant) -> f64 {
@@ -40,13 +44,7 @@ pub(super) async fn parse_incoming_payload(
         let multipart = Multipart::new(http_req.headers(), payload);
         parse_sql_payload(Either::Right(multipart), &app_context.config().files)
             .await
-            .map_err(|e| {
-                HttpResponse::BadRequest().json(SqlResponse::error(
-                    e.code,
-                    &e.message,
-                    took_ms(start_time),
-                ))
-            })
+            .map_err(|err| payload_error_response(err, start_time))
     } else {
         let json =
             web::Json::<QueryRequest>::from_request(http_req, &mut payload)
@@ -60,13 +58,7 @@ pub(super) async fn parse_incoming_payload(
                 })?;
         parse_sql_payload(Either::Left(json), &app_context.config().files)
             .await
-            .map_err(|e| {
-                HttpResponse::BadRequest().json(SqlResponse::error(
-                    e.code,
-                    &e.message,
-                    took_ms(start_time),
-                ))
-            })
+            .map_err(|err| payload_error_response(err, start_time))
     }
 }
 

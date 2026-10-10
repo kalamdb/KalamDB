@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::SeqId;
+use crate::VersionId;
 
 /// Read-only snapshot of an active subscription's metadata.
 ///
@@ -18,7 +18,7 @@ pub struct SubscriptionInfo {
     /// The SQL query this subscription is tracking.
     pub query:              String,
     /// Last received sequence ID (used for resume-from on reconnect).
-    pub last_seq_id:        Option<SeqId>,
+    pub last_seq_id:        Option<VersionId>,
     /// Timestamp (millis since Unix epoch) of the last received event,
     /// or `None` if no events have been received yet.
     pub last_event_time_ms: Option<u64>,
@@ -37,7 +37,7 @@ mod tests {
         let info = SubscriptionInfo {
             id:                 "sub-1".to_string(),
             query:              "SELECT * FROM t".to_string(),
-            last_seq_id:        Some(SeqId::new(42)),
+            last_seq_id:        Some(VersionId::from(42_i64)),
             last_event_time_ms: Some(1700000000000),
             created_at_ms:      1700000000000,
             closed:             false,

@@ -25,7 +25,7 @@ use kalamdb_commons::{
         scalar_to_pk_string,
     },
     models::{rows::Row, UserId},
-    NotLeaderError, TableId, TableType,
+    CodedError, NotLeaderError, TableId, TableType,
 };
 use kalamdb_datafusion_sources::exec::{DeferredBatchExec, DeferredBatchSource};
 use kalamdb_transactions::{
@@ -469,6 +469,10 @@ fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
     }
 }
 
+fn row_number(row_idx: usize) -> i64 {
+    i64::try_from(row_idx + 1).unwrap_or(i64::MAX)
+}
+
 /// Validate NOT NULL constraints on rows before INSERT/UPDATE
 ///
 /// According to ADR-016, validation must occur before any RocksDB write.
@@ -480,7 +484,7 @@ fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
 ///
 /// # Returns
 /// * `Ok(())` if all non-nullable columns have non-NULL values
-/// * `Err(DataFusionError)` if any NOT NULL constraint is violated
+/// * `Err(CodedError)` if any NOT NULL constraint is violated
 ///
 /// # Example
 /// ```ignore
@@ -488,7 +492,7 @@ fn predicate_to_bool(value: ScalarValue) -> DataFusionResult<bool> {
 /// validate_not_null_constraints(&schema, &rows)?;
 /// // Safe to write to storage now - validation passed
 /// ```
-pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> DataFusionResult<()> {
+pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> Result<(), CodedError> {
     // Precompute non-nullable columns to avoid repeated checks
     let non_nullable_columns: Vec<Arc<Field>> =
         schema.fields().iter().filter(|f| !f.is_nullable()).cloned().collect();
@@ -505,22 +509,15 @@ pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> DataFu
             // Check if column value exists and is non-NULL
             match row.values.get(column_name) {
                 None => {
-                    return Err(DataFusionError::Execution(format!(
-                        "NOT NULL constraint violation: column '{}' is missing in row {} (row \
-                         index {})",
-                        column_name,
-                        row_idx + 1,
-                        row_idx
-                    )));
+                    return Err(CodedError::missing_column(
+                        column_name.clone(),
+                        row_number(row_idx),
+                    ));
                 },
                 Some(value) if value.is_null() => {
                     // Use is_null() to catch both ScalarValue::Null and typed NULLs like
                     // Utf8(None), Int32(None), etc.
-                    return Err(DataFusionError::Execution(format!(
-                        "NOT NULL constraint violation: column '{}' cannot be NULL (row {})",
-                        column_name,
-                        row_idx + 1
-                    )));
+                    return Err(CodedError::not_null(column_name.clone(), row_number(row_idx)));
                 },
                 Some(_) => continue,
             }
@@ -541,7 +538,7 @@ pub fn validate_not_null_constraints(schema: &SchemaRef, rows: &[Row]) -> DataFu
 pub fn validate_not_null_with_set(
     non_null_columns: &std::collections::HashSet<String>,
     rows: &[Row],
-) -> DataFusionResult<()> {
+) -> Result<(), CodedError> {
     if non_null_columns.is_empty() {
         return Ok(());
     }
@@ -550,20 +547,13 @@ pub fn validate_not_null_with_set(
         for column_name in non_null_columns {
             match row.values.get(column_name) {
                 None => {
-                    return Err(DataFusionError::Execution(format!(
-                        "NOT NULL constraint violation: column '{}' is missing in row {} (row \
-                         index {})",
-                        column_name,
-                        row_idx + 1,
-                        row_idx
-                    )));
+                    return Err(CodedError::missing_column(
+                        column_name.clone(),
+                        row_number(row_idx),
+                    ));
                 },
                 Some(value) if value.is_null() => {
-                    return Err(DataFusionError::Execution(format!(
-                        "NOT NULL constraint violation: column '{}' cannot be NULL (row {})",
-                        column_name,
-                        row_idx + 1
-                    )));
+                    return Err(CodedError::not_null(column_name.clone(), row_number(row_idx)));
                 },
                 Some(_) => continue,
             }

@@ -1,10 +1,11 @@
 use kalam_cli::{workflow::db, Result};
 
-use super::context::workflow_context;
+use super::context::{ensure_project_command_matches_instance, workflow_context};
 use crate::args::{Cli, DbArgs, DbCommand, MigrationCommand};
 
 pub(super) async fn handle_db(cli: &Cli, args: &DbArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), None)?;
+    ensure_project_command_matches_instance(cli, &ctx)?;
 
     match &args.command {
         DbCommand::Migrate(_) => db::migrate_database(&ctx).await,

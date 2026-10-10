@@ -102,6 +102,20 @@ pub(super) async fn run_websocket(
                             })).await;
                             break;
                         }
+                        Some(ConnectionEvent::SubscriptionLapsed { subscription_id }) => {
+                            warn!(
+                                "Live subscription {} lapsed on connection {}",
+                                subscription_id, connection_id
+                            );
+                            let _ = send_error(
+                                &mut session,
+                                &subscription_id,
+                                WsErrorCode::CursorExpired,
+                                "stale resume cursor expired; resubscribe without a resume token",
+                                handler_context.compression_enabled,
+                            )
+                            .await;
+                        }
                         None => break,
                     }
                 }

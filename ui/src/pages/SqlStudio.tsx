@@ -119,9 +119,14 @@ import {
   createSavedQueryId,
   createTabId,
   resolveResultView,
+  prepareLiveSubscriptionSql,
   stripAutoSelectLimitForLiveSql,
 } from "@/features/sql-studio/utils/workspaceHelpers";
 import { ExplorerTableContextMenu } from "@/features/sql-studio/components/ExplorerTableContextMenu";
+import {
+  namespaceNames,
+  preferredExplorerNamespace,
+} from "@/components/sql-studio-v2/shared/NamespaceTableBrowser";
 import {
   buildSyncedSqlStudioWorkspaceState,
   loadSyncedSqlStudioWorkspaceState,
@@ -466,10 +471,16 @@ export default function SqlStudio() {
   }, [applySyncedWorkspace, dispatch, user?.username]);
 
   useEffect(() => {
-    if (!selectedTableKey && schema.length > 0 && schema[0].tables.length > 0) {
-      const firstTable = schema[0].tables[0];
-      dispatch(setSelectedTableKey(`${firstTable.namespace}.${firstTable.name}`));
+    if (selectedTableKey || schema.length === 0) {
+      return;
     }
+    const preferredName = preferredExplorerNamespace(namespaceNames(schema));
+    const preferred = schema.find((namespace) => namespace.name === preferredName);
+    const firstTable = preferred?.tables[0];
+    if (!firstTable) {
+      return;
+    }
+    dispatch(setSelectedTableKey(`${firstTable.namespace}.${firstTable.name}`));
   }, [dispatch, schema, selectedTableKey]);
 
   useEffect(() => {
@@ -690,7 +701,8 @@ export default function SqlStudio() {
   }, [dispatch, user?.username]);
 
   const startLiveQuery = useCallback(async (tab: QueryTab, sqlOverride?: string) => {
-    const sqlToRun = stripAutoSelectLimitForLiveSql(sqlOverride ?? tab.sql);
+    const prepared = prepareLiveSubscriptionSql(sqlOverride ?? tab.sql);
+    const sqlToRun = prepared.sql;
     const tracedSubscribeSql = stripTrailingOptionsClause(sqlToRun);
 
     if (!sqlToRun.trim()) {
@@ -716,6 +728,12 @@ export default function SqlStudio() {
       },
     }));
     updateTab(tab.id, { liveStatus: "connecting", isLive: true });
+    if (prepared.notice) {
+      dispatch(appendWorkspaceResultLog({
+        tabId: tab.id,
+        entry: createLogEntry(prepared.notice, "info", user?.username),
+      }));
+    }
 
     // Wire up WS message tracing — every frame in/out appears in the log panel
     setClientSendListener((message: string) => {
@@ -925,17 +943,20 @@ export default function SqlStudio() {
       if (liveGenRef.current[tab.id] !== gen) return;
 
       console.error("Failed to subscribe to live query", error);
-      dispatch(appendWorkspaceResultLog({
+      const message = getErrorMessage(error, "Failed to subscribe to live query");
+      dispatch(setWorkspaceTabResult({
         tabId: tab.id,
-        entry: createLogEntry(
-          getErrorMessage(error, "Failed to subscribe to live query"),
-          "error",
-          user?.username,
-          toSerializableErrorPayload(error),
-        ),
-        statusOverride: "error",
+        result: {
+          status: "error",
+          rows: [],
+          schema: [],
+          tookMs: 0,
+          rowCount: 0,
+          logs: [createLogEntry(message, "error", user?.username, toSerializableErrorPayload(error))],
+          errorMessage: message,
+        },
       }));
-      updateTab(tab.id, { liveStatus: "error" });
+      updateTab(tab.id, { liveStatus: "error", resultView: "results" });
       dispatch(setWorkspaceRunning(false));
     }
   }, [cleanupLiveSubscription, dispatch, updateTab, user?.username]);

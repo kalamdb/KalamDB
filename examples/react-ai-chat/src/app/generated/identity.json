@@ -1,0 +1,72 @@
+{
+  "types": {
+    "react_ai_chat.agent_actions": {
+      "type_id": "react_ai_chat.agent_actions",
+      "slots": {}
+    },
+    "react_ai_chat.agent_messages": {
+      "type_id": "react_ai_chat.agent_messages",
+      "slots": {}
+    },
+    "react_ai_chat.approval_actions": {
+      "type_id": "react_ai_chat.approval_actions",
+      "slots": {
+        "action": 4,
+        "approval_id": 2,
+        "conversation_id": 3,
+        "created_at": 5,
+        "id": 1
+      }
+    },
+    "react_ai_chat.approvals": {
+      "type_id": "react_ai_chat.approvals",
+      "slots": {
+        "body": 5,
+        "conversation_id": 2,
+        "created_at": 7,
+        "id": 1,
+        "message_id": 3,
+        "status": 6,
+        "title": 4,
+        "updated_at": 8
+      }
+    },
+    "react_ai_chat.conversations": {
+      "type_id": "react_ai_chat.conversations",
+      "slots": {
+        "created_at": 4,
+        "id": 1,
+        "summary": 3,
+        "title": 2,
+        "updated_at": 5
+      }
+    },
+    "react_ai_chat.messages": {
+      "type_id": "react_ai_chat.messages",
+      "slots": {
+        "approval_id": 9,
+        "attachment": 8,
+        "body": 6,
+        "client_id": 2,
+        "conversation_id": 3,
+        "created_at": 10,
+        "id": 1,
+        "reply_to_message_id": 4,
+        "role": 5,
+        "status": 7,
+        "updated_at": 11
+      }
+    },
+    "react_ai_chat.typing_tokens": {
+      "type_id": "react_ai_chat.typing_tokens",
+      "slots": {
+        "conversation_id": 2,
+        "created_at": 6,
+        "id": 1,
+        "message_id": 3,
+        "status": 4,
+        "token": 5
+      }
+    }
+  }
+}

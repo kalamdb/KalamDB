@@ -153,7 +153,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   };
 
   const handleDropNamespaceClick = () => {
-    if (activeNamespace.startsWith("system") || activeNamespace.startsWith("dba")) return;
+    if (isReadOnlyNamespace(activeNamespace)) return;
     setShowDropNamespace(true);
   };
 
@@ -295,9 +295,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
               <FolderPlus data-icon="only" />
             </StudioIconButton>
             {(() => {
-              const isSystem =
-                activeNamespace.startsWith("system") ||
-                activeNamespace.startsWith("dba");
+              const isSystem = isReadOnlyNamespace(activeNamespace);
               const noNamespaces = namespaces.length === 0;
               const disabled = isSystem || noNamespaces;
               const tooltipLabel = noNamespaces

@@ -17,9 +17,11 @@ pub struct NamingOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssignedNames {
     /// Qualified type id (`chat.user`) → generated type ident (`ChatUser` / `User`).
-    pub types:    BTreeMap<String, String>,
+    pub types:       BTreeMap<String, String>,
     /// Qualified routine id → generated procedure contract ident.
-    pub routines: BTreeMap<String, String>,
+    pub routines:    BTreeMap<String, String>,
+    /// Project connection namespace. Names in this schema stay short.
+    pub home_schema: Option<String>,
 }
 
 impl AssignedNames {
@@ -30,20 +32,45 @@ impl AssignedNames {
     pub fn routine_ident(&self, routine_id: &str) -> &str {
         self.routines.get(routine_id).map(String::as_str).unwrap_or("Unknown")
     }
+
+    /// True when generated idents for `schema` should drop the schema prefix.
+    pub fn uses_local_name(&self, schema: &str) -> bool {
+        schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE)
+            || self
+                .home_schema
+                .as_deref()
+                .is_some_and(|home| schema.eq_ignore_ascii_case(home))
+    }
 }
 
 pub fn assign_names(snapshot: &ContractSnapshot, options: NamingOptions) -> Result<AssignedNames> {
+    assign_names_with_home(snapshot, options, None)
+}
+
+pub fn assign_names_with_home(
+    snapshot: &ContractSnapshot,
+    options: NamingOptions,
+    home_schema: Option<&str>,
+) -> Result<AssignedNames> {
     let mut claimed: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut types = BTreeMap::new();
     for (id, ty) in &snapshot.types {
-        let ident = generated_type_ident(&ty.schema, &ty.name, options.unqualified_names);
+        let ident = generated_type_ident(
+            &ty.schema,
+            &ty.name,
+            options.unqualified_names || schema_is_home(&ty.schema, home_schema),
+        );
         claimed.entry(ident.clone()).or_default().push(id.clone());
         types.insert(id.clone(), ident.clone());
         types.insert(ty.type_id.to_string(), ident);
     }
     let mut routines = BTreeMap::new();
     for (id, routine) in &snapshot.routines {
-        let ident = generated_type_ident(&routine.schema, &routine.name, options.unqualified_names);
+        let ident = generated_type_ident(
+            &routine.schema,
+            &routine.name,
+            options.unqualified_names || schema_is_home(&routine.schema, home_schema),
+        );
         claimed.entry(ident.clone()).or_default().push(format!("procedure {id}"));
         routines.insert(id.clone(), ident);
     }
@@ -61,7 +88,15 @@ pub fn assign_names(snapshot: &ContractSnapshot, options: NamingOptions) -> Resu
         )));
     }
 
-    Ok(AssignedNames { types, routines })
+    Ok(AssignedNames {
+        types,
+        routines,
+        home_schema: home_schema.map(str::to_string),
+    })
+}
+
+fn schema_is_home(schema: &str, home_schema: Option<&str>) -> bool {
+    home_schema.is_some_and(|home| schema.eq_ignore_ascii_case(home))
 }
 
 pub fn generated_type_ident(schema: &str, name: &str, unqualified_names: bool) -> String {
@@ -108,9 +143,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(names.type_ident("chat.user"), "ChatUser");
+        assert!(names.home_schema.is_none());
         assert_eq!(names.routine_ident("chat.create_message"), "ChatCreateMessage");
         assert_eq!(namespace_object_ident("chat"), "chat");
         assert_eq!(method_ident("create_message"), "createMessage");
+    }
+
+    #[test]
+    fn home_schema_keeps_project_table_names_short() {
+        let snapshot =
+            compile_contract_sql("CREATE TABLE users (id BIGINT PRIMARY KEY);", "app").unwrap();
+        let names = assign_names_with_home(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+            Some("app"),
+        )
+        .unwrap();
+        assert_eq!(names.type_ident("app.users"), "Users");
+        assert_eq!(value_ident("app", "users", names.uses_local_name("app")), "users");
     }
 
     #[test]

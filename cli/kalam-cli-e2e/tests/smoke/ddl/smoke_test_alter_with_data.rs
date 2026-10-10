@@ -310,9 +310,17 @@ fn extract_schema_from_json(json_str: &str) -> Vec<String> {
         .and_then(|result| result.get("schema"))
         .and_then(serde_json::Value::as_array)
         .map(|schema| {
-            schema.iter()
-                .filter_map(|col| col.get("name").and_then(serde_json::Value::as_str).map(String::from))
-                .filter(|name| name != "_seq" && name != "_deleted") // Filter out system columns
+            schema
+                .iter()
+                .filter_map(|col| {
+                    col.get("name").and_then(serde_json::Value::as_str).map(String::from)
+                })
+                .filter(|name| {
+                    !matches!(
+                        name.as_str(),
+                        "_seq" | "_commit_seq" | "_version" | "_timestamp" | "_deleted"
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()

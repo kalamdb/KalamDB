@@ -23,7 +23,6 @@ use crate::{
     event_handlers::EventHandlers,
     models::{ChangeEvent, ConnectionOptions, SubscriptionInfo, SubscriptionOptions},
     timeouts::KalamLinkTimeouts,
-    SeqId,
 };
 
 mod reconnect;
@@ -31,7 +30,8 @@ mod registry;
 mod routing;
 
 use reconnect::connection_task;
-use registry::{ConnCmd, SubscriptionReady};
+pub(crate) use registry::ResumeCache as SharedResumeCache;
+use registry::{ConnCmd, ResumeCache, SubscriptionReady};
 
 const DISCONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -69,7 +69,7 @@ impl SharedSubscriptionControl {
         &self,
         id: String,
         generation: u64,
-        seq_id: SeqId,
+        seq_id: crate::VersionId,
         advance_resume: bool,
     ) {
         let _ = self
@@ -97,6 +97,7 @@ impl SharedConnection {
         timeouts: KalamLinkTimeouts,
         connection_options: ConnectionOptions,
         event_handlers: EventHandlers,
+        resume_cache: Arc<ResumeCache>,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<ConnCmd>(256);
         let connected = Arc::new(AtomicBool::new(false));
@@ -104,6 +105,7 @@ impl SharedConnection {
 
         let connected_clone = connected.clone();
         let reconnect_clone = reconnect_attempts.clone();
+        let resume_cache_for_task = Arc::clone(&resume_cache);
         let auto_reconnect = connection_options.auto_reconnect;
         let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
 
@@ -118,6 +120,7 @@ impl SharedConnection {
                 connected_clone,
                 reconnect_clone,
                 Some(ready_tx),
+                resume_cache_for_task,
             )
             .await;
         });
@@ -400,17 +403,57 @@ mod tests {
 
     #[test]
     fn closed_subscription_cursor_cache_is_bounded() {
-        let mut cache = HashMap::new();
+        let cache = registry::ResumeCache::default();
 
         for index in 0..1_100 {
             let mut entry = make_test_entry("SELECT 1");
-            entry.last_seq_id = Some(SeqId::from(index + 1));
-            registry::cache_entry_seq(&mut cache, format!("sub-{index}"), &entry);
+            entry.last_seq_id = Some(crate::VersionId::from((index as i64) + 1));
+            let id = format!("sub-{index}");
+            registry::cache_entry_seq(&cache, &id, &entry);
         }
 
         assert!(
-            cache.len() <= 1_024,
+            cache.closed_cursors().len() <= 1_024,
             "closed subscription cursor history must not grow without bound"
         );
+    }
+
+    #[test]
+    fn fresh_subscribe_does_not_inherit_closed_cursor() {
+        let sql = "SELECT * FROM ns.items";
+        let cache = registry::ResumeCache::default();
+        let domain = kalamdb_commons::ids::VersionDomain::new(
+            "hist",
+            kalamdb_commons::TableId::new(
+                kalamdb_commons::NamespaceId::new("ns"),
+                kalamdb_commons::models::TableName::new("items"),
+            ),
+            0,
+        );
+        let mut entry = make_test_entry(sql);
+        entry.last_seq_id = Some(crate::VersionId::from(10));
+        entry.options.version_domain = Some(domain.clone());
+        registry::cache_entry_seq(&cache, "sub-old", &entry);
+
+        let inherited = cache.peek("sub-new", sql);
+        let mut fresh = SubscriptionOptions::default();
+        assert!(registry::merge_resume_from(&mut fresh, inherited.as_ref()).is_none());
+        assert!(fresh.from.is_none());
+        assert!(fresh.version_domain.is_none());
+
+        let same_id = cache.peek("sub-old", sql);
+        let mut reused = SubscriptionOptions::default();
+        assert_eq!(
+            registry::merge_resume_from(&mut reused, same_id.as_ref()),
+            Some(crate::VersionId::from(10))
+        );
+        assert_eq!(reused.version_domain.as_ref(), Some(&domain));
+
+        let mut resume = SubscriptionOptions::default().with_from(crate::VersionId::from(4));
+        assert_eq!(
+            registry::merge_resume_from(&mut resume, inherited.as_ref()),
+            Some(crate::VersionId::from(10))
+        );
+        assert_eq!(resume.version_domain.as_ref(), Some(&domain));
     }
 }

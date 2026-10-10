@@ -197,7 +197,7 @@ void main() {
         kind: KalamChangeKind.insert,
         rowKey: 'message-1',
         row: Message(id: 'message-1', text: 'original'),
-        seq: SeqId(1),
+        seq: VersionId(1),
       ),
     );
 
@@ -207,7 +207,7 @@ void main() {
         kind: KalamChangeKind.update,
         rowKey: 'message-1',
         row: Message(id: 'message-1', text: 'stale echo'),
-        seq: SeqId(2),
+        seq: VersionId(2),
       ),
     );
 
@@ -221,7 +221,7 @@ void main() {
       const KalamChange(
         kind: KalamChangeKind.delete,
         rowKey: 'message-1',
-        seq: SeqId(3),
+        seq: VersionId(3),
       ),
     );
     expect(
@@ -279,7 +279,7 @@ void main() {
           kind: KalamChangeKind.insert,
           rowKey: 'message-1',
           row: Message(id: 'message-1', text: 'authoritative'),
-          seq: SeqId(12),
+          seq: VersionId(12),
         ),
       );
 
@@ -293,7 +293,7 @@ void main() {
         const Message(id: 'message-1', text: 'authoritative'),
       );
       expect(rows.single.sync.phase, KalamRowSyncPhase.synced);
-      expect(checkpoint?.seq, const SeqId(12));
+      expect(checkpoint?.seq, const VersionId(12));
     },
   );
 }

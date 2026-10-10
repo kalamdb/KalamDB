@@ -13,7 +13,7 @@ use datafusion::{
     logical_expr::{col, lit, Expr},
 };
 use kalamdb_commons::{
-    ids::SharedTableRowId,
+    ids::{SharedTableRowId, VersionId},
     models::{rows::Row, UserId},
     AuthorizationRelation, PolicyCommand, PolicyProgram, Role, TableId,
 };
@@ -24,6 +24,11 @@ use kalamdb_rls::{
 };
 
 use super::{SharedScanContext, SharedTableProvider};
+
+fn snapshot_as_u64(snapshot: Option<VersionId>) -> Option<u64> {
+    snapshot.map(|v| v.as_u64())
+}
+
 use crate::{
     error::KalamDbError,
     rls::TablePoliciesEpoch,
@@ -112,7 +117,7 @@ impl SharedTableAuthorization {
         &self,
         host: &SharedTableProvider,
         policies: &BoundTablePolicies,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<BoundAuthorization, KalamDbError> {
         let mut sets = HashMap::new();
         let mut dependencies = HashMap::new();
@@ -140,7 +145,7 @@ impl SharedTableAuthorization {
                 policies.principal(),
                 &relation.relation_table,
                 relation_generation,
-                snapshot_commit_seq,
+                snapshot_as_u64(snapshot_commit_seq),
             );
             if let Some(set) = self.cache.get(&cache_key) {
                 if relation_provider.authorization.authorization_generation() == relation_generation
@@ -193,7 +198,7 @@ impl SharedTableAuthorization {
         relation_table: &kalamdb_commons::schemas::TableDefinition,
         relation: &AuthorizationRelation,
         principal: &UserId,
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<AuthorizationSet, KalamDbError> {
         let principal_filter =
             indexed_principal_filter(relation_provider, relation_table, relation, principal);
@@ -266,7 +271,7 @@ impl SharedTableAuthorization {
         host: &SharedTableProvider,
         policies: &BoundTablePolicies,
         rows: &[Row],
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
         operation: &str,
     ) -> DataFusionResult<()> {
         if policies.bypasses_rls() {
@@ -275,7 +280,7 @@ impl SharedTableAuthorization {
         let authorization = self
             .bind_authorization(host, policies, snapshot_commit_seq)
             .await
-            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+            .map_err(crate::error::into_datafusion)?;
         if authorization.authorizes_all(rows) {
             Ok(())
         } else {
@@ -295,7 +300,7 @@ impl SharedTableAuthorization {
         command: PolicyCommand,
         check: bool,
         rows: &[Row],
-        snapshot_commit_seq: Option<u64>,
+        snapshot_commit_seq: Option<VersionId>,
     ) -> Result<(), KalamDbError> {
         let policies = self.bind_policies(host.core.as_ref(), user_id, role, command, check)?;
         self.ensure_rows_authorized(
@@ -404,7 +409,7 @@ impl SharedTableAuthorization {
                                 scan_context.policies.principal(),
                                 &relation.relation_table,
                                 generation,
-                                scan_context.snapshot_commit_seq,
+                                snapshot_as_u64(scan_context.snapshot_commit_seq),
                             ))
                             .is_some()
                 });
@@ -471,7 +476,7 @@ impl SharedTableAuthorization {
             scan_context.policies.principal(),
             &relation.relation_table,
             relation_generation,
-            scan_context.snapshot_commit_seq,
+            snapshot_as_u64(scan_context.snapshot_commit_seq),
         );
         let Some(set) = self.cache.get(&cache_key) else {
             if relation_provider.core.primary_key_column_id() != relation.principal_column {

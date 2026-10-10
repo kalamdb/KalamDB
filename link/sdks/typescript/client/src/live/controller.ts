@@ -1,7 +1,7 @@
 import type { KalamDBClient } from '../client.js';
 import type { RowData } from '../cell_value.js';
 import type { LiveCheckpoint, LiveOptions, SubscriptionErrorEvent, Unsubscribe } from '../types.js';
-import type { SeqId } from '../seq_id.js';
+import type { VersionId } from '../version_id.js';
 import type { LiveQueryDescriptor } from './descriptor.js';
 import { projectLiveRows } from './projection.js';
 
@@ -13,12 +13,12 @@ export interface LiveQueryControllerSnapshot<TRow> {
   connected: boolean;
   status: LiveQueryControllerStatus;
   error?: Error;
-  lastSeqId?: SeqId;
+  lastVersionId?: VersionId;
 }
 
 export type LiveQueryControllerListener<TRow> = (snapshot: LiveQueryControllerSnapshot<TRow>) => void;
 
-export interface LiveQueryControllerOptions<TRow> extends Pick<LiveOptions<TRow>, 'batchSize' | 'lastRows' | 'from' | 'autoFetchBatches'> {
+export interface LiveQueryControllerOptions<TRow> extends Pick<LiveOptions<TRow>, 'batchSize' | 'lastRows' | 'from' | 'versionDomain' | 'autoFetchBatches'> {
   onError?: (event: SubscriptionErrorEvent) => void;
   onCheckpoint?: (checkpoint: LiveCheckpoint) => void;
 }
@@ -131,6 +131,7 @@ export class LiveQueryController<TRow = RowData> {
       ...(this.descriptor.getKey ? { getKey: this.descriptor.getKey } : {}),
       ...(this.options.batchSize !== undefined ? { batchSize: this.options.batchSize } : {}),
       ...(this.options.lastRows !== undefined ? { lastRows: this.options.lastRows } : {}),
+      ...(this.options.versionDomain !== undefined ? { versionDomain: this.options.versionDomain } : {}),
       ...(this.options.from !== undefined ? { from: this.options.from } : {}),
       ...(this.options.autoFetchBatches !== undefined ? { autoFetchBatches: this.options.autoFetchBatches } : {}),
       onError: (event) => {
@@ -143,7 +144,7 @@ export class LiveQueryController<TRow = RowData> {
         this.options.onError?.(event);
       },
       onCheckpoint: (checkpoint) => {
-        this.setSnapshot({ lastSeqId: checkpoint.lastSeqId });
+        this.setSnapshot({ lastVersionId: checkpoint.lastVersionId });
         this.options.onCheckpoint?.(checkpoint);
       },
     };

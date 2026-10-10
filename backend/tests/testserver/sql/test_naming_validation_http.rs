@@ -46,7 +46,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let reserved_columns = ["_seq", "_deleted"];
+    let reserved_columns = ["_seq", "_version", "_timestamp", "_deleted"];
     for col_name in reserved_columns {
         let table_name = format!("test_{}", col_name.replace('_', ""));
         let sql = format!(

@@ -13,7 +13,7 @@ final class KalamRemoteBatch {
   }) : _acknowledge = acknowledge;
 
   final List<KalamRemoteChange> changes;
-  final SeqId? checkpoint;
+  final VersionId? checkpoint;
   final Future<void> Function() _acknowledge;
   Future<void>? _acknowledgement;
 

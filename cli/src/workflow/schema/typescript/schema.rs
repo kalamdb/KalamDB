@@ -268,7 +268,11 @@ fn table_decls(snapshot: &ContractSnapshot, names: &AssignedNames) -> Vec<TableD
         .tables
         .values()
         .map(|table| TableDecl {
-            var_name:   value_ident(&table.schema, &table.name, false),
+            var_name:   value_ident(
+                &table.schema,
+                &table.name,
+                names.uses_local_name(&table.schema),
+            ),
             factory:    match table.kind {
                 ContractTableKind::User => "kTable.user",
                 ContractTableKind::Shared => "kTable.shared",

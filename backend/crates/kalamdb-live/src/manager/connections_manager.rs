@@ -43,7 +43,7 @@ use super::super::models::{
     ConnectionEvent, ConnectionRegistration, ConnectionState, LiveRoute, SharedConnectionState,
     SubscriptionHandle, EVENT_CHANNEL_CAPACITY, NOTIFICATION_CHANNEL_CAPACITY,
 };
-use crate::IndexedSubscriberRelation;
+use crate::{replay_log::ReplayLog, IndexedSubscriberRelation};
 
 /// Connections Manager
 ///
@@ -94,6 +94,9 @@ pub struct ConnectionsManager {
     peak_connections:    AtomicUsize,
     total_subscriptions: AtomicUsize,
     peak_subscriptions:  AtomicUsize,
+
+    /// Shared resume log for tables that have had a live subscriber.
+    replay: ReplayLog,
 }
 
 impl ConnectionsManager {
@@ -158,6 +161,7 @@ impl ConnectionsManager {
             peak_connections: AtomicUsize::new(0),
             total_subscriptions: AtomicUsize::new(0),
             peak_subscriptions: AtomicUsize::new(0),
+            replay: ReplayLog::new(),
         });
 
         // Start background heartbeat checker
@@ -425,6 +429,34 @@ impl ConnectionsManager {
     }
 
     /// Check if any shared table subscriptions exist for a table
+    pub(crate) fn replay(&self) -> &ReplayLog {
+        &self.replay
+    }
+
+    pub fn user_subscription_handle(
+        &self,
+        user_id: &UserId,
+        table_id: &TableId,
+        subscription_id: &str,
+    ) -> Option<SubscriptionHandle> {
+        self.get_subscriptions_for_table(user_id, table_id).iter().find_map(|entry| {
+            let handle = entry.value();
+            (handle.subscription_id.as_ref() == subscription_id).then(|| handle.clone())
+        })
+    }
+
+    pub fn shared_subscription_handle(
+        &self,
+        table_id: &TableId,
+        subscription_id: &str,
+    ) -> Option<SubscriptionHandle> {
+        self.shared_subscribers.handle_for_subscription(table_id, subscription_id)
+    }
+
+    pub fn shared_handles_for_table(&self, table_id: &TableId) -> Vec<SubscriptionHandle> {
+        self.shared_subscribers.handles_for_table(table_id)
+    }
+
     pub fn has_shared_subscriptions(&self, table_id: &TableId) -> bool {
         self.shared_subscribers.has_subscriptions(table_id)
     }
@@ -1013,6 +1045,7 @@ mod tests {
             authorization: None,
             projections: None,
             notification_tx,
+            event_tx: tokio::sync::mpsc::channel(1).0,
             flow_control: Some(flow_control),
             runtime_metadata,
         }

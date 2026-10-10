@@ -20,7 +20,7 @@ use kalamdb_core::{
             },
             PreparedExecutionStatement, ScalarValue, SqlExecutor,
         },
-        SqlImpersonationService,
+        ExecutionResult, SqlImpersonationService,
     },
 };
 use kalamdb_raft::GroupId;
@@ -34,9 +34,8 @@ use super::{
         prepared_statement_target_group, should_route_batch_statements_individually,
     },
     helpers::{
-        cleanup_files, execute_single_statement, execute_single_statement_raw,
-        execution_result_to_query_result, stream_sql_rows_response,
-        stream_sql_scalar_rows_response,
+        cleanup_files, execute_single_statement_raw, execution_result_to_query_result,
+        stream_sql_rows_response, stream_sql_scalar_rows_response,
     },
     models::{ErrorCode, QueryRequest, QueryResult, SqlResponse},
     request::took_ms,
@@ -81,7 +80,6 @@ fn is_leader_routing_error_message(message: &str) -> bool {
         || message.contains("no cluster leader")
         || message.contains("no raft leader")
         || message.contains("forward request to cluster leader")
-        || message.contains("failed to forward request to cluster leader")
         || message.contains("forward to leader")
 }
 
@@ -90,13 +88,14 @@ fn is_safe_validation_error_message(message: &str) -> bool {
     (message.contains("column") && message.contains("not found"))
         || (message.contains("field") && message.contains("not found"))
         || message.contains("no field named")
-        || message.contains("schema error: no field named")
         || message.contains("primary key")
         || message.contains("constraint violation")
         || message.contains("already exists")
         || message.contains("duplicate")
         || message.contains("unique constraint")
         || message.contains("unique index")
+        || message.contains("cannot be null")
+        || message.contains("is missing in row")
 }
 
 #[inline]
@@ -113,7 +112,6 @@ fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
         | KalamDbError::InvalidOperation(_)
         | KalamDbError::InvalidSchemaEvolution(_)
         | KalamDbError::SystemColumnViolation(_)
-        | KalamDbError::ConstraintViolation(_)
         | KalamDbError::Conflict(_)
         | KalamDbError::NamespaceNotFound(_)
         | KalamDbError::IdempotentConflict(_)
@@ -136,6 +134,11 @@ fn classify_sql_error(err: &KalamDbError) -> (StatusCode, ErrorCode, bool) {
             } else {
                 (StatusCode::BAD_REQUEST, ErrorCode::SqlExecutionError, true)
             }
+        },
+        KalamDbError::Coded(error) => {
+            let status = StatusCode::from_u16(error.leaf_code().http_status())
+                .unwrap_or(StatusCode::BAD_REQUEST);
+            (status, ErrorCode::SqlExecutionError, true)
         },
         KalamDbError::ExecutionError(message) => {
             let message_lower = message.to_lowercase();
@@ -161,6 +164,7 @@ fn build_sql_error_response(
     took: f64,
     is_admin: bool,
     preserve_message: bool,
+    catalog: Option<&'static str>,
 ) -> HttpResponse {
     let payload = if preserve_message {
         if is_admin {
@@ -177,13 +181,23 @@ fn build_sql_error_response(
         SqlResponse::error_for_privilege(code, message, took, is_admin)
     };
 
-    HttpResponse::build(status).json(payload)
+    HttpResponse::build(status).json(payload.with_catalog_code(catalog))
 }
 
 fn build_kalamdb_error_response(err: &KalamDbError, took: f64, is_admin: bool) -> HttpResponse {
     let (status, code, preserve_message) = classify_sql_error(err);
     let message = err.user_message();
-    build_sql_error_response(status, code, message.as_ref(), None, took, is_admin, preserve_message)
+    let catalog = catalog_code(err);
+    build_sql_error_response(
+        status,
+        code,
+        message.as_ref(),
+        None,
+        took,
+        is_admin,
+        preserve_message,
+        catalog,
+    )
 }
 
 fn push_or_accumulate_batch_result(
@@ -236,7 +250,9 @@ fn is_transient_forwarded_metadata_error(response: &SqlResponse) -> bool {
         return false;
     };
 
-    if !matches!(error.code, ErrorCode::SqlExecutionError | ErrorCode::TableNotFound) {
+    if error.code != ErrorCode::SqlExecutionError.as_str()
+        && error.code != ErrorCode::TableNotFound.as_str()
+    {
         return false;
     }
 
@@ -246,11 +262,77 @@ fn is_transient_forwarded_metadata_error(response: &SqlResponse) -> bool {
         message.push_str(&details.to_ascii_lowercase());
     }
 
-    message.contains("table") && message.contains("not found")
-        || message.contains("relation") && message.contains("does not exist")
-        || message.contains("unknown table")
+    is_table_discovery_error_message(&message)
         || message.contains("namespace") && message.contains("not found")
         || message.contains("schema") && message.contains("not found")
+}
+
+fn result_role(
+    impersonating: bool,
+    session_role: kalamdb_commons::Role,
+) -> Option<kalamdb_commons::Role> {
+    Some(if impersonating {
+        kalamdb_commons::Role::User
+    } else {
+        session_role
+    })
+}
+
+fn shared_table_impersonation_rejected(
+    table_id: &impl std::fmt::Display,
+    took: f64,
+    is_admin: bool,
+) -> HttpResponse {
+    HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
+        ErrorCode::SqlExecutionError,
+        &format!(
+            "EXECUTE AS USER is not allowed on SHARED tables (table '{table_id}'). AS USER \
+             impersonation is only supported for USER and STREAM tables."
+        ),
+        took,
+        is_admin,
+    ))
+}
+
+enum SingleRowBody {
+    Ready(Result<HttpResponse, actix_web::Error>),
+    Other(ExecutionResult, String),
+}
+
+/// Single-statement SELECT returns before the batch JSON encoder. Scalar rows stay
+/// as row maps so a cached point get does not rebuild an Arrow batch.
+fn single_row_body(
+    exec_result: ExecutionResult,
+    role: Option<kalamdb_commons::Role>,
+    as_user: String,
+    took: f64,
+) -> SingleRowBody {
+    match exec_result {
+        ExecutionResult::ScalarRows {
+            rows,
+            row_count,
+            schema,
+        } => SingleRowBody::Ready(stream_sql_scalar_rows_response(
+            rows, schema, role, as_user, row_count, took,
+        )),
+        ExecutionResult::Rows {
+            batches,
+            row_count,
+            schema,
+        } => SingleRowBody::Ready(stream_sql_rows_response(
+            batches, schema, role, as_user, row_count, took,
+        )),
+        other => SingleRowBody::Other(other, as_user),
+    }
+}
+
+fn stream_rows_error(err: actix_web::Error, took: f64, is_admin: bool) -> HttpResponse {
+    HttpResponse::InternalServerError().json(SqlResponse::error_for_privilege(
+        ErrorCode::InternalError,
+        &format!("Failed to stream SQL response: {err}"),
+        took,
+        is_admin,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -318,6 +400,13 @@ async fn forward_batch_statement_to_group(
     )))
 }
 
+fn catalog_code(error: &KalamDbError) -> Option<&'static str> {
+    match error {
+        KalamDbError::Coded(coded) => coded.leaf_code().client_code(),
+        _ => None,
+    }
+}
+
 fn build_statement_error_response(
     err: &(dyn std::error::Error + 'static),
     statement_index: usize,
@@ -336,12 +425,13 @@ fn build_statement_error_response(
             took,
             is_admin,
             preserve_message,
+            catalog_code(kalamdb_err),
         );
     }
 
     let err_msg = err.to_string();
+    let message = format!("Statement {statement_index} failed: {err_msg}");
     if is_leader_routing_error_message(&err_msg.to_lowercase()) {
-        let message = format!("Statement {statement_index} failed: {err_msg}");
         return build_sql_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::NotLeader,
@@ -350,10 +440,10 @@ fn build_statement_error_response(
             took,
             is_admin,
             true,
+            None,
         );
     }
 
-    let message = format!("Statement {statement_index} failed: {err_msg}");
     build_sql_error_response(
         StatusCode::BAD_REQUEST,
         ErrorCode::SqlExecutionError,
@@ -362,6 +452,7 @@ fn build_statement_error_response(
         took,
         is_admin,
         false,
+        None,
     )
 }
 
@@ -376,7 +467,6 @@ pub(super) async fn execute_file_upload_path(
     exec_ctx: &ExecutionContext,
     impersonation_service: &SqlImpersonationService,
     authorized_username: &str,
-    _default_namespace: &NamespaceId,
     params: Vec<ScalarValue>,
     schema_registry: &SchemaRegistry,
     start_time: Instant,
@@ -442,16 +532,11 @@ pub(super) async fn execute_file_upload_path(
     let table_type = table_entry.table_type;
 
     if execute_as_user.is_some() && table_type == TableType::Shared {
-        return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-            ErrorCode::SqlExecutionError,
-            &format!(
-                "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
-                 impersonation is only supported for USER and STREAM tables.",
-                table_id
-            ),
+        return shared_table_impersonation_rejected(
+            &table_id,
             took_ms(start_time),
             exec_ctx.is_admin(),
-        ));
+        );
     }
 
     let user_id = match table_type {
@@ -515,10 +600,9 @@ pub(super) async fn execute_file_upload_path(
 
     let effective_username =
         resolve_result_username(authorized_username, stmt.execute_as_username.as_deref());
-
-    match execute_single_statement(
+    let role = result_role(execute_as_user.is_some(), exec_ctx.user_role());
+    let executed = match execute_single_statement_raw(
         &modified_metadata,
-        app_context,
         sql_executor,
         exec_ctx,
         execute_as_user,
@@ -526,6 +610,11 @@ pub(super) async fn execute_file_upload_path(
     )
     .await
     {
+        Ok(exec_result) => execution_result_to_query_result(exec_result, role),
+        Err(err) => Err(err),
+    };
+
+    match executed {
         Ok(result) => {
             let result = result.with_as_user(effective_username);
             if let Err(e) = manifest_service.update_file_subfolder_state(&table_id, subfolder_state)
@@ -675,16 +764,11 @@ pub(super) async fn execute_batch_path(
             if let Some(table_id) = stmt.prepared_statement.table_id.as_ref() {
                 let _ =
                     request_transaction_guard.rollback_if_active(&request_transaction_coordinator);
-                return HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
-                    ErrorCode::SqlExecutionError,
-                    &format!(
-                        "EXECUTE AS USER is not allowed on SHARED tables (table '{}'). AS USER \
-                         impersonation is only supported for USER and STREAM tables.",
-                        table_id
-                    ),
+                return shared_table_impersonation_rejected(
+                    table_id,
                     took_ms(start_time),
                     statement_exec_ctx.is_admin(),
-                ));
+                );
             }
         }
 
@@ -807,84 +891,23 @@ pub(super) async fn execute_batch_path(
                     stmt.prepared_statement.table_id.as_ref().map(|id| id.table_name().clone()),
                 );
 
-                if !is_batch {
-                    // Handle ScalarRows before Rows. Calling into_arrow_rows()
-                    // here would undo skip-Arrow on cached PK point gets.
-                    if let kalamdb_core::sql::ExecutionResult::ScalarRows {
-                        rows,
-                        row_count,
-                        schema,
-                    } = exec_result
-                    {
-                        let effective_role = if execute_as_user.is_some() {
-                            Some(kalamdb_commons::Role::User)
-                        } else {
-                            Some(statement_exec_ctx.user_role())
-                        };
-                        return match stream_sql_scalar_rows_response(
-                            rows,
-                            schema,
-                            effective_role,
-                            effective_username,
-                            row_count,
-                            took_ms(start_time),
-                        ) {
-                            Ok(response) => response,
-                            Err(err) => {
-                                let _ = request_transaction_guard
-                                    .rollback_if_active(&request_transaction_coordinator);
-                                HttpResponse::InternalServerError().json(
-                                    SqlResponse::error_for_privilege(
-                                        ErrorCode::InternalError,
-                                        &format!("Failed to stream SQL response: {}", err),
-                                        took_ms(start_time),
-                                        statement_exec_ctx.is_admin(),
-                                    ),
-                                )
-                            },
-                        };
+                let effective_role =
+                    result_role(execute_as_user.is_some(), statement_exec_ctx.user_role());
+                let (exec_result, effective_username) = if !is_batch {
+                    let took = took_ms(start_time);
+                    match single_row_body(exec_result, effective_role, effective_username, took) {
+                        SingleRowBody::Ready(Ok(response)) => return response,
+                        SingleRowBody::Ready(Err(err)) => {
+                            let _ = request_transaction_guard
+                                .rollback_if_active(&request_transaction_coordinator);
+                            return stream_rows_error(err, took, statement_exec_ctx.is_admin());
+                        },
+                        SingleRowBody::Other(result, username) => (result, username),
                     }
-                    if let kalamdb_core::sql::ExecutionResult::Rows {
-                        batches,
-                        row_count,
-                        schema,
-                    } = exec_result
-                    {
-                        let effective_role = if execute_as_user.is_some() {
-                            Some(kalamdb_commons::Role::User)
-                        } else {
-                            Some(statement_exec_ctx.user_role())
-                        };
-                        return match stream_sql_rows_response(
-                            batches,
-                            schema,
-                            effective_role,
-                            effective_username,
-                            row_count,
-                            took_ms(start_time),
-                        ) {
-                            Ok(response) => response,
-                            Err(err) => {
-                                let _ = request_transaction_guard
-                                    .rollback_if_active(&request_transaction_coordinator);
-                                HttpResponse::InternalServerError().json(
-                                    SqlResponse::error_for_privilege(
-                                        ErrorCode::InternalError,
-                                        &format!("Failed to stream SQL response: {}", err),
-                                        took_ms(start_time),
-                                        statement_exec_ctx.is_admin(),
-                                    ),
-                                )
-                            },
-                        };
-                    }
-                }
-
-                let effective_role = if execute_as_user.is_some() {
-                    Some(kalamdb_commons::Role::User)
                 } else {
-                    Some(statement_exec_ctx.user_role())
+                    (exec_result, effective_username)
                 };
+
                 let result = match execution_result_to_query_result(exec_result, effective_role) {
                     Ok(result) => result.with_as_user(effective_username),
                     Err(err) => {
@@ -961,31 +984,32 @@ pub(super) async fn execute_batch_path(
     }
 
     if is_batch {
+        let as_user = authorized_username.to_string();
         if total_inserted > 0 {
             results.push(
                 QueryResult::with_affected_rows(
                     total_inserted,
-                    Some(format!("Inserted {} row(s)", total_inserted)),
+                    Some(format!("Inserted {total_inserted} row(s)")),
                 )
-                .with_as_user(authorized_username.to_string()),
+                .with_as_user(as_user.clone()),
             );
         }
         if total_updated > 0 {
             results.push(
                 QueryResult::with_affected_rows(
                     total_updated,
-                    Some(format!("Updated {} row(s)", total_updated)),
+                    Some(format!("Updated {total_updated} row(s)")),
                 )
-                .with_as_user(authorized_username.to_string()),
+                .with_as_user(as_user.clone()),
             );
         }
         if total_deleted > 0 {
             results.push(
                 QueryResult::with_affected_rows(
                     total_deleted,
-                    Some(format!("Deleted {} row(s)", total_deleted)),
+                    Some(format!("Deleted {total_deleted} row(s)")),
                 )
-                .with_as_user(authorized_username.to_string()),
+                .with_as_user(as_user),
             );
         }
     }

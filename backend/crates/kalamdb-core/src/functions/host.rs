@@ -624,6 +624,16 @@ fn map_core(error: crate::error::KalamDbError) -> FunctionsError {
         crate::error::KalamDbError::Function { code, message } => {
             FunctionsError::from_code(code, message)
         },
+        crate::error::KalamDbError::Coded(error) => {
+            let code = error.leaf_code();
+            let message = error.user_message();
+            let detail = error.debug_chain();
+            FunctionsError::Catalog {
+                code,
+                message,
+                detail,
+            }
+        },
         other => FunctionsError::Invalid(other.to_string()),
     }
 }

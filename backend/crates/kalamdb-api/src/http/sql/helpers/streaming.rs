@@ -30,6 +30,22 @@ struct StreamingRowsState {
     row_separator_needed: bool,
 }
 
+fn write_json_rows(
+    dest: &mut Vec<u8>,
+    rows: &[Vec<KalamCellValue>],
+    row_separator_needed: &mut bool,
+) -> Result<(), serde_json::Error> {
+    for row in rows {
+        if *row_separator_needed {
+            dest.push(b',');
+        } else {
+            *row_separator_needed = true;
+        }
+        serde_json::to_writer(&mut *dest, row)?;
+    }
+    Ok(())
+}
+
 fn serialize_rows_chunk(
     rows: &[Vec<KalamCellValue>],
     row_separator_needed: &mut bool,
@@ -38,28 +54,9 @@ fn serialize_rows_chunk(
         return Ok(None);
     }
 
-    let mut chunk = String::new();
-    for row in rows {
-        if *row_separator_needed {
-            chunk.push(',');
-        } else {
-            *row_separator_needed = true;
-        }
-        chunk.push_str(&serde_json::to_string(row)?);
-    }
-
+    let mut chunk = Vec::new();
+    write_json_rows(&mut chunk, rows, row_separator_needed)?;
     Ok(Some(Bytes::from(chunk)))
-}
-
-fn append_serialized_rows(
-    dest: &mut Vec<u8>,
-    rows: &[Vec<KalamCellValue>],
-    row_separator_needed: &mut bool,
-) -> Result<(), serde_json::Error> {
-    if let Some(chunk) = serialize_rows_chunk(rows, row_separator_needed)? {
-        dest.extend_from_slice(&chunk);
-    }
-    Ok(())
 }
 
 fn batches_to_masked_rows(
@@ -79,6 +76,20 @@ fn batches_to_masked_rows(
     Ok(rows)
 }
 
+fn inline_json_body(
+    prefix: &[u8],
+    rows: &[Vec<KalamCellValue>],
+    suffix: &str,
+) -> Result<Bytes, actix_web::Error> {
+    let mut body = Vec::with_capacity(prefix.len() + suffix.len() + rows.len() * 64);
+    body.extend_from_slice(prefix);
+    let mut row_separator_needed = false;
+    write_json_rows(&mut body, rows, &mut row_separator_needed)
+        .map_err(ErrorInternalServerError)?;
+    body.extend_from_slice(suffix.as_bytes());
+    Ok(Bytes::from(body))
+}
+
 fn inline_sql_rows_body(
     batches: &[arrow::record_batch::RecordBatch],
     prefix: &Bytes,
@@ -87,13 +98,7 @@ fn inline_sql_rows_body(
     suffix: &str,
 ) -> Result<Bytes, actix_web::Error> {
     let rows = batches_to_masked_rows(batches, schema_fields, user_role)?;
-    let mut body = Vec::with_capacity(prefix.len() + suffix.len() + rows.len() * 64);
-    body.extend_from_slice(prefix);
-    let mut row_separator_needed = false;
-    append_serialized_rows(&mut body, &rows, &mut row_separator_needed)
-        .map_err(ErrorInternalServerError)?;
-    body.extend_from_slice(suffix.as_bytes());
-    Ok(Bytes::from(body))
+    inline_json_body(prefix, &rows, suffix)
 }
 
 pub fn stream_sql_scalar_rows_response(
@@ -112,14 +117,8 @@ pub fn stream_sql_scalar_rows_response(
     if let Some(role) = user_role {
         mask_sensitive_rows_for_role(&mut json_rows, cached.fields.as_ref(), role);
     }
-    let mut body =
-        Vec::with_capacity(cached.row_result_prefix.len() + suffix.len() + json_rows.len() * 64);
-    body.extend_from_slice(&cached.row_result_prefix);
-    let mut row_separator_needed = false;
-    append_serialized_rows(&mut body, &json_rows, &mut row_separator_needed)
-        .map_err(ErrorInternalServerError)?;
-    body.extend_from_slice(suffix.as_bytes());
-    Ok(HttpResponse::Ok().content_type("application/json").body(Bytes::from(body)))
+    let body = inline_json_body(&cached.row_result_prefix, &json_rows, &suffix)?;
+    Ok(HttpResponse::Ok().content_type("application/json").body(body))
 }
 
 pub fn stream_sql_rows_response(

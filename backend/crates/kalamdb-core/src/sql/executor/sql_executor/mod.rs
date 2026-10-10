@@ -12,9 +12,10 @@ use datafusion::{
     common::tree_node::{Transformed, TransformedResult, TreeNode, TreeNodeRecursion},
     dataframe::DataFrame,
     datasource::MemTable,
+    execution::context::SessionState,
     logical_expr::{Expr as DataFusionExpr, LogicalPlan},
     physical_plan::collect,
-    prelude::SessionContext,
+    prelude::{SessionConfig, SessionContext},
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
@@ -25,7 +26,7 @@ use kalamdb_commons::{
     try_pk_bucket_key, PkBucketKey, Role, SystemTable,
 };
 use kalamdb_datafusion_sources::exec::DeferredBatchExec;
-use kalamdb_session_datafusion::ScanDiagnosticsContext;
+use kalamdb_session_datafusion::{install_extension, ScanDiagnosticsContext};
 use kalamdb_sql::{
     classifier::{SqlStatement, SqlStatementKind, StatementClassificationError},
     rewrite_explain_for_datafusion,
@@ -617,7 +618,10 @@ impl SqlExecutor {
             KalamDbError::InvalidOperation(format!("Failed to build RETURNING rows: {}", error))
         })?;
 
-        let session = SessionContext::new();
+        let session = SessionContext::new_with_config(SessionConfig::new().set_str(
+            "datafusion.sql_parser.dialect",
+            crate::sql::datafusion_session::SQL_PARSER_DIALECT,
+        ));
         let returning_table_name = "__kalamdb_returning";
         let mem_table = MemTable::try_new(table_schema, vec![vec![batch]])
             .map_err(Self::datafusion_to_execution_error)?;
@@ -868,7 +872,7 @@ impl SqlExecutor {
 
         Ok(Some(TransactionQueryContext::new(
             transaction_id.clone(),
-            handle.snapshot_commit_seq,
+            Arc::clone(&handle.snapshot_log_index),
             Arc::new(crate::transactions::CoordinatorOverlayView::new(
                 Arc::clone(&coordinator),
                 transaction_id.clone(),
@@ -878,55 +882,51 @@ impl SqlExecutor {
         )))
     }
 
+    fn user_session_state(
+        exec_ctx: &ExecutionContext,
+        transaction: Option<TransactionQueryContext>,
+    ) -> SessionState {
+        let mut state = exec_ctx.build_user_session_state();
+        if let Some(transaction) = transaction {
+            install_extension(&mut state, TransactionQueryExtension::new(transaction));
+        }
+        state
+    }
+
     fn create_session_with_transaction_context(
         &self,
         exec_ctx: &ExecutionContext,
     ) -> Result<SessionContext, KalamDbError> {
-        let Some(transaction_query_context) =
-            self.transaction_query_context_for_request(exec_ctx)?
-        else {
+        let Some(transaction) = self.transaction_query_context_for_request(exec_ctx)? else {
             return Ok(exec_ctx.create_session_with_user());
         };
-
-        let mut state = exec_ctx.build_user_session_state();
-        state
-            .config_mut()
-            .options_mut()
-            .extensions
-            .insert(TransactionQueryExtension::new(transaction_query_context));
-        Ok(SessionContext::new_with_state(state))
+        Ok(SessionContext::new_with_state(Self::user_session_state(
+            exec_ctx,
+            Some(transaction),
+        )))
     }
 
     fn point_read_session_state(
         &self,
         exec_ctx: &ExecutionContext,
-    ) -> Result<Arc<datafusion::execution::context::SessionState>, KalamDbError> {
-        let transaction_query_context = self.transaction_query_context_for_request(exec_ctx)?;
-        if transaction_query_context.is_none() {
-            let key = PointReadSessionCacheKey::new(
-                exec_ctx.user_id().clone(),
-                exec_ctx.user_role(),
-                exec_ctx.default_namespace(),
-                exec_ctx.read_context(),
-            );
-            if let Some(state) = self.point_read_session_cache.get(&key) {
-                return Ok(state);
-            }
+    ) -> Result<Arc<SessionState>, KalamDbError> {
+        if let Some(transaction) = self.transaction_query_context_for_request(exec_ctx)? {
+            return Ok(Arc::new(Self::user_session_state(exec_ctx, Some(transaction))));
+        }
 
-            let state = Arc::new(exec_ctx.build_user_session_state());
-            self.point_read_session_cache.insert(key, Arc::clone(&state));
+        let key = PointReadSessionCacheKey::new(
+            exec_ctx.user_id().clone(),
+            exec_ctx.user_role(),
+            exec_ctx.default_namespace(),
+            exec_ctx.read_context(),
+        );
+        if let Some(state) = self.point_read_session_cache.get(&key) {
             return Ok(state);
         }
 
-        let mut state = exec_ctx.build_user_session_state();
-        if let Some(transaction_query_context) = transaction_query_context {
-            state
-                .config_mut()
-                .options_mut()
-                .extensions
-                .insert(TransactionQueryExtension::new(transaction_query_context));
-        }
-        Ok(Arc::new(state))
+        let state = Arc::new(Self::user_session_state(exec_ctx, None));
+        self.point_read_session_cache.insert(key, Arc::clone(&state));
+        Ok(state)
     }
 
     async fn execute_begin_transaction(
@@ -2359,11 +2359,7 @@ impl SqlExecutor {
         let session = self.create_session_with_transaction_context(exec_ctx)?;
         let session = if explain_analyze {
             let mut state = session.state();
-            state
-                .config_mut()
-                .options_mut()
-                .extensions
-                .insert(ScanDiagnosticsContext::enabled());
+            install_extension(&mut state, ScanDiagnosticsContext::enabled());
             SessionContext::new_with_state(state)
         } else {
             session
@@ -2854,6 +2850,10 @@ mod tests {
                         ("id".to_string(), ScalarValue::Utf8(Some("doc-b".to_string()))),
                         ("owner_id".to_string(), ScalarValue::Utf8(Some("bob".to_string()))),
                     ]),
+                ],
+                &[
+                    kalamdb_commons::ids::VersionId::from(1_i64),
+                    kalamdb_commons::ids::VersionId::from(2_i64),
                 ],
             )
             .await

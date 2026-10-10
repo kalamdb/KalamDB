@@ -3,8 +3,7 @@
 //! Shared types, constants, and utilities for KalamDB.
 //!
 //! This crate provides foundational types and constants used across KalamDB crates
-//! (kalamdb-core, kalamdb-dialect, kalamdb-system, kalamdb-store, kalamdb-api). It has zero
-//! external dependencies to prevent circular dependency issues.
+//! (kalamdb-core, kalamdb-dialect, kalamdb-system, kalamdb-store, kalamdb-api).
 //!
 //! ## Type-Safe Wrappers
 //!
@@ -43,6 +42,7 @@
 //! ```
 
 pub mod api_models;
+pub mod coded_error;
 pub mod constants;
 #[cfg(any(
     feature = "conversions",
@@ -86,7 +86,7 @@ pub use conversions::{
     scalar_value_to_bytes, try_pk_bucket_key, try_pk_bucket_key_from_array,
     try_pk_bucket_key_from_typed_string, PkBucketKey,
 };
-pub use errors::{CommonError, NotLeaderError, Result};
+pub use errors::{CodedError, CommonError, ErrorArg, ErrorCode, NotLeaderError, Result};
 #[cfg(feature = "arrow-utils")]
 pub use helpers::arrow_utils;
 #[cfg(feature = "storage")]

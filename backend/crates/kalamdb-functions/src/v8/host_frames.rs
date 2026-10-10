@@ -69,7 +69,7 @@ impl HostFrames {
 }
 
 fn frame_key<'s>(scope: &v8::PinScope<'s, '_>) -> Option<v8::Local<'s, v8::Private>> {
-    let name = v8::String::new(scope, FRAME_KEY)?;
+    let name = crate::convert::string_to_v8(scope, FRAME_KEY).ok()?;
     Some(v8::Private::for_api(scope, Some(name)))
 }
 

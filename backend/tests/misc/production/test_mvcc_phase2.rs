@@ -3,14 +3,14 @@
 //! Tests:
 //! - T050: SeqId creation, timestamp extraction, ordering, serialization (unit tests in seq_id.rs)
 //! - T051: CREATE TABLE without PK → rejected with error
-//! - T052: CREATE TABLE with user PK → `_seq: SeqId` and `_deleted: bool` auto-added to schema
+//! - T052: CREATE TABLE with user PK → `_version: SeqId` and `_deleted: bool` auto-added to schema
 //! - T053: INSERT → verify storage key format
-//! - T054: INSERT → verify UserTableRow structure (user_id, _seq, _deleted, fields)
-//! - T055: INSERT to shared table → verify SharedTableRow structure (_seq, _deleted, fields)
+//! - T054: INSERT → verify UserTableRow structure (user_id, _version, _deleted, fields)
+//! - T055: INSERT to shared table → verify SharedTableRow structure (_version, _deleted, fields)
 //! - T060: INSERT duplicate PK → rejected with uniqueness error
-//! - T062: Incremental sync `WHERE _seq > X` → returns all versions after SeqId threshold
+//! - T062: Incremental sync `WHERE _version > X` → returns all versions after SeqId threshold
 //! - T063: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
-//! - T064: RocksDB range scan `_seq > threshold` → efficiently skips older versions
+//! - T064: RocksDB range scan `_version > threshold` → efficiently skips older versions
 
 use kalam_client::{models::ResponseStatus, parse_i64};
 
@@ -68,7 +68,7 @@ async fn test_create_table_without_pk_rejected() {
     println!("✅ T051: CREATE TABLE without PK correctly rejected");
 }
 
-/// T052: CREATE TABLE with user PK → verify `_seq` and `_deleted` auto-added to schema
+/// T052: CREATE TABLE with user PK → verify `_version` and `_deleted` auto-added to schema
 #[actix_web::test]
 async fn test_create_table_auto_adds_system_columns() {
     let server = TestServer::new_shared().await;
@@ -111,11 +111,11 @@ async fn test_create_table_auto_adds_system_columns() {
         )
         .await;
 
-    // Query with explicit _seq and _deleted columns
+    // Query with explicit _version and _deleted columns
     let response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, name, price, _seq, _deleted FROM {}.products WHERE id = 'prod1'",
+                "SELECT id, name, price, _version, _deleted FROM {}.products WHERE id = 'prod1'",
                 ns
             ),
             "user1",
@@ -133,13 +133,13 @@ async fn test_create_table_auto_adds_system_columns() {
     assert_eq!(parse_i64(row.get("price").unwrap()), 100);
 
     // Verify system columns exist
-    assert!(row.contains_key("_seq"), "_seq column should be auto-added");
+    assert!(row.contains_key("_version"), "_version column should be auto-added");
     assert!(row.contains_key("_deleted"), "_deleted column should be auto-added");
 
-    // Verify _seq is a valid i64 (SeqId) - it's returned as a string for JavaScript precision
-    let seq = row.get("_seq").unwrap();
-    let seq_str = seq.as_str().expect("_seq should be a string representation of i64");
-    seq_str.parse::<i64>().expect("_seq string should parse as i64");
+    // Verify _version is a valid i64 (SeqId) - it's returned as a string for JavaScript precision
+    let seq = row.get("_version").unwrap();
+    let seq_str = seq.as_str().expect("_version should be a string representation of i64");
+    seq_str.parse::<i64>().expect("_version string should parse as i64");
 
     // Verify _deleted defaults to false
     assert_eq!(
@@ -148,7 +148,7 @@ async fn test_create_table_auto_adds_system_columns() {
         "_deleted should default to false"
     );
 
-    println!("✅ T052: CREATE TABLE auto-adds _seq and _deleted system columns");
+    println!("✅ T052: CREATE TABLE auto-adds _version and _deleted system columns");
 }
 
 /// T053: INSERT → verify storage key format for user and shared tables
@@ -267,7 +267,7 @@ async fn test_insert_storage_key_format() {
     println!("✅ T053: INSERT storage key format works for user and shared tables");
 }
 
-/// T054: INSERT → verify UserTableRow structure (user_id, _seq, _deleted, fields)
+/// T054: INSERT → verify UserTableRow structure (user_id, _version, _deleted, fields)
 #[actix_web::test]
 async fn test_user_table_row_structure() {
     let server = TestServer::new_shared().await;
@@ -313,7 +313,10 @@ async fn test_user_table_row_structure() {
     // Query with all columns including system columns
     let response = server
         .execute_sql_as_user(
-            &format!("SELECT record_id, title, priority, _seq, _deleted FROM {}.user_records", ns),
+            &format!(
+                "SELECT record_id, title, priority, _version, _deleted FROM {}.user_records",
+                ns
+            ),
             "user1",
         )
         .await;
@@ -329,24 +332,27 @@ async fn test_user_table_row_structure() {
     assert!(row.contains_key("priority"), "priority should exist");
 
     // Verify system columns
-    assert!(row.contains_key("_seq"), "_seq should exist");
+    assert!(row.contains_key("_version"), "_version should exist");
     assert!(row.contains_key("_deleted"), "_deleted should exist");
 
-    // Verify _seq is numeric (SeqId wrapper) - returned as string for JavaScript precision
-    let seq = row.get("_seq").unwrap();
-    let seq_str = seq.as_str().expect("_seq should be string representation of i64");
-    seq_str.parse::<i64>().expect("_seq string should parse as i64");
+    // Verify _version is numeric (SeqId wrapper) - returned as string for JavaScript precision
+    let seq = row.get("_version").unwrap();
+    let seq_str = seq.as_str().expect("_version should be string representation of i64");
+    seq_str.parse::<i64>().expect("_version string should parse as i64");
 
     // Verify _deleted is boolean
     assert_eq!(row.get("_deleted").unwrap().as_bool(), Some(false), "_deleted should be false");
 
     // Note: user_id is NOT exposed in query results (internal to storage key)
-    // UserTableRow structure: { user_id: UserId, _seq: SeqId, _deleted: bool, fields: JsonValue }
+    // UserTableRow structure: { user_id: UserId, _version: SeqId, _deleted: bool, fields: JsonValue
+    // }
 
-    println!("✅ T054: UserTableRow structure verified (user_id internal, _seq, _deleted, fields)");
+    println!(
+        "✅ T054: UserTableRow structure verified (user_id internal, _version, _deleted, fields)"
+    );
 }
 
-/// T055: INSERT to shared table → verify SharedTableRow structure (_seq, _deleted, fields only)
+/// T055: INSERT to shared table → verify SharedTableRow structure (_version, _deleted, fields only)
 #[actix_web::test]
 async fn test_shared_table_row_structure() {
     let server = TestServer::new_shared().await;
@@ -395,7 +401,10 @@ async fn test_shared_table_row_structure() {
     // Query with all columns including system columns (as system user)
     let response = server
         .execute_sql_as_user(
-            &format!("SELECT config_key, value, enabled, _seq, _deleted FROM {}.shared_config", ns),
+            &format!(
+                "SELECT config_key, value, enabled, _version, _deleted FROM {}.shared_config",
+                ns
+            ),
             "system",
         )
         .await;
@@ -411,7 +420,7 @@ async fn test_shared_table_row_structure() {
     assert!(row.get("enabled").unwrap().as_bool().unwrap());
 
     // Verify system columns
-    assert!(row.contains_key("_seq"), "_seq should exist");
+    assert!(row.contains_key("_version"), "_version should exist");
     assert!(row.contains_key("_deleted"), "_deleted should exist");
 
     // Verify NO access_level column (removed from SharedTableRow in Phase 2)
@@ -421,15 +430,15 @@ async fn test_shared_table_row_structure() {
         "access_level should NOT be in SharedTableRow (cached in schema)"
     );
 
-    // Verify _seq is numeric - returned as string for JavaScript precision
-    let seq = row.get("_seq").unwrap();
-    let seq_str = seq.as_str().expect("_seq should be string representation of i64");
-    seq_str.parse::<i64>().expect("_seq string should parse as i64");
+    // Verify _version is numeric - returned as string for JavaScript precision
+    let seq = row.get("_version").unwrap();
+    let seq_str = seq.as_str().expect("_version should be string representation of i64");
+    seq_str.parse::<i64>().expect("_version string should parse as i64");
 
-    // SharedTableRow structure: { _seq: SeqId, _deleted: bool, fields: JsonValue }
+    // SharedTableRow structure: { _version: SeqId, _deleted: bool, fields: JsonValue }
     // NO user_id (not user-scoped), NO access_level (in schema cache)
 
-    println!("✅ T055: SharedTableRow structure verified (_seq, _deleted, fields only)");
+    println!("✅ T055: SharedTableRow structure verified (_version, _deleted, fields only)");
 }
 
 /// T060: INSERT with duplicate PRIMARY KEY → validates uniqueness when user provides PK
@@ -542,9 +551,9 @@ async fn test_insert_duplicate_pk_rejected() {
     println!("✅ T060: Duplicate PK correctly rejected when user provides explicit PK value");
 }
 
-/// T062: Incremental sync `WHERE _seq > X` → returns all versions after threshold
+/// T062: Incremental sync `WHERE _version > X` → returns all versions after threshold
 #[actix_web::test]
-async fn test_incremental_sync_seq_threshold() {
+async fn test_incremental_sync_version_threshold() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("test_ns_t062");
 
@@ -593,10 +602,10 @@ async fn test_incremental_sync_seq_threshold() {
         )
         .await;
 
-    // Get all records with _seq
+    // Get all records with _version
     let response = server
         .execute_sql_as_user(
-            &format!("SELECT id, version, _seq FROM {}.sync_records ORDER BY id", ns),
+            &format!("SELECT id, version, _version FROM {}.sync_records ORDER BY id", ns),
             "user1",
         )
         .await;
@@ -605,18 +614,18 @@ async fn test_incremental_sync_seq_threshold() {
     let all_rows = response.rows_as_maps();
     assert_eq!(all_rows.len(), 3);
 
-    // Get the _seq of the second record (handle both i64 and string)
-    let threshold_seq = all_rows[1]
-        .get("_seq")
+    // Get the _version of the second record (handle both i64 and string)
+    let threshold_version = all_rows[1]
+        .get("_version")
         .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
-        .expect("_seq should be present and numeric");
+        .expect("_version should be present and numeric");
 
-    // Query with WHERE _seq > threshold (should return only rec3)
+    // Query with WHERE _version > threshold (should return only rec3)
     let response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, version, _seq FROM {}.sync_records WHERE _seq > {} ORDER BY id",
-                ns, threshold_seq
+                "SELECT id, version, _version FROM {}.sync_records WHERE _version > {} ORDER BY id",
+                ns, threshold_version
             ),
             "user1",
         )
@@ -631,10 +640,13 @@ async fn test_incremental_sync_seq_threshold() {
         "Should return rec3 (latest)"
     );
 
-    let returned_seq = parse_i64(rows[0].get("_seq").unwrap());
-    assert!(returned_seq > threshold_seq, "Returned _seq should be greater than threshold");
+    let returned_version = parse_i64(rows[0].get("_version").unwrap());
+    assert!(
+        returned_version > threshold_version,
+        "Returned _version should be greater than threshold"
+    );
 
-    println!("✅ T062: Incremental sync with WHERE _seq > X works correctly");
+    println!("✅ T062: Incremental sync with WHERE _version > X works correctly");
 }
 
 /// T063: RocksDB prefix scan `{user_id}:` → efficiently returns only that user's rows
@@ -723,7 +735,7 @@ async fn test_rocksdb_prefix_scan_user_isolation() {
     println!("✅ T063: RocksDB prefix scan ensures user isolation");
 }
 
-/// T064: RocksDB range scan `_seq > threshold` → efficiently skips older versions
+/// T064: RocksDB range scan `_version > threshold` → efficiently skips older versions
 /// **NOTE**: This test has an UPDATE handler bug preventing validation.
 /// The range scan logic works correctly, but UPDATE fails with "Row not found".
 #[actix_web::test]
@@ -754,17 +766,20 @@ async fn test_rocksdb_range_scan_efficiency() {
         )
         .await;
 
-    // Get initial _seq
+    // Get initial _version
     let response = server
-        .execute_sql_as_user(&format!("SELECT id, value, _seq FROM {}.versioned_data", ns), "user1")
+        .execute_sql_as_user(
+            &format!("SELECT id, value, _version FROM {}.versioned_data", ns),
+            "user1",
+        )
         .await;
 
     let rows = response.rows_as_maps();
     assert!(!rows.is_empty(), "Should have at least one row");
-    let initial_seq = rows[0]
-        .get("_seq")
+    let initial_version = rows[0]
+        .get("_version")
         .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
-        .expect("_seq should be present and numeric");
+        .expect("_version should be present and numeric");
 
     // Update record (creates new version)
     server
@@ -782,12 +797,12 @@ async fn test_rocksdb_range_scan_efficiency() {
         )
         .await;
 
-    // Query with WHERE _seq > initial_seq (range scan should skip first version)
+    // Query with WHERE _version > initial_version (range scan should skip first version)
     let response = server
         .execute_sql_as_user(
             &format!(
-                "SELECT id, value, _seq FROM {}.versioned_data WHERE _seq > {}",
-                ns, initial_seq
+                "SELECT id, value, _version FROM {}.versioned_data WHERE _version > {}",
+                ns, initial_version
             ),
             "user1",
         )
@@ -796,12 +811,15 @@ async fn test_rocksdb_range_scan_efficiency() {
     assert_eq!(response.status, ResponseStatus::Success);
     let rows = response.rows_as_maps();
     // Should return the latest version (value=3) since version resolution
-    // applies MAX(_seq) AFTER the range filter
+    // applies MAX(_version) AFTER the range filter
     assert_eq!(rows.len(), 1, "Should return 1 row (latest version)");
     assert_eq!(parse_i64(rows[0].get("value").unwrap()), 3, "Should return latest value");
 
-    let returned_seq = parse_i64(rows[0].get("_seq").unwrap());
-    assert!(returned_seq > initial_seq, "Returned _seq should be > initial_seq");
+    let returned_version = parse_i64(rows[0].get("_version").unwrap());
+    assert!(
+        returned_version > initial_version,
+        "Returned _version should be > initial_version"
+    );
 
-    println!("✅ T064: RocksDB range scan with _seq > threshold works efficiently");
+    println!("✅ T064: RocksDB range scan with _version > threshold works efficiently");
 }

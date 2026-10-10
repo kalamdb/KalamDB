@@ -4,7 +4,10 @@ use std::hash::{Hash, Hasher};
 
 // Re-export GroupId and related types
 pub use group_id::{GroupId, DEFAULT_SHARED_SHARDS, DEFAULT_USER_SHARDS};
-use kalamdb_commons::models::{TableId, UserId};
+use kalamdb_commons::{
+    models::{TableId, UserId},
+    schemas::{TableDefinition, TableOptions, TableType},
+};
 // Re-export cluster config types for shared consumption
 pub use kalamdb_configs::{ClusterConfig, PeerConfig};
 #[cfg(feature = "serde")]
@@ -104,16 +107,29 @@ impl ShardRouter {
         GroupId::DataUserShard(self.table_shard_id(table_id))
     }
 
-    pub fn route_shared(&self, _table_id: &TableId) -> Shard {
-        Shard::new(ShardKind::Shared, 0)
+    /// Placement policy for NEW tables only. Persist the result before proposing CREATE.
+    ///
+    /// Tables in one namespace share a group so a procedure or row policy can
+    /// use them in one transaction. Distinct namespaces still spread across groups.
+    pub fn place_shared_table(&self, table_id: &TableId) -> u32 {
+        self.hash_to_shard(table_id.namespace_id().as_str(), self.num_shared_shards.max(1))
     }
 
-    pub fn shared_shard_id(&self) -> u32 {
-        0
-    }
-
-    pub fn shared_group_id(&self) -> GroupId {
-        GroupId::DataSharedShard(self.shared_shard_id())
+    /// Resolve existing metadata without applying the placement policy again.
+    pub fn shared_group_id(&self, table: &TableDefinition) -> Result<GroupId, String> {
+        let TableOptions::Shared(options) = &table.table_options else {
+            return Err(format!("'{}' is not a shared table", table.table_id()));
+        };
+        if table.table_type != TableType::Shared
+            || options.shared_shard_id >= self.num_shared_shards
+        {
+            return Err(format!(
+                "Invalid or unavailable shared owner {} for '{}'",
+                options.shared_shard_id,
+                table.table_id()
+            ));
+        }
+        Ok(GroupId::DataSharedShard(options.shared_shard_id))
     }
 
     pub fn num_user_shards(&self) -> u32 {
@@ -137,5 +153,77 @@ impl ShardRouter {
         table_id.table_name().as_str().hash(&mut hasher);
         let hash = hasher.finish();
         (hash % num_shards as u64) as u32
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    fn table(namespace: &str, name: &str) -> TableDefinition {
+        TableDefinition::new_with_defaults(
+            namespace.into(),
+            name.into(),
+            TableType::Shared,
+            vec![],
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn persisted_owners_survive_growth_and_concurrent_resolution() {
+        let original = ShardRouter::new(8, 4);
+        let expanded = ShardRouter::new(8, 16);
+        let mut distribution = [0usize; 4];
+        let tables: Vec<_> = (0..2048)
+            .map(|i| {
+                let mut table = table(&format!("ns_{i}"), "rows");
+                let owner = original.place_shared_table(&table.table_id());
+                if let TableOptions::Shared(options) = &mut table.table_options {
+                    options.shared_shard_id = owner;
+                }
+                distribution[owner as usize] += 1;
+                (table, GroupId::DataSharedShard(owner))
+            })
+            .collect();
+        assert!(distribution.iter().all(|count| *count > 1));
+        let tables = Arc::new(tables);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let tables = Arc::clone(&tables);
+                let router = expanded.clone();
+                scope.spawn(move || {
+                    for (table, owner) in tables.iter() {
+                        assert_eq!(router.shared_group_id(table).unwrap(), *owner);
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn legacy_ownership_and_invalid_metadata_fail_closed() {
+        let router = ShardRouter::new(8, 4);
+        let mut table = table("legacy_ns", "legacy");
+        assert_eq!(router.shared_group_id(&table).unwrap(), GroupId::DataSharedShard(0));
+        if let TableOptions::Shared(options) = &mut table.table_options {
+            options.shared_shard_id = 4;
+        }
+        assert!(router.shared_group_id(&table).is_err());
+        table.table_type = TableType::User;
+        assert!(router.shared_group_id(&table).is_err());
+    }
+
+    #[test]
+    fn one_namespace_shares_one_shared_group() {
+        let router = ShardRouter::new(8, 4);
+        let rooms = router.place_shared_table(&table("chat_demo", "rooms").table_id());
+        let members = router.place_shared_table(&table("chat_demo", "room_members").table_id());
+        let messages = router.place_shared_table(&table("chat_demo", "messages").table_id());
+        assert_eq!(rooms, members);
+        assert_eq!(rooms, messages);
     }
 }

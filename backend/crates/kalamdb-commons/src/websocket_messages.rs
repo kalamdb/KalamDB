@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::SeqId,
+    ids::{VersionDomain, VersionId},
     models::{KalamCellValue, Role, SchemaField, UserId},
     websocket_protocol::ProtocolOptions,
 };
@@ -35,21 +35,25 @@ pub enum BatchStatus {
 /// Batch control metadata for paginated initial data loading.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BatchControl {
+    /// Preserve this envelope alongside SHARED row versions for safe resumption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_domain: Option<VersionDomain>,
     /// Current batch number (0-indexed).
-    pub batch_num:   u32,
+    pub batch_num:      u32,
     /// Whether more batches are available to fetch.
-    pub has_more:    bool,
+    pub has_more:       bool,
     /// Loading status for the subscription.
-    pub status:      BatchStatus,
-    /// The SeqId of the last row in this batch (used for subsequent requests).
+    pub status:         BatchStatus,
+    /// The version of the last row in this batch (used for subsequent requests).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seq_id: Option<SeqId>,
+    pub last_seq_id:    Option<VersionId>,
 }
 
 impl BatchControl {
     /// Create a batch control for the first batch (batch_num=0).
     pub fn first(has_more: bool) -> Self {
         Self {
+            version_domain: None,
             batch_num: 0,
             has_more,
             status: if has_more {
@@ -64,6 +68,7 @@ impl BatchControl {
     /// Create a batch control for a subsequent batch (batch_num > 0).
     pub fn subsequent(batch_num: u32, has_more: bool) -> Self {
         Self {
+            version_domain: None,
             batch_num,
             has_more,
             status: if has_more {
@@ -76,7 +81,7 @@ impl BatchControl {
     }
 
     /// Create batch control with all fields specified.
-    pub fn new(batch_num: u32, has_more: bool, last_seq_id: Option<SeqId>) -> Self {
+    pub fn new(batch_num: u32, has_more: bool, last_seq_id: Option<VersionId>) -> Self {
         let status = if batch_num == 0 {
             if has_more {
                 BatchStatus::Loading
@@ -90,6 +95,7 @@ impl BatchControl {
         };
 
         Self {
+            version_domain: None,
             batch_num,
             has_more,
             status,
@@ -101,15 +107,18 @@ impl BatchControl {
 /// Options for live query subscriptions.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SubscriptionOptions {
+    /// Required with `from` for SHARED tables; copied from the subscription ack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_domain:     Option<VersionDomain>,
     /// Hint for server-side batch sizing during initial data load.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub batch_size:         Option<usize>,
     /// Number of last (newest) rows to fetch for initial data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_rows:          Option<u32>,
-    /// Resume subscription from a specific sequence ID.
+    /// Resume subscription from a specific row version.
     #[serde(skip_serializing_if = "Option::is_none", alias = "from_seq_id")]
-    pub from:               Option<SeqId>,
+    pub from:               Option<VersionId>,
     /// Client-side control for automatically requesting subsequent initial data batches.
     #[serde(default, skip_serializing, alias = "autoFetchBatches")]
     pub auto_fetch_batches: Option<bool>,
@@ -133,15 +142,21 @@ impl SubscriptionOptions {
         self
     }
 
-    /// Resume from a specific sequence ID.
-    pub fn with_from(mut self, seq_id: SeqId) -> Self {
-        self.from = Some(seq_id);
+    /// Resume from a specific row version.
+    pub fn with_from(mut self, version: VersionId) -> Self {
+        self.from = Some(version);
         self
     }
 
-    /// Resume from a specific sequence ID via deprecated alias.
-    pub fn with_from_seq_id(self, seq_id: SeqId) -> Self {
-        self.with_from(seq_id)
+    /// Attach the version domain that owns `from`. Shared tables reject a cursor without it.
+    pub fn with_version_domain(mut self, domain: VersionDomain) -> Self {
+        self.version_domain = Some(domain);
+        self
+    }
+
+    /// Resume from a specific row version via deprecated alias.
+    pub fn with_from_seq_id(self, version: VersionId) -> Self {
+        self.with_from(version)
     }
 
     /// Control whether the client should automatically request subsequent initial data batches.
@@ -150,7 +165,7 @@ impl SubscriptionOptions {
         self
     }
 
-    /// Check if this contains a resume seq_id.
+    /// Check if this contains a resume version.
     pub fn has_resume_seq_id(&self) -> bool {
         self.from.is_some()
     }
@@ -227,7 +242,7 @@ pub enum ClientMessage {
     NextBatch {
         subscription_id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        last_seq_id:     Option<SeqId>,
+        last_seq_id:     Option<VersionId>,
     },
     /// Unsubscribe from live query.
     Unsubscribe { subscription_id: String },
@@ -243,7 +258,7 @@ impl ClientMessage {
     }
 
     /// Create a next batch request message.
-    pub fn next_batch(subscription_id: String, last_seq_id: Option<SeqId>) -> Self {
+    pub fn next_batch(subscription_id: String, last_seq_id: Option<VersionId>) -> Self {
         Self::NextBatch {
             subscription_id,
             last_seq_id,

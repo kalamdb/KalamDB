@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use datafusion::{
-    arrow::array::{BooleanArray, Float32Array, Float64Array, Int64Array, ListArray, StringArray},
+    arrow::array::{BooleanArray, Float32Array, Float64Array, StringArray},
     prelude::SessionContext,
 };
 use kalamdb_commons::{Role, UserId};
@@ -199,72 +199,31 @@ async fn test_cosine_distance_json_query_vector_uses_kdb_path() {
 }
 
 #[tokio::test]
-async fn test_array_transform_lambda_multiplies_elements() {
+async fn test_array_transform_lambda_is_rejected() {
     let session = exec_ctx().create_session_with_user();
-
     let result = session
         .sql("SELECT array_transform([1, 2, 3, 4, 5], x -> x * 10) AS scaled")
         .await;
-    assert!(result.is_ok(), "array_transform query failed: {:?}", result.err());
-
-    let batches = result.unwrap().collect().await.unwrap();
-    assert_eq!(batches.len(), 1);
-    assert_eq!(batches[0].num_rows(), 1);
-
-    let list = batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<ListArray>()
-        .expect("scaled list column");
-    let scaled_values = list.value(0);
-    let values = scaled_values.as_any().downcast_ref::<Int64Array>().expect("scaled values");
-    assert_eq!(
-        values.iter().map(|value| value.expect("scaled value")).collect::<Vec<_>>(),
-        vec![10, 20, 30, 40, 50]
-    );
+    assert!(result.is_err(), "public x -> lambda syntax must be rejected");
 }
 
 #[tokio::test]
-async fn test_array_filter_and_transform_lambda_compose() {
+async fn test_array_filter_and_transform_lambda_is_rejected() {
     let session = exec_ctx().create_session_with_user();
-
     let result = session
         .sql(
             "SELECT array_transform(array_filter([1, 2, 3, 4, 5], x -> x > 2), x -> x * 10) AS \
              filtered_scaled",
         )
         .await;
-    assert!(result.is_ok(), "composed lambda array query failed: {:?}", result.err());
-
-    let batches = result.unwrap().collect().await.unwrap();
-    let list = batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<ListArray>()
-        .expect("filtered list column");
-    let filtered_values = list.value(0);
-    let values = filtered_values.as_any().downcast_ref::<Int64Array>().expect("filtered values");
-    assert_eq!(
-        values.iter().map(|value| value.expect("filtered value")).collect::<Vec<_>>(),
-        vec![30, 40, 50]
-    );
+    assert!(result.is_err(), "public x -> lambda syntax must be rejected");
 }
 
 #[tokio::test]
-async fn test_array_any_match_lambda() {
+async fn test_array_any_match_lambda_is_rejected() {
     let session = exec_ctx().create_session_with_user();
-
     let result = session.sql("SELECT array_any_match([1, 2, 3], x -> x > 2) AS has_large").await;
-    assert!(result.is_ok(), "array_any_match query failed: {:?}", result.err());
-
-    let batches = result.unwrap().collect().await.unwrap();
-    let value = batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<datafusion::arrow::array::BooleanArray>()
-        .expect("boolean result")
-        .value(0);
-    assert!(value);
+    assert!(result.is_err(), "public x -> lambda syntax must be rejected");
 }
 
 #[tokio::test]
@@ -281,7 +240,7 @@ async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
     let result = session.sql(&rewritten.sql).await;
     assert!(
         result.is_ok(),
-        "rewritten EXPLAIN should plan under DuckDB dialect: {:?}",
+        "rewritten EXPLAIN should plan under the PostgreSQL dialect: {:?}",
         result.err()
     );
     let batches = result.unwrap().collect().await.expect("EXPLAIN ANALYZE should run");
@@ -289,7 +248,7 @@ async fn postgres_explain_option_list_rewrites_to_runnable_sql() {
 }
 
 #[tokio::test]
-async fn datafusion_explain_metrics_option_runs_under_duckdb_dialect() {
+async fn datafusion_explain_metrics_option_runs() {
     use kalamdb_sql::rewrite_explain_for_datafusion;
 
     let session = exec_ctx().create_session_with_user();
@@ -297,7 +256,7 @@ async fn datafusion_explain_metrics_option_runs_under_duckdb_dialect() {
     let native_result = session.sql(native).await;
     assert!(
         native_result.is_ok(),
-        "DataFusion-native EXPLAIN options should plan under DuckDB dialect: {:?}",
+        "DataFusion-native EXPLAIN options should plan under the PostgreSQL dialect: {:?}",
         native_result.err()
     );
     let native_batches = native_result

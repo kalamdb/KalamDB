@@ -7,7 +7,7 @@ import 'file_ref.dart';
 import 'logger.dart';
 import 'live_event_delivery.dart';
 import 'models.dart';
-import 'seq_id.dart';
+import 'version_id.dart';
 import 'generated/api.dart' as bridge;
 import 'generated/models.dart' as gen;
 import 'generated/frb_generated.dart';
@@ -326,7 +326,7 @@ class KalamClient {
     required String subscriptionId,
     int? batchSize,
     int? lastRows,
-    SeqId? from,
+    VersionId? from,
     bool explicitAck = false,
   }) {
     if (batchSize == null &&
@@ -574,7 +574,7 @@ class KalamClient {
     String sql, {
     int? batchSize,
     int? lastRows,
-    SeqId? from,
+    VersionId? from,
     String? subscriptionId,
     List<dynamic>? params,
     void Function(LiveCheckpoint checkpoint)? onCheckpoint,
@@ -619,7 +619,7 @@ class KalamClient {
     String sql, {
     int? batchSize,
     int? lastRows,
-    SeqId? from,
+    VersionId? from,
     String? subscriptionId,
     List<dynamic>? params,
     void Function(SubscriptionError error)? onError,
@@ -658,7 +658,7 @@ class KalamClient {
               ? Future.value()
               : bridge.dartLiveEventsAck(
                   subscription: subscription,
-                  seqId: checkpoint.lastSeqId.toInt(),
+                  seqId: checkpoint.lastVersionId.toInt(),
                 ),
         );
       },
@@ -690,7 +690,7 @@ class KalamClient {
     String sql, {
     int? batchSize,
     int? lastRows,
-    SeqId? from,
+    VersionId? from,
     String? subscriptionId,
     int? limit,
     List<String>? keyColumns,
@@ -738,7 +738,7 @@ class KalamClient {
     String tableName, {
     int? batchSize,
     int? lastRows,
-    SeqId? from,
+    VersionId? from,
     String? subscriptionId,
     int? limit,
     List<String>? keyColumns,
@@ -775,8 +775,8 @@ class KalamClient {
         .map((info) => SubscriptionInfo(
               id: info.id,
               query: info.query,
-              lastSeqId:
-                  info.lastSeqId == null ? null : SeqId.parse(info.lastSeqId!),
+              lastVersionId:
+                  info.lastSeqId == null ? null : VersionId.parse(info.lastSeqId!),
               lastEventTimeMs: info.lastEventTimeMs,
               createdAtMs: info.createdAtMs,
               closed: info.closed,
@@ -1000,7 +1000,7 @@ class KalamClient {
             onCheckpoint?.call(
               LiveCheckpoint(
                 subscriptionId: subscriptionId,
-                lastSeqId: SeqId.parse(lastSeqId.toString()),
+                lastVersionId: VersionId.parse(lastSeqId.toString()),
               ),
             );
           }
@@ -1057,19 +1057,19 @@ class KalamClient {
     String subscriptionId,
     List<String> rowsJson,
   ) {
-    SeqId? maxSeqId;
+    VersionId? maxVersionId;
     for (final row in _decodeTypedRows(rowsJson)) {
-      final seqId = row['_seq']?.asSeqId();
+      final seqId = row['_version']?.asVersionId();
       if (seqId != null &&
-          (maxSeqId == null || seqId.compareTo(maxSeqId) > 0)) {
-        maxSeqId = seqId;
+          (maxVersionId == null || seqId.compareTo(maxVersionId) > 0)) {
+        maxVersionId = seqId;
       }
     }
 
-    if (maxSeqId == null) {
+    if (maxVersionId == null) {
       return null;
     }
-    return LiveCheckpoint(subscriptionId: subscriptionId, lastSeqId: maxSeqId);
+    return LiveCheckpoint(subscriptionId: subscriptionId, lastVersionId: maxVersionId);
   }
 
   static List<Map<String, KalamCellValue>> _decodeTypedRows(

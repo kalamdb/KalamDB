@@ -90,3 +90,9 @@ function getColumns(resp) {
 }
 
 console.log('normalize.test.mjs passed');
+
+// Resume envelopes retain exact table/history/group identity.
+{
+  const domain = { history_incarnation: 'history-a', table_id: 'app.events', scope_id: 3, partition_id: null };
+  assert.deepEqual(normalizeLiveStreamOptions({ from: '65536', versionDomain: domain }), { from: '65536', version_domain: domain });
+}
