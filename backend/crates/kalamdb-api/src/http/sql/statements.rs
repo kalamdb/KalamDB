@@ -91,16 +91,17 @@ fn map_classification_error(
     start_time: Instant,
     is_admin: bool,
 ) -> HttpResponse {
+    let message = err.user_message().to_string();
     match err {
-        kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => {
+        kalamdb_sql::classifier::StatementClassificationError::Unauthorized(_) => {
             HttpResponse::Forbidden().json(SqlResponse::error_for_privilege(
                 ErrorCode::PermissionDenied,
-                &msg,
+                &message,
                 took_ms(start_time),
                 is_admin,
             ))
         },
-        kalamdb_sql::classifier::StatementClassificationError::InvalidSql { message, .. } => {
+        kalamdb_sql::classifier::StatementClassificationError::InvalidSql { .. } => {
             HttpResponse::BadRequest().json(SqlResponse::error_for_privilege(
                 ErrorCode::InvalidSql,
                 &message,

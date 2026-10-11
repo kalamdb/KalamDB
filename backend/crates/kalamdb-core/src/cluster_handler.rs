@@ -250,7 +250,7 @@ impl CoreClusterHandler {
             .app_context
             .sql_executor()
             .prepare_statement_metadata_for_role(&sql, default_namespace, actor_role)
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| err.user_message().to_string())?;
 
         Ok((prepared_statement, execute_as_username))
     }

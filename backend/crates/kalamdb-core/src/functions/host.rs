@@ -193,7 +193,7 @@ impl CoreFunctionHost {
         let executor = self.app.sql_executor();
         let metadata = executor
             .prepare_statement_metadata(&sql, &ctx)
-            .map_err(|e| FunctionsError::Invalid(e.to_string()))?;
+            .map_err(|error| FunctionsError::Invalid(error.user_message().to_string()))?;
         // Procedure transactions are owned by their root invocation.
         if metadata.classified_statement.as_ref().is_some_and(|statement| {
             matches!(
@@ -545,6 +545,25 @@ mod tests {
         assert!(!is_allowed_response_header("x-evil", "a\r\nSet-Cookie: session=1"));
         assert!(!is_allowed_response_header("bad name", "ok"));
     }
+
+    #[test]
+    fn host_sql_errors_keep_the_catalog_sentence() {
+        let coded = super::map_core(crate::error::KalamDbError::Coded(
+            kalamdb_commons::CodedError::not_null("id", 1),
+        ));
+        match coded {
+            FunctionsError::Catalog { code, message, .. } => {
+                assert_eq!(code.as_str(), "NOT_NULL_VIOLATION");
+                assert_eq!(message, "column 'id' cannot be NULL (row 1)");
+            },
+            other => panic!("expected catalog error, got {other}"),
+        }
+
+        let execution = super::map_core(crate::error::KalamDbError::ExecutionError(
+            "relation \"notes\" does not exist".into(),
+        ));
+        assert_eq!(execution.to_string(), "relation \"notes\" does not exist");
+    }
 }
 
 pub(super) fn resolve_routine_id(name: &str, default_ns: &NamespaceId) -> RoutineId {
@@ -634,7 +653,7 @@ fn map_core(error: crate::error::KalamDbError) -> FunctionsError {
                 detail,
             }
         },
-        other => FunctionsError::Invalid(other.to_string()),
+        other => FunctionsError::Invalid(other.user_message().into_owned()),
     }
 }
 
