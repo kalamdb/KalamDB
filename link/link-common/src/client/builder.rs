@@ -266,6 +266,7 @@ impl KalamLinkClientBuilder {
             event_handlers: self.event_handlers,
             shared_resolved_auth: Arc::new(RwLock::new(self.resolved_auth)),
             connection: Arc::new(tokio::sync::Mutex::new(None)),
+            resume_cache: Arc::new(crate::connection::SharedResumeCache::default()),
         })
     }
 }

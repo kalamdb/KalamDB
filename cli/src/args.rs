@@ -119,7 +119,8 @@ pub struct Cli {
     #[arg(long = "password", num_args = 0..=1, default_missing_value = "", global = true)]
     pub password: Option<String>,
 
-    /// Instance name for saved credentials or a named local server
+    /// Saved server name from `kalam instances`. Selects that server from any directory.
+    /// The default `local` means the current project, not a saved cloud login.
     #[arg(long = "instance", default_value = "local", global = true)]
     pub instance: String,
 

@@ -1,12 +1,12 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
   procedure,
-  type ChatDemoAiInbox,
-  chatDemoDirectMessages,
-  chatDemoMessages,
+  type AiInbox,
+  directMessages,
+  messages,
 } from "../generated/contracts";
 
-function taggedRow<T extends ChatDemoAiInbox>(
+function taggedRow<T extends AiInbox>(
   table: T["_table"],
   row: Omit<T, "_table"> | undefined,
 ): T {
@@ -31,7 +31,7 @@ export const sendMessage = procedure.chatDemo.sendMessage(async (ctx, input) => 
     if (targetId !== actor) {
       throw new Error("direct target_id must be the current user");
     }
-    await ctx.orm.insert(chatDemoDirectMessages).values({
+    await ctx.orm.insert(directMessages).values({
       id: sql`DEFAULT`,
       role: "user",
       author: actor,
@@ -41,16 +41,16 @@ export const sendMessage = procedure.chatDemo.sendMessage(async (ctx, input) => 
     });
     const [row] = await ctx.orm
       .select()
-      .from(chatDemoDirectMessages)
+      .from(directMessages)
       .where(
-        and(eq(chatDemoDirectMessages.sender_username, actor), eq(chatDemoDirectMessages.content, content)),
+        and(eq(directMessages.sender_username, actor), eq(directMessages.content, content)),
       )
-      .orderBy(desc(chatDemoDirectMessages.id))
+      .orderBy(desc(directMessages.id))
       .limit(1);
     return taggedRow("chat_demo:direct_messages", row);
   }
 
-  await ctx.orm.insert(chatDemoMessages).values({
+  await ctx.orm.insert(messages).values({
     id: sql`DEFAULT`,
     room: targetId,
     role: "user",
@@ -61,15 +61,15 @@ export const sendMessage = procedure.chatDemo.sendMessage(async (ctx, input) => 
   });
   const [row] = await ctx.orm
     .select()
-    .from(chatDemoMessages)
+    .from(messages)
     .where(
       and(
-        eq(chatDemoMessages.room, targetId),
-        eq(chatDemoMessages.sender_username, actor),
-        eq(chatDemoMessages.content, content),
+        eq(messages.room, targetId),
+        eq(messages.sender_username, actor),
+        eq(messages.content, content),
       ),
     )
-    .orderBy(desc(chatDemoMessages.id))
+    .orderBy(desc(messages.id))
     .limit(1);
   return taggedRow("chat_demo:messages", row);
 });

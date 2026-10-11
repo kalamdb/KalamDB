@@ -135,6 +135,10 @@ impl MetaStateMachine {
 
     fn publish_last_applied(&self, index: u64) {
         self.last_applied_tx.send_replace(index);
+        // Restart restores this index without re-applying the log. Data groups
+        // read the coordinator, not this atomic, so a restored watermark has to
+        // be published or later shared writes buffer forever and return no rows.
+        super::get_coordinator().advance(index);
     }
 
     /// Apply a meta command
@@ -632,6 +636,7 @@ impl KalamStateMachine for MetaStateMachine {
                 index,
                 last_applied
             );
+            super::get_coordinator().advance(last_applied);
             return Ok(ApplyResult::NoOp);
         }
 

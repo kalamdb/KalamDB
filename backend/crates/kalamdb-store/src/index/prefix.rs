@@ -235,11 +235,21 @@ impl PrefixIndexedKey for kalamdb_commons::ids::UserTableRowId {
     }
 
     fn prefix_index_seq(&self) -> i64 {
-        self.seq.as_i64()
+        self.version().as_i64()
     }
 }
 
 impl PrefixIndexedKey for kalamdb_commons::ids::SeqId {
+    fn prefix_index_user_id(&self) -> Option<&UserId> {
+        None
+    }
+
+    fn prefix_index_seq(&self) -> i64 {
+        self.as_i64()
+    }
+}
+
+impl PrefixIndexedKey for kalamdb_commons::ids::VersionId {
     fn prefix_index_user_id(&self) -> Option<&UserId> {
         None
     }
@@ -326,8 +336,14 @@ mod tests {
             true,
         );
         let row = conversation_row("42");
-        let alice = UserTableRowId::new(UserId::new("alice"), SeqId::new(10));
-        let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(10));
+        let alice = UserTableRowId::new(
+            UserId::new("alice"),
+            kalamdb_commons::ids::VersionId::try_from_i64(10).unwrap(),
+        );
+        let bob = UserTableRowId::new(
+            UserId::new("bob"),
+            kalamdb_commons::ids::VersionId::try_from_i64(10).unwrap(),
+        );
         let alice_key = index.extract_key(&alice, &row).unwrap();
         let bob_key = index.extract_key(&bob, &row).unwrap();
         assert!(alice_key.starts_with(&index.encode_user_prefix(&UserId::new("alice"))));

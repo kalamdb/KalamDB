@@ -113,7 +113,7 @@ impl TableFlush for SharedTableFlushJob {
         let pk_field = helpers::extract_pk_field_name(&self.schema);
         log::debug!("📊 [FLUSH DEDUP] Using primary key field: {}", pk_field);
 
-        // Map: pk_value -> (key_bytes, row, _seq)
+        // Map: pk_value -> (key_bytes, row, _version)
         let mut latest_versions: helpers::LatestVersions<SharedTableRow> = HashMap::new();
         // Track ALL keys to delete (including old versions)
         let mut all_keys_to_delete: Vec<Vec<u8>> = Vec::new();

@@ -184,7 +184,7 @@ impl TableFlush for UserTableFlushJob {
             log::trace!(
                 "[FLUSH] Processing batch of {} rows (cursor={:?})",
                 batch.len(),
-                cursor.as_ref().map(|c| c.seq().as_i64())
+                cursor.as_ref().map(|c| c.version().as_i64())
             );
 
             // Update cursor for next batch

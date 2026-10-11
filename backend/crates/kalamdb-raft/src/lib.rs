@@ -54,8 +54,8 @@ pub use applier::{NoOpSharedDataApplier, NoOpUserDataApplier, SharedDataApplier,
 // Re-exports - Core types
 pub use cluster_types::{NodeRole, NodeStatus, ServerStateExt};
 pub use commands::{
-    commit_seq_from_log_position, DataResponse, MetaCommand, MetaResponse, RaftCommand,
-    RaftResponse, SharedDataCommand, TransactionApplyResult, UserDataCommand,
+    assign_entry_versions, DataResponse, MetaCommand, MetaResponse, RaftCommand, RaftResponse,
+    SharedDataCommand, TransactionApplyResult, UserDataCommand,
 };
 pub use error::{RaftError, Result};
 pub use executor::{ClusterInfo, ClusterNodeInfo, CommandExecutor, RaftExecutor};

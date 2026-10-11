@@ -7,8 +7,8 @@
 //! - **SharedTableStore**: Global table storage accessible to all users
 //! - **StreamTableStore**: Time-windowed streaming table storage with TTL
 //!
-//! **Note**: DataFusion TableProvider implementations are in `kalamdb-core/providers/`,
-//! not in this crate. This crate provides only the storage layer.
+//! DataFusion providers live next to their stores. User and shared tables share
+//! MVCC helpers in `versioned`. Stream tables keep a separate append-log provider.
 //!
 //! ## Architecture
 //!
@@ -51,6 +51,7 @@ pub mod stream_tables;
 pub mod topics;
 pub mod user_tables;
 pub mod utils;
+pub(crate) mod versioned;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};

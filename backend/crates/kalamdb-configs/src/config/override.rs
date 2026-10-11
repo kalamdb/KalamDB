@@ -359,7 +359,7 @@ impl ServerConfig {
             api_addr: api_addr.clone().unwrap_or_else(|| "127.0.0.1:2900".to_string()),
             peers: Vec::new(),
             user_shards: 12,
-            shared_shards: 1,
+            shared_shards: 4,
             heartbeat_interval_ms: 250,
             election_timeout_ms: (500, 1000),
             snapshot_policy: "LogsSinceLast(1000)".to_string(),

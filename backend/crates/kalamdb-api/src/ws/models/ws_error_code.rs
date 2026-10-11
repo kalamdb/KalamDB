@@ -34,6 +34,8 @@ pub enum WsErrorCode {
     UnsupportedData,
     /// Generic protocol error
     Protocol,
+    /// Resume cursor skipped changes. Client must subscribe again without it.
+    CursorExpired,
 }
 
 impl WsErrorCode {
@@ -54,6 +56,7 @@ impl WsErrorCode {
             WsErrorCode::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
             WsErrorCode::UnsupportedData => "UNSUPPORTED_DATA",
             WsErrorCode::Protocol => "PROTOCOL",
+            WsErrorCode::CursorExpired => "CURSOR_EXPIRED",
         }
     }
 }

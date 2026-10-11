@@ -1,11 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   procedure,
-  type ChatDemoAiInbox,
-  type ChatDemoOnUserMessageRequest,
-  chatDemoAgentEvents,
-  chatDemoDirectMessages,
-  chatDemoMessages,
+  type AiInbox,
+  type OnUserMessageRequest,
+  agentEvents,
+  directMessages,
+  messages,
 } from "../generated/contracts";
 
 const THINKING_DELAY_MS = 200;
@@ -13,18 +13,18 @@ const STREAM_DELAY_MS = 80;
 const STREAM_CHUNK_SIZE = 64;
 
 function isDirectPayload(
-  payload: ChatDemoAiInbox,
-): payload is Extract<ChatDemoAiInbox, { _table: "chat_demo:direct_messages" }> {
+  payload: AiInbox,
+): payload is Extract<AiInbox, { _table: "chat_demo:direct_messages" }> {
   return payload._table === "chat_demo:direct_messages";
 }
 
-function inboxPayload(input: ChatDemoOnUserMessageRequest): ChatDemoAiInbox {
+function inboxPayload(input: OnUserMessageRequest): AiInbox {
   const raw: unknown = input.payload;
   if (typeof raw === "string") {
-    return JSON.parse(raw) as ChatDemoAiInbox;
+    return JSON.parse(raw) as AiInbox;
   }
   if (raw && typeof raw === "object") {
-    return raw as ChatDemoAiInbox;
+    return raw as AiInbox;
   }
   throw new Error("on_user_message expected input.payload");
 }
@@ -64,23 +64,23 @@ export const onUserMessage = procedure.chatDemo.onUserMessage(async (ctx, input)
   const asSender = ctx.orm.as(sender);
   const already = direct
     ? await asSender
-        .select({ id: chatDemoDirectMessages.id })
-        .from(chatDemoDirectMessages)
+        .select({ id: directMessages.id })
+        .from(directMessages)
         .where(
-          and(eq(chatDemoDirectMessages.reply_to, messageId), eq(chatDemoDirectMessages.role, "assistant")),
+          and(eq(directMessages.reply_to, messageId), eq(directMessages.role, "assistant")),
         )
         .limit(1)
     : await ctx.orm
-        .select({ id: chatDemoMessages.id })
-        .from(chatDemoMessages)
-        .where(and(eq(chatDemoMessages.reply_to, messageId), eq(chatDemoMessages.role, "assistant")))
+        .select({ id: messages.id })
+        .from(messages)
+        .where(and(eq(messages.reply_to, messageId), eq(messages.role, "assistant")))
         .limit(1);
   if (already.length > 0) {
     return;
   }
 
   const emit = async (stage: string, preview: string, message: string): Promise<void> => {
-    await asSender.insert(chatDemoAgentEvents).values({
+    await asSender.insert(agentEvents).values({
       id: sql`DEFAULT`,
       response_id: responseId,
       room: destination,
@@ -106,7 +106,7 @@ export const onUserMessage = procedure.chatDemo.onUserMessage(async (ctx, input)
   }
 
   if (direct) {
-    await asSender.insert(chatDemoDirectMessages).values({
+    await asSender.insert(directMessages).values({
       id: sql`DEFAULT`,
       role: "assistant",
       author: "KalamDB Copilot",
@@ -116,7 +116,7 @@ export const onUserMessage = procedure.chatDemo.onUserMessage(async (ctx, input)
       created_at: sql`DEFAULT`,
     });
   } else {
-    await ctx.orm.insert(chatDemoMessages).values({
+    await ctx.orm.insert(messages).values({
       id: sql`DEFAULT`,
       room: destination,
       role: "assistant",

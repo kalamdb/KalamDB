@@ -1,10 +1,11 @@
 use kalam_cli::{workflow::functions, Result};
 
-use super::context::workflow_context;
+use super::context::{ensure_project_command_matches_instance, workflow_context};
 use crate::args::{Cli, FunctionsArgs, FunctionsCommand};
 
 pub(super) async fn handle_functions(cli: &Cli, args: &FunctionsArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), None)?;
+    ensure_project_command_matches_instance(cli, &ctx)?;
     match &args.command {
         FunctionsCommand::Build => functions::build_functions(&ctx).await,
         FunctionsCommand::Status => functions::show_function_status(&ctx).await,

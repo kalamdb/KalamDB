@@ -6,7 +6,7 @@ KalamDB is an open-source, **SQL-first backend** that combines database tables, 
 
 Define your backend once in SQL. KalamDB uses that schema for storage, permissions, realtime events, procedure contracts, backend-managed schema migrations, and generated application types.
 
-![CI](https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag) ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/jamals86/kalamdb)
+![CI](https://github.com/kalamdb/KalamDB/actions/workflows/ci.yml/badge.svg) ![Release](https://img.shields.io/github/v/release/kalamdb/KalamDB?display_name=tag) ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/kalamdb/kalamdb)
 
 [Get started](#get-started) · [Schema first](#one-schema-for-your-whole-backend) · [Realtime + pubsub](#one-write-connects-your-app-workers-and-agents) · [PostgreSQL](#connect-with-postgresql-tools) · [How it scales](#grow-your-app-and-your-data) · [Documentation](https://kalamdb.org/docs)
 

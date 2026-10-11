@@ -1,28 +1,32 @@
 //! Data operation responses
 //!
 //! Shared response type for both user and shared data operations.
+use kalamdb_commons::ids::{check_entry_slot_count, RaftVersionId, VersionError, VersionId};
 use serde::{Deserialize, Serialize};
 
-use crate::GroupId;
-
-const COMMIT_SEQ_GROUP_BITS: u32 = 16;
-const COMMIT_SEQ_GROUP_MASK: u64 = (1u64 << COMMIT_SEQ_GROUP_BITS) - 1;
-
-/// Build a deterministic commit marker from a committed Raft position.
+/// Assign one [`VersionId`] per final row slot in a committed Raft entry.
 ///
-/// This is stable across replicas for the same group/log entry. It preserves
-/// ordering within a Raft group without letting followers allocate their own
-/// local `_commit_seq` values.
-pub fn commit_seq_from_log_position(group_id: GroupId, log_index: u64) -> u64 {
-    log_index
-        .saturating_mul(1u64 << COMMIT_SEQ_GROUP_BITS)
-        .saturating_add(group_id.as_u64() & COMMIT_SEQ_GROUP_MASK)
+/// Ordinals are `0..slot_count` (not `mutation_order as u16`). Entries that need
+/// more than 65 536 final versions are rejected.
+pub fn assign_entry_versions(
+    entry_log_index: u64,
+    slot_count: usize,
+) -> Result<Vec<VersionId>, VersionError> {
+    let slots = slot_count as u64;
+    check_entry_slot_count(slots)?;
+    let mut versions = Vec::with_capacity(slot_count);
+    for ordinal in 0..slot_count {
+        let version = RaftVersionId::try_new(entry_log_index, ordinal as u32)?.version();
+        versions.push(version);
+    }
+    Ok(versions)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TransactionApplyResult {
     pub rows_affected:      usize,
-    pub commit_seq:         u64,
+    /// Raft log index of the committed entry (group frontier, not a packed seq).
+    pub log_index:          u64,
     pub notifications_sent: usize,
     pub manifest_updates:   usize,
     pub publisher_events:   usize,
@@ -55,6 +59,14 @@ impl DataResponse {
         }
     }
 
+    /// Store a Raft error. Coded errors keep their code and arguments.
+    pub fn from_raft_error(error: crate::error::RaftError) -> Self {
+        match error {
+            crate::error::RaftError::Coded(error) => Self::error(error.encode()),
+            other => Self::error(other.to_string()),
+        }
+    }
+
     /// Returns true if this is not an error response
     pub fn is_ok(&self) -> bool {
         !matches!(self, Self::Error { .. })
@@ -69,11 +81,16 @@ impl DataResponse {
         }
     }
 
-    pub fn committed_commit_seq(&self) -> Option<u64> {
+    pub fn committed_log_index(&self) -> Option<u64> {
         match self {
-            DataResponse::TransactionCommitted(result) => Some(result.commit_seq),
+            DataResponse::TransactionCommitted(result) => Some(result.log_index),
             _ => None,
         }
+    }
+
+    /// Backward-compatible alias for [`Self::committed_log_index`].
+    pub fn committed_commit_seq(&self) -> Option<u64> {
+        self.committed_log_index()
     }
 
     pub fn committed_side_effect_counts(&self) -> Option<(usize, usize, usize)> {
@@ -91,12 +108,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn assign_entry_versions_packs_log_index_and_ordinal() {
+        let versions = assign_entry_versions(5, 2).unwrap();
+        assert_eq!(versions[0], RaftVersionId::try_new(5, 0).unwrap().version());
+        assert_eq!(versions[1], RaftVersionId::try_new(5, 1).unwrap().version());
+        assert!(assign_entry_versions(1, 65_537).is_err());
+    }
+
+    #[test]
     fn test_data_response_is_ok() {
         assert!(DataResponse::Ok.is_ok());
         assert!(DataResponse::RowsAffected(5).is_ok());
         assert!(DataResponse::TransactionCommitted(TransactionApplyResult {
             rows_affected:      2,
-            commit_seq:         9,
+            log_index:          9,
             notifications_sent: 1,
             manifest_updates:   1,
             publisher_events:   1,
@@ -119,7 +144,7 @@ mod tests {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
                 rows_affected:      4,
-                commit_seq:         11,
+                log_index:          11,
                 notifications_sent: 2,
                 manifest_updates:   2,
                 publisher_events:   2,
@@ -137,19 +162,19 @@ mod tests {
     }
 
     #[test]
-    fn test_data_response_committed_commit_seq() {
+    fn test_data_response_committed_log_index() {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
                 rows_affected:      3,
-                commit_seq:         42,
+                log_index:          42,
                 notifications_sent: 1,
                 manifest_updates:   1,
                 publisher_events:   1,
             })
-            .committed_commit_seq(),
+            .committed_log_index(),
             Some(42)
         );
-        assert_eq!(DataResponse::RowsAffected(2).committed_commit_seq(), None);
+        assert_eq!(DataResponse::RowsAffected(2).committed_log_index(), None);
     }
 
     #[test]
@@ -157,7 +182,7 @@ mod tests {
         assert_eq!(
             DataResponse::TransactionCommitted(TransactionApplyResult {
                 rows_affected:      3,
-                commit_seq:         42,
+                log_index:          42,
                 notifications_sent: 5,
                 manifest_updates:   3,
                 publisher_events:   2,

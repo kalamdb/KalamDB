@@ -719,7 +719,7 @@ retention_batch_size = 10000
 # 
 # # Number of shared data shards (default: 1)
 # # Each shard is a separate Raft group for shared table data
-# shared_shards = 1
+# shared_shards = 4
 # 
 # # Raft heartbeat interval in milliseconds (default: 50)
 # heartbeat_interval_ms = 50
@@ -775,7 +775,7 @@ retention_batch_size = 10000
 # rpc_addr = "node1.example.com:2910"
 # api_addr = "http://node1.example.com:2900"
 # user_shards = 32
-# shared_shards = 1
+# shared_shards = 4
 # snapshot_policy = "LogsSinceLast(1000)"
 # max_snapshots_to_keep = 3
 # replication_timeout_ms = 5000

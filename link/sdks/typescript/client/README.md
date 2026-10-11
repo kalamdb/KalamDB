@@ -147,12 +147,12 @@ await stop();
 await client.disconnect();
 ```
 
-## Resume From a Specific `SeqId`
+## Resume From a Specific `VersionId`
 
-When you want offline resume or a durable checkpoint, persist the last `SeqId` you applied and feed it back into `from`.
+When you want offline resume or a durable checkpoint, persist the last `VersionId` you applied and feed it back into `from`.
 
 ```ts
-import { Auth, SeqId, createClient } from '@kalamdb/client';
+import { Auth, VersionId, createClient } from '@kalamdb/client';
 
 const client = createClient({
   url: 'http://localhost:2900',
@@ -172,7 +172,7 @@ const inboxSql = `
 
 // Start from a specific known sequence ID.
 // Replace '42' with a previously persisted checkpoint string when resuming.
-const startFrom = SeqId.from('42');
+const startFrom = VersionId.from('42');
 let latestCheckpoint;
 
 const stop = await client.live(
@@ -185,10 +185,10 @@ const stop = await client.live(
     limit: 200,
     lastRows: 200,
     ...(startFrom ? { from: startFrom } : {}),
-    onCheckpoint: ({ lastSeqId }) => {
+    onCheckpoint: ({ lastVersionId }) => {
       // Persist the last fully applied server sequence so the next session can
       // continue from that exact point.
-      latestCheckpoint = lastSeqId.toString();
+      latestCheckpoint = lastVersionId.toString();
     },
   },
 );
@@ -288,13 +288,13 @@ The SDK handles:
 - Basic-auth-to-JWT exchange
 - default namespace forwarding for `/v1/api/sql` plus unqualified live/file contexts
 - lazy or eager WebSocket connection
-- reconnect controls and `SeqId` tracking
+- reconnect controls and `VersionId` tracking
 
 ## Tested Examples
 
 The npm README examples are backed by SDK tests:
 
-- `tests/readme-examples.test.mjs` covers `live()`, resume-from-`SeqId`, `executeAsUser()`, and `queryWithFiles()`.
+- `tests/readme-examples.test.mjs` covers `live()`, resume-from-`VersionId`, `executeAsUser()`, and `queryWithFiles()`.
 - `tests/single-socket-subscriptions.test.mjs` covers shared-socket subscriptions and materialized live rows.
 
 ## API Pointers
@@ -303,7 +303,7 @@ The npm README examples are backed by SDK tests:
 - `insert()`, `update()`, `delete()` for convenience DML
 - `live()` and `liveTable()` for materialized realtime rows
 - `liveEvents()` for low-level subscription frames
-- `getSubscriptions()` for active subscriptions and typed `lastSeqId` checkpoints
+- `getSubscriptions()` for active subscriptions and typed `lastVersionId` checkpoints
 
 Full docs: [kalamdb.org/docs/sdk/typescript](https://kalamdb.org/docs/sdk/typescript)
 - Issues: [github.com/kalamdb/KalamDB/issues](https://github.com/kalamdb/KalamDB/issues)

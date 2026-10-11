@@ -177,7 +177,7 @@ List<int> changeEventSeqValues(Iterable<ChangeEvent> events) {
         const <Map<String, KalamCellValue>>[],
     };
     for (final row in rows) {
-      final seq = row['_seq']?.asInt();
+      final seq = row['_version']?.asInt();
       if (seq != null) {
         seqs.add(seq);
       }
@@ -289,7 +289,7 @@ void expectNoDuplicateSeqs(
 /// Assert that every observed `_seq` value is strictly greater than [checkpoint].
 void expectSeqsStrictlyAfterCheckpoint(
   Iterable<ChangeEvent> events,
-  SeqId checkpoint, {
+  VersionId checkpoint, {
   required String reason,
 }) {
   final offending = changeEventSeqValues(events)

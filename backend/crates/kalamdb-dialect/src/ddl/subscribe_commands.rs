@@ -50,7 +50,9 @@
 //! }
 //! ```
 
-use kalamdb_commons::{websocket::SubscriptionOptions, NamespaceId, TableName};
+use kalamdb_commons::{
+    ids::VersionDomain, websocket::SubscriptionOptions, NamespaceId, TableId, TableName,
+};
 use sqlparser::{
     ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor},
     dialect::{GenericDialect, PostgreSqlDialect},
@@ -110,7 +112,8 @@ impl SubscribeStatement {
         };
 
         // Extract OPTIONS clause first
-        let (sql_without_options, options) = Self::extract_options_clause(subscribe_body)?;
+        let (sql_without_options, mut options, domain_parts) =
+            Self::extract_options_clause(subscribe_body)?;
 
         // Check if user provided custom SELECT query
         let select_sql = if Self::starts_with_keyword(&sql_without_options, "SELECT") {
@@ -166,6 +169,11 @@ impl SubscribeStatement {
 
         let (namespace, table_name) =
             Self::extract_namespace_table(name, &NamespaceId::default_ns())?;
+        if !domain_parts.is_empty() {
+            options.version_domain = Some(
+                domain_parts.into_domain(TableId::new(namespace.clone(), table_name.clone()))?,
+            );
+        }
 
         Ok(SubscribeStatement {
             select_query: select_sql,
@@ -178,7 +186,9 @@ impl SubscribeStatement {
     /// Extract OPTIONS clause from SUBSCRIBE TO SQL, return modified SQL and parsed options.
     ///
     /// Uses sqlparser tokenizer to find OPTIONS keyword, avoiding false matches in strings.
-    fn extract_options_clause(sql: &str) -> DdlResult<(String, SubscriptionOptions)> {
+    fn extract_options_clause(
+        sql: &str,
+    ) -> DdlResult<(String, SubscriptionOptions, ResumeDomainParts)> {
         use sqlparser::tokenizer::{Token, Tokenizer};
 
         let dialect = GenericDialect {};
@@ -207,7 +217,11 @@ impl SubscribeStatement {
         }
 
         if !has_options_clause {
-            return Ok((sql.to_string(), SubscriptionOptions::default()));
+            return Ok((
+                sql.to_string(),
+                SubscriptionOptions::default(),
+                ResumeDomainParts::default(),
+            ));
         }
 
         // Find actual OPTIONS keyword position in SQL (case-insensitive)
@@ -223,9 +237,9 @@ impl SubscribeStatement {
         let after_options = sql[after_options_start..].trim();
 
         // Parse OPTIONS (don't modify SQL here, will be processed later)
-        let options = parse_subscribe_options(after_options)?;
+        let (options, domain_parts) = parse_subscribe_options(after_options)?;
 
-        Ok((before_options.to_string(), options))
+        Ok((before_options.to_string(), options, domain_parts))
     }
 
     fn strip_subscribe_to_prefix(sql: &str) -> Option<&str> {
@@ -313,8 +327,50 @@ impl SubscribeStatement {
 /// - `from=N` - Resume subscription from a specific sequence ID
 ///
 /// Unknown options are rejected with an error to catch typos early.
-fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> {
-    use kalamdb_commons::ids::SeqId;
+#[derive(Default)]
+struct ResumeDomainParts {
+    history_incarnation: Option<String>,
+    scope_id:            Option<u64>,
+    partition_id:        Option<u64>,
+}
+
+impl ResumeDomainParts {
+    fn is_empty(&self) -> bool {
+        self.history_incarnation.is_none() && self.scope_id.is_none() && self.partition_id.is_none()
+    }
+
+    fn into_domain(self, table_id: TableId) -> DdlResult<VersionDomain> {
+        let history_incarnation = self.history_incarnation.ok_or_else(|| {
+            "history_incarnation is required when resuming a shared version domain".to_string()
+        })?;
+        let scope_id = self.scope_id.ok_or_else(|| {
+            "scope_id is required when resuming a shared version domain".to_string()
+        })?;
+        Ok(VersionDomain {
+            history_incarnation,
+            table_id,
+            scope_id,
+            partition_id: self.partition_id,
+        })
+    }
+}
+
+fn unquote_option(value: &str) -> String {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+    {
+        return value[1..value.len() - 1].to_string();
+    }
+    value.to_string()
+}
+
+fn parse_subscribe_options(
+    options_str: &str,
+) -> DdlResult<(SubscriptionOptions, ResumeDomainParts)> {
+    use kalamdb_commons::ids::VersionId;
 
     let options_str = options_str.trim();
 
@@ -330,6 +386,7 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
     let mut batch_size = None;
     let mut last_rows = None;
     let mut from = None;
+    let mut domain_parts = ResumeDomainParts::default();
 
     for part in inner.split(',') {
         let part = part.trim();
@@ -359,13 +416,29 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
                     let seq_val = value
                         .parse::<i64>()
                         .map_err(|_| format!("Invalid from value: {}", value))?;
-                    from = Some(SeqId::new(seq_val));
+                    from = VersionId::try_from_i64(seq_val).ok();
+                },
+                "history_incarnation" => {
+                    domain_parts.history_incarnation = Some(unquote_option(value));
+                },
+                "scope_id" => {
+                    domain_parts.scope_id = Some(
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| format!("Invalid scope_id value: {value}"))?,
+                    );
+                },
+                "partition_id" => {
+                    domain_parts.partition_id = Some(
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| format!("Invalid partition_id value: {value}"))?,
+                    );
                 },
                 _ => {
                     return Err(format!(
-                        "Unknown subscription option: '{}'. Valid options are: last_rows, \
-                         batch_size, from",
-                        key
+                        "Unknown subscription option: '{key}'. Valid options are: last_rows, \
+                         batch_size, from, history_incarnation, scope_id, partition_id"
                     ));
                 },
             }
@@ -374,12 +447,16 @@ fn parse_subscribe_options(options_str: &str) -> DdlResult<SubscriptionOptions> 
         }
     }
 
-    Ok(SubscriptionOptions {
-        batch_size,
-        last_rows,
-        from,
-        auto_fetch_batches: None,
-    })
+    Ok((
+        SubscriptionOptions {
+            version_domain: None,
+            batch_size,
+            last_rows,
+            from,
+            auto_fetch_batches: None,
+        },
+        domain_parts,
+    ))
 }
 
 #[cfg(test)]
@@ -606,30 +683,48 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_with_from() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=12345)").unwrap();
         assert_eq!(stmt.namespace, NamespaceId::from("app"));
         assert_eq!(stmt.table_name, TableName::from("messages"));
-        assert_eq!(stmt.options.from, Some(SeqId::new(12345)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
         assert!(stmt.options.batch_size.is_none());
         assert!(stmt.options.last_rows.is_none());
     }
 
     #[test]
     fn test_parse_subscribe_with_from_seq_id_alias() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from_seq_id=12345)")
                 .unwrap();
-        assert_eq!(stmt.options.from, Some(SeqId::new(12345)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
+    }
+
+    #[test]
+    fn test_parse_subscribe_shared_resume_domain() {
+        use kalamdb_commons::ids::VersionId;
+
+        let stmt = SubscribeStatement::parse(
+            "SUBSCRIBE TO app.messages OPTIONS (from=12345, history_incarnation='history-a', \
+             scope_id=3)",
+        )
+        .unwrap();
+        let domain = stmt.options.version_domain.expect("resume domain");
+        assert_eq!(domain.history_incarnation, "history-a");
+        assert_eq!(domain.scope_id, 3);
+        assert!(domain.partition_id.is_none());
+        assert_eq!(domain.table_id.namespace_id().as_str(), "app");
+        assert_eq!(domain.table_id.table_name().as_str(), "messages");
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(12345).unwrap()));
     }
 
     #[test]
     fn test_parse_subscribe_with_multiple_options() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         let stmt = SubscribeStatement::parse(
             "SUBSCRIBE TO app.messages OPTIONS (last_rows=50, batch_size=50, from=999)",
@@ -639,7 +734,7 @@ mod tests {
         assert_eq!(stmt.table_name, TableName::from("messages"));
         assert_eq!(stmt.options.last_rows, Some(50));
         assert_eq!(stmt.options.batch_size, Some(50));
-        assert_eq!(stmt.options.from, Some(SeqId::new(999)));
+        assert_eq!(stmt.options.from, Some(VersionId::try_from_i64(999).unwrap()));
     }
 
     #[test]
@@ -685,12 +780,12 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_negative_from() {
-        use kalamdb_commons::ids::SeqId;
+        use kalamdb_commons::ids::VersionId;
 
         // Negative seq_id should be valid (might be used for special cases)
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=-1)").unwrap();
-        assert_eq!(stmt.options.from, Some(SeqId::new(-1)));
+        assert_eq!(stmt.options.from, None /* negative versions rejected */);
     }
 
     #[test]

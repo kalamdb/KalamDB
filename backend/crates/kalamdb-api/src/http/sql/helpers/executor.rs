@@ -9,7 +9,10 @@ use kalamdb_core::sql::{
     ExecutionResult,
 };
 
-use super::{super::models::QueryResult, converter::record_batch_to_query_result};
+use super::{
+    super::models::QueryResult,
+    converter::{record_batch_to_query_result, scalar_rows_to_query_result},
+};
 
 pub async fn execute_single_statement_raw(
     metadata: &PreparedExecutionStatement,
@@ -32,15 +35,14 @@ pub fn execution_result_to_query_result(
     exec_result: ExecutionResult,
     user_role: Option<Role>,
 ) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    // Batch / non-streaming responses can rebuild Arrow. The bake-off HTTP
-    // path (`execution_paths.rs`) must handle ScalarRows before this helper.
-    let exec_result = exec_result.into_arrow_rows()?;
     match exec_result {
         ExecutionResult::Success { message } => Ok(QueryResult::with_message(message)),
         ExecutionResult::Rows {
             batches, schema, ..
         } => record_batch_to_query_result(batches, schema, user_role),
-        ExecutionResult::ScalarRows { .. } => unreachable!("converted by into_arrow_rows"),
+        ExecutionResult::ScalarRows { rows, schema, .. } => {
+            scalar_rows_to_query_result(rows, schema, user_role)
+        },
         ExecutionResult::Inserted { rows_affected } => Ok(QueryResult::with_affected_rows(
             rows_affected,
             Some(format!("Inserted {} row(s)", rows_affected)),
@@ -74,24 +76,4 @@ pub fn execution_result_to_query_result(
             Ok(QueryResult::with_message(format!("Job {} killed: {}", job_id, status)))
         },
     }
-}
-
-/// Execute a single SQL statement
-pub async fn execute_single_statement(
-    metadata: &PreparedExecutionStatement,
-    _app_context: &Arc<kalamdb_core::app_context::AppContext>,
-    sql_executor: &Arc<SqlExecutor>,
-    exec_ctx: &ExecutionContext,
-    execute_as_user: Option<UserId>,
-    params: Vec<ScalarValue>,
-) -> Result<QueryResult, Box<dyn std::error::Error>> {
-    let user_role = if execute_as_user.is_some() {
-        Some(Role::User)
-    } else {
-        Some(exec_ctx.user_role())
-    };
-    let exec_result =
-        execute_single_statement_raw(metadata, sql_executor, exec_ctx, execute_as_user, params)
-            .await?;
-    execution_result_to_query_result(exec_result, user_role)
 }

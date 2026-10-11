@@ -6,10 +6,11 @@ use kalamdb_commons::TypeId;
 
 /// Thin wrapper around the shared Arrow/DataFusion value model.
 ///
-/// JSON/JSONB values set [`RoutineValue::json_sql`] so the V8 ABI may use
-/// `JSON.parse` / `JSON.stringify`. Other types convert field-by-field.
-/// Nested/HTTP hops may attach a FlatBuffer [`RoutineValue::transfer`] so the
-/// isolate decodes once instead of walking the Arrow field graph.
+/// JSON/JSONB values set [`RoutineValue::json_sql`] so the V8 boundary
+/// `JSON.parse`s the stored UTF-8. Every other value is converted field by
+/// field in [`crate::convert`]. [`RoutineValue::transfer`] is an optional
+/// flexbuffer of the same value for callers that already hold one; the V8
+/// boundary does not decode it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoutineValue {
     pub type_id:       Option<TypeId>,

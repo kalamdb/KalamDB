@@ -4,7 +4,7 @@ This document explains why KalamDB can show non-zero CPU and memory while idle i
 
 ## Summary
 
-Observed on February 13, 2026 using `jamals86/kalamdb:latest` with no user queries:
+Observed on February 13, 2026 using `kalamdb/kalamdb:latest` with no user queries:
 
 - Idle CPU: typically `~0.5%` to `~1.6%` (short spikes higher)
 - Idle memory: typically `~20 MiB` to `~28 MiB` in default Docker single-node setup

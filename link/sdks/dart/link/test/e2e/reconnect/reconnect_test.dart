@@ -296,10 +296,10 @@ void main() {
     );
 
     // ─────────────────────────────────────────────────────────────────
-    // 5b. Explicit checkpoint resume: reconnect + re-subscribe from lastSeqId
+    // 5b. Explicit checkpoint resume: reconnect + re-subscribe from lastVersionId
     // ─────────────────────────────────────────────────────────────────
     test(
-      'reconnect then resubscribe from lastSeqId continues without replay',
+      'reconnect then resubscribe from lastVersionId continues without replay',
       () async {
         final seed = DateTime.now().millisecondsSinceEpoch % 1000000;
         final preIds = [(seed * 10) + 1, (seed * 10) + 2];
@@ -334,13 +334,13 @@ void main() {
                 .every((id) => changeEventsContainRowId(eventsBefore, id)),
           );
 
-          SeqId? checkpoint;
+          VersionId? checkpoint;
           final started = DateTime.now();
           while (checkpoint == null) {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              if (s.id == checkpointSubId && s.lastSeqId != null) {
-                checkpoint = s.lastSeqId;
+              if (s.id == checkpointSubId && s.lastVersionId != null) {
+                checkpoint = s.lastVersionId;
                 break;
               }
             }

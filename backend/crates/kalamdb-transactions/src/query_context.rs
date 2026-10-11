@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use kalamdb_commons::{
     models::{rows::Row, OperationKind, TableId, TransactionId, UserId},
@@ -7,6 +10,7 @@ use kalamdb_commons::{
 
 use crate::{
     access::{TransactionAccessError, TransactionAccessValidator},
+    commit_sequence::SNAPSHOT_UNSET,
     overlay::TransactionOverlay,
     staged_mutation::StagedMutation,
 };
@@ -75,28 +79,47 @@ pub trait TransactionMutationSink: std::fmt::Debug + Send + Sync {
 /// Query-time transaction context shared between the coordinator and providers.
 #[derive(Debug, Clone)]
 pub struct TransactionQueryContext {
-    pub transaction_id:      TransactionId,
-    pub snapshot_commit_seq: u64,
-    pub overlay_view:        Arc<dyn TransactionOverlayView>,
-    pub mutation_sink:       Arc<dyn TransactionMutationSink>,
-    pub access_validator:    Arc<dyn TransactionAccessValidator>,
+    pub transaction_id:     TransactionId,
+    /// Live pin cell shared with [`crate::TransactionHandle`].
+    snapshot_log_index:     Arc<AtomicU64>,
+    pub overlay_view:       Arc<dyn TransactionOverlayView>,
+    pub mutation_sink:      Arc<dyn TransactionMutationSink>,
+    pub access_validator:   Arc<dyn TransactionAccessValidator>,
 }
 
 impl TransactionQueryContext {
     #[inline]
     pub fn new(
         transaction_id: TransactionId,
-        snapshot_commit_seq: u64,
+        snapshot_log_index: Arc<AtomicU64>,
         overlay_view: Arc<dyn TransactionOverlayView>,
         mutation_sink: Arc<dyn TransactionMutationSink>,
         access_validator: Arc<dyn TransactionAccessValidator>,
     ) -> Self {
         Self {
             transaction_id,
-            snapshot_commit_seq,
+            snapshot_log_index,
             overlay_view,
             mutation_sink,
             access_validator,
         }
+    }
+
+    /// Pinned group frontier log index, or `0` when still unset (empty view).
+    ///
+    /// Tables still read this as `snapshot_commit_seq` for MVCC bounds.
+    #[inline]
+    pub fn snapshot_commit_seq(&self) -> u64 {
+        let value = self.snapshot_log_index.load(Ordering::Acquire);
+        if value == SNAPSHOT_UNSET {
+            0
+        } else {
+            value
+        }
+    }
+
+    #[inline]
+    pub fn snapshot_log_index_cell(&self) -> &Arc<AtomicU64> {
+        &self.snapshot_log_index
     }
 }

@@ -37,7 +37,7 @@ function parseSystemColumnsArg(value: string | true | undefined): boolean | 'all
   if (value === true || value === 'true') return true;
   if (value === 'all') return 'all' as const;
   const columns = value.split(',').map((item) => item.trim()).filter((item) => item.length > 0);
-  const supported = new Set<KalamSystemColumnName>(['_seq', '_deleted', '_commit_seq']);
+  const supported = new Set<KalamSystemColumnName>(['_version', '_deleted', '_timestamp']);
   for (const column of columns) {
     if (!supported.has(column as KalamSystemColumnName)) {
       throw new Error(`Unsupported system column: ${column}`);
@@ -72,7 +72,7 @@ if (!password) {
   console.error('  --password <pass>    Password (required)');
   console.error('  --out <file>         Output file (default: schema.ts)');
   console.error('  --include-system     Include system/dba tables');
-  console.error('  --include-system-columns [all|_seq,_deleted]');
+  console.error('  --include-system-columns [all|_version,_deleted]');
   console.error('                       Add KalamDB hidden columns to generated table types');
   console.error('  --namespace <name>   Limit output to one or more namespaces (repeatable or comma-separated)');
   console.error('  --bigint-mode <mode> Generate BIGINT as string (default), bigint, or number');

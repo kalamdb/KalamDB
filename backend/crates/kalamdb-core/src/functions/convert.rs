@@ -3,8 +3,12 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc};
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    conversions::arrow_json_conversion::{json_value_to_scalar, scalar_value_to_js_json},
-    json_value_to_scalar_for_column, CallArgument, KalamDataType,
+    conversions::arrow_json_conversion::{
+        coerce_scalar_to_field, json_value_to_scalar, scalar_value_to_js_json,
+    },
+    json_value_to_scalar_for_column,
+    models::rows::Row,
+    CallArgument, KalamDataType,
 };
 use kalamdb_functions::RoutineValue;
 use serde_json::Value as JsonValue;
@@ -132,7 +136,13 @@ fn parse_timestamp_micros(text: &str) -> Result<i64, KalamDbError> {
     Ok(naive.and_utc().timestamp_micros())
 }
 
+const MAX_PROCEDURE_QUERY_ROWS: usize = 10_000;
+const MAX_PROCEDURE_QUERY_BYTES: usize = 8 * 1024 * 1024;
+
 pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+    if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
+        return routine_value_from_scalar_rows(rows, &schema);
+    }
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     match result {
         ExecutionResult::Rows { batches, .. } => rows_to_routine(&batches),
@@ -151,6 +161,10 @@ pub fn execution_result_to_routine(result: ExecutionResult) -> Result<RoutineVal
 }
 
 pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue, KalamDbError> {
+    if let ExecutionResult::ScalarRows { rows, schema, .. } = result {
+        ensure_scalar_row_limit(&rows)?;
+        return Ok(wrap_query_list(structs_from_scalar_rows(rows, &schema)?));
+    }
     let result = result.into_arrow_rows().map_err(KalamDbError::InvalidOperation)?;
     let ExecutionResult::Rows { batches, .. } = result else {
         return Err(KalamDbError::InvalidOperation(
@@ -158,13 +172,11 @@ pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue,
         ));
     };
     let count: usize = batches.iter().map(|batch| batch.num_rows()).sum();
-    if count > 10_000
+    if count > MAX_PROCEDURE_QUERY_ROWS
         || batches.iter().map(|batch| batch.get_array_memory_size()).sum::<usize>()
-            > 8 * 1024 * 1024
+            > MAX_PROCEDURE_QUERY_BYTES
     {
-        return Err(KalamDbError::InvalidOperation(
-            "procedure query result limit exceeded; use LIMIT and pagination".into(),
-        ));
+        return Err(procedure_query_limit());
     }
     let mut rows = Vec::with_capacity(count);
     for batch in &batches {
@@ -172,13 +184,7 @@ pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue,
             rows.push(scalar_struct_from_row(batch, row)?);
         }
     }
-    let item_type = rows
-        .first()
-        .map(|row| row.data_type())
-        .unwrap_or(arrow::datatypes::DataType::Null);
-    Ok(RoutineValue::new(ScalarValue::List(ScalarValue::new_list(
-        &rows, &item_type, true,
-    ))))
+    Ok(wrap_query_list(rows))
 }
 
 fn rows_to_routine(batches: &[arrow::array::RecordBatch]) -> Result<RoutineValue, KalamDbError> {
@@ -212,6 +218,84 @@ fn rows_to_routine(batches: &[arrow::array::RecordBatch]) -> Result<RoutineValue
     ))))
 }
 
+fn ensure_scalar_row_limit(rows: &[Row]) -> Result<(), KalamDbError> {
+    let bytes = rows
+        .iter()
+        .map(|row| row.values.values().map(ScalarValue::size).sum::<usize>())
+        .sum::<usize>();
+    if rows.len() > MAX_PROCEDURE_QUERY_ROWS || bytes > MAX_PROCEDURE_QUERY_BYTES {
+        return Err(procedure_query_limit());
+    }
+    Ok(())
+}
+
+fn procedure_query_limit() -> KalamDbError {
+    KalamDbError::InvalidOperation(
+        "procedure query result limit exceeded; use LIMIT and pagination".into(),
+    )
+}
+
+fn structs_from_scalar_rows(
+    rows: Vec<Row>,
+    schema: &arrow::datatypes::SchemaRef,
+) -> Result<Vec<ScalarValue>, KalamDbError> {
+    let mut structs = Vec::with_capacity(rows.len());
+    for mut row in rows {
+        structs.push(struct_from_scalar_row(schema, &mut row)?);
+    }
+    Ok(structs)
+}
+
+fn struct_from_scalar_row(
+    schema: &arrow::datatypes::SchemaRef,
+    row: &mut Row,
+) -> Result<ScalarValue, KalamDbError> {
+    let mut columns = Vec::with_capacity(schema.fields().len());
+    for field in schema.fields() {
+        let scalar = row.values.remove(field.name()).unwrap_or(ScalarValue::Null);
+        let scalar =
+            coerce_scalar_to_field(scalar, field.as_ref()).map_err(KalamDbError::ExecutionError)?;
+        let array = scalar
+            .to_array()
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+        columns.push((std::sync::Arc::clone(field), array));
+    }
+    Ok(ScalarValue::Struct(std::sync::Arc::new(arrow::array::StructArray::from(
+        columns,
+    ))))
+}
+
+fn wrap_query_list(rows: Vec<ScalarValue>) -> RoutineValue {
+    let item_type = rows
+        .first()
+        .map(ScalarValue::data_type)
+        .unwrap_or(arrow::datatypes::DataType::Null);
+    RoutineValue::new(ScalarValue::List(ScalarValue::new_list(&rows, &item_type, true)))
+}
+
+fn routine_value_from_scalar_rows(
+    rows: Vec<Row>,
+    schema: &arrow::datatypes::SchemaRef,
+) -> Result<RoutineValue, KalamDbError> {
+    ensure_scalar_row_limit(&rows)?;
+    if rows.is_empty() {
+        return Ok(RoutineValue::new(ScalarValue::Null));
+    }
+    if rows.len() == 1 && schema.fields().len() == 1 {
+        let field = std::sync::Arc::clone(&schema.fields()[0]);
+        let mut row = rows.into_iter().next().expect("one scalar row");
+        let scalar = row.values.remove(field.name()).unwrap_or(ScalarValue::Null);
+        let scalar =
+            coerce_scalar_to_field(scalar, field.as_ref()).map_err(KalamDbError::ExecutionError)?;
+        return Ok(RoutineValue::new(scalar));
+    }
+    let structs = structs_from_scalar_rows(rows, schema)?;
+    if structs.len() == 1 {
+        return Ok(RoutineValue::new(structs.into_iter().next().expect("one struct")));
+    }
+    Ok(wrap_query_list(structs))
+}
+
 fn scalar_struct_from_row(
     batch: &arrow::array::RecordBatch,
     row: usize,
@@ -232,15 +316,69 @@ fn scalar_struct_from_row(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use arrow::{
-        array::{Array, Int64Array, RecordBatch, StructArray},
-        datatypes::{DataType, Field, Schema},
+        array::{Array, Int64Array, RecordBatch, StringArray, StructArray},
+        datatypes::{DataType, Field, Schema, SchemaRef},
     };
     use datafusion::scalar::ScalarValue;
+    use kalamdb_commons::models::rows::Row;
 
-    use super::rows_to_routine;
+    use super::{execution_result_to_rows, rows_to_routine};
+    use crate::sql::context::ExecutionResult;
+
+    fn message_schema() -> SchemaRef {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("data", DataType::Utf8, true),
+        ]))
+    }
+
+    fn point_row(id: i64, data: &str) -> Row {
+        let mut values = BTreeMap::new();
+        values.insert("data".to_string(), ScalarValue::Utf8(Some(data.to_string())));
+        values.insert("id".to_string(), ScalarValue::Int64(Some(id)));
+        Row { values }
+    }
+
+    fn scalar_rows(rows: Vec<Row>, schema: SchemaRef) -> ExecutionResult {
+        let row_count = rows.len();
+        ExecutionResult::ScalarRows {
+            rows,
+            row_count,
+            schema,
+        }
+    }
+
+    fn query_structs(value: ScalarValue) -> StructArray {
+        let ScalarValue::List(list) = value else {
+            panic!("query rows must be a list, got {value:?}");
+        };
+        let rows = list.value(0);
+        rows.as_any().downcast_ref::<StructArray>().expect("query row structs").clone()
+    }
+
+    fn assert_message_row(structs: &StructArray, index: usize, id: i64, data: &str) {
+        assert_eq!(
+            structs.fields().iter().map(|field| field.name().as_str()).collect::<Vec<_>>(),
+            ["id", "data"]
+        );
+        let ids = structs
+            .column_by_name("id")
+            .expect("id")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("id ints");
+        let texts = structs
+            .column_by_name("data")
+            .expect("data")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("data strings");
+        assert_eq!(ids.value(index), id);
+        assert_eq!(texts.value(index), data);
+    }
 
     fn integer_batch(values: Vec<Option<i64>>) -> RecordBatch {
         RecordBatch::try_new(
@@ -259,6 +397,115 @@ mod tests {
         let ids = rows.column_by_name("id").expect("id column");
         let ids = ids.as_any().downcast_ref::<Int64Array>().expect("integer ids");
         assert_eq!(ids.iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn point_get_query_keeps_schema_field_order() {
+        let result =
+            execution_result_to_rows(scalar_rows(vec![point_row(7, "hello")], message_schema()))
+                .expect("point get rows");
+        let structs = query_structs(result.value);
+        assert_eq!(structs.len(), 1);
+        assert_message_row(&structs, 0, 7, "hello");
+    }
+
+    #[test]
+    fn point_get_query_returns_empty_list_for_zero_rows() {
+        let result = execution_result_to_rows(scalar_rows(vec![], message_schema()))
+            .expect("empty point get");
+        let ScalarValue::List(list) = result.value else {
+            panic!("empty query must be a list");
+        };
+        assert_eq!(list.value(0).len(), 0);
+        assert_eq!(
+            list.data_type(),
+            &DataType::List(Arc::new(Field::new_list_field(DataType::Null, true)))
+        );
+    }
+
+    #[test]
+    fn point_get_query_keeps_schema_order_across_rows() {
+        let result = execution_result_to_rows(scalar_rows(
+            vec![point_row(1, "a"), point_row(2, "b")],
+            message_schema(),
+        ))
+        .expect("two point rows");
+        let structs = query_structs(result.value);
+        assert_eq!(structs.len(), 2);
+        assert_message_row(&structs, 0, 1, "a");
+        assert_message_row(&structs, 1, 2, "b");
+    }
+
+    fn query_rows_via_arrow(result: ExecutionResult) -> super::RoutineValue {
+        let result = result.into_arrow_rows().expect("scalar rows become arrow");
+        let ExecutionResult::Rows { batches, .. } = result else {
+            panic!("arrow conversion must produce batches");
+        };
+        let mut rows = Vec::new();
+        for batch in &batches {
+            for index in 0..batch.num_rows() {
+                rows.push(super::scalar_struct_from_row(batch, index).expect("struct"));
+            }
+        }
+        let item_type = rows.first().map(ScalarValue::data_type).unwrap_or(DataType::Null);
+        super::RoutineValue::new(ScalarValue::List(ScalarValue::new_list(&rows, &item_type, true)))
+    }
+
+    #[test]
+    fn point_get_query_matches_arrow_oracle() {
+        let input = scalar_rows(vec![point_row(7, "hello")], message_schema());
+        let direct = execution_result_to_rows(input.clone()).expect("direct");
+        assert_eq!(direct.value, query_rows_via_arrow(input).value);
+    }
+
+    #[test]
+    fn point_get_query_reads_alias_and_fills_missing_key_with_null() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("title", DataType::Utf8, true),
+            Field::new("note", DataType::Utf8, true),
+        ]));
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(3)));
+        values.insert("title".to_string(), ScalarValue::Utf8(Some("renamed".to_string())));
+        let input = scalar_rows(vec![Row { values }], schema);
+        let direct = execution_result_to_rows(input.clone()).expect("alias row");
+        assert_eq!(direct.value, query_rows_via_arrow(input).value);
+        let structs = query_structs(direct.value);
+        assert_eq!(
+            structs.fields().iter().map(|field| field.name().as_str()).collect::<Vec<_>>(),
+            ["id", "title", "note"]
+        );
+        assert!(structs.column_by_name("note").expect("note").is_null(0));
+    }
+
+    #[test]
+    fn point_get_query_rejects_more_than_10_000_rows() {
+        let rows = vec![
+            Row {
+                values: BTreeMap::new(),
+            };
+            10_001
+        ];
+        let error =
+            execution_result_to_rows(scalar_rows(rows, message_schema())).expect_err("row limit");
+        assert!(error.to_string().contains("procedure query result limit exceeded"), "{error}");
+    }
+
+    #[test]
+    fn point_get_execute_returns_one_column_as_scalar_and_insert_count() {
+        use super::execution_result_to_routine;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, true)]));
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(5)));
+        let scalar = execution_result_to_routine(scalar_rows(vec![Row { values }], schema))
+            .expect("one column");
+        assert_eq!(scalar.value, ScalarValue::Int64(Some(5)));
+
+        let inserted = execution_result_to_routine(ExecutionResult::Inserted { rows_affected: 1 })
+            .expect("insert count");
+        assert_eq!(inserted.value, ScalarValue::Int64(Some(1)));
     }
 
     #[test]

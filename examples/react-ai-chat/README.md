@@ -16,7 +16,7 @@ The example is a `kalam init`-style project. [kalam.toml](kalam.toml) points at 
 
 ## Quick Start
 
-Use a current Kalam CLI. Update with `kalam self-update`, or run the workspace build: `../../target/debug/kalam dev`.
+Use a current Kalam CLI. Update with `kalam update`, or run the workspace build: `../../target/debug/kalam dev`.
 
 ```bash
 npm install

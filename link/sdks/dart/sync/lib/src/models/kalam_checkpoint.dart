@@ -11,6 +11,6 @@ final class KalamCheckpoint {
 
   final String accountKey;
   final String subscriptionId;
-  final SeqId seq;
+  final VersionId seq;
   final DateTime updatedAt;
 }

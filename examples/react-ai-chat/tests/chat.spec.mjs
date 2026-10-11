@@ -18,9 +18,9 @@ test('React AI chat app uses @kalamdb/react live components and workflow tables'
   assert.match(conversation, /approval_id/);
   assert.match(schema, /attachment: file\(["']attachment["']\)/);
   assert.match(schema, /client_id/);
-  assert.match(schema, /export const reactAiChatApprovals/);
-  assert.match(schema, /export const reactAiChatMessages/);
-  assert.match(schema, /export const reactAiChatTypingTokens/);
+  assert.match(schema, /export const approvals/);
+  assert.match(schema, /export const messages/);
+  assert.match(schema, /export const typingTokens/);
   assert.match(agent, /agent_messages/);
   assert.match(agent, /agent_actions/);
   assert.match(demoClient, /localStorage/);

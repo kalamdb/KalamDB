@@ -57,7 +57,7 @@ function hasRowId(events, expectedId) {
 
 function assertRowsStrictlyAfter(events, from, context) {
   for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
+    const seq = row._seq?.asVersionId?.();
     if (!seq) continue;
     assert.ok(
       seq.compareTo(from) > 0,
@@ -69,7 +69,7 @@ function assertRowsStrictlyAfter(events, from, context) {
 function assertNoDuplicateSeqRows(events, context) {
   const seen = new Set();
   for (const row of extractRows(events)) {
-    const seq = row._seq?.asSeqId?.();
+    const seq = row._seq?.asVersionId?.();
     if (!seq) continue;
     const key = seq.toString();
     assert.ok(!seen.has(key), `${context}: duplicate _seq replayed: ${key}`);
@@ -135,11 +135,11 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
         const sub = client
           .getSubscriptions()
           .find((s) => s.tableName === `SELECT id, value FROM ${tbl}`);
-        return !!sub?.lastSeqId;
+        return !!sub?.lastVersionId;
       });
       const checkpoint = client
         .getSubscriptions()
-        .find((s) => s.tableName === `SELECT id, value FROM ${tbl}`)?.lastSeqId;
+        .find((s) => s.tableName === `SELECT id, value FROM ${tbl}`)?.lastVersionId;
       assert.ok(checkpoint, 'checkpoint should exist before disconnect');
 
       await unsub();
@@ -233,15 +233,15 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
       await waitFor(() => {
         const subs = client.getSubscriptions();
         return (
-          subs.find((s) => s.tableName === sqlA)?.lastSeqId &&
-          subs.find((s) => s.tableName === sqlB)?.lastSeqId &&
-          subs.find((s) => s.tableName === sqlC)?.lastSeqId
+          subs.find((s) => s.tableName === sqlA)?.lastVersionId &&
+          subs.find((s) => s.tableName === sqlB)?.lastVersionId &&
+          subs.find((s) => s.tableName === sqlC)?.lastVersionId
         );
       });
       const subs = client.getSubscriptions();
-      const cpA = subs.find((s) => s.tableName === sqlA)?.lastSeqId;
-      const cpB = subs.find((s) => s.tableName === sqlB)?.lastSeqId;
-      const cpC = subs.find((s) => s.tableName === sqlC)?.lastSeqId;
+      const cpA = subs.find((s) => s.tableName === sqlA)?.lastVersionId;
+      const cpB = subs.find((s) => s.tableName === sqlB)?.lastVersionId;
+      const cpC = subs.find((s) => s.tableName === sqlC)?.lastVersionId;
 
       await unsubA();
       await unsubB();
@@ -325,9 +325,9 @@ describe('Checkpoint resume after disconnect (E2E)', { timeout: 120_000 }, () =>
 
       await waitFor(() => {
         const sub = client.getSubscriptions().find((s) => s.tableName === sql);
-        return !!sub?.lastSeqId;
+        return !!sub?.lastVersionId;
       });
-      const checkpoint = client.getSubscriptions().find((s) => s.tableName === sql)?.lastSeqId;
+      const checkpoint = client.getSubscriptions().find((s) => s.tableName === sql)?.lastVersionId;
 
       await unsub();
 

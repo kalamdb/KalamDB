@@ -86,6 +86,8 @@ pub fn has_object_magic(bytes: &[u8]) -> bool {
 
 /// Row payloads include a per-column offset table after `field_count`.
 pub(crate) const FLAG_COLUMN_OFFSETS: u16 = 1 << 0;
+/// Row payload stores the tombstone flag only. `_version` lives on the storage key.
+pub(crate) const FLAG_VERSION_IN_KEY: u16 = 1 << 1;
 
 pub(crate) fn encode_envelope(
     object_kind: ObjectKind,

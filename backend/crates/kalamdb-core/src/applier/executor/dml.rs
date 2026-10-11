@@ -13,13 +13,14 @@
 use std::{collections::HashSet, sync::Arc};
 
 use kalamdb_commons::{
-    ids::StreamTableRowId,
+    ids::{StreamTableRowId, VersionId},
     models::{rows::Row, OperationKind, TopicOp, TransactionId, UserId},
     schemas::TableType,
     websocket::{ChangeNotification, ChangeType},
     TableId,
 };
-use kalamdb_raft::TransactionApplyResult;
+use kalamdb_raft::{assign_entry_versions, TransactionApplyResult};
+use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_system::{FileRef, NotificationService as NotificationServiceTrait, TopicPublisher};
 use kalamdb_tables::{utils::base as table_base, StreamTableRow};
 use kalamdb_transactions::StagedMutation;
@@ -37,7 +38,7 @@ use crate::{
         base::{find_row_by_pk, BaseTableProvider},
         SharedTableProvider, StreamTableProvider, UserTableProvider,
     },
-    transactions::{CommitSideEffectPlan, FanoutOwnerScope},
+    transactions::CommitSideEffectPlan,
 };
 
 /// Executor for DML operations (Data Plane)
@@ -45,6 +46,41 @@ use crate::{
 /// This executor is stateless and designed for concurrent access from
 /// multiple Data Raft groups. Each method accesses the schema registry
 /// to get the appropriate provider and performs the operation.
+fn shared_update_targets(
+    updates: &[Row],
+    pk_values: Option<&[String]>,
+    filter: Option<&str>,
+    versions: &[VersionId],
+) -> Result<Vec<(String, Row, VersionId)>, ApplierError> {
+    if let Some(pk_values) = pk_values {
+        if pk_values.len() != updates.len() || pk_values.len() != versions.len() {
+            return Err(ApplierError::Validation(format!(
+                "shared update version count {} does not match {} primary keys and {} update rows",
+                versions.len(),
+                pk_values.len(),
+                updates.len()
+            )));
+        }
+        return Ok(pk_values
+            .iter()
+            .zip(updates.iter().cloned())
+            .zip(versions.iter().copied())
+            .map(|((pk, row), version)| (pk.clone(), row, version))
+            .collect());
+    }
+
+    if updates.len() != 1 || versions.len() != 1 {
+        return Err(ApplierError::Validation(
+            "shared update without pk_values writes one final row and requires one version slot"
+                .into(),
+        ));
+    }
+    let pk_value = filter.ok_or_else(|| {
+        ApplierError::Validation("Update requires filter with PK value".to_string())
+    })?;
+    Ok(vec![(pk_value.to_string(), updates[0].clone(), versions[0])])
+}
+
 pub struct DmlExecutor {
     app_context: Arc<AppContext>,
 }
@@ -55,9 +91,128 @@ impl DmlExecutor {
         Self { app_context }
     }
 
-    #[inline]
-    fn observe_commit_seq(&self, commit_seq: u64) {
-        self.app_context.commit_sequence_tracker().observe_committed(commit_seq);
+    fn dml_group_id(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+    ) -> Option<GroupId> {
+        let router =
+            ShardRouter::from_optional_cluster_config(self.app_context.config().cluster.as_ref());
+        match table_type {
+            TableType::User | TableType::Stream => user_id.map(|uid| router.user_group_id(uid)),
+            TableType::Shared => self.app_context.shared_group_id(table_id).ok(),
+            TableType::System => None,
+        }
+    }
+
+    fn local_versions(&self, slot_count: usize) -> Result<(u64, Vec<VersionId>), ApplierError> {
+        let log_index = self.app_context.commit_sequence_tracker().allocate_next();
+        let versions = assign_entry_versions(log_index, slot_count)
+            .map_err(|error| ApplierError::Validation(error.to_string()))?;
+        Ok((log_index, versions))
+    }
+
+    fn log_index_from_versions(versions: &[VersionId]) -> Result<u64, ApplierError> {
+        let version = versions
+            .first()
+            .ok_or_else(|| ApplierError::Validation("DML apply missing VersionId".to_string()))?;
+        Ok(version.as_u64() >> 16)
+    }
+
+    fn defer_observe(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+        log_index: u64,
+    ) {
+        let tracker = self.app_context.commit_sequence_tracker();
+        let group_id = self.dml_group_id(table_id, table_type, user_id);
+        kalamdb_store::defer_after_persist(move || {
+            if let Some(group_id) = group_id {
+                tracker.observe_committed(group_id, log_index);
+            }
+        });
+    }
+
+    fn defer_observe_and_dispatch(
+        &self,
+        table_id: &TableId,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+        log_index: u64,
+        side_effect_plan: crate::transactions::CommitSideEffectPlan,
+    ) -> usize {
+        let notifications_sent = side_effect_plan
+            .notifications
+            .iter()
+            .map(|dispatch| dispatch.notifications.len())
+            .sum();
+        let tracker = self.app_context.commit_sequence_tracker();
+        let group_id = self.dml_group_id(table_id, table_type, user_id);
+        let notification_service = Arc::clone(self.app_context.notification_service());
+        let topic_publisher = self.app_context.topic_publisher();
+        kalamdb_store::defer_after_persist(move || {
+            if let Some(group_id) = group_id {
+                tracker.observe_committed(group_id, log_index);
+            }
+            for dispatch in &side_effect_plan.notifications {
+                for notification in &dispatch.notifications {
+                    let publish_user =
+                        notification.actor_user_id.clone().or_else(|| {
+                            match &dispatch.owner_scope {
+                                crate::transactions::FanoutOwnerScope::Shared => None,
+                                crate::transactions::FanoutOwnerScope::User(uid) => {
+                                    Some(uid.clone())
+                                },
+                            }
+                        });
+                    if topic_publisher.has_topics_for_table(&notification.table_id) {
+                        let op = Self::topic_op_for_change(&notification.change_type);
+                        if let Err(error) = topic_publisher.publish_for_table(
+                            &notification.table_id,
+                            op,
+                            &notification.row_data,
+                            publish_user.as_ref(),
+                        ) {
+                            log::warn!(
+                                "Topic publish failed for transaction change on table {}: {}",
+                                notification.table_id,
+                                error
+                            );
+                        }
+                    }
+                }
+            }
+            let _ = notification_service.dispatch_commit_plan(&side_effect_plan);
+        });
+        notifications_sent
+    }
+
+    /// Queue one committed change for post-persist topic publish and live fanout.
+    ///
+    /// Topic delivery does not require a live subscriber. The deferred hook
+    /// publishes only after the Raft batch is durable.
+    fn stage_commit_notification(
+        &self,
+        plan: &mut crate::transactions::CommitSideEffectPlan,
+        owner_scope: crate::transactions::FanoutOwnerScope,
+        notification: ChangeNotification,
+    ) {
+        let publish =
+            self.app_context.topic_publisher().has_topics_for_table(&notification.table_id);
+        if publish {
+            plan.record_publisher_event();
+        }
+        let live = NotificationServiceTrait::has_subscribers(
+            self.app_context.notification_service().as_ref(),
+            owner_scope.user_id(),
+            &notification.table_id,
+        );
+        if publish || live {
+            plan.push_notification(owner_scope, notification);
+        }
     }
 
     async fn load_provider(
@@ -182,7 +337,7 @@ impl DmlExecutor {
         }
     }
 
-    async fn emit_autocommit_notification(
+    fn emit_autocommit_notification(
         &self,
         user_id: Option<&UserId>,
         notification: ChangeNotification,
@@ -194,19 +349,32 @@ impl DmlExecutor {
         );
         let scoped_user = user_id.cloned();
         let table_id = notification.table_id.clone();
-
-        let _ = self.publish_transaction_notification(user_id, &notification).await;
-
-        if has_live_subscribers {
-            self.app_context.notification_service().notify_table_change(
-                scoped_user,
-                table_id,
-                notification,
-            );
-        }
+        let notification_service = Arc::clone(self.app_context.notification_service());
+        let topic_publisher = self.app_context.topic_publisher();
+        let publish_user = user_id.cloned();
+        kalamdb_store::defer_after_persist(move || {
+            if topic_publisher.has_topics_for_table(&notification.table_id) {
+                let op = Self::topic_op_for_change(&notification.change_type);
+                if let Err(error) = topic_publisher.publish_for_table(
+                    &notification.table_id,
+                    op,
+                    &notification.row_data,
+                    publish_user.as_ref(),
+                ) {
+                    log::warn!(
+                        "Topic publish failed for autocommit change on table {}: {}",
+                        notification.table_id,
+                        error
+                    );
+                }
+            }
+            if has_live_subscribers {
+                notification_service.notify_table_change(scoped_user, table_id, notification);
+            }
+        });
     }
 
-    async fn emit_shared_autocommit_notification(
+    fn emit_shared_autocommit_notification(
         &self,
         actor_user_id: Option<&UserId>,
         notification: ChangeNotification,
@@ -217,16 +385,29 @@ impl DmlExecutor {
             &notification.table_id,
         );
         let table_id = notification.table_id.clone();
-
-        let _ = self.publish_transaction_notification(actor_user_id, &notification).await;
-
-        if has_live_subscribers {
-            self.app_context.notification_service().notify_table_change(
-                None,
-                table_id,
-                notification,
-            );
-        }
+        let notification_service = Arc::clone(self.app_context.notification_service());
+        let topic_publisher = self.app_context.topic_publisher();
+        let publish_user = actor_user_id.cloned();
+        kalamdb_store::defer_after_persist(move || {
+            if topic_publisher.has_topics_for_table(&notification.table_id) {
+                let op = Self::topic_op_for_change(&notification.change_type);
+                if let Err(error) = topic_publisher.publish_for_table(
+                    &notification.table_id,
+                    op,
+                    &notification.row_data,
+                    publish_user.as_ref(),
+                ) {
+                    log::warn!(
+                        "Topic publish failed for autocommit change on table {}: {}",
+                        notification.table_id,
+                        error
+                    );
+                }
+            }
+            if has_live_subscribers {
+                notification_service.notify_table_change(None, table_id, notification);
+            }
+        });
     }
 
     // =========================================================================
@@ -240,20 +421,21 @@ impl DmlExecutor {
         user_id: &UserId,
         rows: &[Row],
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.insert_user_data_with_commit_seq(table_id, user_id, rows, commit_seq).await
+        let (_log_index, versions) = self.local_versions(rows.len())?;
+        self.insert_user_data_with_versions(table_id, user_id, rows, &versions).await
     }
 
-    pub async fn insert_user_data_with_commit_seq(
+    pub async fn insert_user_data_with_versions(
         &self,
         table_id: &TableId,
         user_id: &UserId,
         rows: &[Row],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         if rows.is_empty() {
             return Ok(0);
         }
+        let log_index = Self::log_index_from_versions(versions)?;
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
@@ -262,19 +444,20 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
             let row_ids = provider
-                .insert_batch_with_commit_seq(user_id, rows.to_vec(), commit_seq)
+                .insert_batch_with_versions(user_id, rows.to_vec(), versions)
                 .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
-            self.observe_commit_seq(commit_seq);
+                .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
+            self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
         {
-            let row_ids = provider.insert_batch(user_id, rows.to_vec()).await.map_err(|e| {
-                ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
-            })?;
-            self.observe_commit_seq(commit_seq);
+            let row_ids =
+                provider.insert_batch(user_id, rows.to_vec(), versions).await.map_err(|e| {
+                    ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
+                })?;
+            self.defer_observe(table_id, TableType::Stream, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else {
@@ -293,18 +476,18 @@ impl DmlExecutor {
         updates: &[Row],
         filter: Option<&str>,
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.update_user_data_with_commit_seq(table_id, user_id, updates, filter, commit_seq)
+        let (_log_index, versions) = self.local_versions(1)?;
+        self.update_user_data_with_versions(table_id, user_id, updates, filter, &versions)
             .await
     }
 
-    pub async fn update_user_data_with_commit_seq(
+    pub async fn update_user_data_with_versions(
         &self,
         table_id: &TableId,
         user_id: &UserId,
         updates: &[Row],
         filter: Option<&str>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         let pk_value = filter.ok_or_else(|| {
             ApplierError::Validation("Update requires filter with PK value".to_string())
@@ -313,6 +496,8 @@ impl DmlExecutor {
         let update_row = updates.first().ok_or_else(|| {
             ApplierError::Validation("Update requires at least one update row".to_string())
         })?;
+        let log_index = Self::log_index_from_versions(versions)?;
+        let version = *versions.first().expect("version");
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
@@ -331,13 +516,13 @@ impl DmlExecutor {
                 .await;
 
             let updated = provider
-                .update_by_pk_value_deferred(user_id, pk_value, update_row.clone(), commit_seq)
+                .update_by_pk_value_deferred(user_id, pk_value, update_row.clone(), version)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
             if let Some((_row_key, notification)) = updated {
                 if let Some(notification) = notification {
-                    self.emit_autocommit_notification(Some(user_id), notification).await;
+                    self.emit_autocommit_notification(Some(user_id), notification);
                 }
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
@@ -347,7 +532,7 @@ impl DmlExecutor {
                     &replaced_refs,
                 )
                 .await;
-                self.observe_commit_seq(commit_seq);
+                self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
                 Ok(1)
             } else {
                 Ok(0)
@@ -355,7 +540,7 @@ impl DmlExecutor {
         } else if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
         {
-            self.update_stream_provider(provider, user_id, pk_value, update_row.clone())
+            self.update_stream_provider(provider, user_id, pk_value, update_row.clone(), version)
                 .await
         } else {
             Err(ApplierError::Execution(format!(
@@ -372,17 +557,18 @@ impl DmlExecutor {
         user_id: &UserId,
         pk_values: Option<&[String]>,
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.delete_user_data_with_commit_seq(table_id, user_id, pk_values, commit_seq)
+        let slot_count = pk_values.map(|values| values.len()).unwrap_or(0);
+        let (_log_index, versions) = self.local_versions(slot_count.max(1))?;
+        self.delete_user_data_with_versions(table_id, user_id, pk_values, &versions)
             .await
     }
 
-    pub async fn delete_user_data_with_commit_seq(
+    pub async fn delete_user_data_with_versions(
         &self,
         table_id: &TableId,
         user_id: &UserId,
         pk_values: Option<&[String]>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         let pk_values = pk_values.ok_or_else(|| {
             ApplierError::Validation("Delete requires pk_values list".to_string())
@@ -391,6 +577,7 @@ impl DmlExecutor {
         if pk_values.is_empty() {
             return Ok(0);
         }
+        let log_index = Self::log_index_from_versions(versions)?;
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
@@ -398,7 +585,7 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
             let mut deleted_count = 0;
-            for pk_value in pk_values {
+            for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
                 let file_refs = self
                     .collect_user_file_refs_for_mutation(
                         provider,
@@ -411,12 +598,12 @@ impl DmlExecutor {
                     .await;
 
                 if let Some((_row_key, notification)) = provider
-                    .delete_by_pk_value_deferred(user_id, pk_value, commit_seq)
+                    .delete_by_pk_value_deferred(user_id, pk_value, version)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     if let Some(notification) = notification {
-                        self.emit_autocommit_notification(Some(user_id), notification).await;
+                        self.emit_autocommit_notification(Some(user_id), notification);
                     }
                     deleted_count += 1;
                     delete_file_refs_best_effort(
@@ -431,16 +618,16 @@ impl DmlExecutor {
             }
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
             if deleted_count > 0 {
-                self.observe_commit_seq(commit_seq);
+                self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
             }
             Ok(deleted_count)
         } else if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
         {
             let mut deleted_count = 0;
-            for pk_value in pk_values {
+            for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
                 if provider
-                    .delete_by_id_field(user_id, pk_value)
+                    .delete_by_id_field(user_id, pk_value, version)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
@@ -468,21 +655,22 @@ impl DmlExecutor {
         actor_user_id: Option<&UserId>,
         rows: &[Row],
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.insert_shared_data_with_commit_seq(table_id, actor_user_id, rows, commit_seq)
+        let (_log_index, versions) = self.local_versions(rows.len())?;
+        self.insert_shared_data_with_versions(table_id, actor_user_id, rows, &versions)
             .await
     }
 
-    pub async fn insert_shared_data_with_commit_seq(
+    pub async fn insert_shared_data_with_versions(
         &self,
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         rows: &[Row],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         if rows.is_empty() {
             return Ok(0);
         }
+        let log_index = Self::log_index_from_versions(versions)?;
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
@@ -490,10 +678,10 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
         {
             let row_ids = provider
-                .insert_batch_with_commit_seq(actor_user_id, rows.to_vec(), commit_seq)
+                .insert_batch_with_versions(actor_user_id, rows.to_vec(), versions)
                 .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to insert batch: {}", e)))?;
-            self.observe_commit_seq(commit_seq);
+                .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
+            self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
             log::debug!("DmlExecutor: Inserted {} shared rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
         } else {
@@ -512,77 +700,75 @@ impl DmlExecutor {
         updates: &[Row],
         filter: Option<&str>,
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.update_shared_data_with_commit_seq(
+        let (_log_index, versions) = self.local_versions(1)?;
+        self.update_shared_data_with_versions(
             table_id,
             actor_user_id,
             updates,
+            None,
             filter,
-            commit_seq,
+            &versions,
         )
         .await
     }
 
-    pub async fn update_shared_data_with_commit_seq(
+    pub async fn update_shared_data_with_versions(
         &self,
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         updates: &[Row],
+        pk_values: Option<&[String]>,
         filter: Option<&str>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         if updates.is_empty() {
             return Ok(0);
         }
-
-        let pk_value = filter.ok_or_else(|| {
-            ApplierError::Validation("Update requires filter with PK value".to_string())
-        })?;
+        let targets = shared_update_targets(updates, pk_values, filter, versions)?;
+        let log_index = Self::log_index_from_versions(versions)?;
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
         {
-            let update_row = updates[0].clone();
+            let mut affected_rows = 0;
+            for (pk_value, update_row, version) in targets {
+                let replaced_refs = self
+                    .collect_shared_file_refs_for_mutation(
+                        provider,
+                        table_id,
+                        &pk_value,
+                        OperationKind::Update,
+                        Some(&update_row),
+                    )
+                    .await;
 
-            let replaced_refs = self
-                .collect_shared_file_refs_for_mutation(
-                    provider,
-                    table_id,
-                    pk_value,
-                    OperationKind::Update,
-                    Some(&update_row),
-                )
-                .await;
+                let updated = provider
+                    .update_by_pk_value_deferred(&pk_value, update_row, version)
+                    .await
+                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
-            let updated = provider
-                .update_by_pk_value_deferred(pk_value, update_row, commit_seq)
-                .await
-                .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
-
-            let affected_rows = usize::from(updated.is_some());
-            if let Some((_row_key, notification)) = updated {
-                if let Some(notification) = notification {
-                    self.emit_shared_autocommit_notification(actor_user_id, notification).await;
+                if let Some((_row_key, notification)) = updated {
+                    affected_rows += 1;
+                    if let Some(notification) = notification {
+                        self.emit_shared_autocommit_notification(actor_user_id, notification);
+                    }
+                    delete_file_refs_best_effort(
+                        self.app_context.as_ref(),
+                        table_id,
+                        TableType::Shared,
+                        None,
+                        &replaced_refs,
+                    )
+                    .await;
                 }
-                delete_file_refs_best_effort(
-                    self.app_context.as_ref(),
-                    table_id,
-                    TableType::Shared,
-                    None,
-                    &replaced_refs,
-                )
-                .await;
-                self.observe_commit_seq(commit_seq);
             }
 
-            log::debug!(
-                "DmlExecutor: Updated {} shared row(s) in {} (pk={})",
-                affected_rows,
-                table_id,
-                pk_value
-            );
+            log::debug!("DmlExecutor: Updated {} shared row(s) in {}", affected_rows, table_id);
+            if affected_rows > 0 {
+                self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
+            }
             Ok(affected_rows)
         } else {
             Err(ApplierError::Execution(format!(
@@ -599,17 +785,18 @@ impl DmlExecutor {
         actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
     ) -> Result<usize, ApplierError> {
-        let commit_seq = self.app_context.commit_sequence_tracker().allocate_next();
-        self.delete_shared_data_with_commit_seq(table_id, actor_user_id, pk_values, commit_seq)
+        let slot_count = pk_values.map(|values| values.len()).unwrap_or(0);
+        let (_log_index, versions) = self.local_versions(slot_count.max(1))?;
+        self.delete_shared_data_with_versions(table_id, actor_user_id, pk_values, &versions)
             .await
     }
 
-    pub async fn delete_shared_data_with_commit_seq(
+    pub async fn delete_shared_data_with_versions(
         &self,
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
         pk_values: Option<&[String]>,
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         let pk_values = pk_values.ok_or_else(|| {
             ApplierError::Validation("Delete requires pk_values list".to_string())
@@ -618,6 +805,14 @@ impl DmlExecutor {
         if pk_values.is_empty() {
             return Ok(0);
         }
+        if versions.len() != pk_values.len() {
+            return Err(ApplierError::Validation(format!(
+                "delete version count {} does not match primary key count {}",
+                versions.len(),
+                pk_values.len()
+            )));
+        }
+        let log_index = Self::log_index_from_versions(versions)?;
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
@@ -626,7 +821,7 @@ impl DmlExecutor {
         {
             let mut deleted_count = 0;
 
-            for pk_value in pk_values {
+            for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
                 let file_refs = self
                     .collect_shared_file_refs_for_mutation(
                         provider,
@@ -638,12 +833,12 @@ impl DmlExecutor {
                     .await;
 
                 if let Some((_row_key, notification)) = provider
-                    .delete_by_pk_value_deferred(pk_value, commit_seq)
+                    .delete_by_pk_value_deferred(pk_value, version)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
                 {
                     if let Some(notification) = notification {
-                        self.emit_shared_autocommit_notification(actor_user_id, notification).await;
+                        self.emit_shared_autocommit_notification(actor_user_id, notification);
                     }
                     deleted_count += 1;
                     delete_file_refs_best_effort(
@@ -659,7 +854,7 @@ impl DmlExecutor {
 
             log::debug!("DmlExecutor: Deleted {} shared rows from {}", deleted_count, table_id);
             if deleted_count > 0 {
-                self.observe_commit_seq(commit_seq);
+                self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);
             }
             Ok(deleted_count)
         } else {
@@ -700,12 +895,7 @@ impl DmlExecutor {
                         mutations.iter().map(|mutation| &mutation.payload).collect();
 
                     provider.validate_insert_batch_rows(user_id, batch_rows).await.map_err(
-                        |error| {
-                            ApplierError::Execution(format!(
-                                "Failed to insert batch row: {}",
-                                error
-                            ))
-                        },
+                        |error| ApplierError::from_table(error, "Failed to insert batch row"),
                     )?;
 
                     return Ok(());
@@ -770,9 +960,7 @@ impl DmlExecutor {
 
             table_base::ensure_unique_pk_value(provider, Some(&user_id), &mutation.payload)
                 .await
-                .map_err(|error| {
-                    ApplierError::Execution(format!("Failed to insert batch row: {}", error))
-                })?;
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
@@ -834,20 +1022,19 @@ impl DmlExecutor {
 
             table_base::ensure_unique_pk_value(provider, None, &mutation.payload)
                 .await
-                .map_err(|error| {
-                    ApplierError::Execution(format!("Failed to insert batch row: {}", error))
-                })?;
+                .map_err(|error| ApplierError::from_table(error, "Failed to insert batch row"))?;
         }
 
         Ok(())
     }
 
-    pub async fn apply_user_transaction_batch_with_commit_seq(
+    pub async fn apply_user_transaction_batch_with_versions(
         &self,
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
+        let log_index = Self::log_index_from_versions(versions)?;
         self.prevalidate_user_transaction_batch(transaction_id, mutations).await?;
 
         let mut affected_rows = 0;
@@ -875,15 +1062,13 @@ impl DmlExecutor {
                         })?;
 
                     let applied = provider
-                        .insert_batch_deferred_prevalidated_with_commit_seq(
+                        .insert_batch_deferred_prevalidated_with_versions(
                             &user_id,
                             mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
-                            commit_seq,
+                            versions,
                         )
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch rows: {}", e))
-                        })?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
 
                     if applied.len() != mutations.len() {
                         return Err(ApplierError::Execution(format!(
@@ -893,42 +1078,30 @@ impl DmlExecutor {
                         )));
                     }
 
-                    for (_mutation, (_row_key, notification)) in
-                        mutations.iter().zip(applied.into_iter())
-                    {
+                    for (_row_key, notification) in applied {
                         affected_rows += 1;
                         side_effect_plan.record_manifest_update();
 
                         if let Some(notification) = notification {
-                            if self
-                                .publish_transaction_notification(Some(&user_id), &notification)
-                                .await
-                            {
-                                side_effect_plan.record_publisher_event();
-                            }
-
-                            if NotificationServiceTrait::has_subscribers(
-                                self.app_context.notification_service().as_ref(),
-                                Some(&user_id),
-                                &notification.table_id,
-                            ) {
-                                side_effect_plan.push_notification(
-                                    FanoutOwnerScope::User(user_id.clone()),
-                                    notification,
-                                );
-                            }
+                            self.stage_commit_notification(
+                                &mut side_effect_plan,
+                                crate::transactions::FanoutOwnerScope::User(user_id.clone()),
+                                notification,
+                            );
                         }
                     }
 
-                    let notifications_sent = self
-                        .app_context
-                        .notification_service()
-                        .dispatch_commit_plan(&side_effect_plan);
-                    self.observe_commit_seq(commit_seq);
+                    let notifications_sent = self.defer_observe_and_dispatch(
+                        &mutations[0].table_id,
+                        TableType::User,
+                        Some(&user_id),
+                        log_index,
+                        side_effect_plan.clone(),
+                    );
 
                     return Ok(TransactionApplyResult {
                         rows_affected: affected_rows,
-                        commit_seq,
+                        log_index,
                         notifications_sent,
                         manifest_updates: side_effect_plan.manifest_updates,
                         publisher_events: side_effect_plan.publisher_events,
@@ -942,7 +1115,7 @@ impl DmlExecutor {
             Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
         )> = None;
 
-        for mutation in mutations {
+        for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
             if &mutation.transaction_id != transaction_id {
                 return Err(ApplierError::Validation(format!(
                     "staged mutation transaction mismatch: expected '{}', got '{}'",
@@ -990,14 +1163,9 @@ impl DmlExecutor {
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
-                        .insert_deferred_prevalidated(&user_id, mutation.payload.clone())
+                        .insert_deferred_prevalidated(&user_id, mutation.payload.clone(), version)
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch row: {}", e))
-                        })?;
-                    provider.patch_commit_seq_for_row_key(&row_key, commit_seq).await.map_err(
-                        |e| ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e)),
-                    )?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
                     Some((row_key, notification))
                 },
                 OperationKind::Update => provider
@@ -1005,16 +1173,12 @@ impl DmlExecutor {
                         &user_id,
                         mutation.primary_key.as_str(),
                         mutation.payload.clone(),
-                        commit_seq,
+                        version,
                     )
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?,
                 OperationKind::Delete => provider
-                    .delete_by_pk_value_deferred(
-                        &user_id,
-                        mutation.primary_key.as_str(),
-                        commit_seq,
-                    )
+                    .delete_by_pk_value_deferred(&user_id, mutation.primary_key.as_str(), version)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?,
             };
@@ -1036,40 +1200,38 @@ impl DmlExecutor {
             side_effect_plan.record_manifest_update();
 
             if let Some(notification) = notification {
-                if self.publish_transaction_notification(Some(&user_id), &notification).await {
-                    side_effect_plan.record_publisher_event();
-                }
-
-                if NotificationServiceTrait::has_subscribers(
-                    self.app_context.notification_service().as_ref(),
-                    Some(&user_id),
-                    &mutation.table_id,
-                ) {
-                    side_effect_plan
-                        .push_notification(FanoutOwnerScope::User(user_id.clone()), notification);
-                }
+                self.stage_commit_notification(
+                    &mut side_effect_plan,
+                    crate::transactions::FanoutOwnerScope::User(user_id.clone()),
+                    notification,
+                );
             }
         }
 
-        let notifications_sent =
-            self.app_context.notification_service().dispatch_commit_plan(&side_effect_plan);
-        self.observe_commit_seq(commit_seq);
+        let notifications_sent = self.defer_observe_and_dispatch(
+            &mutations[0].table_id,
+            TableType::User,
+            mutations.first().and_then(|m| m.user_id.as_ref()),
+            log_index,
+            side_effect_plan.clone(),
+        );
 
         Ok(TransactionApplyResult {
             rows_affected: affected_rows,
-            commit_seq,
+            log_index,
             notifications_sent,
             manifest_updates: side_effect_plan.manifest_updates,
             publisher_events: side_effect_plan.publisher_events,
         })
     }
 
-    pub async fn apply_shared_transaction_batch_with_commit_seq(
+    pub async fn apply_shared_transaction_batch_with_versions(
         &self,
         transaction_id: &TransactionId,
         mutations: &[StagedMutation],
-        commit_seq: u64,
+        versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
+        let log_index = Self::log_index_from_versions(versions)?;
         self.prevalidate_shared_transaction_batch(transaction_id, mutations).await?;
 
         let mut affected_rows = 0;
@@ -1095,14 +1257,12 @@ impl DmlExecutor {
                     })?;
 
                 let applied = provider
-                    .insert_batch_deferred_prevalidated_with_commit_seq(
+                    .insert_batch_deferred_prevalidated_with_versions(
                         mutations.iter().map(|mutation| mutation.payload.clone()).collect(),
-                        commit_seq,
+                        versions,
                     )
                     .await
-                    .map_err(|e| {
-                        ApplierError::Execution(format!("Failed to insert batch rows: {}", e))
-                    })?;
+                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch rows"))?;
 
                 if applied.len() != mutations.len() {
                     return Err(ApplierError::Execution(format!(
@@ -1112,41 +1272,30 @@ impl DmlExecutor {
                     )));
                 }
 
-                for (mutation, (_row_key, notification)) in
-                    mutations.iter().zip(applied.into_iter())
-                {
+                for (mutation, (_row_key, notification)) in mutations.iter().zip(applied) {
                     affected_rows += 1;
                     side_effect_plan.record_manifest_update();
 
                     if let Some(notification) = notification {
-                        if self
-                            .publish_transaction_notification(
-                                mutation.user_id.as_ref(),
-                                &notification,
-                            )
-                            .await
-                        {
-                            side_effect_plan.record_publisher_event();
-                        }
-
-                        if NotificationServiceTrait::has_subscribers(
-                            self.app_context.notification_service().as_ref(),
-                            None,
-                            &notification.table_id,
-                        ) {
-                            side_effect_plan
-                                .push_notification(FanoutOwnerScope::Shared, notification);
-                        }
+                        self.stage_commit_notification(
+                            &mut side_effect_plan,
+                            crate::transactions::FanoutOwnerScope::Shared,
+                            notification.with_actor(mutation.user_id.clone()),
+                        );
                     }
                 }
 
-                let notifications_sent =
-                    self.app_context.notification_service().dispatch_commit_plan(&side_effect_plan);
-                self.observe_commit_seq(commit_seq);
+                let notifications_sent = self.defer_observe_and_dispatch(
+                    &mutations[0].table_id,
+                    TableType::Shared,
+                    first_mutation.user_id.as_ref(),
+                    log_index,
+                    side_effect_plan.clone(),
+                );
 
                 return Ok(TransactionApplyResult {
                     rows_affected: affected_rows,
-                    commit_seq,
+                    log_index,
                     notifications_sent,
                     manifest_updates: side_effect_plan.manifest_updates,
                     publisher_events: side_effect_plan.publisher_events,
@@ -1159,7 +1308,7 @@ impl DmlExecutor {
             Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
         )> = None;
 
-        for mutation in mutations {
+        for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
             if &mutation.transaction_id != transaction_id {
                 return Err(ApplierError::Validation(format!(
                     "staged mutation transaction mismatch: expected '{}', got '{}'",
@@ -1201,26 +1350,21 @@ impl DmlExecutor {
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
                     let (row_key, notification) = provider
-                        .insert_deferred_prevalidated(mutation.payload.clone())
+                        .insert_deferred_prevalidated(mutation.payload.clone(), version)
                         .await
-                        .map_err(|e| {
-                            ApplierError::Execution(format!("Failed to insert batch row: {}", e))
-                        })?;
-                    provider.patch_commit_seq_for_row_key(&row_key, commit_seq).await.map_err(
-                        |e| ApplierError::Execution(format!("Failed to stamp commit_seq: {}", e)),
-                    )?;
+                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
                     Some((row_key, notification))
                 },
                 OperationKind::Update => provider
                     .update_by_pk_value_deferred(
                         mutation.primary_key.as_str(),
                         mutation.payload.clone(),
-                        commit_seq,
+                        version,
                     )
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?,
                 OperationKind::Delete => provider
-                    .delete_by_pk_value_deferred(mutation.primary_key.as_str(), commit_seq)
+                    .delete_by_pk_value_deferred(mutation.primary_key.as_str(), version)
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?,
             };
@@ -1242,30 +1386,25 @@ impl DmlExecutor {
             side_effect_plan.record_manifest_update();
 
             if let Some(notification) = notification {
-                if self
-                    .publish_transaction_notification(mutation.user_id.as_ref(), &notification)
-                    .await
-                {
-                    side_effect_plan.record_publisher_event();
-                }
-
-                if NotificationServiceTrait::has_subscribers(
-                    self.app_context.notification_service().as_ref(),
-                    None,
-                    &mutation.table_id,
-                ) {
-                    side_effect_plan.push_notification(FanoutOwnerScope::Shared, notification);
-                }
+                self.stage_commit_notification(
+                    &mut side_effect_plan,
+                    crate::transactions::FanoutOwnerScope::Shared,
+                    notification.with_actor(mutation.user_id.clone()),
+                );
             }
         }
 
-        let notifications_sent =
-            self.app_context.notification_service().dispatch_commit_plan(&side_effect_plan);
-        self.observe_commit_seq(commit_seq);
+        let notifications_sent = self.defer_observe_and_dispatch(
+            &mutations[0].table_id,
+            TableType::Shared,
+            mutations.first().and_then(|m| m.user_id.as_ref()),
+            log_index,
+            side_effect_plan.clone(),
+        );
 
         Ok(TransactionApplyResult {
             rows_affected: affected_rows,
-            commit_seq,
+            log_index,
             notifications_sent,
             manifest_updates: side_effect_plan.manifest_updates,
             publisher_events: side_effect_plan.publisher_events,
@@ -1285,6 +1424,7 @@ impl DmlExecutor {
         }
     }
 
+    #[allow(dead_code)]
     async fn publish_transaction_notification(
         &self,
         user_id: Option<&UserId>,
@@ -1449,8 +1589,9 @@ impl DmlExecutor {
         user_id: &UserId,
         pk_value: &str,
         updates: Row,
+        version: VersionId,
     ) -> Result<usize, ApplierError> {
-        match provider.update_by_id_field(user_id, pk_value, updates.clone()).await {
+        match provider.update_by_id_field(user_id, pk_value, updates.clone(), version).await {
             Ok(result) => Ok(usize::from(result.is_some())),
             Err(kalamdb_tables::TableError::NotFound(_)) => {
                 if let Some(key) =
@@ -1461,7 +1602,9 @@ impl DmlExecutor {
                     let updated = <StreamTableProvider as BaseTableProvider<
                         StreamTableRowId,
                         StreamTableRow,
-                    >>::update(provider, user_id, &key, updates)
+                    >>::update(
+                        provider, user_id, &key, updates, version
+                    )
                     .await
                     .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
                     Ok(usize::from(updated.is_some()))

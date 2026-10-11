@@ -204,8 +204,12 @@ Notes:
 }
 ```
 
-The client resume cursor is always `last_seq_id`; snapshot and commit
-boundaries are backend-owned and are not part of the WebSocket contract.
+The client resume cursor is an opaque decimal `_version` token (`resume_token`),
+not a JavaScript number. It is bound to one version domain, history incarnation,
+and query scope. A numeric Snowflake `from_seq_id` / `last_seq_id` is rejected
+with an upgrade or resync error. Snapshot and materialized-frontier boundaries
+stay server-owned. Row results expose `_version` (signed bigint, transported as
+a decimal string) instead of `_seq` and `_commit_seq`.
 
 `batch_control.status` values:
 

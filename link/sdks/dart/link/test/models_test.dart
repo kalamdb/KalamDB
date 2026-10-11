@@ -574,14 +574,14 @@ void main() {
       final info = SubscriptionInfo(
         id: 'sub-1',
         query: 'SELECT * FROM users',
-        lastSeqId: SeqId(42),
+        lastVersionId: VersionId(42),
         lastEventTimeMs: 1700000000000,
         createdAtMs: 1700000000000,
         closed: false,
       );
       expect(info.id, 'sub-1');
       expect(info.query, 'SELECT * FROM users');
-      expect(info.lastSeqId, SeqId(42));
+      expect(info.lastVersionId, VersionId(42));
       expect(info.lastEventTimeMs, 1700000000000);
       expect(info.createdAtMs, 1700000000000);
       expect(info.closed, isFalse);
@@ -594,7 +594,7 @@ void main() {
         createdAtMs: 1700000000000,
         closed: true,
       );
-      expect(info.lastSeqId, isNull);
+      expect(info.lastVersionId, isNull);
       expect(info.lastEventTimeMs, isNull);
       expect(info.closed, isTrue);
     });
@@ -614,103 +614,95 @@ void main() {
   });
 
   // -----------------------------------------------------------------------
-  // SeqId
+  // VersionId
   // -----------------------------------------------------------------------
-  group('SeqId', () {
+  group('VersionId', () {
     test('creates from int', () {
-      final seq = SeqId(123456789);
+      final seq = VersionId(123456789);
       expect(seq.value, 123456789);
       expect(seq.toInt(), 123456789);
     });
 
     test('parse from string', () {
-      final seq = SeqId.parse('123456789');
+      final seq = VersionId.parse('123456789');
       expect(seq.value, 123456789);
     });
 
     test('parse from BigInt', () {
-      final seq = SeqId.parse(BigInt.from(42));
+      final seq = VersionId.parse(BigInt.from(42));
       expect(seq.value, 42);
     });
 
     test('tryParse returns null for invalid', () {
-      expect(SeqId.tryParse(null), isNull);
-      expect(SeqId.tryParse('abc'), isNull);
+      expect(VersionId.tryParse(null), isNull);
+      expect(VersionId.tryParse('abc'), isNull);
     });
 
     test('zero constructor', () {
-      const seq = SeqId.zero();
+      const seq = VersionId.zero();
       expect(seq.value, 0);
     });
 
-    test('Snowflake field extraction', () {
-      final timestampOffset = 5000;
-      final workerId = 7;
-      final sequence = 21;
-      final id = (timestampOffset << 22) | (workerId << 12) | sequence;
-      final seq = SeqId(id);
-
-      expect(seq.timestampMillis, SeqId.epoch + timestampOffset);
-      expect(seq.workerId, workerId);
-      expect(seq.sequence, sequence);
+    test('VersionId is an opaque decimal, not a timestamp', () {
+      const packed = VersionId(1 << 16);
+      expect(packed.toString(), '${1 << 16}');
+      expect(VersionId.parse(packed.toString()), packed);
     });
 
-    test('toDateTime returns UTC DateTime', () {
-      final seq = SeqId(1000 << 22);
-      final dt = seq.toDateTime();
-      expect(dt.isUtc, isTrue);
-      expect(dt.millisecondsSinceEpoch, SeqId.epoch + 1000);
+    test('large decimal survives parse', () {
+      final seq = VersionId.parse('9007199254740993');
+      expect(seq.toString(), '9007199254740993');
     });
 
     test('equality', () {
-      expect(SeqId(42), equals(SeqId(42)));
-      expect(SeqId(42) == SeqId(43), isFalse);
+      expect(VersionId(42), equals(VersionId(42)));
+      expect(VersionId(42) == VersionId(43), isFalse);
     });
 
     test('compareTo', () {
-      expect(SeqId(10).compareTo(SeqId(20)), lessThan(0));
-      expect(SeqId(20).compareTo(SeqId(10)), greaterThan(0));
-      expect(SeqId(10).compareTo(SeqId(10)), 0);
+      expect(VersionId(10).compareTo(VersionId(20)), lessThan(0));
+      expect(VersionId(20).compareTo(VersionId(10)), greaterThan(0));
+      expect(VersionId(10).compareTo(VersionId(10)), 0);
     });
 
     test('comparison operators', () {
-      expect(SeqId(10) < SeqId(20), isTrue);
-      expect(SeqId(20) > SeqId(10), isTrue);
-      expect(SeqId(10) <= SeqId(10), isTrue);
-      expect(SeqId(10) >= SeqId(10), isTrue);
+      expect(VersionId(10) < VersionId(20), isTrue);
+      expect(VersionId(20) > VersionId(10), isTrue);
+      expect(VersionId(10) <= VersionId(10), isTrue);
+      expect(VersionId(10) >= VersionId(10), isTrue);
     });
 
     test('toString returns decimal', () {
-      expect(SeqId(42).toString(), '42');
+      expect(VersionId(42).toString(), '42');
     });
 
     test('toBigInt', () {
-      expect(SeqId(42).toBigInt(), BigInt.from(42));
+      expect(VersionId(42).toBigInt(), BigInt.from(42));
     });
   });
 
   // -----------------------------------------------------------------------
-  // KalamCellValue.asSeqId()
+  // KalamCellValue.asVersionId()
   // -----------------------------------------------------------------------
-  group('KalamCellValue.asSeqId()', () {
-    test('converts int to SeqId', () {
-      final seq = KalamCellValue.from(42).asSeqId();
+  group('KalamCellValue.asVersionId()', () {
+    test('converts int to VersionId', () {
+      final seq = KalamCellValue.from(42).asVersionId();
       expect(seq, isNotNull);
       expect(seq!.value, 42);
     });
 
-    test('converts string to SeqId', () {
-      final seq = KalamCellValue.from('99').asSeqId();
+    test('converts string to VersionId', () {
+      final seq = KalamCellValue.from('99').asVersionId();
       expect(seq, isNotNull);
       expect(seq!.value, 99);
     });
 
     test('returns null for non-numeric string', () {
-      expect(KalamCellValue.from('abc').asSeqId(), isNull);
+      expect(KalamCellValue.from('abc').asVersionId(), isNull);
     });
 
     test('returns null for null', () {
-      expect(KalamCellValue.from(null).asSeqId(), isNull);
+      expect(KalamCellValue.from(null).asVersionId(), isNull);
     });
   });
 

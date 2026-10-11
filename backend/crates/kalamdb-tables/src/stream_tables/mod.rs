@@ -5,6 +5,7 @@
 //! - MVCC architecture with user_id and _seq system columns
 //! - Persistent append-only logs for fast replay
 
+#[path = "provider/mod.rs"]
 pub mod stream_table_provider;
 pub mod stream_table_store;
 

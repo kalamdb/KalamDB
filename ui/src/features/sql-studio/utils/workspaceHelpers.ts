@@ -93,3 +93,56 @@ export function stripAutoSelectLimitForLiveSql(sql: string): string {
 
   return `${match[1]};`;
 }
+
+export function prepareLiveSubscriptionSql(sql: string): { sql: string; notice: string | null } {
+  const limited = stripAutoSelectLimitForLiveSql(sql).trim().replace(/;+\s*$/, "");
+  const orderByAt = indexOfTopLevelKeyword(limited, "order by");
+  if (orderByAt < 0) {
+    return { sql: limited, notice: null };
+  }
+
+  return {
+    sql: limited.slice(0, orderByAt).trim(),
+    notice:
+      "Live queries cannot use ORDER BY, so Kalam left it out of this subscription. Rows still update live. Sort the grid if you need an order.",
+  };
+}
+
+function indexOfTopLevelKeyword(sql: string, keyword: string): number {
+  const target = keyword.toLowerCase();
+  const lower = sql.toLowerCase();
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    if (quote) {
+      if (char === quote && sql[index - 1] !== "\\") {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0 || !lower.startsWith(target, index)) {
+      continue;
+    }
+    const before = index === 0 ? " " : sql[index - 1];
+    const after = sql[index + target.length] ?? " ";
+    if (!/\w/.test(before) && !/\w/.test(after)) {
+      return index;
+    }
+  }
+
+  return -1;
+}

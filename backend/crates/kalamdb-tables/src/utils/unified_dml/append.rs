@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{
     conversions::arrow_json_conversion::json_to_row,
-    ids::{SeqId, UserTableRowId},
+    ids::{UserTableRowId, VersionId},
     models::{schemas::TableType, TableId, UserId},
 };
 use kalamdb_store::EntityStore;
@@ -33,10 +33,10 @@ use crate::{error::KalamDbError, SharedTableRow, SharedTableStore, UserTableRow,
 /// * `deleted` - Tombstone flag (false for INSERT/UPDATE, true for DELETE)
 ///
 /// # Returns
-/// * `Ok(SeqId)` - The sequence ID of the newly appended version
+/// * `Ok(VersionId)` - The sequence ID of the newly appended version
 /// * `Err(KalamDbError)` - If append fails
 pub fn append_version_sync_with_deps(
-    system_columns: Arc<SystemColumnsService>,
+    _system_columns: Arc<SystemColumnsService>,
     user_table_store: Arc<UserTableStore>,
     shared_table_store: Arc<SharedTableStore>,
     _table_id: &TableId,
@@ -44,7 +44,8 @@ pub fn append_version_sync_with_deps(
     user_id: Option<UserId>,
     fields: serde_json::Value,
     deleted: bool,
-) -> Result<SeqId, KalamDbError> {
+    version: VersionId,
+) -> Result<VersionId, KalamDbError> {
     // T060: Validate PRIMARY KEY (basic check - full uniqueness validation in provider)
     // This is a safety check; actual uniqueness validation happens in the provider layer
     // to avoid scanning all rows on every insert
@@ -64,10 +65,7 @@ pub fn append_version_sync_with_deps(
         _ => {},
     }
 
-    // Generate new SeqId via SystemColumnsService
-    let seq_id = system_columns
-        .generate_seq_id()
-        .map_err(|e| KalamDbError::InvalidOperation(format!("SeqId generation failed: {}", e)))?;
+    let seq_id = version;
 
     match table_type {
         TableType::User => {
@@ -77,11 +75,10 @@ pub fn append_version_sync_with_deps(
 
             // Create UserTableRow
             let entity = UserTableRow {
-                user_id:     user_id.clone(),
-                _seq:        seq_id,
-                _commit_seq: 0,
-                _deleted:    deleted,
-                fields:      json_to_row(&fields).ok_or_else(|| {
+                user_id:  user_id.clone(),
+                _version: seq_id,
+                _deleted: deleted,
+                fields:   json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )
@@ -111,10 +108,9 @@ pub fn append_version_sync_with_deps(
         TableType::Shared => {
             // Create SharedTableRow
             let entity = SharedTableRow {
-                _seq:        seq_id,
-                _commit_seq: 0,
-                _deleted:    deleted,
-                fields:      json_to_row(&fields).ok_or_else(|| {
+                _version: seq_id,
+                _deleted: deleted,
+                fields:   json_to_row(&fields).ok_or_else(|| {
                     KalamDbError::InvalidOperation(
                         "Invalid JSON fields: must be an object".to_string(),
                     )
@@ -169,7 +165,7 @@ pub fn append_version_sync_with_deps(
 /// * `deleted` - Tombstone flag (false for INSERT/UPDATE, true for DELETE)
 ///
 /// # Returns
-/// * `Ok(SeqId)` - The sequence ID of the newly appended version
+/// * `Ok(VersionId)` - The sequence ID of the newly appended version
 /// * `Err(KalamDbError)` - If append fails
 pub async fn append_version(
     system_columns: Arc<SystemColumnsService>,
@@ -180,7 +176,8 @@ pub async fn append_version(
     user_id: Option<UserId>,
     fields: serde_json::Value,
     deleted: bool,
-) -> Result<SeqId, KalamDbError> {
+    version: VersionId,
+) -> Result<VersionId, KalamDbError> {
     // Delegate to synchronous implementation
     append_version_sync_with_deps(
         system_columns,
@@ -191,5 +188,6 @@ pub async fn append_version(
         user_id,
         fields,
         deleted,
+        version,
     )
 }

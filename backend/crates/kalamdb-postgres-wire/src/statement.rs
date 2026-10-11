@@ -208,12 +208,7 @@ fn pg_type_for_data_type(data_type: &DataType) -> PgWireResult<Type> {
 fn classification_error_to_pg(
     error: kalamdb_sql::classifier::StatementClassificationError,
 ) -> PgWireError {
-    let message = match error {
-        kalamdb_sql::classifier::StatementClassificationError::Unauthorized(msg) => msg,
-        kalamdb_sql::classifier::StatementClassificationError::InvalidSql { message, .. } => {
-            message
-        },
-    };
+    let message = error.user_message().to_string();
     PgWireError::UserError(Box::new(ErrorInfo::new(
         "ERROR".to_string(),
         "42601".to_string(),

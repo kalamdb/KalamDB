@@ -1,6 +1,7 @@
 {{header}}
 import type { ProcedureContext } from "../runtime";
+import type { {{request_ident}}, {{result_ident}} } from "../contracts";
 
-export async function {{ident}}(ctx: ProcedureContext, input: unknown): Promise<unknown> {
+export async function {{ident}}(ctx: ProcedureContext, input: {{request_ident}}): Promise<{{result_ident}}> {
 {{{body}}}
 }

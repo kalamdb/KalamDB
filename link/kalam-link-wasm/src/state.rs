@@ -2,7 +2,7 @@ use link_common::{
     models::{ChangeEvent, ServerMessage, SubscriptionOptions},
     seq_tracking,
     subscription::{LiveRowsConfig, LiveRowsMaterializer},
-    SeqId,
+    VersionId,
 };
 
 #[derive(Clone)]
@@ -33,7 +33,7 @@ pub(crate) struct SubscriptionState {
     /// JavaScript callback function
     pub(crate) callback: js_sys::Function,
     /// Last received seq_id for resumption
-    pub(crate) last_seq_id: Option<SeqId>,
+    pub(crate) last_seq_id: Option<VersionId>,
     /// Promise resolver for an in-flight subscribe request waiting for ack.
     pub(crate) pending_subscribe_resolve: Option<js_sys::Function>,
     /// Promise rejector for an in-flight subscribe request waiting for ack.
@@ -50,7 +50,7 @@ pub(crate) enum WasmLiveRowsEvent {
     Rows {
         subscription_id: String,
         rows:            Vec<link_common::models::RowData>,
-        last_seq_id:     Option<SeqId>,
+        last_seq_id:     Option<VersionId>,
     },
     Error {
         subscription_id: String,
@@ -67,7 +67,10 @@ pub(crate) struct WasmLiveRowsOptions {
 }
 
 #[inline]
-pub(crate) fn track_subscription_checkpoint(last_seq_id: &mut Option<SeqId>, event: &ChangeEvent) {
+pub(crate) fn track_subscription_checkpoint(
+    last_seq_id: &mut Option<VersionId>,
+    event: &ChangeEvent,
+) {
     match event {
         ChangeEvent::Ack { batch_control, .. } => {
             if let Some(seq_id) = batch_control.last_seq_id {

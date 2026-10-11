@@ -97,6 +97,13 @@ pub enum FunctionsError {
     ContractMismatch(String),
     #[error("{0}")]
     Storage(String),
+    /// A catalog error. `message` is the user sentence. `detail` is the debug chain.
+    #[error("{message}")]
+    Catalog {
+        code:    kalamdb_commons::ErrorCode,
+        message: String,
+        detail:  String,
+    },
 }
 
 impl FunctionsError {
@@ -117,6 +124,7 @@ impl FunctionsError {
             },
             Self::StaleRevision { .. } => FunctionErrorCode::StaleRevision,
             Self::ContractMismatch(_) => FunctionErrorCode::ContractMismatch,
+            Self::Catalog { .. } => FunctionErrorCode::InvalidArguments,
         }
     }
 

@@ -61,3 +61,6 @@ mod test_project_workflow_deploy;
 
 #[path = "cli/test_project_workflow_deploy_guardrails.rs"]
 mod test_project_workflow_deploy_guardrails;
+
+#[path = "cli/test_first_run_and_instances.rs"]
+mod test_first_run_and_instances;

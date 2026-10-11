@@ -12,7 +12,7 @@ pub use kalamdb_configs::RpcTlsConfig;
 pub const DEFAULT_USER_DATA_SHARDS: u32 = 32;
 
 /// Default number of shared data shards
-pub const DEFAULT_SHARED_DATA_SHARDS: u32 = 1;
+pub const DEFAULT_SHARED_DATA_SHARDS: u32 = kalamdb_sharding::DEFAULT_SHARED_SHARDS;
 
 /// Runtime configuration for the Raft Manager
 ///

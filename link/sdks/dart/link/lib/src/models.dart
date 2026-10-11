@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:kalam_link/src/cell_value.dart';
-import 'package:kalam_link/src/seq_id.dart';
+import 'package:kalam_link/src/version_id.dart';
 
 /// Column metadata from a query result.
 class SchemaField {
@@ -439,17 +439,17 @@ class LiveCheckpoint {
   /// Subscription ID assigned when opening the live stream.
   final String subscriptionId;
 
-  /// Last fully applied sequence ID for this event or materialized snapshot.
-  final SeqId lastSeqId;
+  /// Last fully applied row version for this event or materialized snapshot.
+  final VersionId lastVersionId;
 
   const LiveCheckpoint({
     required this.subscriptionId,
-    required this.lastSeqId,
+    required this.lastVersionId,
   });
 
   @override
   String toString() =>
-      'LiveCheckpoint(subscriptionId: $subscriptionId, lastSeqId: $lastSeqId)';
+      'LiveCheckpoint(subscriptionId: $subscriptionId, lastVersionId: $lastVersionId)';
 }
 
 // ---------------------------------------------------------------------------
@@ -466,8 +466,8 @@ class SubscriptionInfo {
   /// The SQL query this subscription is tracking.
   final String query;
 
-  /// Last received sequence ID (for resume on reconnect), if any.
-  final SeqId? lastSeqId;
+  /// Last received row version (for resume on reconnect), if any.
+  final VersionId? lastVersionId;
 
   /// Timestamp (millis since epoch) of the last received event.
   final int? lastEventTimeMs;
@@ -481,7 +481,7 @@ class SubscriptionInfo {
   const SubscriptionInfo({
     required this.id,
     required this.query,
-    this.lastSeqId,
+    this.lastVersionId,
     this.lastEventTimeMs,
     required this.createdAtMs,
     required this.closed,

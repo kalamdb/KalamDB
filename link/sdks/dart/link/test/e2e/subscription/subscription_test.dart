@@ -400,7 +400,7 @@ void main() {
           expect(checkpoint.subscriptionId, isNotEmpty);
           final subs = await client.getSubscriptions();
           final info = subs.firstWhere((sub) => sub.query == sql);
-          expect(info.lastSeqId?.toString(), checkpoint.lastSeqId.toString());
+          expect(info.lastVersionId?.toString(), checkpoint.lastVersionId.toString());
         } finally {
           await _safeCancel(sub);
           await writer.dispose();

@@ -82,6 +82,20 @@ mod tests {
     use super::CLISession;
 
     #[test]
+    fn split_batch_statements_preserves_inline_procedure_bodies() {
+        for delimiter in ["$$", "$body$"] {
+            let procedure = format!(
+                "CREATE PROCEDURE api.greet(msg TEXT) RETURNS TEXT LANGUAGE JAVASCRIPT AS \
+                 {delimiter} const suffix = ';'; // comment\nreturn input.msg + suffix; \
+                 {delimiter}"
+            );
+            let statements =
+                CLISession::split_batch_statements(&format!("{procedure}; CALL api.greet('Ada');"));
+            assert_eq!(statements, vec![procedure, "CALL api.greet('Ada')".to_string()]);
+        }
+    }
+
+    #[test]
     fn split_batch_statements_preserves_comments_and_literals() {
         let statements = CLISession::split_batch_statements(
             "-- leading comment; not a statement\nCREATE TABLE demo.t (id BIGINT PRIMARY KEY, msg \

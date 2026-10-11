@@ -761,7 +761,7 @@ pub async fn dart_live_events_ack(
     seq_id: i64,
 ) -> anyhow::Result<()> {
     let mut sub = subscription.inner.lock().await;
-    sub.acknowledge(kalam_client::SeqId::from_i64(seq_id)).await?;
+    sub.acknowledge(kalam_client::VersionId::try_from_i64(seq_id)?).await?;
     Ok(())
 }
 

@@ -35,8 +35,8 @@ test('buildReply uses default advice for generic messages', async () => {
 
 test('assistant SHARED insert does not use EXECUTE AS', async () => {
   const source = await procedureSource();
-  assert.match(source, /insert\(chatDemoMessages\)/);
-  const marker = 'await ctx.orm.insert(chatDemoMessages)';
+  assert.match(source, /insert\(messages\)/);
+  const marker = 'await ctx.orm.insert(messages)';
   const start = source.indexOf(marker);
   assert.ok(start >= 0, 'expected SHARED assistant insert through the invoker orm');
   const block = source.slice(start, start + 400);
@@ -47,7 +47,7 @@ test('assistant SHARED insert does not use EXECUTE AS', async () => {
 test('STREAM thinking events use EXECUTE AS the chatting user', async () => {
   const source = await procedureSource();
   assert.match(source, /const asSender = ctx\.orm\.as\(sender\)/);
-  assert.match(source, /asSender\.insert\(chatDemoAgentEvents\)/);
+  assert.match(source, /asSender\.insert\(agentEvents\)/);
 });
 
 test('on_user_message accepts a JSON-string payload from topic packing', async () => {

@@ -5,7 +5,7 @@ import { generateSchema } from '../dist/index.js';
 const columnsJson = JSON.stringify([
   { column_name: 'id', ordinal_position: 1, data_type: 'Text', is_nullable: false, is_primary_key: true, default_value: 'None' },
   { column_name: 'body', ordinal_position: 2, data_type: 'Text', is_nullable: true, is_primary_key: false, default_value: 'None' },
-  { column_name: '_seq', ordinal_position: 3, data_type: 'BigInt', is_nullable: false, is_primary_key: false, default_value: 'None' },
+  { column_name: '_version', ordinal_position: 3, data_type: 'BigInt', is_nullable: false, is_primary_key: false, default_value: 'None' },
 ]);
 
 const allTypesColumnsJson = JSON.stringify([
@@ -70,8 +70,8 @@ describe('generateSchema unit behavior', () => {
     assert.ok(schema.includes('export const chat_messages = kTable.shared("chat.messages"'));
     assert.ok(schema.includes('export const chat_messagesConfig = getKalamTableConfig(chat_messages)!;'));
     assert.ok(schema.includes('export const chat_inbox = kTable.stream("chat.inbox"'));
-    assert.ok(schema.includes('...kSystemColumns(["_seq","_deleted"] as const),'));
-    assert.ok(schema.includes('...kSystemColumns(["_seq"] as const),'));
+    assert.ok(schema.includes('...kSystemColumns(["_version","_deleted"] as const),'));
+    assert.ok(schema.includes('...kSystemColumns(["_version"] as const),'));
     assert.ok(schema.includes('{ systemColumns: true }'));
     assert.ok(schema.includes('export type ChatMessages = typeof chat_messages.$inferSelect;'));
   });
@@ -172,7 +172,7 @@ describe('generateSchema unit behavior', () => {
                 { column_name: 'ship_date', ordinal_position: 9, data_type: 'Date32', is_nullable: true, is_primary_key: false, default_value: 'None' },
                 { column_name: 'delivery_window', ordinal_position: 10, data_type: 'Time64(Microsecond)', is_nullable: true, is_primary_key: false, default_value: 'None' },
                 { column_name: 'class', ordinal_position: 11, data_type: 'Text', is_nullable: true, is_primary_key: false, default_value: 'None' },
-                { column_name: '_seq', ordinal_position: 12, data_type: 'BigInt', is_nullable: false, is_primary_key: false, default_value: 'None' },
+                { column_name: '_version', ordinal_position: 12, data_type: 'BigInt', is_nullable: false, is_primary_key: false, default_value: 'None' },
               ],
             }],
           };
@@ -205,7 +205,7 @@ describe('generateSchema unit behavior', () => {
     assert.ok(schema.includes('ship_date: date("ship_date", { mode: \'date\' })'));
     assert.ok(schema.includes('delivery_window: time("delivery_window")'));
     assert.ok(schema.includes('class: text("class")'));
-    assert.ok(schema.includes('...kSystemColumns(["_seq","_deleted","_commit_seq"] as const),'));
+    assert.ok(schema.includes('...kSystemColumns(["_version","_deleted","_timestamp"] as const),'));
     assert.ok(schema.includes('}, { systemColumns: "all" });'));
     assert.ok(schema.includes('export const commerce_ordersConfig = getKalamTableConfig(commerce_orders)!;'));
     assert.ok(schema.includes('export type CommerceOrders = typeof commerce_orders.$inferSelect;'));
@@ -283,13 +283,13 @@ describe('generateSchema unit behavior', () => {
     };
 
     const schema = await generateSchema(client, {
-      includeSystemColumns: ['_seq'],
+      includeSystemColumns: ['_version'],
       bigIntMode: 'number',
       includeTypeAliases: false,
     });
 
-    assert.ok(schema.includes('...kSystemColumns(["_seq"] as const),'));
-    assert.ok(schema.includes('}, { systemColumns: ["_seq"] });'));
+    assert.ok(schema.includes('...kSystemColumns(["_version"] as const),'));
+    assert.ok(schema.includes('}, { systemColumns: ["_version"] });'));
     assert.ok(schema.includes('id: bigint("id", { mode: "number" }).primaryKey()'));
     assert.ok(schema.includes('value: doublePrecision("value").notNull()'));
     assert.ok(!schema.includes('export type MetricsSamples'));

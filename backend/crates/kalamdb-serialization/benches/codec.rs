@@ -13,7 +13,7 @@ use arrow::{
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    ids::SeqId,
+    ids::VersionId,
     models::{
         rows::{Row, UserTableRow},
         UserId,
@@ -102,11 +102,10 @@ fn nested_row() -> UserTableRow {
     values.insert("customer".to_string(), struct_scalar(7, "ada"));
     values.insert("tags".to_string(), utf8_list(&["vip", "west"]));
     UserTableRow {
-        user_id:     UserId::new("user-1"),
-        _seq:        SeqId::from_i64(100),
-        _commit_seq: 3,
-        _deleted:    false,
-        fields:      Row { values },
+        user_id:  UserId::new("user-1"),
+        _version: VersionId::try_from_i64(100).unwrap(),
+        _deleted: false,
+        fields:   Row { values },
     }
 }
 
@@ -119,11 +118,10 @@ fn scalar_row() -> UserTableRow {
         ScalarValue::Utf8(Some("hello from kalamdb 0.7".to_string())),
     );
     UserTableRow {
-        user_id:     UserId::new("user-1"),
-        _seq:        SeqId::from_i64(100),
-        _commit_seq: 3,
-        _deleted:    false,
-        fields:      Row { values },
+        user_id:  UserId::new("user-1"),
+        _version: VersionId::try_from_i64(100).unwrap(),
+        _deleted: false,
+        fields:   Row { values },
     }
 }
 
@@ -186,7 +184,7 @@ fn bench_codec(c: &mut Criterion) {
                 black_box(&nested_bytes),
                 black_box(&nested_schema),
                 UserId::new("user-1"),
-                SeqId::from_i64(100),
+                VersionId::try_from_i64(100).unwrap(),
             )
             .unwrap()
         })
@@ -213,7 +211,7 @@ fn bench_codec(c: &mut Criterion) {
                 black_box(&scalar_bytes),
                 black_box(&scalar_schema),
                 UserId::new("user-1"),
-                SeqId::from_i64(100),
+                VersionId::try_from_i64(100).unwrap(),
             )
             .unwrap()
         })
@@ -244,7 +242,7 @@ fn bench_codec(c: &mut Criterion) {
                         bytes,
                         &scalar_schema,
                         UserId::new("user-1"),
-                        SeqId::from_i64(100),
+                        VersionId::try_from_i64(100).unwrap(),
                     )
                     .unwrap();
                 }

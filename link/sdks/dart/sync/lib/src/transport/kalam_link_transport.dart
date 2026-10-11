@@ -120,7 +120,7 @@ final class KalamLinkTransport implements KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   }) async* {
@@ -137,7 +137,7 @@ final class KalamLinkTransport implements KalamSyncTransport {
           _emitConnection(KalamTransportConnection.connected);
           return KalamRemoteBatch(
             changes: decodeEvent(delivery.event),
-            checkpoint: delivery.checkpoint?.lastSeqId,
+            checkpoint: delivery.checkpoint?.lastVersionId,
             acknowledge: delivery.acknowledge,
           );
         });
@@ -221,10 +221,10 @@ final class KalamLinkTransport implements KalamSyncTransport {
     Map<String, KalamCellValue>? oldRow,
     bool initial = false,
   }) {
-    final seq = values['_seq']?.asSeqId() ?? oldRow?['_seq']?.asSeqId();
+    final seq = values['_version']?.asVersionId() ?? oldRow?['_version']?.asVersionId();
     if (seq == null) {
       throw const FormatException(
-        'A synchronized KalamDB row must include its _seq value.',
+        'A synchronized KalamDB row must include its _version value.',
       );
     }
     return KalamRemoteChange(
@@ -239,7 +239,7 @@ final class KalamLinkTransport implements KalamSyncTransport {
   static Map<String, Object?> _plainRow(Map<String, KalamCellValue> values) {
     return {
       for (final entry in values.entries)
-        if (entry.key != '_seq') entry.key: entry.value.toJson(),
+        if (entry.key != '_version') entry.key: entry.value.toJson(),
     };
   }
 }

@@ -1,8 +1,13 @@
 //! Arrow to JSON conversion helpers
 
 use arrow::record_batch::RecordBatch;
-use kalamdb_commons::{conversions::mask_sensitive_rows_for_role, models::Role};
-use kalamdb_core::providers::arrow_json_conversion::record_batch_to_json_arrays;
+use kalamdb_commons::{
+    conversions::mask_sensitive_rows_for_role,
+    models::{rows::Row, Role},
+};
+use kalamdb_core::providers::arrow_json_conversion::{
+    record_batch_to_json_arrays, rows_to_json_arrays,
+};
 
 use super::{super::models::QueryResult, schema_response_cache::cached_sql_schema};
 
@@ -33,6 +38,22 @@ pub fn record_batch_to_query_result(
 
     let result = QueryResult::with_rows_and_schema(rows, schema_fields);
     Ok(result)
+}
+
+/// JSON for cached point-get rows. Skips the Arrow batch those rows used to
+/// be rebuilt into before the same cells were read back out.
+pub fn scalar_rows_to_query_result(
+    rows: Vec<Row>,
+    schema: arrow::datatypes::SchemaRef,
+    user_role: Option<Role>,
+) -> Result<QueryResult, Box<dyn std::error::Error>> {
+    let cached = cached_sql_schema(&schema);
+    let mut json_rows = rows_to_json_arrays(&schema, rows)?;
+    if let Some(role) = user_role {
+        mask_sensitive_rows_for_role(&mut json_rows, cached.fields.as_ref(), role);
+    }
+    let schema_fields = cached.fields.as_ref().clone();
+    Ok(QueryResult::with_rows_and_schema(json_rows, schema_fields))
 }
 
 pub fn resolve_arrow_schema(
@@ -113,6 +134,34 @@ mod tests {
         ));
         assert_eq!(result.schema[2].name, "payload");
         assert!(result.schema[2].flags.is_none());
+    }
+
+    #[test]
+    fn scalar_rows_match_arrow_json() {
+        use std::collections::BTreeMap;
+
+        use arrow::array::Int64Array;
+        use kalamdb_commons::models::rows::Row;
+        use kalamdb_core::sql::ScalarValue;
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![Arc::new(Int64Array::from(vec![7_i64]))],
+        )
+        .expect("batch");
+        let from_arrow = record_batch_to_query_result(vec![batch], None, None).expect("arrow json");
+
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(7)));
+        let from_rows =
+            scalar_rows_to_query_result(vec![Row::new(values)], Arc::clone(&schema), None)
+                .expect("scalar json");
+
+        assert_eq!(
+            serde_json::to_value(&from_arrow).expect("arrow value"),
+            serde_json::to_value(&from_rows).expect("scalar value")
+        );
     }
 
     #[test]

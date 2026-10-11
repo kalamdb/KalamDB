@@ -465,7 +465,10 @@ mod tests {
             let generated =
                 fs::read_to_string(temp.path().join("lib/generated/kalam.dart")).unwrap();
             assert!(generated.contains("KalamTableSpec<Users>"));
-            assert!(generated.contains("tableId: 'users'"));
+            assert!(
+                generated.contains("tableId: 'demo_dart.users'"),
+                "project namespace should qualify the Dart table id\n{generated}"
+            );
             assert!(!generated.to_lowercase().contains("placeholder"));
         });
     }

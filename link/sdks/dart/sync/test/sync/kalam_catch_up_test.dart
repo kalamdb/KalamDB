@@ -8,7 +8,7 @@ import 'package:kalam_sync/kalam_sync.dart';
 final class _CatchUpTransport implements KalamSyncTransport {
   final pages = <String, List<KalamRemoteBatch>>{};
   final calls =
-      <({String id, String sql, SeqId? from, int? batchSize})>[];
+      <({String id, String sql, VersionId? from, int? batchSize})>[];
 
   @override
   Stream<KalamTransportConnection> get connectionStates =>
@@ -18,7 +18,7 @@ final class _CatchUpTransport implements KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   }) {
@@ -56,7 +56,7 @@ void main() {
         subject: 'user-a',
       ).accountKey,
       subscriptionId: 'messages',
-      seq: const SeqId(10),
+      seq: const VersionId(10),
       apply: () => null,
     );
 
@@ -66,16 +66,16 @@ void main() {
           changes: [
             const KalamRemoteChange(
               kind: KalamChangeKind.insert,
-              seq: SeqId(11),
+              seq: VersionId(11),
               row: {'id': 'message-11'},
             ),
             const KalamRemoteChange(
               kind: KalamChangeKind.insert,
-              seq: SeqId(12),
+              seq: VersionId(12),
               row: {'id': 'message-12'},
             ),
           ],
-          checkpoint: const SeqId(12),
+          checkpoint: const VersionId(12),
           acknowledge: () async {},
         ),
       ];
@@ -97,7 +97,7 @@ void main() {
     );
 
     expect(transport.calls.single.sql, 'SELECT * FROM public.messages');
-    expect(transport.calls.single.from, const SeqId(10));
+    expect(transport.calls.single.from, const VersionId(10));
     expect(transport.calls.single.batchSize, 2);
     expect(applied, [11, 12]);
     expect(result.appliedCount, 2);
@@ -112,7 +112,7 @@ void main() {
             : '',
         subscriptionId: 'messages',
       ))?.seq,
-      const SeqId(12),
+      const VersionId(12),
     );
   });
 
@@ -125,11 +125,11 @@ void main() {
           changes: [
             const KalamRemoteChange(
               kind: KalamChangeKind.insert,
-              seq: SeqId(3),
+              seq: VersionId(3),
               row: {'id': 'message-3'},
             ),
           ],
-          checkpoint: const SeqId(3),
+          checkpoint: const VersionId(3),
           acknowledge: () async {},
         ),
       ];
@@ -167,6 +167,6 @@ void main() {
       ),
     );
 
-    expect(live.calls.single.from, const SeqId(3));
+    expect(live.calls.single.from, const VersionId(3));
   });
 }

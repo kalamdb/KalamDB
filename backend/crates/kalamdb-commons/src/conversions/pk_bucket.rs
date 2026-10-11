@@ -14,7 +14,7 @@ use arrow_schema::DataType;
 use datafusion_common::ScalarValue;
 
 use super::scalar::string::parse_string_as_scalar;
-use crate::{ids::SeqId, models::rows::Row};
+use crate::{ids::VersionId, models::rows::Row};
 
 /// Hash-map key for PK-keyed winner selection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -22,7 +22,7 @@ pub enum PkBucketKey {
     Int(i64),
     UInt(u64),
     Text(String),
-    Seq(i64),
+    Version(i64),
 }
 
 impl From<String> for PkBucketKey {
@@ -43,7 +43,7 @@ impl fmt::Display for PkBucketKey {
             Self::Int(value) => write!(f, "{value}"),
             Self::UInt(value) => write!(f, "{value}"),
             Self::Text(value) => write!(f, "{value}"),
-            Self::Seq(value) => write!(f, "_seq:{value}"),
+            Self::Version(value) => write!(f, "_version:{value}"),
         }
     }
 }
@@ -75,19 +75,19 @@ pub fn try_pk_bucket_key(value: &ScalarValue) -> Result<PkBucketKey, String> {
 /// Null or empty text falls back to `_seq` so rows without a PK still bucket.
 /// Unsupported non-null types stringify so merge still groups them.
 #[inline]
-pub fn pk_bucket_key_from_scalar(value: &ScalarValue, seq: SeqId) -> PkBucketKey {
+pub fn pk_bucket_key_from_scalar(value: &ScalarValue, version: VersionId) -> PkBucketKey {
     match try_pk_bucket_key(value) {
-        Ok(PkBucketKey::Text(text)) if text.is_empty() => PkBucketKey::Seq(seq.as_i64()),
+        Ok(PkBucketKey::Text(text)) if text.is_empty() => PkBucketKey::Version(version.as_i64()),
         Ok(key) => key,
-        Err(_) if value.is_null() => PkBucketKey::Seq(seq.as_i64()),
+        Err(_) if value.is_null() => PkBucketKey::Version(version.as_i64()),
         Err(_) => PkBucketKey::Text(value.to_string()),
     }
 }
 
-pub fn pk_bucket_key_from_row(row: &Row, pk_name: &str, seq: SeqId) -> PkBucketKey {
+pub fn pk_bucket_key_from_row(row: &Row, pk_name: &str, version: VersionId) -> PkBucketKey {
     match row.get(pk_name) {
-        Some(value) => pk_bucket_key_from_scalar(value, seq),
-        None => PkBucketKey::Seq(seq.as_i64()),
+        Some(value) => pk_bucket_key_from_scalar(value, version),
+        None => PkBucketKey::Version(version.as_i64()),
     }
 }
 
@@ -95,10 +95,10 @@ pub fn pk_bucket_key_from_row(row: &Row, pk_name: &str, seq: SeqId) -> PkBucketK
 pub fn pk_bucket_key_from_typed_string(
     value: &str,
     data_type: &DataType,
-    seq: SeqId,
+    version: VersionId,
 ) -> Result<PkBucketKey, String> {
     let scalar = parse_string_as_scalar(value, data_type)?;
-    Ok(pk_bucket_key_from_scalar(&scalar, seq))
+    Ok(pk_bucket_key_from_scalar(&scalar, version))
 }
 
 /// Convert a previously stringified PK into a required identity key using the column type.
@@ -117,11 +117,15 @@ pub fn try_pk_bucket_key_from_array(array: &dyn Array, row_idx: usize) -> Option
 }
 
 /// Read a PK bucket from an Arrow array using the same encoding as [`pk_bucket_key_from_scalar`].
-pub fn pk_bucket_key_from_array(array: &dyn Array, row_idx: usize, seq: SeqId) -> PkBucketKey {
+pub fn pk_bucket_key_from_array(
+    array: &dyn Array,
+    row_idx: usize,
+    version: VersionId,
+) -> PkBucketKey {
     match read_pk_bucket_from_array(array, row_idx) {
-        Some(PkBucketKey::Text(text)) if text.is_empty() => PkBucketKey::Seq(seq.as_i64()),
+        Some(PkBucketKey::Text(text)) if text.is_empty() => PkBucketKey::Version(version.as_i64()),
         Some(key) => key,
-        None => PkBucketKey::Seq(seq.as_i64()),
+        None => PkBucketKey::Version(version.as_i64()),
     }
 }
 
@@ -173,7 +177,7 @@ mod tests {
 
     #[test]
     fn integer_keys_stay_on_the_stack() {
-        let seq = SeqId::from_i64(99);
+        let seq = VersionId::try_from_i64(99).unwrap();
         assert_eq!(
             pk_bucket_key_from_scalar(&ScalarValue::Int64(Some(42)), seq),
             PkBucketKey::Int(42)
@@ -187,12 +191,15 @@ mod tests {
 
     #[test]
     fn empty_or_null_falls_back_to_seq_for_merge() {
-        let seq = SeqId::from_i64(99);
+        let seq = VersionId::try_from_i64(99).unwrap();
         assert_eq!(
             pk_bucket_key_from_scalar(&ScalarValue::Utf8(Some(String::new())), seq),
-            PkBucketKey::Seq(99)
+            PkBucketKey::Version(99)
         );
-        assert_eq!(pk_bucket_key_from_scalar(&ScalarValue::Int64(None), seq), PkBucketKey::Seq(99));
+        assert_eq!(
+            pk_bucket_key_from_scalar(&ScalarValue::Int64(None), seq),
+            PkBucketKey::Version(99)
+        );
     }
 
     #[test]
@@ -210,7 +217,7 @@ mod tests {
 
     #[test]
     fn typed_string_round_trips_int64() {
-        let seq = SeqId::from_i64(0);
+        let seq = VersionId::try_from_i64(1).unwrap();
         assert_eq!(
             pk_bucket_key_from_typed_string("42", &DataType::Int64, seq).unwrap(),
             PkBucketKey::Int(42)
@@ -228,7 +235,7 @@ mod tests {
     #[test]
     fn display_matches_legacy_string_keys() {
         assert_eq!(PkBucketKey::Int(12345).to_string(), "12345");
-        assert_eq!(PkBucketKey::Seq(7).to_string(), "_seq:7");
+        assert_eq!(PkBucketKey::Version(7).to_string(), "_version:7");
         assert_eq!(PkBucketKey::Text("user".to_string()).to_string(), "user");
     }
 }

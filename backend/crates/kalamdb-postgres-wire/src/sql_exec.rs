@@ -92,11 +92,7 @@ impl WireSqlExecutor {
                     },
                     Err(error) => {
                         self.mark_statement_failed_if_in_block(state);
-                        Ok(vec![Response::Error(Box::new(error_info(
-                            "ERROR",
-                            SQL_ERROR_SQLSTATE,
-                            error.to_string(),
-                        )))])
+                        Ok(vec![Response::Error(Box::new(sql_error_info(&error)))])
                     },
                 }
             },
@@ -133,11 +129,7 @@ impl WireSqlExecutor {
             Ok(result) => execution_result_to_responses(result),
             Err(error) => {
                 self.mark_statement_failed_if_in_block(state);
-                Ok(vec![Response::Error(Box::new(error_info(
-                    "ERROR",
-                    SQL_ERROR_SQLSTATE,
-                    error.to_string(),
-                )))])
+                Ok(vec![Response::Error(Box::new(sql_error_info(&error)))])
             },
         }
     }
@@ -193,6 +185,16 @@ pub fn backend_session_error_to_response(error: BackendSessionError) -> Response
 
 pub fn pg_error(message: impl Into<String>) -> PgWireError {
     PgWireError::UserError(Box::new(error_info("ERROR", SQL_ERROR_SQLSTATE, message)))
+}
+
+fn sql_error_info(error: &kalamdb_core::error::KalamDbError) -> ErrorInfo {
+    let sqlstate = match error {
+        kalamdb_core::error::KalamDbError::Coded(coded) => {
+            coded.leaf_code().sqlstate().unwrap_or(SQL_ERROR_SQLSTATE)
+        },
+        _ => SQL_ERROR_SQLSTATE,
+    };
+    error_info("ERROR", sqlstate, error.user_message())
 }
 
 fn error_info(

@@ -9,13 +9,13 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ids::SeqId,
+    ids::VersionId,
     models::UserId,
     storage_key::{decode_key, encode_key, encode_prefix},
     StorageKey,
 };
 
-/// Composite key for user table rows: {user_id}:{_seq}
+/// Composite key for user table rows: {user_id}:{_version}
 ///
 /// **MVCC Architecture**: Similar to TableId pattern, this is a composite struct
 /// with two fields that implements StorageKey trait for RocksDB storage.
@@ -40,13 +40,13 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserTableRowId {
     pub user_id: UserId,
-    pub seq:     SeqId,
+    pub version: VersionId,
 }
 
 impl UserTableRowId {
     /// Create a new user table row ID
-    pub fn new(user_id: UserId, seq: SeqId) -> Self {
-        Self { user_id, seq }
+    pub fn new(user_id: UserId, version: VersionId) -> Self {
+        Self { user_id, version }
     }
 
     /// Get the user_id component
@@ -54,9 +54,9 @@ impl UserTableRowId {
         &self.user_id
     }
 
-    /// Get the sequence ID component
-    pub fn seq(&self) -> SeqId {
-        self.seq
+    /// Canonical row version stored in this key.
+    pub fn version(&self) -> VersionId {
+        self.version
     }
 
     /// Prefix for scanning all rows for a user.
@@ -68,20 +68,19 @@ impl UserTableRowId {
 impl StorageKey for UserTableRowId {
     fn storage_key(&self) -> Vec<u8> {
         // Use storekey's order-preserving encoding for (user_id, seq) tuple
-        encode_key(&(self.user_id.as_str(), self.seq.as_i64()))
+        encode_key(&(self.user_id.as_str(), self.version.as_i64()))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        let (user_id_str, seq_val): (String, i64) = decode_key(bytes)?;
-        Ok(Self::new(UserId::new(user_id_str), SeqId::new(seq_val)))
+        let (user_id_str, version_val): (String, i64) = decode_key(bytes)?;
+        let version = VersionId::try_from_i64(version_val)
+            .map_err(|error| format!("invalid user row version: {error}"))?;
+        Ok(Self::new(UserId::new(user_id_str), version))
     }
 }
 
-/// Type alias for shared table row ID (just SeqId, no user scoping)
-///
-/// **MVCC Architecture**: Shared tables use SeqId directly as the storage key
-/// since they are accessible across all users.
-pub type SharedTableRowId = SeqId;
+/// Shared table row key. The key is the canonical [`VersionId`].
+pub type SharedTableRowId = VersionId;
 
 /// Composite key for stream table rows: {user_id}:{_seq}
 ///
@@ -108,13 +107,13 @@ pub type SharedTableRowId = SeqId;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StreamTableRowId {
     pub user_id: UserId,
-    pub seq:     SeqId,
+    pub version: VersionId,
 }
 
 impl StreamTableRowId {
     /// Create a new stream table row ID
-    pub fn new(user_id: UserId, seq: SeqId) -> Self {
-        Self { user_id, seq }
+    pub fn new(user_id: UserId, version: VersionId) -> Self {
+        Self { user_id, version }
     }
 
     /// Get the user_id component
@@ -122,9 +121,9 @@ impl StreamTableRowId {
         &self.user_id
     }
 
-    /// Get the sequence ID component
-    pub fn seq(&self) -> SeqId {
-        self.seq
+    /// Canonical row version stored in this key.
+    pub fn version(&self) -> VersionId {
+        self.version
     }
 
     /// Prefix for scanning all rows for a user.
@@ -136,7 +135,7 @@ impl StreamTableRowId {
 impl Ord for StreamTableRowId {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.user_id.as_str().cmp(other.user_id.as_str()) {
-            Ordering::Equal => self.seq.cmp(&other.seq),
+            Ordering::Equal => self.version.cmp(&other.version),
             other => other,
         }
     }
@@ -151,12 +150,14 @@ impl PartialOrd for StreamTableRowId {
 impl StorageKey for StreamTableRowId {
     fn storage_key(&self) -> Vec<u8> {
         // Use storekey's order-preserving encoding for (user_id, seq) tuple
-        encode_key(&(self.user_id.as_str(), self.seq.as_i64()))
+        encode_key(&(self.user_id.as_str(), self.version.as_i64()))
     }
 
     fn from_storage_key(bytes: &[u8]) -> Result<Self, String> {
-        let (user_id_str, seq_val): (String, i64) = decode_key(bytes)?;
-        Ok(Self::new(UserId::new(user_id_str), SeqId::new(seq_val)))
+        let (user_id_str, version_val): (String, i64) = decode_key(bytes)?;
+        let version = VersionId::try_from_i64(version_val)
+            .map_err(|error| format!("invalid stream row version: {error}"))?;
+        Ok(Self::new(UserId::new(user_id_str), version))
     }
 }
 
@@ -167,29 +168,32 @@ mod tests {
     #[test]
     fn test_user_table_row_id_storage_key_round_trip() {
         let user_id = UserId::new("user1");
-        let seq = SeqId::new(12345);
-        let row_id = UserTableRowId::new(user_id.clone(), seq);
+        let version = VersionId::try_from_i64(12345).unwrap();
+        let row_id = UserTableRowId::new(user_id.clone(), version);
 
         // Serialize and deserialize using StorageKey trait
         let key_bytes = row_id.storage_key();
         let parsed = UserTableRowId::from_storage_key(&key_bytes).unwrap();
 
         assert_eq!(parsed.user_id(), &user_id);
-        assert_eq!(parsed.seq(), seq);
+        assert_eq!(parsed.version(), version);
     }
 
     #[test]
     fn test_user_table_row_id_ordering() {
         // Critical test: verify lexicographic ordering is correct
-        let alice = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
-        let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(50));
+        let alice =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
+        let bob = UserTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(50).unwrap());
 
         // "alice" < "bob" lexicographically, so alice's key should sort first
         assert!(alice.storage_key() < bob.storage_key(), "alice should sort before bob");
 
-        // Same user, different seq: should sort by seq
-        let alice_100 = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
-        let alice_200 = UserTableRowId::new(UserId::new("alice"), SeqId::new(200));
+        // Same user, different version: should sort by version
+        let alice_100 =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
+        let alice_200 =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(200).unwrap());
         assert!(
             alice_100.storage_key() < alice_200.storage_key(),
             "alice:100 should sort before alice:200"
@@ -200,8 +204,9 @@ mod tests {
     fn test_variable_length_user_id_ordering() {
         // This tests the bug that was fixed: "bob" (3 chars) vs "alice" (5 chars)
         // Previously, bob would sort before alice due to length-first encoding
-        let bob = UserTableRowId::new(UserId::new("bob"), SeqId::new(100));
-        let alice = UserTableRowId::new(UserId::new("alice"), SeqId::new(100));
+        let bob = UserTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(100).unwrap());
+        let alice =
+            UserTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
 
         // "alice" < "bob" lexicographically
         assert!(
@@ -212,30 +217,30 @@ mod tests {
 
     #[test]
     fn test_shared_table_row_id_alias() {
-        // SharedTableRowId is just SeqId
-        let seq: SharedTableRowId = SeqId::new(12345);
-        assert_eq!(seq.as_i64(), 12345);
+        let version: SharedTableRowId = VersionId::try_from_i64(12345).unwrap();
+        assert_eq!(version.as_i64(), 12345);
     }
 
     #[test]
     fn test_stream_table_row_id_round_trip() {
         let user_id = UserId::new("bob");
-        let seq = SeqId::new(88888);
-        let row_id = StreamTableRowId::new(user_id.clone(), seq);
+        let version = VersionId::try_from_i64(88888).unwrap();
+        let row_id = StreamTableRowId::new(user_id.clone(), version);
 
         // Serialize and deserialize using StorageKey trait
         let bytes = row_id.storage_key();
         let parsed = StreamTableRowId::from_storage_key(&bytes).unwrap();
 
         assert_eq!(parsed.user_id, user_id);
-        assert_eq!(parsed.seq, seq);
+        assert_eq!(parsed.version, version);
     }
 
     #[test]
     fn test_stream_table_row_id_ordering() {
         // Same ordering tests for StreamTableRowId
-        let alice = StreamTableRowId::new(UserId::new("alice"), SeqId::new(100));
-        let bob = StreamTableRowId::new(UserId::new("bob"), SeqId::new(50));
+        let alice =
+            StreamTableRowId::new(UserId::new("alice"), VersionId::try_from_i64(100).unwrap());
+        let bob = StreamTableRowId::new(UserId::new("bob"), VersionId::try_from_i64(50).unwrap());
 
         assert!(alice.storage_key() < bob.storage_key(), "alice should sort before bob");
     }

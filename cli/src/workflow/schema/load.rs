@@ -65,9 +65,13 @@ pub fn compile_project_contract(
             sql:  sql.as_str(),
         })
         .collect();
-    let mut snapshot = compile_contract(&sources, DEFAULT_NAMESPACE).map_err(|err| {
-        CLIError::ConfigurationError(format!("failed to compile schema contract: {}", err.message))
-    })?;
+    let mut snapshot =
+        compile_contract(&sources, project_contract_namespace(config)).map_err(|err| {
+            CLIError::ConfigurationError(format!(
+                "failed to compile schema contract: {}",
+                err.message
+            ))
+        })?;
     let identity_path = if path.is_dir() {
         Some(path.join("identity.json"))
     } else {
@@ -92,6 +96,19 @@ pub fn compile_project_contract(
     }
     let hash = canonical_contract_hash(&snapshot);
     Ok((snapshot, hash))
+}
+
+/// Unqualified SQL in schema.sql belongs to the project's connection namespace.
+///
+/// `kalam dev` applies that SQL in the same namespace. Generating `public.*`
+/// pointed the starter app at a schema Drizzle refuses to name and that the
+/// dev server never created.
+pub(crate) fn project_contract_namespace(config: &KalamProjectConfig) -> &str {
+    config
+        .connection
+        .get(&config.project.default_env)
+        .map(|env| env.namespace.as_str())
+        .unwrap_or(DEFAULT_NAMESPACE)
 }
 
 fn collect_sql_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {

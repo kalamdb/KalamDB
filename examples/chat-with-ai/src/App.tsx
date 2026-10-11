@@ -3,18 +3,18 @@ import { type SubscriptionErrorEvent } from '@kalamdb/client';
 import { and, eq } from 'drizzle-orm';
 import { liveTable } from '@kalamdb/orm';
 import {
-  chatDemoAgentEvents as agentEvents,
-  chatDemoDirectMessages as directMessages,
-  chatDemoMessages as chatMessages,
-  type ChatDemoAgentEvents as AgentEventRow,
-  type ChatDemoDirectMessages as DirectMessageRow,
-  type ChatDemoMessages as ChatMessageRow,
-  type ChatDemoMessageTarget,
+  agentEvents,
+  directMessages,
+  messages as chatMessages,
+  type AgentEvents as AgentEventRow,
+  type DirectMessages as DirectMessageRow,
+  type Messages as ChatMessageRow,
+  type MessageTarget,
 } from './generated/kalam';
 import { api, CHAT_USERNAME, client, ROOM } from './db';
 import './styles.css';
 
-type Inbox = ChatDemoMessageTarget;
+type Inbox = MessageTarget;
 type ThreadRow = ChatMessageRow | DirectMessageRow;
 
 type LiveDraft = {

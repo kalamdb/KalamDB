@@ -106,7 +106,7 @@ pub async fn handle_subscribe(
 
             // Send response
             // Use BatchControl::new() which handles status based on batch_num and has_more
-            let batch_control = if let Some(ref initial) = result.initial_data {
+            let mut batch_control = if let Some(ref initial) = result.initial_data {
                 BatchControl::new(
                     0, // batch_num
                     initial.has_more,
@@ -117,6 +117,7 @@ pub async fn handle_subscribe(
                 BatchControl::new(0, false, None)
             };
 
+            batch_control.version_domain = result.version_domain.clone();
             let ack = WebSocketMessage::subscription_ack(
                 subscription_id.clone(),
                 0,
@@ -209,6 +210,11 @@ pub async fn handle_subscribe(
                 kalamdb_live::error::LiveError::PermissionDenied(_) => WsErrorCode::Unauthorized,
                 kalamdb_live::error::LiveError::NotFound(_) => WsErrorCode::NotFound,
                 kalamdb_live::error::LiveError::InvalidSql(_) => WsErrorCode::InvalidSql,
+                kalamdb_live::error::LiveError::InvalidOperation(message)
+                    if message.contains("stale resume cursor") =>
+                {
+                    WsErrorCode::CursorExpired
+                },
                 kalamdb_live::error::LiveError::InvalidOperation(_) => WsErrorCode::Unsupported,
                 _ => WsErrorCode::SubscriptionFailed,
             };
@@ -274,6 +280,7 @@ mod tests {
     #[test]
     fn validate_subscription_options_allows_last_rows_within_batch_size() {
         let options = SubscriptionOptions {
+            version_domain:     None,
             batch_size:         Some(50),
             last_rows:          Some(50),
             from:               None,
@@ -289,6 +296,7 @@ mod tests {
     #[test]
     fn validate_subscription_options_rejects_last_rows_above_batch_size() {
         let options = SubscriptionOptions {
+            version_domain:     None,
             batch_size:         Some(50),
             last_rows:          Some(51),
             from:               None,
@@ -305,6 +313,7 @@ mod tests {
     #[test]
     fn validate_subscription_options_uses_default_batch_size_when_unspecified() {
         let options = SubscriptionOptions {
+            version_domain:     None,
             batch_size:         None,
             last_rows:          Some(MAX_ROWS_PER_BATCH as u32 + 1),
             from:               None,
@@ -320,6 +329,7 @@ mod tests {
     #[test]
     fn subscription_batch_size_clamps_oversized_client_hint() {
         let options = SubscriptionOptions {
+            version_domain:     None,
             batch_size:         Some(MAX_ROWS_PER_BATCH.saturating_mul(10)),
             last_rows:          None,
             from:               None,

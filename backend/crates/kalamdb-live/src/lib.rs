@@ -17,6 +17,7 @@ mod indexed_subscriber_relation;
 pub mod manager;
 pub mod models;
 pub mod notification;
+mod replay_log;
 pub mod subscription;
 pub mod traits;
 

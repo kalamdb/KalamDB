@@ -27,8 +27,8 @@ use super::{
     KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
 };
 use crate::{
-    applier::UserDataApplier, commit_seq_from_log_position, DataResponse, GroupId, RaftCommand,
-    RaftError, UserDataCommand,
+    applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
+    UserDataCommand,
 };
 
 /// Snapshot data for UserDataStateMachine
@@ -46,8 +46,9 @@ struct UserDataSnapshot {
 enum UserApplyCommand {
     User(UserDataCommand),
     TransactionCommit {
-        transaction_id: TransactionId,
-        mutations:      Vec<StagedMutation>,
+        required_meta_index: u64,
+        transaction_id:      TransactionId,
+        mutations:           Vec<StagedMutation>,
     },
 }
 
@@ -55,7 +56,17 @@ impl UserApplyCommand {
     fn required_meta_index(&self) -> u64 {
         match self {
             Self::User(command) => command.required_meta_index(),
-            Self::TransactionCommit { .. } => 0,
+            Self::TransactionCommit {
+                required_meta_index,
+                ..
+            } => *required_meta_index,
+        }
+    }
+
+    fn row_slot_count(&self) -> usize {
+        match self {
+            Self::User(command) => command.row_slot_count(),
+            Self::TransactionCommit { mutations, .. } => mutations.len(),
         }
     }
 }
@@ -164,8 +175,18 @@ impl UserDataStateMachine {
 
         for pending in drained {
             let cmd = Self::decode_apply_command(&pending.command_bytes)?;
-            let commit_seq = commit_seq_from_log_position(self.group_id(), pending.log_index);
-            let _ = self.apply_decoded_command(cmd, commit_seq).await?;
+            let versions = match assign_entry_versions(pending.log_index, cmd.row_slot_count()) {
+                Ok(versions) => versions,
+                Err(error) => {
+                    log::warn!(
+                        "UserDataStateMachine[{}]: rejecting buffered entry: {}",
+                        self.shard,
+                        error
+                    );
+                    continue;
+                },
+            };
+            let _ = self.apply_decoded_command(cmd, &versions).await?;
             log::debug!(
                 "UserDataStateMachine[{}]: Applied buffered command log_index={}",
                 self.shard,
@@ -190,7 +211,7 @@ impl UserDataStateMachine {
     async fn apply_command(
         &self,
         cmd: UserDataCommand,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         // Get applier reference
         let applier = {
@@ -220,7 +241,7 @@ impl UserDataStateMachine {
 
                 // Persist data via applier if available
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.insert(&table_id, &user_id, &rows, &encoded_fields, commit_seq).await {
+                    match a.insert(&table_id, &user_id, &rows, &encoded_fields, versions).await {
                         Ok(count) => count,
                         Err(e) => {
                             // Convert applier errors to DataResponse::Error
@@ -230,7 +251,7 @@ impl UserDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -257,9 +278,7 @@ impl UserDataStateMachine {
                 log::debug!("UserDataStateMachine[{}]: Update {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a
-                        .update(&table_id, &user_id, &updates, filter.as_deref(), commit_seq)
-                        .await
+                    match a.update(&table_id, &user_id, &updates, filter.as_deref(), versions).await
                     {
                         Ok(count) => count,
                         Err(e) => {
@@ -268,7 +287,7 @@ impl UserDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -292,7 +311,7 @@ impl UserDataStateMachine {
                 log::debug!("UserDataStateMachine[{}]: Delete from {:?}", self.shard, table_id);
 
                 let rows_affected = if let Some(ref a) = applier {
-                    match a.delete(&table_id, &user_id, pk_values.as_deref(), commit_seq).await {
+                    match a.delete(&table_id, &user_id, pk_values.as_deref(), versions).await {
                         Ok(count) => count,
                         Err(e) => {
                             log::warn!(
@@ -300,7 +319,7 @@ impl UserDataStateMachine {
                                 self.shard,
                                 e
                             );
-                            return Ok(DataResponse::error(e.to_string()));
+                            return Ok(DataResponse::from_raft_error(e));
                         },
                     }
                 } else {
@@ -324,9 +343,11 @@ impl UserDataStateMachine {
 
         match crate::codec::command_codec::decode_raft_command(command)? {
             RaftCommand::TransactionCommit {
+                required_meta_index,
                 transaction_id,
                 mutations,
             } => Ok(UserApplyCommand::TransactionCommit {
+                required_meta_index,
                 transaction_id,
                 mutations,
             }),
@@ -340,14 +361,15 @@ impl UserDataStateMachine {
     async fn apply_decoded_command(
         &self,
         cmd: UserApplyCommand,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         match cmd {
-            UserApplyCommand::User(command) => self.apply_command(command, commit_seq).await,
+            UserApplyCommand::User(command) => self.apply_command(command, versions).await,
             UserApplyCommand::TransactionCommit {
+                required_meta_index: _,
                 transaction_id,
                 mutations,
-            } => self.apply_transaction_commit(transaction_id, mutations, commit_seq).await,
+            } => self.apply_transaction_commit(transaction_id, mutations, versions).await,
         }
     }
 
@@ -355,7 +377,7 @@ impl UserDataStateMachine {
         &self,
         transaction_id: TransactionId,
         mutations: Vec<StagedMutation>,
-        commit_seq: u64,
+        versions: &[kalamdb_commons::ids::VersionId],
     ) -> Result<DataResponse, RaftError> {
         if mutations
             .iter()
@@ -375,12 +397,12 @@ impl UserDataStateMachine {
             return Ok(DataResponse::error("No applier set, transaction commit not persisted"));
         };
 
-        match applier.apply_transaction_batch(&transaction_id, &mutations, commit_seq).await {
+        match applier.apply_transaction_batch(&transaction_id, &mutations, versions).await {
             Ok(result) => {
                 self.total_operations.fetch_add(1, Ordering::Relaxed);
                 Ok(DataResponse::TransactionCommitted(result))
             },
-            Err(error) => Ok(DataResponse::error(error.to_string())),
+            Err(error) => Ok(DataResponse::from_raft_error(error)),
         }
     }
 }
@@ -444,8 +466,17 @@ impl KalamStateMachine for UserDataStateMachine {
         }
 
         // Apply current command
-        let commit_seq = commit_seq_from_log_position(self.group_id(), index);
-        let response = self.apply_decoded_command(cmd, commit_seq).await?;
+        let versions = match assign_entry_versions(index, cmd.row_slot_count()) {
+            Ok(versions) => versions,
+            Err(error) => {
+                return Ok(ApplyResult::ok_with_data(
+                    crate::codec::command_codec::encode_data_response(&DataResponse::error(
+                        error.to_string(),
+                    ))?,
+                ));
+            },
+        };
+        let response = self.apply_decoded_command(cmd, &versions).await?;
 
         // Update last applied
         self.last_applied_index.store(index, Ordering::Release);
@@ -557,7 +588,7 @@ mod tests {
             _user_id: &UserId,
             rows: &[Row],
             encoded_fields: &[Vec<u8>],
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(rows.len().max(encoded_fields.len()))
         }
@@ -568,7 +599,7 @@ mod tests {
             _user_id: &UserId,
             _updates: &[Row],
             _filter: Option<&str>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -578,7 +609,7 @@ mod tests {
             _table_id: &TableId,
             _user_id: &UserId,
             _pk_values: Option<&[String]>,
-            _commit_seq: u64,
+            _versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<usize, RaftError> {
             Ok(1)
         }
@@ -587,14 +618,14 @@ mod tests {
             &self,
             _transaction_id: &TransactionId,
             mutations: &[StagedMutation],
-            commit_seq: u64,
+            versions: &[kalamdb_commons::ids::VersionId],
         ) -> Result<crate::TransactionApplyResult, RaftError> {
             Ok(crate::TransactionApplyResult {
-                rows_affected: mutations.len(),
-                commit_seq,
+                rows_affected:      mutations.len(),
+                log_index:          versions.first().map(|v| v.as_u64() >> 16).unwrap_or(1),
                 notifications_sent: 0,
-                manifest_updates: 0,
-                publisher_events: 0,
+                manifest_updates:   0,
+                publisher_events:   0,
             })
         }
     }
@@ -626,8 +657,9 @@ mod tests {
         let table_id = TableId::new(NamespaceId::default(), "users".into());
 
         let cmd = RaftCommand::TransactionCommit {
-            transaction_id: transaction_id.clone(),
-            mutations:      vec![StagedMutation::new(
+            required_meta_index: 0,
+            transaction_id:      transaction_id.clone(),
+            mutations:           vec![StagedMutation::new(
                 transaction_id,
                 table_id,
                 TableType::User,
@@ -648,10 +680,7 @@ mod tests {
                 match response {
                     DataResponse::TransactionCommitted(result) => {
                         assert_eq!(result.rows_affected, 1);
-                        assert_eq!(
-                            result.commit_seq,
-                            commit_seq_from_log_position(GroupId::DataUserShard(0), 1)
-                        );
+                        assert_eq!(result.log_index, 1);
                     },
                     other => panic!("unexpected response: {:?}", other),
                 }

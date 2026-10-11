@@ -41,6 +41,9 @@ impl SqlExecutor {
         if let Some(not_leader) = Self::try_not_leader_error(e) {
             return not_leader;
         }
+        if let Some(coded) = coded_error_from_datafusion(e) {
+            return KalamDbError::Coded(coded);
+        }
 
         let error_msg = datafusion_user_message(e);
         let lower = error_msg.to_lowercase();
@@ -62,6 +65,20 @@ impl SqlExecutor {
         }
 
         KalamDbError::ExecutionError(error_msg)
+    }
+}
+
+fn coded_error_from_datafusion(
+    error: &datafusion::error::DataFusionError,
+) -> Option<kalamdb_commons::CodedError> {
+    match error {
+        datafusion::error::DataFusionError::External(inner) => {
+            inner.downcast_ref::<kalamdb_commons::CodedError>().cloned()
+        },
+        datafusion::error::DataFusionError::Context(_, source) => {
+            coded_error_from_datafusion(source)
+        },
+        _ => None,
     }
 }
 

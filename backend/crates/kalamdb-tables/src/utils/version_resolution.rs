@@ -2,7 +2,7 @@
 //! and Parquet decoding logic into `kalamdb-datafusion-sources`.
 
 use datafusion::{arrow::array::RecordBatch, error::DataFusionError};
-use kalamdb_commons::{ids::SeqId, models::rows::RowMetadata};
+use kalamdb_commons::{ids::VersionId, models::rows::RowMetadata};
 use kalamdb_datafusion_sources::exec::{
     parquet_batch_to_metadata as shared_parquet_batch_to_metadata,
     parquet_batch_to_rows as shared_parquet_batch_to_rows,
@@ -31,19 +31,15 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestVersionedRow {
-        seq:     SeqId,
+        version: VersionId,
         deleted: bool,
         pk:      String,
         value:   String,
     }
 
     impl VersionedRow for TestVersionedRow {
-        fn seq_id(&self) -> SeqId {
-            self.seq
-        }
-
-        fn commit_seq(&self) -> u64 {
-            0
+        fn version(&self) -> VersionId {
+            self.version
         }
 
         fn deleted(&self) -> bool {
@@ -59,7 +55,7 @@ mod tests {
     fn resolve_latest_kvs_from_cold_batch_only_builds_winning_cold_rows() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::DELETED, DataType::Boolean, false),
             Field::new("name", DataType::Utf8, true),
         ]));
@@ -77,7 +73,7 @@ mod tests {
         let hot_rows = vec![(
             "hot-a".to_string(),
             TestVersionedRow {
-                seq:     SeqId::from_i64(2),
+                version: VersionId::try_from_i64(2).unwrap(),
                 deleted: false,
                 pk:      "a".to_string(),
                 value:   "hot-a".to_string(),
@@ -108,7 +104,7 @@ mod tests {
                 Ok((
                     pk.clone(),
                     TestVersionedRow {
-                        seq: row_data.seq_id,
+                        version: row_data.version,
                         deleted: false,
                         pk,
                         value: name,
@@ -127,10 +123,10 @@ mod tests {
 
     #[test]
     fn resolve_latest_kvs_from_cold_batch_honors_snapshot_commit_seq() {
+        // Inclusive snapshot 4 hides cold version 5 and keeps hot version 4.
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
-            Field::new(SystemColumnNames::COMMIT_SEQ, DataType::UInt64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::DELETED, DataType::Boolean, false),
             Field::new("name", DataType::Utf8, true),
         ]));
@@ -139,7 +135,6 @@ mod tests {
             vec![
                 Arc::new(StringArray::from(vec!["a"])),
                 Arc::new(Int64Array::from(vec![5])),
-                Arc::new(UInt64Array::from(vec![2_u64])),
                 Arc::new(BooleanArray::from(vec![false])),
                 Arc::new(StringArray::from(vec!["cold-new"])),
             ],
@@ -149,7 +144,7 @@ mod tests {
         let hot_rows = vec![(
             "hot-a".to_string(),
             TestVersionedRow {
-                seq:     SeqId::from_i64(4),
+                version: VersionId::try_from_i64(4).unwrap(),
                 deleted: false,
                 pk:      "a".to_string(),
                 value:   "hot-visible".to_string(),
@@ -161,7 +156,7 @@ mod tests {
             hot_rows,
             &cold_batch,
             false,
-            Some(1),
+            Some(VersionId::try_from_i64(4).unwrap()),
             |row_data| {
                 let pk = match row_data.fields.get("id").unwrap() {
                     ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => {
@@ -178,7 +173,7 @@ mod tests {
                 Ok((
                     pk.clone(),
                     TestVersionedRow {
-                        seq: row_data.seq_id,
+                        version: row_data.version,
                         deleted: row_data.deleted,
                         pk,
                         value: name,
@@ -194,19 +189,15 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestIntPkRow {
-        seq:     SeqId,
+        version: VersionId,
         deleted: bool,
         pk:      i64,
         value:   String,
     }
 
     impl VersionedRow for TestIntPkRow {
-        fn seq_id(&self) -> SeqId {
-            self.seq
-        }
-
-        fn commit_seq(&self) -> u64 {
-            0
+        fn version(&self) -> VersionId {
+            self.version
         }
 
         fn deleted(&self) -> bool {
@@ -226,7 +217,7 @@ mod tests {
     fn resolve_latest_kvs_from_cold_batch_merges_int64_primary_keys() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::DELETED, DataType::Boolean, false),
             Field::new("name", DataType::Utf8, true),
         ]));
@@ -244,7 +235,7 @@ mod tests {
         let hot_rows = vec![(
             "hot-1".to_string(),
             TestIntPkRow {
-                seq:     SeqId::from_i64(2),
+                version: VersionId::try_from_i64(2).unwrap(),
                 deleted: false,
                 pk:      1,
                 value:   "hot-1".to_string(),
@@ -271,7 +262,7 @@ mod tests {
                 Ok((
                     pk.to_string(),
                     TestIntPkRow {
-                        seq: row_data.seq_id,
+                        version: row_data.version,
                         deleted: false,
                         pk,
                         value: name,
@@ -306,8 +297,8 @@ pub fn parquet_batch_to_rows(batch: &RecordBatch) -> Result<Vec<ParquetRowData>,
 pub fn parquet_batch_to_metadata(
     batch: &RecordBatch,
     pk_name: &str,
-) -> Result<Vec<(SeqId, RowMetadata)>, KalamDbError> {
+) -> Result<Vec<(VersionId, RowMetadata)>, KalamDbError> {
     shared_parquet_batch_to_metadata(batch, pk_name)
-        .map(|rows| rows.into_iter().map(|metadata| (metadata.seq, metadata)).collect())
+        .map(|rows| rows.into_iter().map(|metadata| (metadata.version, metadata)).collect())
         .map_err(shared_decoder_error)
 }

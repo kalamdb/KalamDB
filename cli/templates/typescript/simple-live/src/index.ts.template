@@ -28,11 +28,19 @@ async function main(): Promise<void> {
     }
   }, { lastRows: 50 });
 
-  await client.insert('users', {
-    id: 1,
-    email: 'demo@example.com',
-    created_at: new Date(),
-  });
+  try {
+    await client.insert('users', {
+      id: 1,
+      email: 'demo@example.com',
+      created_at: new Date(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/already exists|Primary key violation/i.test(message)) {
+      throw error;
+    }
+    console.log('demo user already exists; leaving the live query running');
+  }
 
   process.on('SIGINT', async () => {
     await stop();

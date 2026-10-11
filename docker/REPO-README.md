@@ -1,31 +1,34 @@
-# 🚀 KalamDB on Docker Hub
+# KalamDB
 
-KalamDB is a SQL-first realtime backend for agent-native apps.
-Give AI agents one SQL tool to your app data, while your frontend subscribes to live rows from the same backend.
+### One SQL schema. Your whole realtime backend.
 
-It combines in one runtime:
+KalamDB is an open-source, **SQL-first backend** that combines database tables, realtime subscriptions, durable pub/sub, and server functions in one system. It speaks the **PostgreSQL wire protocol**, so existing PostgreSQL tools and drivers can connect directly.
 
-- ⚡ One SQL API for reads and writes
-- 🔄 Live subscriptions over WebSocket
-- 📡 Pub/sub streams
-- 🔐 Built-in auth with JWT support
-- 🧱 Per-user isolation with policy-scoped access
-- 💾 Hot storage on RocksDB
-- 📦 Cold storage on Parquet
-- 🛠️ Included CLI tools in the image
+Define the backend once in SQL. KalamDB uses that schema for storage, permissions, realtime events, procedure contracts, backend-managed schema migrations, and generated TypeScript and Dart/Flutter types.
 
-The Docker image includes:
+This image publishes the server. It includes:
 
 - `kalamdb-server`
 - `kalam`
 - `kalam-cli`
 
-## ✨ Quick Start
+| Your app needs | This server gives you |
+| --- | --- |
+| One source of truth | **Schema-first SQL:** tables, types, enums, procedures, topics, and policies |
+| Existing PostgreSQL tools | **PGWire:** `psql`, drivers, prepared queries, transactions, and `CALL` (enable it in `server.toml`) |
+| Live chat, feeds, and dashboards | **Realtime queries** over WebSocket |
+| Background jobs and AI workers | **Durable pub/sub** with acknowledgements and retries |
+| Backend business logic | **Server functions:** sandboxed TypeScript in a V8 runtime |
+| Personal vs shared data | **USER**, **SHARED**, and **STREAM** tables |
+| Growing data | **Hot RocksDB** plus **cold Parquet** on filesystem or object storage |
+| More connections | **Multi-Raft** clusters |
 
-### 🐳 Pull and run
+Apache-2.0. Documentation: https://kalamdb.org/docs · Source: https://github.com/kalamdb/KalamDB
+
+## Quick start
 
 ```bash
-docker pull jamals86/kalamdb:latest
+docker pull kalamdb/kalamdb:latest
 
 docker run -d \
   --name kalamdb \
@@ -34,25 +37,21 @@ docker run -d \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
   -v kalamdb_data:/data \
-  jamals86/kalamdb:latest
+  kalamdb/kalamdb:latest
 ```
 
-### ✅ Check health
+The admin UI, when the image is built with it, is at `http://localhost:2900`. Sign in as `root` with `KALAMDB_ROOT_PASSWORD`.
 
 ```bash
 curl http://localhost:2900/health
 curl http://localhost:2900/v1/api/healthcheck
 ```
 
-### 🔑 Login
-
 ```bash
 curl -X POST http://localhost:2900/v1/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"root","password":"kalamdb123"}'
 ```
-
-### 🧪 Run your first SQL query
 
 ```bash
 curl -X POST http://localhost:2900/v1/api/sql \
@@ -61,166 +60,111 @@ curl -X POST http://localhost:2900/v1/api/sql \
   -d '{"sql":"SELECT 1 AS ok"}'
 ```
 
-## 🧩 Docker Compose
-
-### 📄 Single-node compose file
-
-- GitHub view: https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
-- Raw file: https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml
-
-### 🧱 3-node cluster compose file
-
-- GitHub view: https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
-- Raw file: https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml
-
-### ⚡ Start single node with compose
+For an application project, install the CLI on the host and point it at this server:
 
 ```bash
-cd docker/run/single
-export KALAMDB_JWT_SECRET=replace-with-a-32-char-secret
-docker compose up -d
+npm install -g @kalamdb/cli
+kalam login --url http://localhost:2900
 ```
 
-By default, the single-node compose file publishes KalamDB on `http://localhost:8088`.
+`kalam init` and `kalam dev` are the usual way to start a schema, generate contracts, and run an app. See the [GitHub README](https://github.com/kalamdb/KalamDB#get-started).
 
-### ⚡ Start 3-node cluster with compose
+## PostgreSQL wire protocol
 
-```bash
-cd docker/run/cluster
-export KALAMDB_JWT_SECRET=replace-with-a-32-char-secret
-docker compose up -d
+PGWire is off in the default image config. To use `psql` or a PostgreSQL driver, set this in the mounted `server.toml` and publish the port:
+
+```toml
+[postgres_wire]
+enabled = true
+host = "0.0.0.0"
+port = 5432
 ```
-
-Cluster endpoints:
-
-- Node 1: `http://localhost:2901`
-- Node 2: `http://localhost:2902`
-- Node 3: `http://localhost:2903`
-
-### 🌐 One-line startup from the repo
-
-Single node:
-
-```bash
-KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
-curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/single/docker-compose.yml | docker compose -f - up -d
-```
-
-3-node cluster:
-
-```bash
-KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
-curl -sSL https://raw.githubusercontent.com/kalamdb/KalamDB/main/docker/run/cluster/docker-compose.yml | docker compose -f - up -d
-```
-
-## 🖥️ Open the UI
-
-If the Admin UI is enabled in your image and config, open:
-
-- Single container run: `http://localhost:2900`
-- Single-node compose: `http://localhost:8088`
-- Cluster node 1: `http://localhost:2901`
-
-Useful API endpoints:
-
-- Health: `GET /health`
-- Extended health: `GET /v1/api/healthcheck`
-- Login: `POST /v1/api/auth/login`
-- SQL API: `POST /v1/api/sql`
-
-## 🛠️ CLI Commands
-
-The image includes both `kalam` and `kalam-cli`.
-
-### 📌 Basic CLI usage
-
-```bash
-docker exec -it kalamdb kalam --version
-docker exec -it kalamdb kalam-cli --version
-```
-
-### 🐚 Open a shell inside the container
-
-The image includes bash for direct shell access:
-
-```bash
-docker exec -it kalamdb bash
-```
-
-### ▶️ Useful commands to run inside the container
-
-```bash
-docker exec -it kalamdb kalam --help
-docker exec -it kalamdb kalam-cli --help
-docker exec -it kalamdb /usr/local/bin/kalamdb-server --help
-```
-
-### 📋 Common Docker commands
-
-```bash
-# View logs
-docker logs -f kalamdb
-
-# Stop container
-docker stop kalamdb
-
-# Start container
-docker start kalamdb
-
-# Remove container
-docker rm -f kalamdb
-
-# List volumes
-docker volume ls
-
-# Inspect persisted data volume
-docker volume inspect kalamdb_data
-```
-
-## 🌱 Environment Variables
-
-These are the most useful environment variables for setup and day-to-day use.
-
-| Variable | Purpose | Example |
-| --- | --- | --- |
-| `KALAMDB_SERVER_HOST` | Bind address inside the container | `0.0.0.0` |
-| `KALAMDB_ROOT_PASSWORD` | Root user password for initial login | `kalamdb123` |
-| `KALAMDB_JWT_SECRET` | JWT signing secret, should be at least 32 chars | `super-secret-value` |
-| `KALAMDB_LOG_LEVEL` | Logging level | `info` |
-| `KALAMDB_PORT` | Host port override in single-node compose | `2900` |
-| `KALAMDB_ALLOW_REMOTE_SETUP` | Allow initial remote setup in Docker-based development flows | `true` |
-| `KALAMDB_CLUSTER_ID` | Cluster identifier for multi-node deployments | `docker-cluster` |
-| `KALAMDB_NODE_ID` | Node id in cluster setups | `1` |
-| `KALAMDB_CLUSTER_RPC_ADDR` | Raft RPC address for a node | `kalamdb-node1:2910` |
-| `KALAMDB_CLUSTER_API_ADDR` | Public API address for a node | `http://kalamdb-node1:2900` |
-| `KALAMDB_CLUSTER_PEERS` | Cluster peer list for Docker cluster compose | `2@node2:2910@http://node2:2900;3@node3:2910@http://node3:2900` |
-
-### 🔐 Security note
-
-For anything beyond local testing:
-
-- change `KALAMDB_ROOT_PASSWORD`
-- use a strong `KALAMDB_JWT_SECRET`
-- persist `/data` with a Docker volume or bind mount
-
-## 💾 Persistence
-
-KalamDB stores database state under `/data` inside the container.
-
-Run with a named volume:
 
 ```bash
 docker run -d \
   --name kalamdb \
   -p 2900:2900 \
+  -p 5432:5432 \
   -e KALAMDB_SERVER_HOST=0.0.0.0 \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET=replace-with-a-32-char-secret \
   -v kalamdb_data:/data \
-  jamals86/kalamdb:latest
+  -v "$PWD/server.toml":/config/server.toml:ro \
+  kalamdb/kalamdb:latest
 ```
 
-Backup example:
+```bash
+psql -h 127.0.0.1 -p 5432 -U root -d kalam -W
+```
+
+Queries still use KalamDB's SQL engine and permissions. Protocol support does not mean full PostgreSQL SQL or extension compatibility. See [client compatibility](https://github.com/kalamdb/KalamDB/blob/main/docs/architecture/pg-catalog-shims.md).
+
+## Docker Compose
+
+Single node. The compose file publishes host port **8088**:
+
+- https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
+
+```bash
+git clone https://github.com/kalamdb/KalamDB.git
+cd KalamDB/docker/run/single
+export KALAMDB_JWT_SECRET=replace-with-a-32-char-secret
+docker compose up -d
+```
+
+Open `http://localhost:8088`. Override the host port with `KALAMDB_PORT=2900 docker compose up -d`.
+
+Three-node cluster. Host HTTP ports are **8081**, **8082**, and **8083**:
+
+- https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
+
+```bash
+git clone https://github.com/kalamdb/KalamDB.git
+cd KalamDB
+docker compose -f docker/run/cluster/docker-compose.yml up -d
+```
+
+- Node 1: `http://localhost:8081`
+- Node 2: `http://localhost:8082`
+- Node 3: `http://localhost:8083`
+
+## CLI in the container
+
+```bash
+docker exec -it kalamdb kalam --version
+docker exec -it kalamdb kalam --help
+docker exec -it kalamdb bash
+```
+
+The CLI keeps config and credentials in `/data/.kalam`, so they persist with the data volume.
+
+```bash
+docker logs -f kalamdb
+docker stop kalamdb
+docker start kalamdb
+```
+
+## Environment variables
+
+| Variable | Purpose | Example |
+| --- | --- | --- |
+| `KALAMDB_SERVER_HOST` | Bind address inside the container | `0.0.0.0` |
+| `KALAMDB_ROOT_PASSWORD` | Root password for the first login | `kalamdb123` |
+| `KALAMDB_JWT_SECRET` | JWT signing secret, at least 32 characters | `replace-with-a-32-char-secret` |
+| `KALAMDB_LOG_LEVEL` | Server log level | `info` |
+| `KALAMDB_PORT` | Host port for the single-node compose file | `8088` |
+| `KALAMDB_ALLOW_REMOTE_SETUP` | Allow initial setup from outside the container | `true` |
+| `KALAMDB_CLUSTER_ID` | Cluster identifier | `docker-cluster` |
+| `KALAMDB_NODE_ID` | Node id | `1` |
+| `KALAMDB_CLUSTER_RPC_ADDR` | Raft address for this node | `kalamdb-node1:2910` |
+| `KALAMDB_CLUSTER_API_ADDR` | API address for this node | `http://kalamdb-node1:2900` |
+| `KALAMDB_CLUSTER_PEERS` | Other cluster members | `2@kalamdb-node2:2910@http://kalamdb-node2:2900` |
+
+Change the root password and JWT secret before anything other than local testing, and keep `/data` on a volume.
+
+## Persistence
+
+Database files live under `/data`.
 
 ```bash
 docker run --rm \
@@ -230,48 +174,25 @@ docker run --rm \
   tar czf /backup/kalamdb-data.tar.gz /data
 ```
 
-## 🔍 Troubleshooting
+## Troubleshooting
 
-### Container is up but you cannot connect
+If the container is up and the port does not answer, check `docker logs kalamdb`. The server must listen on `0.0.0.0`, and port `2900` (or the compose host port) must be published. A non-localhost bind needs `KALAMDB_JWT_SECRET`.
 
-```bash
-docker logs kalamdb
-```
+Login uses the `KALAMDB_ROOT_PASSWORD` from container startup.
 
-Make sure:
+`Permission denied (os error 13)` means the image user cannot write its paths. The process is not root. A custom `server.toml` must be readable, `data_path` and `logs_path` must be writable, and a bind-mounted `/data` must be writable by uid `65532`. A named volume is the simplest persistent setup.
 
-- port `2900` is published
-- `KALAMDB_SERVER_HOST=0.0.0.0`
-- your JWT secret is set when binding beyond localhost
-
-### Login is failing
-
-Make sure the password you use matches `KALAMDB_ROOT_PASSWORD` from container startup.
-
-### You see `Permission denied (os error 13)` on startup
-
-The image runs as a non-root user.
-
-The bundled CLI uses `/data/.kalam` as its default local state directory inside the container.
-
-Check these first:
-
-- if you mounted a custom `server.toml`, make sure the file is readable inside the container
-- if your custom config changes `logs_path` or `data_path`, make sure those paths are writable
-- if you bind-mount a host directory to `/data` or `/config`, make sure Docker grants the container write access
-- for the simplest persistent setup, prefer a named Docker volume for `/data`
-
-### You want a clean reset
+Reset a local container:
 
 ```bash
 docker rm -f kalamdb
 docker volume rm kalamdb_data
 ```
 
-## 🔗 Links
+## Links
 
-- Docker Hub: https://hub.docker.com/r/jamals86/kalamdb
-- GitHub: https://github.com/kalamdb/KalamDB
-- Docs: https://kalamdb.org/docs
-- Single-node compose: https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
-- Cluster compose: https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml
+- https://hub.docker.com/r/kalamdb/kalamdb
+- https://github.com/kalamdb/KalamDB
+- https://kalamdb.org/docs
+- https://github.com/kalamdb/KalamDB/blob/main/docker/run/single/docker-compose.yml
+- https://github.com/kalamdb/KalamDB/blob/main/docker/run/cluster/docker-compose.yml

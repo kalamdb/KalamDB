@@ -2,12 +2,13 @@ import type { ComponentType } from "react";
 import { Radio, User, Users } from "lucide-react";
 
 export function isReadOnlyNamespace(name: string): boolean {
+  const normalized = name.toLowerCase();
   return (
-    name === "information_schema" ||
-    name === "pg_catalog" ||
-    name === "datafusion" ||
-    name.startsWith("system") ||
-    name.startsWith("dba")
+    normalized === "information_schema" ||
+    normalized === "pg_catalog" ||
+    normalized === "datafusion" ||
+    normalized === "system" ||
+    normalized === "dba"
   );
 }
 

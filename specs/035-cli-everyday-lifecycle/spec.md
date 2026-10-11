@@ -83,7 +83,9 @@ my-app/
 - `kalam dev --exec "cmd"` uses an isolated temporary database, injects
   connection settings, runs the command, cleans up, and returns that exit code.
 - Pin `project.server_version` (default: CLI version) under
-  `~/.kalam/bin/<version>/`.
+  `~/.kalam/bin/<version>/`. A leftover `~/.kalam/bin/kalamdb-server` next to
+  the installed CLI does not override that pin. `kalam up` prints the binary
+  path and version it started.
 
 ## Agent contract
 

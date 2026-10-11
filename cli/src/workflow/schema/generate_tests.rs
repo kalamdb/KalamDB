@@ -295,8 +295,25 @@ CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"
         fs::read_to_string(root.join("functions/src/generated/inline/api_health.ts")).unwrap();
     assert!(shim.contains("ProcedureContext"));
     assert!(shim.contains("return \"ok\""));
+    assert!(shim.contains("input: ApiHealthRequest"));
+    assert!(shim.contains("Promise<ApiHealthResult>"));
     let registry = fs::read_to_string(root.join("functions/src/generated/registry.ts")).unwrap();
     assert!(!registry.contains("api.health"));
+    let tsconfig_path = root.join("functions/tsconfig.json");
+    let tsconfig: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&tsconfig_path).unwrap()).unwrap();
+    assert_eq!(tsconfig["compilerOptions"]["strict"], true);
+    assert_eq!(tsconfig["compilerOptions"]["noEmit"], true);
+    assert_eq!(tsconfig["compilerOptions"]["moduleResolution"], "Bundler");
+    assert_eq!(tsconfig["include"][0], "src/**/*.ts");
+
+    let custom = "{\"extends\": \"../tsconfig.json\"}\n";
+    fs::write(&tsconfig_path, custom).unwrap();
+    generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap();
+    assert_eq!(fs::read_to_string(tsconfig_path).unwrap(), custom);
+    fs::write(root.join("schema.sql"), "CREATE SCHEMA api;").unwrap();
+    generate_languages(root, &config, &[LanguageTarget::TypeScript], None).unwrap();
+    assert!(!root.join("functions/src/generated/inline/api_health.ts").exists());
 }
 
 #[test]
@@ -498,6 +515,29 @@ export function helper() { return 1; }
     assert!(registry.contains("\"chat.join_room\""));
     assert!(!registry.contains("plus_one"));
     assert!(!registry.contains("greet"));
+}
+
+#[test]
+fn inline_procedure_types_are_checked_by_tsc() {
+    if tsc_bin().is_none() {
+        return;
+    }
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    let schema = "CREATE PROCEDURE chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE \
+                  JAVASCRIPT AS $$ return input.name; $$;";
+    fs::write(root.join("schema.sql"), schema).unwrap();
+    generate_languages(root, &typescript_project_config(), &[LanguageTarget::TypeScript], None)
+        .unwrap();
+    let (ok, output) = run_tsc(root).expect("tsc");
+    assert!(ok, "valid inline arguments must typecheck: {output}");
+
+    fs::write(root.join("schema.sql"), schema.replace("input.name", "42")).unwrap();
+    generate_languages(root, &typescript_project_config(), &[LanguageTarget::TypeScript], None)
+        .unwrap();
+    let (ok, output) = run_tsc(root).expect("tsc");
+    assert!(!ok, "a numeric result must not satisfy RETURNS TEXT");
+    assert!(output.contains("not assignable"), "{output}");
 }
 
 #[test]

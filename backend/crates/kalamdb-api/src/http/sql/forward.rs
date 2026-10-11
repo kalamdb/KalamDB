@@ -78,6 +78,7 @@ fn is_transaction_control(statement: &PreparedApiExecutionStatement) -> bool {
 }
 
 fn data_group_for_table_type(
+    table_id: Option<&kalamdb_commons::TableId>,
     app_context: &AppContext,
     table_type: TableType,
     user_id: &UserId,
@@ -91,7 +92,7 @@ fn data_group_for_table_type(
         TableType::User | TableType::Stream => {
             Some(GroupId::DataUserShard(router.user_shard_id(user_id)))
         },
-        TableType::Shared => Some(GroupId::DataSharedShard(router.shared_shard_id())),
+        TableType::Shared => app_context.shared_group_id(table_id?).ok(),
         TableType::System => Some(GroupId::Meta),
     }
 }
@@ -123,7 +124,12 @@ pub(crate) fn prepared_statement_target_group(
         return prepared_statement_table_type(statement, app_context).and_then(|table_type| {
             match table_type {
                 TableType::User | TableType::Shared | TableType::Stream => {
-                    data_group_for_table_type(app_context, table_type, user_id)
+                    data_group_for_table_type(
+                        statement.prepared_statement.table_id.as_ref(),
+                        app_context,
+                        table_type,
+                        user_id,
+                    )
                 },
                 TableType::System => None,
             }
@@ -137,7 +143,14 @@ pub(crate) fn prepared_statement_target_group(
     match classified.kind() {
         SqlStatementKind::Insert(_) | SqlStatementKind::Update(_) | SqlStatementKind::Delete(_) => {
             prepared_statement_table_type(statement, app_context)
-                .and_then(|table_type| data_group_for_table_type(app_context, table_type, user_id))
+                .and_then(|table_type| {
+                    data_group_for_table_type(
+                        statement.prepared_statement.table_id.as_ref(),
+                        app_context,
+                        table_type,
+                        user_id,
+                    )
+                })
                 .or(Some(GroupId::Meta))
         },
         _ => Some(GroupId::Meta),

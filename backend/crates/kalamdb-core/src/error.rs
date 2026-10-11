@@ -94,9 +94,6 @@ pub enum KalamDbError {
     #[error("System column violation: {0}")]
     SystemColumnViolation(String),
 
-    #[error("Constraint violation: {0}")]
-    ConstraintViolation(String),
-
     #[error("Conflict: {0}")]
     Conflict(String),
 
@@ -170,10 +167,17 @@ pub enum KalamDbError {
 
     #[error("{0}")]
     Other(String),
+
+    /// Code, template arguments, and the cause. The sentence is rendered on display.
+    #[error(transparent)]
+    Coded(#[from] kalamdb_commons::CodedError),
 }
 
 impl From<kalamdb_functions::FunctionsError> for KalamDbError {
     fn from(error: kalamdb_functions::FunctionsError) -> Self {
+        if let kalamdb_functions::FunctionsError::Catalog { code, message, .. } = error {
+            return KalamDbError::Coded(kalamdb_commons::CodedError::pre_rendered(code, message));
+        }
         KalamDbError::Function {
             code:    error.code(),
             message: error.to_string(),
@@ -638,19 +642,19 @@ impl KalamDbError {
             | KalamDbError::InvalidOperation(message)
             | KalamDbError::InvalidSchemaEvolution(message)
             | KalamDbError::SystemColumnViolation(message)
-            | KalamDbError::ConstraintViolation(message)
             | KalamDbError::Conflict(message)
             | KalamDbError::PermissionDenied(message)
             | KalamDbError::Unauthorized(message)
             | KalamDbError::IdempotentConflict(message)
             | KalamDbError::ExecutionError(message)
-            | KalamDbError::Other(message) => Cow::Borrowed(message),
-            KalamDbError::Function { message, .. } => Cow::Borrowed(message),
+            | KalamDbError::Other(message) => Cow::Borrowed(message.as_str()),
+            KalamDbError::Function { message, .. } => Cow::Borrowed(message.as_str()),
             KalamDbError::IoMessage { message, .. }
-            | KalamDbError::ParameterBindingError { message } => Cow::Borrowed(message),
+            | KalamDbError::ParameterBindingError { message } => Cow::Borrowed(message.as_str()),
             KalamDbError::SchemaVersionNotFound { table, version } => {
                 Cow::Owned(format!("Schema version not found: table={table}, version={version}"))
             },
+            KalamDbError::Coded(error) => Cow::Owned(error.user_message()),
             _ => Cow::Owned(self.to_string()),
         }
     }
@@ -755,9 +759,7 @@ impl From<kalamdb_tables::TableError> for KalamDbError {
             TableError::SchemaError(msg) => KalamDbError::SchemaError(msg),
             TableError::NotLeader { leader_addr } => KalamDbError::NotLeader { leader_addr },
             TableError::Other(msg) => KalamDbError::Other(msg),
-            TableError::ConstraintViolation(msg) => {
-                KalamDbError::InvalidOperation(format!("Constraint violation: {}", msg))
-            },
+            TableError::Coded(error) => KalamDbError::Coded(error),
         }
     }
 }
@@ -872,5 +874,11 @@ mod tests {
             Some(kalamdb_functions::FunctionErrorCode::ProcedureNotImplemented)
         );
         assert!(err.user_message().contains("api.create_order"));
+    }
+
+    #[test]
+    fn coded_user_message_is_the_rendered_template() {
+        let err = KalamDbError::Coded(kalamdb_commons::CodedError::not_null("id", 1));
+        assert_eq!(err.user_message(), "column 'id' cannot be NULL (row 1)");
     }
 }

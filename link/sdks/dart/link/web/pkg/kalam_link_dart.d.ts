@@ -110,7 +110,7 @@ export class KalamClient {
      *
      * Useful for debugging or manual resumption tracking
      */
-    getLastSeqId(subscription_id: string): string | undefined;
+    getLastVersionId(subscription_id: string): string | undefined;
     /**
      * Get the current reconnection attempt count
      */

@@ -13,7 +13,7 @@ use kalam_client::{
     auth::AuthProvider,
     seq_tracking::{extract_max_seq, row_seq},
     ChangeEvent, ConnectionOptions, EventHandlers, KalamCellValue, KalamLinkClient,
-    KalamLinkTimeouts, SeqId,
+    KalamLinkTimeouts, VersionId,
 };
 use tokio::time::{sleep, Instant};
 
@@ -137,9 +137,14 @@ pub async fn ensure_table(client: &KalamLinkClient, table: &str) {
     panic!("timed out waiting for table {} to become queryable: {}", table, last_err);
 }
 
-pub async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {
+pub async fn query_max_seq(client: &KalamLinkClient, table: &str) -> VersionId {
     let result = client
-        .execute_query(&format!("SELECT MAX(_seq) AS max_seq FROM {}", table), None, None, None)
+        .execute_query(
+            &format!("SELECT MAX(_version) AS max_seq FROM {}", table),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("max seq query should succeed");
 
@@ -147,7 +152,7 @@ pub async fn query_max_seq(client: &KalamLinkClient, table: &str) -> SeqId {
         .get_i64("max_seq")
         .unwrap_or_else(|| panic!("max seq query should return a value for {}", table));
 
-    SeqId::from_i64(max_seq)
+    VersionId::try_from_i64(max_seq).expect("max version")
 }
 
 pub fn change_event_rows(event: &ChangeEvent) -> Option<&[HashMap<String, KalamCellValue>]> {
@@ -164,7 +169,7 @@ pub fn row_id(row: &HashMap<String, KalamCellValue>) -> Option<&str> {
     row.get("id").and_then(|value| value.as_str())
 }
 
-pub fn event_last_seq(event: &ChangeEvent) -> Option<SeqId> {
+pub fn event_last_seq(event: &ChangeEvent) -> Option<VersionId> {
     match event {
         ChangeEvent::Ack { batch_control, .. }
         | ChangeEvent::InitialDataBatch { batch_control, .. } => batch_control.last_seq_id,
@@ -176,7 +181,7 @@ pub fn event_last_seq(event: &ChangeEvent) -> Option<SeqId> {
     }
 }
 
-pub fn assert_event_rows_strictly_after(event: &ChangeEvent, from: SeqId, context: &str) {
+pub fn assert_event_rows_strictly_after(event: &ChangeEvent, from: VersionId, context: &str) {
     let Some(rows) = change_event_rows(event) else {
         return;
     };
@@ -199,8 +204,8 @@ pub fn assert_event_rows_strictly_after(event: &ChangeEvent, from: SeqId, contex
 pub fn collect_ids_and_track_seq(
     event: &ChangeEvent,
     ids: &mut Vec<String>,
-    max_seq: &mut Option<SeqId>,
-    strict_from: Option<SeqId>,
+    max_seq: &mut Option<VersionId>,
+    strict_from: Option<VersionId>,
     context: &str,
 ) {
     if let Some(from) = strict_from {

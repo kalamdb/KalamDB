@@ -172,8 +172,10 @@ pub async fn attach_or_start_managed_server(
         })?;
     drop(spinner);
     super::track_server(&prepared.layout, output);
-    output.status(format!("Server started at {}", prepared.record.url));
-    output.agent_event("KALAM_SERVER_STARTED", &[("url", &prepared.record.url)]);
+    let binary = crate::workflow::dev::server::format_server_binary(&program);
+    output.status(format!("Server started at {} using {binary}", prepared.record.url));
+    output
+        .agent_event("KALAM_SERVER_STARTED", &[("url", &prepared.record.url), ("binary", &binary)]);
     Ok(prepared)
 }
 

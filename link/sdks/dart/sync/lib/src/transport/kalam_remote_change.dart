@@ -13,7 +13,7 @@ final class KalamRemoteChange {
   });
 
   final KalamChangeKind kind;
-  final SeqId seq;
+  final VersionId seq;
   final Map<String, Object?> row;
   final Map<String, Object?>? oldRow;
   final bool initial;

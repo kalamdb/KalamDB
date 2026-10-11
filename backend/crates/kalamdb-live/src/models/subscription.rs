@@ -1,15 +1,16 @@
 //! Subscription and notification result models
 
 pub use kalamdb_commons::websocket::{ChangeNotification, ChangeType};
-use kalamdb_commons::{models::LiveQueryId, schemas::SchemaField};
+use kalamdb_commons::{ids::VersionDomain, models::LiveQueryId, schemas::SchemaField};
 
 use crate::helpers::initial_data::InitialDataResult;
 
 /// Result of registering a live query subscription with initial data
 #[derive(Debug)]
 pub struct SubscriptionResult {
+    pub version_domain: Option<VersionDomain>,
     /// The generated LiveId for the subscription
-    pub live_id: LiveQueryId,
+    pub live_id:        LiveQueryId,
 
     /// Initial data returned with the subscription (if requested)
     pub initial_data: Option<InitialDataResult>,

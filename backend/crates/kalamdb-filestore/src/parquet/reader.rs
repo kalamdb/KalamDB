@@ -81,13 +81,18 @@ impl ParquetReadOptions {
         self
     }
 
-    pub fn with_seq_range(mut self, column: impl Into<String>, min: i64, max: i64) -> Self {
+    pub fn with_version_range(mut self, column: impl Into<String>, min: i64, max: i64) -> Self {
         self.seq_range = Some(SeqRangePruning {
             column: column.into(),
             min,
             max,
         });
         self
+    }
+
+    /// Compatibility alias for [`Self::with_version_range`].
+    pub fn with_seq_range(self, column: impl Into<String>, min: i64, max: i64) -> Self {
+        self.with_version_range(column, min, max)
     }
 
     pub fn with_column_bloom_values<I, S>(mut self, column: impl Into<String>, values: I) -> Self
@@ -455,19 +460,19 @@ mod tests {
         let schema = schema(vec![
             field_int64("id", false),
             field_utf8("name", true),
-            field_int64("_seq", false),
+            field_int64("_version", false),
         ]);
 
         let ids: Vec<i64> = (0..num_rows as i64).collect();
         let names: Vec<String> = (0..num_rows).map(|i| format!("name_{}", i)).collect();
-        let seqs: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000).collect();
+        let versions: Vec<i64> = (0..num_rows as i64).map(|i| i * 1000).collect();
 
         RecordBatch::try_new(
             schema,
             vec![
                 Arc::new(Int64Array::from(ids)),
                 Arc::new(StringArray::from(names)),
-                Arc::new(Int64Array::from(seqs)),
+                Arc::new(Int64Array::from(versions)),
             ],
         )
         .unwrap()
@@ -540,7 +545,7 @@ mod tests {
         let batch = create_simple_batch(50);
         let (store, path) = write_test_parquet(&temp_dir, "proj.parquet", vec![batch]);
 
-        let stream = parse_parquet_stream(store, &path, &["id", "_seq"]).await.unwrap();
+        let stream = parse_parquet_stream(store, &path, &["id", "_version"]).await.unwrap();
         let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
 
         assert_eq!(batches.len(), 1);
@@ -751,7 +756,7 @@ mod tests {
         let batch = create_simple_batch(150_000);
         let (store, path) = write_test_parquet(&temp_dir, "seq_pruned.parquet", vec![batch]);
 
-        let options = ParquetReadOptions::new().with_seq_range("_seq", 132_000_000, 132_010_000);
+        let options = ParquetReadOptions::new().with_version_range("_version", 132_000_000, 132_010_000);
         let stream = parse_parquet_stream_with_options(store, &path, &options).await.unwrap();
         let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
 
@@ -802,7 +807,7 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![
             with_parquet_field_id(Field::new("id", DataType::Int64, false), 1),
             with_parquet_field_id(Field::new("display_name", DataType::Utf8, true), 2),
-            with_parquet_field_id(Field::new("_seq", DataType::Int64, false), 3),
+            with_parquet_field_id(Field::new("_version", DataType::Int64, false), 3),
         ]));
         let batch = RecordBatch::try_new(
             schema,
@@ -856,7 +861,7 @@ mod tests {
         );
         let schema = Arc::new(Schema::new(vec![
             address,
-            with_parquet_field_id(Field::new("_seq", DataType::Int64, false), 2),
+            with_parquet_field_id(Field::new("_version", DataType::Int64, false), 2),
         ]));
         let nested = StructArray::from(vec![
             (

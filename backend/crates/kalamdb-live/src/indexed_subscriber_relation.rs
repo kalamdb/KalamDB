@@ -64,6 +64,27 @@ impl IndexedSubscriberRelation {
         }
     }
 
+    pub fn handle_for_subscription(
+        &self,
+        table_id: &TableId,
+        subscription_id: &str,
+    ) -> Option<SubscriptionHandle> {
+        self.subscribers.iter().find_map(|entry| {
+            let subscriber = entry.value();
+            (subscriber.table_id == *table_id
+                && subscriber.handle.subscription_id.as_ref() == subscription_id)
+                .then(|| subscriber.handle.clone())
+        })
+    }
+
+    pub fn handles_for_table(&self, table_id: &TableId) -> Vec<SubscriptionHandle> {
+        self.subscribers
+            .iter()
+            .filter(|entry| entry.value().table_id == *table_id)
+            .map(|entry| entry.value().handle.clone())
+            .collect()
+    }
+
     pub fn unindex(&self, live_id: &LiveQueryId) {
         let Some((_, subscriber)) = self.subscribers.remove(live_id) else {
             return;
@@ -258,6 +279,7 @@ mod tests {
             authorization: None,
             projections: None,
             notification_tx,
+            event_tx: mpsc::channel(1).0,
             flow_control: None,
             runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
                 "SELECT * FROM chat.conversations",

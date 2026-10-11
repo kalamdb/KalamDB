@@ -213,7 +213,7 @@ impl ClusterCoordinator for NoopClusterCoordinator {
         true
     }
 
-    async fn is_leader_for_shared(&self) -> bool {
+    async fn is_leader_for_shared(&self, _table_id: &TableId) -> bool {
         true
     }
 
@@ -221,7 +221,7 @@ impl ClusterCoordinator for NoopClusterCoordinator {
         None
     }
 
-    async fn leader_addr_for_shared(&self) -> Option<String> {
+    async fn leader_addr_for_shared(&self, _table_id: &TableId) -> Option<String> {
         None
     }
 }
@@ -230,6 +230,10 @@ impl ClusterCoordinator for NoopClusterCoordinator {
 struct TestCommitSequence;
 
 impl CommitSequenceSource for TestCommitSequence {
+    fn frontier(&self, _group_id: kalamdb_sharding::GroupId) -> u64 {
+        0
+    }
+
     fn current_committed(&self) -> u64 {
         0
     }
@@ -387,6 +391,7 @@ async fn stream_provider_planning_stays_lightweight_until_execution() {
                 ("event_id", ScalarValue::Utf8(Some("evt-1".to_string()))),
                 ("payload", ScalarValue::Utf8(Some("hello".to_string()))),
             ]),
+            kalamdb_commons::ids::VersionId::from(1_i64),
         )
         .await
         .expect("insert row after planning");

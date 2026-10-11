@@ -483,9 +483,12 @@ impl DartSubscriptionConfig {
             id:       self.id.unwrap_or_else(|| uuid_v4()),
             sql:      self.sql,
             options:  Some(kalam_client::SubscriptionOptions {
+                version_domain:     None,
                 batch_size:         self.batch_size.map(|v| v as usize),
                 last_rows:          self.last_rows.map(|v| v as u32),
-                from:               self.from.map(kalam_client::SeqId::new),
+                from:               self
+                    .from
+                    .and_then(|value| kalam_client::VersionId::try_from_i64(value).ok()),
                 auto_fetch_batches: None,
             }),
             ws_url:   None,

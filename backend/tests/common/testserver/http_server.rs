@@ -887,31 +887,35 @@ fn reserve_local_port() -> Result<u16> {
 
 async fn wait_for_cluster_ready(nodes: &[HttpTestServer]) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(30);
+    let shared_shards = nodes
+        .first()
+        .map(|node| {
+            let app = node.app_context();
+            app.config()
+                .cluster
+                .as_ref()
+                .map(|cluster| cluster.shared_shards.max(1))
+                .unwrap_or(1)
+        })
+        .unwrap_or(1);
 
     loop {
         let mut meta_leader_count = 0usize;
         let mut shared_leader_count = 0usize;
         let mut known_meta_leader = None;
-        let mut known_shared_leader = None;
+        let mut known_shared_leaders = vec![None; shared_shards as usize];
         let mut ready = true;
 
         for node in nodes {
             let executor = node.app_context().executor();
             let meta_leader = executor.get_leader(kalamdb_raft::GroupId::Meta).await;
-            let shared_leader =
-                executor.get_leader(kalamdb_raft::GroupId::DataSharedShard(0)).await;
-
-            if meta_leader.is_none() || shared_leader.is_none() {
+            if meta_leader.is_none() {
                 ready = false;
                 break;
             }
 
             if executor.is_leader(kalamdb_raft::GroupId::Meta).await {
                 meta_leader_count += 1;
-            }
-
-            if executor.is_leader(kalamdb_raft::GroupId::DataSharedShard(0)).await {
-                shared_leader_count += 1;
             }
 
             if let Some(current_meta_leader) = known_meta_leader {
@@ -923,17 +927,31 @@ async fn wait_for_cluster_ready(nodes: &[HttpTestServer]) -> Result<()> {
                 known_meta_leader = meta_leader;
             }
 
-            if let Some(current_shared_leader) = known_shared_leader {
-                if Some(current_shared_leader) != shared_leader {
+            for shard in 0..shared_shards {
+                let group = kalamdb_raft::GroupId::DataSharedShard(shard);
+                let shared_leader = executor.get_leader(group).await;
+                if shared_leader.is_none() {
                     ready = false;
                     break;
                 }
-            } else {
-                known_shared_leader = shared_leader;
+                if executor.is_leader(group).await {
+                    shared_leader_count += 1;
+                }
+                if let Some(current_shared_leader) = known_shared_leaders[shard as usize] {
+                    if Some(current_shared_leader) != shared_leader {
+                        ready = false;
+                        break;
+                    }
+                } else {
+                    known_shared_leaders[shard as usize] = shared_leader;
+                }
+            }
+            if !ready {
+                break;
             }
         }
 
-        if ready && meta_leader_count == 1 && shared_leader_count == 1 {
+        if ready && meta_leader_count == 1 && shared_leader_count == shared_shards as usize {
             return Ok(());
         }
 
@@ -1060,7 +1078,7 @@ async fn start_cluster_server() -> Result<ClusterTestServer> {
                     api_addr: format!("http://127.0.0.1:{}", api_port),
                     peers,
                     user_shards: 1,
-                    shared_shards: 1,
+                    shared_shards: 4,
                     heartbeat_interval_ms: 50,
                     election_timeout_ms: (150, 300),
                     snapshot_policy: "LogsSinceLast(1000)".to_string(),

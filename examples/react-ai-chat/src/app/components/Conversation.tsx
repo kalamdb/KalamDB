@@ -3,15 +3,15 @@ import type { KalamDBClient } from '@kalamdb/client';
 import { Database, MoreVertical, Share2 } from 'lucide-react';
 import type { ChatLiveContext } from '../App';
 import {
-  reactAiChatApprovalActions as approval_actions,
-  reactAiChatConversations as conversations,
-  reactAiChatMessages as messages,
+  approvalActions as approval_actions,
+  conversations,
+  messages,
 } from '../generated/kalam';
 import type {
-  ReactAiChatApprovals as ApprovalRow,
-  ReactAiChatConversations as ConversationRow,
-  ReactAiChatMessages as MessageRow,
-  ReactAiChatTypingTokens as TypingTokenRow,
+  Approvals as ApprovalRow,
+  Conversations as ConversationRow,
+  Messages as MessageRow,
+  TypingTokens as TypingTokenRow,
 } from '../generated/kalam';
 import { ChatComposer } from './ChatComposer';
 import { Messages } from './Messages';

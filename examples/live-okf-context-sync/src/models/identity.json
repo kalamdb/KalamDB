@@ -1,0 +1,13 @@
+{
+  "types": {
+    "okf_sync.context_files": {
+      "type_id": "okf_sync.context_files",
+      "slots": {
+        "created_at": 3,
+        "file_ref": 2,
+        "path": 1,
+        "updated_at": 4
+      }
+    }
+  }
+}

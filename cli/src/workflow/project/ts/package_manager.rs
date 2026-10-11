@@ -4,7 +4,7 @@
 //! yarn, bun). Interactive setup prompts when more than one is available; the
 //! choice is stored in `kalam.toml` as `[project].package_manager`.
 
-use std::{env, path::Path};
+use std::{env, path::Path, thread, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -237,6 +237,22 @@ pub fn resolve_package_manager_for_init(
 }
 
 pub fn execute_package_install(root: &Path, manager: PackageManager) -> Result<()> {
+    const ATTEMPTS: u32 = 3;
+    let mut last_failure = None;
+    for attempt in 1..=ATTEMPTS {
+        match execute_package_install_once(root, manager) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < ATTEMPTS && package_install_error_is_transient(&error) => {
+                last_failure = Some(error);
+                thread::sleep(Duration::from_secs(u64::from(attempt)));
+            },
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_failure.expect("package install retry exits on success or a non-transient error"))
+}
+
+fn execute_package_install_once(root: &Path, manager: PackageManager) -> Result<()> {
     let args: Vec<&str> = manager.install_args().iter().copied().collect();
     let output = run_path_tool(manager.as_str(), &args, root).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -268,6 +284,20 @@ pub fn execute_package_install(root: &Path, manager: PackageManager) -> Result<(
         stdout.trim(),
         stderr.trim(),
     )))
+}
+
+fn package_install_error_is_transient(error: &CLIError) -> bool {
+    let CLIError::ConfigurationError(message) = error else {
+        return false;
+    };
+    let message = message.to_ascii_lowercase();
+    message.contains("eidle")
+        || message.contains("etimedout")
+        || message.contains("econnreset")
+        || message.contains("eai_again")
+        || message.contains("socket hang up")
+        || message.contains("fetch failed")
+        || message.contains("network")
 }
 
 fn package_manager_missing_error(requested: Option<PackageManager>) -> CLIError {
@@ -630,6 +660,17 @@ mod tests {
     #[test]
     fn default_package_manager_returns_none_for_empty_installed_list() {
         assert_eq!(default_package_manager(&[]), None);
+    }
+
+    #[test]
+    fn package_install_retries_registry_idle_timeouts() {
+        let transient = CLIError::ConfigurationError(
+            "npm error code EIDLETIMEOUT\nnpm error Invalid response body".to_string(),
+        );
+        let permanent = CLIError::ConfigurationError("npm error code ERESOLVE".to_string());
+        assert!(package_install_error_is_transient(&transient));
+        assert!(!package_install_error_is_transient(&permanent));
+        assert!(!package_install_error_is_transient(&CLIError::Cancelled));
     }
 
     #[test]

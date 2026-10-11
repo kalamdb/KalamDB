@@ -1,15 +1,11 @@
-//! Shared tables module - Store types only
+//! Shared tables: global MVCC storage, primary-key index, and the SQL provider.
 //!
-//! **Phase 13.6**: Provider moved to crate::utils::SharedTableProvider
-//! **Phase 13.7**: Flush logic moved to crate::utils::flush::SharedTableFlushJob
-//!
-//! This module now contains ONLY:
-//! - SharedTableStore (EntityStore-based storage)
-//! - SharedTableRow (data structure)
-//! - SharedTablePkIndex (primary key index for efficient lookups)
-//! - SharedTableIndexedStore (store with PK index support)
+//! The provider is split under `provider/` (storage, scan, DML, SQL). Row-level
+//! security stays in this module. Hot primary-key checks shared with user tables
+//! live in `crate::versioned`.
 
 pub mod pk_index;
+#[path = "provider/mod.rs"]
 pub mod shared_table_provider;
 pub mod shared_table_store;
 

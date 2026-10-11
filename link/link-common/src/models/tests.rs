@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 use super::*;
-use crate::SeqId;
+use crate::VersionId;
 
 // ==================== ConnectionOptions Tests ====================
 
@@ -135,7 +135,7 @@ fn test_subscription_options_new() {
 
 #[test]
 fn test_subscription_options_builder_pattern() {
-    let seq_id = SeqId::from(12345i64);
+    let seq_id = VersionId::from(12345i64);
     let opts = SubscriptionOptions::new()
         .with_batch_size(100)
         .with_last_rows(50)
@@ -167,7 +167,7 @@ fn test_subscription_options_with_last_rows_only() {
 
 #[test]
 fn test_subscription_options_with_from_only() {
-    let seq_id = SeqId::from(99999i64);
+    let seq_id = VersionId::from(99999i64);
     let opts = SubscriptionOptions::new().with_from(seq_id);
 
     assert!(opts.batch_size.is_none());
@@ -180,7 +180,7 @@ fn test_subscription_options_has_resume_seq_id() {
     let opts_without = SubscriptionOptions::new();
     assert!(!opts_without.has_resume_seq_id());
 
-    let opts_with = SubscriptionOptions::new().with_from(SeqId::from(123i64));
+    let opts_with = SubscriptionOptions::new().with_from(VersionId::from(123i64));
     assert!(opts_with.has_resume_seq_id());
 }
 
@@ -198,13 +198,13 @@ fn test_subscription_options_serialization() {
 
 #[test]
 fn test_subscription_options_serialization_with_seq_id() {
-    let seq_id = SeqId::from(42i64);
+    let seq_id = VersionId::from(42i64);
     let opts = SubscriptionOptions::new().with_batch_size(50).with_from(seq_id);
 
     let json = serde_json::to_string(&opts).unwrap();
 
     assert!(json.contains("\"batch_size\":50"));
-    assert!(json.contains("\"from\":42"));
+    assert!(json.contains("\"from\":\"42\""));
 }
 
 #[test]
@@ -219,10 +219,10 @@ fn test_subscription_options_deserialization() {
 
 #[test]
 fn test_subscription_options_deserialization_alias() {
-    let json = r#"{"from_seq_id": 75}"#;
+    let json = r#"{"from_seq_id": "75"}"#;
     let opts: SubscriptionOptions = serde_json::from_str(json).unwrap();
 
-    assert_eq!(opts.from, Some(SeqId::from(75i64)));
+    assert_eq!(opts.from, Some(VersionId::from(75i64)));
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn test_subscription_options_deserialization_string_seq_id() {
     let json = r#"{"from":"922337203685477500"}"#;
     let opts: SubscriptionOptions = serde_json::from_str(json).unwrap();
 
-    assert_eq!(opts.from, Some(SeqId::from(922337203685477500i64)));
+    assert_eq!(opts.from, Some(VersionId::from(922337203685477500i64)));
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn test_client_message_subscribe_serialization() {
 
 #[test]
 fn test_client_message_subscribe_with_resume() {
-    let seq_id = SeqId::from(12345i64);
+    let seq_id = VersionId::from(12345i64);
     let msg = ClientMessage::Subscribe {
         subscription: SubscriptionRequest {
             id:      "resume-sub".to_string(),
@@ -345,7 +345,7 @@ fn test_client_message_subscribe_with_resume() {
 
     let json = serde_json::to_string(&msg).unwrap();
     assert!(json.contains("\"type\":\"subscribe\""));
-    assert!(json.contains("\"from\":12345"));
+    assert!(json.contains("\"from\":\"12345\""));
     assert!(json.contains("timeline.events"));
 }
 
@@ -353,12 +353,13 @@ fn test_client_message_subscribe_with_resume() {
 
 #[test]
 fn test_batch_control_with_seq_id() {
-    let seq_id = SeqId::from(999i64);
+    let seq_id = VersionId::from(999i64);
     let batch_control = BatchControl {
-        batch_num:   0,
-        has_more:    true,
-        status:      BatchStatus::Loading,
-        last_seq_id: Some(seq_id),
+        version_domain: None,
+        batch_num:      0,
+        has_more:       true,
+        status:         BatchStatus::Loading,
+        last_seq_id:    Some(seq_id),
     };
 
     let json = serde_json::to_string(&batch_control).unwrap();
@@ -371,10 +372,11 @@ fn test_batch_control_with_seq_id() {
 #[test]
 fn test_batch_control_ready_status() {
     let batch_control = BatchControl {
-        batch_num:   5,
-        has_more:    false,
-        status:      BatchStatus::Ready,
-        last_seq_id: Some(SeqId::from(1000i64)),
+        version_domain: None,
+        batch_num:      5,
+        has_more:       false,
+        status:         BatchStatus::Ready,
+        last_seq_id:    Some(VersionId::from(1000i64)),
     };
 
     let json = serde_json::to_string(&batch_control).unwrap();
@@ -406,7 +408,7 @@ fn test_server_message_initial_data_batch_parsing() {
             "batch_num": 0,
             "has_more": true,
             "status": "loading",
-            "last_seq_id": 12345
+            "last_seq_id": "12345"
         }
     }"#;
 
@@ -420,7 +422,7 @@ fn test_server_message_initial_data_batch_parsing() {
             assert_eq!(subscription_id, "sub-123");
             assert_eq!(rows.len(), 1);
             assert!(batch_control.has_more);
-            assert_eq!(batch_control.last_seq_id, Some(SeqId::from(12345i64)));
+            assert_eq!(batch_control.last_seq_id, Some(VersionId::from(12345i64)));
         },
         _ => panic!("Expected InitialDataBatch"),
     }
@@ -462,7 +464,7 @@ fn test_subscription_options_for_reconnection() {
     assert!(!initial_opts.has_resume_seq_id());
 
     // 2. After receiving data, we have a last_seq_id
-    let last_received_seq = SeqId::from(54321i64);
+    let last_received_seq = VersionId::from(54321i64);
 
     // 3. On reconnect, we create new options with the resume seq_id
     let reconnect_opts = SubscriptionOptions::new()
@@ -539,10 +541,11 @@ fn test_change_event_helpers() {
         subscription_id: "sub-1".to_string(),
         total_rows:      0,
         batch_control:   BatchControl {
-            batch_num:   0,
-            has_more:    false,
-            status:      BatchStatus::Ready,
-            last_seq_id: None,
+            version_domain: None,
+            batch_num:      0,
+            has_more:       false,
+            status:         BatchStatus::Ready,
+            last_seq_id:    None,
         },
         schema:          vec![SchemaField {
             name:      "id".to_string(),

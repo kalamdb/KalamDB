@@ -48,12 +48,13 @@ export {
   KalamCellValue,
   LogLevel,
   MessageType,
-  SeqId,
+  VersionId,
   UserId,
   wrapRowMap,
 } from './types.js';
 
 export type {
+  VersionDomain,
   BatchControl,
   BatchStatus,
   ChangeTypeRaw,

@@ -125,7 +125,13 @@ pub struct SharedTableOptions {
 
     /// Compression algorithm for Parquet cold-storage files.
     #[serde(default = "default_compression")]
-    pub compression: TableCompression,
+    pub compression:         TableCompression,
+    /// Persisted owner. Legacy tables remain on shard zero; never rehash on reads.
+    #[serde(default)]
+    pub shared_shard_id:     u32,
+    /// Changes on table recreation or explicit fresh-domain import.
+    #[serde(default)]
+    pub history_incarnation: String,
 }
 
 /// Table options for STREAM tables
@@ -364,10 +370,12 @@ impl Default for UserTableOptions {
 impl Default for SharedTableOptions {
     fn default() -> Self {
         Self {
-            storage_id:   StorageId::default(),
-            access_level: None,
-            flush_policy: None,
-            compression:  default_compression(),
+            shared_shard_id:     0,
+            history_incarnation: String::new(),
+            storage_id:          StorageId::default(),
+            access_level:        None,
+            flush_policy:        None,
+            compression:         default_compression(),
         }
     }
 }

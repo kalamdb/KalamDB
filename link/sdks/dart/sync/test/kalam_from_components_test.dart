@@ -14,7 +14,7 @@ final class _WrapperTransport implements KalamSyncTransport {
   Stream<KalamRemoteBatch> subscribe({
     required String sql,
     required String subscriptionId,
-    SeqId? from,
+    VersionId? from,
     int? batchSize,
     List<Object?>? params,
   }) => const Stream.empty();
@@ -99,7 +99,7 @@ void main() {
         kind: KalamChangeKind.insert,
         rowKey: 'message-1',
         row: {'id': 'message-1', 'text': 'projected'},
-        seq: SeqId(1),
+        seq: VersionId(1),
       ),
     );
 

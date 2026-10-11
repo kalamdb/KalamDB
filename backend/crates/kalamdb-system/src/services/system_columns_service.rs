@@ -22,12 +22,9 @@
 //! - **Soft Deletes**: Records marked `_deleted=true` are filtered from queries unless explicitly
 //!   requested
 
-use std::sync::Arc;
-
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::{snowflake::SnowflakeGenerator, SeqId},
-    models::schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
+    models::schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableType},
 };
 
 use crate::error::SystemError;
@@ -37,9 +34,6 @@ use crate::error::SystemError;
 /// **MVCC Architecture**: Manages system columns `_seq` and `_deleted`.
 /// Thread-safe via interior mutability in SnowflakeGenerator.
 pub struct SystemColumnsService {
-    /// Snowflake ID generator for `_seq` column
-    snowflake_gen: Arc<SnowflakeGenerator>,
-
     /// Worker ID from config (for logging/debugging)
     worker_id: u16,
 }
@@ -53,50 +47,7 @@ impl SystemColumnsService {
     /// # Returns
     /// A new SystemColumnsService instance
     pub fn new(worker_id: u16) -> Self {
-        let snowflake_gen = Arc::new(SnowflakeGenerator::new(worker_id));
-
-        Self {
-            snowflake_gen,
-            worker_id,
-        }
-    }
-
-    /// Generate a unique SeqId for `_seq` column
-    ///
-    /// **MVCC Architecture**: SeqId wraps Snowflake ID for version tracking.
-    ///
-    /// # Returns
-    /// A SeqId containing a 64-bit Snowflake ID:
-    /// - 41 bits: timestamp in milliseconds since 2024-01-01
-    /// - 10 bits: worker/node ID
-    /// - 12 bits: sequence number
-    ///
-    /// # Errors
-    /// Returns `SystemError::InvalidOperation` if clock moves backwards
-    pub fn generate_seq_id(&self) -> Result<SeqId, SystemError> {
-        let id = self.snowflake_gen.next_id().map_err(|e| {
-            SystemError::InvalidOperation(format!("SeqId generation failed: {}", e))
-        })?;
-        Ok(SeqId::new(id))
-    }
-
-    /// Generate multiple unique SeqIds in a single call
-    ///
-    /// **Performance Optimization**: Acquires the internal mutex only once,
-    /// making batch inserts significantly faster than calling `generate_seq_id()` N times.
-    ///
-    /// # Arguments
-    /// * `count` - Number of SeqIds to generate
-    ///
-    /// # Returns
-    /// Vector of unique, time-ordered SeqIds
-    ///
-    /// # Errors
-    /// Returns `SystemError::InvalidOperation` if clock moves backwards
-    pub fn generate_seq_ids(&self, count: usize) -> Result<Vec<SeqId>, SystemError> {
-        self.snowflake_gen.next_ids_mapped(count, SeqId::new).map_err(|e| {
-            SystemError::InvalidOperation(format!("Batch SeqId generation failed: {}", e))
-        })
+        Self { worker_id }
     }
 
     /// Add system columns to a table definition
@@ -114,9 +65,7 @@ impl SystemColumnsService {
     pub fn add_system_columns(&self, table_def: &mut TableDefinition) -> Result<(), SystemError> {
         // Check for conflicts
         for col in &table_def.columns {
-            if col.column_name == SystemColumnNames::SEQ
-                || col.column_name == SystemColumnNames::DELETED
-            {
+            if SystemColumnNames::is_system_column(&col.column_name) {
                 return Err(SystemError::InvalidOperation(format!(
                     "Column name '{}' is reserved for system columns",
                     col.column_name
@@ -124,34 +73,56 @@ impl SystemColumnsService {
             }
         }
 
-        let next_ordinal = table_def.columns.len() as u32 + 1;
+        let mut next_ordinal = table_def.columns.len() as u32 + 1;
 
-        // Add _seq column (BIGINT, NOT NULL)
-        // Note: _seq is NOT a primary key - user must define their own PK
-        // _seq contains embedded timestamp (Snowflake ID format)
-        let seq_column_id = table_def.next_column_id;
+        let version_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
-            column_id:        seq_column_id,
-            column_name:      SystemColumnNames::SEQ.to_string(),
+            column_id:        version_column_id,
+            column_name:      SystemColumnNames::VERSION.to_string(),
             ordinal_position: next_ordinal,
             data_type:        kalamdb_commons::models::datatypes::KalamDataType::BigInt,
             is_nullable:      false,
-            is_primary_key:   false, // User-defined PK required separately
+            is_primary_key:   false,
             is_partition_key: false,
             default_value:    ColumnDefault::None,
-            column_comment:   Some("Version ID (MVCC) with embedded timestamp".to_string()),
+            column_comment:   Some(
+                "Canonical row version assigned from the committed Raft entry".to_string(),
+            ),
             named_type_id:    None,
             is_array:         false,
             element_nullable: true,
         });
         table_def.next_column_id += 1;
+        next_ordinal += 1;
+
+        if table_def.table_type == TableType::Stream {
+            let timestamp_column_id = table_def.next_column_id;
+            table_def.columns.push(ColumnDefinition {
+                column_id:        timestamp_column_id,
+                column_name:      SystemColumnNames::TIMESTAMP.to_string(),
+                ordinal_position: next_ordinal,
+                data_type:        kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+                is_nullable:      false,
+                is_primary_key:   false,
+                is_partition_key: false,
+                default_value:    ColumnDefault::None,
+                column_comment:   Some(
+                    "Server ingestion time in UTC epoch milliseconds".to_string(),
+                ),
+                named_type_id:    None,
+                is_array:         false,
+                element_nullable: true,
+            });
+            table_def.next_column_id += 1;
+            next_ordinal += 1;
+        }
 
         // Add _deleted column (BOOLEAN, NOT NULL, DEFAULT FALSE)
         let deleted_column_id = table_def.next_column_id;
         table_def.columns.push(ColumnDefinition {
             column_id:        deleted_column_id,
             column_name:      SystemColumnNames::DELETED.to_string(),
-            ordinal_position: next_ordinal + 1,
+            ordinal_position: next_ordinal,
             data_type:        kalamdb_commons::models::datatypes::KalamDataType::Boolean,
             is_nullable:      false,
             is_primary_key:   false,
@@ -165,62 +136,6 @@ impl SystemColumnsService {
         table_def.next_column_id += 1;
 
         Ok(())
-    }
-
-    /// Handle INSERT operation - generate system column values
-    ///
-    /// **MVCC Architecture**: Returns new SeqId and _deleted=false.
-    ///
-    /// # Returns
-    /// Tuple of (`_seq`, `_deleted` = false)
-    ///
-    /// # Errors
-    /// - `InvalidOperation` if SeqId generation fails
-    pub fn handle_insert(&self) -> Result<(SeqId, bool), SystemError> {
-        // Generate unique SeqId
-        let seq = self.generate_seq_id()?;
-
-        // New records are not deleted
-        let deleted = false;
-
-        Ok((seq, deleted))
-    }
-
-    /// Handle UPDATE operation - generate new version
-    ///
-    /// **MVCC Architecture**: Appends new version with new SeqId, _deleted=false.
-    ///
-    /// # Returns
-    /// Tuple of (new `_seq`, `_deleted` = false)
-    ///
-    /// # Details
-    /// UPDATE creates a new version with a new SeqId (append-only).
-    pub fn handle_update(&self) -> Result<(SeqId, bool), SystemError> {
-        let new_seq = self.generate_seq_id()?;
-
-        // UPDATE preserves _deleted=false (use DELETE to mark deleted)
-        let deleted = false;
-
-        Ok((new_seq, deleted))
-    }
-
-    /// Handle DELETE operation - set `_deleted = true` with new version
-    ///
-    /// **MVCC Architecture**: Appends tombstone version with new SeqId, _deleted=true.
-    ///
-    /// # Returns
-    /// Tuple of (new `_seq`, `_deleted` = true)
-    ///
-    /// # Details
-    /// Soft delete: record remains in storage with `_deleted=true`.
-    /// Queries filter deleted records unless `include_deleted=true`.
-    pub fn handle_delete(&self) -> Result<(SeqId, bool), SystemError> {
-        let new_seq = self.generate_seq_id()?;
-
-        // Soft delete
-        let deleted = true;
-
-        Ok((new_seq, deleted))
     }
 
     /// Apply deletion filter to query
@@ -251,16 +166,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_seq_id() {
-        let svc = SystemColumnsService::new(1);
-        let seq1 = svc.generate_seq_id().unwrap();
-        let seq2 = svc.generate_seq_id().unwrap();
-
-        assert!(seq1.as_i64() > 0);
-        assert!(seq2 > seq1, "SeqIds should be strictly increasing");
-    }
-
-    #[test]
     fn test_add_system_columns() {
         use kalamdb_commons::{
             models::schemas::{TableOptions, TableType},
@@ -280,38 +185,9 @@ mod tests {
 
         svc.add_system_columns(&mut table_def).unwrap();
 
-        assert_eq!(table_def.columns.len(), 2); // _seq and _deleted
-        assert_eq!(table_def.columns[0].column_name, "_seq");
+        assert_eq!(table_def.columns.len(), 2); // _version and _deleted
+        assert_eq!(table_def.columns[0].column_name, "_version");
         assert_eq!(table_def.columns[1].column_name, "_deleted");
-    }
-
-    #[test]
-    fn test_handle_insert_success() {
-        let svc = SystemColumnsService::new(1);
-        let (seq, deleted) = svc.handle_insert().unwrap();
-
-        assert!(seq.as_i64() > 0);
-        assert!(!deleted);
-    }
-
-    #[test]
-    fn test_handle_update_new_seq() {
-        let svc = SystemColumnsService::new(1);
-
-        let (new_seq, deleted) = svc.handle_update().unwrap();
-
-        assert!(new_seq.as_i64() > 0);
-        assert!(!deleted);
-    }
-
-    #[test]
-    fn test_handle_delete() {
-        let svc = SystemColumnsService::new(1);
-
-        let (new_seq, deleted) = svc.handle_delete().unwrap();
-
-        assert!(new_seq.as_i64() > 0);
-        assert!(deleted);
     }
 
     #[test]

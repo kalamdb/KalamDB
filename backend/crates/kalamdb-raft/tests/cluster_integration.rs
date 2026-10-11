@@ -66,6 +66,7 @@ impl TestNode {
         };
 
         let manager = Arc::new(RaftManager::new(config));
+        manager.set_shared_data_applier(Arc::new(kalamdb_raft::applier::NoOpSharedDataApplier));
 
         Self {
             node_id: NodeId::new(node_id),
@@ -902,6 +903,7 @@ async fn test_shared_data_shard_operations() {
         actor_user_id:       None,
         table_id:            table_id.clone(),
         updates:             vec![make_test_row()],
+        pk_values:           None,
         filter:              None,
     };
     let result = leader.manager.propose_shared_data(0, cmd).await;

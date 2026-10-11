@@ -81,7 +81,7 @@ impl<'a> FlushScopeWriter<'a> {
             }
         }
 
-        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
+        let (min_version, max_version) = FlushManifestHelper::extract_version_range(&batch);
         let column_stats =
             FlushManifestHelper::extract_column_stats(&batch, &self.metadata.indexed_columns);
         let row_count = batch.num_rows() as u64;
@@ -145,8 +145,8 @@ impl<'a> FlushScopeWriter<'a> {
                 self.table_id,
                 user_id,
                 batch_filename,
-                min_seq,
-                max_seq,
+                min_version,
+                max_version,
                 column_stats.clone(),
                 row_count,
                 result.size_bytes,

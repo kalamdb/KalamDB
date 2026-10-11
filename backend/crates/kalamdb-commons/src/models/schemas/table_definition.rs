@@ -18,6 +18,7 @@ use crate::{
     conversions::{
         with_kalam_column_flags_metadata, with_kalam_data_type_metadata, with_parquet_field_id,
     },
+    ids::VersionDomain,
     models::{
         datatypes::{ArrowConversionError, ToArrowType},
         schemas::{ColumnDefinition, ScalarIndexDefinition, SchemaField, TableOptions, TableType},
@@ -113,7 +114,7 @@ struct SemanticSchema<'a> {
     table_type:     TableType,
     columns:        &'a [ColumnDefinition],
     next_column_id: u64,
-    table_options:  &'a TableOptions,
+    table_options:  TableOptions,
     table_comment:  &'a Option<String>,
     scalar_indexes: &'a [ScalarIndexDefinition],
 }
@@ -301,6 +302,18 @@ impl TableDefinition {
         Self::new(namespace_id, table_name, table_type, columns, table_options, table_comment)
     }
 
+    /// Domain envelope for today's single-owner SHARED tables.
+    pub fn shared_version_domain(&self) -> Option<VersionDomain> {
+        let TableOptions::Shared(options) = &self.table_options else {
+            return None;
+        };
+        Some(VersionDomain::new(
+            options.history_incarnation.clone(),
+            self.table_id(),
+            u64::from(options.shared_shard_id),
+        ))
+    }
+
     /// Composite table identity from already-typed namespace and name fields.
     #[inline]
     pub fn table_id(&self) -> TableId {
@@ -444,14 +457,20 @@ impl TableDefinition {
     }
 
     fn semantic_schema(&self) -> SemanticSchema<'_> {
+        // Ownership and history are catalog identity, not a desired-schema change.
+        let mut table_options = self.table_options.clone();
+        if let TableOptions::Shared(options) = &mut table_options {
+            options.shared_shard_id = 0;
+            options.history_incarnation.clear();
+        }
         SemanticSchema {
-            namespace_id:   &self.namespace_id,
-            table_name:     &self.table_name,
-            table_type:     self.table_type,
-            columns:        &self.columns,
+            namespace_id: &self.namespace_id,
+            table_name: &self.table_name,
+            table_type: self.table_type,
+            columns: &self.columns,
             next_column_id: self.next_column_id,
-            table_options:  &self.table_options,
-            table_comment:  &self.table_comment,
+            table_options,
+            table_comment: &self.table_comment,
             scalar_indexes: &self.scalar_indexes,
         }
     }
@@ -804,6 +823,38 @@ mod tests {
 
         let pk_columns = table.get_primary_key_columns();
         assert!(pk_columns.is_empty());
+    }
+
+    #[test]
+    fn shared_ownership_survives_catalog_roundtrip_and_legacy_defaults() {
+        let mut table = TableDefinition::new_with_defaults(
+            "app".into(),
+            "shared".into(),
+            TableType::Shared,
+            sample_columns(),
+            None,
+        )
+        .unwrap();
+        if let TableOptions::Shared(options) = &mut table.table_options {
+            options.shared_shard_id = 3;
+            options.history_incarnation = "history-1".into();
+        }
+        let json = serde_json::to_string(&table).unwrap();
+        let recovered: TableDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(recovered.shared_version_domain(), table.shared_version_domain());
+        let mut legacy = serde_json::to_value(&table).unwrap();
+        let options = legacy["table_options"].as_object_mut().unwrap();
+        options.remove("shared_shard_id");
+        options.remove("history_incarnation");
+        let recovered: TableDefinition = serde_json::from_value(legacy).unwrap();
+        assert_eq!(recovered.shared_version_domain().unwrap().scope_id, 0);
+        let mut moved = table.clone();
+        if let TableOptions::Shared(options) = &mut moved.table_options {
+            options.shared_shard_id = 1;
+            options.history_incarnation = "history-2".into();
+        }
+        assert!(table.semantically_equal(&moved));
+        assert_ne!(table.shared_version_domain(), moved.shared_version_domain());
     }
 
     #[test]

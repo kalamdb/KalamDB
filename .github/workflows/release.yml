@@ -54,7 +54,7 @@ on:
       docker_repo:
         description: "Docker Hub repo (owner/name)"
         required: false
-        default: "jamals86/kalamdb"
+        default: "kalamdb/kalamdb"
 
       publish_npm_cli:
         description: "Publish @kalamdb/cli to npm (skips if version already published)"
@@ -140,7 +140,7 @@ jobs:
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKER_REPO: ${{ github.event.inputs.docker_repo || 'jamals86/kalamdb' }}
+          DOCKER_REPO: ${{ github.event.inputs.docker_repo || 'kalamdb/kalamdb' }}
         run: |
           set -euo pipefail
 
@@ -2140,7 +2140,7 @@ jobs:
           DOCKER_IMAGE_SOURCE="https://github.com/${{ github.repository }}"
           DOCKER_IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           if [[ -z "$DOCKER_REPO" ]]; then
-            DOCKER_REPO="jamals86/kalamdb"
+            DOCKER_REPO="kalamdb/kalamdb"
           fi
           SHORT_SHA="${GITHUB_SHA:-}"
           if [[ -n "$SHORT_SHA" ]]; then
@@ -2434,6 +2434,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ steps.vars.outputs.docker_repo }}
+          short-description: "One SQL schema for tables, live queries, pub/sub, server functions, and PGWire."
           readme-filepath: ./docker/REPO-README.md
 
       - name: Warn if Docker Hub README update failed
@@ -2563,7 +2564,7 @@ jobs:
           VERSION="${{ needs.read_version.outputs.version }}"
           SERVER_REPO="${{ github.event.inputs.docker_repo }}"
           if [[ -z "$SERVER_REPO" ]]; then
-            SERVER_REPO="jamals86/kalamdb"
+            SERVER_REPO="kalamdb/kalamdb"
           fi
 
           SERVER_IMAGE="${SERVER_REPO}:${VERSION}"

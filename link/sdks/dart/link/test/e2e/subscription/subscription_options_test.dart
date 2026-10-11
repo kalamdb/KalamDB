@@ -108,7 +108,7 @@ void main() {
         final events = <ChangeEvent>[];
         final stream = client.liveEvents(
           'SELECT * FROM $tbl',
-          from: SeqId.zero(), // start from beginning
+          from: VersionId.zero(), // start from beginning
         );
         final sub = stream.listen(events.add);
 
@@ -133,7 +133,7 @@ void main() {
           'SELECT * FROM $tbl',
           batchSize: 10,
           lastRows: 5,
-          from: SeqId.zero(),
+          from: VersionId.zero(),
           subscriptionId: 'custom-all-opts',
         );
         final sub = stream.listen(events.add);
@@ -186,13 +186,13 @@ void main() {
           await waitForCondition(
               () => changeEventsContainRowId(firstEvents, preId));
 
-          SeqId? checkpoint;
+          VersionId? checkpoint;
           final started = DateTime.now();
           while (checkpoint == null) {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              if (s.id == firstAck.subscriptionId && s.lastSeqId != null) {
-                checkpoint = s.lastSeqId;
+              if (s.id == firstAck.subscriptionId && s.lastVersionId != null) {
+                checkpoint = s.lastVersionId;
                 break;
               }
             }
@@ -320,13 +320,13 @@ void main() {
                 changeEventsContainRowId(baselineEvents, baselineB),
           );
 
-          SeqId? checkpoint;
+          VersionId? checkpoint;
           final started = DateTime.now();
           while (checkpoint == null) {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              if (s.id == checkpointSubId && s.lastSeqId != null) {
-                checkpoint = s.lastSeqId;
+              if (s.id == checkpointSubId && s.lastVersionId != null) {
+                checkpoint = s.lastVersionId;
                 break;
               }
             }
@@ -371,9 +371,9 @@ void main() {
           while (!resumedAdvanced) {
             final subs = await client.getSubscriptions();
             for (final s in subs) {
-              final lastSeqId = s.lastSeqId;
-              if (s.id == resumedSubId && lastSeqId != null) {
-                resumedAdvanced = lastSeqId > checkpointValue;
+              final lastVersionId = s.lastVersionId;
+              if (s.id == resumedSubId && lastVersionId != null) {
+                resumedAdvanced = lastVersionId > checkpointValue;
                 break;
               }
             }
@@ -544,9 +544,9 @@ void main() {
         expect(info.query, isA<String>());
         expect(info.createdAtMs, isA<int>());
         expect(info.closed, isA<bool>());
-        // lastSeqId and lastEventTimeMs may be null initially.
+        // lastVersionId and lastEventTimeMs may be null initially.
         // Just verify they are accessible.
-        info.lastSeqId; // no assertion, just access
+        info.lastVersionId; // no assertion, just access
         info.lastEventTimeMs;
 
         await _safeCancel(sub);

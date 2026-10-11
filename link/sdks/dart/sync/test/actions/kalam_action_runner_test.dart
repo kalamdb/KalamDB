@@ -306,7 +306,7 @@ void main() {
               accountKey: 'server/user-a',
               tableId: 'app.messages',
               rowKey: 'message-1',
-              seq: const SeqId(15),
+              seq: const VersionId(15),
             );
             throw StateError('response lost after commit');
           },

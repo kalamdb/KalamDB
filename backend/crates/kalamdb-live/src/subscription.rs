@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use kalamdb_commons::{
-    ids::SeqId,
+    ids::VersionId,
     models::{ConnectionId, LiveQueryId, TableId, UserId},
     websocket::SubscriptionRequest,
     TableType,
@@ -73,7 +73,7 @@ impl SubscriptionService {
         table_type: TableType,
     ) -> Result<LiveQueryId, LiveError> {
         // Read connection info from state and check subscription limit
-        let (connection_id, user_id, notification_tx) = {
+        let (connection_id, user_id, notification_tx, event_tx) = {
             let user_id = connection_state.user_id().cloned().ok_or_else(|| {
                 LiveError::InvalidOperation("Connection not authenticated".to_string())
             })?;
@@ -90,6 +90,7 @@ impl SubscriptionService {
                 connection_state.connection_id().clone(),
                 user_id,
                 connection_state.notification_tx.clone(),
+                connection_state.event_tx.clone(),
             )
         };
 
@@ -142,6 +143,7 @@ impl SubscriptionService {
             authorization,
             projections: projections_arc,
             notification_tx,
+            event_tx,
             flow_control,
             runtime_metadata,
         };
@@ -188,7 +190,7 @@ impl SubscriptionService {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        snapshot_end_seq: SeqId,
+        snapshot_end_seq: VersionId,
     ) {
         connection_state.update_snapshot_end_seq(subscription_id, Some(snapshot_end_seq));
     }
@@ -198,7 +200,7 @@ impl SubscriptionService {
         &self,
         connection_state: &SharedConnectionState,
         subscription_id: &str,
-        snapshot_end_seq: Option<SeqId>,
+        snapshot_end_seq: Option<VersionId>,
         snapshot_end_commit_seq: Option<u64>,
     ) {
         connection_state.update_snapshot_boundaries(

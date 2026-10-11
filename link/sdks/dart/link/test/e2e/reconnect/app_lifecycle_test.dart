@@ -43,18 +43,18 @@ Future<KalamClient> _connectAppStyleClient() async {
   );
 }
 
-Future<Map<String, SeqId>> _waitForCheckpoints(
+Future<Map<String, VersionId>> _waitForCheckpoints(
   KalamClient client,
   Iterable<String> subscriptionIds,
 ) async {
   final ids = subscriptionIds.toSet();
-  var checkpoints = <String, SeqId>{};
+  var checkpoints = <String, VersionId>{};
 
   await waitForAsyncCondition(() async {
     checkpoints = {
       for (final sub in await client.getSubscriptions())
-        if (!sub.closed && sub.lastSeqId != null && ids.contains(sub.id))
-          sub.id: sub.lastSeqId!,
+        if (!sub.closed && sub.lastVersionId != null && ids.contains(sub.id))
+          sub.id: sub.lastVersionId!,
     };
     return checkpoints.length == ids.length;
   }, timeout: const Duration(seconds: 20));
@@ -70,7 +70,7 @@ Future<
   required KalamClient client,
   required Map<String, String> tables,
   required Map<String, String> subscriptionIds,
-  required Map<String, SeqId> checkpointById,
+  required Map<String, VersionId> checkpointById,
 }) async {
   final events = {
     for (final channel in tables.keys) channel: <ChangeEvent>[],
@@ -80,7 +80,7 @@ Future<
   for (final entry in tables.entries) {
     final channel = entry.key;
     final subscriptionId = subscriptionIds[channel]!;
-    final checkpoint = checkpointById[subscriptionId] ?? const SeqId.zero();
+    final checkpoint = checkpointById[subscriptionId] ?? const VersionId.zero();
 
     subscriptions.add(
       client
@@ -167,9 +167,9 @@ void main() {
           expect(await client.isConnected, isTrue,
               reason: 'client should connect before opening subscriptions');
 
-          var checkpoints = <String, SeqId>{
+          var checkpoints = <String, VersionId>{
             for (final subId in subscriptionIds.values)
-              subId: const SeqId.zero(),
+              subId: const VersionId.zero(),
           };
 
           final initialOpen = await _openSubscriptions(

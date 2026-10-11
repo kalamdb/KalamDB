@@ -21,7 +21,7 @@ use kalamdb_core::{
     },
 };
 use kalamdb_pg::OperationExecutor;
-use kalamdb_session_datafusion::SessionUserContext;
+use kalamdb_session_datafusion::{install_extension, SessionUserContext};
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
     build_insert_staged_mutations, TransactionQueryContext, TransactionQueryExtension,
@@ -58,14 +58,13 @@ impl OperationService {
             Some(uid) => SessionUserContext::new(uid.clone(), role, ReadContext::Client),
             None => SessionUserContext::new(UserId::anonymous(), role, ReadContext::Client),
         };
-        state.config_mut().options_mut().extensions.insert(ctx);
+        install_extension(&mut state, ctx);
 
         if let Some(transaction_query_context) = transaction_query_context {
-            state
-                .config_mut()
-                .options_mut()
-                .extensions
-                .insert(TransactionQueryExtension::new(transaction_query_context));
+            install_extension(
+                &mut state,
+                TransactionQueryExtension::new(transaction_query_context),
+            );
         }
 
         SessionContext::new_with_state(state)
@@ -308,7 +307,7 @@ impl OperationService {
         let coordinator = self.app_context.transaction_coordinator();
         Ok(Some(TransactionQueryContext::new(
             transaction_id.clone(),
-            handle.snapshot_commit_seq,
+            Arc::clone(&handle.snapshot_log_index),
             Arc::new(CoordinatorOverlayView::new(Arc::clone(&coordinator), transaction_id.clone())),
             Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
             Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),

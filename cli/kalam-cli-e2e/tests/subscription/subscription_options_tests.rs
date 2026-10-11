@@ -6,7 +6,7 @@
 //! - Resume from seq_id for reconnection scenarios
 //! - Serialization aligned with backend
 
-use kalam_client::{SeqId, SubscriptionOptions};
+use kalam_client::{SubscriptionOptions, VersionId};
 
 /// Test that default SubscriptionOptions have all fields as None
 #[test]
@@ -21,7 +21,7 @@ fn test_subscription_options_defaults() {
 /// Test the builder pattern for SubscriptionOptions
 #[test]
 fn test_subscription_options_builder() {
-    let seq_id = SeqId::from(12345i64);
+    let seq_id = VersionId::from(12345i64);
 
     let opts = SubscriptionOptions::new()
         .with_batch_size(100)
@@ -56,7 +56,7 @@ fn test_subscription_options_last_rows_only() {
 /// Test setting only from_seq_id (for resume after reconnection)
 #[test]
 fn test_subscription_options_from_seq_id_only() {
-    let seq_id = SeqId::from(99999i64);
+    let seq_id = VersionId::from(99999i64);
 
     let opts = SubscriptionOptions::new().with_from_seq_id(seq_id);
 
@@ -71,7 +71,7 @@ fn test_subscription_options_has_resume_seq_id() {
     let opts_without = SubscriptionOptions::new();
     assert!(!opts_without.has_resume_seq_id(), "Should not have resume seq_id");
 
-    let opts_with = SubscriptionOptions::new().with_from_seq_id(SeqId::from(123i64));
+    let opts_with = SubscriptionOptions::new().with_from_seq_id(VersionId::from(123i64));
     assert!(opts_with.has_resume_seq_id(), "Should have resume seq_id");
 }
 
@@ -93,7 +93,7 @@ fn test_subscription_options_json_serialization_sparse() {
 /// Test that JSON serialization includes from_seq_id when set
 #[test]
 fn test_subscription_options_json_with_seq_id() {
-    let seq_id = SeqId::from(42i64);
+    let seq_id = VersionId::from(42i64);
 
     let opts = SubscriptionOptions::new().with_batch_size(50).with_from_seq_id(seq_id);
 
@@ -106,13 +106,13 @@ fn test_subscription_options_json_with_seq_id() {
 /// Test JSON deserialization with all fields
 #[test]
 fn test_subscription_options_json_deserialization_full() {
-    let json = r#"{"batch_size": 100, "last_rows": 50, "from_seq_id": 12345}"#;
+    let json = r#"{"batch_size": 100, "last_rows": 50, "from_seq_id": "12345"}"#;
 
     let opts: SubscriptionOptions = serde_json::from_str(json).expect("deserialization failed");
 
     assert_eq!(opts.batch_size, Some(100));
     assert_eq!(opts.last_rows, Some(50));
-    assert_eq!(opts.from, Some(SeqId::from(12345i64)));
+    assert_eq!(opts.from, Some(VersionId::from(12345i64)));
 }
 
 /// Test JSON deserialization with minimal fields
@@ -139,7 +139,7 @@ fn test_subscription_options_reconnection_workflow() {
     );
 
     // Step 2: After receiving data, we track the last seq_id (simulated)
-    let last_received_seq = SeqId::from(54321i64);
+    let last_received_seq = VersionId::from(54321i64);
 
     // Step 3: On reconnection, create options with from_seq_id to resume
     let reconnect_opts = SubscriptionOptions::new()
@@ -182,9 +182,9 @@ fn test_subscription_options_typical_use_case() {
 /// Test SeqId comparison for resume scenarios
 #[test]
 fn test_seq_id_comparison() {
-    let seq_a = SeqId::from(1000i64);
-    let seq_b = SeqId::from(2000i64);
-    let seq_c = SeqId::from(1000i64);
+    let seq_a = VersionId::from(1000i64);
+    let seq_b = VersionId::from(2000i64);
+    let seq_c = VersionId::from(1000i64);
 
     // Equal comparison
     assert_eq!(seq_a, seq_c, "Same seq_id values should be equal");
@@ -198,7 +198,7 @@ fn test_seq_id_comparison() {
 /// Test SeqId string conversion
 #[test]
 fn test_seq_id_to_string() {
-    let seq = SeqId::from(12345i64);
+    let seq = VersionId::from(12345i64);
     let str_rep = seq.to_string();
 
     assert_eq!(str_rep, "12345", "SeqId should convert to string correctly");

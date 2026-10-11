@@ -1,6 +1,6 @@
 # KalamDB Docker Guide
 
-KalamDB is a SQL-first realtime backend for agent-native apps. Agents and frontends share one HTTP SQL API for reads and writes plus WebSocket live subscriptions, with USER tables and auth keeping access policy-scoped. This directory contains the Docker image definitions and compose setups used to run KalamDB as a single node or a 3-node cluster.
+KalamDB is an open-source SQL-first backend: one SQL schema for tables, realtime subscriptions, durable pub/sub, and server functions, with the PostgreSQL wire protocol available for existing tools. This directory contains the Docker image definitions and compose setups used to run KalamDB as a single node or a 3-node cluster.
 
 The Docker image ships with both binaries:
 
@@ -37,7 +37,7 @@ docker/utils/
 ### Pull and run the published image
 
 ```bash
-docker pull jamals86/kalamdb:latest
+docker pull kalamdb/kalamdb:latest
 
 docker run -d \
   --name kalamdb \
@@ -46,7 +46,7 @@ docker run -d \
   -e KALAMDB_ROOT_PASSWORD=kalamdb123 \
   -e KALAMDB_JWT_SECRET="replace-with-a-32-char-secret" \
   -v kalamdb_data:/data \
-  jamals86/kalamdb:latest
+  kalamdb/kalamdb:latest
 ```
 
 Verify the server is healthy:
@@ -84,9 +84,9 @@ docker compose up -d
 
 Default node endpoints:
 
-- Node 1: `http://localhost:2901`
-- Node 2: `http://localhost:2902`
-- Node 3: `http://localhost:2903`
+- Node 1: `http://localhost:8081`
+- Node 2: `http://localhost:8082`
+- Node 3: `http://localhost:8083`
 
 ## Build the Image Locally
 

@@ -1,128 +1,89 @@
 # Implementation Plan: PostgreSQL-Only SQL Language
 
-**Branch**: `036-postgresql-sql-dialect` | **Date**: 2026-09-20 | **Spec**: [spec.md](./spec.md)
-
-**Input**: Feature specification from `/Users/jamal/git/KalamDB/specs/036-postgresql-sql-dialect/spec.md`
+**Branch**: `036-postgresql-sql-dialect` | **Revised**: 2026-10-04 | **Spec**: [spec.md](spec.md)
 
 ## Summary
 
-Make PostgreSQL the only public SQL language on every KalamDB SQL surface. Replace homemade statement parsers with sqlparser 0.62 `PostgreSqlDialect` plus a real `KalamDbDialect` that intercepts Kalam-only commands and PostgreSQL statements that upstream models incorrectly (`CREATE USER`, `CREATE PROCEDURE`, topic `CREATE TRIGGER`). Classify from one parse tree. Point DataFusion `sql_parser.dialect` at PostgreSQL, not DuckDB. Reject `CREATE USER TABLE` and DuckDB `x -> expr` lambdas. Keep `CREATE SCHEMA` canonical with `CREATE NAMESPACE` as an alias; keep table kind as `CREATE TABLE ... WITH (TYPE = ...)`.
+Provide one PostgreSQL 18-based language with documented Kalam extensions. All SQL enters `KalamParser` in `kalamdb-dialect`, using sqlparser's tokenizer and a PostgreSQL-preserving `KalamDbDialect`. The parser returns a typed sum of upstream SQL AST, PostgreSQL compatibility node, or Kalam command. Classification, authorization, parameter metadata, and execution consume that result. Standard query planning uses DataFusion's AST API; there is no text reparse or DuckDB fallback.
 
-## Technical Context
+This is language unification, not an implementation of every PostgreSQL storage engine feature. The [capability matrix](contracts/capability-matrix.md) specifies required execution, explicit limitations, aliases, and rejection cases.
 
-**Language/Version**: Rust 1.94 (workspace edition 2021); sqlparser 0.62.0 (workspace pin)
+## Technical context
 
-**Primary Dependencies**: `sqlparser` (`Parser`, `Dialect`, `PostgreSqlDialect`, `Tokenizer`, `ast::Statement`); DataFusion 55.x session SQL parser dialect; `kalamdb-dialect`, `kalamdb-core`, `kalamdb-api`, `kalamdb-postgres-wire`
+- Rust 1.94, edition 2021; workspace sqlparser 0.62.0 and DataFusion 55.1.0. Use the existing dependency cohort; no fork or new parser library.
+- Ownership: `kalamdb-dialect` owns lexing, parsing, normalization of identifiers, syntax validation and pure payload-free classification; existing context-bound `SqlStatementKind` payloads are created during binding. Core owns authorization/orchestration and the AST-to-DataFusion adapter. `kalamdb-backend` owns session/transaction lifecycle; permission-aware resolution uses the existing session/provider boundaries.
+- Models: one model per file; typed IDs, `TableId`, existing domain enums; `Arc<ParsedStatement>` for prepared metadata, typed bind values per execution, no mutable parser payload stored on a shared dialect.
+- Stored SQL: retain text and definition version in existing stores; validate/parse through the same API. An offline example runner accepts exported definition records on stdin for pre-upgrade validation; startup uses the same check before catalog mutation. No storage-format rewrite or direct filesystem work in core.
+- Build/test: default dev profile, `cargo nextest run`, batch compile feedback once per edit batch. CLI smoke requires a running server and a prebuilt CLI.
+- Performance: SC-009 compares complete pipelines under equal work and warm prepared execution; record runtime seconds and allocations. No extra SQL rewrite passes.
 
-**Storage**: N/A (parse/classify/plan layer). Table/schema catalogs unchanged except how DDL is recognized.
+## Constitution check
 
-**Testing**: `cargo nextest run -p kalamdb-dialect`; targeted `kalamdb-core` SQL/parser tests; CLI e2e smoke after server start (`./cli/run-tests.sh` or documented smoke filter); wire/HTTP SQL regression from 033 quickstart catalog probes
+| Principle | Design obligation and validation |
+|---|---|
+| I Performance-first | One tokenization/parse, AST planning, shared immutable prepared data; parse-count tests and same-work latency/allocation baselines. |
+| II Ownership | Language code stays in dialect; session changes stay in existing session owners; filestore/store APIs perform any persisted-definition access. |
+| III Dependencies | Reuse pinned sqlparser/DataFusion APIs; dependencies only through root workspace declarations with minimal features if strictly necessary. |
+| IV Validation/docs | Tests precede each story implementation; cross-transport corpus, SDK tests/docs, architecture and migration documentation ship together. |
+| V Composable APIs | Shared parser/resolver contracts have no UI framework dependencies; UI completion consumes the documented language inventory. |
+| Delivery constraints | Do not hand-edit generated outputs. External docs must be updated and validated or reported outstanding. |
 
-**Target Platform**: Server process (HTTP SQL, PostgreSQL wire, extension bridge)
+Design satisfies these obligations; implementation evidence is pending. Re-check before implementation and release. No performance or ownership exception is pre-approved.
 
-**Project Type**: Backend language layer (Rust workspace)
+## Concrete parser decision
 
-**Performance Goals**: Parse+classify of a simple `SELECT` within 10% of current skip-full-DDL hot path (SC-009)
+`Dialect::parse_statement` returns only upstream `Statement`; it cannot return arbitrary Kalam payloads. `KalamParser` therefore wraps a single sqlparser `Parser`, dispatches owned commands by token lookahead, and returns `StatementPayload`. Commands representable upstream can use a dialect hook; custom payloads and required PostgreSQL parser gaps use the wrapper. Both routes use the same parser cursor and lexical rules. All custom grammar remains in `kalamdb-dialect`.
 
-**Constraints**: Constitution: crate ownership (`kalamdb-dialect` owns parsing/classification); no extra SQL rewrite passes in hot paths; `Arc` sharing; no `use` inside methods; `cargo nextest`; one `cargo check` per edit batch
+Forward PostgreSQL dialect identity (`Dialect::dialect()`), lexical and capability methods, expression hooks and precedence behavior. A representative upstream PostgreSQL fixture corpus must behave identically under the wrapper except for explicitly registered extensions. `None` from a hook delegates to upstream parsing; it must not consume input. Unknown syntax is never retried under another parser.
 
-**Scale/Scope**: ~25 homemade parsers in `kalamdb-dialect`; DataFusion session dialect in `kalamdb-core`; docs `docs/reference/sql.md`, `docs/development/how-to-add-sql-statement.md`
+## Integration inventory
 
-## Constitution Check
+Paths are repository-relative. New files are explicitly marked; follow the smallest existing owning module when additional call sites are discovered and record them in the inventory.
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+| Surface | Existing paths / proposed additions |
+|---|---|
+| Shared parse API | `backend/crates/kalamdb-dialect/src/dialect.rs`, `parser/mod.rs`, `parser/utils.rs`, new `parser/kalam_parser.rs`, `parser/classify_from_ast.rs`, `parser/compatibility.rs` |
+| Typed models | New `backend/crates/kalamdb-dialect/src/models/{parsed_statement,statement_payload,postgres_compat_statement,kalam_statement,sql_source_span,sql_source_origin,sql_statement_class,dialect_error}.rs` and module exports |
+| DDL/extensions | `backend/crates/kalamdb-dialect/src/ddl/`; replace raw-text parse bodies with AST converters or shared-cursor parsers; remove `parser/extensions.rs` and obsolete `ddl/parsing.rs` dispatch helpers |
+| Batch/classifier | `backend/crates/kalamdb-dialect/src/batch_execution.rs`, `classifier/engine/core.rs`, `classifier/types.rs` |
+| Core planning/cache | `backend/crates/kalamdb-core/src/sql/executor/sql_executor/mod.rs`, `prepared_execution_statement.rs`, `parameter_binding.rs`, `sql/plan_cache.rs` (re-export), owner `backend/crates/kalamdb-plan-cache/src/lib.rs`; new `sql/ast_planner.rs` |
+| Sessions/resolution | `backend/crates/kalamdb-backend/src/{session,manager}.rs`, core `sql/context/execution_context.rs`, `sql/executor/sql_executor/postgres_meta.rs`, `schema_registry/policy_table_resolver.rs`; new `backend/crates/kalamdb-commons/src/models/search_path.rs` |
+| HTTP/WS | `backend/crates/kalamdb-api/src/http/sql/statements.rs`, `http/sql/execute.rs`, `ws/events/subscription.rs` |
+| Wire | `backend/crates/kalamdb-postgres-wire/src/{statement,query,tx_control,connection}.rs`, `client_catalog/{postgres_set,postgres_show}.rs` |
+| Nested/stored SQL | Core `functions/{host,executor,lifecycle,schedule_store}.rs`, `views/mod.rs`, dialect `ddl/{create_view,create_procedure,create_schedule,subscribe_commands}.rs` |
+| CLI/producers | `cli/src/sql_batch.rs`, `session/batch.rs`, `workflow/schema/typescript/mod.rs`; SDK handwritten SQL producers and fixtures under `link/sdks/` |
+| UI | `ui/src/components/sql-studio-v2/input-form/sqlCompletionCatalog.ts` and its test |
+| PostgreSQL extension | `pg/src/{fdw_ddl,remote_executor}.rs`, `pg/tests/e2e_ddl/`; typed FDW operations stay typed, SQL emitted by adapters is covered by fixtures |
+| Documentation | `docs/reference/sql.md`, `docs/development/how-to-add-sql-statement.md`, new `docs/architecture/postgresql-dialect.md`, new `docs/migrations/postgresql-dialect.md` |
 
-- Performance-first: One parse reused by classifier and executor. No new rewrite pass for statements sqlparser already understands. Keep the SELECT fast path (do not run every extension parser).
-- Crate ownership: All public SQL lex/parse/classify lives in `kalamdb-dialect`. Core only consumes classified kinds + AST. Do not put a second dialect in `kalamdb-core`.
-- DataFusion for query processing: Execution still uses DataFusion; the change is **which sqlparser dialect DataFusion uses** (`postgresql`), not a new planner.
-- Type-safe domain models: Map parser AST onto existing `SqlStatementKind` / DDL structs (`CreateTableStatement`, `CreateSchemaStatement`, …). Do not add stringly command enums.
-- Storage boundaries: Unchanged.
-- Testing: Dialect unit tests for each converted statement; core tests for DataFusion dialect and UNNEST; CLI smoke for `CREATE SCHEMA` / `CREATE USER` / `CREATE TABLE WITH (TYPE=...)`.
+Do not mistake a PostgreSQL server's native parser in `pg/` for a second Kalam parser. Its SQL-emitting bridge must produce canonical SQL; non-SQL typed requests are exempt from parse counts.
 
-## Project Structure
+## Delivery phases
 
-### Documentation (this feature)
+1. Setup: freeze source inventory, unchanged GUI fixtures, capability fixture IDs, and pre-change performance baselines.
+2. Foundation: models, PostgreSQL delegation, parser wrapper, pure classifier, stable errors, token-based batch boundaries and AST planner API. Keep the new pipeline internal until the atomic cutover; do not create a user-selectable dialect flag.
+3. US1: standard DDL, required upstream PostgreSQL gaps, session/search-path/transaction behavior and authorization using typed results.
+4. US2: canonical table options/defaults, complete constraints/options validation, shared/stream aliases, removed user-table forms.
+5. US3: move core, HTTP and wire planning/metadata to ASTs, parameter binding/cache isolation, arrays/operators, catalog adaptations, strict syntax and dialect lock. Run all earlier story tests at cutover.
+6. US4: finish custom-command families, subscriptions and nested stored SQL on the same token/parser API; remove old dispatch.
+7. US5: aliases, producers, upgrade detection/migration fixtures, SDK and canonical docs.
+8. US6: contributor/architecture contract and automated guards.
+9. Release validation: complete corpus, authorization, CLI smoke, wire/bridge/SDK/UI tests and performance; no legacy parser left serving user SQL.
 
-```text
-specs/036-postgresql-sql-dialect/
-├── spec.md
-├── plan.md
-├── research.md
-├── data-model.md
-├── quickstart.md
-├── contracts/
-│   ├── sql-language.md
-│   └── parser-architecture.md
-├── checklists/requirements.md
-└── tasks.md          # created by /speckit-tasks, not this command
-```
+US1/US2 can be tested through the internal typed executor before US3 cutover. They are independently testable slices, not separately releasable dialect modes. The first PostgreSQL migration MVP comprises Foundation + US1 + US2 + US3; public replacement is not shippable until US4/US5 preserve extensions and migration safety.
 
-### Source Code (repository root)
+## Bounded compatibility adaptations
 
-```text
-backend/crates/kalamdb-dialect/src/
-├── dialect.rs                         # replace type alias with KalamDbDialect
-├── parser/
-│   ├── mod.rs                         # single parse_sql_statements entry
-│   ├── extensions.rs                  # DELETE string dispatcher
-│   ├── classify_from_ast.rs           # NEW: Statement -> SqlStatementKind
-│   ├── kalam_commands.rs              # NEW: Dialect::parse_statement intercepts
-│   ├── pg_unnest.rs                   # keep only if still required after PG dialect
-│   └── utils.rs                       # drop JDBC/pg regexes that PG dialect makes unnecessary
-├── classifier/engine/core.rs          # classify from one AST; no FooStatement::parse
-└── ddl/                               # converters from sqlparser AST; delete parsing.rs helpers
+Keep required catalog providers/UDFs. Convert existing lexical regex rewrites to AST/planner transformations where the unchanged fixture corpus proves they are needed; remove redundant ones. No new text preprocessing or retry-parse pass, including JDBC calls, context functions or UNNEST. If a parser gap needs token syntax support, add one minimal documented shared-cursor implementation with a regression fixture. Unmeasured additional hot-path complexity blocks the gate.
 
-backend/crates/kalamdb-core/src/
-└── datafusion_session.rs              # sql_parser.dialect = postgresql
+## Validation and completion
 
-docs/development/how-to-add-sql-statement.md
-docs/reference/sql.md
-```
+Use [quickstart.md](quickstart.md) for executable commands and expected results, [tasks.md](tasks.md) for dependency order, and the [parser contract](contracts/parser-architecture.md) for invariants. Update the matrix with observed fixture results during implementation. A planning checklist is not proof of runtime compatibility.
 
-**Structure Decision**: Extend `kalamdb-dialect` in place. Introduce `KalamDbDialect` wrapping `PostgreSqlDialect`. Convert existing `*Statement` types from “parse from remainder string” to “from sqlparser AST”. Delete `ExtensionStatement`, `ddl/parsing.rs` string helpers, and `user_commands` Tokenizer loops.
+## Cleanup, memory, upstream reuse and injection controls
 
-## Complexity Tracking
+The [efficiency/security/cleanup contract](contracts/efficiency-security-cleanup.md) is a release gate, not optional polish. Expand the seeded [cleanup ledger](cleanup.md) with verified old-to-new symbol mappings and caller evidence; delete old production paths in each converted slice. Reuse sqlparser's token/helper/visitor APIs for standard and custom syntax, with no reimplemented lexer, expression grammar or parallel AST hierarchy.
 
-| Violation | Why needed | Simpler alternative rejected because |
-|-----------|------------|--------------------------------------|
-| Dialect intercepts for `CREATE USER` / `CREATE PROCEDURE` / topic `CREATE TRIGGER` | sqlparser 0.62 maps those prefixes to Snowflake/T-SQL/table-trigger grammars even under `PostgreSqlDialect` | Using upstream `Statement::CreateUser` as-is would accept the wrong option grammar and still collide with `CREATE USER TABLE` |
-| Optional internal UNNEST rewrite (`pg_unnest.rs`) | DataFusion + PostgreSQL dialect may still fail GUI `JOIN UNNEST(...)` | Exposing DuckDB dialect publicly to get UNNEST planning — rejected by spec FR-012 / FR-013 |
-| Compatibility aliases (`CREATE NAMESPACE`, `CREATE SHARED TABLE`) | Existing tests/scripts | Deleting all aliases in the same change as PostgreSQL unification would mix two breaking migrations |
+Use safe owned Rust with shared immutable syntax, bounded admission before token allocation and byte-bounded existing caches. Avoid retaining large batch sources for small prepared statements. Inspect dependency raw-SQL logging as well as application diagnostics. Custom commands, error paths and nested SQL join the same parse-count, allocation, lifetime and injection corpus as standard queries. Bind data values; authorize typed identifiers and every batch member. Parsing is not a security boundary.
 
-## Phase 0 Research (complete)
-
-See [research.md](./research.md). Decisions:
-
-1. Official custom-command API is `Dialect::parse_statement` (`Some` = handled, `None` = PostgreSQL fallback). Do not add `Statement` variants to sqlparser.
-2. Pattern: wrap `Parser` like DataFusion `DFParser`, or map dialect-owned structs onto existing Kalam AST. Prefer mapping onto existing `kalamdb-dialect` statement types.
-3. DataFusion session dialect becomes `postgresql`. DuckDB lambdas become unsupported.
-4. Canonical table kind: `WITH (TYPE=...)`. Reject `CREATE USER TABLE`. Keep shared/stream prefix aliases.
-5. Canonical schema: `CREATE SCHEMA`. Alias `CREATE NAMESPACE`.
-
-## Phase 1 Design (complete)
-
-- Data model: [data-model.md](./data-model.md)
-- Contracts: [contracts/sql-language.md](./contracts/sql-language.md), [contracts/parser-architecture.md](./contracts/parser-architecture.md)
-- Validation: [quickstart.md](./quickstart.md)
-
-## Implementation Strategy (for /speckit-tasks and implementers)
-
-Implement in this order so each slice is independently testable:
-
-1. **Foundation**: Real `KalamDbDialect`; `parse_sql_statements` always uses it; classifier consumes AST; DataFusion dialect `postgresql`. Keep old homemade parsers temporarily behind the same kinds so tests stay green.
-2. **De-collide PostgreSQL**: Intercept `CREATE USER`/`DROP USER`/`ALTER USER`; reject `CREATE USER TABLE`; map `CREATE SCHEMA`; table type from `WITH (TYPE=...)`.
-3. **Convert standard SQL parsers** one statement family at a time (CALL, GRANT EXECUTE, COMMENT/POLICY already AST-based, CREATE TYPE, CREATE INDEX, DROP TABLE, SET search_path, USE, DESCRIBE).
-4. **Convert Kalam extensions** to `Dialect::parse_statement` (STORAGE, CLUSTER, SUBSCRIBE, TOPIC, SCHEDULE, KILL JOB). Delete `ExtensionStatement`.
-5. **Remove DuckDB public syntax**: delete lambda tests or rewrite to PostgreSQL; keep `pg_unnest` only if still needed; drop session `duckdb`.
-6. **Docs + contributor guide**.
-7. **CLI smoke + wire catalog probes**.
-
-Do not land a half-converted command: each command is either fully on the shared parse path or still on the old parser, never both live for the same prefix.
-
-## Constitution Re-check (post Phase 1)
-
-Still pass: one parse, dialect crate owns language, no new storage, DataFusion remains planner, type-safe kinds preserved.
-
-## Next
-
-Run `/speckit-tasks` to generate `tasks.md`, then implement from that file.
+Runtime security and memory-safety claims require the executable evidence in SC-014–SC-017. The planning update does not assert that the current code is injection-free or leak-free.

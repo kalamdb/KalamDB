@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-IMAGE_NAME="${1:-jamals86/kalamdb:test}"
+IMAGE_NAME="${1:-kalamdb/kalamdb:test}"
 CONTAINER_NAME="kalamdb-startup-test-$$"
 TEST_PORT="${TEST_PORT:-18080}"
 TIMEOUT="${TIMEOUT:-30}"

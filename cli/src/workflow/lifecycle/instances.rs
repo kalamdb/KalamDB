@@ -79,8 +79,20 @@ fn merge_credentials(rows: &mut Vec<InstanceSummary>, store: &dyn CredentialStor
                 .then_some(index)
             })
             .collect();
-        if let [index] = matches.as_slice() {
-            rows[*index].aliases.push(name);
+        let running: Vec<usize> = matches
+            .iter()
+            .copied()
+            .filter(|index| rows[*index].state == InstanceState::Running)
+            .collect();
+        let attach = if let [index] = matches.as_slice() {
+            Some(*index)
+        } else if let [index] = running.as_slice() {
+            Some(*index)
+        } else {
+            None
+        };
+        if let Some(index) = attach {
+            rows[index].aliases.push(name);
             continue;
         }
         let user = creds
@@ -123,7 +135,7 @@ fn connection_endpoint(value: &str) -> Option<String> {
     Some(url.as_str().trim_end_matches('/').to_string())
 }
 
-pub(super) fn endpoint_key(value: &str) -> Option<String> {
+pub fn endpoint_key(value: &str) -> Option<String> {
     let mut url = Url::parse(value).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
@@ -158,9 +170,35 @@ fn assign_unique_names(rows: &mut [InstanceSummary]) {
     }
 }
 
+/// A stopped local server can still remember a port that another running server
+/// has taken. Callers must not send SQL to that URL.
+pub fn other_running_instance<'a>(
+    rows: &'a [InstanceSummary],
+    selected: &InstanceSummary,
+) -> Option<&'a InstanceSummary> {
+    if selected.kind != InstanceKind::Local || selected.state == InstanceState::Running {
+        return None;
+    }
+    let key = selected.url.as_deref().and_then(endpoint_key)?;
+    rows.iter().find(|row| {
+        row.name != selected.name
+            && row.kind == InstanceKind::Local
+            && row.state == InstanceState::Running
+            && row.url.as_deref().and_then(endpoint_key).as_deref() == Some(key.as_str())
+    })
+}
+
 pub fn resolve_instance_name(name: &str, output: &WorkflowOutput) -> Result<InstanceSummary> {
     let store = FileCredentialStore::new()?;
-    select_instance(name, instance_catalog(output, &store)?)
+    find_instance(name, output, &store)
+}
+
+pub fn find_instance(
+    name: &str,
+    output: &WorkflowOutput,
+    store: &dyn CredentialStore,
+) -> Result<InstanceSummary> {
+    select_instance(name, instance_catalog(output, store)?)
 }
 
 fn select_instance(name: &str, rows: Vec<InstanceSummary>) -> Result<InstanceSummary> {
@@ -171,7 +209,9 @@ fn select_instance(name: &str, rows: Vec<InstanceSummary>) -> Result<InstanceSum
     match matches.len() {
         1 => Ok(matches.into_iter().next().expect("one matched instance")),
         0 => Err(CLIError::ConfigurationError(format!(
-            "Unknown instance '{name}'. Run `kalam instances` to see available names."
+            "Unknown instance '{name}'. Run `kalam instances` to see available names. Add a cloud \
+             server with `kalam login --instance {name} --url <server>` (`--oidc` when it uses an \
+             identity provider)."
         ))),
         _ => Err(CLIError::ConfigurationError(format!(
             "Instance name '{name}' is ambiguous. Use one of: {}",
@@ -246,7 +286,7 @@ fn render_instances(rows: Vec<InstanceSummary>, output: &WorkflowOutput) -> Resu
     output.status(format!("KalamDB instances · {} cloud · {local} local", rows.len() - local));
     let width = rows.iter().map(|row| row.name.chars().count()).max().unwrap_or(4).max(4);
     output.listing_line(format!("{:<width$}  {:<5}  {:<11}  URL", "NAME", "TYPE", "STATUS"));
-    for row in rows {
+    for row in &rows {
         output.instance_row(
             &row.name,
             row.kind.as_str(),
@@ -254,7 +294,7 @@ fn render_instances(rows: Vec<InstanceSummary>, output: &WorkflowOutput) -> Resu
             row.url.as_deref().unwrap_or("not configured"),
             width,
         );
-        if let Some(folder) = row.folder {
+        if let Some(folder) = row.folder.as_ref() {
             output.detail(format!("  Folder  {}", folder.display()));
             if row.global {
                 output.detail("  Scope   Global");
@@ -276,6 +316,13 @@ fn render_instances(rows: Vec<InstanceSummary>, output: &WorkflowOutput) -> Resu
         if !aliases.is_empty() {
             output.detail(format!("  Also    {}", aliases.join(", ")));
         }
+        if let Some(owner) = other_running_instance(&rows, row) {
+            output.warn(format!(
+                "  Port    last used {}, now running as {}",
+                row.url.as_deref().unwrap_or("this URL"),
+                owner.name
+            ));
+        }
         output.agent_event(
             "KALAM_INSTANCE",
             &[
@@ -286,6 +333,15 @@ fn render_instances(rows: Vec<InstanceSummary>, output: &WorkflowOutput) -> Resu
             ],
         );
     }
+    output.detail("");
+    output.detail(
+        "Use `kalam --instance <name>` for SQL on that server from any directory. `kalam dev` \
+         still follows the current project's database.",
+    );
+    output.detail(
+        "`up`, `down`, `status`, and `logs` take the same name. Add an OIDC cloud server with \
+         `kalam login --oidc --instance <name> --url <server>`.",
+    );
     Ok(())
 }
 
@@ -362,6 +418,25 @@ mod tests {
             select_instance("local", rows.clone()).unwrap().url.as_deref(),
             Some("https://example.com")
         );
+    }
+
+    #[test]
+    fn shared_port_credential_attaches_to_the_running_server() {
+        let mut stopped = local("old", "/old");
+        stopped.state = InstanceState::Stopped;
+        let running = local("home", "/home");
+        let mut store = MemoryCredentialStore::new();
+        let mut creds = Credentials::new("analytics".into(), "never-display-this-token".into());
+        creds.server_url = Some("http://127.0.0.1:2900".into());
+        store.set_credentials(&creds).unwrap();
+        let mut rows = vec![stopped, running];
+        merge_credentials(&mut rows, &store).unwrap();
+        assert_eq!(rows.len(), 2);
+        let home = select_instance("analytics", rows.clone()).unwrap();
+        assert_eq!(home.name, "home");
+        assert_eq!(home.state, InstanceState::Running);
+        let old = select_instance("old", rows.clone()).unwrap();
+        assert_eq!(other_running_instance(&rows, &old).map(|row| row.name.as_str()), Some("home"));
     }
 
     #[test]

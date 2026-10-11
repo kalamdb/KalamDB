@@ -88,7 +88,7 @@ AS $$
   var seats = input.seats;
   var notes = input.notes;
   return ctx.db.query(
-    "SELECT venue_id, city, capacity, _seq, _deleted FROM ${ns}.venues WHERE venue_id = $1",
+    "SELECT venue_id, city, capacity, _version, _deleted FROM ${ns}.venues WHERE venue_id = $1",
     [venueId]
   ).then(function (rows) {
     var row = rows && rows[0];
@@ -105,7 +105,7 @@ AS $$
         venue_id: resolvedVenueId,
         city: city,
         capacity: capacity,
-        _seq: row._seq,
+        _version: row._version,
         _deleted: row._deleted === true
       },
       guest: {

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use actix_ws::Session;
-use kalamdb_commons::{ids::SeqId, websocket::BatchControl, WebSocketMessage};
+use kalamdb_commons::{ids::VersionId, websocket::BatchControl, WebSocketMessage};
 use kalamdb_core::providers::arrow_json_conversion::row_into_json_map;
 use kalamdb_live::{LiveQueryManager, SharedConnectionState};
 use kalamdb_observability::record_subscription_delivery;
@@ -22,7 +22,7 @@ use crate::ws::models::WsErrorCode;
 pub async fn handle_next_batch(
     connection_state: &SharedConnectionState,
     subscription_id: &str,
-    last_seq_id: Option<SeqId>,
+    last_seq_id: Option<VersionId>,
     session: &mut Session,
     live_query_manager: &Arc<LiveQueryManager>,
     compression_enabled: bool,

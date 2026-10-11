@@ -93,9 +93,18 @@ fn cli_local_login_explains_disabled_policy_without_password_prompt() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let expected = format!(
+        "username/password login is disabled on {server_url}; use `kalam login --oidc --instance \
+         local --url {server_url}`"
+    );
     assert!(
-        stderr.contains("local username/password login is disabled; use `kalam login --oidc`"),
+        stderr.contains(&expected),
         "expected disabled-policy message, got stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.to_ascii_lowercase().contains("password"),
+        "disabled local login must not prompt for a password\nstdout: {stdout}"
     );
 
     server.join().expect("join login-options server");

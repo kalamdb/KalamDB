@@ -31,22 +31,27 @@ pub struct SystemColumnNames;
 
 #[allow(non_upper_case_globals)]
 impl SystemColumnNames {
-    // REMOVED: _updated column (timestamp is embedded in _seq Snowflake ID)
-    // Use _seq >> 22 to extract timestamp in milliseconds
-    // pub const UPDATED: &'static str = "_updated";
-
     /// Soft delete flag (true = deleted)
     pub const DELETED: &'static str = "_deleted";
 
-    /// Sequence column used for MVCC versioning
+    /// Canonical row version. Same-domain ordering and MVCC identity.
+    pub const VERSION: &'static str = "_version";
+
+    /// Server ingestion time for STREAM rows. Not derived from `_version`.
+    pub const TIMESTAMP: &'static str = "_timestamp";
+
+    /// Reserved name. Not a stored column.
     pub const SEQ: &'static str = "_seq";
 
-    /// Commit-order marker used for snapshot visibility on committed rows.
+    /// Reserved name. Not a stored column.
     pub const COMMIT_SEQ: &'static str = "_commit_seq";
 
     /// Check if a column name is a system column
     pub fn is_system_column(column_name: &str) -> bool {
-        matches!(column_name, Self::DELETED | Self::SEQ | Self::COMMIT_SEQ)
+        matches!(
+            column_name,
+            Self::DELETED | Self::VERSION | Self::TIMESTAMP | Self::SEQ | Self::COMMIT_SEQ
+        )
     }
 }
 // /// Global instance of system column names.

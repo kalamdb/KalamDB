@@ -1,7 +1,7 @@
-//! In-memory function JS-boundary codec.
+//! In-memory function value codec.
 //!
-//! Nested in-process calls pass these bytes; this is not the durable catalog
-//! [`crate::encode_object`] path.
+//! The V8 boundary converts `RoutineValue` directly and does not read these
+//! bytes. This is not the durable catalog [`crate::encode_object`] path.
 
 use std::sync::Arc;
 

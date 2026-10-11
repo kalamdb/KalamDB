@@ -115,9 +115,9 @@ async fn explicit_commit_persists_same_table_same_user_user_inserts() {
         .expect("lookup succeeds")
         .expect("second row exists after commit");
 
-    assert_ne!(first_key.seq, second_key.seq);
-    assert_eq!(first_row._commit_seq, commit_seq);
-    assert_eq!(second_row._commit_seq, commit_seq);
+    assert_ne!(first_key.version(), second_key.version());
+    assert_eq!(first_row._version.as_u64() >> 16, commit_seq);
+    assert_eq!(second_row._version.as_u64() >> 16, commit_seq);
     assert_eq!(
         first_row.fields.get("name"),
         Some(&ScalarValue::Utf8(Some("alpha".to_string())))

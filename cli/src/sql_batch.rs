@@ -14,8 +14,20 @@ pub(crate) fn split_batch_statements(sql: &str) -> Vec<String> {
     let mut in_backtick = false;
     let mut in_line_comment = false;
     let mut in_block_comment = false;
+    let mut dollar_delimiter: Option<String> = None;
 
     while let Some(ch) = chars.next() {
+        if let Some(delimiter) = dollar_delimiter.as_deref() {
+            current.push(ch);
+            if ch == '$' && chars.clone().take(delimiter.len() - 1).eq(delimiter.chars().skip(1)) {
+                for _ in 1..delimiter.len() {
+                    current.push(chars.next().expect("matched dollar delimiter"));
+                }
+                dollar_delimiter = None;
+            }
+            continue;
+        }
+
         if in_line_comment {
             current.push(ch);
             if ch == '\n' {
@@ -34,6 +46,27 @@ pub(crate) fn split_batch_statements(sql: &str) -> Vec<String> {
         }
 
         if !in_single_quote && !in_double_quote && !in_backtick {
+            if ch == '$' {
+                let mut lookahead = chars.clone();
+                let mut tag = String::new();
+                while let Some(&next) = lookahead.peek() {
+                    if next.is_ascii_alphanumeric() || next == '_' {
+                        tag.push(lookahead.next().expect("peeked tag character"));
+                    } else {
+                        break;
+                    }
+                }
+                if lookahead.peek() == Some(&'$') {
+                    let delimiter = format!("${tag}$");
+                    current.push_str(&delimiter);
+                    for _ in 0..tag.len() + 1 {
+                        chars.next();
+                    }
+                    dollar_delimiter = Some(delimiter);
+                    continue;
+                }
+            }
+
             if ch == '-'
                 && chars.peek() == Some(&'-')
                 && is_sql_line_comment_start(&current, &chars)

@@ -97,10 +97,13 @@ fn write_module_artifact(ctx: &WorkflowContext) -> Result<()> {
     fs::create_dir_all(&generated_dir).map_err(|error| {
         CLIError::FileError(format!("failed to create '{}': {error}", generated_dir.display()))
     })?;
-    fs::write(&registry_path, generate_registry_source(&hash, &bindings, &generated_dir)?)
-        .map_err(|error| {
-            CLIError::FileError(format!("failed to write '{}': {error}", registry_path.display()))
-        })?;
+    fs::write(
+        &registry_path,
+        generate_registry_source(&hash, &bindings, &generated_dir, None)?,
+    )
+    .map_err(|error| {
+        CLIError::FileError(format!("failed to write '{}': {error}", registry_path.display()))
+    })?;
     let implemented = bindings.iter().any(|binding| binding.implemented);
     let source = if implemented {
         let esbuild = find_esbuild_bin(&ctx.project_root).ok_or_else(|| {

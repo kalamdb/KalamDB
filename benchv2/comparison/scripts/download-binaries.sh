@@ -7,9 +7,9 @@ BIN="$ROOT/bin"
 mkdir -p "$BIN"
 
 # GitHub release pins. Bump these and re-run this script to refresh ./bin.
-TRAIL_VERSION="v0.33.14"
-PB_VERSION="0.40.3"
-SURREAL_VERSION="v3.2.4"
+TRAIL_VERSION="v0.34.4"
+PB_VERSION="0.40.5"
+SURREAL_VERSION="v3.3.0"
 KALAM_RELEASE="v0.5.5-rc.1"
 
 ARCH="$(uname -m)"

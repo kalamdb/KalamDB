@@ -1,6 +1,8 @@
 use kalam_cli::{
-    workflow::{target::TargetSelector, WorkflowContext},
-    CLIConfiguration, CLIError, Result,
+    config::WorkflowLoggingPolicy,
+    output::WorkflowOutput,
+    workflow::{lifecycle::find_instance, target::TargetSelector, WorkflowContext},
+    CLIConfiguration, CLIError, FileCredentialStore, Result,
 };
 
 use crate::args::Cli;
@@ -78,6 +80,56 @@ pub(super) fn try_workflow_context(
         },
         Err(error) => Err(error),
     }
+}
+
+/// Database, deploy, link, and function commands follow the project. A saved
+/// server selected with `--instance` must be the same endpoint, otherwise the
+/// command would change the wrong database.
+pub(super) fn ensure_project_command_matches_instance(
+    cli: &Cli,
+    ctx: &WorkflowContext,
+) -> Result<()> {
+    let Some((name, instance_url, project_url)) = instance_project_mismatch(cli, ctx)? else {
+        return Ok(());
+    };
+    Err(CLIError::ConfigurationError(format!(
+        "`--instance {name}` is {instance_url}, but this command is aimed at {project_url}. \
+         Database, deploy, link, and function commands follow the project. Use `kalam --instance \
+         {name} -c` for SQL on {name}, or run the command from that server's project."
+    )))
+}
+
+pub(super) fn note_dev_keeps_project_database(cli: &Cli, ctx: &WorkflowContext) -> Result<()> {
+    let Some((name, instance_url, project_url)) = instance_project_mismatch(cli, ctx)? else {
+        return Ok(());
+    };
+    eprintln!(
+        "`--instance {name}` is {instance_url}. `kalam dev` still uses this project's database at \
+         {project_url}."
+    );
+    Ok(())
+}
+
+fn instance_project_mismatch(
+    cli: &Cli,
+    ctx: &WorkflowContext,
+) -> Result<Option<(String, String, String)>> {
+    let Some(name) = cli.explicit_instance() else {
+        return Ok(None);
+    };
+    let store = FileCredentialStore::new().map_err(|error| {
+        CLIError::ConfigurationError(format!("failed to read saved servers: {error}"))
+    })?;
+    let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
+    let summary = find_instance(name, &output, &store)?;
+    let Some(instance_url) = summary.url.filter(|url| !url.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let project_url = ctx.resolved_environment()?.url;
+    if crate::connect::endpoints_match_servers(&instance_url, &project_url) {
+        return Ok(None);
+    }
+    Ok(Some((name.to_string(), instance_url, project_url)))
 }
 
 pub(super) fn command_output(

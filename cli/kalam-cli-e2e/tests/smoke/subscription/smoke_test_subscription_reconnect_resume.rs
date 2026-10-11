@@ -26,8 +26,8 @@
 use std::time::Duration;
 
 use kalam_client::{
-    models::ChangeEvent, KalamLinkClient, KalamLinkTimeouts, SeqId, SubscriptionConfig,
-    SubscriptionOptions,
+    models::ChangeEvent, KalamLinkClient, KalamLinkTimeouts, SubscriptionConfig,
+    SubscriptionOptions, VersionId,
 };
 
 use crate::common::*;
@@ -101,7 +101,7 @@ fn contains_value(events: &[ChangeEvent], needle: &str) -> bool {
 }
 
 /// Extract the `last_seq_id` from an Ack or InitialDataBatch event.
-fn seq_id_from_event(event: &ChangeEvent) -> Option<SeqId> {
+fn seq_id_from_event(event: &ChangeEvent) -> Option<VersionId> {
     match event {
         ChangeEvent::Ack { batch_control, .. } => batch_control.last_seq_id,
         ChangeEvent::InitialDataBatch { batch_control, .. } => batch_control.last_seq_id,
@@ -318,7 +318,7 @@ fn smoke_subscription_resume_from_seq_id() {
         );
 
         // Use the most recent seq_id we observed (Insert event seq beats Ack seq).
-        let last_seq: Option<SeqId> =
+        let last_seq: Option<VersionId> =
             change_events.iter().rev().find_map(|e| seq_id_from_event(e)).or(ack_seq);
 
         // Disconnect.

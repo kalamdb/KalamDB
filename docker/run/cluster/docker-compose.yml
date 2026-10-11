@@ -20,7 +20,7 @@ services:
   # Node 1 - Initial leader candidate
   # ============================================================================
   kalamdb-node1:
-    image: jamals86/kalamdb:latest
+    image: kalamdb/kalamdb:latest
     container_name: kalamdb-node1
     hostname: kalamdb-node1
     ports:
@@ -58,7 +58,7 @@ services:
   # Node 2
   # ============================================================================
   kalamdb-node2:
-    image: jamals86/kalamdb:latest
+    image: kalamdb/kalamdb:latest
     container_name: kalamdb-node2
     hostname: kalamdb-node2
     ports:
@@ -99,7 +99,7 @@ services:
   # Node 3
   # ============================================================================
   kalamdb-node3:
-    image: jamals86/kalamdb:latest
+    image: kalamdb/kalamdb:latest
     container_name: kalamdb-node3
     hostname: kalamdb-node3
     ports:

@@ -33,5 +33,5 @@ export 'src/kalam_client.dart';
 export 'src/logger.dart';
 export 'src/live_event_delivery.dart';
 export 'src/models.dart';
-export 'src/seq_id.dart';
+export 'src/version_id.dart';
 export 'src/sql_params.dart';

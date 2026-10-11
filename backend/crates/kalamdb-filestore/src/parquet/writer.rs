@@ -62,7 +62,7 @@ pub(crate) fn serialize_to_parquet_with_compression(
         content_defined_chunking = options.content_defined_chunking
     );
 
-    let batches = sort_batches_by_seq(batches)?;
+    let batches = sort_batches_by_version(batches)?;
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
     let props = writer_properties(total_rows, bloom_filter_columns, options);
 
@@ -198,18 +198,18 @@ fn zstd_level() -> ZstdLevel {
     ZstdLevel::try_new(1).unwrap_or_default()
 }
 
-fn sort_batches_by_seq(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>> {
-    batches.into_iter().map(sort_record_batch_by_seq).collect()
+fn sort_batches_by_version(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>> {
+    batches.into_iter().map(sort_record_batch_by_version).collect()
 }
 
-fn sort_record_batch_by_seq(batch: RecordBatch) -> Result<RecordBatch> {
+fn sort_record_batch_by_version(batch: RecordBatch) -> Result<RecordBatch> {
     let Some(seq_idx) =
-        batch.schema().fields().iter().position(|f| f.name() == SystemColumnNames::SEQ)
+        batch.schema().fields().iter().position(|f| f.name() == SystemColumnNames::VERSION)
     else {
         return Ok(batch);
     };
 
-    if is_sorted_by_seq(&batch, seq_idx)? {
+    if is_sorted_by_version(&batch, seq_idx)? {
         return Ok(batch);
     }
 
@@ -222,7 +222,7 @@ fn sort_record_batch_by_seq(batch: RecordBatch) -> Result<RecordBatch> {
         }),
         None,
     )
-    .map_err(|e| FilestoreError::Other(format!("Failed to sort by _seq: {e}")))?;
+    .map_err(|e| FilestoreError::Other(format!("Failed to sort by _version: {e}")))?;
 
     let new_columns: Result<Vec<_>> = batch
         .columns()
@@ -237,14 +237,14 @@ fn sort_record_batch_by_seq(batch: RecordBatch) -> Result<RecordBatch> {
         .map_err(|e| FilestoreError::Other(format!("Failed to build sorted RecordBatch: {e}")))
 }
 
-fn is_sorted_by_seq(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
+fn is_sorted_by_version(batch: &RecordBatch, seq_idx: usize) -> Result<bool> {
     if batch.num_rows() <= 1 {
         return Ok(true);
     }
 
     let seq_col = batch.column(seq_idx);
     let Some(seq_array) = seq_col.as_any().downcast_ref::<Int64Array>() else {
-        // If _seq isn't Int64 in this batch, fall back to sorting.
+        // If _version isn't Int64 in this batch, fall back to sorting.
         return Ok(false);
     };
 

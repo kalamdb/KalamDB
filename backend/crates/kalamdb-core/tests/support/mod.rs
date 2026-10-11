@@ -59,6 +59,13 @@ pub async fn create_cluster_app_context() -> (Arc<AppContext>, TestDb) {
 pub async fn create_cluster_app_context_with_config(
     config: ServerConfig,
 ) -> (Arc<AppContext>, TestDb) {
+    create_cluster_app_context_with_shared_shards(config, 1).await
+}
+
+pub async fn create_cluster_app_context_with_shared_shards(
+    config: ServerConfig,
+    shared_shards: u32,
+) -> (Arc<AppContext>, TestDb) {
     let mut config = config;
     if config.cluster.is_none() {
         let (rpc_port, api_port) = next_test_ports();
@@ -69,7 +76,7 @@ pub async fn create_cluster_app_context_with_config(
             api_addr: format!("http://127.0.0.1:{}", api_port),
             peers: Vec::new(),
             user_shards: 32,
-            shared_shards: 1,
+            shared_shards,
             heartbeat_interval_ms: 50,
             election_timeout_ms: (150, 300),
             snapshot_policy: "LogsSinceLast(1000)".to_string(),

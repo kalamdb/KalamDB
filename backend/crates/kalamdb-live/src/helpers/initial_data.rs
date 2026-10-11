@@ -13,7 +13,7 @@ use arrow::{
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     constants::SystemColumnNames,
-    ids::SeqId,
+    ids::VersionId,
     models::{rows::Row, ReadContext, TableId},
     quote_sql_identifier, Role, TableType,
 };
@@ -29,11 +29,11 @@ use crate::{
 pub struct InitialDataOptions {
     /// Fetch changes since this sequence ID (exclusive)
     /// If None, starts from the beginning (or end, depending on strategy)
-    pub since_seq: Option<SeqId>,
+    pub since_seq: Option<VersionId>,
 
     /// Fetch changes up to this sequence ID (inclusive)
     /// Used to define the snapshot boundary
-    pub until_seq: Option<SeqId>,
+    pub until_seq: Option<VersionId>,
 
     /// Fetch changes after this deterministic commit sequence (exclusive).
     pub since_commit_seq: Option<u64>,
@@ -70,7 +70,7 @@ impl Default for InitialDataOptions {
 
 impl InitialDataOptions {
     /// Create options to fetch changes since a specific sequence ID
-    pub fn since(seq: SeqId) -> Self {
+    pub fn since(seq: VersionId) -> Self {
         Self {
             since_seq:        Some(seq),
             until_seq:        None,
@@ -83,7 +83,7 @@ impl InitialDataOptions {
     }
 
     /// Create options to fetch the last N rows (legacy/simple mode)
-    /// Note: This might need adjustment for SeqId-based logic
+    /// Note: This might need adjustment for VersionId-based logic
     pub fn last(limit: usize) -> Self {
         Self {
             since_seq: None,
@@ -97,7 +97,11 @@ impl InitialDataOptions {
     }
 
     /// Create options for batch-based fetching
-    pub fn batch(since_seq: Option<SeqId>, until_seq: Option<SeqId>, batch_size: usize) -> Self {
+    pub fn batch(
+        since_seq: Option<VersionId>,
+        until_seq: Option<VersionId>,
+        batch_size: usize,
+    ) -> Self {
         Self {
             since_seq,
             until_seq,
@@ -141,7 +145,7 @@ pub struct InitialDataResult {
 
     /// Sequence ID of the last row in the result
     /// Used for pagination (passed as since_seq in next request)
-    pub last_seq: Option<SeqId>,
+    pub last_seq: Option<VersionId>,
 
     /// Deterministic commit sequence of the last row in the result.
     pub last_commit_seq: Option<u64>,
@@ -150,7 +154,7 @@ pub struct InitialDataResult {
     pub has_more: bool,
 
     /// The snapshot boundary used for this fetch
-    pub snapshot_end_seq: Option<SeqId>,
+    pub snapshot_end_seq: Option<VersionId>,
 
     /// Deterministic snapshot boundary used for this fetch.
     pub snapshot_end_commit_seq: Option<u64>,
@@ -164,8 +168,7 @@ pub struct InitialDataFetcher {
 
 #[derive(Debug, Clone, Copy)]
 struct TableCapabilities {
-    has_commit_seq: bool,
-    has_deleted:    bool,
+    has_deleted: bool,
 }
 
 fn quoted_table_sql(table_id: &TableId) -> String {
@@ -245,15 +248,10 @@ impl InitialDataFetcher {
         // Build SELECT clause: either specific columns or *
         // Always include _seq column for pagination, even if not in projections
         let table_capabilities = self.table_capabilities(table_id)?;
-        let has_commit_seq = table_capabilities.has_commit_seq;
         let select_clause = if let Some(cols) = projections {
-            // Ensure system resume columns are always included for pagination tracking.
             let mut columns = cols.to_vec();
-            if !columns.iter().any(|c| c == SystemColumnNames::SEQ) {
-                columns.push(SystemColumnNames::SEQ.to_string());
-            }
-            if has_commit_seq && !columns.iter().any(|c| c == SystemColumnNames::COMMIT_SEQ) {
-                columns.push(SystemColumnNames::COMMIT_SEQ.to_string());
+            if !columns.iter().any(|c| c == SystemColumnNames::VERSION) {
+                columns.push(SystemColumnNames::VERSION.to_string());
             }
             columns
                 .iter()
@@ -275,12 +273,8 @@ impl InitialDataFetcher {
         }
 
         // Add ORDER BY — use write! to avoid intermediate format! allocations
-        let seq_col = quote_sql_identifier(SystemColumnNames::SEQ);
-        let commit_col = quote_sql_identifier(SystemColumnNames::COMMIT_SEQ);
-        if has_commit_seq && options.since_commit_seq.is_some() {
-            let direction = if options.fetch_last { "DESC" } else { "ASC" };
-            let _ = write!(sql, " ORDER BY {commit_col} {direction}, {seq_col} {direction}");
-        } else if options.fetch_last {
+        let seq_col = quote_sql_identifier(SystemColumnNames::VERSION);
+        if options.fetch_last {
             let _ = write!(sql, " ORDER BY {seq_col} DESC");
         } else {
             let _ = write!(sql, " ORDER BY {seq_col} ASC");
@@ -294,9 +288,8 @@ impl InitialDataFetcher {
             .execute_for_batches(&sql, user_id, role, ReadContext::Internal)
             .await?;
 
-        let mut rows_with_seq =
-            materialize_initial_rows(batches, has_commit_seq, limit + 1).await?;
-        sort_initial_rows(&mut rows_with_seq, has_commit_seq, &options);
+        let mut rows_with_seq = materialize_initial_rows(batches, false, limit + 1).await?;
+        sort_initial_rows(&mut rows_with_seq, false, &options);
 
         // Determine has_more and slice to limit
         let total_fetched = rows_with_seq.len();
@@ -335,7 +328,7 @@ impl InitialDataFetcher {
     ///
     /// Compute the snapshot boundary from rows already materialized on this node.
     ///
-    /// The boundary deliberately uses local `MAX(_seq)` instead of a wall-clock
+    /// The boundary deliberately uses local `MAX(_version)` instead of a wall-clock
     /// Snowflake upper bound. On a follower, the wall-clock bound can include
     /// leader commits that have not applied locally yet; using the local max keeps
     /// the initial snapshot and buffered notification gate aligned with this
@@ -348,12 +341,8 @@ impl InitialDataFetcher {
         table_type: TableType,
         options: &InitialDataOptions,
         where_clause: Option<&str>,
-    ) -> Result<Option<SeqId>, LiveError> {
+    ) -> Result<Option<VersionId>, LiveError> {
         let table_capabilities = self.table_capabilities(table_id)?;
-        if table_capabilities.has_commit_seq {
-            return Ok(None);
-        }
-
         self.compute_snapshot_end_seq_sql_fallback(
             live_id,
             role,
@@ -366,58 +355,6 @@ impl InitialDataFetcher {
         .await
     }
 
-    /// Compute the deterministic commit-sequence snapshot boundary for tables
-    /// that expose `_commit_seq`.
-    pub async fn compute_snapshot_end_commit_seq(
-        &self,
-        live_id: &kalamdb_commons::models::LiveQueryId,
-        role: Role,
-        table_id: &TableId,
-        table_type: TableType,
-        options: &InitialDataOptions,
-        where_clause: Option<&str>,
-    ) -> Result<Option<u64>, LiveError> {
-        let table_capabilities = self.table_capabilities(table_id)?;
-        if !table_capabilities.has_commit_seq {
-            return Ok(None);
-        }
-
-        let user_id = live_id.user_id().clone();
-        let table_name = quoted_table_sql(table_id);
-        let mut sql = format!(
-            "SELECT MAX({}) AS max_commit_seq FROM {}",
-            quote_sql_identifier(SystemColumnNames::COMMIT_SEQ),
-            table_name
-        );
-
-        let where_clauses =
-            self.build_where_clauses(table_type, options, where_clause, table_capabilities);
-        if !where_clauses.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&where_clauses.join(" AND "));
-        }
-
-        let batches = self
-            .sql_executor()?
-            .execute_for_batches(&sql, user_id, role, ReadContext::Internal)
-            .await?;
-
-        if batches.is_empty() || batches[0].num_rows() == 0 {
-            return Ok(None);
-        }
-
-        let batch = &batches[0];
-        let value = ScalarValue::try_from_array(batch.column(0), 0)
-            .into_serialization_error("Failed to convert max_commit_seq")?;
-
-        match value {
-            ScalarValue::UInt64(Some(commit_seq)) => Ok(Some(commit_seq)),
-            ScalarValue::Int64(Some(commit_seq)) if commit_seq >= 0 => Ok(Some(commit_seq as u64)),
-            ScalarValue::Null | ScalarValue::UInt64(None) | ScalarValue::Int64(None) => Ok(None),
-            _ => Err(LiveError::Other("max_commit_seq column is not an integer".to_string())),
-        }
-    }
-
     async fn compute_snapshot_end_seq_sql_fallback(
         &self,
         live_id: &kalamdb_commons::models::LiveQueryId,
@@ -427,13 +364,13 @@ impl InitialDataFetcher {
         options: &InitialDataOptions,
         where_clause: Option<&str>,
         table_capabilities: TableCapabilities,
-    ) -> Result<Option<SeqId>, LiveError> {
+    ) -> Result<Option<VersionId>, LiveError> {
         let user_id = live_id.user_id().clone();
 
         let table_name = quoted_table_sql(table_id);
         let mut sql = format!(
             "SELECT MAX({}) AS max_seq FROM {}",
-            quote_sql_identifier(SystemColumnNames::SEQ),
+            quote_sql_identifier(SystemColumnNames::VERSION),
             table_name
         );
 
@@ -464,7 +401,10 @@ impl InitialDataFetcher {
             return Ok(None);
         }
 
-        Ok(Some(SeqId::from(array.value(0))))
+        Ok(Some(
+            VersionId::try_from_i64(array.value(0))
+                .map_err(|error| LiveError::Other(format!("invalid max version: {error}")))?,
+        ))
     }
 
     fn build_where_clauses(
@@ -476,36 +416,12 @@ impl InitialDataFetcher {
     ) -> Vec<String> {
         let mut where_clauses = Vec::new();
 
-        let seq_col = quote_sql_identifier(SystemColumnNames::SEQ);
-        let commit_col = quote_sql_identifier(SystemColumnNames::COMMIT_SEQ);
-        if table_capabilities.has_commit_seq {
-            match (options.since_commit_seq, options.since_seq) {
-                (Some(since_commit), Some(since_seq)) => where_clauses.push(format!(
-                    "({commit_col} > {since_commit} OR ({commit_col} = {since_commit} AND \
-                     {seq_col} > {since_seq}))",
-                    since_seq = since_seq.as_i64()
-                )),
-                (Some(since_commit), None) => {
-                    where_clauses.push(format!("{commit_col} > {since_commit}"))
-                },
-                (None, Some(since_seq)) => {
-                    where_clauses.push(format!("{seq_col} > {}", since_seq.as_i64()))
-                },
-                (None, None) => {},
-            }
-
-            if let Some(until_commit_seq) = options.until_commit_seq {
-                where_clauses.push(format!("{commit_col} <= {until_commit_seq}"));
-            } else if let Some(until_seq) = options.until_seq {
-                where_clauses.push(format!("{seq_col} <= {}", until_seq.as_i64()));
-            }
-        } else {
-            if let Some(since) = options.since_seq {
-                where_clauses.push(format!("{seq_col} > {}", since.as_i64()));
-            }
-            if let Some(until) = options.until_seq {
-                where_clauses.push(format!("{seq_col} <= {}", until.as_i64()));
-            }
+        let seq_col = quote_sql_identifier(SystemColumnNames::VERSION);
+        if let Some(since) = options.since_seq {
+            where_clauses.push(format!("{seq_col} > {}", since.as_i64()));
+        }
+        if let Some(until) = options.until_seq {
+            where_clauses.push(format!("{seq_col} <= {}", until.as_i64()));
         }
 
         if !options.include_deleted
@@ -526,8 +442,7 @@ impl InitialDataFetcher {
     fn table_capabilities(&self, table_id: &TableId) -> Result<TableCapabilities, LiveError> {
         let schema = self.schema_lookup.get_arrow_schema(table_id)?;
         Ok(TableCapabilities {
-            has_commit_seq: schema.field_with_name(SystemColumnNames::COMMIT_SEQ).is_ok(),
-            has_deleted:    schema.field_with_name(SystemColumnNames::DELETED).is_ok(),
+            has_deleted: schema.field_with_name(SystemColumnNames::DELETED).is_ok(),
         })
     }
 }
@@ -536,7 +451,7 @@ async fn materialize_initial_rows(
     batches: Vec<RecordBatch>,
     has_commit_seq: bool,
     capacity_hint: usize,
-) -> Result<Vec<(SeqId, Option<u64>, Row)>, LiveError> {
+) -> Result<Vec<(VersionId, Option<u64>, Row)>, LiveError> {
     let row_count = batches.iter().map(|batch| batch.num_rows()).sum::<usize>();
     if row_count <= BLOCKING_MATERIALIZATION_ROW_THRESHOLD {
         return materialize_initial_rows_sync(batches, has_commit_seq, capacity_hint);
@@ -553,18 +468,18 @@ fn materialize_initial_rows_sync(
     batches: Vec<RecordBatch>,
     has_commit_seq: bool,
     capacity_hint: usize,
-) -> Result<Vec<(SeqId, Option<u64>, Row)>, LiveError> {
+) -> Result<Vec<(VersionId, Option<u64>, Row)>, LiveError> {
     let mut rows_with_seq = Vec::with_capacity(capacity_hint);
 
     for batch in batches {
         let schema = batch.schema();
-        let seq_col_idx = schema.index_of(SystemColumnNames::SEQ).map_err(|_| {
-            LiveError::Other(format!("Result missing {} column", SystemColumnNames::SEQ))
+        let seq_col_idx = schema.index_of(SystemColumnNames::VERSION).map_err(|_| {
+            LiveError::Other(format!("Result missing {} column", SystemColumnNames::VERSION))
         })?;
 
         let seq_col = batch.column(seq_col_idx);
         let seq_array = seq_col.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-            LiveError::Other(format!("{} column is not Int64", SystemColumnNames::SEQ))
+            LiveError::Other(format!("{} column is not Int64", SystemColumnNames::VERSION))
         })?;
         let commit_seq_array = if has_commit_seq {
             let commit_idx = schema.index_of(SystemColumnNames::COMMIT_SEQ).map_err(|_| {
@@ -591,7 +506,8 @@ fn materialize_initial_rows_sync(
                 row_map.insert(col_name.clone(), value);
             }
 
-            let seq_id = SeqId::from(seq_array.value(row_idx));
+            let seq_id = VersionId::try_from_i64(seq_array.value(row_idx))
+                .map_err(|error| LiveError::Other(format!("invalid row version: {error}")))?;
             let commit_seq = commit_seq_array
                 .as_ref()
                 .and_then(|array| ScalarValue::try_from_array(array, row_idx).ok())
@@ -610,7 +526,7 @@ fn materialize_initial_rows_sync(
 }
 
 fn sort_initial_rows(
-    rows_with_seq: &mut [(SeqId, Option<u64>, Row)],
+    rows_with_seq: &mut [(VersionId, Option<u64>, Row)],
     has_commit_seq: bool,
     options: &InitialDataOptions,
 ) {
@@ -673,7 +589,7 @@ mod tests {
 
         fn get_arrow_schema(&self, _table_id: &TableId) -> Result<Arc<Schema>, LiveError> {
             Ok(Arc::new(Schema::new(vec![
-                Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+                Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
                 Field::new(SystemColumnNames::COMMIT_SEQ, DataType::UInt64, false),
             ])))
         }
@@ -781,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_initial_data_options_since() {
-        let seq = SeqId::new(12345);
+        let seq = VersionId::try_from_i64(12345).unwrap();
         let options = InitialDataOptions::since(seq);
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 100);
@@ -800,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_initial_data_options_builder() {
-        let seq = SeqId::new(12345);
+        let seq = VersionId::try_from_i64(12345).unwrap();
         let options = InitialDataOptions::since(seq).with_limit(200).with_deleted();
 
         assert_eq!(options.since_seq, Some(seq));
@@ -816,12 +732,16 @@ mod tests {
 
     #[test]
     fn sort_initial_rows_orders_seq_before_truncation() {
-        let options = InitialDataOptions::batch(Some(SeqId::from(8)), Some(SeqId::from(30)), 3);
+        let options = InitialDataOptions::batch(
+            Some(VersionId::try_from_i64(8).unwrap()),
+            Some(VersionId::try_from_i64(30).unwrap()),
+            3,
+        );
         let mut rows = vec![
-            (SeqId::from(10), None, test_row("seed-10")),
-            (SeqId::from(11), None, test_row("seed-11")),
-            (SeqId::from(12), None, test_row("seed-12")),
-            (SeqId::from(9), None, test_row("seed-9")),
+            (VersionId::try_from_i64(10).unwrap(), None, test_row("seed-10")),
+            (VersionId::try_from_i64(11).unwrap(), None, test_row("seed-11")),
+            (VersionId::try_from_i64(12).unwrap(), None, test_row("seed-12")),
+            (VersionId::try_from_i64(9).unwrap(), None, test_row("seed-9")),
         ];
 
         sort_initial_rows(&mut rows, false, &options);
@@ -840,13 +760,17 @@ mod tests {
 
     #[test]
     fn sort_initial_rows_orders_commit_seq_window() {
-        let options = InitialDataOptions::batch(Some(SeqId::from(8)), Some(SeqId::from(30)), 3)
-            .with_commit_range(Some(4), Some(9));
+        let options = InitialDataOptions::batch(
+            Some(VersionId::try_from_i64(8).unwrap()),
+            Some(VersionId::try_from_i64(30).unwrap()),
+            3,
+        )
+        .with_commit_range(Some(4), Some(9));
         let mut rows = vec![
-            (SeqId::from(12), Some(6), test_row("c6-s12")),
-            (SeqId::from(10), Some(5), test_row("c5-s10")),
-            (SeqId::from(11), Some(5), test_row("c5-s11")),
-            (SeqId::from(9), Some(5), test_row("c5-s9")),
+            (VersionId::try_from_i64(12).unwrap(), Some(6), test_row("c6-s12")),
+            (VersionId::try_from_i64(10).unwrap(), Some(5), test_row("c5-s10")),
+            (VersionId::try_from_i64(11).unwrap(), Some(5), test_row("c5-s11")),
+            (VersionId::try_from_i64(9).unwrap(), Some(5), test_row("c5-s9")),
         ];
 
         sort_initial_rows(&mut rows, true, &options);
@@ -891,10 +815,10 @@ mod tests {
             .await
             .expect("snapshot boundary");
 
-        assert_eq!(boundary, Some(SeqId::from(42)));
+        assert_eq!(boundary, Some(VersionId::try_from_i64(42).unwrap()));
         assert_eq!(
             executor.seen_sql.lock().as_deref(),
-            Some("SELECT MAX(\"_seq\") AS max_seq FROM \"app\".\"items\"")
+            Some("SELECT MAX(\"_version\") AS max_seq FROM \"app\".\"items\"")
         );
     }
 
@@ -926,7 +850,7 @@ mod tests {
             .expect("snapshot boundary check");
 
         assert_eq!(boundary, None);
-        assert_eq!(executor.calls.load(Ordering::Relaxed), 0);
+        assert_eq!(executor.calls.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -934,7 +858,7 @@ mod tests {
         let schema_calls = StdArc::new(AtomicUsize::new(0));
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::COMMIT_SEQ, DataType::UInt64, false),
             Field::new(SystemColumnNames::DELETED, DataType::Boolean, false),
         ]));
@@ -959,7 +883,7 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(None, Some(SeqId::from(10)), 100),
+                InitialDataOptions::batch(None, Some(VersionId::try_from_i64(10).unwrap()), 100),
                 None,
                 Some(&["id".to_string()]),
             )
@@ -974,7 +898,7 @@ mod tests {
     async fn fetch_initial_data_builds_seq_window_sql() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
@@ -999,7 +923,11 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(Some(SeqId::from(10)), Some(SeqId::from(40)), 2),
+                InitialDataOptions::batch(
+                    Some(VersionId::try_from_i64(10).unwrap()),
+                    Some(VersionId::try_from_i64(40).unwrap()),
+                    2,
+                ),
                 Some("id > 0"),
                 Some(&["id".to_string()]),
             )
@@ -1010,8 +938,8 @@ mod tests {
         assert_eq!(
             executor.seen_sql.lock().as_slice(),
             [
-                "SELECT \"id\", \"_seq\" FROM \"app\".\"items\" WHERE \"_seq\" > 10 AND \"_seq\" \
-                 <= 40 AND id > 0 ORDER BY \"_seq\" ASC LIMIT 3"
+                "SELECT \"id\", \"_version\" FROM \"app\".\"items\" WHERE \"_version\" > 10 AND \
+                 \"_version\" <= 40 AND id > 0 ORDER BY \"_version\" ASC LIMIT 3"
             ],
         );
     }
@@ -1020,7 +948,7 @@ mod tests {
     async fn fetch_initial_data_quotes_projection_identifiers() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
             seen_sql: Mutex::new(Vec::new()),
@@ -1055,18 +983,18 @@ mod tests {
         let sql = executor.seen_sql.lock()[0].clone();
         assert!(
             sql.starts_with(
-                "SELECT \"id; DROP TABLE secrets; --\", \"_seq\" FROM \"app\".\"items\""
+                "SELECT \"id; DROP TABLE secrets; --\", \"_version\" FROM \"app\".\"items\""
             ),
             "projection must be quoted so it cannot change SQL structure: {sql}"
         );
-        assert!(!sql.contains("DROP TABLE secrets; --\", \"_seq\" FROM app.items"));
+        assert!(!sql.contains("DROP TABLE secrets; --\", \"_version\" FROM app.items"));
     }
 
     #[tokio::test]
     async fn fetch_initial_data_builds_commit_seq_resume_sql() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::COMMIT_SEQ, DataType::UInt64, false),
         ]));
         let executor = Arc::new(CaptureFetchExecutor {
@@ -1092,7 +1020,7 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(Some(SeqId::from(10)), None, 2)
+                InitialDataOptions::batch(Some(VersionId::try_from_i64(10).unwrap()), None, 2)
                     .with_commit_range(Some(7), Some(9)),
                 None,
                 Some(&["id".to_string()]),
@@ -1104,9 +1032,8 @@ mod tests {
         assert_eq!(
             executor.seen_sql.lock().as_slice(),
             [
-                "SELECT \"id\", \"_seq\", \"_commit_seq\" FROM \"app\".\"items\" WHERE \
-                 (\"_commit_seq\" > 7 OR (\"_commit_seq\" = 7 AND \"_seq\" > 10)) AND \
-                 \"_commit_seq\" <= 9 ORDER BY \"_commit_seq\" ASC, \"_seq\" ASC LIMIT 3"
+                "SELECT \"id\", \"_version\" FROM \"app\".\"items\" WHERE \"_version\" > 10 ORDER \
+                 BY \"_version\" ASC LIMIT 3"
             ],
         );
     }
@@ -1115,7 +1042,7 @@ mod tests {
     async fn materialize_initial_rows_extracts_resume_columns_and_rows() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new(SystemColumnNames::COMMIT_SEQ, DataType::UInt64, false),
         ]));
         let batch = RecordBatch::try_new(
@@ -1131,9 +1058,9 @@ mod tests {
         let rows = materialize_initial_rows(vec![batch], true, 3).await.expect("materialized rows");
 
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, SeqId::from(100));
+        assert_eq!(rows[0].0, VersionId::try_from_i64(100).unwrap());
         assert_eq!(rows[0].1, Some(7));
-        assert_eq!(rows[1].0, SeqId::from(200));
+        assert_eq!(rows[1].0, VersionId::try_from_i64(200).unwrap());
         assert_eq!(rows[1].1, Some(8));
         assert!(rows[0].2.values.contains_key("id"));
         assert!(!rows[0].2.values.contains_key(SystemColumnNames::COMMIT_SEQ));
@@ -1143,7 +1070,7 @@ mod tests {
     async fn fetch_initial_data_returns_rows_in_seq_order() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -1175,7 +1102,7 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(None, Some(SeqId::from(20)), 10),
+                InitialDataOptions::batch(None, Some(VersionId::try_from_i64(20).unwrap()), 10),
                 None,
                 Some(&["id".to_string()]),
             )
@@ -1198,7 +1125,7 @@ mod tests {
     async fn fetch_initial_data_exact_batch_boundary_is_ready() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -1230,7 +1157,7 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(None, Some(SeqId::from(20)), 2),
+                InitialDataOptions::batch(None, Some(VersionId::try_from_i64(20).unwrap()), 2),
                 None,
                 Some(&["id".to_string()]),
             )
@@ -1248,15 +1175,15 @@ mod tests {
 
         assert_eq!(ids, vec![1, 2]);
         assert!(!result.has_more);
-        assert_eq!(result.last_seq, Some(SeqId::from(20)));
-        assert_eq!(result.snapshot_end_seq, Some(SeqId::from(20)));
+        assert_eq!(result.last_seq, Some(VersionId::try_from_i64(20).unwrap()));
+        assert_eq!(result.snapshot_end_seq, Some(VersionId::try_from_i64(20).unwrap()));
     }
 
     #[tokio::test]
     async fn fetch_initial_data_resume_batch_preserves_cursor_state() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -1288,7 +1215,11 @@ mod tests {
                 Role::User,
                 &table_id,
                 TableType::User,
-                InitialDataOptions::batch(Some(SeqId::from(10)), Some(SeqId::from(40)), 2),
+                InitialDataOptions::batch(
+                    Some(VersionId::try_from_i64(10).unwrap()),
+                    Some(VersionId::try_from_i64(40).unwrap()),
+                    2,
+                ),
                 None,
                 Some(&["id".to_string()]),
             )
@@ -1306,15 +1237,15 @@ mod tests {
 
         assert_eq!(ids, vec![2, 3]);
         assert!(result.has_more);
-        assert_eq!(result.last_seq, Some(SeqId::from(30)));
-        assert_eq!(result.snapshot_end_seq, Some(SeqId::from(40)));
+        assert_eq!(result.last_seq, Some(VersionId::try_from_i64(30).unwrap()));
+        assert_eq!(result.snapshot_end_seq, Some(VersionId::try_from_i64(40).unwrap()));
     }
 
     #[tokio::test]
     async fn fetch_last_rows_does_not_paginate_older_history() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -1364,15 +1295,15 @@ mod tests {
 
         assert_eq!(ids, vec![2, 3, 4, 5, 6]);
         assert!(!result.has_more);
-        assert_eq!(result.last_seq, Some(SeqId::from(60)));
-        assert_eq!(result.snapshot_end_seq, Some(SeqId::from(60)));
+        assert_eq!(result.last_seq, Some(VersionId::try_from_i64(60).unwrap()));
+        assert_eq!(result.snapshot_end_seq, Some(VersionId::try_from_i64(60).unwrap()));
     }
 
     #[tokio::test]
     async fn fetch_last_rows_returns_all_when_row_count_is_below_limit() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
@@ -1422,7 +1353,7 @@ mod tests {
 
         assert_eq!(ids, vec![1, 2]);
         assert!(!result.has_more);
-        assert_eq!(result.last_seq, Some(SeqId::from(20)));
-        assert_eq!(result.snapshot_end_seq, Some(SeqId::from(20)));
+        assert_eq!(result.last_seq, Some(VersionId::try_from_i64(20).unwrap()));
+        assert_eq!(result.snapshot_end_seq, Some(VersionId::try_from_i64(20).unwrap()));
     }
 }

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   Auth,
-  SeqId,
+  VersionId,
   createClient,
 } from '../dist/src/index.js';
 
@@ -56,7 +56,7 @@ function createReadmeWasmClient() {
     async unsubscribe(subscriptionId) {
       callbacks.delete(subscriptionId);
     },
-    getLastSeqId(subscriptionId) {
+    getLastVersionId(subscriptionId) {
       return subscriptions.find((sub) => sub.id === subscriptionId)?.lastSeqId;
     },
     getSubscriptions() {
@@ -100,7 +100,7 @@ test('README live resume example passes options and exposes typed checkpoints', 
 `;
   const renderedSnapshots = [];
   const checkpoints = [];
-  const startFrom = SeqId.from('42');
+  const startFrom = VersionId.from('42');
 
   const stop = await client.live(
     inboxSql,
@@ -115,8 +115,8 @@ test('README live resume example passes options and exposes typed checkpoints', 
       limit: 200,
       lastRows: 200,
       from: startFrom,
-      onCheckpoint: ({ lastSeqId }) => {
-        checkpoints.push(lastSeqId.toString());
+      onCheckpoint: ({ lastVersionId }) => {
+        checkpoints.push(lastVersionId.toString());
       },
     },
   );

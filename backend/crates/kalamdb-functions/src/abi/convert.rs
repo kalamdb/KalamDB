@@ -1,4 +1,12 @@
-//! Direct V8 ↔ ScalarValue conversion without JSON stringify except for JSON SQL.
+//! The only Rust ↔ V8 value translation.
+//!
+//! Strings are UTF-8 in Rust and Latin-1 or UTF-16 inside V8, so each string
+//! is copied once with `v8::String::new`. External V8 strings only avoid that
+//! copy for buffers that are already Latin-1 or UTF-16. Byte strings move
+//! once into an `ArrayBuffer` backing store and surface as `Uint8Array`.
+//! Objects cannot alias Arrow structs, so they are built field by field.
+//! JSON SQL values are `JSON.parse`d from the UTF-8 already stored on the
+//! routine value.
 
 use std::sync::Arc;
 
@@ -19,27 +27,78 @@ pub fn routine_to_v8<'s>(
     scope: &PinScope<'s, '_>,
     value: &RoutineValue,
 ) -> Result<Local<'s, v8::Value>> {
-    if let (Some(bytes), Some(hash)) = (value.transfer.as_ref(), value.contract_hash.as_deref()) {
-        return transfer_bytes_to_v8(scope, bytes, hash);
-    }
     if value.json_sql {
-        return json_sql_to_v8(scope, &value.value);
+        return json_text_to_v8(scope, &value.value);
     }
     scalar_to_v8(scope, &value.value)
 }
 
-fn transfer_bytes_to_v8<'s>(
+pub(crate) fn string_to_v8<'s>(
     scope: &PinScope<'s, '_>,
-    bytes: &[u8],
-    contract_hash: &str,
+    text: &str,
+) -> Result<Local<'s, v8::String>> {
+    v8::String::new(scope, text)
+        .ok_or_else(|| FunctionsError::Invalid("string exceeds the v8 limit".into()))
+}
+
+pub(crate) fn string_from_v8(
+    scope: &PinScope<'_, '_>,
+    value: Local<'_, v8::Value>,
+) -> Result<String> {
+    let text = value
+        .to_string(scope)
+        .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
+    Ok(text.to_rust_string_lossy(scope))
+}
+
+fn string_from_v8_budgeted<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+    budget: &mut ConversionBudget,
+) -> Result<String> {
+    let text = value
+        .to_string(scope)
+        .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
+    budget.string(text)?;
+    Ok(text.to_rust_string_lossy(scope))
+}
+
+pub(crate) fn object_set(
+    scope: &PinScope<'_, '_>,
+    object: Local<'_, v8::Object>,
+    key: &str,
+    value: Local<'_, v8::Value>,
+) -> Result<()> {
+    let key = string_to_v8(scope, key)?;
+    object
+        .set(scope, key.into(), value)
+        .ok_or_else(|| FunctionsError::Invalid("failed to set object field".into()))?;
+    Ok(())
+}
+
+pub(crate) fn json_text_to_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    value: &ScalarValue,
 ) -> Result<Local<'s, v8::Value>> {
-    let json = kalamdb_serialization::decode_function_value(bytes, contract_hash)
-        .map_err(|error| FunctionsError::Invalid(error.to_string()))?;
-    let text = json.to_string();
-    let source = v8::String::new(scope, &text)
-        .ok_or_else(|| FunctionsError::Invalid("transfer json too large".to_string()))?;
+    let text = match value {
+        ScalarValue::Utf8(Some(text))
+        | ScalarValue::LargeUtf8(Some(text))
+        | ScalarValue::Utf8View(Some(text)) => text.as_str(),
+        ScalarValue::Utf8(None)
+        | ScalarValue::LargeUtf8(None)
+        | ScalarValue::Utf8View(None)
+        | ScalarValue::Null => {
+            return Ok(v8::null(scope).into());
+        },
+        other => {
+            return Err(FunctionsError::Invalid(format!(
+                "json sql value must be utf8, got {other:?}"
+            )));
+        },
+    };
+    let source = string_to_v8(scope, text)?;
     v8::json::parse(scope, source)
-        .ok_or_else(|| FunctionsError::Invalid("invalid function transfer buffer".to_string()))
+        .ok_or_else(|| FunctionsError::Invalid("invalid json sql value".into()))
 }
 
 pub fn v8_to_routine<'s>(
@@ -68,27 +127,6 @@ pub fn v8_to_routine<'s>(
     })
 }
 
-fn json_sql_to_v8<'s>(
-    scope: &PinScope<'s, '_>,
-    value: &ScalarValue,
-) -> Result<Local<'s, v8::Value>> {
-    let text = match value {
-        ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => text.as_str(),
-        ScalarValue::Utf8(None) | ScalarValue::LargeUtf8(None) | ScalarValue::Null => {
-            return Ok(v8::null(scope).into());
-        },
-        other => {
-            return Err(FunctionsError::Invalid(format!(
-                "json sql value must be utf8, got {other:?}"
-            )));
-        },
-    };
-    let source = v8::String::new(scope, text)
-        .ok_or_else(|| FunctionsError::Invalid("json text too large".to_string()))?;
-    v8::json::parse(scope, source)
-        .ok_or_else(|| FunctionsError::Invalid("invalid json sql value".to_string()))
-}
-
 fn v8_to_json_sql<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
@@ -97,8 +135,9 @@ fn v8_to_json_sql<'s>(
         return Ok(ScalarValue::Utf8(None));
     }
     let text = v8::json::stringify(scope, value)
-        .ok_or_else(|| FunctionsError::Invalid("failed to stringify json sql value".to_string()))?;
-    ConversionBudget::new(scope).string(text)?;
+        .ok_or_else(|| FunctionsError::Invalid("failed to stringify json sql value".into()))?;
+    let mut budget = ConversionBudget::new(scope);
+    budget.string(text)?;
     Ok(ScalarValue::Utf8(Some(text.to_rust_string_lossy(scope))))
 }
 
@@ -114,16 +153,30 @@ fn scalar_to_v8<'s>(scope: &PinScope<'s, '_>, value: &ScalarValue) -> Result<Loc
         ScalarValue::UInt8(Some(n)) => v8::Number::new(scope, *n as f64).into(),
         ScalarValue::UInt16(Some(n)) => v8::Number::new(scope, *n as f64).into(),
         ScalarValue::UInt32(Some(n)) => v8::Number::new(scope, *n as f64).into(),
-        ScalarValue::UInt64(Some(n)) => i64_to_v8(scope, *n as i64),
+        ScalarValue::UInt64(Some(n)) => u64_to_v8(scope, *n),
         ScalarValue::Float32(Some(n)) => v8::Number::new(scope, *n as f64).into(),
         ScalarValue::Float64(Some(n)) => v8::Number::new(scope, *n).into(),
-        ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
-            v8::String::new(scope, text)
-                .ok_or_else(|| FunctionsError::Invalid("utf8 value too large".to_string()))?
-                .into()
+        ScalarValue::Utf8(Some(text))
+        | ScalarValue::LargeUtf8(Some(text))
+        | ScalarValue::Utf8View(Some(text)) => string_to_v8(scope, text)?.into(),
+        ScalarValue::Binary(Some(bytes))
+        | ScalarValue::LargeBinary(Some(bytes))
+        | ScalarValue::BinaryView(Some(bytes)) => bytes_to_v8(scope, bytes)?,
+        ScalarValue::FixedSizeBinary(_, Some(bytes)) if bytes.len() == 16 => {
+            string_to_v8(scope, &uuid_text(bytes))?.into()
         },
+        ScalarValue::FixedSizeBinary(_, Some(bytes)) => bytes_to_v8(scope, bytes)?,
+        ScalarValue::Decimal128(Some(value), _precision, scale) => {
+            string_to_v8(scope, &decimal128_text(*value, *scale))?.into()
+        },
+        ScalarValue::Decimal128(None, _, _)
+        | ScalarValue::Binary(None)
+        | ScalarValue::LargeBinary(None)
+        | ScalarValue::BinaryView(None)
+        | ScalarValue::FixedSizeBinary(_, None) => v8::null(scope).into(),
         ScalarValue::Utf8(None)
         | ScalarValue::LargeUtf8(None)
+        | ScalarValue::Utf8View(None)
         | ScalarValue::Int8(None)
         | ScalarValue::Int16(None)
         | ScalarValue::Int32(None)
@@ -148,6 +201,8 @@ fn scalar_to_v8<'s>(scope: &PinScope<'s, '_>, value: &ScalarValue) -> Result<Loc
         | ScalarValue::Date64(None) => v8::null(scope).into(),
         ScalarValue::Struct(array) => struct_to_v8(scope, array)?,
         ScalarValue::List(array) => list_to_v8(scope, array.as_ref())?,
+        ScalarValue::LargeList(array) => list_to_v8(scope, array.as_ref())?,
+        ScalarValue::FixedSizeList(array) => list_to_v8(scope, array.as_ref())?,
         other => {
             return Err(FunctionsError::Invalid(format!("unsupported function value: {other:?}")));
         },
@@ -162,6 +217,82 @@ fn i64_to_v8<'s>(scope: &PinScope<'s, '_>, value: i64) -> Local<'s, v8::Value> {
     }
 }
 
+fn u64_to_v8<'s>(scope: &PinScope<'s, '_>, value: u64) -> Local<'s, v8::Value> {
+    if value <= (1u64 << 53) {
+        v8::Number::new(scope, value as f64).into()
+    } else {
+        v8::BigInt::new_from_u64(scope, value).into()
+    }
+}
+
+fn bytes_to_v8<'s>(scope: &PinScope<'s, '_>, bytes: &[u8]) -> Result<Local<'s, v8::Value>> {
+    let backing = v8::ArrayBuffer::new_backing_store_from_vec(bytes.to_vec()).make_shared();
+    let buffer = v8::ArrayBuffer::with_backing_store(scope, &backing);
+    let view = v8::Uint8Array::new(scope, buffer, 0, bytes.len())
+        .ok_or_else(|| FunctionsError::Invalid("byte value exceeds the v8 limit".into()))?;
+    Ok(view.into())
+}
+
+fn bytes_from_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+    budget: &mut ConversionBudget,
+) -> Result<Vec<u8>> {
+    if let Ok(view) = v8::Local::<v8::Uint8Array>::try_from(value) {
+        return copy_uint8_array(view, budget);
+    }
+    if let Ok(buffer) = v8::Local::<v8::ArrayBuffer>::try_from(value) {
+        let view = v8::Uint8Array::new(scope, buffer, 0, buffer.byte_length())
+            .ok_or_else(|| FunctionsError::Invalid("byte value exceeds the v8 limit".into()))?;
+        return copy_uint8_array(view, budget);
+    }
+    Err(FunctionsError::Invalid("expected Uint8Array or ArrayBuffer".into()))
+}
+
+fn copy_uint8_array(
+    view: v8::Local<'_, v8::Uint8Array>,
+    budget: &mut ConversionBudget,
+) -> Result<Vec<u8>> {
+    let len = view.byte_length();
+    budget.bytes(len)?;
+    let mut bytes = vec![0u8; len];
+    let copied = view.copy_contents(&mut bytes);
+    bytes.truncate(copied);
+    Ok(bytes)
+}
+
+fn uuid_text(bytes: &[u8]) -> String {
+    let hex = hex::encode(bytes);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+fn decimal128_text(value: i128, scale: i8) -> String {
+    let scale = u32::try_from(scale.max(0)).unwrap_or(0);
+    if scale == 0 {
+        return value.to_string();
+    }
+    let negative = value < 0;
+    let value = value.checked_abs().unwrap_or(i128::MAX);
+    let Some(divisor) = 10i128.checked_pow(scale) else {
+        return value.to_string();
+    };
+    let integer = value / divisor;
+    let fraction = value % divisor;
+    let body = format!("{integer}.{fraction:0width$}", width = scale as usize);
+    if negative {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
 fn struct_to_v8<'s>(scope: &PinScope<'s, '_>, array: &StructArray) -> Result<Local<'s, v8::Value>> {
     if array.len() == 0 || array.is_null(0) {
         return Ok(v8::null(scope).into());
@@ -173,37 +304,47 @@ fn struct_to_v8<'s>(scope: &PinScope<'s, '_>, array: &StructArray) -> Result<Loc
             FunctionsError::Invalid(format!("struct field '{}': {error}", field.name()))
         })?;
         let js_value = scalar_to_v8(scope, &scalar)?;
-        let key = v8::String::new(scope, field.name())
-            .ok_or_else(|| FunctionsError::Invalid("struct field name too large".to_string()))?;
-        object
-            .set(scope, key.into(), js_value)
-            .ok_or_else(|| FunctionsError::Invalid("failed to set struct field".to_string()))?;
+        object_set(scope, object, field.name(), js_value)?;
     }
     Ok(object.into())
 }
 
 fn list_to_v8<'s>(scope: &PinScope<'s, '_>, array: &dyn Array) -> Result<Local<'s, v8::Value>> {
-    let length = if array.len() == 0 { 0 } else { array.len() };
-    // List ScalarValue stores a ListArray of length 1 whose values are the list items.
+    let Some(values) = list_values(array) else {
+        return Ok(v8::null(scope).into());
+    };
+    let js_array = v8::Array::new(scope, values.len() as i32);
+    for index in 0..values.len() {
+        let scalar = ScalarValue::try_from_array(values.as_ref(), index)
+            .map_err(|error| FunctionsError::Invalid(format!("list element {index}: {error}")))?;
+        let js_value = scalar_to_v8(scope, &scalar)?;
+        js_array
+            .set_index(scope, index as u32, js_value)
+            .ok_or_else(|| FunctionsError::Invalid("failed to set list element".into()))?;
+    }
+    Ok(js_array.into())
+}
+
+fn list_values(array: &dyn Array) -> Option<arrow::array::ArrayRef> {
     if let Some(list) = array.as_any().downcast_ref::<arrow::array::ListArray>() {
         if list.len() == 0 || list.is_null(0) {
-            return Ok(v8::null(scope).into());
+            return None;
         }
-        let values = list.value(0);
-        let js_array = v8::Array::new(scope, values.len() as i32);
-        for index in 0..values.len() {
-            let scalar = ScalarValue::try_from_array(values.as_ref(), index).map_err(|error| {
-                FunctionsError::Invalid(format!("list element {index}: {error}"))
-            })?;
-            let js_value = scalar_to_v8(scope, &scalar)?;
-            js_array
-                .set_index(scope, index as u32, js_value)
-                .ok_or_else(|| FunctionsError::Invalid("failed to set list element".to_string()))?;
-        }
-        return Ok(js_array.into());
+        return Some(list.value(0));
     }
-    let js_array = v8::Array::new(scope, length as i32);
-    Ok(js_array.into())
+    if let Some(list) = array.as_any().downcast_ref::<arrow::array::LargeListArray>() {
+        if list.len() == 0 || list.is_null(0) {
+            return None;
+        }
+        return Some(list.value(0));
+    }
+    if let Some(list) = array.as_any().downcast_ref::<arrow::array::FixedSizeListArray>() {
+        if list.len() == 0 || list.is_null(0) {
+            return None;
+        }
+        return Some(list.value(0));
+    }
+    None
 }
 
 fn v8_to_scalar<'s>(
@@ -233,20 +374,33 @@ fn v8_to_scalar<'s>(
             Ok(ScalarValue::UInt16(Some(value.uint32_value(scope).unwrap_or(0) as u16)))
         },
         DataType::UInt32 => Ok(ScalarValue::UInt32(Some(value.uint32_value(scope).unwrap_or(0)))),
-        DataType::UInt64 => Ok(ScalarValue::UInt64(Some(js_to_i64(scope, value) as u64))),
+        DataType::UInt64 => Ok(ScalarValue::UInt64(Some(js_to_u64(scope, value)))),
         DataType::Float32 => {
             Ok(ScalarValue::Float32(Some(value.number_value(scope).unwrap_or(0.0) as f32)))
         },
         DataType::Float64 => {
             Ok(ScalarValue::Float64(Some(value.number_value(scope).unwrap_or(0.0))))
         },
-        DataType::Utf8 => {
-            let text = value
-                .to_string(scope)
-                .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
-            budget.string(text)?;
-            let text = text.to_rust_string_lossy(scope);
-            Ok(ScalarValue::Utf8(Some(text)))
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => {
+            Ok(ScalarValue::Utf8(Some(string_from_v8_budgeted(scope, value, budget)?)))
+        },
+        DataType::Binary | DataType::LargeBinary | DataType::BinaryView => {
+            Ok(ScalarValue::Binary(Some(bytes_from_v8(scope, value, budget)?)))
+        },
+        DataType::FixedSizeBinary(16) => fixed_size_binary_from_v8(scope, value, 16, budget),
+        DataType::FixedSizeBinary(size) => {
+            let bytes = bytes_from_v8(scope, value, budget)?;
+            if bytes.len() != *size as usize {
+                return Err(FunctionsError::Invalid(format!(
+                    "expected {size} bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            Ok(ScalarValue::FixedSizeBinary(*size, Some(bytes)))
+        },
+        DataType::Decimal128(precision, scale) => {
+            let text = string_from_v8_budgeted(scope, value, budget)?;
+            Ok(parse_decimal128(&text, *precision, *scale)?)
         },
         DataType::Struct(fields) => v8_object_to_struct(scope, value, fields, budget, depth),
         DataType::List(field) => v8_array_to_list(scope, value, field, budget, depth),
@@ -289,12 +443,10 @@ pub(crate) fn infer_value<'s>(
         return Ok(ScalarValue::Float64(Some(number)));
     }
     if value.is_string() {
-        let text = value
-            .to_string(scope)
-            .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
-        budget.string(text)?;
-        let text = text.to_rust_string_lossy(scope);
-        return Ok(ScalarValue::Utf8(Some(text)));
+        return Ok(ScalarValue::Utf8(Some(string_from_v8_budgeted(scope, value, budget)?)));
+    }
+    if value.is_uint8_array() || value.is_array_buffer() {
+        return Ok(ScalarValue::Binary(Some(bytes_from_v8(scope, value, budget)?)));
     }
     if value.is_array() {
         let array = v8::Local::<v8::Array>::try_from(value)
@@ -328,12 +480,7 @@ pub(crate) fn infer_value<'s>(
     if value.is_object() {
         return infer_v8_object(scope, value, budget, depth);
     }
-    let text = value
-        .to_string(scope)
-        .ok_or_else(|| FunctionsError::Invalid("string conversion failed".into()))?;
-    budget.string(text)?;
-    let text = text.to_rust_string_lossy(scope);
-    Ok(ScalarValue::Utf8(Some(text)))
+    Ok(ScalarValue::Utf8(Some(string_from_v8_budgeted(scope, value, budget)?)))
 }
 
 fn infer_v8_object<'s>(
@@ -355,11 +502,7 @@ fn infer_v8_object<'s>(
         let key_value = names
             .get_index(scope, index)
             .ok_or_else(|| FunctionsError::Invalid("missing object key".to_string()))?;
-        let key = key_value
-            .to_string(scope)
-            .ok_or_else(|| FunctionsError::Invalid("object key conversion failed".into()))?;
-        budget.string(key)?;
-        let key = key.to_rust_string_lossy(scope);
+        let key = string_from_v8_budgeted(scope, key_value, budget)?;
         let property = object
             .get(scope, key_value)
             .ok_or_else(|| FunctionsError::Javascript("object accessor failed".into()))?;
@@ -380,6 +523,64 @@ fn js_to_i64(scope: &PinScope<'_, '_>, value: Local<'_, v8::Value>) -> i64 {
     value.number_value(scope).unwrap_or(0.0) as i64
 }
 
+fn js_to_u64(scope: &PinScope<'_, '_>, value: Local<'_, v8::Value>) -> u64 {
+    if value.is_big_int() {
+        return value.to_big_int(scope).map(|n| n.u64_value().0).unwrap_or(0);
+    }
+    value.number_value(scope).unwrap_or(0.0) as u64
+}
+
+fn fixed_size_binary_from_v8<'s>(
+    scope: &PinScope<'s, '_>,
+    value: Local<'s, v8::Value>,
+    size: i32,
+    budget: &mut ConversionBudget,
+) -> Result<ScalarValue> {
+    if size == 16 && value.is_string() {
+        let text = string_from_v8_budgeted(scope, value, budget)?;
+        return Ok(ScalarValue::FixedSizeBinary(16, Some(parse_uuid(&text)?.to_vec())));
+    }
+    let bytes = bytes_from_v8(scope, value, budget)?;
+    if bytes.len() != usize::try_from(size).unwrap_or(usize::MAX) {
+        return Err(FunctionsError::Invalid(format!("expected {size} bytes, got {}", bytes.len())));
+    }
+    Ok(ScalarValue::FixedSizeBinary(size, Some(bytes)))
+}
+
+fn parse_uuid(text: &str) -> Result<[u8; 16]> {
+    let hex_text: String = text.chars().filter(|ch| *ch != '-').collect();
+    let bytes = hex::decode(hex_text)
+        .map_err(|error| FunctionsError::Invalid(format!("invalid uuid: {error}")))?;
+    bytes.try_into().map_err(|_| FunctionsError::Invalid("invalid uuid".into()))
+}
+
+fn parse_decimal128(text: &str, precision: u8, scale: i8) -> Result<ScalarValue> {
+    let negative = text.starts_with('-');
+    let text = text.trim_start_matches(['+', '-']);
+    let (integer, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let scale_digits = usize::try_from(scale.max(0)).unwrap_or(0);
+    if !integer.chars().all(|ch| ch.is_ascii_digit())
+        || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        || fraction.len() > scale_digits
+    {
+        return Err(FunctionsError::Invalid(format!("invalid decimal '{text}'")));
+    }
+    let mut digits = String::with_capacity(integer.len() + scale_digits);
+    digits.push_str(integer);
+    digits.push_str(fraction);
+    for _ in fraction.len()..scale_digits {
+        digits.push('0');
+    }
+    let mut value = digits
+        .parse::<i128>()
+        .map_err(|error| FunctionsError::Invalid(format!("invalid decimal '{text}': {error}")))?;
+    if negative {
+        value = -value;
+    }
+    Ok(ScalarValue::Decimal128(Some(value), precision, scale))
+}
+
 fn v8_object_to_struct<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
@@ -393,8 +594,7 @@ fn v8_object_to_struct<'s>(
     budget.items(fields.len())?;
     let mut columns: Vec<(Arc<Field>, arrow::array::ArrayRef)> = Vec::with_capacity(fields.len());
     for field in fields.iter() {
-        let key = v8::String::new(scope, field.name())
-            .ok_or_else(|| FunctionsError::Invalid("struct field name too large".to_string()))?;
+        let key = string_to_v8(scope, field.name())?;
         let property = object
             .get(scope, key.into())
             .ok_or_else(|| FunctionsError::Javascript("object accessor failed".into()))?;
@@ -457,5 +657,20 @@ mod tests {
         let bytes = encode_function_value("", &encoded.0).unwrap();
         let decoded = kalamdb_serialization::decode_function_value(&bytes, "").unwrap();
         assert_eq!(decoded, json!(41));
+    }
+
+    #[test]
+    fn uuid_and_decimal_text_match_the_json_boundary() {
+        let uuid = super::uuid_text(&[
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
+        ]);
+        assert_eq!(uuid, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(super::decimal128_text(20075, 2), "200.75");
+        assert_eq!(super::decimal128_text(-75, 2), "-0.75");
+        assert_eq!(
+            super::parse_decimal128("-0.75", 10, 2).unwrap(),
+            ScalarValue::Decimal128(Some(-75), 10, 2)
+        );
     }
 }

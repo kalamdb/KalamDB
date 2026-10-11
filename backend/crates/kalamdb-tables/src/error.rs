@@ -18,9 +18,6 @@ pub enum TableError {
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
 
-    #[error("Constraint violation: {0}")]
-    ConstraintViolation(String),
-
     #[error("Serialization error: {0}")]
     Serialization(String),
 
@@ -47,6 +44,10 @@ pub enum TableError {
 
     #[error("Other error: {0}")]
     Other(String),
+
+    /// Structured constraint or data error. Display renders the template.
+    #[error(transparent)]
+    Coded(#[from] kalamdb_commons::CodedError),
 }
 
 /// Result type for table operations
@@ -80,5 +81,13 @@ impl From<serde_json::Error> for TableError {
 impl From<kalamdb_system::SystemError> for TableError {
     fn from(err: kalamdb_system::SystemError) -> Self {
         TableError::InvalidOperation(err.to_string())
+    }
+}
+
+/// Keep catalog errors typed inside DataFusion. Other table errors stay a sentence.
+pub fn into_datafusion(error: impl Into<TableError>) -> datafusion::error::DataFusionError {
+    match error.into() {
+        TableError::Coded(coded) => datafusion::error::DataFusionError::External(Box::new(coded)),
+        other => datafusion::error::DataFusionError::Execution(other.to_string()),
     }
 }

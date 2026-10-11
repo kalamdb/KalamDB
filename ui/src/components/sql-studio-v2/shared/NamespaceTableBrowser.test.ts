@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { isReadOnlyNamespace } from "../table-editor/types";
 import {
+  preferredExplorerNamespace,
   reconcileActiveNamespace,
   tablesForNamespace,
 } from "./NamespaceTableBrowser";
@@ -90,5 +92,28 @@ describe("NamespaceTableBrowser", () => {
         previousSelectedTableKey: null,
       }),
     ).toBe("default");
+  });
+
+  it("opens on an application namespace instead of the built-in dba catalog", () => {
+    expect(
+      reconcileActiveNamespace({
+        activeNamespace: "",
+        namespaces: ["dba", "default", "home_check", "system"],
+        selectedTableKey: null,
+        previousSelectedTableKey: null,
+      }),
+    ).toBe("home_check");
+  });
+
+  it("treats only exact built-in names as catalogs, so prefixed application schemas stay editable", () => {
+    expect(preferredExplorerNamespace(["dba", "dba_metrics", "system_metrics"])).toBe("dba_metrics");
+    expect(preferredExplorerNamespace(["SYSTEM", "Public_app"])).toBe("Public_app");
+    expect(isReadOnlyNamespace("dba")).toBe(true);
+    expect(isReadOnlyNamespace("DBA")).toBe(true);
+    expect(isReadOnlyNamespace("system")).toBe(true);
+    expect(isReadOnlyNamespace("information_schema")).toBe(true);
+    expect(isReadOnlyNamespace("dba_metrics")).toBe(false);
+    expect(isReadOnlyNamespace("system_metrics")).toBe(false);
+    expect(isReadOnlyNamespace("default")).toBe(false);
   });
 });

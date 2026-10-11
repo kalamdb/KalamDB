@@ -33,6 +33,8 @@ async fn wait_for_cluster_roles(cluster: &ClusterTestServer) -> Result<(usize, u
             let executor = node.app_context().executor();
             let node_id = executor.node_id();
             let meta_leader = executor.get_leader(GroupId::Meta).await;
+            // User-table transactions route by user id. Shared group 0 still has a leader
+            // when the fixture runs four shared groups; readiness waits for every shared group.
             let shared_leader = executor.get_leader(GroupId::DataSharedShard(0)).await;
 
             if let Some(meta_leader) = meta_leader {

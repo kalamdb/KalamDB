@@ -26,6 +26,7 @@ fn make_shared_handle(
         authorization:    None,
         projections:      None,
         notification_tx:  tx,
+        event_tx:         mpsc::channel(1).0,
         flow_control:     Some(flow_control),
         runtime_metadata: Arc::new(SubscriptionRuntimeMetadata::new(
             "SELECT * FROM shared.items",

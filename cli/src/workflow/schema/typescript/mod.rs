@@ -29,6 +29,7 @@ pub fn write_typescript(input: &SchemaEmitInput<'_>) -> Result<()> {
         &schema_path,
         input.snapshot,
         input.hash,
+        input.names,
         input.procedures,
     )?;
     Ok(())

@@ -354,7 +354,7 @@ export function UsersList() {
                   ) : (
                     users.map((user, index) => (
                       <TableRow key={user.user_id || `user-${index}`}>
-                        <TableCell className="font-medium">{user.name || "—"}</TableCell>
+                        <TableCell className="font-medium">{user.name?.trim() || user.user_id || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{user.user_id}</TableCell>
                         <TableCell>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(user.role)}`}>

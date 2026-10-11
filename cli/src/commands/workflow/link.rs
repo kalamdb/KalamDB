@@ -3,11 +3,12 @@ use kalam_cli::{
     Result,
 };
 
-use super::context::workflow_context;
+use super::context::{ensure_project_command_matches_instance, workflow_context};
 use crate::args::{Cli, LinkArgs};
 
 pub(super) fn handle_link(cli: &Cli, args: &LinkArgs) -> Result<()> {
     let ctx = workflow_context(cli, args.project_dir.as_deref(), args.namespace.as_deref())?;
+    ensure_project_command_matches_instance(cli, &ctx)?;
     link_project(
         &ctx,
         LinkOptions {

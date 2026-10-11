@@ -181,8 +181,7 @@ final class KalamSyncCoordinator {
     StackTrace stackTrace,
   ) async {
     if (_disposed || active.isCancelled) return;
-    if (error is KalamSubscriptionException &&
-        error.isExpiredCursor &&
+    if (_isExpiredCursor(error) &&
         !active.rebootstrapAttempted &&
         !_paused) {
       active.rebootstrapAttempted = true;
@@ -343,6 +342,13 @@ final class KalamSyncCoordinator {
         errorCode: code,
       ),
     );
+  }
+
+  bool _isExpiredCursor(Object error) {
+    if (error is KalamSubscriptionException) return error.isExpiredCursor;
+    final text = error.toString().toLowerCase();
+    return text.contains('cursor_expired') ||
+        text.contains('stale resume cursor');
   }
 
   String? _errorCode(Object error) {

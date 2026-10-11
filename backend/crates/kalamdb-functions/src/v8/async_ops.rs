@@ -8,7 +8,7 @@ use futures_util::{stream::FuturesUnordered, StreamExt};
 use super::{host_frames::HostFrames, rejections::Rejections};
 use crate::{
     abi::{conversion_budget::ConversionBudget, conversion_limit::ConversionLimit},
-    convert::{infer_v8_value, infer_value, routine_to_v8, v8_to_routine},
+    convert::{infer_v8_value, infer_value, routine_to_v8, string_to_v8, v8_to_routine},
     deadline::DeadlineGuard,
     v8_adapter::{
         arg_string, bind_ctx, bind_native, current_host, functions_error_from_value,
@@ -51,7 +51,7 @@ fn metadata(scope: &mut v8::PinScope, _: v8::FunctionCallbackArguments, mut rv: 
         .and_then(|metadata| serde_json::to_string(&metadata).ok())
         .filter(|text| text != "null")
         .unwrap_or_else(|| "{}".to_string());
-    if let Some(text) = v8::String::new(scope, &text) {
+    if let Ok(text) = string_to_v8(scope, &text) {
         rv.set(text.into());
     }
 }
@@ -310,15 +310,13 @@ impl V8Session {
         let mut scope = v8::ContextScope::new(scope, context);
         bind_ctx(&mut scope)?;
         v8::tc_scope!(let scope, &mut scope);
-        let key = v8::String::new(scope, "kalamInvoke")
-            .ok_or_else(|| FunctionsError::Invalid("kalamInvoke name".into()))?;
+        let key = string_to_v8(scope, "kalamInvoke")?;
         let function = context
             .global(scope)
             .get(scope, key.into())
             .and_then(|v| v8::Local::<v8::Function>::try_from(v).ok())
             .ok_or_else(|| FunctionsError::Invalid("artifact must export kalamInvoke".into()))?;
-        let name = v8::String::new(scope, invocation.routine_id.as_str())
-            .ok_or_else(|| FunctionsError::Invalid("procedure name".into()))?;
+        let name = string_to_v8(scope, invocation.routine_id.as_str())?;
         let args = v8::Array::new(scope, invocation.args.len() as i32);
         for (index, value) in invocation.args.iter().enumerate() {
             let value = routine_to_v8(scope, value)?;

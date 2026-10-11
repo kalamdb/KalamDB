@@ -1162,7 +1162,7 @@ mod tests {
         let writer = std::sync::Arc::clone(&backend);
         let hot_write = hot.clone();
         let raft_write = raft.clone();
-        let (seen, ops) = crate::with_write_coalesce(async move {
+        let (seen, batch) = crate::with_write_coalesce(async move {
             writer.put(&hot_write, b"row", b"table").unwrap();
             writer.put(&raft_write, b"log:1", b"entry").unwrap();
             writer.get(&hot_write, b"row").unwrap()
@@ -1170,8 +1170,8 @@ mod tests {
         .await;
 
         assert_eq!(seen, None);
-        assert_eq!(ops.len(), 2);
-        backend.batch(ops).unwrap();
+        assert_eq!(batch.ops.len(), 2);
+        backend.batch(batch.ops).unwrap();
         assert_eq!(backend.get(&hot, b"row").unwrap(), Some(b"table".to_vec()));
         assert_eq!(backend.get(&raft, b"log:1").unwrap(), Some(b"entry".to_vec()));
     }

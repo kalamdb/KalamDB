@@ -103,6 +103,6 @@ fn activation_error(error: kalamdb_core::error::KalamDbError) -> HttpResponse {
     status.json(json!({
         "status": "error",
         "code": code,
-        "message": error.to_string(),
+        "message": error.user_message(),
     }))
 }

@@ -9,7 +9,7 @@ import {
   KalamDBClient,
   MessageType,
   ChangeType,
-  SeqId,
+  VersionId,
   createClient,
   type BatchStatus,
   type QueryResponse,
@@ -106,7 +106,7 @@ async function testMethods() {
   const opts: LiveEventsOptions = {
     batchSize: 50,
     lastRows: 100,
-    from: SeqId.from('42'),
+    from: VersionId.from('42'),
   };
   const unsub2 = await client.liveEvents(
     'SELECT * FROM chat.messages',
@@ -117,8 +117,8 @@ async function testMethods() {
   const liveOpts: LiveOptions<Record<string, unknown>> = {
     limit: 50,
     getKey: ['id'],
-    onCheckpoint: ({ lastSeqId }) => {
-      const seq: SeqId = lastSeqId;
+    onCheckpoint: ({ lastVersionId }) => {
+      const seq: VersionId = lastVersionId;
       console.log(seq.toString());
     },
   };

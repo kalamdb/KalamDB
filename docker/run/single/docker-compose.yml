@@ -13,7 +13,7 @@
 
 services:
   kalamdb:
-    image: jamals86/kalamdb:latest
+    image: kalamdb/kalamdb:latest
     container_name: kalamdb
     ports:
       - "${KALAMDB_PORT:-8088}:2900"

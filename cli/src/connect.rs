@@ -5,9 +5,15 @@ use indicatif::ProgressBar;
 #[cfg(test)]
 use kalam_cli::workflow::target::DEFAULT_LOCAL_URL as DEFAULT_LOCAL_SERVER_URL;
 use kalam_cli::{
+    config::WorkflowLoggingPolicy,
+    output::WorkflowOutput,
     terminal_ui,
     workflow::{
-        project::identifiers::preferred_user_label,
+        lifecycle::{
+            endpoint_key, find_instance, instance_catalog, other_running_instance, InstanceKind,
+            InstanceState as CatalogInstanceState,
+        },
+        project::{config::KalamProjectConfig, identifiers::preferred_user_label},
         target::{resolve_target, ResolutionSource, TargetSelector},
     },
     CLIConfiguration, CLIError, CLISession, FileCredentialStore, OutputFormat, Result,
@@ -32,6 +38,153 @@ enum ServerUrlSource {
     InstanceState,
     StoredCredentials,
     DefaultLocalFallback,
+}
+
+fn oidc_only_login_error(server_url: &str, instance: &str) -> CLIError {
+    CLIError::ConfigurationError(format!(
+        "{server_url} does not accept a username and password. Sign in with `kalam login --oidc \
+         --instance {instance} --url {server_url}`."
+    ))
+}
+
+fn quiet_output() -> WorkflowOutput {
+    WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled())
+}
+
+async fn local_password_disabled(server_url: &str) -> bool {
+    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(5)).build() else {
+        return false;
+    };
+    matches!(
+        kalam_cli::session::auth_options::fetch_login_options(&client, server_url).await,
+        Ok(options) if !options.local.enabled
+    )
+}
+
+pub(crate) fn endpoints_match_servers(left: &str, right: &str) -> bool {
+    endpoints_match(left, right)
+}
+
+fn forced_server_url(cli: &Cli) -> Option<String> {
+    if let Some(url) = cli.url.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        return Some(url.to_string());
+    }
+    let host = cli.host.as_deref().map(str::trim).filter(|value| !value.is_empty())?;
+    let port = cli.port.unwrap_or(kalam_cli::workflow::target::DEFAULT_HTTP_PORT);
+    Some(format!("http://{host}:{port}"))
+}
+
+fn endpoints_match(left: &str, right: &str) -> bool {
+    match (endpoint_key(left), endpoint_key(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.trim().trim_end_matches('/') == right.trim().trim_end_matches('/'),
+    }
+}
+
+fn project_local_root_password() -> Option<String> {
+    let start = std::env::current_dir().ok()?;
+    let (root, config) = KalamProjectConfig::discover(&start, None).ok()?;
+    kalam_cli::workflow::dev::server::local_server_root_password(&root, &config)
+        .ok()
+        .flatten()
+}
+
+/// Root password for this URL only. A project password must not be sent to a
+/// different local port or a cloud server selected with `--instance`.
+fn root_password_for_url(cli: &Cli, server_url: &str) -> Option<String> {
+    if !is_localhost_url(server_url) {
+        return None;
+    }
+    if let Some(name) = cli.explicit_instance() {
+        let store = FileCredentialStore::new().ok()?;
+        let summary = find_instance(name, &quiet_output(), &store).ok()?;
+        let folder = summary.folder?;
+        if summary.url.as_deref().is_some_and(|url| !endpoints_match(url, server_url)) {
+            return None;
+        }
+        let (_, config) = KalamProjectConfig::discover(&folder, Some(&folder)).ok()?;
+        return kalam_cli::workflow::dev::server::local_server_root_password(&folder, &config)
+            .ok()
+            .flatten();
+    }
+    let start = std::env::current_dir().ok()?;
+    let target = resolve_target(&TargetSelector::new(&start)).ok()?;
+    if !endpoints_match(&target.url, server_url) {
+        return None;
+    }
+    project_local_root_password()
+}
+
+fn session_namespace(
+    cli: &Cli,
+    store: &FileCredentialStore,
+) -> Option<kalamdb_commons::NamespaceId> {
+    if cli.global {
+        return None;
+    }
+    if let Some(name) = cli.explicit_instance() {
+        let summary = find_instance(name, &quiet_output(), store).ok()?;
+        let forced_url = forced_server_url(cli);
+        let instance_url = summary.url.as_deref().filter(|url| !url.trim().is_empty());
+        let forced_elsewhere = forced_url.as_deref().is_some_and(|forced| {
+            instance_url.is_none_or(|instance| !endpoints_match(forced, instance))
+        });
+        if !forced_elsewhere {
+            if summary.kind != InstanceKind::Local {
+                return None;
+            }
+            let folder = summary.folder?;
+            let selector = TargetSelector {
+                start_dir:   folder.clone(),
+                project_dir: Some(folder),
+                global:      false,
+                env:         None,
+                url:         None,
+                host:        None,
+                port:        None,
+                namespace:   None,
+                instance:    None,
+            };
+            return resolve_target(&selector).ok().map(|target| target.namespace);
+        }
+    }
+    let start_dir = std::env::current_dir().ok()?;
+    let selector = TargetSelector {
+        start_dir,
+        project_dir: None,
+        global: false,
+        env: cli.env.clone(),
+        url: cli.url.clone(),
+        host: cli.host.clone(),
+        port: cli.port,
+        namespace: None,
+        instance: None,
+    };
+    let target = resolve_target(&selector).ok()?;
+    // DefaultDev is the fallback used outside a project. A project file, an
+    // explicit flag, or KALAM_NAMESPACE should become the session namespace so
+    // unqualified names in `kalam -c` match `kalam dev`.
+    if matches!(
+        target.namespace_source,
+        ResolutionSource::CliFlag
+            | ResolutionSource::EnvironmentVariable
+            | ResolutionSource::ProjectConfig
+    ) {
+        Some(target.namespace)
+    } else {
+        None
+    }
+}
+
+fn with_project_namespace(
+    cli: &Cli,
+    store: &FileCredentialStore,
+    mut session: CLISession,
+) -> CLISession {
+    if let Some(namespace) = session_namespace(cli, store) {
+        session.set_current_namespace(namespace);
+    }
+    session
 }
 
 fn credentials_from_login_response(
@@ -83,6 +236,10 @@ pub(crate) fn build_timeouts(cli: &Cli) -> KalamLinkTimeouts {
         .initial_data_timeout_secs(cli.initial_data_timeout)
         .idle_timeout_secs(cli.subscription_timeout) // subscription_timeout is the idle timeout
         .build()
+}
+
+pub(crate) fn is_localhost_server(url: &str) -> bool {
+    is_localhost_url(url)
 }
 
 fn is_localhost_url(url: &str) -> bool {
@@ -195,6 +352,13 @@ fn resolve_server_target_from(
     credential_store: &FileCredentialStore,
     start_dir: PathBuf,
 ) -> Result<ResolvedServerUrl> {
+    let url_flag = cli.url.as_deref().is_some_and(|value| !value.trim().is_empty());
+    let host_flag = cli.host.as_deref().is_some_and(|value| !value.trim().is_empty());
+    if !url_flag && !host_flag {
+        if let Some(name) = cli.explicit_instance() {
+            return named_instance_url(name, credential_store);
+        }
+    }
     let selector = TargetSelector {
         start_dir,
         project_dir: None,
@@ -204,7 +368,7 @@ fn resolve_server_target_from(
         host: cli.host.clone(),
         port: cli.port,
         namespace: None,
-        instance: cli.explicit_instance().map(str::to_string),
+        instance: None,
     };
     let target = resolve_target(&selector)?;
     let mut server_url = target.url.clone();
@@ -219,10 +383,78 @@ fn resolve_server_target_from(
         }
     }
 
-    Ok(ResolvedServerUrl {
-        value: normalize_and_validate_server_url(&server_url)?,
-        source,
-    })
+    let value = normalize_and_validate_server_url(&server_url)?;
+    warn_when_url_overrides_instance(cli, credential_store, &value);
+    refuse_project_url_owned_by_other_instance(cli, credential_store, &value)?;
+    Ok(ResolvedServerUrl { value, source })
+}
+
+fn refuse_project_url_owned_by_other_instance(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+    resolved_url: &str,
+) -> Result<()> {
+    if cli.explicit_instance().is_some() || forced_server_url(cli).is_some() {
+        return Ok(());
+    }
+    let Ok(rows) = instance_catalog(&quiet_output(), credential_store) else {
+        return Ok(());
+    };
+    let Some(resolved_key) = endpoint_key(resolved_url) else {
+        return Ok(());
+    };
+    let mut owners = rows.into_iter().filter(|row| {
+        row.kind == InstanceKind::Local
+            && row.state == CatalogInstanceState::Running
+            && row.url.as_deref().and_then(endpoint_key).as_deref() == Some(resolved_key.as_str())
+    });
+    let Some(owner) = owners.next() else {
+        return Ok(());
+    };
+    if owners.next().is_some() {
+        return Ok(());
+    }
+    let Some(owner_folder) = owner.folder else {
+        return Ok(());
+    };
+    let start = std::env::current_dir().unwrap_or_default();
+    let Ok((project_root, _)) = KalamProjectConfig::discover(&start, None) else {
+        return Ok(());
+    };
+    let project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root);
+    let owner_folder = std::fs::canonicalize(&owner_folder).unwrap_or(owner_folder);
+    if project_root == owner_folder {
+        return Ok(());
+    }
+    Err(CLIError::ConfigurationError(format!(
+        "This project is configured for {resolved_url}, which is the running server `{}`. Start \
+         this project with `kalam up` so it gets its own port, or run SQL with `kalam --instance \
+         {}` if you meant that server.",
+        owner.name, owner.name
+    )))
+}
+
+fn warn_when_url_overrides_instance(
+    cli: &Cli,
+    credential_store: &FileCredentialStore,
+    resolved_url: &str,
+) {
+    let Some(name) = cli.explicit_instance() else {
+        return;
+    };
+    if forced_server_url(cli).is_none() {
+        return;
+    }
+    let Ok(named) = named_instance_url(name, credential_store) else {
+        return;
+    };
+    if endpoints_match(&named.value, resolved_url) {
+        return;
+    }
+    eprintln!(
+        "`--url` overrides `--instance {name}` ({}). This command uses {resolved_url}.",
+        named.value
+    );
 }
 
 fn map_resolution_source(source: ResolutionSource, cli: &Cli) -> ServerUrlSource {
@@ -235,6 +467,66 @@ fn map_resolution_source(source: ResolutionSource, cli: &Cli) -> ServerUrlSource
         ResolutionSource::InstanceState => ServerUrlSource::InstanceState,
         ResolutionSource::DefaultDev => ServerUrlSource::DefaultLocalFallback,
     }
+}
+
+fn named_instance_url(name: &str, store: &FileCredentialStore) -> Result<ResolvedServerUrl> {
+    let summary = find_instance(name, &quiet_output(), store)?;
+    if let Some(owner) =
+        other_running_instance(&instance_catalog(&quiet_output(), store)?, &summary)
+    {
+        return Err(CLIError::ConfigurationError(format!(
+            "Instance '{}' is stopped, and {} is already the running server `{}`. Start a \
+             separate server with `kalam up --instance {}`, or use `kalam --instance {}` for the \
+             one that is running.",
+            summary.name,
+            summary.url.as_deref().unwrap_or("its last URL"),
+            owner.name,
+            summary.name,
+            owner.name
+        )));
+    }
+    let Some(url) = summary.url.filter(|url| !url.trim().is_empty()) else {
+        return Err(CLIError::ConfigurationError(format!(
+            "Instance '{name}' has no server URL. Sign in with `kalam login --instance {name} \
+             --url <server>`."
+        )));
+    };
+    Ok(ResolvedServerUrl {
+        value:  normalize_and_validate_server_url(&url)?,
+        source: ServerUrlSource::StoredCredentials,
+    })
+}
+
+fn stored_credentials_for_server(
+    store: &FileCredentialStore,
+    cli: &Cli,
+    server_url: &str,
+) -> Result<Option<Credentials>> {
+    let Some(creds) = store.get_credentials(&cli.instance).map_err(|error| {
+        CLIError::ConfigurationError(format!("Failed to load credentials: {error}"))
+    })?
+    else {
+        return Ok(None);
+    };
+    if let Some(saved) = creds.server_url.as_deref() {
+        if !endpoints_match(saved, server_url) {
+            if cli.instance == "local" {
+                eprintln!(
+                    "Saved login 'local' points at {saved}, not {server_url}. The default name \
+                     cannot be selected with `--instance local`. Sign that server in under its \
+                     own name: `kalam login --oidc --instance <name> --url {saved}`."
+                );
+            } else {
+                eprintln!(
+                    "Saved login for instance '{}' points at {saved}, not {server_url}. Run \
+                     `kalam --instance {}` to use that server.",
+                    cli.instance, cli.instance
+                );
+            }
+            return Ok(None);
+        }
+    }
+    Ok(Some(creds))
 }
 
 fn stored_credential_url(
@@ -431,6 +723,30 @@ pub async fn create_session(
         }
     }
 
+    async fn try_project_root_login(
+        cli: &Cli,
+        server_url: &str,
+        verbose: bool,
+        spinner: bool,
+    ) -> Option<LoginResponse> {
+        let password = root_password_for_url(cli, server_url)?;
+        match try_login(server_url, "root", &password, verbose, spinner).await {
+            LoginResult::Success(response) => {
+                eprintln!("Signed in as root using the password in kalam/server/server.toml.");
+                Some(response)
+            },
+            _ => None,
+        }
+    }
+
+    fn auth_from_root_login(login_response: LoginResponse) -> (AuthProvider, Option<String>, bool) {
+        (
+            AuthProvider::jwt_token(login_response.access_token),
+            Some(login_response.user.id.to_string()),
+            false,
+        )
+    }
+
     /// Run the server setup wizard
     ///
     /// Returns the user and password that were set up so the caller can log in.
@@ -610,6 +926,13 @@ pub async fn create_session(
         instance: &str,
         credential_store: &mut FileCredentialStore,
     ) -> Result<(AuthProvider, Option<String>, bool)> {
+        if local_password_disabled(server_url).await {
+            return Err(CLIError::ConfigurationError(format!(
+                "{server_url} does not accept a username and password. Sign in with `kalam login \
+                 --oidc --instance {instance} --url {server_url}`."
+            )));
+        }
+
         // Before prompting for credentials, probe the server to detect whether it needs
         // initial setup. We use two methods:
         //
@@ -802,6 +1125,10 @@ pub async fn create_session(
             String::new()
         };
 
+        if local_password_disabled(&server_url).await {
+            return Err(oidc_only_login_error(&server_url, &cli.instance));
+        }
+
         match try_login(&server_url, &username, &password, cli.verbose, !cli.no_spinner).await {
             LoginResult::Success(login_response) => {
                 let authenticated_user = login_response.user.id.to_string();
@@ -855,10 +1182,7 @@ pub async fn create_session(
                 return Err(CLIError::LinkError(KalamLinkError::NetworkError(error)));
             },
         }
-    } else if let Some(creds) = credential_store
-        .get_credentials(&cli.instance)
-        .map_err(|e| CLIError::ConfigurationError(format!("Failed to load credentials: {}", e)))?
-    {
+    } else if let Some(creds) = stored_credentials_for_server(credential_store, cli, &server_url)? {
         // Load from stored credentials (JWT token)
         if creds.is_expired() {
             // Access token expired - try to refresh using refresh_token
@@ -909,7 +1233,11 @@ pub async fn create_session(
                     // Refresh failed - prompt for credentials if terminal is available
                     eprintln!("Warning: Could not refresh token.");
 
-                    if std::io::stdin().is_terminal() {
+                    if let Some(login_response) =
+                        try_project_root_login(cli, &server_url, cli.verbose, !cli.no_spinner).await
+                    {
+                        auth_from_root_login(login_response)
+                    } else if std::io::stdin().is_terminal() {
                         // Prompt user for credentials interactively
                         prompt_and_login(
                             &server_url,
@@ -990,7 +1318,11 @@ pub async fn create_session(
                 // No refresh token available - prompt for credentials if terminal is available
                 eprintln!("Warning: No refresh token available.");
 
-                if std::io::stdin().is_terminal() {
+                if let Some(login_response) =
+                    try_project_root_login(cli, &server_url, cli.verbose, !cli.no_spinner).await
+                {
+                    auth_from_root_login(login_response)
+                } else if std::io::stdin().is_terminal() {
                     // Prompt user for credentials interactively
                     prompt_and_login(
                         &server_url,
@@ -1074,9 +1406,15 @@ pub async fn create_session(
             }
             (AuthProvider::jwt_token(creds.jwt_token), stored_username, true)
         }
+    } else if local_password_disabled(&server_url).await {
+        return Err(oidc_only_login_error(&server_url, &cli.instance));
     } else {
         // No credentials provided - prompt interactively if terminal is available
-        if std::io::stdin().is_terminal() {
+        if let Some(login_response) =
+            try_project_root_login(cli, &server_url, cli.verbose, !cli.no_spinner).await
+        {
+            auth_from_root_login(login_response)
+        } else if std::io::stdin().is_terminal() {
             prompt_and_login(
                 &server_url,
                 server_url_source,
@@ -1237,7 +1575,7 @@ pub async fn create_session(
 
     // If session creation failed with an auth error and no --user was provided, prompt for login
     match session_result {
-        Ok(session) => Ok(session),
+        Ok(session) => Ok(with_project_namespace(cli, credential_store, session)),
         Err(ref e) => {
             // Check if setup is required first
             let is_setup_required =
@@ -1288,6 +1626,7 @@ pub async fn create_session(
                             new_creds_loaded,
                         )
                         .await
+                        .map(|session| with_project_namespace(cli, credential_store, session))
                     },
                     Err(setup_err) => Err(setup_err),
                 }
@@ -1330,9 +1669,10 @@ pub async fn create_session(
                     new_creds_loaded,
                 )
                 .await
+                .map(|session| with_project_namespace(cli, credential_store, session))
             } else {
                 // Non-interactive or CLI args provided - return the original error
-                session_result
+                session_result.map(|session| with_project_namespace(cli, credential_store, session))
             }
         },
     }
@@ -1349,7 +1689,7 @@ mod tests {
         },
         FileCredentialStore,
     };
-    use kalam_client::KalamLinkTimeouts;
+    use kalam_client::{credentials::Credentials, KalamLinkTimeouts};
 
     use super::*;
     use crate::args::Cli;
@@ -1421,6 +1761,53 @@ mod tests {
 
         assert_eq!(resolved.value, DEFAULT_LOCAL_SERVER_URL);
         assert_eq!(resolved.source, ServerUrlSource::DefaultLocalFallback);
+    }
+
+    #[test]
+    fn named_cloud_instance_overrides_the_current_project_and_env_url() {
+        let _url = UnsetEnv::new(ENV_VAR_KALAM_URL);
+        let _env = UnsetEnv::new(ENV_VAR_KALAM_ENV);
+        let _namespace = UnsetEnv::new(ENV_VAR_KALAM_NAMESPACE);
+        env::set_var(ENV_VAR_KALAM_URL, "http://127.0.0.1:2900");
+        env::set_var(ENV_VAR_KALAM_NAMESPACE, "home_check");
+
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("kalam.toml"), "not used when --instance is set\n")
+            .unwrap();
+        let mut store =
+            FileCredentialStore::with_path(temp.path().join("credentials.toml")).unwrap();
+        let creds = Credentials::with_details(
+            "prod-cloud-zz".into(),
+            "never-display-this-token".into(),
+            "alice",
+            "2099-01-01T00:00:00Z".into(),
+            Some("https://db.example.com".into()),
+        );
+        store.set_credentials(&creds).unwrap();
+
+        let cli = Cli::parse_from(["kalam", "--instance", "prod-cloud-zz"]);
+        let resolved = resolve_server_target_from(&cli, &store, temp.path().to_path_buf()).unwrap();
+        assert_eq!(resolved.value, "https://db.example.com");
+        assert_eq!(resolved.source, ServerUrlSource::StoredCredentials);
+        assert!(session_namespace(&cli, &store).is_none());
+
+        let explicit = Cli::parse_from([
+            "kalam",
+            "--instance",
+            "prod-cloud-zz",
+            "--url",
+            "https://other.example",
+        ]);
+        let resolved =
+            resolve_server_target_from(&explicit, &store, temp.path().to_path_buf()).unwrap();
+        assert_eq!(resolved.value, "https://other.example");
+
+        let missing = Cli::parse_from(["kalam", "--instance", "missing-instance-zz"]);
+        let error = resolve_server_target_from(&missing, &store, temp.path().to_path_buf())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("missing-instance-zz"));
+        assert!(error.contains("--oidc"));
     }
 
     struct UnsetEnv {

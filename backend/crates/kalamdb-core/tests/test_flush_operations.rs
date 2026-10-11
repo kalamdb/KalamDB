@@ -14,7 +14,7 @@ use kalamdb_flush::FlushError;
 #[test]
 fn test_extract_pk_field_name_with_non_system_column() {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("_seq", DataType::Int64, false),
+        Field::new("_version", DataType::Int64, false),
         Field::new("_version", DataType::Int64, false),
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, true),
@@ -27,7 +27,7 @@ fn test_extract_pk_field_name_with_non_system_column() {
 #[test]
 fn test_extract_pk_field_name_only_system_columns() {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("_seq", DataType::Int64, false),
+        Field::new("_version", DataType::Int64, false),
         Field::new("_version", DataType::Int64, false),
         Field::new("_deleted", DataType::Boolean, true),
     ]));
@@ -269,7 +269,7 @@ fn test_cursor_advancement_with_special_bytes() {
 #[test]
 fn test_pk_field_extraction_from_complex_schema() {
     let schema = Arc::new(Schema::new(vec![
-        Field::new("_seq", DataType::Int64, false),
+        Field::new("_version", DataType::Int64, false),
         Field::new("_version", DataType::Int64, false),
         Field::new("_user_id", DataType::Utf8, true),
         Field::new("_deleted", DataType::Boolean, true),

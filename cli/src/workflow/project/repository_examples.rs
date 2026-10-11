@@ -619,7 +619,7 @@ fn component_as_str(component: Component<'_>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
-    use zip::{write::FileOptions, ZipWriter};
+    use zip::{write::SimpleFileOptions, ZipWriter};
 
     use super::*;
 
@@ -633,7 +633,7 @@ mod tests {
     fn copy_example_from_zip_extracts_only_selected_example() {
         let temp = TempDir::new().expect("tempdir");
         let mut archive = ZipWriter::new(io::Cursor::new(Vec::new()));
-        let options: FileOptions<'_, ()> = FileOptions::default();
+        let options = SimpleFileOptions::default();
         archive
             .start_file("KalamDB-main/examples/chat-with-ai/kalam.toml", options)
             .expect("start selected file");
@@ -660,7 +660,7 @@ mod tests {
     fn copy_example_rewrites_file_sdk_deps_and_copies_env() {
         let temp = TempDir::new().expect("tempdir");
         let mut archive = ZipWriter::new(io::Cursor::new(Vec::new()));
-        let options: FileOptions<'_, ()> = FileOptions::default();
+        let options = SimpleFileOptions::default();
         archive
             .start_file("KalamDB-main/examples/chat-with-ai/package.json", options)
             .expect("start package.json");

@@ -1,52 +1,53 @@
-//! Version-merge contract: the shared substrate must expose the ordering rule
-//! used by every MVCC-backed provider family — `(commit_seq, seq_id)` with
-//! commit_seq as the primary key and seq_id as the tiebreaker.
-//!
-//! The real merge execution plan lands in US3. This contract test pins the
-//! ordering rule so the implementation cannot silently drift.
+//! Version-merge contract: hot/cold MVCC selects by a single [`VersionId`].
+//! Snapshot bounds apply before winner selection. Equal versions are one row.
 
+use kalamdb_commons::ids::{RaftVersionId, VersionId};
 use kalamdb_datafusion_sources::exec::{
     select_latest_versions, version_ordering, PkBucketKey, SelectedVersion, VersionCandidate,
 };
 
-#[test]
-fn commit_seq_wins_over_seq_id() {
-    use std::cmp::Ordering::*;
-    assert_eq!(version_ordering(10, 1_u64, 9, 999_u64), Greater);
-    assert_eq!(version_ordering(5, 100_u64, 5, 101_u64), Less);
-    assert_eq!(version_ordering(5, 100_u64, 5, 100_u64), Equal);
+fn v(raw: i64) -> VersionId {
+    VersionId::try_from_i64(raw).unwrap()
+}
+
+fn raft(log_index: u64, ordinal: u32) -> VersionId {
+    RaftVersionId::try_new(log_index, ordinal).unwrap().version()
+}
+
+fn snapshot_through_log(log_index: u64) -> VersionId {
+    // Inclusive upper bound covering every ordinal of `log_index`.
+    VersionId::try_from_raw((log_index << 16) | u64::from(u16::MAX)).unwrap()
 }
 
 #[test]
-fn ordering_is_total_and_transitive() {
-    let samples = [(1, 1), (1, 2), (2, 0), (2, 5), (3, 1)];
-    for &a in &samples {
-        for &b in &samples {
-            for &c in &samples {
-                if version_ordering(a.0, a.1, b.0, b.1).is_lt()
-                    && version_ordering(b.0, b.1, c.0, c.1).is_lt()
-                {
-                    assert!(
-                        version_ordering(a.0, a.1, c.0, c.1).is_lt(),
-                        "transitivity broke for {a:?} < {b:?} < {c:?}"
-                    );
-                }
-            }
-        }
+fn greater_version_wins() {
+    use std::cmp::Ordering::*;
+    assert_eq!(version_ordering(v(10), v(9)), Greater);
+    assert_eq!(version_ordering(v(5), v(6)), Less);
+    assert_eq!(version_ordering(v(5), v(5)), Equal);
+}
+
+#[test]
+fn newer_hot_beats_older_cold() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new(PkBucketKey::Int(1), v(2), false, "hot")],
+        vec![VersionCandidate::new(PkBucketKey::Int(1), v(1), false, "cold")],
+        None,
+        false,
+    );
+
+    assert_eq!(winners.len(), 1);
+    match &winners[0] {
+        SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot"),
+        SelectedVersion::Cold(payload) => panic!("expected hot winner, got {payload}"),
     }
 }
 
 #[test]
-fn latest_version_selection_is_metadata_first_and_filters_deleted_winners() {
+fn newer_cold_beats_older_hot() {
     let winners = select_latest_versions(
-        vec![
-            VersionCandidate::new("a".to_string(), 1, 1_u64, false, "hot-a"),
-            VersionCandidate::new("b".to_string(), 5, 1_u64, false, "hot-b"),
-        ],
-        vec![
-            VersionCandidate::new("a".to_string(), 2, 0_u64, false, "cold-a"),
-            VersionCandidate::new("b".to_string(), 6, 0_u64, true, "cold-b-delete"),
-        ],
+        vec![VersionCandidate::new("a".to_string(), v(1), false, "hot-a")],
+        vec![VersionCandidate::new("a".to_string(), v(2), false, "cold-a")],
         None,
         false,
     );
@@ -59,47 +60,79 @@ fn latest_version_selection_is_metadata_first_and_filters_deleted_winners() {
 }
 
 #[test]
-fn integer_primary_keys_merge_without_stringifying() {
+fn equal_version_is_one_row() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new(
-            PkBucketKey::Int(1),
-            2,
-            2_u64,
-            false,
-            "hot-1",
-        )],
-        vec![VersionCandidate::new(
-            PkBucketKey::Int(1),
-            1,
-            1_u64,
-            false,
-            "cold-1",
-        )],
+        vec![VersionCandidate::new(PkBucketKey::Int(1), v(7), false, "hot")],
+        vec![VersionCandidate::new(PkBucketKey::Int(1), v(7), false, "cold")],
         None,
         false,
     );
 
     assert_eq!(winners.len(), 1);
     match &winners[0] {
-        SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot-1"),
-        SelectedVersion::Cold(payload) => panic!("expected hot winner, got {payload}"),
+        SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot"),
+        SelectedVersion::Cold(payload) => panic!("equal versions must collapse to one row, got {payload}"),
     }
 }
 
 #[test]
-fn seq_fallback_does_not_collide_with_text_seq_key() {
+fn snapshot_hides_newer_tier_so_older_visible_wins() {
+    // Snapshot excludes log-index 501; visible 490 must beat the hidden newer row.
     let winners = select_latest_versions(
         vec![VersionCandidate::new(
-            PkBucketKey::Seq(1),
-            1,
-            1_u64,
+            "a".to_string(),
+            raft(501, 0),
             false,
-            "seq",
+            "hot-hidden",
         )],
         vec![VersionCandidate::new(
-            PkBucketKey::Text("_seq:1".to_string()),
-            1,
-            2_u64,
+            "a".to_string(),
+            raft(490, 0),
+            false,
+            "cold-visible",
+        )],
+        Some(snapshot_through_log(500)),
+        false,
+    );
+
+    assert_eq!(winners.len(), 1);
+    match &winners[0] {
+        SelectedVersion::Cold(payload) => assert_eq!(*payload, "cold-visible"),
+        SelectedVersion::Hot(payload) => panic!("snapshot must hide 501, got {payload}"),
+    }
+}
+
+#[test]
+fn tombstone_of_winner_hides_row_unless_keep_deleted() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new("b".to_string(), v(5), false, "hot-b")],
+        vec![VersionCandidate::new("b".to_string(), v(6), true, "cold-b-delete")],
+        None,
+        false,
+    );
+    assert!(winners.is_empty());
+
+    let kept = select_latest_versions(
+        vec![VersionCandidate::new("b".to_string(), v(5), false, "hot-b")],
+        vec![VersionCandidate::new("b".to_string(), v(6), true, "cold-b-delete")],
+        None,
+        true,
+    );
+    assert_eq!(kept.len(), 1);
+}
+
+#[test]
+fn version_fallback_does_not_collide_with_text_version_key() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new(
+            PkBucketKey::Version(1),
+            v(1),
+            false,
+            "version",
+        )],
+        vec![VersionCandidate::new(
+            PkBucketKey::Text("_version:1".to_string()),
+            v(2),
             false,
             "text",
         )],
@@ -113,5 +146,8 @@ fn seq_fallback_does_not_collide_with_text_seq_key() {
 #[test]
 fn integer_bucket_key_does_not_equal_stringified_integer() {
     assert_ne!(PkBucketKey::Int(1), PkBucketKey::Text("1".to_string()));
-    assert_ne!(PkBucketKey::Seq(1), PkBucketKey::Text("_seq:1".to_string()));
+    assert_ne!(
+        PkBucketKey::Version(1),
+        PkBucketKey::Text("_version:1".to_string())
+    );
 }

@@ -46,9 +46,9 @@ void main() {
       final delivery =
           await inserted.future.timeout(const Duration(seconds: 10));
       final seq =
-          (delivery.event as InsertEvent).rows.single['_seq']!.asSeqId()!;
+          (delivery.event as InsertEvent).rows.single['_version']!.asVersionId()!;
       expect(
-        (await _subscription(client, activeSubscriptionId)).lastSeqId,
+        (await _subscription(client, activeSubscriptionId)).lastVersionId,
         isNot(seq),
         reason: 'delivery must not move the reconnect cursor',
       );
@@ -78,11 +78,11 @@ Future<SubscriptionInfo> _subscription(
 Future<void> _waitForSeq(
   KalamClient client,
   String subscriptionId,
-  SeqId seq,
+  VersionId seq,
 ) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (DateTime.now().isBefore(deadline)) {
-    if ((await _subscription(client, subscriptionId)).lastSeqId == seq) return;
+    if ((await _subscription(client, subscriptionId)).lastVersionId == seq) return;
     await Future<void>.delayed(const Duration(milliseconds: 20));
   }
   throw TimeoutException(

@@ -1116,10 +1116,15 @@ impl<SM: KalamStateMachine + Send + Sync + 'static> KalamRaftStorage<SM> {
         if entries.len() == 1 {
             if let Some(store) = self.persistent_store.as_ref() {
                 let backend = store.backend();
-                let (result, ops) =
+                let (result, batch) =
                     with_write_coalesce(self.apply_entries_to_state_machine(entries)).await;
-                if !ops.is_empty() {
-                    backend.batch(ops).map_err(|e| StorageIOError::<u64>::write(&e))?;
+                if result.is_ok() {
+                    if !batch.ops.is_empty() {
+                        backend.batch(batch.ops).map_err(|e| StorageIOError::<u64>::write(&e))?;
+                    }
+                    for hook in batch.after_persist {
+                        hook();
+                    }
                 }
                 return result;
             }

@@ -44,6 +44,7 @@ pub mod error_extensions;
 pub mod functions;
 pub mod job_waker;
 pub mod live_adapters;
+pub mod maintenance;
 pub mod manifest;
 pub mod metrics;
 pub mod operations;

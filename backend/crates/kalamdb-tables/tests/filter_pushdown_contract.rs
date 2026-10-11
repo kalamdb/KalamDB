@@ -13,7 +13,7 @@ fn classify_mvcc_filters(filters: Vec<Expr>) -> Vec<TableProviderFilterPushDown>
 fn mvcc_filters_report_exact_for_resolved_row_evaluation() {
     let results = classify_mvcc_filters(vec![
         col("id").eq(lit(1_i64)),
-        col("_seq").gt_eq(lit(10_i64)),
+        col("_version").gt_eq(lit(10_i64)),
         col("_deleted").eq(lit(false)),
         col("id").eq(lit(2_i64)).and(col("name").eq(lit("beta"))),
     ]);
@@ -33,7 +33,7 @@ fn mvcc_filters_report_exact_for_resolved_row_evaluation() {
 fn mvcc_filter_evaluation_preserves_inexact_source_pruning_subset() {
     let filters = vec![
         col("id").eq(lit(1_i64)),
-        col("_seq").gt_eq(lit(10_i64)),
+        col("_version").gt_eq(lit(10_i64)),
         col("_deleted").eq(lit(false)),
         col("name").eq(lit("alpha")),
         col("id").eq(lit(2_i64)).and(col("name").eq(lit("beta"))),
@@ -45,7 +45,7 @@ fn mvcc_filter_evaluation_preserves_inexact_source_pruning_subset() {
         evaluation.inexact.filters.as_ref(),
         vec![
             col("id").eq(lit(1_i64)),
-            col("_seq").gt_eq(lit(10_i64)),
+            col("_version").gt_eq(lit(10_i64)),
             col("_deleted").eq(lit(false)),
             col("id").eq(lit(2_i64)).and(col("name").eq(lit("beta"))),
         ]

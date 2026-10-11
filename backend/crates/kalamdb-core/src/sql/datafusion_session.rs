@@ -38,7 +38,8 @@ use crate::sql::{
     table_functions::VectorSearchTableFunction,
 };
 
-// KalamSessionState removed (ExecutionContext used at higher layer)
+/// Public SQL parser dialect. PostgreSQL is the only dialect on this session.
+pub const SQL_PARSER_DIALECT: &str = "postgresql";
 
 /// DataFusion session factory with parallelism configuration
 ///
@@ -87,10 +88,10 @@ impl DataFusionSessionFactory {
             settings.batch_size
         );
 
-        // DuckDB dialect enables SQL lambda parsing (`x -> expr`) required by DataFusion 55
-        // higher-order array functions such as array_transform and array_filter.
+        // Higher-order UDFs such as array_transform stay registered. Public
+        // `x ->` lambda syntax is rejected because this session parses PostgreSQL.
         let config = SessionConfig::new()
-            .set_str("datafusion.sql_parser.dialect", "duckdb")
+            .set_str("datafusion.sql_parser.dialect", SQL_PARSER_DIALECT)
             .with_information_schema(false)
             .with_parquet_bloom_filter_pruning(true)
             .with_parquet_page_index_pruning(true)
@@ -146,7 +147,9 @@ impl DataFusionSessionFactory {
     pub fn ensure_extended_functions(ctx: &SessionContext) {
         use datafusion::execution::FunctionRegistry;
 
-        if ctx.udf("json_get").is_ok() {
+        // `state_ref` checks the registry without cloning SessionState.
+        // The guard must drop before registration takes the write lock.
+        if ctx.state_ref().read().udfs().get("json_get").is_some() {
             return;
         }
 
@@ -266,7 +269,7 @@ impl DataFusionSessionFactory {
                 continue;
             }
 
-            let schema_provider = std::sync::Arc::new(MemorySchemaProvider::new());
+            let schema_provider = Arc::new(MemorySchemaProvider::new());
             match catalog.register_schema(namespace, schema_provider) {
                 Ok(_) => {
                     log::debug!("Registered DataFusion schema for namespace '{}'", namespace);
@@ -377,11 +380,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lambda_array_transform_sql() {
+    async fn test_lambda_array_transform_sql_is_rejected() {
         let factory = DataFusionSessionFactory::new().unwrap();
         let session = factory.create_session();
         DataFusionSessionFactory::ensure_extended_functions(&session);
         let result = session.sql("SELECT array_transform([1, 2, 3], x -> x * 10)").await;
-        assert!(result.is_ok(), "lambda array_transform failed: {:?}", result.err());
+        assert!(
+            result.is_err(),
+            "public x -> lambda syntax must be rejected under the PostgreSQL dialect"
+        );
     }
 }

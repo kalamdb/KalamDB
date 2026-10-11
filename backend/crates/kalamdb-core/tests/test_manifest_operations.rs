@@ -37,7 +37,7 @@ fn rows_batch(schema: SchemaRef, rows: &[(i64, &str, i64, bool)]) -> RecordBatch
                 ("name", DataType::Utf8) => {
                     Arc::new(StringArray::from(rows.iter().map(|row| row.1).collect::<Vec<_>>()))
                 },
-                (SystemColumnNames::SEQ, DataType::Int64) => {
+                (SystemColumnNames::VERSION, DataType::Int64) => {
                     Arc::new(Int64Array::from(rows.iter().map(|row| row.2).collect::<Vec<_>>()))
                 },
                 (SystemColumnNames::DELETED, DataType::Boolean) => {
@@ -83,11 +83,11 @@ async fn read_test_rows_from_parquet(
             .downcast_ref::<StringArray>()
             .expect("name utf8");
         let seq_array = batch
-            .column_by_name(SystemColumnNames::SEQ)
-            .expect("_seq column")
+            .column_by_name(SystemColumnNames::VERSION)
+            .expect("_version column")
             .as_any()
             .downcast_ref::<Int64Array>()
-            .expect("_seq int64");
+            .expect("_version int64");
         let deleted_array = batch
             .column_by_name(SystemColumnNames::DELETED)
             .expect("_deleted column")

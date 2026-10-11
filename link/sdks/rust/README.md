@@ -173,20 +173,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See [QUICKSTART.md](https://github.com/kalamdb/KalamDB/blob/main/link/sdks/rust/QUICKSTART.md) for a shorter copy-paste flow and [examples](https://github.com/kalamdb/KalamDB/tree/main/link/sdks/rust/examples) for runnable projects.
 
-## Resume From a Specific `SeqId`
+## Resume From a Specific `VersionId`
 
-When you want offline resume or a durable checkpoint, persist the last `SeqId` you applied and feed it back through `SubscriptionOptions::with_from()`.
+When you want offline resume or a durable checkpoint, persist the last `VersionId` you applied and feed it back through `SubscriptionOptions::with_from()`.
 
 ```rust,no_run
-use kalam_client::{SeqId, SubscriptionOptions};
+use kalam_client::{VersionId, SubscriptionOptions};
 
-let start_from = SeqId::from(42_i64);
+let start_from = VersionId::from(42_i64);
 let options = SubscriptionOptions::new()
     .with_last_rows(200)
     .with_from(start_from);
 ```
 
-Each `LiveRowsEvent::Rows` includes `last_seq_id` so you can persist checkpoints between sessions.
+Each `LiveRowsEvent::Rows` includes `last_seq_id` (`VersionId`) so you can persist checkpoints between sessions.
 
 ## Lower-Level Realtime API
 
@@ -307,7 +307,7 @@ The SDK handles:
 - Basic-auth-to-JWT exchange
 - default namespace forwarding for `/v1/api/sql` plus unqualified live/file contexts
 - shared WebSocket connection management
-- reconnect controls and `SeqId` tracking
+- reconnect controls and `VersionId` tracking
 
 ## Examples and Tests
 

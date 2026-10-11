@@ -249,7 +249,7 @@ pub fn build_table_definition(
         _ => {},
     }
 
-    // Inject system columns (_seq, _deleted)
+    // Inject system columns (_version, _deleted)
     let sys_cols = app_context.system_columns_service();
     sys_cols.add_system_columns(&mut table_def)?;
 

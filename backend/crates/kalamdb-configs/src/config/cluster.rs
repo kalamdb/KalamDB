@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// rpc_addr = "127.0.0.1:2910"
 /// api_addr = "127.0.0.1:2900"
 /// user_shards = 12
-/// shared_shards = 1
+/// shared_shards = 4
 /// heartbeat_interval_ms = 50
 /// election_timeout_ms = [150, 300]
 /// snapshot_threshold = 10000
@@ -67,8 +67,8 @@ pub struct ClusterConfig {
     #[serde(default = "default_user_shards")]
     pub user_shards: u32,
 
-    /// Number of shared data shards (must be 1)
-    /// Shared tables currently run in a single Raft group.
+    /// Number of shared data shards (default: 4).
+    /// Each SHARED table is persisted onto exactly one of these Raft groups.
     #[serde(default = "default_shared_shards")]
     pub shared_shards: u32,
 
@@ -161,7 +161,7 @@ fn default_user_shards() -> u32 {
 }
 
 fn default_shared_shards() -> u32 {
-    1
+    4
 }
 
 fn default_heartbeat_interval_ms() -> u64 {
@@ -263,8 +263,8 @@ impl ClusterConfig {
             return Err("user_shards must be > 0".to_string());
         }
 
-        if self.shared_shards != 1 {
-            return Err("shared_shards must be exactly 1".to_string());
+        if self.shared_shards == 0 {
+            return Err("shared_shards must be > 0".to_string());
         }
 
         if self.reconnect_interval_ms == 0 {
@@ -374,12 +374,20 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_rejects_multiple_shared_shards() {
+    fn default_cluster_has_four_shared_shards() {
+        assert_eq!(default_shared_shards(), 4);
         let mut config = valid_config();
-        config.shared_shards = 2;
+        config.shared_shards = default_shared_shards();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_zero_shared_shards() {
+        let mut config = valid_config();
+        config.shared_shards = 0;
         assert_eq!(
-            config.validate().expect_err("shared shards > 1 must be rejected"),
-            "shared_shards must be exactly 1"
+            config.validate().expect_err("zero shared shards must be rejected"),
+            "shared_shards must be > 0"
         );
     }
 

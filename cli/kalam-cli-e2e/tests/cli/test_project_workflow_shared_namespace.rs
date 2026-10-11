@@ -215,7 +215,10 @@ fn test_second_project_reuses_shared_namespace_history_without_recreating_tables
     );
     let dart_source =
         fs::read_to_string(dart_dir.join("lib/generated/kalam.dart")).expect("read dart types");
-    assert!(dart_source.contains("tableId: 'users'"), "expected Users table in dart types");
+    assert!(
+        dart_source.contains("tableId: 'app.users'"),
+        "shared namespace should qualify the Dart table id\n{dart_source}"
+    );
     assert!(
         dart_source.contains("display_name") || dart_source.contains("displayName"),
         "dart types should come from the shared evolved schema, not the init \

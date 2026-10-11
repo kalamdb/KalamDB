@@ -274,7 +274,7 @@ pub mod helpers {
     };
     use kalamdb_commons::{
         constants::SystemColumnNames, conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-        ids::SeqId, models::rows::Row, next_storage_key_bytes, pk_bucket_key_from_row, PkBucketKey,
+        ids::VersionId, models::rows::Row, next_storage_key_bytes, pk_bucket_key_from_row, PkBucketKey,
     };
     use kalamdb_tables::{SharedTableRow, UserTableRow};
 
@@ -285,7 +285,7 @@ pub mod helpers {
 
     /// Row behavior shared by user/shared flush version resolution.
     pub trait FlushVersionRow {
-        fn seq_i64(&self) -> i64;
+        fn version_i64(&self) -> i64;
         fn is_deleted(&self) -> bool;
         fn fields(&self) -> &Row;
         fn into_fields(self) -> Row;
@@ -293,8 +293,8 @@ pub mod helpers {
 
     impl FlushVersionRow for UserTableRow {
         #[inline]
-        fn seq_i64(&self) -> i64 {
-            self._seq.as_i64()
+        fn version_i64(&self) -> i64 {
+            self._version.as_i64()
         }
 
         #[inline]
@@ -315,8 +315,8 @@ pub mod helpers {
 
     impl FlushVersionRow for SharedTableRow {
         #[inline]
-        fn seq_i64(&self) -> i64 {
-            self._seq.as_i64()
+        fn version_i64(&self) -> i64 {
+            self._version.as_i64()
         }
 
         #[inline]
@@ -367,10 +367,10 @@ pub mod helpers {
         }
     }
 
-    /// Convert rows with _seq and _deleted system columns to Arrow RecordBatch
+    /// Convert rows with _version and _deleted system columns to Arrow RecordBatch
     ///
     /// This is the common pattern used by both user and shared table flush.
-    /// Adds _seq and _deleted columns to each row before conversion.
+    /// Adds _version and _deleted columns to each row before conversion.
     pub fn rows_to_arrow_batch(schema: &SchemaRef, rows: &[(Vec<u8>, Row)]) -> Result<RecordBatch> {
         // Avoid cloning: collect references, then build columnar arrays directly.
         // The JSON conversion function requires owned Rows (it consumes the BTreeMap),
@@ -408,8 +408,9 @@ pub mod helpers {
         pk_field: &str,
         stats: &mut FlushDedupStats,
     ) {
-        let seq = row.seq_i64();
-        let pk_key = pk_bucket_key_from_row(row.fields(), pk_field, SeqId::from_i64(seq));
+        let version = row.version_i64();
+        let version_id = VersionId::try_from_i64(version).expect("flushed row version is non-zero");
+        let pk_key = pk_bucket_key_from_row(row.fields(), pk_field, version_id);
 
         if row.is_deleted() {
             stats.deleted_count += 1;
@@ -417,20 +418,20 @@ pub mod helpers {
 
         match latest_versions.entry(pk_key) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if seq > entry.get().2 {
-                    entry.insert((key_bytes, row, seq));
+                if version > entry.get().2 {
+                    entry.insert((key_bytes, row, version));
                 }
             },
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert((key_bytes, row, seq));
+                entry.insert((key_bytes, row, version));
             },
         }
     }
 
-    /// Add system columns (_seq, _deleted) to a Row
-    pub fn add_system_columns(mut row: Row, seq: i64, deleted: bool) -> Row {
+    /// Add system columns (_version, _deleted) to a Row
+    pub fn add_system_columns(mut row: Row, version: i64, deleted: bool) -> Row {
         row.values
-            .insert(SystemColumnNames::SEQ.to_string(), ScalarValue::Int64(Some(seq)));
+            .insert(SystemColumnNames::VERSION.to_string(), ScalarValue::Int64(Some(version)));
         row.values
             .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(deleted)));
         row
@@ -448,15 +449,15 @@ pub mod helpers {
         let mut rows = Vec::with_capacity(latest_versions.len());
         let mut preserved_tombstone_keys = HashSet::new();
 
-        for (_pk_value, (key_bytes, row, _seq)) in latest_versions {
+        for (_pk_value, (key_bytes, row, _version)) in latest_versions {
             if row.is_deleted() {
                 stats.tombstones_filtered += 1;
                 preserved_tombstone_keys.insert(key_bytes);
                 continue;
             }
 
-            let seq = row.seq_i64();
-            rows.push((key_bytes, add_system_columns(row.into_fields(), seq, false)));
+            let version = row.version_i64();
+            rows.push((key_bytes, add_system_columns(row.into_fields(), version, false)));
         }
 
         (rows, preserved_tombstone_keys)

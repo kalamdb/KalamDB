@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-IMAGE_NAME="${1:-jamals86/kalamdb:test}"
+IMAGE_NAME="${1:-kalamdb/kalamdb:test}"
 CONTAINER_NAME="kalamdb-test-$$"
 TEST_PORT="${TEST_PORT:-8081}"
 TIMEOUT="${TIMEOUT:-30}"

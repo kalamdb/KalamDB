@@ -57,9 +57,26 @@ export function reconcileActiveNamespace({
     return selectedNamespace;
   }
   if (!activeNamespace || !namespaces.includes(activeNamespace)) {
-    return namespaces[0] ?? "";
+    return preferredExplorerNamespace(namespaces);
   }
   return activeNamespace;
+}
+
+function isBuiltInExplorerNamespace(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return (
+    normalized === "information_schema" ||
+    normalized === "pg_catalog" ||
+    normalized === "datafusion" ||
+    normalized === "default" ||
+    normalized === "system" ||
+    normalized === "dba"
+  );
+}
+
+export function preferredExplorerNamespace(namespaces: string[]): string {
+  const application = namespaces.find((name) => !isBuiltInExplorerNamespace(name));
+  return application ?? namespaces[0] ?? "";
 }
 
 export function tablesForNamespace(

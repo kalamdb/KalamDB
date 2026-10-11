@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use kalam_client::{
     AuthProvider, AutoOffsetReset, FileDownload, FileRef, FileUpload, KalamLinkClient,
-    KalamLinkError, LiveRowsConfig, LiveRowsEvent, LiveRowsSubscription, QueryParam, SeqId,
-    SubscriptionConfig, SubscriptionManager, SubscriptionOptions, TopicConsumer,
+    KalamLinkError, LiveRowsConfig, LiveRowsEvent, LiveRowsSubscription, QueryParam,
+    SubscriptionConfig, SubscriptionManager, SubscriptionOptions, TopicConsumer, VersionId,
     query::models::query_param::from_json_value,
 };
 use pyo3::{
@@ -102,7 +102,7 @@ fn new_subscription_id(prefix: &str) -> String {
     format!("{prefix}_{nanos}")
 }
 
-fn py_seq_id(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<SeqId>> {
+fn py_version_id(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<VersionId>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -110,10 +110,14 @@ fn py_seq_id(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<SeqId>> {
         return Ok(None);
     }
     if let Ok(raw) = value.extract::<i64>() {
-        return Ok(Some(SeqId::from_i64(raw)));
+        return VersionId::try_from_i64(raw).map(Some).map_err(|error| {
+            KalamConfigError::new_err(error.to_string())
+        });
     }
     let raw: String = value.extract()?;
-    SeqId::from_string(&raw).map(Some).map_err(KalamConfigError::new_err)
+    VersionId::from_decimal_str(&raw).map(Some).map_err(|error| {
+        KalamConfigError::new_err(error.to_string())
+    })
 }
 
 fn live_subscription_config(
@@ -121,7 +125,7 @@ fn live_subscription_config(
     prefix: &str,
     batch_size: Option<usize>,
     last_rows: Option<u32>,
-    from: Option<SeqId>,
+    from: Option<VersionId>,
     auto_fetch_batches: Option<bool>,
 ) -> SubscriptionConfig {
     let mut options = SubscriptionOptions::new();
@@ -154,17 +158,17 @@ fn table_live_sql(table: &str) -> PyResult<String> {
     Ok(format!("SELECT * FROM {table}"))
 }
 
-fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: SeqId) -> PyResult<Py<PyAny>> {
+fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: VersionId) -> PyResult<Py<PyAny>> {
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("subscription_id", subscription_id)?;
-    dict.set_item("last_seq_id", seq_id.as_i64().to_string())?;
+    dict.set_item("last_version_id", seq_id.as_i64().to_string())?;
     Ok(dict.unbind().into())
 }
 
 fn call_checkpoint(
     callback: Option<&Py<PyAny>>,
     subscription_id: &str,
-    seq_id: Option<SeqId>,
+    seq_id: Option<VersionId>,
 ) -> PyResult<()> {
     let Some(seq_id) = seq_id else {
         return Ok(());
@@ -179,7 +183,7 @@ fn call_checkpoint(
     })
 }
 
-fn change_event_checkpoint(event: &kalam_client::ChangeEvent) -> Option<(&str, SeqId)> {
+fn change_event_checkpoint(event: &kalam_client::ChangeEvent) -> Option<(&str, VersionId)> {
     match event {
         kalam_client::ChangeEvent::Ack {
             subscription_id,
@@ -1004,7 +1008,7 @@ impl KalamClient {
         on_error: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let from = py_seq_id(from_)?;
+        let from = py_version_id(from_)?;
         let config = live_subscription_config(
             sql,
             "events",
@@ -1049,7 +1053,7 @@ impl KalamClient {
         on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let state = self.state.clone();
-        let from = py_seq_id(from_)?;
+        let from = py_version_id(from_)?;
         let config =
             live_subscription_config(sql, "live", batch_size, last_rows, from, auto_fetch_batches);
         let live_config = LiveRowsConfig { limit, key_columns };

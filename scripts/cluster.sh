@@ -128,13 +128,13 @@ docker_build_image() {
     
     echo "Project root: $PROJECT_ROOT"
     echo "Building image (this may take several minutes)..."
-    docker build -f "$PROJECT_ROOT/docker/build/Dockerfile" -t jamals86/kalamdb:latest "$PROJECT_ROOT"
+    docker build -f "$PROJECT_ROOT/docker/build/Dockerfile" -t kalamdb/kalamdb:latest "$PROJECT_ROOT"
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Image built successfully${NC}"
         echo ""
-        echo "Image: jamals86/kalamdb:latest"
-        docker images jamals86/kalamdb:latest --format "Size: {{.Size}}, Created: {{.CreatedSince}}"
+        echo "Image: kalamdb/kalamdb:latest"
+        docker images kalamdb/kalamdb:latest --format "Size: {{.Size}}, Created: {{.CreatedSince}}"
     else
         echo -e "${RED}✗ Image build failed${NC}"
         exit 1
@@ -148,9 +148,9 @@ docker_start_cluster() {
     
     # Check if image exists
     echo "Checking for kalamdb image..."
-    if ! docker image inspect jamals86/kalamdb:latest &> /dev/null; then
+    if ! docker image inspect kalamdb/kalamdb:latest &> /dev/null; then
         echo -e "${YELLOW}Image not found locally. Pulling...${NC}"
-        docker pull jamals86/kalamdb:latest || {
+        docker pull kalamdb/kalamdb:latest || {
             echo -e "${RED}Failed to pull image. Try building locally: $0 --docker build${NC}"
             exit 1
         }

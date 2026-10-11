@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::{array::*, compute, record_batch::RecordBatch};
 use kalamdb_commons::{
-    arrow_utils::compute_min_max, constants::SystemColumnNames, ids::SeqId, TableId, UserId,
+    arrow_utils::compute_min_max, constants::SystemColumnNames, ids::{SeqId, VersionId}, TableId, UserId,
 };
 use kalamdb_store::StorageError;
 use kalamdb_system::{ColumnStats, Manifest, SegmentMetadata};
@@ -106,21 +106,35 @@ impl FlushManifestHelper {
             })
     }
 
-    /// Extract min/max _seq values from RecordBatch
+    /// Extract min/max `_version` values from RecordBatch.
     ///
-    /// Returns (min_seq, max_seq) tuple
-    pub fn extract_seq_range(batch: &RecordBatch) -> (SeqId, SeqId) {
-        let seq_column = batch
-            .column_by_name(SystemColumnNames::SEQ)
+    /// Returns `(min_version, max_version)`. Empty or missing column yields zero
+    /// placeholders for SegmentMetadata until that type migrates off SeqId.
+    pub fn extract_version_range(batch: &RecordBatch) -> (VersionId, VersionId) {
+        let version_column = batch
+            .column_by_name(SystemColumnNames::VERSION)
             .and_then(|col| col.as_any().downcast_ref::<Int64Array>());
 
-        if let Some(seq_arr) = seq_column {
-            let min = compute::min(seq_arr).unwrap_or(0);
-            let max = compute::max(seq_arr).unwrap_or(0);
-            (SeqId::from(min), SeqId::from(max))
+        if let Some(version_arr) = version_column {
+            let min = compute::min(version_arr).unwrap_or(0);
+            let max = compute::max(version_arr).unwrap_or(0);
+            (
+                VersionId::try_from_i64(min).unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
+                VersionId::try_from_i64(max).unwrap_or_else(|_| VersionId::try_from_local_sequence(1).expect("1")),
+            )
         } else {
-            (SeqId::from(0i64), SeqId::from(0i64))
+            // Placeholder for empty batches; SegmentMetadata still accepts SeqId(0).
+            (
+                VersionId::try_from_local_sequence(1).expect("1"),
+                VersionId::try_from_local_sequence(1).expect("1"),
+            )
         }
+    }
+
+    /// Compatibility wrapper — prefer [`Self::extract_version_range`].
+    pub fn extract_seq_range(batch: &RecordBatch) -> (SeqId, SeqId) {
+        let (min, max) = Self::extract_version_range(batch);
+        (SeqId::from(min.as_i64()), SeqId::from(max.as_i64()))
     }
 
     /// Extract column statistics (min/max/nulls) from RecordBatch
@@ -132,8 +146,8 @@ impl FlushManifestHelper {
         let mut stats = HashMap::new();
 
         for (column_id, column_name) in indexed_columns {
-            // Skip _seq system column (handled separately)
-            if column_name == SystemColumnNames::SEQ {
+            // Skip _version system column (handled separately as the version range)
+            if column_name == SystemColumnNames::VERSION {
                 continue;
             }
 
@@ -160,8 +174,8 @@ impl FlushManifestHelper {
         table_id: &TableId,
         user_id: Option<&UserId>,
         batch_filename: String,
-        min_seq: SeqId,
-        max_seq: SeqId,
+        min_version: VersionId,
+        max_version: VersionId,
         column_stats: HashMap<u64, ColumnStats>,
         row_count: u64,
         file_size_bytes: u64,
@@ -170,12 +184,13 @@ impl FlushManifestHelper {
         let segment_id = batch_filename.clone();
         let relative_path = batch_filename;
 
+        // SegmentMetadata still stores SeqId fields until kalamdb-system migrates.
         let segment = SegmentMetadata::with_schema_version(
             segment_id,
             relative_path,
             column_stats,
-            min_seq,
-            max_seq,
+            SeqId::from(min_version.as_i64()),
+            SeqId::from(max_version.as_i64()),
             row_count,
             file_size_bytes,
             schema_version,
@@ -224,9 +239,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_seq_range() {
+    fn test_extract_version_range() {
         let schema = StdArc::new(Schema::new(vec![
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
             Field::new("data", DataType::Utf8, true),
         ]));
 
@@ -237,36 +252,36 @@ mod tests {
             RecordBatch::try_new(schema, vec![StdArc::new(seq_array), StdArc::new(data_array)])
                 .unwrap();
 
-        let (min, max) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min, SeqId::from(100i64));
-        assert_eq!(max, SeqId::from(200i64));
+        let (min, max) = FlushManifestHelper::extract_version_range(&batch);
+        assert_eq!(min, VersionId::try_from_i64(100).unwrap());
+        assert_eq!(max, VersionId::try_from_i64(200).unwrap());
     }
 
     #[test]
-    fn test_extract_seq_range_empty() {
+    fn test_extract_version_range_empty() {
         let schema = StdArc::new(Schema::new(vec![Field::new(
-            SystemColumnNames::SEQ,
+            SystemColumnNames::VERSION,
             DataType::Int64,
             false,
         )]));
         let seq_array = Int64Array::from(vec![] as Vec<i64>);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(seq_array)]).unwrap();
 
-        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min_seq, SeqId::from(0i64));
-        assert_eq!(max_seq, SeqId::from(0i64));
+        let (min_version, max_version) = FlushManifestHelper::extract_version_range(&batch);
+        assert_eq!(min_version, VersionId::try_from_local_sequence(1).unwrap());
+        assert_eq!(max_version, VersionId::try_from_local_sequence(1).unwrap());
     }
 
     #[test]
-    fn test_extract_seq_range_missing_column() {
+    fn test_extract_version_range_missing_column() {
         let schema =
             StdArc::new(Schema::new(vec![Field::new("other_column", DataType::Int64, false)]));
         let col_array = Int64Array::from(vec![1, 2, 3]);
         let batch = RecordBatch::try_new(schema, vec![StdArc::new(col_array)]).unwrap();
 
-        let (min_seq, max_seq) = FlushManifestHelper::extract_seq_range(&batch);
-        assert_eq!(min_seq, SeqId::from(0i64));
-        assert_eq!(max_seq, SeqId::from(0i64));
+        let (min_version, max_version) = FlushManifestHelper::extract_version_range(&batch);
+        assert_eq!(min_version, VersionId::try_from_local_sequence(1).unwrap());
+        assert_eq!(max_version, VersionId::try_from_local_sequence(1).unwrap());
     }
 
     #[test]
@@ -277,7 +292,7 @@ mod tests {
         let schema = StdArc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, true),
             Field::new("timestamp", DataType::Int64, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let id_array = Int32Array::from(vec![Some(5), Some(10), None, Some(1), Some(8)]);
         let ts_array = Int64Array::from(vec![1000000, 2000000, 1500000, 1800000, 1200000]);
@@ -325,12 +340,12 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_column_stats_skips_seq_column() {
+    fn test_extract_column_stats_skips_version_column() {
         use datafusion::arrow::array::Int32Array;
 
         let schema = StdArc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
-            Field::new(SystemColumnNames::SEQ, DataType::Int64, false),
+            Field::new(SystemColumnNames::VERSION, DataType::Int64, false),
         ]));
         let id_array = Int32Array::from(vec![1, 2, 3]);
         let seq_array = Int64Array::from(vec![10, 20, 30]);
@@ -340,11 +355,11 @@ mod tests {
 
         let indexed_columns = vec![
             (1u64, "id".to_string()),
-            (2u64, SystemColumnNames::SEQ.to_string()),
+            (2u64, SystemColumnNames::VERSION.to_string()),
         ];
         let stats = FlushManifestHelper::extract_column_stats(&batch, &indexed_columns);
 
-        // Should only have stats for "id", not "_seq"
+        // Should only have stats for "id", not "_version"
         assert_eq!(stats.len(), 1);
         assert!(stats.contains_key(&1u64));
         assert!(!stats.contains_key(&2u64));

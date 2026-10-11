@@ -109,7 +109,7 @@ pub fn mvcc_filter_evaluation(filters: &[Expr], pk_name: &str) -> MvccFilterEval
 
 fn is_mvcc_source_pruning_filter(filter: &Expr, pk_name: &str) -> bool {
     contains_pk_equality(filter, pk_name)
-        || contains_seq_bound(filter)
+        || contains_version_bound(filter)
         || references_column(filter, "_deleted")
 }
 
@@ -127,7 +127,7 @@ fn contains_pk_equality(filter: &Expr, pk_name: &str) -> bool {
     }
 }
 
-fn contains_seq_bound(filter: &Expr) -> bool {
+fn contains_version_bound(filter: &Expr) -> bool {
     match filter {
         Expr::BinaryExpr(binary)
             if matches!(
@@ -135,11 +135,11 @@ fn contains_seq_bound(filter: &Expr) -> bool {
                 Operator::Eq | Operator::Lt | Operator::LtEq | Operator::Gt | Operator::GtEq
             ) =>
         {
-            is_column_literal_comparison(&binary.left, &binary.right, "_seq")
-                || is_column_literal_comparison(&binary.right, &binary.left, "_seq")
+            is_column_literal_comparison(&binary.left, &binary.right, "_version")
+                || is_column_literal_comparison(&binary.right, &binary.left, "_version")
         },
         Expr::BinaryExpr(binary) if binary.op == Operator::And => {
-            contains_seq_bound(&binary.left) || contains_seq_bound(&binary.right)
+            contains_version_bound(&binary.left) || contains_version_bound(&binary.right)
         },
         _ => false,
     }

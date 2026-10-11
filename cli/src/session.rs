@@ -394,10 +394,16 @@ impl CLISession {
             eprintln!("{} {}", "Instance:".cyan().bold(), instance.green().bold());
             eprintln!("{} {}", "Server:".cyan().bold(), self.server_url.green());
             eprintln!("{} {}", "User:".cyan().bold(), user.green().bold());
+            if let Some(namespace) = self.current_namespace_label_if_set() {
+                eprintln!("{} {}", "Namespace:".cyan().bold(), namespace.green().bold());
+            }
         } else {
             eprintln!("Instance: {}", instance);
             eprintln!("Server: {}", self.server_url);
             eprintln!("User: {}", user);
+            if let Some(namespace) = self.current_namespace_label_if_set() {
+                eprintln!("Namespace: {}", namespace);
+            }
         }
         eprintln!();
     }
@@ -483,10 +489,7 @@ impl CLISession {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use kalam_client::{
-        credentials::{CredentialStore, Credentials},
-        SeqId,
-    };
+    use kalam_client::credentials::{CredentialStore, Credentials};
     use ntest::timeout;
     use serde_json::json;
     use tempfile::TempDir;
@@ -842,7 +845,7 @@ mod tests {
         let options = options.expect("options should parse");
         assert_eq!(options.last_rows, Some(20));
         assert_eq!(options.batch_size, Some(5));
-        assert_eq!(options.from, Some(SeqId::from(42)));
+        assert_eq!(options.from, Some(kalam_client::VersionId::from(42)));
     }
 
     #[test]
@@ -854,7 +857,7 @@ mod tests {
         assert_eq!(sql, "SELECT * FROM table");
         let options = options.expect("options should parse");
         assert_eq!(options.batch_size, Some(10));
-        assert_eq!(options.from, Some(SeqId::from(99)));
+        assert_eq!(options.from, Some(kalam_client::VersionId::from(99)));
     }
 
     #[test]

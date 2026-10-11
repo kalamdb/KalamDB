@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   Auth,
   LogLevel,
-  SeqId,
+  VersionId,
   createClient,
 } from '../dist/src/index.js';
 import { KalamClient as WasmKalamClient } from '../dist/wasm/kalam_client.js';
@@ -145,7 +145,7 @@ function createRuntimeCoverageWasmClient({ failOnConcurrentQuery = false } = {})
     isReconnecting() {
       return reconnectAttempts > 0;
     },
-    getLastSeqId(subscriptionId) {
+    getLastVersionId(subscriptionId) {
       return subscriptions.find((sub) => sub.id === subscriptionId)?.lastSeqId;
     },
     getSubscriptions() {
@@ -390,7 +390,7 @@ test('liveEvents opens the low-level SQL event stream', async () => {
   const checkpoints = [];
   const unsub = await client.liveEvents('SELECT * FROM demo.logs', (event) => {
     seen.push(event.type);
-  }, { lastRows: 2, onCheckpoint: ({ lastSeqId }) => checkpoints.push(lastSeqId.toString()) });
+  }, { lastRows: 2, onCheckpoint: ({ lastVersionId }) => checkpoints.push(lastVersionId.toString()) });
 
   assert.equal(fakeWasmClient.subscribeCalls.length, 1);
   assert.deepEqual(JSON.parse(fakeWasmClient.subscribeCalls[0].optionsJson), {
@@ -424,7 +424,7 @@ test('liveTable delegates to live using SELECT * sugar', async () => {
     snapshots.push(rows.map((row) => row.id.asInt()));
   }, {
     lastRows: 5,
-    from: SeqId.from('10'),
+    from: VersionId.from('10'),
   });
 
   assert.equal(fakeWasmClient.liveSubscribeCalls[0].sql, 'SELECT * FROM demo.tasks');
@@ -454,7 +454,7 @@ test('live passes key columns through to Rust materialization', async () => {
   }, {
     getKey: ['room_id', 'message_id'],
     lastRows: 10,
-    onCheckpoint: ({ lastSeqId }) => checkpoints.push(lastSeqId.toString()),
+    onCheckpoint: ({ lastVersionId }) => checkpoints.push(lastVersionId.toString()),
   });
 
   assert.deepEqual(JSON.parse(fakeWasmClient.liveSubscribeCalls[0].optionsJson), {
