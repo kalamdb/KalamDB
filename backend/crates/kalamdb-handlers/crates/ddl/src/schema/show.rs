@@ -1,4 +1,4 @@
-//! Typed DDL handler for SHOW NAMESPACES statements
+//! Typed DDL handler for SHOW SCHEMAS statements
 
 use std::sync::Arc;
 
@@ -10,25 +10,25 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::ShowNamespacesStatement;
+use kalamdb_sql::ddl::ShowSchemasStatement;
 
 use crate::helpers::async_blocking::run_blocking;
 
-/// Typed handler for SHOW NAMESPACES statements
-pub struct ShowNamespacesHandler {
+/// Typed handler for SHOW SCHEMAS statements
+pub struct ShowSchemasHandler {
     app_context: Arc<AppContext>,
 }
 
-impl ShowNamespacesHandler {
+impl ShowSchemasHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
 }
 
-impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
+impl TypedStatementHandler<ShowSchemasStatement> for ShowSchemasHandler {
     async fn execute(
         &self,
-        _statement: ShowNamespacesStatement,
+        _statement: ShowSchemasStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
@@ -57,7 +57,7 @@ impl TypedStatementHandler<ShowNamespacesStatement> for ShowNamespacesHandler {
 
     async fn check_authorization(
         &self,
-        _statement: &ShowNamespacesStatement,
+        _statement: &ShowSchemasStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         if matches!(context.user_role(), kalamdb_commons::Role::User) {
@@ -90,10 +90,10 @@ mod tests {
     #[tokio::test]
     async fn test_show_namespaces_authorization() {
         let app_ctx = init_app_context();
-        let handler = ShowNamespacesHandler::new(app_ctx);
-        let stmt = ShowNamespacesStatement {};
+        let handler = ShowSchemasHandler::new(app_ctx);
+        let stmt = ShowSchemasStatement {};
 
-        // Elevated users can show namespaces
+        // Elevated users can show schemas
         let ctx = create_test_context();
         let result = handler.check_authorization(&stmt, &ctx).await;
 
@@ -108,8 +108,8 @@ mod tests {
     #[tokio::test]
     async fn test_show_namespaces_success() {
         let app_ctx = init_app_context();
-        let handler = ShowNamespacesHandler::new(app_ctx);
-        let stmt = ShowNamespacesStatement {};
+        let handler = ShowSchemasHandler::new(app_ctx);
+        let stmt = ShowSchemasStatement {};
         let ctx = create_test_context();
 
         let result = handler.execute(stmt, vec![], &ctx).await;

@@ -25,7 +25,7 @@ impl ChatFixture {
             self.messages_table
         ));
         let _ =
-            execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
+            execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", self.namespace));
     }
 }
 

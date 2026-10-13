@@ -1,6 +1,6 @@
 -- Namespace-local DML only in the active namespace.
 
-DROP NAMESPACE IF EXISTS sql_file_case_12 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_12 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_12;
 USE sql_file_case_12;
@@ -19,4 +19,4 @@ UPDATE case12_items SET state = 'updated-current' WHERE id = 1201;
 DELETE FROM case12_items WHERE id = 1202;
 INSERT INTO case12_items (id, label, state) VALUES (1202, 'reinsert-current', 'reinserted');
 
-DROP NAMESPACE IF EXISTS sql_file_case_12 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_12 CASCADE;

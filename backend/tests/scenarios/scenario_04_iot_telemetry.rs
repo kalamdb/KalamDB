@@ -267,7 +267,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     assert_eq!(post_flush_device, device_count, "Device count should be same after flush");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -368,7 +368,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -458,6 +458,6 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     println!("Projection scan of 100 rows took {:?}", projection_time);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

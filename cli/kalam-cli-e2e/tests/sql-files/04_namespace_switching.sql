@@ -1,7 +1,7 @@
 -- Multiple USE statements in one file to exercise per-statement namespace carry-over.
 
-DROP NAMESPACE IF EXISTS sql_file_case_04_a CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_04_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_04_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_04_b CASCADE;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_04_a;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_04_b;
 
@@ -25,5 +25,5 @@ INSERT INTO sql_file_case_04_b.items (id, name) VALUES (4202, 'second-b');
 CONSUME FROM item_events LIMIT 10;
 
 DROP TOPIC item_events;
-DROP NAMESPACE IF EXISTS sql_file_case_04_b CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_04_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_04_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_04_a CASCADE;

@@ -108,5 +108,5 @@ fn smoke_stream_table_subscription() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

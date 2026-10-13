@@ -121,7 +121,7 @@ after(async () => {
   await adminClient?.query(`DROP TOPIC IF EXISTS ${topicName}`).catch(() => {});
   await adminClient?.query(`DROP TABLE IF EXISTS ${processedTableName}`).catch(() => {});
   await adminClient?.query(`DROP TABLE IF EXISTS ${inboxTableName}`).catch(() => {});
-  await adminClient?.query(`DROP NAMESPACE IF EXISTS ${namespace}`).catch(() => {});
+  await adminClient?.query(`DROP SCHEMA IF EXISTS ${namespace}`).catch(() => {});
   await adminClient?.disconnect();
 });
 

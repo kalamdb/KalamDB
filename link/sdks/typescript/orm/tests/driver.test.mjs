@@ -112,7 +112,7 @@ describe('kalamDriver', () => {
     assert.ok(rows[0].id > 0, 'auto-generated id should be positive');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.items');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
 
@@ -142,7 +142,7 @@ describe('kalamDriver', () => {
     assert.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(rows[0].created_at), 'created_at should be ISO 8601 format');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_defaults');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('maps TIMESTAMP columns to Date when the schema uses date mode', async () => {
@@ -170,7 +170,7 @@ describe('kalamDriver', () => {
     assert.ok(!Number.isNaN(rows[0].created_at.getTime()));
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.date_defaults');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('INSERT with explicit id still works alongside DEFAULT columns', async () => {
@@ -195,7 +195,7 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].name, 'explicit');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.explicit_id');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles multi-row INSERT with server-side DEFAULT', async () => {
@@ -222,7 +222,7 @@ describe('kalamDriver', () => {
     assert.equal(ids.size, 3, 'each row should have a unique auto-generated id');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_row');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles UPDATE via Drizzle', async () => {
@@ -251,7 +251,7 @@ describe('kalamDriver', () => {
     assert.equal(after[0].status, 'published');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.updatable');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles DELETE via Drizzle', async () => {
@@ -279,7 +279,7 @@ describe('kalamDriver', () => {
     assert.equal(after[0].name, 'keep');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.deletable');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('preserves SNOWFLAKE_ID precision when using text type', async () => {
@@ -308,7 +308,7 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].id, rawId, 'id should match raw query exactly (no precision loss)');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.precision');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('throws when querying a non-existent table', async () => {
@@ -341,7 +341,7 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].doc, null);
 
     await client.query('DROP TABLE IF EXISTS test_orm.nullable_files');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('handles FILE column type with real data', async () => {
@@ -376,7 +376,7 @@ describe('kalamDriver', () => {
     assert.ok(rows[0].attachment.getDownloadUrl('http://localhost:8088', 'test_orm', 'docs').includes('/f0001/99999'));
 
     await client.query('DROP TABLE IF EXISTS test_orm.docs');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('uploads FILE bytes through db.insert with kalamFile()', async () => {
@@ -409,7 +409,7 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].attachment.name, 'driver-upload.txt');
 
     await client.query('DROP TABLE IF EXISTS test_orm.uploads');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('executes Drizzle builders via executeAsUser', async () => {
@@ -433,6 +433,6 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].name, 'executed-as-user');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 });

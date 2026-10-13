@@ -24,7 +24,7 @@ use crate::{
         CreateNamespaceStatement, CreateProcedureStatement, CreateSchemaStatement,
         CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, EnumValueNeighbor,
         GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement, TypeReference,
-        UseNamespaceStatement,
+        UseSchemaStatement,
     },
     split_statements,
 };
@@ -182,7 +182,7 @@ fn apply_statement(
         schemas.extend(search_path.iter().cloned());
         return Ok(());
     }
-    if let Ok(stmt) = UseNamespaceStatement::parse(sql) {
+    if let Ok(stmt) = UseSchemaStatement::parse(sql) {
         let schema = fold_ident(stmt.namespace.as_str());
         schemas.insert(schema.clone());
         *search_path = vec![schema];
@@ -961,12 +961,13 @@ fn resolve_snapshot(
     for type_id in kind_map.keys().cloned().collect::<Vec<_>>() {
         let mut visiting = Vec::new();
         let type_ref = TypeReference {
-            namespace_id: None,
-            name:         type_id.clone(),
-            data_type:    None,
-            is_array:     false,
-            not_null:     true,
-            nonempty:     false,
+            namespace_id:       None,
+            name:               type_id.clone(),
+            data_type:          None,
+            syntactic_modifier: None,
+            is_array:           false,
+            not_null:           true,
+            nonempty:           false,
         };
         let arrow = resolve_arrow_type(&type_ref, &kind_map, &mut visiting)?;
         if let Some(entry) = kind_map.get_mut(&type_id) {

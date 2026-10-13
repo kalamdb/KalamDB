@@ -1,6 +1,6 @@
 //! SQL statement handler implementations for KalamDB
 //!
-//! This crate contains all SQL handler implementations (CREATE TABLE, DROP NAMESPACE, etc.)
+//! This crate contains all SQL handler implementations (CREATE TABLE, DROP SCHEMA, etc.)
 //! and shared helpers used by those handlers. Extracting these from `kalamdb-core` enables
 //! parallel compilation, significantly reducing build times.
 //!

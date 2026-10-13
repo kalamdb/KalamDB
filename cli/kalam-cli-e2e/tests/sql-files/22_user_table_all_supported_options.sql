@@ -1,6 +1,6 @@
 -- USER table: create with supported options + alter table properties + DML lifecycle.
 
-DROP NAMESPACE IF EXISTS sql_file_case_22 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_22 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_22;
 USE sql_file_case_22;
@@ -48,4 +48,4 @@ ALTER TABLE case22_user_orders SET TBLPROPERTIES (
   COMPRESSION = 'snappy'
 );
 
-DROP NAMESPACE IF EXISTS sql_file_case_22 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_22 CASCADE;

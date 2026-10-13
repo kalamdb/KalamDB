@@ -292,9 +292,9 @@ pub(crate) fn is_contract_ddl(sql: &str) -> bool {
         || starts_ci(sql, "DROP TRIGGER")
         || starts_ci(sql, "ALTER TRIGGER")
         || starts_ci(sql, "SET SEARCH_PATH")
+        || starts_ci(sql, "SET SCHEMA")
         || starts_ci(sql, "SET NAMESPACE")
         || starts_ci(sql, "USE ")
-        || starts_ci(sql, "USE NAMESPACE")
 }
 
 fn starts_ci(sql: &str, prefix: &str) -> bool {

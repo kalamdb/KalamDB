@@ -160,7 +160,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   const handleDropNamespaceConfirm = (cascade: boolean) => {
     setShowDropNamespace(false);
     const droppedName = activeNamespace;
-    const sql = `DROP NAMESPACE ${droppedName}${cascade ? " CASCADE" : ""};`;
+    const sql = `DROP SCHEMA ${droppedName}${cascade ? " CASCADE" : ""};`;
     openSqlPreview({
       sql,
       title: `Drop namespace "${droppedName}"`,

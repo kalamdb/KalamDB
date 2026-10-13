@@ -235,7 +235,7 @@ async fn test_role_based_auth_e2e() {
     // Cleanup
     server
         .execute_sql_as_user(
-            &format!("DROP NAMESPACE {} CASCADE", namespace),
+            &format!("DROP SCHEMA {} CASCADE", namespace),
             dba_user.user_id.as_str(),
         )
         .await;

@@ -58,3 +58,21 @@ Document checks passed: local Markdown links, task references, task/requirement 
 - [ ] T121/T122 pass generated API/DX checks and integrated performance gates.
 
 This follow-up adds FR-160–FR-167 and T112–T122. Read-view/transfer examples are proposed APIs, not currently implemented features.
+
+## Routine follow-up gates — 2026-10-13
+
+- [ ] T125–T129 prove PostgreSQL names/quotes/type declarations, stable overload identity and explicit argument binding through production entry points, including negative cases.
+- [ ] T130–T135 prove SQL-to-V8 execution, language/runtime distinctions, result shapes, privileges/transactions and typed requests/replies without envelope serialization.
+- [ ] T136/T137 pass the PG differential and paired JS fixtures plus the disposable-project and explicit legacy migration journey.
+- [ ] T138 and T122 meet the measured copy/CPU/allocation/memory gates; compatible forwarding has zero intermediate request/reply envelopes.
+
+This follow-up adds FR-168–FR-176, SC-014 and T125–T138. Earlier completion marks do not substitute for these acceptance checks; details are in [routines-postgresql.md](../contracts/routines-postgresql.md).
+
+## CLI lifecycle follow-up gates — 2026-10-13
+
+- [ ] T139–T142 prove complete supported object diff coverage, shared parsing/resolution, dependency ordering, PostgreSQL emission and typed safety/manual outcomes.
+- [ ] T143–T147 prove target-specific applied baselines, migration concurrency/recovery, schema/artifact handoff, no lost watch edits and coherent generation/build publication.
+- [ ] T148–T150 preserve command/target ownership, readiness semantics, isolated JS execution and migration/deploy parity.
+- [ ] T151/T152 pass the real-server disposable project and failure matrix; T153 passes CLI idle/edit-loop resource and cleanup gates.
+
+This follow-up adds FR-177–FR-187, SC-015/SC-016 and T139–T153. See [cli-development.md](../contracts/cli-development.md); updating documents is not evidence that these runtime gates pass.

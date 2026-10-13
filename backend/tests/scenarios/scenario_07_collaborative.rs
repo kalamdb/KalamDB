@@ -279,7 +279,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     sub2.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -354,7 +354,7 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -421,6 +421,6 @@ async fn test_scenario_07_shared_document_policies() -> anyhow::Result<()> {
     assert!(resp.success(), "editor1 must read the updated shared doc");
     assert_eq!(resp.rows().len(), 1, "both collaborators must see the same document row");
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

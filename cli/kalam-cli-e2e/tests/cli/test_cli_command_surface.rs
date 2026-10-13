@@ -386,7 +386,7 @@ fn test_cli_export_import_shared_table_with_args_binary_style() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 #[test]
@@ -498,5 +498,5 @@ fn test_cli_export_import_user_table_with_all_args_binary_style() {
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_id));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

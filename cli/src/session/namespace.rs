@@ -29,6 +29,10 @@ impl CLISession {
             return None;
         }
 
+        if let Some(remainder) = Self::strip_ascii_prefix(trimmed, "SET SCHEMA") {
+            return Self::parse_namespace_identifier(remainder);
+        }
+
         if let Some(remainder) = Self::strip_ascii_prefix(trimmed, "USE NAMESPACE") {
             return Self::parse_namespace_identifier(remainder);
         }

@@ -103,7 +103,7 @@ fn test_update_row_with_null_columns_hot() {
     println!("✅ Test passed: UPDATE works on rows with NULL columns (hot storage)");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test UPDATE on rows with NULL values after FLUSH (cold storage)
@@ -209,7 +209,7 @@ fn test_update_row_with_null_columns_cold() {
     println!("✅ Test passed: UPDATE works on rows with NULL columns (cold storage)");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test UPDATE with no actual changes - should be a no-op (0 rows affected)
@@ -283,7 +283,7 @@ fn test_update_no_changes() {
     println!("✅ Test passed: No-op UPDATE correctly reports 0 rows affected");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test UPDATE multiple rows with mixed NULL values
@@ -361,5 +361,5 @@ fn test_update_multiple_rows_with_nulls() {
     println!("✅ Test passed: Multiple rows with NULL values can be updated");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

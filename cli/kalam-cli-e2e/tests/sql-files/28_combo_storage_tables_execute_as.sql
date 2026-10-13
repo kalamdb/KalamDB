@@ -2,8 +2,8 @@
 -- transactions, namespace switching, multi-source topics, and EXECUTE AS user.
 
 DROP USER IF EXISTS 'case28_user';
-DROP NAMESPACE IF EXISTS sql_file_case_28_a CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_28_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_28_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_28_b CASCADE;
 DROP STORAGE IF EXISTS case28_storage;
 
 CREATE STORAGE case28_storage
@@ -167,7 +167,7 @@ ALTER USER 'case28_user' SET STORAGE_ID NULL;
 CONSUME FROM case28_topic LIMIT 50;
 
 DROP TOPIC case28_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_28_b CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_28_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_28_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_28_a CASCADE;
 DROP USER IF EXISTS 'case28_user';
 DROP STORAGE case28_storage;

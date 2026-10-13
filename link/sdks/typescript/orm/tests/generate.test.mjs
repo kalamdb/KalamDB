@@ -24,7 +24,7 @@ after(async () => {
   await client.query('DROP TABLE IF EXISTS test_gen.uploads');
   await client.query('DROP TABLE IF EXISTS test_gen.with_defaults');
   await client.query('DROP TABLE IF EXISTS test_gen.with_literal_default');
-  await client.query('DROP NAMESPACE IF EXISTS test_gen');
+  await client.query('DROP SCHEMA IF EXISTS test_gen');
   await client?.disconnect();
 });
 

@@ -130,3 +130,15 @@ The APIs the plan names are present on those resolved crates:
 - sqlparser 0.62.0 feature `derive-dialect` exports `derive_dialect!`, including `preserve_type_id = true`.
 - DataFusion 55.2.0 `SessionState::statement_to_plan` takes one `Statement` and returns a logical plan.
 - arrow-array 59.2.0 `GenericByteViewBuilder` has `append_block` and `try_append_view`.
+
+## Routine surface review — 2026-10-13
+
+Current source based on `9cf03307` still has bespoke type/procedure parsing, lowercased name-only routine identities and JSON named-input packing. The PG18 documentation confirms the needed split between function returns and procedure output arguments, signature identity, quoted names and context-specific typmods. Full evidence and sources are in [routines-postgresql.md](contracts/routines-postgresql.md) and [review.md](review.md).
+
+Decision: preserve PostgreSQL public DDL/call semantics while selecting V8 for declared JS/TS languages. Bind once into typed slots; forward native owners and typed replies without invocation-envelope serialization. New JS objects convert directly once, and ordinary wire/storage codecs remain. This supplements the existing V8 design instead of adding a serializer, parser or registry. T125–T138 cover the remaining implementation and verification; this review ran no runtime or performance experiment.
+
+## CLI schema diff and lifecycle review — 2026-10-13
+
+Current code based on `9cf03307` has schema diffing and dev lifecycle orchestration, but uses structural and contract parsers/emitters independently. Types/routines are appended after table SQL, some PG declarations fall through unhandled, generated modifications retain non-PG syntax, and constraints can become advisory comments. Baselines, watch stamps, artifact generation and activation are not all bound to one captured revision. Source evidence is recorded in [review.md](review.md).
+
+Decision: extend existing owners with one project snapshot, a typed dependency/risk operation graph and explicit committed-state receipts. Preflight generation/build before effects; publish executables against the committed schema/ABI and expose partial-stage recovery. Preserve 035 command ownership while making file/directory watching, isolated exec and fresh-clone replay use the same contracts. The PG dependency/enum/index references in [cli-development.md](contracts/cli-development.md) determine legal ordering and transaction phases. T139–T153 add implementation and real-server/performance gates; no runtime experiment was run here.

@@ -575,6 +575,6 @@ async fn test_chat_app_endurance_with_100_parallel_users() -> Result<()> {
     );
     assert_eq!(error_count, 0, "endurance workload recorded backend errors");
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
     Ok(())
 }

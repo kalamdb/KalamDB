@@ -40,7 +40,7 @@ fn cluster_test_system_tables_replication() {
     let namespace = generate_unique_namespace("sys_tbl_repl");
 
     // Setup: Create namespace and tables on first node
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -126,7 +126,7 @@ fn cluster_test_system_tables_replication() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ system.schemas is identical across all nodes\n");
 }
@@ -147,7 +147,7 @@ fn cluster_test_system_namespaces_replication() {
     let namespaces: Vec<String> = (0..5).map(|i| format!("{}_{}", base_ns, i)).collect();
 
     for ns in &namespaces {
-        let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+        let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
     }
 
     for ns in &namespaces {
@@ -192,7 +192,7 @@ fn cluster_test_system_namespaces_replication() {
 
     // Cleanup
     for ns in namespaces.iter().rev() {
-        let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", ns));
+        let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", ns));
     }
 
     println!("\n  ✅ system.namespaces is identical across all nodes\n");
@@ -211,7 +211,7 @@ fn cluster_test_system_users_replication() {
     let namespace = generate_unique_namespace("usr_repl");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -254,7 +254,7 @@ fn cluster_test_system_users_replication() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ system.users is identical across all nodes\n");
 }
@@ -326,7 +326,7 @@ fn cluster_test_alter_table_replication() {
     let namespace = generate_unique_namespace("alter_repl");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -387,7 +387,7 @@ fn cluster_test_alter_table_replication() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ ALTER TABLE replicated to all nodes\n");
 }
@@ -405,7 +405,7 @@ fn cluster_test_drop_replication() {
     let namespace = generate_unique_namespace("drop_repl");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -470,7 +470,7 @@ fn cluster_test_drop_replication() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ DROP operation replicated to all nodes\n");
 }

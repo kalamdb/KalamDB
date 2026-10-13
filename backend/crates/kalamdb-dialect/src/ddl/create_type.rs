@@ -12,13 +12,18 @@ use crate::ddl::{
 /// SQL type reference used in composite fields and signatures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeReference {
-    pub namespace_id: Option<NamespaceId>,
-    pub name:         String,
+    pub namespace_id:       Option<NamespaceId>,
+    pub name:               String,
     /// Parsed builtin, including `DECIMAL(p,s)` / `EMBEDDING(n)` parameters.
-    pub data_type:    Option<KalamDataType>,
-    pub is_array:     bool,
-    pub not_null:     bool,
-    pub nonempty:     bool,
+    pub data_type:          Option<KalamDataType>,
+    /// Parenthesized modifier text from the AST, such as `12,2` or `10`.
+    ///
+    /// Composite attributes keep this. Function and procedure signatures discard
+    /// it when computing the effective type.
+    pub syntactic_modifier: Option<String>,
+    pub is_array:           bool,
+    pub not_null:           bool,
+    pub nonempty:           bool,
 }
 
 impl TypeReference {
@@ -33,6 +38,30 @@ impl TypeReference {
             None
         } else {
             Some((self.namespace_id.clone().unwrap_or_else(|| current.clone()), self.name.clone()))
+        }
+    }
+
+    /// Effective function or procedure argument type.
+    ///
+    /// PostgreSQL `CREATE FUNCTION` discards parenthesized type modifiers, so
+    /// `numeric(12,2)` and `numeric(4,1)` are the same signature type. The
+    /// parsed [`Self::syntactic_modifier`] stays on the original AST. Bare
+    /// `numeric` still uses the existing decimal128 default; that is not
+    /// unconstrained numeric.
+    pub fn function_signature_type(&self) -> Self {
+        let data_type = if self.namespace_id.is_none() {
+            KalamDataType::from_sql_name(&self.name)
+        } else {
+            None
+        };
+        Self {
+            namespace_id: self.namespace_id.clone(),
+            name: self.name.clone(),
+            data_type,
+            syntactic_modifier: None,
+            is_array: self.is_array,
+            not_null: self.not_null,
+            nonempty: self.nonempty,
         }
     }
 
@@ -354,11 +383,20 @@ pub(crate) fn parse_type_reference(input: &str) -> DdlResult<(TypeReference, &st
     } else {
         None
     };
+    let syntactic_modifier = params.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    });
     Ok((
         TypeReference {
             namespace_id: qual.namespace_id,
             name: qual.name,
             data_type,
+            syntactic_modifier,
             is_array,
             not_null: false,
             nonempty: false,

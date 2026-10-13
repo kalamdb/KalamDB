@@ -1,4 +1,4 @@
-//! USE NAMESPACE handler
+//! SET SCHEMA handler
 //!
 //! This handler sets the default schema for unqualified table names for the
 //! current request or multi-statement batch using DataFusion's native
@@ -19,29 +19,29 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::UseNamespaceStatement;
+use kalamdb_sql::ddl::UseSchemaStatement;
 
 use crate::helpers::async_blocking::run_blocking;
 
-/// Handler for USE NAMESPACE / USE / SET NAMESPACE statements
+/// Handler for SET SCHEMA / USE statements
 ///
 /// Uses DataFusion's native `datafusion.catalog.default_schema` configuration
 /// to change the default schema for the current request or multi-statement
 /// batch. This is not a long-lived backend connection session.
-pub struct UseNamespaceHandler {
+pub struct UseSchemaHandler {
     app_context: Arc<AppContext>,
 }
 
-impl UseNamespaceHandler {
+impl UseSchemaHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
 }
 
-impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
+impl TypedStatementHandler<UseSchemaStatement> for UseSchemaHandler {
     async fn execute(
         &self,
-        statement: UseNamespaceStatement,
+        statement: UseSchemaStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
@@ -82,7 +82,7 @@ impl TypedStatementHandler<UseNamespaceStatement> for UseNamespaceHandler {
 
     async fn check_authorization(
         &self,
-        _statement: &UseNamespaceStatement,
+        _statement: &UseSchemaStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         if matches!(context.user_role(), kalamdb_commons::Role::User) {
@@ -109,10 +109,10 @@ mod tests {
     #[tokio::test]
     async fn test_use_namespace_not_found() {
         let app_ctx = test_app_context_simple();
-        let handler = UseNamespaceHandler::new(app_ctx);
+        let handler = UseSchemaHandler::new(app_ctx);
         let ctx = test_context();
 
-        let stmt = UseNamespaceStatement {
+        let stmt = UseSchemaStatement {
             namespace: kalamdb_commons::models::NamespaceId::new("nonexistent"),
         };
 

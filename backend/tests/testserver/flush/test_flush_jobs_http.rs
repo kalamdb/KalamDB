@@ -51,6 +51,6 @@ async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
         sleep(Duration::from_millis(50)).await;
     }
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {}", ns)).await;
     Ok(())
 }

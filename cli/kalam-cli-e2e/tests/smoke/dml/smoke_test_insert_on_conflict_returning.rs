@@ -60,7 +60,7 @@ impl UsersFixture {
 
     fn drop(&self) {
         let _ = execute_sql_as_root_via_client(&format!(
-            "DROP NAMESPACE IF EXISTS {} CASCADE",
+            "DROP SCHEMA IF EXISTS {} CASCADE",
             self.namespace
         ));
     }

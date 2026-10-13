@@ -18,12 +18,12 @@ use crate::ddl::DdlResult;
 /// After executing `USE namespace1`, a query like `SELECT * FROM users` will
 /// resolve to `kalam.namespace1.users`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UseNamespaceStatement {
+pub struct UseSchemaStatement {
     /// Namespace name to switch to
     pub namespace: NamespaceId,
 }
 
-impl UseNamespaceStatement {
+impl UseSchemaStatement {
     /// Parse a USE NAMESPACE statement from SQL
     ///
     /// Supports syntax:
@@ -35,16 +35,13 @@ impl UseNamespaceStatement {
         let words: Vec<&str> = sql.split_whitespace().collect();
 
         // Match patterns: USE <name>, USE NAMESPACE <name>, SET NAMESPACE <name>
-        let namespace_name = if sql_upper.starts_with("USE NAMESPACE") {
-            // USE NAMESPACE namespace_name
+        let namespace_name = if sql_upper.starts_with("SET SCHEMA")
+            || sql_upper.starts_with("SET NAMESPACE")
+            || sql_upper.starts_with("USE SCHEMA")
+            || sql_upper.starts_with("USE NAMESPACE")
+        {
             if words.len() < 3 {
-                return Err("USE NAMESPACE requires a namespace name".to_string());
-            }
-            words[2]
-        } else if sql_upper.starts_with("SET NAMESPACE") {
-            // SET NAMESPACE namespace_name
-            if words.len() < 3 {
-                return Err("SET NAMESPACE requires a namespace name".to_string());
+                return Err("SET SCHEMA requires a schema name".to_string());
             }
             words[2]
         } else if sql_upper.starts_with("USE ") {
@@ -74,7 +71,7 @@ impl UseNamespaceStatement {
 }
 
 // Implement DdlAst marker trait
-impl crate::DdlAst for UseNamespaceStatement {}
+impl crate::DdlAst for UseSchemaStatement {}
 
 #[cfg(test)]
 mod tests {
@@ -82,37 +79,43 @@ mod tests {
 
     #[test]
     fn test_parse_use_namespace() {
-        let stmt = UseNamespaceStatement::parse("USE NAMESPACE myapp").unwrap();
+        let stmt = UseSchemaStatement::parse("USE NAMESPACE myapp").unwrap();
         assert_eq!(stmt.namespace.as_str(), "myapp");
     }
 
     #[test]
     fn test_parse_use_shorthand() {
-        let stmt = UseNamespaceStatement::parse("USE myapp").unwrap();
+        let stmt = UseSchemaStatement::parse("USE myapp").unwrap();
         assert_eq!(stmt.namespace.as_str(), "myapp");
     }
 
     #[test]
     fn test_parse_set_namespace() {
-        let stmt = UseNamespaceStatement::parse("SET NAMESPACE production").unwrap();
+        let stmt = UseSchemaStatement::parse("SET NAMESPACE production").unwrap();
+        assert_eq!(stmt.namespace.as_str(), "production");
+    }
+
+    #[test]
+    fn test_parse_set_schema() {
+        let stmt = UseSchemaStatement::parse("SET SCHEMA production").unwrap();
         assert_eq!(stmt.namespace.as_str(), "production");
     }
 
     #[test]
     fn test_parse_lowercase() {
-        let stmt = UseNamespaceStatement::parse("use namespace myapp").unwrap();
+        let stmt = UseSchemaStatement::parse("use namespace myapp").unwrap();
         assert_eq!(stmt.namespace.as_str(), "myapp");
     }
 
     #[test]
     fn test_parse_quoted() {
-        let stmt = UseNamespaceStatement::parse("USE 'my_app'").unwrap();
+        let stmt = UseSchemaStatement::parse("USE 'my_app'").unwrap();
         assert_eq!(stmt.namespace.as_str(), "my_app");
     }
 
     #[test]
     fn test_parse_missing_name() {
-        let result = UseNamespaceStatement::parse("USE NAMESPACE");
+        let result = UseSchemaStatement::parse("USE NAMESPACE");
         assert!(result.is_err());
     }
 }

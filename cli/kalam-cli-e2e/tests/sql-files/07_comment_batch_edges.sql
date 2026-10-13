@@ -1,6 +1,6 @@
 -- Stress comments, literals, and namespace-local DML in one script.
 
-DROP NAMESPACE IF EXISTS sql_file_case_07 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_07 CASCADE;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_07;
 USE sql_file_case_07;
 
@@ -25,4 +25,4 @@ VALUES
 CONSUME FROM snippet_events LIMIT 10;
 
 DROP TOPIC snippet_events;
-DROP NAMESPACE IF EXISTS sql_file_case_07 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_07 CASCADE;

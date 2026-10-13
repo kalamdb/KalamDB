@@ -208,7 +208,7 @@ async fn test_scenario_09_ddl_while_active() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -303,7 +303,7 @@ async fn test_scenario_09_drop_column() -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -388,6 +388,6 @@ async fn test_scenario_09_concurrent_reads_during_ddl() -> anyhow::Result<()> {
     assert!(read_count >= 8, "Most reads should succeed during DDL, got {}", read_count);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

@@ -374,7 +374,7 @@ impl UnifiedApplier for RaftApplier {
 
     async fn drop_namespace(&self, namespace_id: SchemaId) -> Result<String, ApplierError> {
         let cmd = MetaCommand::DeleteNamespace { namespace_id };
-        self.propose_meta(cmd, "DROP NAMESPACE").await
+        self.propose_meta(cmd, "DROP SCHEMA").await
     }
 
     // =========================================================================

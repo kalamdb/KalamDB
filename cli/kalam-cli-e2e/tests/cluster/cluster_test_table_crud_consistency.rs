@@ -103,7 +103,7 @@ fn cluster_test_table_crud_consistency() {
     let test_user = format!("crud_user_{}", namespace);
     let user_password = "test_password_123";
 
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -211,7 +211,7 @@ fn cluster_test_table_crud_consistency() {
     );
 
     let _ = execute_on_node(&urls[0], &format!("DROP USER IF EXISTS {}", test_user));
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ CRUD results match across all nodes for all table types\n");
 }

@@ -49,3 +49,25 @@ Temporary v1 decoders and integration adapters close only at their named compati
 | Millisecond timestamp lowering and permissive narrowing on the new ABI | Lossless descriptor-driven mappings and checked conversion | open | T113/T118; legacy migration explicit |
 
 No cleanup task can replace immutable Arrow data with writable shared V8 storage or remove memory/permission checks to achieve a copy count.
+
+## Routine follow-up cleanup obligations — 2026-10-13
+
+| Old path | Replacement | Status | Notes |
+| --- | --- | --- | --- |
+| Language-word routine dispatch and DDL name/body string splitters | Shared PostgreSQL token/AST path | open | T125/T128; keep only explicitly versioned legacy syntax adapters |
+| Lowercased name-only RoutineId keys and dot-split qualified names | Stable identity plus quoted-aware overload lookup | open | T126/T135; durable migration and artifact/grant consumers precede removal |
+| Named-input object-key guessing and request/reply JSON envelopes | Explicit binding form, typed native request/reply owners/errors | open | T129/T133/T138; new ABI first, old adapter has one removal milestone |
+| Canonical PROCEDURE RETURNS and implicit CALL-return expectations | Functions with SELECT, or procedures with OUT/INOUT | open | T128/T137; inventory and migrate stored and generated callers explicitly |
+| Signature metadata duplicated in generated JS and runtime mappings | One revision-pinned call descriptor and generated declarations | open | T134/T135/T137; quoted names and unnamed parameters included |
+
+## CLI development cleanup obligations — 2026-10-13
+
+| Old path | Replacement | Status | Notes |
+| --- | --- | --- | --- |
+| Independent structural/contract parsing and string rewrites in schema diff | Shared project AST/snapshot and canonical resolver | open | T139; no additional live type registry |
+| Concatenated emitters, MODIFY COLUMN, PROCEDURE RETURNS, unsafe type recreation and comment-only unsupported diffs | Typed dependency/risk plan and PostgreSQL emitters | open | T140–T142; preserve explicit legacy migration adapters only |
+| Raw-line destructive/section-marker scans | Shared AST/lexer-aware boundaries | open | T142/T144; quoted body text cannot become a destructive operation or marker |
+| Current-source baseline copying and filename-only missing-baseline seeding | Target-scoped committed revision receipts | open | T143; retain readers for old baseline metadata through a versioned migration |
+| Maximum-mtime watch acknowledgement and generated-output rescans | Bounded input revisions/event tracking and pending-stage retry | open | T146/T153 |
+| Repeated generation/artifact/manifest compilation and mixed-revision writes | One staged snapshot with coherent publication/fingerprints | open | T145/T147; never prune user-written handler files |
+| Monolithic success labels and migration-only isolated exec | Stage-specific evidence and shared required preparation | open | T149/T150; old agent event compatibility remains explicit |

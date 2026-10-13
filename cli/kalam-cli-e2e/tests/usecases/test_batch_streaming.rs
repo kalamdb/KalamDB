@@ -233,7 +233,7 @@ fn test_websocket_batch_streaming_rows() {
     if let Err(e) = cleanup_test_table(&table_name) {
         eprintln!("⚠️  Cleanup warning: {}", e);
     }
-    if let Err(e) = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {}", namespace)) {
+    if let Err(e) = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {}", namespace)) {
         eprintln!("⚠️  Namespace cleanup warning: {}", e);
     }
 

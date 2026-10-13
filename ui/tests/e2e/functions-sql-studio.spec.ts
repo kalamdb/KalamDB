@@ -276,6 +276,6 @@ test("SQL Studio deploys a typed booking function and Test UI can invoke it", as
     });
   } finally {
     await openSqlStudio(page).catch(() => undefined);
-    await runSql(page, `DROP NAMESPACE IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
+    await runSql(page, `DROP SCHEMA IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
   }
 });

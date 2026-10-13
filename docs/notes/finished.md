@@ -56,7 +56,7 @@ This file contains both the original completed items from the old notes file and
      - Added ANONYMOUS_USER_ID constant to constants.rs
      - Added ExecutionContext::is_anonymous() method
      - Added block_anonymous_write() guard function in guards.rs
-     - Integrated into all DDL handlers: CREATE/ALTER/DROP TABLE, CREATE/ALTER/DROP NAMESPACE
+     - Integrated into all DDL handlers: CREATE/ALTER/DROP TABLE, CREATE/ALTER/DROP SCHEMA
      - Integrated into all DML handlers: INSERT, UPDATE, DELETE
      - Anonymous users can only SELECT from public tables
 

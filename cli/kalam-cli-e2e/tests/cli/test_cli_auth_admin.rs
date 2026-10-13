@@ -40,7 +40,7 @@ async fn test_root_can_create_namespace() {
 
     // Clean up any existing namespace (just in case)
     let _ = execute_sql_via_http_as_root(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ))
     .await;
@@ -98,7 +98,7 @@ async fn test_root_can_create_namespace() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test that root user can create and drop tables
@@ -143,7 +143,7 @@ async fn test_root_can_create_drop_tables() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test CREATE NAMESPACE via CLI with root authentication
@@ -161,13 +161,13 @@ async fn test_cli_create_namespace_as_root() {
 
     // Clean up any existing namespace
     let drop_result =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE IF EXISTS {}", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA IF EXISTS {}", namespace_name)).await;
     if let Err(e) = &drop_result {
-        eprintln!("DROP NAMESPACE failed: {:?}", e);
+        eprintln!("DROP SCHEMA failed: {:?}", e);
     }
     if let Ok(result) = &drop_result {
         if result["status"] != "success" {
-            eprintln!("DROP NAMESPACE returned non-success: {:?}", result);
+            eprintln!("DROP SCHEMA returned non-success: {:?}", result);
         }
     }
 
@@ -187,7 +187,7 @@ async fn test_cli_create_namespace_as_root() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test that non-admin users cannot create namespaces
@@ -276,7 +276,7 @@ async fn test_cli_admin_operations() {
     // Clean up with retry to handle propagation delays in cluster
     for _ in 0..3 {
         let _ = execute_sql_via_http_as_root(&format!(
-            "DROP NAMESPACE IF EXISTS {} CASCADE",
+            "DROP SCHEMA IF EXISTS {} CASCADE",
             namespace_name
         ))
         .await;
@@ -317,10 +317,10 @@ async fn test_cli_admin_operations() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
-/// Test SHOW NAMESPACES command
+/// Test SHOW SCHEMAS command
 #[tokio::test]
 async fn test_cli_show_namespaces() {
     let _guard = admin_cli_test_mutex().lock().await;
@@ -330,13 +330,13 @@ async fn test_cli_show_namespaces() {
         return;
     }
 
-    let stdout = execute_sql_as_root_via_cli("SHOW NAMESPACES")
-        .expect("SHOW NAMESPACES command should succeed");
+    let stdout = execute_sql_as_root_via_cli("SHOW SCHEMAS")
+        .expect("SHOW SCHEMAS command should succeed");
 
     // Should show table format with column headers
     assert!(
         stdout.contains("name") || stdout.contains("namespace"),
-        "SHOW NAMESPACES should display namespace names: {}",
+        "SHOW SCHEMAS should display namespace names: {}",
         stdout
     );
 }
@@ -356,7 +356,7 @@ async fn test_cli_flush_table() {
 
     // Setup: Create namespace and user table
     let _ = execute_sql_via_http_as_root(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ))
     .await;
@@ -552,7 +552,7 @@ async fn test_cli_flush_table() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test STORAGE FLUSH ALL command via CLI
@@ -570,7 +570,7 @@ async fn test_cli_flush_all_tables() {
 
     // Setup: Create namespace with multiple tables
     let _ = execute_sql_via_http_as_root(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ))
     .await;
@@ -780,5 +780,5 @@ async fn test_cli_flush_all_tables() {
 
     // Cleanup
     let _ =
-        execute_sql_via_http_as_root(&format!("DROP NAMESPACE {} CASCADE", namespace_name)).await;
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }

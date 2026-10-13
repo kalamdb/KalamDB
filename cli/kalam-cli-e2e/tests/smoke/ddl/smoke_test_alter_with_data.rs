@@ -35,7 +35,7 @@ fn smoke_test_alter_table_with_data_verification() {
     // ========================================================================
     println!("\n📋 Phase 1: Create table with initial data");
 
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace))
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace))
         .expect("Failed to drop namespace");
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
@@ -292,7 +292,7 @@ fn smoke_test_alter_table_with_data_verification() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================

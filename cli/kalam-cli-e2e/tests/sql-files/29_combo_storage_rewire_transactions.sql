@@ -1,8 +1,8 @@
 -- Combo coverage focused on storage rewiring, transactions, wide schema, and multi-source topics.
 
 DROP USER IF EXISTS 'case29_user';
-DROP NAMESPACE IF EXISTS sql_file_case_29_a CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_29_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_29_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_29_b CASCADE;
 DROP STORAGE IF EXISTS case29_storage_b;
 DROP STORAGE IF EXISTS case29_storage_a;
 
@@ -161,8 +161,8 @@ ALTER USER 'case29_user' SET STORAGE_ID NULL;
 CONSUME FROM case29_topic LIMIT 50;
 
 DROP TOPIC case29_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_29_b CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_29_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_29_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_29_a CASCADE;
 DROP USER IF EXISTS 'case29_user';
 DROP STORAGE case29_storage_b;
 DROP STORAGE case29_storage_a;

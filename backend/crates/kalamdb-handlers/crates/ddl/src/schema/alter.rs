@@ -1,4 +1,4 @@
-//! Typed DDL handler for ALTER NAMESPACE statements
+//! Typed DDL handler for ALTER SCHEMA statements
 
 use std::sync::Arc;
 
@@ -11,25 +11,25 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::AlterNamespaceStatement;
+use kalamdb_sql::ddl::AlterSchemaStatement;
 
 use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
 
-/// Typed handler for ALTER NAMESPACE statements
-pub struct AlterNamespaceHandler {
+/// Typed handler for ALTER SCHEMA statements
+pub struct AlterSchemaHandler {
     app_context: Arc<AppContext>,
 }
 
-impl AlterNamespaceHandler {
+impl AlterSchemaHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
 }
 
-impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
+impl TypedStatementHandler<AlterSchemaStatement> for AlterSchemaHandler {
     async fn execute(
         &self,
-        statement: AlterNamespaceStatement,
+        statement: AlterSchemaStatement,
         _params: Vec<ScalarValue>,
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
@@ -85,15 +85,15 @@ impl TypedStatementHandler<AlterNamespaceStatement> for AlterNamespaceHandler {
 
     async fn check_authorization(
         &self,
-        _statement: &AlterNamespaceStatement,
+        _statement: &AlterSchemaStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         use crate::helpers::guards::block_anonymous_write;
 
         // T050: Block anonymous users from DDL operations
-        block_anonymous_write(context, "ALTER NAMESPACE")?;
+        block_anonymous_write(context, "ALTER SCHEMA")?;
 
-        require_admin(context, "alter namespace")
+        require_admin(context, "alter schema")
     }
 }
 
@@ -117,8 +117,8 @@ mod tests {
     #[tokio::test]
     async fn test_alter_namespace_authorization() {
         let app_ctx = init_app_context();
-        let handler = AlterNamespaceHandler::new(app_ctx);
-        let stmt = AlterNamespaceStatement {
+        let handler = AlterSchemaHandler::new(app_ctx);
+        let stmt = AlterSchemaStatement {
             name:    NamespaceId::new("test"),
             options: std::collections::HashMap::new(),
         };
@@ -135,11 +135,11 @@ mod tests {
     #[tokio::test]
     async fn test_alter_namespace_success() {
         let app_ctx = init_app_context();
-        let handler = AlterNamespaceHandler::new(app_ctx);
+        let handler = AlterSchemaHandler::new(app_ctx);
         let mut options = std::collections::HashMap::new();
         options.insert("max_tables".to_string(), serde_json::json!(100));
 
-        let stmt = AlterNamespaceStatement {
+        let stmt = AlterSchemaStatement {
             name: NamespaceId::new("test_namespace"),
             options,
         };

@@ -225,7 +225,7 @@ fn smoke_test_00_parallel_query_burst() {
     );
 
     // Cleanup to avoid leaving state behind on the running server.
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n=== Parallel Query Burst Smoke Test Complete ===\n");
 }

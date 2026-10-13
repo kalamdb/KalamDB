@@ -931,15 +931,15 @@ mod tests {
     #[test]
     fn test_parse_namespace_switch_statements() {
         assert_eq!(
-            CLISession::parse_namespace_switch("USE NAMESPACE chat;"),
+            CLISession::parse_namespace_switch("SET SCHEMA chat;"),
             Some(kalamdb_commons::SchemaId::new("chat"))
         );
-        assert_eq!(CLISession::parse_namespace_switch("SET NAMESPACE \"team chat\""), None);
+        assert_eq!(CLISession::parse_namespace_switch("SET SCHEMA \"team chat\""), None);
         assert_eq!(
             CLISession::parse_namespace_switch("USE billing"),
             Some(kalamdb_commons::SchemaId::new("billing"))
         );
-        assert_eq!(CLISession::parse_namespace_switch("USE NAMESPACE chat; SELECT 1"), None);
+        assert_eq!(CLISession::parse_namespace_switch("SET SCHEMA chat; SELECT 1"), None);
         assert_eq!(
             CLISession::parse_namespace_switch(
                 "-- setup namespace\n/* next */\nUSE NAMESPACE batch_case;"
@@ -1003,9 +1003,9 @@ mod tests {
         .expect("session should initialize");
 
         session
-            .execute_input("USE NAMESPACE chat;")
+            .execute_input("SET SCHEMA chat;")
             .await
-            .expect("use namespace should succeed");
+            .expect("set schema should succeed");
         session
             .execute_input("SELECT * FROM messages;")
             .await

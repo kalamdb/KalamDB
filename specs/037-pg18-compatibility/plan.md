@@ -6,6 +6,10 @@
 
 **Second review**: [review.md](review.md), 2026-10-11. Design corrections are incorporated below and in the contracts. Implementation and performance remain unverified.
 
+**Routine follow-up**: 2026-10-13. [routines-postgresql.md](contracts/routines-postgresql.md) closes design gaps in type/routine syntax, quoting, overload identity and the in-memory JS call boundary. T125–T138 supplement the existing tasks; completed parser/schema tasks do not establish these cases.
+
+**CLI lifecycle follow-up**: 2026-10-13. [cli-development.md](contracts/cli-development.md) adds complete schema/type/routine diff coverage and a coherent `kalam dev` lifecycle. T139–T153 cover source snapshots, ordered migrations, target-specific baselines, staged V8 activation, watch/recovery and real-project evidence; general SDK or smoke tasks do not close these cases.
+
 ## Summary
 
 Make KalamDB 0.8 compatible with PostgreSQL 18 for the ordinary developer journey: one PostgreSQL grammar, schemas instead of namespaces, one logical type model, matching execution and transactions, truthful catalogs, standard clients, and a checked migration path. Full compatibility is the goal. A gap stays incompatible until an explicit product decision says otherwise.
@@ -61,6 +65,8 @@ specs/037-pg18-compatibility/
 │   ├── schema-migration.md
 │   ├── type-system.md
 │   ├── functions-v8.md
+│   ├── routines-postgresql.md
+│   ├── cli-development.md
 │   ├── execution-performance.md
 │   ├── row-storage.md
 │   ├── cleanup-and-rewrite.md
@@ -185,6 +191,14 @@ Reuse native Arrow cell/batch owners instead of rebuilding per-row scalar arrays
 
 Bound native, managed and external memory together, including async queues, results and retained views. T116/T120 lifecycle checks precede enabling fast paths; T118 covers type fidelity, T119 stream backpressure, T121 generated TypeScript/docs, and T122 measured CPU/allocation/copy/memory gates. Extend existing runtime and cache owners; do not add a second serializer/type registry or route SQL/plpgsql through V8.
 
+### Phase D3 — PostgreSQL routine surface and typed calls
+
+Implement [routines-postgresql.md](contracts/routines-postgresql.md) through the shared AST and existing type/routine owners. JS/TS functions use ordinary PostgreSQL function signatures and SELECT/expression calls; JS/TS procedures use CALL and output parameters. Their declared language selects V8. SQL/PLpgSQL semantics remain independently required by T110. No SDK-specific invocation wrapper is required from SQL.
+
+T125/T127 extend lexer/type tests to the actual classifier and handlers, including quoted names, tagged bodies, empty/Unicode enum labels and table row types. T126 defines stable routine identity and overload keys before T128 migrates DDL/catalog consumers. Correct pending T043 to discard function typmods. T129 binds defaults, modes, named/positional arguments and composite values explicitly. T130 proves DataFusion expression/set/table invocation with bounded async V8 execution; T131/T132 enforce attributes, transactions and language lifecycle. No return-value cache may change volatile behavior.
+
+T133/T134 refine T113–T119 with explicit binding forms and typed request/reply messages. Remove JSON packing and shape heuristics from the new ABI in both directions. Compatible Arrow views reuse owners; ordinary guest objects convert directly once. T135/T137 migrate catalog/artifact/SDK consumers, preserving identity, quoting and existing grants. T136 supplies PG differential and paired JS fixtures; T138 supplies zero-intermediate-envelope and copy-count evidence alongside T122. These tasks gate routine acceptance even where earlier parser tasks are checked off; they do not depend on enabling the new disk format.
+
 ### Phase E — G4, execution and transactions (#394)
 
 Implement against completed type families. Differential fixtures compare results, types, SQLSTATE, permissions, and commit or rollback with PostgreSQL 18. Do not weaken VersionId or shared-table shard ownership. Record the cross-group transaction boundary as a gap owned with #359 and #391, not as a compatibility pass. G4 requires the full failure/concurrency matrix in [contracts/execution-performance.md](contracts/execution-performance.md), including savepoints, snapshot rules, atomic writes, DDL, retry ambiguity and live-event visibility. One rollback and one concurrent write are preliminary smoke checks only.
@@ -204,6 +218,14 @@ Migration compares typed contents, constraints, indexes and sequence state, not 
 ### Phase H — Final verification and release (#397, #398)
 
 Full regression, deletion review against the cleanup ledger, performance budgets, function-value and V8 evidence for SC-012 and SC-013, and the unchanged ordinary PostgreSQL journey on the release candidate. Release artifacts then pass install, upgrade, backup, restore, restart, and interrupted recovery. Release text matches the matrix.
+
+### CLI development slice — starts with G1/G3, closes before Phase H
+
+Follow [cli-development.md](contracts/cli-development.md), preserving the 035 everyday command and process-ownership contract. T139 loads one frozen project revision through the shared AST/resolver, including file/directory sources and the resolved environment. T140/T141 cover schema/table/type/function/procedure diffs; T142 orders one typed operation graph and classifies risk instead of concatenating independent emitters or inspecting SQL lines. Every unsupported change blocks explicitly rather than disappearing into a comment/no-op.
+
+T143 makes baselines target- and receipt-specific, with drift/fresh-clone reconstruction. T144 provides concurrency-safe migration application, transactional receipts and explicit nontransactional recovery. T145 stages compilation and generation before effects and binds activation to the committed schema/ABI revision; no filesystem/database atomicity is assumed. T146 retains edits that arrive during work and retries transient failures without output-triggered rebuild loops. T147 publishes generated artifacts from that same snapshot.
+
+T148–T150 reconcile target resolution, up/down/reset/seed, stage-specific readiness, isolated exec and migration/deploy parity. T151/T152 require real-server disposable projects and failure/concurrency injection; existing fake-server tests cannot close these gates. T153 starts baseline measurement before edits and closes idle CPU, edit-to-ready, allocation/retention and cleanup evidence. Backend transaction/catalog/ABI capabilities are prerequisites for dependent stages, not permission to declare a CLI stage successful early. Release sign-off includes SC-015/SC-016.
 
 ## Cross-cutting rules
 

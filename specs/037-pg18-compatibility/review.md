@@ -1,8 +1,52 @@
 # Second review — PostgreSQL 18 compatibility
 
+**Latest follow-ups**: 2026-10-13. See the scoped CLI/routine reviews below, [cli-development.md](contracts/cli-development.md) and [routines-postgresql.md](contracts/routines-postgresql.md). Earlier observations retain their original inspection date; do not treat them as current implementation status.
+
 **Date**: 2026-10-11 · **Inspected code**: `be5efdd2` plus the current untracked feature documents · **Scope**: planning review and corrections only.
 
-The direction is sound: one parsed representation, one logical type authority, shared catalogs and deletion of superseded paths. The original plan was not ready for implementation unchanged. The most serious issues were schema-evolution correctness, identity migration and unbounded ownership hidden behind the zero-copy goal. Corrections are now integrated into spec, plan, data model, contracts, tasks and quickstart. No server code was changed, no benchmark was run, and no runtime compatibility/performance claim is made.
+The direction is sound: one parsed representation, one logical type authority, shared catalogs and deletion of superseded paths. The original plan was not ready for implementation unchanged. The most serious issues were schema-evolution correctness, identity migration and unbounded ownership hidden behind the zero-copy goal. Corrections are now integrated into spec, plan, data model, contracts, tasks and quickstart. This review changed planning documents only, ran no benchmark, and makes no runtime compatibility/performance claim.
+
+## CLI development follow-up — 2026-10-13
+
+Inspected current CLI/dialect sources based on `9cf03307` and the 035 lifecycle contract. Coverage exists, but T023/T038 and the broad T121/T137 journey do not establish a complete PostgreSQL schema-diff/development lifecycle. This review changes only planning documents; the following source mechanisms require implementation/regression work, not claims that every runtime path was reproduced.
+
+| Severity | Inspected mechanism / gap | Added obligation |
+| --- | --- | --- |
+| P1 | `kalam-schema-diff/src/diff.rs` emits structural tables first, then separately compiled type/procedure DDL. `contracts/diff.rs` drops types before dropping routines. | One dependency-ordered operation graph, including reverse drops and transaction boundaries. T139/T142. |
+| P1 | `contracts/compile.rs::apply_statement` recognizes procedures but falls through successfully for unhandled SQL; the structural parser ignores other AST variants. | CREATE FUNCTION/DOMAIN and other required forms cannot silently disappear. T139–T141. |
+| P1 | `emitter/modify_column.rs` emits MODIFY COLUMN; routine emission still uses PROCEDURE RETURNS; constraint changes become comments. | PostgreSQL emitters and typed blocked/manual outcomes; no baseline advancement for comment-only differences. T140/T141. |
+| P1 | Diff compilation defaults to public, codegen uses project.default_env, apply resolves the selected environment; `normalize_object_key` splits dots and lowercases quoted names. | One resolved target/search path and quoted-aware source model. T139/T148. |
+| P1 | `dev/watch.rs` seeds a missing baseline from current schema.sql when filenames are applied, copies the latest file after apply, and can update baseline in generation-only mode. | Exact committed source/receipt, scoped by target/database identity, with drift and fresh-clone reconstruction. T143. |
+| P1 | Contract type/routine removals do not receive structural diff's allow-destructive flag; `workflow/agent.rs` only scans lines for selected DROP forms. | Typed safety classification across all objects and explicit migrations; force cannot bypass stale-target checks. T142. |
+| P1 | `migration/apply/mod.rs` saves applying/applied records around `execute_sql_batch`; `workflow/sql.rs` sends individual statements unless a file supplied an explicit transaction. | Prove transaction/receipt and multi-phase recovery, concurrent-client coordination and unknown commit handling. T144. |
+| P1 | `migration/markers.rs` recognizes marker-looking lines without SQL lexical state. | Preserve `-- DOWN`/`-- UP` inside quoted routine bodies. T144. |
+| P1 | `dev/orchestrator.rs` can build/activate after a Paused schema result; builds reread the schema independently. | Preflight and publish one compatible revision, explicit partial-state recovery and activation checks. T145/T147. |
+| P2 | Function watch uses the maximum mtime, scans generated/build files, and records the latest stamp even after failure. Schema watching/baseline copying assumes a file while codegen supports directories. | Bounded revision-aware directory watch, no feedback loops/lost edits, transient retry and matching source support. T139/T146. |
+| P2 | Function generation, artifact and manifest compile the project separately; missing tsc returns success. | Shared snapshot/fingerprint, required-tool diagnostics, staged output publication and no-op caching. T147. |
+| P2 | `dev/exec.rs` applies migrations/seed without generation/build/activation; readiness output has no active-function revision and app health is separate. | Full isolated JS preparation, target isolation and honest stage reporting while preserving 035 ownership behavior. T148–T150. |
+| P2 | Current CLI tests include useful fake-server migration tracking but that cannot validate PG DDL dependencies or real V8 calls. | Disposable real-server journey, failure/concurrency matrix and CLI CPU/memory/edit-loop evidence. T151–T153. |
+
+T139–T153 are appended without changing completed tasks. The new contract names supported/manual/gap outcomes, bounded watch work and migration/application failure states. Implementations and runtime measurements remain outstanding. Existing back-end/CLI work in the checkout was preserved.
+
+## Routine follow-up — 2026-10-13
+
+Inspected the working tree based on `9cf03307`, including active uncommitted implementation changes. The type/routine surface is **not yet PostgreSQL-aligned end to end**. Existing G1/schema task completion does not close the following scoped gaps. No implementation files were changed by this review.
+
+| Severity | Current evidence / design flaw | Correction and new task |
+| --- | --- | --- |
+| P1 | `ddl/create_procedure.rs` lowercases quoted names, accepts RETURNS and parses only untagged dollar bodies; `classifier/engine/core.rs::is_kalam_procedure` selects a path by language words. | Shared AST for PostgreSQL routine grammar irrespective of JS language; preserve names/body spans and true function/procedure distinction. T125/T128. |
+| P1 | `models/ids/routine_id.rs::from_parts` lowercases a schema-qualified string without input signature; catalog routine identity is the primary key. | Stable RoutineId plus canonical overload key; function/procedure kind cannot bypass signature conflicts. T126/T135. |
+| P1 | `ddl/create_type.rs::take_ident` stops at the first double quote; enum validation forbids empty/colon labels and measures characters; empty definitions are rejected. | PG lexer/resolver, exact label/byte rules, composite/table-row-type semantics. T125/T127 supplement T124. |
+| P1 | `DropProcedureStatement::parse` ignores text after the name, while `CALL` strips GUI LIMIT/OFFSET clauses; signature and trailing-token semantics diverge. | Signature-aware lifecycle and canonical CALL grammar, with explicit legacy migration where needed. T125/T128/T129. |
+| P1 | `core/functions/executor.rs::pack_named_call_input` guesses named bindings by object keys, packs JSON and substitutes conversion failure with NULL. | Explicit binding forms and typed request/reply messages, including one composite argument and exact errors. T129/T133. |
+| P1 | The plan specifies broad routine attributes/results but lacks a concrete SQL expression/set/table bridge into async V8 and procedure output mapping. | DataFusion integration proof, bounded dispatch, output cardinality and context semantics. T130/T131/T134. |
+| P2 | Pending T043 said to keep function typmods, contradicting FR-073 and the PG reference. | Corrected that pending description to discard signature typmods, preserving applicable field/domain constraints. T127/T128 provide context coverage. |
+| P2 | Language parsing, JS host APIs and SQL-visible behavior could be conflated into a compatibility claim. | JS/TS are declared Kalam languages with normal SQL call shapes; SQL/PLpgSQL retain their own execution tests. T132/T136. |
+| P2 | The existing V8 plan covers buffer ownership but not explicit no-envelope counters for both requests and replies, or overload-aware generated artifact bindings. | Per-boundary evidence and migration of CLI/SDK/stored consumers. T133/T135/T137/T138. |
+
+Completed task descriptions/statuses were preserved. Pending T043/T050 were corrected; T125–T138 were appended. These are design resolutions and implementation obligations, not measured fixes. The review checked current source and the linked PG18 documentation; it did not run the PG oracle, backend tests or performance benchmarks.
+
+The developer experience target is ordinary PostgreSQL type/routine declarations and calls, with JS/TS selected by LANGUAGE. Internally, typed owners remove avoidable invocation serialization. Arbitrary mutable JS objects still require conversion; network/durable encodings and legitimate JSON values still have codec costs. Sources and acceptance examples are in [the routine contract](contracts/routines-postgresql.md).
 
 ## Findings and resolutions
 

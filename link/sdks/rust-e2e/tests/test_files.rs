@@ -103,6 +103,6 @@ async fn file_upload_select_and_download_roundtrip() {
     assert!(url.ends_with(&file_ref.file_ref().stored_name()));
 
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE {ns} CASCADE"), None, None, None)
+        .execute_query(&format!("DROP SCHEMA {ns} CASCADE"), None, None, None)
         .await;
 }

@@ -56,7 +56,7 @@ const TEST_TABLES = ['messages', 'counters', 'encoded', 'composite'] as const;
 
 export async function setupSchema(suffix: string): Promise<string> {
   const schemaName = `react_e2e_${suffix}`;
-  await runSql(`DROP NAMESPACE IF EXISTS ${schemaName}`);
+  await runSql(`DROP SCHEMA IF EXISTS ${schemaName}`);
   await runSql(`CREATE NAMESPACE ${schemaName}`);
   await runSql(`CREATE TABLE ${schemaName}.messages (
     id TEXT PRIMARY KEY,
@@ -87,7 +87,7 @@ export async function setupSchema(suffix: string): Promise<string> {
 }
 
 export async function teardownSchema(suffix: string): Promise<void> {
-  await runSql(`DROP NAMESPACE IF EXISTS react_e2e_${suffix}`).catch(() => undefined);
+  await runSql(`DROP SCHEMA IF EXISTS react_e2e_${suffix}`).catch(() => undefined);
 }
 
 export async function seedMessages(suffix: string, roomId: string, count: number): Promise<void> {

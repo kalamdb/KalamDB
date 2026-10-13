@@ -31,7 +31,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
 
     // Cleanup and setup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -225,7 +225,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ Flush PK integrity smoke test completed successfully!");
 }
@@ -246,7 +246,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
 
     // Cleanup and setup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -358,7 +358,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ SHARED table flush PK integrity test completed!");
 }

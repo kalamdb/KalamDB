@@ -1,6 +1,6 @@
 -- Delete and reinsert the same primary keys with topic fan-out on DML operations.
 
-DROP NAMESPACE IF EXISTS sql_file_case_14 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_14 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_14;
 USE sql_file_case_14;
@@ -33,4 +33,4 @@ INSERT INTO ledger (id, category, amount, note) VALUES (1402, 'expense', 80, 're
 CONSUME FROM ledger_mutations LIMIT 40;
 
 DROP TOPIC ledger_mutations;
-DROP NAMESPACE IF EXISTS sql_file_case_14 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_14 CASCADE;

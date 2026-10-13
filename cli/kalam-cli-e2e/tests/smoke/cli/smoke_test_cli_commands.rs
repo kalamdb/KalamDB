@@ -82,7 +82,7 @@ fn smoke_cli_list_tables_command() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_list_tables_command passed!");
 }
@@ -148,7 +148,7 @@ fn smoke_cli_describe_table_command() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_describe_table_command passed!");
 }
@@ -278,7 +278,7 @@ fn smoke_cli_sql_execution() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_sql_execution passed!");
 }
@@ -383,7 +383,7 @@ fn smoke_cli_flush_command() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_flush_command passed!");
 }
@@ -449,7 +449,7 @@ fn smoke_cli_backslash_flush_qualified_table() {
     assert!(result.contains("test"), "Data should persist after flush: {}", result);
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_backslash_flush_qualified_table passed!");
 }
@@ -516,7 +516,7 @@ fn smoke_cli_backslash_flush_uses_session_namespace() {
     assert!(result.contains("test"), "Data should persist after flush: {}", result);
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_backslash_flush_uses_session_namespace passed!");
 }
@@ -557,7 +557,7 @@ fn smoke_cli_backslash_describe_qualified_table() {
     );
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_backslash_describe_qualified_table passed!");
 }
@@ -623,7 +623,7 @@ fn smoke_cli_namespace_management() {
 
     let namespace = generate_unique_namespace("smoke_cli_ns");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     // Test CREATE NAMESPACE
     let result =
@@ -647,7 +647,7 @@ fn smoke_cli_namespace_management() {
         execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
     assert!(result.is_ok(), "CREATE NAMESPACE IF NOT EXISTS should succeed: {:?}", result);
 
-    // Create a table, then drop namespace without CASCADE.
+    // Create a table, then drop schema without CASCADE.
     let table = generate_unique_table("ns_drop_table");
     let full_table = format!("{}.{}", namespace, table);
     execute_sql_as_root_via_client(&format!(
@@ -657,9 +657,9 @@ fn smoke_cli_namespace_management() {
     .expect("CREATE TABLE should succeed");
     grant_public_select_shared_table(&full_table);
 
-    // Test DROP NAMESPACE
-    let result = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
-    assert!(result.is_ok(), "DROP NAMESPACE should succeed: {:?}", result);
+    // Test DROP SCHEMA
+    let result = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
+    assert!(result.is_ok(), "DROP SCHEMA should succeed: {:?}", result);
 
     // Namespace drop should remove tables too.
     let table_check = execute_sql_as_root_via_client(&format!(
@@ -754,7 +754,7 @@ fn smoke_cli_alter_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     println!("✅ smoke_cli_alter_table passed!");
 }

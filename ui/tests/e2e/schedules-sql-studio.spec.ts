@@ -159,7 +159,7 @@ test("SQL Studio creates a schedule that runs a procedure and the Schedules UI t
   } finally {
     await openSqlStudio(page).catch(() => undefined);
     await openFreshSqlTab(page).catch(() => undefined);
-    await runSql(page, `DROP NAMESPACE IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
+    await runSql(page, `DROP SCHEMA IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
   }
 });
 

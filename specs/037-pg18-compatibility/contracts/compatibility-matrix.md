@@ -145,3 +145,42 @@ All rows are `not_assessed` by this planning extension; existing implementations
 | FN-MEM-01 | Native/V8/external ownership accounting through GC delay and isolate reuse | #397 | T116/T120 |
 | FN-PERF-01 | Copy counts, query/call chain CPU/allocation/latency and retained-memory comparison | #397 | T112/T122 |
 | FN-DX-01 | Generated ABI types, docs and clean-project function journey | #393/#398 | T121 |
+
+## Type/routine follow-up rows — 2026-10-13
+
+These rows record scoped static findings, not passing runtime evidence. `partial` means an existing path covers some behavior but the contract has known gaps; `not_assessed` means the required integrated evidence has not been collected. Exact acceptance and PG sources are in [routines-postgresql.md](routines-postgresql.md). T136 supplies executable differential evidence; T138 adds transport measurements to T122.
+
+| ID | Behavior / boundary | Status | Owner | Required tasks |
+| --- | --- | --- | --- | --- |
+| RT-LEX-01 | Type/routine names, escaped/Unicode identifiers, tagged bodies and shared AST through handlers | partial | #392/#393 | T125 |
+| RT-TYPE-01 | Enum/composite declaration edge cases, collation and table row types | partial | #393 | T124/T127 |
+| RT-ID-01 | Stable identity, signature overloads and function/procedure conflict rules | partial | #393 | T126/T128 |
+| RT-BIND-01 | Modes/defaults/variadics/named calls without composite-object guessing | partial | #393 | T129/T133 |
+| RT-SQL-01 | SQL scalar/set/table functions and CALL driving bounded V8 work | not_assessed | #394 | T130/T134 |
+| RT-CTX-01 | Null-input, volatility, privileges, scoped settings and procedure transaction restrictions | not_assessed | #394 | T131 |
+| RT-LANG-01 | Runtime/body lifecycle distinct from syntax; atomic compile/replacement | partial | #393 | T110/T132 |
+| RT-CAT-01 | Catalog/output metadata, identity helpers and invalidation under rollback/restart | not_assessed | #399/#395 | T135 |
+| RT-MEM-01 | Typed request and reply; no intermediate envelopes, no eligible payload copies | partial | #393/#397 | T133/T134/T138 |
+| RT-MIG-01 | Legacy procedure-return and overload/quoted-name migration across stored/CLI/SDK callers | not_assessed | #393/#396 | T137 |
+| RT-ORACLE-01 | PG syntax/semantic fixtures plus equivalent JS public behavior | not_assessed | #397 | T136 |
+
+The paired JS fixture is a Kalam language test. Stock PostgreSQL is the oracle for matching SQL-visible behavior through an equivalent SQL/PLpgSQL body, not for accepting Kalam's JS `input`/`ctx` API. Runtime counts and performance ratios stay empty until measured.
+
+## CLI development follow-up rows — 2026-10-13
+
+Static review confirms existing coverage with the gaps below; no new lifecycle test was run in this planning pass. Detailed behavior is in [cli-development.md](cli-development.md). Every row needs a real revision/test/result before verification, including real server evidence where SQL or V8 semantics are involved.
+
+| ID | Behavior / boundary | Status | Owner | Required tasks |
+| --- | --- | --- | --- | --- |
+| CLI-SOURCE-01 | Shared immutable file/directory snapshot, target resolution and unsupported-SQL diagnostics | partial | #392/#396 | T139 |
+| CLI-DIFF-01 | PG schema/table/type/domain/routine diffs with explicit rename/manual outcomes | partial | #393/#396 | T140/T141 |
+| CLI-ORDER-01 | Dependency graph, drop order, transaction phases and typed destructive classification | partial | #394/#396 | T142 |
+| CLI-STATE-01 | Target-specific committed baseline, drift and fresh-clone history reconstruction | partial | #396 | T143 |
+| CLI-APPLY-01 | Fenced concurrent apply, transactional receipts, body-safe markers and unknown-outcome recovery | partial | #394/#396 | T144 |
+| CLI-PUBLISH-01 | Schema/artifact/ABI handoff and explicit partial-stage recovery | partial | #393/#396 | T145 |
+| CLI-WATCH-01 | File/directory edits during work, no output loop, bounded retries/rescan/cache | partial | #396/#397 | T146/T153 |
+| CLI-GEN-01 | Shared revision for codegen/build/manifest, tools and owned-output publication | partial | #393/#396 | T147 |
+| CLI-LIFE-01 | Target/instance ownership, init/up/down/seed/reset/exec/deploy and capability checks | partial | #396/#398 | T148/T150 |
+| CLI-READY-01 | Correlated database/schema/generation/functions/app states in all output modes | partial | #396 | T149 |
+| CLI-E2E-01 | Real-server development, replay and injected recovery journey | not_assessed | #397/#398 | T151/T152 |
+| CLI-PERF-01 | Idle/no-op and edit-loop time/CPU/allocation/retention plus cleanup | not_assessed | #397 | T153 |

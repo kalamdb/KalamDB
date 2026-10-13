@@ -800,9 +800,8 @@ impl SqlExecutor {
     fn is_ddl_statement(kind: &SqlStatementKind) -> bool {
         matches!(
             kind,
-            SqlStatementKind::CreateNamespace(_)
-                | SqlStatementKind::AlterNamespace(_)
-                | SqlStatementKind::DropNamespace(_)
+            SqlStatementKind::AlterSchema(_)
+                | SqlStatementKind::DropSchema(_)
                 | SqlStatementKind::CreateStorage(_)
                 | SqlStatementKind::AlterStorage(_)
                 | SqlStatementKind::DropStorage(_)
@@ -1822,8 +1821,8 @@ impl SqlExecutor {
                     | SqlStatementKind::CreatePolicy(_)
                     | SqlStatementKind::AlterPolicy(_)
                     | SqlStatementKind::DropPolicy(_)
-                    | SqlStatementKind::CreateNamespace(_)
-                    | SqlStatementKind::DropNamespace(_)
+                    | SqlStatementKind::CreateSchema(_)
+                    | SqlStatementKind::DropSchema(_)
                     | SqlStatementKind::CreateType(_)
                     | SqlStatementKind::AlterType(_)
                     | SqlStatementKind::DropType(_) => {

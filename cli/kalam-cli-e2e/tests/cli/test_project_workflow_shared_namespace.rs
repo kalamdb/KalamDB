@@ -270,7 +270,7 @@ fn test_second_project_reuses_shared_namespace_history_without_recreating_tables
         "second project must not re-apply CREATE TABLE users\nrequests: {recorded:?}"
     );
     assert!(
-        recorded.iter().all(|request| !sql_matches(request, "DROP NAMESPACE")),
+        recorded.iter().all(|request| !sql_matches(request, "DROP SCHEMA")),
         "second project must not drop the shared namespace\nrequests: {recorded:?}"
     );
     assert!(
@@ -329,7 +329,7 @@ fn test_fresh_init_on_same_namespace_does_not_drop_existing_schema() {
 
     let recorded = requests.lock().expect("lock requests").clone();
     assert!(
-        recorded.iter().all(|request| !sql_matches(request, "DROP NAMESPACE")),
+        recorded.iter().all(|request| !sql_matches(request, "DROP SCHEMA")),
         "a fresh init on the same namespace must not drop existing schema\nrequests: {recorded:?}"
     );
     assert!(

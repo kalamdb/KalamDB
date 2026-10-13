@@ -1,7 +1,7 @@
--- Exercise USE + SET NAMESPACE and ensure unqualified DML follows active namespace.
+-- Exercise USE + SET SCHEMA and ensure unqualified DML follows active namespace.
 
-DROP NAMESPACE IF EXISTS sql_file_case_18_a CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_18_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_18_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_18_b CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_18_a;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_18_b;
@@ -35,5 +35,5 @@ INSERT INTO case18_items (id, label) VALUES (1804, 'from-b-again');
 DELETE FROM case18_items WHERE id = 1802;
 INSERT INTO case18_items (id, label) VALUES (1802, 'from-b-reinsert');
 
-DROP NAMESPACE IF EXISTS sql_file_case_18_b CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_18_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_18_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_18_a CASCADE;

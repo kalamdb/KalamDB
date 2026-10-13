@@ -439,7 +439,7 @@ async function runTests() {
   try {
     await executeSQL(`DROP TABLE IF EXISTS ${TODOS_TABLE}`);
     await executeSQL(`DROP TABLE IF EXISTS ${EVENTS_TABLE}`);
-    await executeSQL(`DROP NAMESPACE IF EXISTS ${TEST_NAMESPACE}`);
+    await executeSQL(`DROP SCHEMA IF EXISTS ${TEST_NAMESPACE}`);
     pass('Test tables and namespace cleaned up');
   } catch (error) {
     log(`  ⚠️  Cleanup warning: ${getErrorMessage(error)}`);

@@ -140,7 +140,7 @@ fn smoke_as_user_role_matrix_allows_privileged_roles_and_denies_user() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", denied_actor));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -230,7 +230,7 @@ fn smoke_as_user_self_target_dml_stays_under_actor_user_id() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", other));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -325,7 +325,7 @@ fn smoke_as_user_allowed_select_update_delete_runs_in_target_scope() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -384,5 +384,5 @@ fn smoke_as_user_shared_table_denied_without_mutation() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", actor));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

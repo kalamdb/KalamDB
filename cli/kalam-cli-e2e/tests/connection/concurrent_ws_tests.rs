@@ -195,7 +195,7 @@ fn test_concurrent_websocket_subscriptions() {
 
         // Cleanup
         let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
         // Assertions: at least 90% should succeed (some may fail due to connection limits)
         let min_success = num_connections * 3 / 4;
@@ -315,7 +315,7 @@ fn test_rapid_connect_disconnect() {
 
         // Cleanup
         let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full));
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
         // At least 90% should succeed
         let min_success = 1;

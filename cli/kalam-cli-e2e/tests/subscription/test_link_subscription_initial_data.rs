@@ -50,7 +50,7 @@ fn test_link_subscription_initial_batch_then_inserts() {
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -104,7 +104,7 @@ fn test_link_subscription_initial_batch_then_inserts() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     eprintln!("✓ Test completed successfully");
 }
@@ -140,7 +140,7 @@ fn test_link_subscription_empty_table_then_inserts() {
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -181,7 +181,7 @@ fn test_link_subscription_empty_table_then_inserts() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     eprintln!("✓ Test completed successfully");
 }
@@ -222,7 +222,7 @@ fn test_link_subscription_batch_status_transition() {
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -260,7 +260,7 @@ fn test_link_subscription_batch_status_transition() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test that multiple inserts after subscription are all received
@@ -289,7 +289,7 @@ fn test_link_subscription_multiple_live_inserts() {
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -340,7 +340,7 @@ fn test_link_subscription_multiple_live_inserts() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test DELETE events (simpler than UPDATE)
@@ -375,7 +375,7 @@ fn test_link_subscription_delete_events() {
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -400,5 +400,5 @@ fn test_link_subscription_delete_events() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

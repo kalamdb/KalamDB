@@ -116,5 +116,5 @@ fn smoke_system_tables_and_user_lifecycle() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", test_ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", test_ns));
 }

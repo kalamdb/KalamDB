@@ -1,6 +1,6 @@
 -- Create users and validate EXECUTE AS USER DML on a USER table.
 
-DROP NAMESPACE IF EXISTS sql_file_case_21 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_21 CASCADE;
 
 DROP USER IF EXISTS 'sql_case21_user_a';
 DROP USER IF EXISTS 'sql_case21_user_b';
@@ -53,6 +53,6 @@ EXECUTE AS USER 'sql_case21_user_b' (
   DELETE FROM case21_actions WHERE id = 2102
 );
 
-DROP NAMESPACE IF EXISTS sql_file_case_21 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_21 CASCADE;
 DROP USER IF EXISTS 'sql_case21_user_a';
 DROP USER IF EXISTS 'sql_case21_user_b';

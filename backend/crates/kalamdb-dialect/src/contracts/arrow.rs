@@ -82,12 +82,13 @@ fn resolve_named_or_builtin(
             let mut arrow_fields = Vec::with_capacity(fields.len());
             for field in fields {
                 let mut nested = TypeReference {
-                    namespace_id: None,
-                    name:         field.type_name.clone(),
-                    data_type:    field.data_type,
-                    is_array:     field.is_array,
-                    not_null:     field.not_null,
-                    nonempty:     field.nonempty,
+                    namespace_id:       None,
+                    name:               field.type_name.clone(),
+                    data_type:          field.data_type,
+                    syntactic_modifier: None,
+                    is_array:           field.is_array,
+                    not_null:           field.not_null,
+                    nonempty:           field.nonempty,
                 };
                 if let Some(type_id) = &field.type_id {
                     let (schema, name) = split_type_id(type_id.as_str());

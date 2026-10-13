@@ -294,7 +294,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
     env.wait_for_kalamdb_table_absent(&ns, &table).await;
     assert!(!env.kalamdb_table_exists(&ns, &table).await);
 
-    let _ = pg_kalam_exec(&pg, &format!("DROP NAMESPACE IF EXISTS {ns}")).await;
+    let _ = pg_kalam_exec(&pg, &format!("DROP SCHEMA IF EXISTS {ns}")).await;
 }
 
 #[tokio::test]

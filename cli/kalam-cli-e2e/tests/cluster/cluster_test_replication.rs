@@ -59,7 +59,7 @@ fn cluster_test_metadata_replication_timing() {
     let namespace = generate_unique_namespace("cluster_time");
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and immediately check replication
     println!("Creating namespace on node 0...");
@@ -94,7 +94,7 @@ fn cluster_test_metadata_replication_timing() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Metadata replication timing test passed\n");
 }
@@ -114,7 +114,7 @@ fn cluster_test_operation_ordering() {
     let namespace = generate_unique_namespace("cluster_order");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -173,7 +173,7 @@ fn cluster_test_operation_ordering() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Operation ordering maintained across nodes\n");
 }
@@ -193,7 +193,7 @@ fn cluster_test_concurrent_writes() {
     let namespace = generate_unique_namespace("cluster_conc");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -274,7 +274,7 @@ fn cluster_test_concurrent_writes() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Concurrent writes properly serialized\n");
 }

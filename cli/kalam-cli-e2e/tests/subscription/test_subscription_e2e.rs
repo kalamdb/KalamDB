@@ -44,7 +44,7 @@ fn test_cli_subscription_initial_and_changes() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -103,5 +103,5 @@ fn test_cli_subscription_initial_and_changes() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

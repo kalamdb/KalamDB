@@ -79,6 +79,6 @@ CREATE TOPIC ${topicId} PARTITIONS 2;
     });
   } finally {
     await openSqlStudio(page).catch(() => undefined);
-    await runSql(page, `DROP NAMESPACE IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
+    await runSql(page, `DROP SCHEMA IF EXISTS ${ns} CASCADE;`).catch(() => undefined);
   }
 });

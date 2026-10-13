@@ -255,5 +255,5 @@ fn smoke_chat_ai_example_from_readme() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TOPIC {}", topic_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

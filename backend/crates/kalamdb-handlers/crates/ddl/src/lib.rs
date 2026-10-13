@@ -38,59 +38,49 @@ use kalamdb_sql::{
 pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppContext>) {
     register_typed_handler!(
         registry,
-        SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
-            name:          NamespaceId::new("_placeholder"),
-            if_not_exists: false,
-        }),
-        schema::CreateNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::CreateNamespace
-    );
-
-    register_typed_handler!(
-        registry,
         SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
             name:          NamespaceId::new("_placeholder"),
             if_not_exists: false,
         }),
-        schema::CreateNamespaceHandler::new(app_context.clone()),
+        schema::CreateSchemaHandler::new(app_context.clone()),
         SqlStatementKind::CreateSchema
     );
 
     register_typed_handler!(
         registry,
-        SqlStatementKind::AlterNamespace(kalamdb_sql::ddl::AlterNamespaceStatement {
+        SqlStatementKind::AlterSchema(kalamdb_sql::ddl::AlterSchemaStatement {
             name:    NamespaceId::new("_placeholder"),
             options: HashMap::new(),
         }),
-        schema::AlterNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::AlterNamespace
+        schema::AlterSchemaHandler::new(app_context.clone()),
+        SqlStatementKind::AlterSchema
     );
 
     register_typed_handler!(
         registry,
-        SqlStatementKind::DropNamespace(kalamdb_sql::ddl::DropNamespaceStatement {
+        SqlStatementKind::DropSchema(kalamdb_sql::ddl::DropSchemaStatement {
             name:      NamespaceId::new("_placeholder"),
             if_exists: false,
             cascade:   false,
         }),
-        schema::DropNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::DropNamespace
+        schema::DropSchemaHandler::new(app_context.clone()),
+        SqlStatementKind::DropSchema
     );
 
     register_typed_handler!(
         registry,
-        SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
-        schema::ShowNamespacesHandler::new(app_context.clone()),
-        SqlStatementKind::ShowNamespaces
+        SqlStatementKind::ShowSchemas(kalamdb_sql::ddl::ShowSchemasStatement),
+        schema::ShowSchemasHandler::new(app_context.clone()),
+        SqlStatementKind::ShowSchemas
     );
 
     register_typed_handler!(
         registry,
-        SqlStatementKind::UseNamespace(kalamdb_sql::ddl::UseNamespaceStatement {
+        SqlStatementKind::UseSchema(kalamdb_sql::ddl::UseSchemaStatement {
             namespace: NamespaceId::new("_placeholder"),
         }),
-        schema::UseNamespaceHandler::new(app_context.clone()),
-        SqlStatementKind::UseNamespace
+        schema::UseSchemaHandler::new(app_context.clone()),
+        SqlStatementKind::UseSchema
     );
 
     register_typed_handler!(
@@ -278,12 +268,13 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             operation:    AlterTypeOperation::AddAttribute {
                 field:    String::new(),
                 type_ref: TypeReference {
-                    namespace_id: None,
-                    name:         "text".to_string(),
-                    data_type:    Some(kalamdb_commons::KalamDataType::Text),
-                    is_array:     false,
-                    not_null:     false,
-                    nonempty:     false,
+                    namespace_id:       None,
+                    name:               "text".to_string(),
+                    data_type:          Some(kalamdb_commons::KalamDataType::Text),
+                    syntactic_modifier: None,
+                    is_array:           false,
+                    not_null:           false,
+                    nonempty:           false,
                 },
             },
         }),

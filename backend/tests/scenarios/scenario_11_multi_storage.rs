@@ -174,7 +174,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     assert_eq!(get_rows(&resp).len(), 2, "Should have 2 tables");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -235,7 +235,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
     assert_eq!(count, 50, "Should have 50 rows");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -405,6 +405,6 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
     .await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

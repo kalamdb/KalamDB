@@ -142,7 +142,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
 
     if !closed {
         eprintln!("WARN: subscription setup/close failed; skipping system.live check");
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
         return;
     }
 
@@ -154,7 +154,7 @@ fn smoke_subscription_explicit_close_removes_live_query() {
         marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }
 
 // ── test 2: drop without close() (Drop impl) ─────────────────────────────────
@@ -248,7 +248,7 @@ fn smoke_subscription_drop_removes_live_query() {
 
     if !dropped {
         eprintln!("WARN: subscription setup failed; skipping system.live check");
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
         return;
     }
 
@@ -262,5 +262,5 @@ fn smoke_subscription_drop_removes_live_query() {
         marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns));
 }

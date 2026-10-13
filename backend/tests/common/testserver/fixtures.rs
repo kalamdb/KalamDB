@@ -133,7 +133,7 @@ pub async fn create_namespace_with_options(
 /// * `server` - Test server instance
 /// * `namespace` - Name of the namespace to drop
 pub async fn drop_namespace(server: &TestServer, namespace: &str) -> QueryResponse {
-    let sql = format!("DROP NAMESPACE {} CASCADE", namespace);
+    let sql = format!("DROP SCHEMA {} CASCADE", namespace);
     server.execute_sql(&sql).await
 }
 

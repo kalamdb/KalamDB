@@ -1,6 +1,6 @@
 -- Multiple topics in one namespace sharing source tables.
 
-DROP NAMESPACE IF EXISTS sql_file_case_09 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_09 CASCADE;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_09;
 USE sql_file_case_09;
 
@@ -37,4 +37,4 @@ CONSUME FROM session_expiry LIMIT 20;
 
 DROP TOPIC session_expiry;
 DROP TOPIC session_updates;
-DROP NAMESPACE IF EXISTS sql_file_case_09 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_09 CASCADE;

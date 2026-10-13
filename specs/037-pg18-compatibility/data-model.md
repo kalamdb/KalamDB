@@ -100,12 +100,27 @@ Read as `RowView<'a>`; never materialized as a name-keyed map on `SELECT` or flu
 | Field | Rules |
 | --- | --- |
 | schema_id | Owner schema |
-| name | Resolved with the search path |
+| name | Quoted-aware resolved identifier, separate from stable identity; qualification preserves component boundaries |
 | kind | `function` or `procedure` |
 | arguments | Modes, names, types, defaults |
 | result | Return type, set-of, or output arguments. Procedures are not given a silent function return. |
 | language | `sql` and `plpgsql` need execution evidence for the supported scope. JavaScript and TypeScript are Kalam extensions. Other languages are rejected. |
-| identity | Overload identity distinct from display name |
+| identity | Stable RoutineId and catalog OID, distinct from name and executable revision; rename/replace preserve them |
+| overload key | SchemaId, resolved name and ordered input type identities (IN/INOUT/variadic array); excludes OUT-only types, typmods, defaults, return type and kind |
+| attributes | Null-input, volatility, security, settings and other supported planner/runtime attributes; never parsed then ignored |
+| revision | Atomic catalog/artifact/ABI publication; dependencies invalidate new calls without freeing descriptors pinned by active calls |
+
+Function and procedure cannot share the same overload key. [routines-postgresql.md](contracts/routines-postgresql.md) defines lookup, replacement, output/cardinality and migration behavior.
+
+## Bound routine call
+
+One immutable call descriptor plus explicitly positional/named/bound argument slots, an execution frame and owning value references. Named `input` and indexed argument views derive from the same slots. A composite object is one value, never implicitly a named argument envelope. Default expressions are evaluated for omitted inputs at invocation. The reply is a typed scalar/composite/set/output tuple or error, not an encoded request/response message. Owners, projections and memory leases follow [functions-v8.md](contracts/functions-v8.md); each implementation model stays in its own file.
+
+## Project revision and migration plan
+
+The CLI holds an immutable source revision with file/content hashes and spans, identity-manifest revision, relevant toolchain/configuration and resolved target context. Diff, codegen and function build derive from that revision. A typed operation graph records object identities, dependencies, risk, preconditions, transaction groups and reversibility; generated SQL is an output, not the authority for safety classification.
+
+Applied-state receipts bind target database identity, managed scope, migration/catalog heads and committed source hash. Desired, database-applied, generated and active-function revisions are separate until reconciled. A local baseline caches a receipt; it cannot assert success by copying the latest file. Pending/retry/unknown outcomes remain explicit through restart, target changes and concurrent clients. Models stay with existing CLI/system owners, each in its own file. See [cli-development.md](contracts/cli-development.md).
 
 ## Catalog projection
 

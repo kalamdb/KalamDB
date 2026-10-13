@@ -3084,7 +3084,7 @@ fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
         || upper.starts_with("CREATE SHARED TABLE")
         || upper.starts_with("CREATE USER TABLE")
         || upper.starts_with("CREATE STREAM TABLE")
-        || upper.starts_with("DROP NAMESPACE")
+        || upper.starts_with("DROP SCHEMA")
         || upper.starts_with("DROP TABLE")
         || upper.starts_with("ALTER TABLE")
 }
@@ -5006,7 +5006,7 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
     if let Some((namespace, _)) = table_full_name.split_once('.') {
-        let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
     }
     Ok(())
 }

@@ -37,7 +37,7 @@ before(async () => {
 
 after(async () => {
   await client.query(`DROP TABLE IF EXISTS ${NS}.users`);
-  await client.query(`DROP NAMESPACE IF EXISTS ${NS}`);
+  await client.query(`DROP SCHEMA IF EXISTS ${NS}`);
   await client?.disconnect();
 });
 

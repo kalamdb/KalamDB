@@ -294,7 +294,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     assert!(overlap.is_empty(), "User isolation violated: overlap = {:?}", overlap);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -402,7 +402,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -497,6 +497,6 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
     assert_eq!(u2_count, 20, "u2 should see 20 items post-flush");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

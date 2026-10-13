@@ -284,5 +284,5 @@ fn smoke_all_datatypes_user_shared_stream() {
         .expect("drop shared table should succeed");
     execute_sql_as_root_via_http(&format!("DROP TABLE {}", stream_full))
         .expect("drop stream table should succeed");
-    let _ = execute_sql_as_root_via_http(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_http(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

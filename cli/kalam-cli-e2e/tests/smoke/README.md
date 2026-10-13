@@ -185,7 +185,7 @@ if !is_server_running() {
 
 ### Test Isolation
 - Each test generates unique namespace: `generate_unique_namespace("prefix")`
-- Cleanup before starting: `DROP NAMESPACE IF EXISTS ... CASCADE`
+- Cleanup before starting: `DROP SCHEMA IF EXISTS ... CASCADE`
 - Small flush thresholds for fast testing: `FLUSH_POLICY='rows:10'`
 
 ### Error Handling
@@ -260,7 +260,7 @@ chmod -R 755 data/storage
 When adding new tests:
 1. Follow existing patterns (use `execute_sql_as_root_via_cli`, `SubscriptionListener`, etc.)
 2. Generate unique namespaces per test run
-3. Clean up before starting (`DROP NAMESPACE IF EXISTS ... CASCADE`)
+3. Clean up before starting (`DROP SCHEMA IF EXISTS ... CASCADE`)
 4. Add graceful skipping if server not running
 5. Register new test modules in `cli/tests/smoke.rs`
 6. Update coverage documentation

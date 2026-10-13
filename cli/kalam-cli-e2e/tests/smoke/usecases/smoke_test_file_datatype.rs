@@ -215,7 +215,7 @@ async fn test_file_datatype_upload_and_download() {
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_ns_sql).await;
 
     println!("✅ FILE datatype smoke test passed!");

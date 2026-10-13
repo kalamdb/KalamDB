@@ -1681,9 +1681,9 @@ mod tests {
     #[test]
     fn test_collect_tokens_and_words() {
         let dialect = GenericDialect {};
-        let tokens = collect_non_whitespace_tokens("USE NAMESPACE demo", &dialect).unwrap();
+        let tokens = collect_non_whitespace_tokens("SET SCHEMA demo", &dialect).unwrap();
         let words = tokens_to_words(&tokens);
-        assert!(words.starts_with(&["USE".to_string(), "NAMESPACE".to_string()]));
+        assert!(words.starts_with(&["SET".to_string(), "SCHEMA".to_string()]));
     }
 
     #[test]

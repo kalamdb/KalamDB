@@ -107,3 +107,25 @@ cargo bench --profile dev -p kalamdb-functions --bench v8_runtime
 These commands are components of the gate, not proof by themselves. T120 adds the owner-lifetime/copy-count/security regressions; T122 runs query→function→nested-call→return and streamed/concurrent workloads, reporting runtimes in seconds, exact copy boundaries, CPU, allocations, GC and retained native/V8 memory. Compare with baseline under the same ABI semantics; label explicit new read-view/batch APIs separately. Follow [functions-v8.md](contracts/functions-v8.md) and reject a fast path that mutates shared data, loses type precision or exceeds budgets.
 
 T121 also requires generated TypeScript input/output checks and a fresh disposable project exercising SQL/HTTP functions and nested host queries. When backend behavior is implemented, rebuild the CLI and run server-backed smoke/SDK checks before committing under AGENTS.md. No benchmark or runtime checks above were run for this planning-only extension.
+
+## Routine follow-up — T125–T138
+
+Use [routines-postgresql.md](contracts/routines-postgresql.md) as the acceptance corpus. After the named test targets are implemented, run the focused dialect/core/function tests added by T125–T135 with `cargo nextest run` in the dev profile. Do not treat currently missing targets as passing tests.
+
+T136 must exercise both HTTP SQL and prepared pgwire against the pinned PG18 fixture: quoted schema/type/routine/argument names; tagged bodies and batching; empty/Unicode enum forms; table row/composite/array types; typmods/domains; overloads/defaults/variadics; SELECT versus CALL and OUT placeholders; replace/drop/grants; error SQLSTATE and transaction effects; rollback/restart and cache invalidation. Run the paired JS/TS fixture with equivalent SQL-visible behavior separately from unchanged PG SQL/PLpgSQL source.
+
+T137 adds the clean-project build/generate/invoke journey and legacy migration. Verify quoted/overloaded artifacts and regenerated SDK declarations, including no SQL-to-JS identifier interpolation. T138 records zero intermediate request/reply envelope encodes/decodes and zero payload copies only for compatible typed forwarding, plus direct-object conversion costs, CPU, allocation, latency and retained memory under T122 budgets. Include runtimes in seconds. A completed earlier parser task or an updated plan cannot satisfy these gates.
+
+## CLI lifecycle follow-up — T139–T153
+
+Use [cli-development.md](contracts/cli-development.md), not generic smoke alone. After implementing the targets, run narrow diff/CLI unit tests with `cargo nextest run` in the dev profile. Rebuild `cargo build -p kalam-cli --bin kalam` before `cargo nextest run -p kalam-cli-e2e --test e2e`; select the new workflow tests during development, fix the first failure and then broaden to required smoke. Start the real backend before server-backed smoke and isolate URLs, credentials, ports and caches. Do not substitute a fake migration-tracking server for SQL/V8 execution evidence.
+
+The disposable project journey must include:
+
+1. Init and up/dev with the registered target; add quoted schema, enum/composite/domain, dependent tables and overloaded JS functions/procedures across files. Verify migration dependency order, generated client types and real SELECT/CALL results.
+2. Apply safe table/type/routine changes and explicit renames, a function handler-only edit and an inline body edit. Repeat unchanged input and verify no duplicate migration/build/upload. Reject unsupported declarations without advancing the baseline.
+3. Save during build/apply, introduce and fix invalid SQL/TS, remove a watched input and simulate an activation/app failure. Verify stage status, preserved committed state, retries and the latest edit eventually becoming active.
+4. Exercise reviewed destructive changes, target switch, out-of-band drift, two clients applying concurrently, lost commit response and interrupted multi-phase migration. Check receipts/data, not only log messages; marker-like lines inside tagged bodies must survive.
+5. Restart, replay a fresh clone, test compatible/incompatible function rollback, seed/reset, and run isolated `dev --exec` against working JS routines despite inherited remote environment variables. Verify exit/signal propagation, cleanup and up/dev/down ownership. Reconnect subscriptions after schema/type changes per T123.
+
+T153 captures cold/warm/edit-to-ready seconds, idle CPU, allocations/retained memory, parse/build/upload/write counts and bounded churn behavior before/after the implementation. Settled/no-op state must not repeatedly compile or upload. Record successful and failure journeys in the matrix with the exact CLI/server/ABI versions. No runtime commands above were executed for this planning review.

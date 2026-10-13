@@ -87,7 +87,7 @@ fn cluster_test_table_identity_inserts() {
     let namespace = generate_unique_namespace("identity_ins");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -144,7 +144,7 @@ fn cluster_test_table_identity_inserts() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Inserted rows are identical across all nodes\n");
 }
@@ -162,7 +162,7 @@ fn cluster_test_table_identity_updates() {
     let namespace = generate_unique_namespace("identity_upd");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -232,7 +232,7 @@ fn cluster_test_table_identity_updates() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Updates are identical across all nodes\n");
 }
@@ -250,7 +250,7 @@ fn cluster_test_table_identity_deletes() {
     let namespace = generate_unique_namespace("identity_del");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -312,7 +312,7 @@ fn cluster_test_table_identity_deletes() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Deletes are identical across all nodes\n");
 }
@@ -330,7 +330,7 @@ fn cluster_test_table_identity_mixed_operations() {
     let namespace = generate_unique_namespace("identity_mix");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -454,7 +454,7 @@ fn cluster_test_table_identity_mixed_operations() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Mixed operations result in identical state across all nodes\n");
 }
@@ -472,7 +472,7 @@ fn cluster_test_table_identity_large_batch() {
     let namespace = generate_unique_namespace("identity_batch");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -527,7 +527,7 @@ fn cluster_test_table_identity_large_batch() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Large batch operations result in identical data\n");
 }
@@ -546,7 +546,7 @@ fn cluster_test_table_identity_user_tables() {
     let user_password = "test_password_123";
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -622,7 +622,7 @@ fn cluster_test_table_identity_user_tables() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ User table data is properly partitioned and replicated\n");
 }

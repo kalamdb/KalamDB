@@ -70,7 +70,7 @@ before(async () => {
 after(async () => {
   await client?.query('DROP TABLE IF EXISTS test_filter.events').catch(() => {});
   await client?.query('DROP TABLE IF EXISTS test_filter.timeline').catch(() => {});
-  await client?.query('DROP NAMESPACE IF EXISTS test_filter').catch(() => {});
+  await client?.query('DROP SCHEMA IF EXISTS test_filter').catch(() => {});
   await client?.disconnect();
 });
 

@@ -708,7 +708,7 @@ fn test_cli_subscribe_flags_work_end_to_end() {
     let elapsed = started.elapsed();
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     assert!(
         output.status.success(),
@@ -775,7 +775,7 @@ fn test_cli_consume_flags_work_end_to_end() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TOPIC {}", topic));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

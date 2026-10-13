@@ -2,8 +2,8 @@
 -- all table types, storage lifecycle, user execute-as, and multiple topic sources.
 
 DROP USER IF EXISTS 'case30_user';
-DROP NAMESPACE IF EXISTS sql_file_case_30_main CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_main CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_other CASCADE;
 DROP STORAGE IF EXISTS case30_storage;
 
 CREATE STORAGE case30_storage
@@ -22,7 +22,7 @@ CREATE USER 'case30_user'
 ALTER USER 'case30_user' SET ROLE service;
 ALTER USER 'case30_user' SET ROLE user;
 
-DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_other CASCADE;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_30_main;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_30_other;
 
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS case30_other_table (
   label TEXT NOT NULL
 ) WITH (TYPE = 'USER', STORAGE_ID = 'local', FLUSH_POLICY = 'rows:10,interval:5');
 
-DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_other CASCADE;
 CREATE SCHEMA IF NOT EXISTS sql_file_case_30_other;
 USE sql_file_case_30_other;
 CREATE TABLE IF NOT EXISTS case30_other_table2 (
@@ -161,7 +161,7 @@ ALTER USER 'case30_user' SET STORAGE_ID NULL;
 CONSUME FROM case30_topic LIMIT 50;
 
 DROP TOPIC case30_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_30_main CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_other CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_30_main CASCADE;
 DROP USER IF EXISTS 'case30_user';
 DROP STORAGE case30_storage;

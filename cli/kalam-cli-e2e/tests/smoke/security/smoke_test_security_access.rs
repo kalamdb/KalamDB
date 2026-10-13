@@ -258,7 +258,7 @@ fn smoke_security_private_shared_table_blocked_in_batch() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", regular_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 // Regular users cannot subscribe to system tables or private shared tables
@@ -326,7 +326,7 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
             let _ =
                 execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_public));
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
             return;
         }
     }
@@ -350,7 +350,7 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
             let _ =
                 execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_public));
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
             return;
         }
     }
@@ -364,7 +364,7 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", regular_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_public));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 // Query length guard rejects oversized SQL (DoS prevention)
@@ -524,7 +524,7 @@ fn smoke_security_cross_user_row_isolation() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_a));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_b));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 // ── EXECUTE AS injection prevention ───────────────────────────────────────
@@ -666,5 +666,5 @@ fn smoke_security_plain_user_cannot_execute_as_any_user() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", dba_target));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

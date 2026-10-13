@@ -181,7 +181,7 @@ fn smoke_test_concurrent_subscription_fanout() {
         full_table_name_for_cleanup
     ));
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_for_cleanup
     ));
 }

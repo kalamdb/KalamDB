@@ -64,7 +64,7 @@ fn smoke_test_timing_output_format() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -112,7 +112,7 @@ fn smoke_test_timing_scaling_small_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -128,7 +128,7 @@ fn smoke_test_timing_scaling_medium_table() {
     let full = format!("{}.{}", namespace, table);
 
     // Cleanup first
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace
     execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
@@ -174,7 +174,7 @@ fn smoke_test_timing_scaling_medium_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -230,7 +230,7 @@ fn smoke_test_timing_aggregation_query() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -324,7 +324,7 @@ fn smoke_test_timing_join_query() {
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full1));
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full2));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -366,7 +366,7 @@ fn smoke_test_timing_ddl_operations() {
     println!("DROP TABLE timing: {:?}", timing);
 
     // Note: This test is primarily informational - DDL timing may vary
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180_000)]
@@ -418,5 +418,5 @@ fn smoke_test_timing_flush_operation() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

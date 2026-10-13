@@ -54,7 +54,7 @@ fn test_shared_catalog_select_without_write() {
 
     let _ = common::execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ = common::execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
+        "DROP SCHEMA IF EXISTS {namespace} CASCADE"
     ));
 }
 
@@ -98,6 +98,6 @@ fn test_shared_default_deny_without_policy() {
 
     let _ = common::execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ = common::execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
+        "DROP SCHEMA IF EXISTS {namespace} CASCADE"
     ));
 }

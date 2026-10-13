@@ -225,7 +225,7 @@ impl SqlStatement {
                 AlterScheduleStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::AlterSchedule)
             }),
-            ["ALTER", "NAMESPACE", ..] => {
+            ["ALTER", "SCHEMA", ..] | ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
@@ -233,10 +233,10 @@ impl SqlStatement {
                     ));
                 }
                 Self::wrap(sql, || {
-                    AlterNamespaceStatement::parse(sql).map(SqlStatementKind::AlterNamespace)
+                    AlterSchemaStatement::parse(sql).map(SqlStatementKind::AlterSchema)
                 })
             },
-            ["DROP", "NAMESPACE", ..] => {
+            ["DROP", "SCHEMA", ..] | ["DROP", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
@@ -244,28 +244,24 @@ impl SqlStatement {
                     ));
                 }
                 Self::wrap(sql, || {
-                    DropNamespaceStatement::parse(sql).map(SqlStatementKind::DropNamespace)
+                    DropSchemaStatement::parse(sql).map(SqlStatementKind::DropSchema)
                 })
             },
-            ["SHOW", "NAMESPACES", ..] => {
+            ["SHOW", "SCHEMAS", ..] | ["SHOW", "NAMESPACES", ..] => {
                 // Read-only, allowed for all users
                 Self::wrap(sql, || {
-                    ShowNamespacesStatement::parse(sql).map(SqlStatementKind::ShowNamespaces)
+                    ShowSchemasStatement::parse(sql).map(SqlStatementKind::ShowSchemas)
                 })
             },
 
-            // USE NAMESPACE / USE / SET NAMESPACE - switch default schema
-            ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
+            // SET SCHEMA / USE <name> - switch default schema
+            ["SET", "SCHEMA", ..] | ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
                 // Allowed for all users (actual table access is checked per-query)
-                Self::wrap(sql, || {
-                    UseNamespaceStatement::parse(sql).map(SqlStatementKind::UseNamespace)
-                })
+                Self::wrap(sql, || UseSchemaStatement::parse(sql).map(SqlStatementKind::UseSchema))
             },
             ["USE", ..] => {
-                // USE <name> shorthand (USE NAMESPACE is handled above)
-                Self::wrap(sql, || {
-                    UseNamespaceStatement::parse(sql).map(SqlStatementKind::UseNamespace)
-                })
+                // USE <name> shorthand (SET SCHEMA is handled above)
+                Self::wrap(sql, || UseSchemaStatement::parse(sql).map(SqlStatementKind::UseSchema))
             },
 
             // Storage operations - require admin
@@ -960,21 +956,20 @@ impl SqlStatement {
             SqlStatementKind::AlterUser(_) => Ok(()),
 
             // Namespace DDL requires admin privileges
-            SqlStatementKind::CreateNamespace(_)
-            | SqlStatementKind::CreateSchema(_)
-            | SqlStatementKind::AlterNamespace(_)
-            | SqlStatementKind::DropNamespace(_) => Err("Admin privileges (DBA or System role) \
-                                                         required for namespace operations"
+            SqlStatementKind::CreateSchema(_)
+            | SqlStatementKind::AlterSchema(_)
+            | SqlStatementKind::DropSchema(_) => Err("Admin privileges (DBA or System role) \
+                                                      required for namespace operations"
                 .to_string()),
 
-            SqlStatementKind::ShowNamespaces(_)
+            SqlStatementKind::ShowSchemas(_)
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_)
-            | SqlStatementKind::UseNamespace(_)
+            | SqlStatementKind::UseSchema(_)
             | SqlStatementKind::SetSearchPath(_) => Ok(()),
 
             SqlStatementKind::CreateTable(_)
@@ -1143,7 +1138,7 @@ mod tests {
         }
 
         for sql in [
-            "SHOW NAMESPACES",
+            "SHOW SCHEMAS",
             "CREATE TABLE default.tasks (id BIGINT PRIMARY KEY) WITH (TYPE='USER')",
             "BEGIN",
             "EXPORT USER DATA",

@@ -35,7 +35,7 @@ fn cluster_test_flush_data_consistency() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     // Cleanup from previous runs
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Step 1: Create namespace on first node
     println!("  1. Creating namespace on node 0...");
@@ -136,7 +136,7 @@ fn cluster_test_flush_data_consistency() {
 
     // Cleanup
     println!("  9. Cleaning up...");
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Cluster flush data consistency test passed\n");
 }
@@ -167,7 +167,7 @@ fn cluster_test_multiple_flushes() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Setup
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
@@ -250,7 +250,7 @@ fn cluster_test_multiple_flushes() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Cluster multiple flushes test passed\n");
 }
@@ -277,7 +277,7 @@ fn cluster_test_flush_during_reads() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Setup
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
@@ -327,7 +327,7 @@ fn cluster_test_flush_during_reads() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Cluster flush during reads test passed\n");
 }

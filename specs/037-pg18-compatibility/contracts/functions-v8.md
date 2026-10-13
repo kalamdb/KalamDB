@@ -8,6 +8,8 @@ Reuse immutable Arrow owners across native boundaries and pass host-backed read 
 
 SQL and PL/pgSQL routines use their native runtime/execution contract, not V8. JavaScript and TypeScript remain Kalam extensions. This work does not add a serializer or a second logical type registry, and does not require a v2 disk-format switch before native call improvements can land.
 
+The PostgreSQL-facing contract is [routines-postgresql.md](routines-postgresql.md). JS/TS are first-class SQL routines: language selection changes the execution backend, not signature binding, quoted-name rules, function/procedure kind or result shape. SQL callers use normal expressions/SELECT or CALL, without a JSON envelope. In-process requests and replies carry typed owners/errors; the no-envelope rule applies to both directions and nested calls. SQL/PLpgSQL bodies cannot be relabeled or executed as JavaScript.
+
 ```mermaid
 flowchart LR
     S[Validated storage decode] --> A[Immutable Arrow buffers and logical descriptors]
@@ -43,6 +45,8 @@ Evolve `RoutineValue` in place into a typed transport envelope with mutually exc
 
 Resolve an immutable call descriptor once per routine/schema/type revision: logical argument/result types, named argument ordinals, nullability, conversion policy, ABI version, and relevant security dependencies. Keep each model in its own file. Functions consumes these descriptors injected by core; it must not depend on core or resolve the type registry per row/field.
 
+The descriptor also carries argument modes/default expression bindings, routine kind, result cardinality and planner attributes. Binding is explicitly positional, named or already bound; never infer named arguments from a JSON/composite object's keys. The new ABI's indexed argument view and named input view refer to the same slots. Unnamed parameters and SQL names invalid as JS identifiers need no source-code interpolation. Defaults are evaluated at invocation when omitted; a cached descriptor must not cache their runtime values. T129/T133/T134 define the exact input/output mappings before T113 is closed.
+
 Do not simultaneously retain a scalar tree, JSON tree and encoded transfer for the same value. Remove `type_id`/`json_sql`/transfer fields as independent authorities when the canonical descriptor/payload replaces them. A small scalar convenience form is a physical representation, not a competing type definition.
 
 Borrowed views are valid within a synchronous scope only. Anything crossing await, worker queues or retained JS wrappers carries owning Arc/Buffer references and a budget lease. No pointer to a temporary `RowView`, iterator value, stack slice or released RecordBatch may escape. The owner also pins the needed descriptor revision, but does not hold a RocksDB iterator, lock or transaction snapshot open solely to keep an already materialized value alive.
@@ -61,6 +65,8 @@ Borrowed views are valid within a synchronous scope only. Anything crossing awai
 | UTF-8 → JS string | Convert on access; optional eligible external string | No blanket zero-copy string promise; account transcoding and retention |
 | JSON/JSONB → JS object | Canonical typed conversion on demand | Parsing/object creation cost remains; SQL JSON null and SQL NULL stay distinct |
 | Return to HTTP/PG wire or durable storage | Existing canonical codecs | Output encoding/write costs are outside the no-copy forwarding claim |
+
+Typed internal dispatch is mandatory even for ordinary JS values: convert a new guest object directly to the declared native value once; never stringify it as a request or reply and parse it again. Native channels transfer the typed message/owner, not encoded bytes. Preserve SQL JSON parsing where it is the value's actual semantics, and count it separately from avoidable invocation-envelope serialization. T138 measures each direction, including errors and nested replies.
 
 No implicit ownership transfer from caller-owned JavaScript buffers. Transfer is explicit in the versioned ABI/API because detachment changes observable behavior. SharedArrayBuffer, resizable/growable buffers, live aliasing, unsupported alignment, or unresolved ownership use a safe copy or explicit rejection under that ABI. Never disable sandboxing to gain a fast path.
 

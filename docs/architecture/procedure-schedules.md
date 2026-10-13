@@ -26,7 +26,7 @@ DROP SCHEDULE IF EXISTS reports.daily_summary;
 - SQL identifiers use PostgreSQL tokenization: unquoted names fold to lowercase, double-quoted names preserve case, and backticks are rejected.
 - Both overlap and misfire policies are `skip`. Unsupported policies are rejected. There is no retry or catch-up queue.
 - Enabling a disabled schedule computes a future next run. Disabling prevents future dispatch and lets a claimed invocation finish. Drop rejects an active claim: disable, wait for completion/recovery, then drop. This also prevents overlap after drop/recreate of the same name.
-- Drop dependent schedules before dropping their procedure. `DROP NAMESPACE` removes schedules in that namespace, matching triggers.
+- Drop dependent schedules before dropping their procedure. `DROP SCHEMA` removes schedules in that namespace, matching triggers.
 
 ## Execution and ownership
 

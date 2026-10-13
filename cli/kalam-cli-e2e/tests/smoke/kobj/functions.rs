@@ -1268,7 +1268,7 @@ fn kobj_functions_runtime_failure_cleanup_and_recovery() {
         "function failure/rollback/recovery runtime_seconds={:.3}",
         started.elapsed().as_secs_f64()
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Concurrent parameter binding and per-call globals through the database API.
@@ -1317,7 +1317,7 @@ fn kobj_functions_runtime_concurrent_calls_preserve_inputs() {
             latencies[98]
         );
     });
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// PocketBase hooks, Postgres functions, and Firebase callable transactions abort
@@ -1453,7 +1453,7 @@ fn kobj_functions_throw_aborts_shared_writes_nested_call_and_topic() {
         0,
         "rejected COMMIT must not leave the insert"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Firebase and this runtime both cap nested calls. A shallow chain succeeds; a
@@ -1486,7 +1486,7 @@ fn kobj_functions_nested_call_depth_limit() {
         too_deep_lower.contains("depth") || too_deep_lower.contains("resource"),
         "call depth past the runtime limit must fail: {too_deep}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Firebase background functions and PocketBase hooks retry a failed delivery.

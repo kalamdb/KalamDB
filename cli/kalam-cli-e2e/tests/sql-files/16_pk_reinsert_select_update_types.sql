@@ -1,6 +1,6 @@
 -- PK delete/reinsert + select/update with NOW/CURRENT_USER and mixed datatypes.
 
-DROP NAMESPACE IF EXISTS sql_file_case_16 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_16 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_16;
 USE sql_file_case_16;
@@ -37,4 +37,4 @@ SET qty = qty + 1,
     owner = CURRENT_USER()
 WHERE id IN (1601, 1602);
 
-DROP NAMESPACE IF EXISTS sql_file_case_16 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_16 CASCADE;

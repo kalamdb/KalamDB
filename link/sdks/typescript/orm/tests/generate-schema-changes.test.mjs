@@ -32,7 +32,7 @@ before(async () => {
 
 after(async () => {
   // Best-effort cleanup — individual tests clean up their own tables.
-  await client?.query(`DROP NAMESPACE IF EXISTS ${NS}`).catch(() => {});
+  await client?.query(`DROP SCHEMA IF EXISTS ${NS}`).catch(() => {});
   await client?.disconnect();
 });
 

@@ -207,7 +207,7 @@ fn smoke_shared_table_subscription_lifecycle() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // Default-deny shared tables still allow User subscribe; RLS filters events.
@@ -249,7 +249,7 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
                 error
             );
             let _ =
-                execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
             return;
         }
@@ -261,6 +261,6 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
 }

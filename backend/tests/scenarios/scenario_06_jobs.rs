@@ -153,7 +153,7 @@ async fn test_scenario_06_jobs_lifecycle() -> anyhow::Result<()> {
     assert_eq!(ids.len(), unique_count, "No duplicate IDs should exist");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -213,7 +213,7 @@ async fn test_scenario_06_job_idempotency() -> anyhow::Result<()> {
     assert_eq!(count, 10, "Should still have exactly 10 rows after multiple flushes");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -332,6 +332,6 @@ async fn test_scenario_06_job_status_transitions() -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

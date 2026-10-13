@@ -148,7 +148,7 @@ fn test_storage_drop_requires_detached_tables() {
 
     execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id))
         .expect("storage drop should succeed after tables removed");
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 fn query_rows(sql: &str) -> Vec<JsonValue> {

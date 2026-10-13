@@ -108,12 +108,13 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
 
 fn builtin_type_reference(data_type: KalamDataType) -> TypeReference {
     TypeReference {
-        namespace_id: None,
-        name:         data_type.sql_name().to_string(),
-        data_type:    Some(data_type),
-        is_array:     false,
-        not_null:     false,
-        nonempty:     false,
+        namespace_id:       None,
+        name:               data_type.sql_name().to_string(),
+        data_type:          Some(data_type),
+        syntactic_modifier: None,
+        is_array:           false,
+        not_null:           false,
+        nonempty:           false,
     }
 }
 
@@ -141,6 +142,7 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
         namespace_id,
         name: type_name.to_ascii_lowercase(),
         data_type: None,
+        syntactic_modifier: None,
         is_array: false,
         not_null: false,
         nonempty: false,

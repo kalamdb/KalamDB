@@ -622,7 +622,7 @@ async fn test_sql_create_namespace() {
 
     // Cleanup
     let _ = client
-        .execute_query("DROP NAMESPACE IF EXISTS test_ns CASCADE", None, None, None)
+        .execute_query("DROP SCHEMA IF EXISTS test_ns CASCADE", None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
@@ -630,7 +630,7 @@ async fn test_sql_create_namespace() {
     assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
 
     // Cleanup
-    let _ = client.execute_query("DROP NAMESPACE test_ns CASCADE", None, None, None).await;
+    let _ = client.execute_query("DROP SCHEMA test_ns CASCADE", None, None, None).await;
 }
 
 #[tokio::test]

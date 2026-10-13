@@ -301,7 +301,7 @@ pub(crate) mod cluster_common {
             || upper.starts_with("CREATE SHARED TABLE")
             || upper.starts_with("CREATE USER TABLE")
             || upper.starts_with("CREATE STREAM TABLE")
-            || upper.starts_with("DROP NAMESPACE")
+            || upper.starts_with("DROP SCHEMA")
             || upper.starts_with("DROP TABLE")
             || upper.starts_with("ALTER TABLE")
     }

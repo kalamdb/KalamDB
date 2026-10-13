@@ -146,5 +146,5 @@ fn smoke_shared_table_crud() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {collaborator}"));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

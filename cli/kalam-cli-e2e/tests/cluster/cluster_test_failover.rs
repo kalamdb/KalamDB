@@ -150,7 +150,7 @@ fn cluster_test_write_routing() {
 
     // Cleanup
     for url in &urls {
-        let _ = execute_on_node(url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        let _ = execute_on_node(url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     }
 
     // Try creating namespace from each node
@@ -170,7 +170,7 @@ fn cluster_test_write_routing() {
         }
 
         // Cleanup
-        let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", test_ns));
+        let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", test_ns));
     }
 
     println!("\n  ✅ Write routing test complete\n");

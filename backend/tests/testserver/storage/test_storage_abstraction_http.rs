@@ -171,9 +171,9 @@ async fn test_storage_abstraction_over_http() -> anyhow::Result<()> {
     assert_eq!(response.status, ResponseStatus::Error);
 
     // Cleanup best-effort: keep the test idempotent.
-    let _ = server.execute_sql("DROP NAMESPACE test_storage_trait").await;
-    let _ = server.execute_sql("DROP NAMESPACE test_rocksdb_trait").await;
-    let _ = server.execute_sql("DROP NAMESPACE test_partition_ns").await;
+    let _ = server.execute_sql("DROP SCHEMA test_storage_trait").await;
+    let _ = server.execute_sql("DROP SCHEMA test_rocksdb_trait").await;
+    let _ = server.execute_sql("DROP SCHEMA test_partition_ns").await;
     let _ = server.execute_sql("DROP STORAGE test_local").await;
     Ok(())
 }

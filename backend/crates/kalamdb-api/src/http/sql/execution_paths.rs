@@ -811,7 +811,7 @@ pub(super) async fn execute_batch_path(
                             if let Some(classified) =
                                 stmt.prepared_statement.classified_statement.as_ref()
                             {
-                                if let SqlStatementKind::UseNamespace(use_namespace) =
+                                if let SqlStatementKind::UseSchema(use_namespace) =
                                     classified.kind()
                                 {
                                     statement_exec_ctx = statement_exec_ctx
@@ -938,7 +938,7 @@ pub(super) async fn execute_batch_path(
                 );
 
                 if let Some(classified) = stmt.prepared_statement.classified_statement.as_ref() {
-                    if let SqlStatementKind::UseNamespace(use_namespace) = classified.kind() {
+                    if let SqlStatementKind::UseSchema(use_namespace) = classified.kind() {
                         statement_exec_ctx = statement_exec_ctx
                             .clone()
                             .with_namespace_id(use_namespace.namespace.clone());

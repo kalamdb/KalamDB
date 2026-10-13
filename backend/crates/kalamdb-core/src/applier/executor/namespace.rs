@@ -46,7 +46,7 @@ impl NamespaceExecutor {
         .await
     }
 
-    /// Execute DROP NAMESPACE
+    /// Execute DROP SCHEMA
     pub async fn drop_namespace(&self, namespace_id: &SchemaId) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Dropping namespace {}", namespace_id);
         let app_context = self.app_context.clone();

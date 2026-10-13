@@ -74,6 +74,6 @@ async def temp_namespace(client):
     await client.query(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
     yield namespace
     try:
-        await client.query(f"DROP NAMESPACE IF EXISTS {namespace} CASCADE")
+        await client.query(f"DROP SCHEMA IF EXISTS {namespace} CASCADE")
     except Exception:
         pass

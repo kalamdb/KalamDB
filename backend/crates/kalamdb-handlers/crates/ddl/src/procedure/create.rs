@@ -282,7 +282,10 @@ fn catalog_routine(
         return_is_array: statement.return_type.as_ref().is_some_and(|ty| ty.is_array),
         return_not_null: statement.return_type.as_ref().is_some_and(|ty| ty.not_null),
         comment: statement.comment.clone(),
-        return_data_type: statement.return_type.as_ref().and_then(|ty| ty.builtin_data_type()),
+        return_data_type: statement
+            .return_type
+            .as_ref()
+            .and_then(|ty| ty.function_signature_type().builtin_data_type()),
         inline_source_hash: None,
         inline_artifact_id: None,
     })
@@ -310,7 +313,7 @@ fn catalog_parameters(
             is_array: parameter.type_ref.is_array,
             not_null: parameter.type_ref.not_null,
             nonempty: parameter.type_ref.nonempty,
-            data_type: parameter.type_ref.builtin_data_type(),
+            data_type: parameter.type_ref.function_signature_type().builtin_data_type(),
         });
     }
     Ok(parameters)

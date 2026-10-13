@@ -483,7 +483,7 @@ impl CatalogStores {
 
     /// Drop procedures, types, triggers, and schedules owned by `namespace_id`.
     ///
-    /// `DROP NAMESPACE` uses this so catalog objects cannot outlive the schema.
+    /// `DROP SCHEMA` uses this so catalog objects cannot outlive the schema.
     /// Referential checks are skipped because the whole namespace is going away.
     pub fn drop_namespace_catalog(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
         let schedule_ids: Vec<ScheduleId> = self

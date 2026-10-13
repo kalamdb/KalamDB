@@ -181,7 +181,7 @@ async fn test_rls_role_targets_user_service_and_public() -> anyhow::Result<()> {
         "PUBLIC policy must combine permissively with service-targeted policy"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -217,7 +217,7 @@ async fn test_rls_membership_authorization_cache_warms_on_repeat_select() -> any
         "second membership select must hit the authorization cache"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -262,7 +262,7 @@ async fn test_rls_repeat_membership_scan_performance_stays_bounded() -> anyhow::
         "warmed membership scans must record authorization cache hits"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -302,7 +302,7 @@ async fn test_rls_membership_revoke_invalidates_authorization_cache() -> anyhow:
         "revoked membership must rebuild authorization state"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -338,7 +338,7 @@ async fn test_rls_rejects_unbounded_not_policy() -> anyhow::Result<()> {
         "complex policy rejection should explain the bounded routing requirement: {message}"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -368,7 +368,7 @@ async fn test_rls_union_and_except_cannot_bypass_membership() -> anyhow::Result<
         "EXCEPT must not surface rows outside membership authorization"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -425,7 +425,7 @@ async fn test_rls_plan_cache_stays_isolated_across_roles_and_principals() -> any
         "plan cache must bind CURRENT_USER independently per principal"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -555,7 +555,7 @@ async fn test_rls_multi_subscriber_conversation_membership_isolation() -> anyhow
         );
     }
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 
@@ -665,7 +665,7 @@ async fn test_rls_unrelated_membership_mutation_fails_closed_without_leak() -> a
         .await?;
 
     let _clients = alice_client;
-    let _ = server.execute_sql(&format!("DROP NAMESPACE IF EXISTS {ns} CASCADE")).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA IF EXISTS {ns} CASCADE")).await;
     Ok(())
 }
 

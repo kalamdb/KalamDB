@@ -58,7 +58,7 @@ fn smoke_shared_table_rls_rejects_access_level() {
     );
 
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -184,7 +184,7 @@ fn smoke_shared_table_rls_default_deny_and_policy_grant() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {service}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -249,7 +249,7 @@ fn smoke_shared_table_rls_plan_cache_isolation() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {alice}"));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {bob}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -314,7 +314,7 @@ fn smoke_shared_table_rls_on_conflict_rejected_for_subjects() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -510,7 +510,7 @@ fn smoke_shared_table_rls_multi_subscriber_conversation_membership() {
                     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
                 }
                 let _ = execute_sql_as_root_via_client(&format!(
-                    "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
+                    "DROP SCHEMA IF EXISTS {namespace} CASCADE"
                 ));
                 return;
             },
@@ -546,7 +546,7 @@ fn smoke_shared_table_rls_multi_subscriber_conversation_membership() {
         let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     }
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -602,7 +602,7 @@ fn smoke_shared_table_rls_raw_download_denied() {
     );
 
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -683,7 +683,7 @@ fn smoke_shared_table_rls_role_policy_targets() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {service}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -763,7 +763,7 @@ fn smoke_shared_table_rls_membership_cache_and_performance() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -831,7 +831,7 @@ fn smoke_shared_table_rls_membership_revoke_invalidates_cache() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 #[ntest::timeout(180000)]
@@ -912,7 +912,7 @@ fn smoke_shared_table_rls_null_not_policy_and_union_bypass() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 fn assert_rls_denied(error: &dyn std::fmt::Display, context: &str) {
@@ -953,5 +953,5 @@ fn wait_for_event(listener: &mut SubscriptionListener, needle: &str, timeout: Du
 fn cleanup_rls_live(namespace: &str, user: &str) {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {user}"));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }

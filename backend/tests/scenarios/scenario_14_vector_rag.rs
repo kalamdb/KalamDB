@@ -535,6 +535,6 @@ async fn test_scenario_14_rag_docs_with_files_and_vector_search() -> anyhow::Res
         "second flush should rotate vector snapshot version for doc_embedding"
     );
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

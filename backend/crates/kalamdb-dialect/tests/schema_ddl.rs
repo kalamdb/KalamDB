@@ -58,6 +58,35 @@ fn create_namespace_is_rejected_for_a_non_admin() {
 }
 
 #[test]
+fn alter_show_and_set_schema_classify() {
+    let altered = classify("ALTER SCHEMA app SET OPTIONS (region = 'us-west')", Role::Dba)
+        .expect("ALTER SCHEMA");
+    assert!(matches!(altered.kind(), SqlStatementKind::AlterSchema(_)));
+
+    let shown = classify("SHOW SCHEMAS", Role::User).expect("SHOW SCHEMAS");
+    assert!(matches!(shown.kind(), SqlStatementKind::ShowSchemas(_)));
+
+    let selected = classify("SET SCHEMA app", Role::User).expect("SET SCHEMA");
+    match selected.kind() {
+        SqlStatementKind::UseSchema(stmt) => assert_eq!(stmt.namespace.as_str(), "app"),
+        other => panic!("expected SET SCHEMA, got {other:?}"),
+    }
+}
+
+#[test]
+fn drop_schema_classifies_as_drop_namespace() {
+    let statement = classify("DROP SCHEMA IF EXISTS app CASCADE", Role::Dba).expect("DROP SCHEMA");
+    match statement.kind() {
+        SqlStatementKind::DropSchema(stmt) => {
+            assert_eq!(stmt.name.as_str(), "app");
+            assert!(stmt.if_exists);
+            assert!(stmt.cascade);
+        },
+        other => panic!("expected DROP SCHEMA, got {other:?}"),
+    }
+}
+
+#[test]
 fn create_user_remains_identity() {
     let statement =
         classify("CREATE USER alice WITH PASSWORD 'secure123' ROLE developer", Role::Dba)

@@ -28,7 +28,7 @@ before(async () => {
 after(async () => {
   if (existsSync(outFile)) unlinkSync(outFile);
   await client?.query('DROP TABLE IF EXISTS test_cli_gen.cli_options').catch(() => {});
-  await client?.query('DROP NAMESPACE IF EXISTS test_cli_gen').catch(() => {});
+  await client?.query('DROP SCHEMA IF EXISTS test_cli_gen').catch(() => {});
   await client?.disconnect();
 });
 

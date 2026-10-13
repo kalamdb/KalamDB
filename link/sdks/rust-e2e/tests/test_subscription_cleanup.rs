@@ -124,7 +124,7 @@ async fn test_is_closed_flag_transitions() {
     sub.close().await.expect("close() should succeed");
     assert!(sub.is_closed(), "should be closed after close()");
 
-    sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+    sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
 }
 
 /// `close()` is idempotent: calling it twice must not error.
@@ -147,7 +147,7 @@ async fn test_close_is_idempotent() {
     sub.close().await.expect("second close() should be a no-op");
     assert!(sub.is_closed());
 
-    sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+    sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
 }
 
 /// After `close()`, `next()` returns `None` immediately.
@@ -177,7 +177,7 @@ async fn test_next_returns_none_after_close() {
         result
     );
 
-    sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+    sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
 }
 
 // ── server-side cleanup ───────────────────────────────────────────────────────
@@ -222,7 +222,7 @@ async fn test_explicit_close_removes_from_live() {
         "subscription should be removed from system.live after explicit close()"
     );
 
-    sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+    sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
 }
 
 /// Dropping a subscription without calling `close()` triggers the Drop impl,
@@ -251,7 +251,7 @@ async fn test_drop_without_close_removes_from_live() {
     if !appeared {
         eprintln!("WARN: subscription did not appear in system.live — skipping drop assertion");
         drop(sub);
-        sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+        sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
         return;
     }
 
@@ -265,5 +265,5 @@ async fn test_drop_without_close_removes_from_live() {
         "subscription should be removed from system.live after drop (Drop impl)"
     );
 
-    sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns)).await;
+    sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns)).await;
 }

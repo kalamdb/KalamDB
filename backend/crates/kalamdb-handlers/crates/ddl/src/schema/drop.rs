@@ -1,4 +1,4 @@
-//! Typed DDL handler for DROP NAMESPACE statements
+//! Typed DDL handler for DROP SCHEMA statements
 //!
 //! When a namespace is dropped, its DataFusion schema becomes unavailable.
 //! Any queries referencing tables in the dropped namespace will fail.
@@ -14,7 +14,7 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::DropNamespaceStatement;
+use kalamdb_sql::ddl::DropSchemaStatement;
 
 use crate::{
     helpers::{
@@ -27,12 +27,12 @@ use crate::{
     },
 };
 
-/// Typed handler for DROP NAMESPACE statements
-pub struct DropNamespaceHandler {
+/// Typed handler for DROP SCHEMA statements
+pub struct DropSchemaHandler {
     app_context: Arc<AppContext>,
 }
 
-impl DropNamespaceHandler {
+impl DropSchemaHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
@@ -72,10 +72,10 @@ impl DropNamespaceHandler {
     }
 }
 
-impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
+impl TypedStatementHandler<DropSchemaStatement> for DropSchemaHandler {
     async fn execute(
         &self,
-        statement: DropNamespaceStatement,
+        statement: DropSchemaStatement,
         _params: Vec<ScalarValue>,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
@@ -168,7 +168,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 "TABLE",
                 &table_id.full_name(),
                 Some(format!(
-                    "CASCADE from DROP NAMESPACE. Type: {:?}, Cleanup Job: {} (completed before \
+                    "CASCADE from DROP SCHEMA. Type: {:?}, Cleanup Job: {} (completed before \
                      response)",
                     table_type, cleanup_job_id
                 )),
@@ -199,7 +199,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
                 "DROP",
                 "TOPIC",
                 &topic_name,
-                Some("CASCADE from DROP NAMESPACE".to_string()),
+                Some("CASCADE from DROP SCHEMA".to_string()),
                 None,
             );
             audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
@@ -212,7 +212,7 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
             .applier()
             .drop_namespace(namespace_id.clone())
             .await
-            .map_err(|e| KalamDbError::ExecutionError(format!("DROP NAMESPACE failed: {}", e)))?;
+            .map_err(|e| KalamDbError::ExecutionError(format!("DROP SCHEMA failed: {}", e)))?;
 
         // Deregister schema from DataFusion catalog
         self.deregister_namespace_schema(&namespace_id);
@@ -234,11 +234,11 @@ impl TypedStatementHandler<DropNamespaceStatement> for DropNamespaceHandler {
 
     async fn check_authorization(
         &self,
-        _statement: &DropNamespaceStatement,
+        _statement: &DropSchemaStatement,
         context: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         // T050: Block anonymous users from DDL operations
-        block_anonymous_write(context, "DROP NAMESPACE")?;
+        block_anonymous_write(context, "DROP SCHEMA")?;
 
         require_admin(context, "drop namespace")
     }
@@ -285,8 +285,8 @@ mod tests {
     #[tokio::test]
     async fn test_drop_namespace_success() {
         let app_ctx = init_app_context();
-        let handler = DropNamespaceHandler::new(app_ctx);
-        let stmt = DropNamespaceStatement {
+        let handler = DropSchemaHandler::new(app_ctx);
+        let stmt = DropSchemaStatement {
             name:      kalamdb_commons::models::NamespaceId::new("test_namespace"),
             if_exists: false,
             cascade:   false,
@@ -304,8 +304,8 @@ mod tests {
     #[tokio::test]
     async fn test_drop_namespace_authorization() {
         let app_ctx = init_app_context();
-        let handler = DropNamespaceHandler::new(app_ctx);
-        let stmt = DropNamespaceStatement {
+        let handler = DropSchemaHandler::new(app_ctx);
+        let stmt = DropSchemaStatement {
             name:      kalamdb_commons::models::NamespaceId::new("test"),
             if_exists: false,
             cascade:   false,
@@ -323,8 +323,8 @@ mod tests {
     #[tokio::test]
     async fn test_drop_namespace_if_exists() {
         let app_ctx = init_app_context();
-        let handler = DropNamespaceHandler::new(app_ctx);
-        let stmt = DropNamespaceStatement {
+        let handler = DropSchemaHandler::new(app_ctx);
+        let stmt = DropSchemaStatement {
             name:      kalamdb_commons::models::NamespaceId::new("nonexistent"),
             if_exists: true,
             cascade:   false,
@@ -345,7 +345,7 @@ mod tests {
         let suffix = unique_suffix();
         let namespace_id = NamespaceId::new(format!("drop_migrations_{}", suffix));
         let other_namespace_id = NamespaceId::new(format!("keep_migrations_{}", suffix));
-        let handler = DropNamespaceHandler::new(app_ctx.clone());
+        let handler = DropSchemaHandler::new(app_ctx.clone());
 
         for ns_id in [&namespace_id, &other_namespace_id] {
             app_ctx
@@ -501,7 +501,7 @@ mod tests {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
         let namespace_id = NamespaceId::new(format!("drop_catalog_{}", suffix));
-        let handler = DropNamespaceHandler::new(app_ctx.clone());
+        let handler = DropSchemaHandler::new(app_ctx.clone());
 
         app_ctx
             .system_tables()
@@ -551,7 +551,7 @@ mod tests {
             })
             .expect("upsert routine");
 
-        let stmt = DropNamespaceStatement {
+        let stmt = DropSchemaStatement {
             name:      namespace_id.clone(),
             if_exists: false,
             cascade:   true,
@@ -566,7 +566,7 @@ mod tests {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
         let namespace_id = NamespaceId::new(format!("orphan_catalog_{}", suffix));
-        let handler = DropNamespaceHandler::new(app_ctx.clone());
+        let handler = DropSchemaHandler::new(app_ctx.clone());
         let stores = app_ctx.system_tables().catalog_stores();
         let routine_id = RoutineId::from_parts(Some(&namespace_id), "book_tickets");
         stores
@@ -589,7 +589,7 @@ mod tests {
             })
             .expect("upsert orphan routine");
 
-        let stmt = DropNamespaceStatement {
+        let stmt = DropSchemaStatement {
             name:      namespace_id.clone(),
             if_exists: true,
             cascade:   true,

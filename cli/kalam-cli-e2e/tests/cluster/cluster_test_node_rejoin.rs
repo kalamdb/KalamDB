@@ -123,7 +123,7 @@ fn cluster_test_node_rejoin_system_metadata() {
     let leader_url = &urls[0]; // http://127.0.0.1:2901
 
     // Setup: Create initial namespace
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Step 1: Stop node3
     println!("Step 1: Stopping node3...");
@@ -258,7 +258,7 @@ fn cluster_test_node_rejoin_system_metadata() {
     }
 
     // Cleanup
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Node rejoin system metadata test passed\n");
 }
@@ -287,7 +287,7 @@ fn cluster_test_node_rejoin_dml_operations() {
     let leader_url = &urls[0];
 
     // Setup: Create namespace and table
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -391,7 +391,7 @@ fn cluster_test_node_rejoin_dml_operations() {
         );
         println!("     This is a known Raft group ordering issue during catch-up");
         // Cleanup and skip remaining assertions
-        let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+        let _ = execute_on_node(leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
         println!("\n  ✅ Node rejoin DML test passed (with known limitation)\n");
         return;
     } else {
@@ -422,7 +422,7 @@ fn cluster_test_node_rejoin_dml_operations() {
     }
 
     // Cleanup
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Node rejoin DML operations test passed\n");
 }
@@ -540,7 +540,7 @@ fn cluster_test_multiple_rejoin_cycles() {
     let leader_url = &urls[0];
 
     // Setup
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -605,7 +605,7 @@ fn cluster_test_multiple_rejoin_cycles() {
     }
 
     // Cleanup
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Multiple rejoin cycles test passed\n");
 }
@@ -634,7 +634,7 @@ fn cluster_test_node_rejoin_schema_changes() {
     let leader_url = &urls[0];
 
     // Setup: Create namespace and initial table
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
@@ -769,7 +769,7 @@ fn cluster_test_node_rejoin_schema_changes() {
     }
 
     // Cleanup
-    let _ = execute_on_node(leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Node rejoin schema changes test passed\n");
 }

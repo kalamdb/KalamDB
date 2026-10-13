@@ -63,7 +63,7 @@ for fpath in rs_files:
 
         # Check what this function creates
         creates_ns = bool(re.search(r"CREATE NAMESPACE|generate_unique_namespace", fn_body))
-        drops_ns = bool(re.search(r"DROP NAMESPACE", fn_body))
+        drops_ns = bool(re.search(r"DROP (?:NAMESPACE|SCHEMA)", fn_body))
         # Distinguish CREATE USER (entity) from CREATE USER TABLE
         creates_user = bool(re.search(r"CREATE USER\s+(?!TABLE)", fn_body, re.IGNORECASE))
         drops_user = bool(re.search(r"DROP USER", fn_body))

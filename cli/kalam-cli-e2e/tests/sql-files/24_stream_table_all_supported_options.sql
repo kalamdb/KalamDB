@@ -1,6 +1,6 @@
 -- STREAM table: required TTL and stream-only options + alter table stream properties.
 
-DROP NAMESPACE IF EXISTS sql_file_case_24 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_24 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_24;
 USE sql_file_case_24;
@@ -43,4 +43,4 @@ ALTER TABLE case24_stream_events SET TBLPROPERTIES (
 CONSUME FROM case24_stream_topic LIMIT 40;
 
 DROP TOPIC case24_stream_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_24 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_24 CASCADE;

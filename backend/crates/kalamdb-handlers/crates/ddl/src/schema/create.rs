@@ -18,12 +18,12 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::{CreateNamespaceStatement, CreateSchemaStatement};
+use kalamdb_sql::ddl::CreateSchemaStatement;
 
 use crate::helpers::{async_blocking::run_blocking, audit, guards::require_admin};
 
 /// Typed handler for CREATE NAMESPACE statements
-pub struct CreateNamespaceHandler {
+pub struct CreateSchemaHandler {
     app_context: Arc<AppContext>,
 }
 
@@ -32,7 +32,7 @@ fn is_namespace_already_exists_error(error: &impl std::fmt::Display) -> bool {
     message.contains("namespace") && message.contains("already exists")
 }
 
-impl CreateNamespaceHandler {
+impl CreateSchemaHandler {
     pub fn new(app_context: Arc<AppContext>) -> Self {
         Self { app_context }
     }
@@ -76,7 +76,7 @@ impl CreateNamespaceHandler {
     }
 }
 
-impl CreateNamespaceHandler {
+impl CreateSchemaHandler {
     async fn create_catalog_schema(
         &self,
         name: &str,
@@ -141,35 +141,7 @@ impl CreateNamespaceHandler {
     }
 }
 
-impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
-    async fn execute(
-        &self,
-        statement: CreateNamespaceStatement,
-        _params: Vec<ScalarValue>,
-        context: &ExecutionContext,
-    ) -> Result<ExecutionResult, KalamDbError> {
-        self.create_catalog_schema(
-            statement.name.as_str(),
-            statement.if_not_exists,
-            context,
-            "NAMESPACE",
-        )
-        .await
-    }
-
-    async fn check_authorization(
-        &self,
-        _statement: &CreateNamespaceStatement,
-        context: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        use crate::helpers::guards::block_anonymous_write;
-
-        block_anonymous_write(context, "CREATE NAMESPACE")?;
-        require_admin(context, "create namespace")
-    }
-}
-
-impl TypedStatementHandler<CreateSchemaStatement> for CreateNamespaceHandler {
+impl TypedStatementHandler<CreateSchemaStatement> for CreateSchemaHandler {
     async fn execute(
         &self,
         statement: CreateSchemaStatement,
@@ -222,10 +194,10 @@ mod tests {
     #[tokio::test]
     async fn test_typed_create_namespace() {
         let app_ctx = test_app_context_simple();
-        let handler = CreateNamespaceHandler::new(app_ctx);
+        let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
 
-        let stmt = CreateNamespaceStatement {
+        let stmt = CreateSchemaStatement {
             name:          NamespaceId::new("test_typed_ns"),
             if_not_exists: false,
         };
@@ -246,10 +218,10 @@ mod tests {
     #[tokio::test]
     async fn test_typed_create_namespace_if_not_exists() {
         let app_ctx = test_app_context_simple();
-        let handler = CreateNamespaceHandler::new(app_ctx);
+        let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
 
-        let stmt = CreateNamespaceStatement {
+        let stmt = CreateSchemaStatement {
             name:          NamespaceId::new("test_typed_ns_ine"),
             if_not_exists: true,
         };
@@ -271,14 +243,14 @@ mod tests {
     #[tokio::test]
     async fn test_typed_authorization_check() {
         let app_ctx = test_app_context_simple();
-        let handler = CreateNamespaceHandler::new(app_ctx);
+        let handler = CreateSchemaHandler::new(app_ctx);
         let user_ctx = ExecutionContext::new(
             UserId::from("regular_user"),
             Role::User,
             create_test_session_simple(),
         );
 
-        let stmt = CreateNamespaceStatement {
+        let stmt = CreateSchemaStatement {
             name:          NamespaceId::new("unauthorized_ns"),
             if_not_exists: false,
         };
@@ -302,9 +274,9 @@ mod tests {
             .create_namespace(Namespace::new("existing_ns"))
             .expect("failed to seed namespace");
 
-        let handler = CreateNamespaceHandler::new(app_ctx);
+        let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
-        let stmt = CreateNamespaceStatement {
+        let stmt = CreateSchemaStatement {
             name:          NamespaceId::new("existing_ns"),
             if_not_exists: false,
         };
@@ -322,9 +294,9 @@ mod tests {
             .create_namespace(Namespace::new("existing_ns_if"))
             .expect("failed to seed namespace");
 
-        let handler = CreateNamespaceHandler::new(app_ctx);
+        let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
-        let stmt = CreateNamespaceStatement {
+        let stmt = CreateSchemaStatement {
             name:          NamespaceId::new("existing_ns_if"),
             if_not_exists: true,
         };

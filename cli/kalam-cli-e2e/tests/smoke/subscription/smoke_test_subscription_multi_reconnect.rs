@@ -216,5 +216,5 @@ fn smoke_subscription_multi_reconnect_parallel() {
         );
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
 }

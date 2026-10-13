@@ -37,7 +37,7 @@ fn cluster_test_data_digest_consistency() {
     let urls = cluster_urls();
     let namespace = generate_unique_namespace("cluster_digest");
 
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
 
@@ -106,7 +106,7 @@ fn cluster_test_data_digest_consistency() {
         panic!("Digest mismatch across nodes. Row counts: {:?}", counts);
     }
 
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Data digests match across all cluster nodes\n");
 }

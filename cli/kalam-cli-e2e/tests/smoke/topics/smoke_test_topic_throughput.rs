@@ -123,7 +123,7 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }
@@ -232,7 +232,7 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }
@@ -357,7 +357,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }

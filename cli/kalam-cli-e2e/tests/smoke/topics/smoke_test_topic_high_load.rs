@@ -1037,7 +1037,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     let _ = execute_sql(&format!("DROP TABLE {}", stream_table)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", product_table)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", session_table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 
     eprintln!("[TEST] High-load test completed successfully!");
 }
@@ -1148,7 +1148,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Test fan-out: two consumer groups each receive the full message stream.
@@ -1240,7 +1240,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Stress test: 4 consumers in the same group under high load.
@@ -1353,7 +1353,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// High-load recovery test:
@@ -1457,7 +1457,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Verify that an unacked prefix is not re-delivered before the visibility
@@ -1604,7 +1604,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Verify that after committing an initial prefix, a crash with a later
@@ -1778,7 +1778,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 /// Validate that a slower consumer still receives every large payload in order,
@@ -1883,7 +1883,7 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
 
     let _ = execute_sql(&format!("DROP TOPIC {}", topic)).await;
     let _ = execute_sql(&format!("DROP TABLE {}", table)).await;
-    let _ = execute_sql(&format!("DROP NAMESPACE {}", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {}", namespace)).await;
 }
 
 #[derive(Debug, Clone)]

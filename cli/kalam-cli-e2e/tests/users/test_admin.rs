@@ -62,7 +62,7 @@ fn test_cli_list_tables() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// T042: Test describe table command (\d table)
@@ -110,7 +110,7 @@ fn test_cli_describe_table() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// T055: Test batch file execution
@@ -130,9 +130,9 @@ fn test_cli_batch_file_execution() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Cleanup first in case namespace/table exists from previous run
-    // Note: DROP NAMESPACE CASCADE doesn't properly cascade to tables yet, so drop table first
+    // Note: DROP SCHEMA CASCADE doesn't properly cascade to tables yet, so drop table first
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
     // Use a unique ID based on timestamp to avoid conflicts
     let unique_id = rand::random::<i64>().abs();
@@ -173,7 +173,7 @@ EXECUTE AS USER '{}' (SELECT * FROM {});"#,
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP USER IF EXISTS {}", batch_user));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 #[test]

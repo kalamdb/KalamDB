@@ -27,7 +27,7 @@ fn leader_and_followers() -> (String, Vec<String>) {
 fn setup_namespace(label: &str) -> String {
     let namespace = generate_unique_namespace(label);
     let (leader, _) = leader_and_followers();
-    let _ = execute_on_node(&leader, &format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
+    let _ = execute_on_node(&leader, &format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
     execute_on_node(&leader, &format!("CREATE NAMESPACE {namespace}"))
         .unwrap_or_else(|err| panic!("create namespace {namespace}: {err}"));
     namespace

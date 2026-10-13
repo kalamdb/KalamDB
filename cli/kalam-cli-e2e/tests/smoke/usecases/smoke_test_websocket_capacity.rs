@@ -506,6 +506,6 @@ fn setup_test_table(namespace: &str, full_table_name: &str) {
 }
 
 fn cleanup_namespace(namespace: &str) {
-    let drop_sql = format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace);
+    let drop_sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace);
     let _ = execute_sql_as_root_via_client(&drop_sql);
 }

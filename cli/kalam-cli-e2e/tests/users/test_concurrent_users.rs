@@ -288,5 +288,5 @@ fn cleanup(namespace: &str, creds: &[(String, String)]) {
         let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", username));
     }
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

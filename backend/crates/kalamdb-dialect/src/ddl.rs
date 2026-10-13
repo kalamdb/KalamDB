@@ -65,7 +65,7 @@ pub(crate) fn reject_access_level_sql(sql: &str) -> DdlResult<()> {
     }
 }
 
-pub use alter_namespace::AlterNamespaceStatement;
+pub use alter_namespace::AlterSchemaStatement;
 pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
 pub use alter_type::{AlterTypeOperation, AlterTypeStatement, EnumValueNeighbor};
 pub use backup_namespace::BackupDatabaseStatement;
@@ -83,7 +83,7 @@ pub use create_type::{
 };
 pub use create_view::CreateViewStatement;
 pub use describe_table::DescribeTableStatement;
-pub use drop_namespace::DropNamespaceStatement;
+pub use drop_namespace::DropSchemaStatement;
 pub use drop_table::{DropTableStatement, TableKind};
 pub use export_commands::{ExportUserDataStatement, ShowExportStatement};
 pub use flush_commands::{FlushAllTablesStatement, FlushTableStatement};
@@ -100,7 +100,7 @@ pub use policy_commands::{
 };
 pub use restore_namespace::RestoreDatabaseStatement;
 pub use set_search_path::SetSearchPathStatement;
-pub use show_namespaces::ShowNamespacesStatement;
+pub use show_namespaces::ShowSchemasStatement;
 pub use show_table_stats::ShowTableStatsStatement;
 pub use show_tables::ShowTablesStatement;
 pub use storage_commands::{
@@ -113,7 +113,7 @@ pub use topic_commands::{
     ClearTopicRetentionStatement, ClearTopicStatement, ConsumePosition, ConsumeStatement,
     CreateTopicStatement, DropTopicStatement, ResetConsumerGroupStatement,
 };
-pub use use_namespace::UseNamespaceStatement;
+pub use use_namespace::UseSchemaStatement;
 pub use user_commands::{
     AlterUserStatement, CreateUserMode, CreateUserStatement, DropUserStatement, UserModification,
 };

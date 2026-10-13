@@ -83,7 +83,7 @@ fn inject_default_sort(
 ///
 /// Returns the first TableScan found in the plan tree.
 /// For simple SELECT queries, this is typically the main table.
-/// Bare table names resolve against `default_namespace` (session `USE NAMESPACE`).
+/// Bare table names resolve against `default_namespace` (session `SET SCHEMA`).
 fn extract_table_reference(plan: &LogicalPlan, default_namespace: &SchemaId) -> Option<TableId> {
     match plan {
         LogicalPlan::TableScan(scan) => {

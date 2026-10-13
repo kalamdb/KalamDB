@@ -299,7 +299,7 @@ fn test_cli_subscription_with_initial_data() {
 
     // Setup: Create namespace and table, insert data via CLI
     let _ = execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
 
@@ -348,7 +348,7 @@ fn test_cli_subscription_with_initial_data() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace_name));
 }
 
 #[test]
@@ -370,7 +370,7 @@ fn test_cli_binary_projected_subscription_receives_live_changes() {
     let live_content = "live-row";
 
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
     execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_name))
@@ -422,7 +422,7 @@ fn test_cli_binary_projected_subscription_receives_live_changes() {
     );
 
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
 }
@@ -441,7 +441,7 @@ fn test_cli_subscription_comprehensive_crud() {
 
     // Setup: Create namespace and table via CLI
     let _ = execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
 
@@ -579,5 +579,5 @@ fn test_cli_subscription_comprehensive_crud() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace_name));
 }

@@ -30,11 +30,11 @@ use crate::{
 ///
 /// # Example
 /// ```ignore
-/// let handler = CreateNamespaceHandler::new(app_context);
+/// let handler = CreateSchemaHandler::new(app_context);
 /// let adapter = TypedHandlerAdapter::new(
 ///     handler,
 ///     |stmt| match stmt {
-///         SqlStatement::CreateNamespace(s) => Some(s),
+///         SqlStatement::CreateSchema(s) => Some(s),
 ///         _ => None,
 ///     }
 /// );

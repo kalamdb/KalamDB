@@ -172,5 +172,5 @@ fn smoke_subscription_update_sends_delta_only() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

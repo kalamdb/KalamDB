@@ -18,7 +18,7 @@ async fn repro_duplicate_column_error() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace)).await;
     execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await.unwrap();
 
     execute_sql(&format!(

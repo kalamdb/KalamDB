@@ -51,17 +51,15 @@ pub struct SqlStatement {
 /// Statement type variants (internal to SqlStatement)
 #[derive(Debug, Clone)]
 pub enum SqlStatementKind {
-    // ===== Namespace Operations =====
-    /// Historical `CREATE NAMESPACE` tree. The classifier rejects this statement.
-    CreateNamespace(CreateNamespaceStatement),
-    /// ALTER NAMESPACE <name> ...
-    AlterNamespace(AlterNamespaceStatement),
-    /// DROP NAMESPACE <name> [CASCADE]
-    DropNamespace(DropNamespaceStatement),
-    /// SHOW NAMESPACES
-    ShowNamespaces(ShowNamespacesStatement),
-    /// USE NAMESPACE <name> / USE <name> / SET NAMESPACE <name>
-    UseNamespace(UseNamespaceStatement),
+    // ===== Schema operations =====
+    /// ALTER SCHEMA <name> ...
+    AlterSchema(AlterSchemaStatement),
+    /// DROP SCHEMA <name> [CASCADE]. Historical `DROP NAMESPACE` uses the same tree.
+    DropSchema(DropSchemaStatement),
+    /// SHOW SCHEMAS
+    ShowSchemas(ShowSchemasStatement),
+    /// SET SCHEMA <name> / USE <name>
+    UseSchema(UseSchemaStatement),
 
     // ===== Storage Operations =====
     /// CREATE STORAGE <name> ...
@@ -281,7 +279,7 @@ impl SqlStatement {
         match &self.kind {
             // Read-only operations - can be served by any node
             SqlStatementKind::Select
-            | SqlStatementKind::ShowNamespaces(_)
+            | SqlStatementKind::ShowSchemas(_)
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowTables(_)
@@ -294,12 +292,11 @@ impl SqlStatement {
             | SqlStatementKind::DataFusionMetaCommand
             | SqlStatementKind::Unknown => false,
 
-            // USE NAMESPACE / SET search_path only affect session state, not cluster state
-            SqlStatementKind::UseNamespace(_) | SqlStatementKind::SetSearchPath(_) => false,
+            // SET SCHEMA / SET search_path only affect session state, not cluster state
+            SqlStatementKind::UseSchema(_) | SqlStatementKind::SetSearchPath(_) => false,
 
             // All other operations modify data or schema - must go to leader
-            SqlStatementKind::CreateNamespace(_)
-            | SqlStatementKind::CreateSchema(_)
+            SqlStatementKind::CreateSchema(_)
             | SqlStatementKind::CreateType(_)
             | SqlStatementKind::AlterType(_)
             | SqlStatementKind::DropType(_)
@@ -315,8 +312,8 @@ impl SqlStatement {
             | SqlStatementKind::DropSchedule(_)
             | SqlStatementKind::AlterTrigger(_)
             | SqlStatementKind::AlterSchedule(_)
-            | SqlStatementKind::AlterNamespace(_)
-            | SqlStatementKind::DropNamespace(_)
+            | SqlStatementKind::AlterSchema(_)
+            | SqlStatementKind::DropSchema(_)
             | SqlStatementKind::CreateStorage(_)
             | SqlStatementKind::AlterStorage(_)
             | SqlStatementKind::DropStorage(_)
@@ -367,11 +364,10 @@ impl SqlStatement {
     /// Get a human-readable name for this statement type
     pub fn name(&self) -> &'static str {
         match &self.kind {
-            SqlStatementKind::CreateNamespace(_) => "CREATE NAMESPACE",
-            SqlStatementKind::AlterNamespace(_) => "ALTER NAMESPACE",
-            SqlStatementKind::DropNamespace(_) => "DROP NAMESPACE",
-            SqlStatementKind::ShowNamespaces(_) => "SHOW NAMESPACES",
-            SqlStatementKind::UseNamespace(_) => "USE NAMESPACE",
+            SqlStatementKind::AlterSchema(_) => "ALTER SCHEMA",
+            SqlStatementKind::DropSchema(_) => "DROP SCHEMA",
+            SqlStatementKind::ShowSchemas(_) => "SHOW SCHEMAS",
+            SqlStatementKind::UseSchema(_) => "SET SCHEMA",
             SqlStatementKind::CreateSchema(_) => "CREATE SCHEMA",
             SqlStatementKind::SetSearchPath(_) => "SET SEARCH_PATH",
             SqlStatementKind::CreateType(_) => "CREATE TYPE",

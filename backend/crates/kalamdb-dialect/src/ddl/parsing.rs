@@ -119,12 +119,12 @@ pub fn normalize_and_upper(sql: &str) -> String {
     result
 }
 
-/// Parse a simple statement with no arguments (e.g., "SHOW NAMESPACES")
+/// Parse a simple statement with no arguments (e.g., "SHOW SCHEMAS")
 ///
 /// # Examples
 ///
 /// ```ignore
-/// parse_simple_statement(sql, "SHOW NAMESPACES")?;
+/// parse_simple_statement(sql, "SHOW SCHEMAS")?;
 /// ```
 pub fn parse_simple_statement(sql: &str, expected: &str) -> DdlResult<()> {
     let normalized = normalize_and_upper(sql);
@@ -201,7 +201,7 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
 ///
 /// ```ignore
 /// let (name, if_not_exists) = parse_create_drop_statement(sql, "CREATE NAMESPACE", "IF NOT EXISTS")?;
-/// let (name, if_exists) = parse_create_drop_statement(sql, "DROP NAMESPACE", "IF EXISTS")?;
+/// let (name, if_exists) = parse_create_drop_statement(sql, "DROP SCHEMA", "IF EXISTS")?;
 /// ```
 pub fn parse_create_drop_statement(
     sql: &str,
@@ -448,9 +448,9 @@ mod tests {
 
     #[test]
     fn test_parse_simple_statement() {
-        assert!(parse_simple_statement("SHOW NAMESPACES", "SHOW NAMESPACES").is_ok());
-        assert!(parse_simple_statement("show namespaces", "SHOW NAMESPACES").is_ok());
-        assert!(parse_simple_statement("SHOW TABLES", "SHOW NAMESPACES").is_err());
+        assert!(parse_simple_statement("SHOW SCHEMAS", "SHOW SCHEMAS").is_ok());
+        assert!(parse_simple_statement("show schemas", "SHOW SCHEMAS").is_ok());
+        assert!(parse_simple_statement("SHOW TABLES", "SHOW SCHEMAS").is_err());
     }
 
     #[test]
@@ -495,12 +495,9 @@ mod tests {
         assert!(!has_if);
 
         // DROP with IF EXISTS
-        let (name, has_if) = parse_create_drop_statement(
-            "DROP NAMESPACE IF EXISTS app",
-            "DROP NAMESPACE",
-            "IF EXISTS",
-        )
-        .unwrap();
+        let (name, has_if) =
+            parse_create_drop_statement("DROP SCHEMA IF EXISTS app", "DROP SCHEMA", "IF EXISTS")
+                .unwrap();
         assert_eq!(name, "app");
         assert!(has_if);
 

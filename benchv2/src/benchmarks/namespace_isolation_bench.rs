@@ -105,7 +105,7 @@ impl Benchmark for NamespaceIsolationBench {
             for i in 0..5 {
                 let ns = format!("{}_iso_{}", config.namespace, i);
                 let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns)).await;
-                let _ = client.sql(&format!("DROP NAMESPACE IF EXISTS {}", ns)).await;
+                let _ = client.sql(&format!("DROP SCHEMA IF EXISTS {}", ns)).await;
             }
             Ok(())
         })

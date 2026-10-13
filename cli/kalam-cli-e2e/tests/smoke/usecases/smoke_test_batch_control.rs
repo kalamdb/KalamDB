@@ -424,7 +424,7 @@ fn smoke_batch_control_single_batch() {
     println!("[TEST] Single batch test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -526,7 +526,7 @@ fn smoke_batch_control_multi_batch() {
     println!("[TEST] Multi-batch control test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -575,7 +575,7 @@ fn smoke_batch_control_empty_table() {
     println!("[TEST] Empty table batch control test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -683,5 +683,5 @@ fn smoke_batch_control_data_ordering() {
     println!("[TEST] Data ordering test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

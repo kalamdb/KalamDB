@@ -185,7 +185,7 @@ async fn main() {
 
     // Clean up the benchmark namespace
     let _ =
-        run_sql_ok_on_all_urls(&client, &format!("DROP NAMESPACE IF EXISTS {}", config.namespace))
+        run_sql_ok_on_all_urls(&client, &format!("DROP SCHEMA IF EXISTS {}", config.namespace))
             .await;
 
     println!();

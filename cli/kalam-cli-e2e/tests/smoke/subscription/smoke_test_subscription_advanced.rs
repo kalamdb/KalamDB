@@ -332,7 +332,7 @@ fn smoke_subscription_multi_batch_initial_data() {
     println!("[TEST] Multi-batch initial data test passed!");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -483,7 +483,7 @@ fn smoke_subscription_resume_from_seq_id() {
     println!("[TEST] Subscription resume test passed! (seq_id capture: {:?})", last_seq_id);
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -642,7 +642,7 @@ fn smoke_subscription_high_volume_changes() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -733,7 +733,7 @@ fn smoke_subscription_delete_events() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 // Helper extension for SubscriptionListener to collect until ready
@@ -991,5 +991,5 @@ fn smoke_subscription_column_projection() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

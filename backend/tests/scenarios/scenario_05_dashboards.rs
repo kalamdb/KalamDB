@@ -249,7 +249,7 @@ async fn test_scenario_05_dashboards_shared_reference() -> anyhow::Result<()> {
     assert!(post_flush_count >= 5, "User1 should still see activities post-flush");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -303,7 +303,7 @@ async fn test_scenario_05_rbac_restrictions() -> anyhow::Result<()> {
     .await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -393,6 +393,6 @@ async fn test_scenario_05_schema_evolution() -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

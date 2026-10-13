@@ -25,7 +25,20 @@ DENY = (
     "relnamespace",
 )
 IDENT_REPLACEMENTS = (("NamespaceId", "SchemaId"),)
-SQL_PAIRS = (("CREATE", "NAMESPACE", "CREATE", "SCHEMA"), ("create", "namespace", "create", "schema"))
+SQL_PAIRS = (
+    ("CREATE", "NAMESPACE", "CREATE", "SCHEMA"),
+    ("create", "namespace", "create", "schema"),
+    ("DROP", "NAMESPACE", "DROP", "SCHEMA"),
+    ("drop", "namespace", "drop", "schema"),
+    ("ALTER", "NAMESPACE", "ALTER", "SCHEMA"),
+    ("alter", "namespace", "alter", "schema"),
+    ("SHOW", "NAMESPACES", "SHOW", "SCHEMAS"),
+    ("show", "namespaces", "show", "schemas"),
+    ("SET", "NAMESPACE", "SET", "SCHEMA"),
+    ("set", "namespace", "set", "schema"),
+    ("USE", "NAMESPACE", "SET", "SCHEMA"),
+    ("use", "namespace", "set", "schema"),
+)
 SOURCE_SUFFIXES = {".rs", ".sql"}
 SKIP_DIR_NAMES = {"target", "generated", "node_modules", ".git"}
 

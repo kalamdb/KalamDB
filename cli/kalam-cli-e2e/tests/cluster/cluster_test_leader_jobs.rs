@@ -35,7 +35,7 @@ fn cluster_test_leader_only_flush_jobs() {
     // Step 0: Setup namespace
     let namespace = generate_unique_namespace("leader_jobs");
     let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
         .expect("Failed to create namespace");
@@ -285,7 +285,7 @@ fn cluster_test_job_claiming() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
@@ -346,7 +346,7 @@ fn cluster_test_flush_job_nodes_completion() {
     let full_table = format!("{}.{}", namespace, table_name);
 
     let _ =
-        execute_on_node(&leader_url, &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
     execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
@@ -386,7 +386,7 @@ fn cluster_test_flush_job_nodes_completion() {
         );
     }
 
-    let _ = execute_on_node(&leader_url, &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Flush job_nodes completion test passed\n");
 }

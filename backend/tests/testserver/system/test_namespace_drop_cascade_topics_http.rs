@@ -71,8 +71,8 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         "topic should contain messages before namespace drop"
     );
 
-    let drop_resp = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await?;
-    anyhow::ensure!(drop_resp.status == ResponseStatus::Success, "DROP NAMESPACE failed");
+    let drop_resp = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await?;
+    anyhow::ensure!(drop_resp.status == ResponseStatus::Success, "DROP SCHEMA failed");
 
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -205,16 +205,16 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         "recreated topic should accept new events"
     );
 
-    let cleanup_recreated = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await?;
+    let cleanup_recreated = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await?;
     anyhow::ensure!(
         cleanup_recreated.status == ResponseStatus::Success,
         "cleanup recreated namespace failed"
     );
 
-    let cleanup_other = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", other_ns)).await?;
+    let cleanup_other = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", other_ns)).await?;
     anyhow::ensure!(
         cleanup_other.status == ResponseStatus::Success,
-        "cleanup DROP NAMESPACE failed"
+        "cleanup DROP SCHEMA failed"
     );
 
     Ok(())

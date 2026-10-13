@@ -36,7 +36,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
             "Should accept valid namespace name '{}'",
             name
         );
-        let _ = server.execute_sql(&format!("DROP NAMESPACE {}", name)).await;
+        let _ = server.execute_sql(&format!("DROP SCHEMA {}", name)).await;
     }
 
     // Reserved column names
@@ -61,7 +61,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
             col_name
         );
     }
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_cols)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {}", test_cols)).await;
 
     // Valid column names
     let ns = unique_namespace("test_valid_cols");
@@ -82,7 +82,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
             col_name
         );
     }
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {}", ns)).await;
 
     // No auto id injection / basic CRUD
     let test_no_id = unique_namespace("test_no_id");
@@ -110,7 +110,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_no_id)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {}", test_no_id)).await;
 
     // Users can use "id" as a column name
     let test_user_id = unique_namespace("test_user_id");
@@ -128,6 +128,6 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
         ResponseStatus::Success,
         "Should allow user-defined 'id' column"
     );
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {}", test_user_id)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {}", test_user_id)).await;
     Ok(())
 }

@@ -163,5 +163,5 @@ fn smoke_user_table_subscription_lifecycle() {
     listener.stop().ok();
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

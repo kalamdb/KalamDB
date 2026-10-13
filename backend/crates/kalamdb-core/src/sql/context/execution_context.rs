@@ -242,8 +242,7 @@ impl ExecutionContext {
     /// The default schema is set to "default" initially and can be changed within
     /// the current request or multi-statement batch using:
     /// - `USE namespace`
-    /// - `USE NAMESPACE namespace`
-    /// - `SET NAMESPACE namespace`
+    /// - `SET SCHEMA namespace`
     ///
     /// # Returns
     /// The current default namespace as a NamespaceId (defaults to "default")

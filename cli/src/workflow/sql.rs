@@ -54,7 +54,7 @@ pub(crate) async fn drop_namespace_if_exists(
     client: &KalamLinkClient,
     namespace: &SchemaId,
 ) -> Result<()> {
-    let sql = format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace.as_str());
+    let sql = format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace.as_str());
     execute_single_statement(client, &sql, None, "namespace reset").await
 }
 

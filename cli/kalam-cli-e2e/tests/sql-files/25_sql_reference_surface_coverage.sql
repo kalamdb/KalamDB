@@ -1,15 +1,15 @@
 -- Coverage for documented SQL reference surface that was not previously exercised.
 
-DROP NAMESPACE IF EXISTS sql_file_case_25 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_25 CASCADE;
 DROP STORAGE IF EXISTS case25_storage;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_25;
-ALTER NAMESPACE sql_file_case_25 SET DESCRIPTION 'case 25 namespace description';
+ALTER SCHEMA sql_file_case_25 SET DESCRIPTION 'case 25 namespace description';
 
-SHOW NAMESPACES;
+SHOW SCHEMAS;
 
-USE NAMESPACE sql_file_case_25;
-SET NAMESPACE sql_file_case_25;
+SET SCHEMA sql_file_case_25;
+SET SCHEMA sql_file_case_25;
 
 CREATE TABLE IF NOT EXISTS case25_user_tbl (
   id BIGINT PRIMARY KEY,
@@ -115,4 +115,4 @@ EXPORT USER DATA;
 SHOW EXPORT;
 
 DROP STORAGE case25_storage;
-DROP NAMESPACE IF EXISTS sql_file_case_25 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_25 CASCADE;

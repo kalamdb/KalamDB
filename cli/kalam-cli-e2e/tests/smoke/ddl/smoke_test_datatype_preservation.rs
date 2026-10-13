@@ -152,7 +152,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
     // 9. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 
@@ -259,7 +259,7 @@ async fn test_system_tables_shows_correct_datatypes() {
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 

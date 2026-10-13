@@ -1,6 +1,6 @@
 -- Explicitly drop and recreate the same namespace in one script.
 
-DROP NAMESPACE IF EXISTS sql_file_case_11 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_11 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_11;
 USE sql_file_case_11;
@@ -27,7 +27,7 @@ INSERT INTO accounts (id, owner, balance, state) VALUES (1102, 'beta', 7200, 're
 CONSUME FROM account_events LIMIT 20;
 
 DROP TOPIC account_events;
-DROP NAMESPACE IF EXISTS sql_file_case_11 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_11 CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS sql_file_case_11;
 USE sql_file_case_11;
@@ -45,4 +45,4 @@ INSERT INTO accounts (id, owner, balance) VALUES (1199, 'gamma', 9000);
 UPDATE accounts SET state = 'closed' WHERE id = 1199;
 DELETE FROM accounts WHERE id = 1199;
 
-DROP NAMESPACE IF EXISTS sql_file_case_11 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_11 CASCADE;

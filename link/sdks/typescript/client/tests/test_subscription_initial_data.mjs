@@ -181,7 +181,7 @@ async function runTest() {
   // Cleanup
   await client.unsubscribe(subscriptionId);
   await client.disconnect();
-  await executeSQL(`DROP NAMESPACE ${namespace} CASCADE`);
+  await executeSQL(`DROP SCHEMA ${namespace} CASCADE`);
   console.log('\n✓ Cleanup completed');
 
   // Verify results

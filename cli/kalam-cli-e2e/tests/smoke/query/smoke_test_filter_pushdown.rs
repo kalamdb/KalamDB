@@ -13,7 +13,7 @@ impl Drop for CleanupGuard {
     fn drop(&mut self) {
         let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", self.user));
         let _ = execute_sql_as_root_via_client(&format!(
-            "DROP NAMESPACE IF EXISTS {} CASCADE",
+            "DROP SCHEMA IF EXISTS {} CASCADE",
             self.namespace
         ));
     }

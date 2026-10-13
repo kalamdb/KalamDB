@@ -634,8 +634,8 @@ async fn test_regular_user_sql_policy_allows_only_dml_and_select() -> anyhow::Re
     anyhow::ensure!(delete.status == ResponseStatus::Success, "DELETE failed: {:?}", delete.error);
 
     let denied_statements = vec![
-        "SHOW NAMESPACES".to_string(),
-        format!("USE NAMESPACE {}", namespace),
+        "SHOW SCHEMAS".to_string(),
+        format!("SET SCHEMA {}", namespace),
         format!("SHOW TABLES IN {}", namespace),
         format!("DESCRIBE TABLE {}.notes", namespace),
         format!("SHOW STATS FOR TABLE {}.notes", namespace),
@@ -652,8 +652,8 @@ async fn test_regular_user_sql_policy_allows_only_dml_and_select() -> anyhow::Re
         format!("STORAGE FLUSH TABLE {}.notes", namespace),
         format!("STORAGE COMPACT TABLE {}.notes", namespace),
         format!("CREATE NAMESPACE {}_new", namespace),
-        format!("ALTER NAMESPACE {} SET DESCRIPTION 'x'", namespace),
-        format!("DROP NAMESPACE {}", namespace),
+        format!("ALTER SCHEMA {} SET DESCRIPTION 'x'", namespace),
+        format!("DROP SCHEMA {}", namespace),
         format!("CREATE USER '{}_new' WITH PASSWORD 'ValidPass123!' ROLE user", username),
         format!("ALTER USER '{}' SET ROLE dba", username),
         format!("DROP USER '{}'", username),

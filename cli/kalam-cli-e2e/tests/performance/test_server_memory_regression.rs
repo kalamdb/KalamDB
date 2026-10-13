@@ -121,8 +121,8 @@ fn flush_and_drop_namespace(namespace: &str, full_table: &str) {
         .expect("flush response should contain a job id");
     verify_job_completed(&job_id, Duration::from_secs(45)).expect("flush job should complete");
 
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace))
-        .expect("drop namespace should succeed");
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace))
+        .expect("drop schema should succeed");
 }
 
 fn run_memory_workload(

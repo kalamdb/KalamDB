@@ -36,7 +36,7 @@ impl TypedStatementHandler<SubscribeStatement> for SubscribeHandler {
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         // Use the session's default namespace if the statement used "default"
-        // This allows SUBSCRIBE TO messages to use the current USE NAMESPACE
+        // This allows SUBSCRIBE TO messages to use the current SET SCHEMA
         let effective_namespace = if statement.namespace.is_default_namespace() {
             context.default_namespace()
         } else {

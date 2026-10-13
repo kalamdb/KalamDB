@@ -9,8 +9,8 @@ pub mod drop;
 pub mod show;
 pub mod use_namespace;
 
-pub use alter::AlterNamespaceHandler;
-pub use create::CreateNamespaceHandler;
-pub use drop::DropNamespaceHandler;
-pub use show::ShowNamespacesHandler;
-pub use use_namespace::UseNamespaceHandler;
+pub use alter::AlterSchemaHandler;
+pub use create::CreateSchemaHandler;
+pub use drop::DropSchemaHandler;
+pub use show::ShowSchemasHandler;
+pub use use_namespace::UseSchemaHandler;

@@ -104,7 +104,7 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
     assert_eq!(total_count, expected_total, "Total rows should match");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -210,7 +210,7 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
     );
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -305,7 +305,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -379,6 +379,6 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
     );
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

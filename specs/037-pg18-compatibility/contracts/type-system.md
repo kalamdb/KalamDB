@@ -92,6 +92,8 @@ Functions and procedures stay distinct. Existing `PROCEDURE ... RETURNS` forms a
 
 Context rule: `CREATE FUNCTION` discards parenthesized type modifiers. Tests must show that. [PostgreSQL 18 CREATE FUNCTION](https://www.postgresql.org/docs/18/sql-createfunction.html).
 
+Detailed acceptance is [routines-postgresql.md](routines-postgresql.md): one AST and resolver, quoted names and bodies, PostgreSQL composite/enum declarations, table row types, overload keys, distinct SELECT/CALL results, argument modes/defaults and truthful language attributes. T125–T138 supplement T043/T050/T110/T124. A function/procedure kind must not allow duplicate schema/name/input-type signatures; typmods, OUT-only arguments and return types do not distinguish overloads.
+
 ## Semantic and ownership corrections
 
 The ownership diagram is conceptual, not permission for a dependency cycle. Serialization/store consume immutable descriptors defined in commons or serialization and injected by the caller; they MUST NOT depend on `kalamdb-core` or call its registry. TypeRegistry remains the authority; physical-layout enums are derived codec data, not competing logical registries. Invalidation retires cached references but does not destroy revisions pinned by active work.
