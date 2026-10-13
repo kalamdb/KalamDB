@@ -57,6 +57,12 @@ Contributor guides for building and developing KalamDB.
 - **[how-to-add-sql-statement.md](development/how-to-add-sql-statement.md)** – Adding new SQL statements
 - **[docker-idle-resource-baseline.md](development/docker-idle-resource-baseline.md)** – Why idle Docker CPU/memory is non-zero and how to tune it
 
+### [pages/](pages/)
+Shared roadmap and planning pages maintained in Git.
+
+- **[README.md](pages/README.md)** – Page index and editing workflow
+- **[kalamdb-0.8-epics.md](pages/kalamdb-0.8-epics.md)** – PostgreSQL 18 compatibility priorities, epics, and release gates
+
 ### [plans/](plans/)
 Decision-complete implementation plans for major initiatives.
 

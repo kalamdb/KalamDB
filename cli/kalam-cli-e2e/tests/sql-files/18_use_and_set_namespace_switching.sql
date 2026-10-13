@@ -3,8 +3,8 @@
 DROP NAMESPACE IF EXISTS sql_file_case_18_a CASCADE;
 DROP NAMESPACE IF EXISTS sql_file_case_18_b CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_18_a;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_18_b;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_18_a;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_18_b;
 
 USE sql_file_case_18_a;
 DROP TABLE IF EXISTS case18_items;

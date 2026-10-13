@@ -6,7 +6,7 @@ use std::{
 };
 
 use datafusion::scalar::ScalarValue;
-use kalamdb_commons::{models::RoutineId, NamespaceId, Role, RoutineSecurityMode, UserId};
+use kalamdb_commons::{models::RoutineId, Role, RoutineSecurityMode, SchemaId, UserId};
 use kalamdb_functions::{
     emit_function_log, format_host_log_message, FunctionCallOrigin, FunctionExecutionRoot,
     FunctionHost, FunctionsError, HostFuture, HostLogRecord, InvocationMetadata, InvocationScope,
@@ -566,10 +566,10 @@ mod tests {
     }
 }
 
-pub(super) fn resolve_routine_id(name: &str, default_ns: &NamespaceId) -> RoutineId {
+pub(super) fn resolve_routine_id(name: &str, default_ns: &SchemaId) -> RoutineId {
     let trimmed = name.trim();
     if let Some((schema, rest)) = trimmed.split_once('.') {
-        RoutineId::from_parts(Some(&NamespaceId::new(schema)), rest)
+        RoutineId::from_parts(Some(&SchemaId::new(schema)), rest)
     } else {
         RoutineId::from_parts(Some(default_ns), trimmed)
     }

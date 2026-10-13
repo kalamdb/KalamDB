@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use kalamdb_backend::manager::{BackendSessionError, BackendSessionManager};
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{ExecutionContext, ScalarValue, SqlExecutor},
 };
+use kalamdb_session::{catalog_entries_for_stored_keys, Catalog, SearchPath};
 use pgwire::{
     api::{
         portal::Format,
@@ -140,25 +141,33 @@ impl WireSqlExecutor {
         sql: &str,
     ) -> Option<Vec<Response>> {
         match classify_postgres_set(sql)? {
-            PostgresSetAction::SetSearchPath { schema } => {
-                self.persist_search_path(state, &schema);
+            PostgresSetAction::SetSearchPath { path } => {
+                self.persist_search_path(state, &path);
                 Some(vec![Response::Execution(Tag::new("SET"))])
             },
             PostgresSetAction::NoOp => Some(vec![Response::Execution(Tag::new("SET"))]),
         }
     }
 
-    fn persist_search_path(&self, state: &WireConnectionState, schema: &str) {
-        let namespace = NamespaceId::new(schema);
-        let exists = self
-            .app_context
-            .system_tables()
-            .namespaces()
-            .get_namespace(&namespace)
-            .map(|entry| entry.is_some())
-            .unwrap_or(false);
-        if exists {
-            state.set_current_schema(namespace);
+    fn persist_search_path(&self, state: &WireConnectionState, path_text: &str) {
+        let Ok(path) = SearchPath::parse(path_text) else {
+            return;
+        };
+        let Ok(namespaces) = self.app_context.system_tables().namespaces().list_namespaces() else {
+            return;
+        };
+        let stored_keys: Vec<(&str, bool)> = namespaces
+            .iter()
+            .map(|namespace| (namespace.namespace_id.as_str(), true))
+            .collect();
+        let entries = catalog_entries_for_stored_keys(&stored_keys);
+        let catalog = Catalog {
+            user:        state.auth().user_id.as_str(),
+            temp_schema: None,
+            schemas:     &entries,
+        };
+        if let Some(stored_key) = path.current_stored_key(&catalog) {
+            state.set_current_schema(SchemaId::new(stored_key));
         }
     }
 

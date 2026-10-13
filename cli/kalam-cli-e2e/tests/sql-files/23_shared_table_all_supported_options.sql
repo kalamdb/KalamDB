@@ -2,7 +2,7 @@
 
 DROP NAMESPACE IF EXISTS sql_file_case_23 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_23;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_23;
 USE sql_file_case_23;
 
 DROP TABLE IF EXISTS case23_shared_feed;

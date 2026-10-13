@@ -281,7 +281,7 @@ pub async fn cleanup_metadata_internal(
 mod tests {
     use std::fs;
 
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
     use crate::test_helpers::test_app_context_simple;
@@ -292,7 +292,7 @@ mod tests {
 
         let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let table_id = TableId::new(
-            NamespaceId::new(format!("cleanup_stream_ns_{}", unique)),
+            SchemaId::new(format!("cleanup_stream_ns_{}", unique)),
             TableName::new(format!("cleanup_stream_tbl_{}", unique)),
         );
 
@@ -327,7 +327,7 @@ mod tests {
 
         let unique = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let table_id = TableId::new(
-            NamespaceId::new(format!("cleanup_stream_missing_ns_{}", unique)),
+            SchemaId::new(format!("cleanup_stream_missing_ns_{}", unique)),
             TableName::new(format!("cleanup_stream_missing_tbl_{}", unique)),
         );
 

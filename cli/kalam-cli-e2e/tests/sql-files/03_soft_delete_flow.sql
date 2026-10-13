@@ -1,7 +1,7 @@
 -- Soft-delete topic routing with delete and update filters.
 
 DROP NAMESPACE IF EXISTS sql_file_case_03 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_03;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_03;
 USE sql_file_case_03;
 
 CREATE TABLE IF NOT EXISTS projects (

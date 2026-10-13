@@ -11,7 +11,7 @@ use sqlparser::ast::{
     TypedString, UnaryOperator, Value,
 };
 
-use crate::{compatibility::map_sql_type_to_kalam, ddl::DdlResult, dialect::KalamDbDialect};
+use crate::{compatibility::map_sql_type_to_kalam, ddl::DdlResult, parser::KalamParser};
 
 pub fn expr_to_column_default(
     expr: &Expr,
@@ -293,8 +293,6 @@ fn value_to_literal_default(value: &Value) -> ColumnDefault {
 }
 
 pub(crate) fn parse_call_argument_sql(input: &str) -> DdlResult<CallArgument> {
-    let dialect = KalamDbDialect::default();
-    let expr = crate::parser::utils::parse_sql_expression(input, &dialect)
-        .map_err(|error| error.to_string())?;
+    let expr = KalamParser::parse_expr(input).map_err(|error| error.to_string())?;
     expr_to_call_argument(&expr)
 }

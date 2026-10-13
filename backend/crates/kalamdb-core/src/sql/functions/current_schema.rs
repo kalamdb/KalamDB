@@ -11,7 +11,7 @@ use datafusion::{
 };
 use kalamdb_commons::{
     arrow_utils::{arrow_utf8, ArrowDataType},
-    NamespaceId,
+    SchemaId,
 };
 
 /// KDB_CURRENT_SCHEMA() scalar function implementation
@@ -50,7 +50,7 @@ impl ScalarUDFImpl for CurrentSchemaFunction {
 
         let schema = args.config_options.catalog.default_schema.trim();
         let value = if schema.is_empty() {
-            NamespaceId::default().as_str().to_string()
+            SchemaId::default().as_str().to_string()
         } else {
             schema.to_string()
         };

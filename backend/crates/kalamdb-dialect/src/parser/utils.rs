@@ -23,7 +23,7 @@ use sqlparser::{
 
 use crate::dialect::KalamDbDialect;
 
-const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
+pub(crate) const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
 
 static CURRENT_SCHEMA_CALL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bCURRENT_SCHEMA\s*\(\s*\)").expect("valid regex"));
@@ -696,8 +696,7 @@ fn sql_needs_datafusion_compat_rewrite(sql: &str) -> bool {
 }
 
 fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
-    let dialect = KalamDbDialect::default();
-    let mut statements = match parse_sql_statements(sql, &dialect) {
+    let mut statements = match super::KalamParser::parse(sql) {
         Ok(statements) => statements,
         Err(_) => return sql.to_string(),
     };
@@ -1199,8 +1198,7 @@ pub fn parse_sql_expression(sql: &str, dialect: &dyn Dialect) -> Result<Expr, Pa
 
 /// Parse a single SQL statement using KalamDB defaults and KalamDbDialect.
 pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserError> {
-    let dialect = KalamDbDialect::default();
-    let mut statements = parse_sql_statements(sql, &dialect)?;
+    let mut statements = super::KalamParser::parse(sql)?;
     if statements.len() != 1 {
         return Ok(None);
     }
@@ -1211,8 +1209,7 @@ pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserErro
 ///
 /// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
 pub fn extract_dml_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
-    let dialect = KalamDbDialect::default();
-    let statements = parse_sql_statements(sql, &dialect).ok()?;
+    let statements = super::KalamParser::parse(sql).ok()?;
     statements
         .first()
         .and_then(|statement| extract_dml_table_id_from_statement(statement, default_namespace))

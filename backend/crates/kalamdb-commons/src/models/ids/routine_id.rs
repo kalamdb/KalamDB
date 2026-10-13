@@ -5,7 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use super::namespace_id::NamespaceId;
+use super::namespace_id::SchemaId;
 #[cfg(feature = "storage")]
 use crate::StorageKey;
 
@@ -30,7 +30,7 @@ impl RoutineId {
         self.0
     }
 
-    pub fn from_parts(namespace: Option<&NamespaceId>, name: &str) -> Self {
+    pub fn from_parts(namespace: Option<&SchemaId>, name: &str) -> Self {
         let name = name.trim().to_ascii_lowercase();
         assert!(!name.is_empty(), "RoutineId cannot be empty");
         match namespace {
@@ -39,8 +39,8 @@ impl RoutineId {
         }
     }
 
-    pub fn namespace_id(&self) -> Option<NamespaceId> {
-        self.as_str().rsplit_once('.').map(|(namespace, _)| NamespaceId::new(namespace))
+    pub fn namespace_id(&self) -> Option<SchemaId> {
+        self.as_str().rsplit_once('.').map(|(namespace, _)| SchemaId::new(namespace))
     }
 }
 
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn routine_id_from_parts() {
         assert_eq!(
-            RoutineId::from_parts(Some(&NamespaceId::new("chat")), "create_message").as_str(),
+            RoutineId::from_parts(Some(&SchemaId::new("chat")), "create_message").as_str(),
             "chat.create_message"
         );
     }

@@ -394,12 +394,12 @@ mod tests {
     #[test]
     fn cached_column_sets_keep_bloom_filters_to_primary_keys() {
         use kalamdb_commons::{
-            models::{KalamDataType, NamespaceId, TableName},
+            models::{KalamDataType, SchemaId, TableName},
             schemas::{ColumnDefinition, TableOptions, TableType},
         };
 
         let table_def = TableDefinition::new(
-            NamespaceId::from("test"),
+            SchemaId::from("test"),
             TableName::from("events"),
             TableType::Shared,
             vec![
@@ -426,12 +426,12 @@ mod tests {
     #[test]
     fn cached_column_sets_include_scalar_index_columns_and_skip_embeddings() {
         use kalamdb_commons::{
-            models::{ColumnId, KalamDataType, NamespaceId, TableName},
+            models::{ColumnId, KalamDataType, SchemaId, TableName},
             schemas::{ColumnDefinition, ScalarIndexDefinition, TableOptions, TableType},
         };
 
         let mut table_def = TableDefinition::new(
-            NamespaceId::from("chat"),
+            SchemaId::from("chat"),
             TableName::from("messages"),
             TableType::Shared,
             vec![

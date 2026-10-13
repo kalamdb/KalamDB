@@ -9,7 +9,7 @@
 //!
 //! The crate provides type-safe wrappers for common identifiers:
 //! - `UserId`: User identifier wrapper
-//! - `NamespaceId`: Namespace identifier wrapper
+//! - `SchemaId`: Schema identifier wrapper. `NamespaceId` is a temporary alias
 //! - `TableName`: Table name wrapper
 //! - `TableType`: Enum for USER/SHARED/STREAM tables
 //!
@@ -30,11 +30,11 @@
 //! ## Example Usage
 //!
 //! ```rust
-//! use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+//! use kalamdb_commons::models::{SchemaId, TableName, UserId};
 //! use kalamdb_system::{Job, LiveQuery, User};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::default();
+//! let namespace_id = SchemaId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Convert to string
@@ -145,6 +145,7 @@ pub use models::{
     ScalarPredicate,
     ScheduleId,
     SchemaField,
+    SchemaId,
     StorageId,
     TableId,
     TablePolicy,

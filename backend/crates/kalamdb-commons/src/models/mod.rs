@@ -12,11 +12,11 @@
 //! ## Examples
 //!
 //! ```rust
-//! use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+//! use kalamdb_commons::models::{SchemaId, TableName, UserId};
 //! use kalamdb_system::{Job, LiveQuery, User};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::default();
+//! let namespace_id = SchemaId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Type safety prevents mixing

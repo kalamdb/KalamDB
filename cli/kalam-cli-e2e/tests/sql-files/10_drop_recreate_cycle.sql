@@ -1,7 +1,7 @@
 -- Drop and recreate objects inside one namespace-scoped batch.
 
 DROP NAMESPACE IF EXISTS sql_file_case_10 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_10;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_10;
 USE sql_file_case_10;
 
 CREATE TABLE IF NOT EXISTS draft_messages (

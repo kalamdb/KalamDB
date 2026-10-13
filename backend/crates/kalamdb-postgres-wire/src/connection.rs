@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use kalamdb_backend::session::BackendAuth;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use parking_lot::Mutex;
 
 pub const DEFAULT_PREPARED_STATEMENT_LIMIT: usize = 1_024;
@@ -42,7 +42,7 @@ impl std::error::Error for WireConnectionStateError {}
 pub struct WireConnectionState {
     session_id:               String,
     auth:                     BackendAuth,
-    current_schema:           Mutex<NamespaceId>,
+    current_schema:           Mutex<SchemaId>,
     prepared_statement_limit: usize,
     portal_limit:             usize,
     prepared_statements:      Mutex<HashMap<String, WirePreparedStatement>>,
@@ -50,11 +50,7 @@ pub struct WireConnectionState {
 }
 
 impl WireConnectionState {
-    pub fn new(
-        session_id: impl Into<String>,
-        auth: BackendAuth,
-        current_schema: NamespaceId,
-    ) -> Self {
+    pub fn new(session_id: impl Into<String>, auth: BackendAuth, current_schema: SchemaId) -> Self {
         Self::with_limits(
             session_id,
             auth,
@@ -67,7 +63,7 @@ impl WireConnectionState {
     pub fn with_limits(
         session_id: impl Into<String>,
         auth: BackendAuth,
-        current_schema: NamespaceId,
+        current_schema: SchemaId,
         prepared_statement_limit: usize,
         portal_limit: usize,
     ) -> Self {
@@ -90,11 +86,11 @@ impl WireConnectionState {
         &self.auth
     }
 
-    pub fn current_schema(&self) -> NamespaceId {
+    pub fn current_schema(&self) -> SchemaId {
         self.current_schema.lock().clone()
     }
 
-    pub fn set_current_schema(&self, current_schema: NamespaceId) {
+    pub fn set_current_schema(&self, current_schema: SchemaId) {
         *self.current_schema.lock() = current_schema;
     }
 
@@ -187,8 +183,7 @@ mod tests {
 
     #[test]
     fn caps_prepared_statement_map() {
-        let state =
-            WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
+        let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
         state
             .put_prepared_statement(WirePreparedStatement {
                 name: "one".to_string(),
@@ -208,8 +203,7 @@ mod tests {
 
     #[test]
     fn caps_portal_map() {
-        let state =
-            WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
+        let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
         state
             .put_portal(WirePortal {
                 name:           "portal_one".to_string(),

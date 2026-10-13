@@ -26,8 +26,8 @@ CREATE USER 'case29_user'
 
 ALTER USER 'case29_user' SET STORAGE_ID 'case29_storage_b';
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_29_a;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_29_b;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_29_a;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_29_b;
 
 USE sql_file_case_29_a;
 

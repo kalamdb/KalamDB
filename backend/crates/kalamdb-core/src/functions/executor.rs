@@ -856,7 +856,7 @@ fn json_for_transfer(arg: &RoutineValue) -> Option<serde_json::Value> {
 mod tests {
     use kalamdb_commons::{
         conversions::arrow_json_conversion::scalar_value_to_js_json,
-        models::{NamespaceId, RoutineId, RoutineSecurityMode, UserId},
+        models::{RoutineId, RoutineSecurityMode, SchemaId, UserId},
         ArtifactId,
     };
     use kalamdb_functions::FunctionErrorCode;
@@ -865,7 +865,7 @@ mod tests {
     use super::*;
 
     fn catalog_routine(language: &str, artifact: bool) -> CatalogRoutine {
-        let ns = NamespaceId::new("api");
+        let ns = SchemaId::new("api");
         CatalogRoutine {
             routine_id:         RoutineId::from_parts(Some(&ns), "health"),
             namespace_id:       ns,

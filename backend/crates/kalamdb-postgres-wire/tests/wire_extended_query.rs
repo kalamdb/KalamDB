@@ -1,5 +1,5 @@
 use kalamdb_backend::session::BackendAuth;
-use kalamdb_commons::models::{NamespaceId, Role, UserId};
+use kalamdb_commons::models::{Role, SchemaId, UserId};
 use kalamdb_postgres_wire::connection::{
     WireConnectionState, WireConnectionStateError, WirePortal, WirePreparedStatement,
 };
@@ -10,7 +10,7 @@ fn auth() -> BackendAuth {
 
 #[test]
 fn prepared_statement_limit_rejects_new_entries_after_cap() {
-    let state = WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
+    let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
 
     state
         .put_prepared_statement(WirePreparedStatement {
@@ -27,7 +27,7 @@ fn prepared_statement_limit_rejects_new_entries_after_cap() {
 
 #[test]
 fn prepared_statement_limit_allows_replacing_existing_name() {
-    let state = WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
+    let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
 
     state
         .put_prepared_statement(WirePreparedStatement {
@@ -50,7 +50,7 @@ fn prepared_statement_limit_allows_replacing_existing_name() {
 
 #[test]
 fn portal_limit_rejects_new_entries_after_cap_and_close_releases_slot() {
-    let state = WireConnectionState::with_limits("session", auth(), NamespaceId::default(), 1, 1);
+    let state = WireConnectionState::with_limits("session", auth(), SchemaId::default(), 1, 1);
 
     state
         .put_portal(WirePortal {

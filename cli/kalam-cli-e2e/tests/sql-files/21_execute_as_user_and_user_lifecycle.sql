@@ -8,7 +8,7 @@ DROP USER IF EXISTS 'sql_case21_user_b';
 CREATE USER 'sql_case21_user_a' WITH PASSWORD 'Case21PassA123!' ROLE user;
 CREATE USER 'sql_case21_user_b' WITH PASSWORD 'Case21PassB123!' ROLE user;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_21;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_21;
 USE sql_file_case_21;
 
 DROP TABLE IF EXISTS case21_actions;

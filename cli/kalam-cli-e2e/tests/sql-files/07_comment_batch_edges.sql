@@ -1,7 +1,7 @@
 -- Stress comments, literals, and namespace-local DML in one script.
 
 DROP NAMESPACE IF EXISTS sql_file_case_07 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_07;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_07;
 USE sql_file_case_07;
 
 /* comment with a semicolon ; should not split the batch */

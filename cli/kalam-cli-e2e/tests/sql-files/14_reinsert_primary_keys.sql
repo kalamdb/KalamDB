@@ -2,7 +2,7 @@
 
 DROP NAMESPACE IF EXISTS sql_file_case_14 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_14;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_14;
 USE sql_file_case_14;
 
 CREATE TABLE IF NOT EXISTS ledger (

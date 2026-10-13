@@ -10,6 +10,7 @@ pub mod compatibility;
 pub mod contracts;
 pub mod ddl;
 pub mod ddl_parent;
+#[path = "kalam_dialect.rs"]
 pub mod dialect;
 pub mod execute_as;
 pub mod parser;
@@ -50,9 +51,9 @@ pub use parser::{
     rewrite_context_functions_for_datafusion, rewrite_explain_for_datafusion,
     single_values_insert_row, sql_value_to_scalar, strip_nested_expr,
     validate_primary_key_conflict_target, values_insert_view, values_insert_view_from_statement,
-    values_rows_from_insert, values_to_rows, OnConflictUpdateAssignment, OnConflictUpdateValue,
-    ParsedOnConflictAction, PostgresExplainFormat, RewrittenPostgresExplain, SqlParser,
-    ValuesInsertShapeOptions, ValuesInsertView,
+    values_rows_from_insert, values_to_rows, KalamParser, OnConflictUpdateAssignment,
+    OnConflictUpdateValue, ParsedOnConflictAction, PostgresExplainFormat, RewrittenPostgresExplain,
+    SqlParser, ValuesInsertShapeOptions, ValuesInsertView,
 };
 pub use query_features::{
     supports_general_query_feature, supports_subscription_query_feature, GeneralQueryFeature,

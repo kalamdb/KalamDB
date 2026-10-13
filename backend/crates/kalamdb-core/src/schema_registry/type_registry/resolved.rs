@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Fields};
 use kalamdb_commons::{
-    models::{CatalogTypeKind, NamespaceId, TypeId},
+    models::{CatalogTypeKind, SchemaId, TypeId},
     LogicalTypeRef, TypeRevision,
 };
 
@@ -13,7 +13,7 @@ use kalamdb_commons::{
 pub struct ResolvedType {
     pub type_id:      TypeId,
     pub revision:     TypeRevision,
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
     pub name:         String,
     pub kind:         CatalogTypeKind,
     pub fields:       Arc<[ResolvedTypeField]>,

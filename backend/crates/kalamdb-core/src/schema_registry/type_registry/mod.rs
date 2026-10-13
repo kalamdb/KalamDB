@@ -101,7 +101,7 @@ mod tests {
     use std::sync::Arc;
 
     use kalamdb_commons::{
-        models::{CatalogTypeKind, NamespaceId},
+        models::{CatalogTypeKind, SchemaId},
         TypeId,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn interned_layout_is_shared_across_loads() {
         let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let type_id = TypeId::from_parts(Some(&ns), "address");
         stores
             .upsert_type(CatalogType::named(
@@ -154,7 +154,7 @@ mod tests {
         };
 
         let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let type_id = TypeId::from_parts(Some(&ns), "status");
         stores
             .upsert_type(CatalogType::named(

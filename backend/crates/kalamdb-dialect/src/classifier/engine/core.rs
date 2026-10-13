@@ -4,8 +4,18 @@ use kalamdb_session::is_admin_role;
 use crate::{
     classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError},
     ddl::*,
-    parser::utils::{collect_non_whitespace_tokens, parse_sql_statements, tokens_to_words},
+    parser::{utils::tokens_to_words, KalamParser},
 };
+
+fn is_topic_trigger(words: &[&str]) -> bool {
+    words.windows(2).any(|window| window == ["ON", "TOPIC"])
+}
+
+fn is_kalam_procedure(words: &[&str]) -> bool {
+    !words
+        .windows(2)
+        .any(|window| window == ["LANGUAGE", "SQL"] || window == ["LANGUAGE", "PLPGSQL"])
+}
 
 impl SqlStatement {
     /// Wrap a parsed statement into SqlStatement with sql_text
@@ -45,9 +55,7 @@ impl SqlStatement {
         default_namespace: &NamespaceId,
         role: Role,
     ) -> Result<Self, StatementClassificationError> {
-        // Use sqlparser's parser lookahead to tokenize without full parsing
-        let dialect = sqlparser::dialect::GenericDialect {};
-        let tokens = collect_non_whitespace_tokens(sql, &dialect).unwrap_or_default();
+        let tokens = KalamParser::tokenize(sql).unwrap_or_default();
 
         // Build words list from tokens for pattern matching
         let mut words: Vec<String> = if !tokens.is_empty() {
@@ -143,18 +151,10 @@ impl SqlStatement {
                         .map(SqlStatementKind::DropPolicy)
                 })
             },
-            // Namespace operations - require admin
-            ["CREATE", "NAMESPACE", ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for namespace operations"
-                            .to_string(),
-                    ));
-                }
-                Self::wrap(sql, || {
-                    CreateNamespaceStatement::parse(sql).map(SqlStatementKind::CreateNamespace)
-                })
-            },
+            ["CREATE", "NAMESPACE", ..] => Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "CREATE NAMESPACE is not valid PostgreSQL; use CREATE SCHEMA".to_string(),
+            }),
             ["CREATE", "SCHEMA", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -175,7 +175,9 @@ impl SqlStatement {
             ["DROP", "TYPE", ..] => Self::wrap(sql, || {
                 DropTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::DropType)
             }),
-            ["CREATE", "PROCEDURE", ..] | ["CREATE", "OR", "REPLACE", "PROCEDURE", ..] => {
+            ["CREATE", "PROCEDURE", ..] | ["CREATE", "OR", "REPLACE", "PROCEDURE", ..]
+                if is_kalam_procedure(&word_refs) =>
+            {
                 Self::wrap(sql, || {
                     CreateProcedureStatement::parse(sql, default_namespace)
                         .map(SqlStatementKind::CreateProcedure)
@@ -199,7 +201,7 @@ impl SqlStatement {
             ["CALL", ..] => Self::wrap(sql, || {
                 CallStatement::parse(sql, default_namespace).map(SqlStatementKind::Call)
             }),
-            ["CREATE", "TRIGGER", ..] => Self::wrap(sql, || {
+            ["CREATE", "TRIGGER", ..] if is_topic_trigger(&word_refs) => Self::wrap(sql, || {
                 CreateTriggerStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::CreateTrigger)
             }),
@@ -326,9 +328,15 @@ impl SqlStatement {
                 }
             },
 
+            ["CREATE", "USER", "TABLE", ..] => Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "CREATE USER TABLE is not valid PostgreSQL; use CREATE TABLE ... WITH \
+                          (TYPE = 'USER')"
+                    .to_string(),
+            }),
+
             // Table operations - authorization deferred to table ownership checks
-            ["CREATE", "USER", "TABLE", ..]
-            | ["CREATE", "SHARED", "TABLE", ..]
+            ["CREATE", "SHARED", "TABLE", ..]
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
                 // Parse CREATE TABLE statement with detailed error logging
@@ -857,24 +865,21 @@ impl SqlStatement {
             },
 
             // Unknown
-            _ => {
-                let dialect = sqlparser::dialect::PostgreSqlDialect {};
-                match parse_sql_statements(sql, &dialect) {
-                    Ok(statements) => {
-                        if let Some(statement) = statements.first() {
-                            Err(StatementClassificationError::InvalidSql {
-                                sql:     sql.to_string(),
-                                message: format!("Unsupported statement type: {}", statement),
-                            })
-                        } else {
-                            Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
-                        }
-                    },
-                    Err(err) => Err(StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
-                        message: err.to_string(),
-                    }),
-                }
+            _ => match KalamParser::parse(sql) {
+                Ok(statements) => {
+                    if let Some(statement) = statements.first() {
+                        Err(StatementClassificationError::InvalidSql {
+                            sql:     sql.to_string(),
+                            message: format!("Unsupported statement type: {}", statement),
+                        })
+                    } else {
+                        Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                    }
+                },
+                Err(err) => Err(StatementClassificationError::InvalidSql {
+                    sql:     sql.to_string(),
+                    message: err.to_string(),
+                }),
             },
         }
     }

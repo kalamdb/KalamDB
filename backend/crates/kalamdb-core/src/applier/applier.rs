@@ -10,7 +10,7 @@ use chrono::Utc;
 use kalamdb_commons::models::{
     rows::Row,
     schemas::{TableDefinition, TableOptions, TableType},
-    NamespaceId, StorageId, TableId, TransactionId, UserId,
+    SchemaId, StorageId, TableId, TransactionId, UserId,
 };
 use kalamdb_raft::{
     DataResponse, GroupId, MetaCommand, RaftExecutor, SharedDataCommand, UserDataCommand,
@@ -58,12 +58,12 @@ pub trait UnifiedApplier: Send + Sync {
     /// Create a namespace
     async fn create_namespace(
         &self,
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         created_by: Option<UserId>,
     ) -> Result<String, ApplierError>;
 
     /// Drop a namespace
-    async fn drop_namespace(&self, namespace_id: NamespaceId) -> Result<String, ApplierError>;
+    async fn drop_namespace(&self, namespace_id: SchemaId) -> Result<String, ApplierError>;
 
     // =========================================================================
     // Storage Operations (Meta Raft Group)
@@ -362,7 +362,7 @@ impl UnifiedApplier for RaftApplier {
 
     async fn create_namespace(
         &self,
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         created_by: Option<UserId>,
     ) -> Result<String, ApplierError> {
         let cmd = MetaCommand::CreateNamespace {
@@ -372,7 +372,7 @@ impl UnifiedApplier for RaftApplier {
         self.propose_meta(cmd, "CREATE NAMESPACE").await
     }
 
-    async fn drop_namespace(&self, namespace_id: NamespaceId) -> Result<String, ApplierError> {
+    async fn drop_namespace(&self, namespace_id: SchemaId) -> Result<String, ApplierError> {
         let cmd = MetaCommand::DeleteNamespace { namespace_id };
         self.propose_meta(cmd, "DROP NAMESPACE").await
     }

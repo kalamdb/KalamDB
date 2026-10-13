@@ -10,7 +10,7 @@ use kalamdb_commons::{
     models::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, TableId, TableName, UserId,
+        SchemaId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
     TableAccess, TableType,
@@ -22,7 +22,7 @@ use support::{create_cluster_app_context, create_executor, execute_ok, unique_na
 
 async fn create_user_file_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
@@ -62,7 +62,7 @@ async fn create_user_file_table(
 
 async fn create_shared_file_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));

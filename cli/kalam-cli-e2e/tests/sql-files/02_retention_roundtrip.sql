@@ -1,7 +1,7 @@
 -- Topic retention set and clear flow inside a namespace-scoped batch.
 
 DROP NAMESPACE IF EXISTS sql_file_case_02 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_02;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_02;
 USE sql_file_case_02;
 
 CREATE TABLE IF NOT EXISTS audit_log (

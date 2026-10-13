@@ -14,7 +14,7 @@ use kalamdb_commons::{
     models::{
         pg_operations::{InsertRequest, ScanRequest},
         rows::Row,
-        NamespaceId, NodeId, StorageId, TableId, TableName, UserId,
+        NodeId, SchemaId, StorageId, TableId, TableName, UserId,
     },
     TableType,
 };
@@ -221,7 +221,7 @@ fn make_user_insert_request(
 
 fn make_system_insert_request(session_id: Option<&str>) -> InsertRequest {
     InsertRequest {
-        table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
+        table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
         table_type: TableType::System,
         session_id: session_id.map(str::to_string),
         user_id:    None,

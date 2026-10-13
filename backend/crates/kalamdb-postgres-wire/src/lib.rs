@@ -19,8 +19,8 @@ pub mod statement;
 pub mod tx_control;
 
 pub use client_catalog::{
-    classify_postgres_set, empty_pg_catalog_table_names, normalize_search_path_schema,
-    PostgresSetAction, EMPTY_PG_CATALOG_TABLE_COUNT,
+    classify_postgres_set, empty_pg_catalog_table_names, PostgresSetAction,
+    EMPTY_PG_CATALOG_TABLE_COUNT,
 };
 pub use listener::{format_startup_log_segment, PostgresWireListener, PostgresWireRuntimeDeps};
 pub use ports::{http_port_conflict_message, rpc_port_conflict_message};

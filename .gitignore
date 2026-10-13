@@ -1,6 +1,12 @@
 # Rust build artifacts
 /target/
 **/target/
+*.rs.bk
+*.rlib
+*.prof*
+# sqlparser_derive 0.5.0 reads this path; build.rs regenerates it.
+backend/crates/kalamdb-dialect/src/dialect/
+scripts/pg18-rewrite/state/
 # Cargo.lock - Committed for reproducible builds (this is an application, not a library)
 
 # WASM build outputs

@@ -17,10 +17,11 @@ use datafusion::{
     physical_plan::collect,
     prelude::{SessionConfig, SessionContext},
     scalar::ScalarValue,
+    sql::parser::Statement as DfStatement,
 };
 use kalamdb_commons::{
     conversions::arrow_json_conversion::{arrow_value_to_scalar, json_rows_to_arrow_batch},
-    models::{rows::row::Row, NamespaceId, ReadContext, TableId, TransactionId, UserId},
+    models::{rows::row::Row, ReadContext, SchemaId, TableId, TransactionId, UserId},
     quote_sql_identifier,
     schemas::TableType,
     try_pk_bucket_key, PkBucketKey, Role, SystemTable,
@@ -120,7 +121,7 @@ fn table_ref_is_client_catalog(table: &datafusion::common::TableReference) -> bo
     matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
 }
 
-fn extract_select_from_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
+fn extract_select_from_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
     let lowered = sql.to_ascii_lowercase();
     let from_idx = lowered.find(" from ")?;
     let rest = sql[from_idx + 6..].trim_start();
@@ -141,7 +142,7 @@ fn extract_select_from_table_id(sql: &str, default_namespace: &NamespaceId) -> O
     }
 }
 
-fn extract_sql_target_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
+fn extract_sql_target_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
     kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
         .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
         .or_else(|| extract_select_from_table_id(sql, default_namespace))
@@ -604,6 +605,36 @@ impl SqlExecutor {
         }
     }
 
+    /// Parse `sql` once. Planning and retries reuse the statement.
+    fn parse_planned_statement(sql: &str) -> Result<Statement, KalamDbError> {
+        kalamdb_sql::parser::KalamParser::parse_one(sql)
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string()))
+    }
+
+    /// Plan an already-parsed statement and optimize it for execution.
+    async fn dataframe_from_statement(
+        session: &SessionContext,
+        statement: &Statement,
+    ) -> Result<DataFrame, datafusion::error::DataFusionError> {
+        let plan = session
+            .state()
+            .statement_to_plan(DfStatement::Statement(Box::new(statement.clone())))
+            .await?;
+        session.execute_logical_plan(plan).await
+    }
+
+    /// One unoptimized plan for prepared parameter and result metadata.
+    pub async fn logical_plan(&self, sql: &str) -> Result<LogicalPlan, KalamDbError> {
+        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
+        let statement = Self::parse_planned_statement(&execution_sql)?;
+        self.app_context
+            .base_session_context()
+            .state()
+            .statement_to_plan(DfStatement::Statement(Box::new(statement)))
+            .await
+            .map_err(Self::datafusion_to_execution_error)
+    }
+
     async fn build_on_conflict_returning_result(
         &self,
         table_id: &TableId,
@@ -637,7 +668,10 @@ impl SqlExecutor {
             returning_table_name,
             quote_sql_identifier(table_id.table_name().as_str())
         );
-        let df = session.sql(&returning_sql).await.map_err(Self::datafusion_to_execution_error)?;
+        let statement = Self::parse_planned_statement(&returning_sql)?;
+        let df = Self::dataframe_from_statement(&session, &statement)
+            .await
+            .map_err(Self::datafusion_to_execution_error)?;
         let schema = Arc::new(df.schema().as_arrow().clone());
         let batches = df.collect().await.map_err(Self::datafusion_to_execution_error)?;
         let row_count = batches.iter().map(|batch| batch.num_rows()).sum();
@@ -1186,7 +1220,7 @@ impl SqlExecutor {
         &self,
         session: &SessionContext,
         data_frame: &DataFrame,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
     ) -> Result<LogicalPlan, KalamDbError> {
         let ordered = apply_default_order_by(
             data_frame.logical_plan().clone(),
@@ -1346,7 +1380,7 @@ impl SqlExecutor {
 
         let default_ns = exec_ctx.default_namespace();
         let namespace = match scan.table_name.schema() {
-            Some(schema) => NamespaceId::from_session_schema(schema, Some(&default_ns)),
+            Some(schema) => SchemaId::from_session_schema(schema, Some(&default_ns)),
             None => default_ns,
         };
         let table_id = TableId::from_namespace(namespace, scan.table_name.table());
@@ -1542,7 +1576,7 @@ impl SqlExecutor {
     pub fn prepare_statement_metadata_for_role(
         &self,
         sql: &str,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
         role: Role,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
         self.prepare_statement_metadata_for_role_with_options(sql, default_namespace, role, true)
@@ -1551,7 +1585,7 @@ impl SqlExecutor {
     fn prepare_statement_metadata_for_role_with_options(
         &self,
         sql: &str,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
         role: Role,
         include_dml_ast: bool,
     ) -> Result<PreparedExecutionStatement, StatementClassificationError> {
@@ -1590,27 +1624,19 @@ impl SqlExecutor {
     fn parse_dml_metadata(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
     ) -> Result<(Option<TableId>, Option<Statement>), StatementClassificationError> {
         match kind {
             SqlStatementKind::Insert(_)
             | SqlStatementKind::Update(_)
             | SqlStatementKind::Delete(_) => {
-                let dialect = sqlparser::dialect::GenericDialect {};
-                let mut statements = kalamdb_sql::parser::utils::parse_sql_statements(
-                    sql, &dialect,
-                )
-                .map_err(|error| StatementClassificationError::InvalidSql {
-                    sql:     sql.to_string(),
-                    message: error.to_string(),
-                })?;
-                if statements.len() != 1 {
-                    return Err(StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
-                        message: "Expected exactly one SQL statement".to_string(),
-                    });
-                }
-                let statement = statements.remove(0);
+                let statement =
+                    kalamdb_sql::parser::KalamParser::parse_one(sql).map_err(|error| {
+                        StatementClassificationError::InvalidSql {
+                            sql:     sql.to_string(),
+                            message: error.to_string(),
+                        }
+                    })?;
                 let table_id =
                     kalamdb_sql::extract_dml_table_id_from_statement(&statement, default_namespace);
                 Ok((table_id, Some(statement)))
@@ -1622,7 +1648,7 @@ impl SqlExecutor {
     fn extract_dml_table_id_only(
         sql: &str,
         kind: &SqlStatementKind,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
     ) -> (Option<TableId>, Option<Statement>) {
         let table_id = match kind {
             SqlStatementKind::Insert(_)
@@ -1952,10 +1978,11 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<(SessionContext, DataFrame), KalamDbError> {
         let session = self.create_session_with_transaction_context(exec_ctx)?;
+        let statement = Self::parse_planned_statement(execution_sql)?;
         #[cfg(feature = "traceability")]
         let plan_start = std::time::Instant::now();
 
-        match session.sql(execution_sql).await {
+        match Self::dataframe_from_statement(&session, &statement).await {
             Ok(df) => {
                 kalamdb_observability::kdb_debug!(
                     plan_ms = (plan_start.elapsed().as_micros() as f64 / 1000.0),
@@ -1976,9 +2003,10 @@ impl SqlExecutor {
                 let retry_session = self.create_session_with_transaction_context(exec_ctx)?;
                 #[cfg(feature = "traceability")]
                 let retry_start = std::time::Instant::now();
-                let retry_df = retry_session.sql(execution_sql).await.map_err(|retry_error| {
-                    self.log_sql_error(original_sql, exec_ctx, retry_error)
-                })?;
+                let retry_df =
+                    Self::dataframe_from_statement(&retry_session, &statement).await.map_err(
+                        |retry_error| self.log_sql_error(original_sql, exec_ctx, retry_error),
+                    )?;
                 kalamdb_observability::kdb_debug!(
                     plan_ms = (retry_start.elapsed().as_micros() as f64 / 1000.0),
                     reloaded_providers = true,
@@ -2159,7 +2187,10 @@ impl SqlExecutor {
                 Ok(df) => df,
                 Err(e) => {
                     log::warn!("Failed to execute cached plan, reparsing SQL: {}", e);
-                    let planned_df = match session.sql(execution_sql).await {
+                    let statement = Self::parse_planned_statement(execution_sql)?;
+                    let planned_df = match Self::dataframe_from_statement(&session, &statement)
+                        .await
+                    {
                         Ok(df) => df,
                         Err(e) => {
                             if Self::is_table_not_found_error(&e) {
@@ -2178,7 +2209,9 @@ impl SqlExecutor {
                                 }
                                 let retry_session =
                                     self.create_session_with_transaction_context(exec_ctx)?;
-                                match retry_session.sql(execution_sql).await {
+                                match Self::dataframe_from_statement(&retry_session, &statement)
+                                    .await
+                                {
                                     Ok(df) => df,
                                     Err(e2) => {
                                         return Err(self.log_sql_error(sql, exec_ctx, e2));
@@ -2223,7 +2256,8 @@ impl SqlExecutor {
             }
         } else {
             let session = self.create_session_with_transaction_context(exec_ctx)?;
-            let planned_df = match session.sql(execution_sql).await {
+            let statement = Self::parse_planned_statement(execution_sql)?;
+            let planned_df = match Self::dataframe_from_statement(&session, &statement).await {
                 Ok(df) => df,
                 Err(e) => {
                     if Self::is_table_not_found_error(&e) {
@@ -2242,7 +2276,7 @@ impl SqlExecutor {
                         }
                         let retry_session =
                             self.create_session_with_transaction_context(exec_ctx)?;
-                        match retry_session.sql(execution_sql).await {
+                        match Self::dataframe_from_statement(&retry_session, &statement).await {
                             Ok(df) => df,
                             Err(e2) => {
                                 return Err(self.log_sql_error(sql, exec_ctx, e2));
@@ -2365,8 +2399,8 @@ impl SqlExecutor {
             session
         };
 
-        // Execute the command directly via DataFusion
-        let df = match session.sql(&execution_sql).await {
+        let statement = Self::parse_planned_statement(&execution_sql)?;
+        let df = match Self::dataframe_from_statement(&session, &statement).await {
             Ok(df) => df,
             Err(e) => {
                 log::error!(
@@ -2820,7 +2854,7 @@ mod tests {
     async fn cached_point_plan_binds_rls_principal_per_execution() {
         let app_context = crate::test_helpers::test_app_context_simple();
         let mut table = TableDefinition::new(
-            NamespaceId::new("security"),
+            SchemaId::new("security"),
             TableName::new("cached_documents"),
             TableType::Shared,
             vec![

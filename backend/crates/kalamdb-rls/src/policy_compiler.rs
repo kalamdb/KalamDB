@@ -4,13 +4,10 @@ use kalamdb_commons::{
     schemas::TableDefinition, AuthorizationRelation, BoundExprShape, InvalidationStrategy,
     PolicyProgram, PolicyScalar, PredicateOperator, PrincipalExpr, ScalarPredicate, TableId,
 };
-use kalamdb_sql::parser::utils::parse_sql_expression;
-use sqlparser::{
-    ast::{
-        BinaryOperator, Expr, FunctionArguments, GroupByExpr, ObjectName, Query, Select,
-        SelectItem, SetExpr, TableFactor, Value,
-    },
-    dialect::PostgreSqlDialect,
+use kalamdb_sql::parser::KalamParser;
+use sqlparser::ast::{
+    BinaryOperator, Expr, FunctionArguments, GroupByExpr, ObjectName, Query, Select, SelectItem,
+    SetExpr, TableFactor, Value,
 };
 
 /// Resolves table definitions while compiling a policy.
@@ -36,8 +33,7 @@ where
         protected_table: &TableDefinition,
         expression_sql: &str,
     ) -> Result<PolicyProgram, String> {
-        let dialect = PostgreSqlDialect {};
-        let expression = parse_sql_expression(expression_sql, &dialect)
+        let expression = KalamParser::parse_expr(expression_sql)
             .map_err(|error| format!("invalid policy expression: {error}"))?;
 
         match expression {

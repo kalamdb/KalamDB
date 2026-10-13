@@ -15,10 +15,7 @@ use sqlparser::ast::{
     TableFactor, TableWithJoins, Value, Visit, VisitMut, Visitor, VisitorMut,
 };
 
-use crate::{
-    dialect::KalamDbDialect,
-    parser::utils::{parse_sql_expression, parse_sql_statements},
-};
+use crate::parser::KalamParser;
 
 /// Error type for query parsing
 #[derive(Debug, Clone)]
@@ -73,9 +70,8 @@ impl QueryParser {
     pub fn analyze_subscription_query(
         query: &str,
     ) -> Result<SubscriptionQueryAnalysis, QueryParseError> {
-        let dialect = KalamDbDialect::default();
-        let statements = parse_sql_statements(query, &dialect)
-            .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
+        let statements =
+            KalamParser::parse(query).map_err(|e| QueryParseError::ParseError(e.to_string()))?;
 
         if statements.is_empty() {
             return Err(QueryParseError::InvalidSql("Empty SQL statement".to_string()));
@@ -209,8 +205,7 @@ impl QueryParser {
         user_id: &kalamdb_commons::models::UserId,
     ) -> Result<String, QueryParseError> {
         let escaped_user_id = user_id.as_str().replace('\'', "''");
-        let dialect = KalamDbDialect::default();
-        let mut expr = parse_sql_expression(where_clause, &dialect)
+        let mut expr = KalamParser::parse_expr(where_clause)
             .map_err(|error| QueryParseError::ParseError(error.to_string()))?;
 
         let mut visitor = CurrentUserPlaceholderResolver {
@@ -285,8 +280,7 @@ impl QueryParser {
     }
 
     pub fn validate_row_filter_expr(expr_str: &str) -> Result<(), QueryParseError> {
-        let dialect = KalamDbDialect::default();
-        let expr = parse_sql_expression(expr_str, &dialect)
+        let expr = KalamParser::parse_expr(expr_str)
             .map_err(|e| QueryParseError::ParseError(e.to_string()))?;
         Self::validate_row_filter_ast(&expr)
     }

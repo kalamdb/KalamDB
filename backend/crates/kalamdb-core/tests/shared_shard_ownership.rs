@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use kalamdb_commons::{
     ids::{same_domain_cmp, VersionError, VersionId},
-    NamespaceId, TableId,
+    SchemaId, TableId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::sql::{
@@ -37,7 +37,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
             &format!("CREATE SHARED TABLE {namespace}.t (id BIGINT PRIMARY KEY, name TEXT)"),
         )
         .await;
-        let id = TableId::new(NamespaceId::new(namespace), "t".into());
+        let id = TableId::new(SchemaId::new(namespace), "t".into());
         let owner = app.shared_group_id(&id).unwrap();
         owners.insert(owner);
         tables.push((id, owner));
@@ -105,7 +105,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         "CREATE SHARED TABLE ownhot.hot (id BIGINT PRIMARY KEY, name TEXT)",
     )
     .await;
-    let hot = TableId::new(NamespaceId::new("ownhot"), "hot".into());
+    let hot = TableId::new(SchemaId::new("ownhot"), "hot".into());
     let hot_owner = app.shared_group_id(&hot).unwrap();
     let mut hot_tasks = Vec::new();
     for client in 0..50 {

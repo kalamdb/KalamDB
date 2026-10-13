@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn list_of_named_reports_type_id() {
-        let id = TypeId::from_parts(Some(&crate::models::NamespaceId::new("chat")), "address");
+        let id = TypeId::from_parts(Some(&crate::models::SchemaId::new("chat")), "address");
         let type_ref = LogicalTypeRef::list(LogicalTypeRef::named(id.clone()), true);
         assert_eq!(type_ref.referenced_type_ids(), vec![id]);
         assert!(type_ref.is_array());
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn stored_named_array_wraps_type_id() {
-        let id = TypeId::from_parts(Some(&crate::models::NamespaceId::new("chat")), "address");
+        let id = TypeId::from_parts(Some(&crate::models::SchemaId::new("chat")), "address");
         let type_ref = LogicalTypeRef::stored(
             "column 'addr'",
             Some(&id),

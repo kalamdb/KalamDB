@@ -10,7 +10,7 @@ DROP USER IF EXISTS 'case31_user_bob';
 CREATE USER 'case31_user_alice' WITH PASSWORD 'Case31Alice!123' ROLE user;
 CREATE USER 'case31_user_bob' WITH PASSWORD 'Case31Bob!123' ROLE user;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_31;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_31;
 USE NAMESPACE sql_file_case_31;
 
 -- Part A: SHARED table

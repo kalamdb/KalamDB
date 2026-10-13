@@ -22,6 +22,7 @@
 pub mod dml;
 pub mod explain;
 pub mod extensions;
+mod kalam;
 mod pg_unnest;
 pub mod query_parser;
 pub mod system;
@@ -42,6 +43,7 @@ pub use explain::{
     rewrite_explain_for_datafusion, PostgresExplainFormat, RewrittenPostgresExplain,
 };
 pub use extensions::*;
+pub use kalam::KalamParser;
 pub use query_parser::*;
 pub use system::*;
 pub use utils::{

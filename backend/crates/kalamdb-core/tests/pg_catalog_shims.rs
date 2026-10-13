@@ -7,7 +7,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType, KalamCellValue, RoutineId, RoutineParameterId,
         RoutineSecurityMode, SessionOrigin, UserId,
     },
-    NamespaceId, Role,
+    Role, SchemaId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -233,7 +233,7 @@ async fn pg_catalog_shim_dbeaver_unqualified_pg_type_query() {
     let observer_ctx = observer_exec_ctx(&app_ctx);
     let namespace = unique_namespace("pg_type_dbeaver");
     create_shared_table(&app_ctx, &namespace, "items").await;
-    let exec_ctx = observer_ctx.with_namespace_id(NamespaceId::new(namespace.as_str()));
+    let exec_ctx = observer_ctx.with_namespace_id(SchemaId::new(namespace.as_str()));
 
     let rows = result_rows(execute_ok(&executor, &exec_ctx, DBEAVER_PG_TYPE_SQL).await);
     assert!(
@@ -591,7 +591,7 @@ async fn pg_catalog_shim_unqualified_pg_type_resolves_via_rewrite() {
     let type_rows = result_rows(
         execute_ok(
             &executor,
-            &observer_ctx.with_namespace_id(NamespaceId::new(namespace.as_str())),
+            &observer_ctx.with_namespace_id(SchemaId::new(namespace.as_str())),
             "SELECT typname FROM pg_type WHERE typrelid = 0 ORDER BY typname LIMIT 5",
         )
         .await,
@@ -1337,7 +1337,7 @@ async fn pg_catalog_shim_jdbc_and_information_schema_routines() {
 
 fn insert_catalog_procedure(
     app_ctx: &std::sync::Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     name: &str,
 ) {
     let stores = app_ctx.system_tables().catalog_stores();

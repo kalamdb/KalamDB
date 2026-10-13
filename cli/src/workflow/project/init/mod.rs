@@ -527,7 +527,7 @@ mod tests {
             assert_eq!(config.project.name, "dev-test1");
             assert_eq!(
                 config.connection.get("dev").expect("dev env").namespace,
-                kalamdb_commons::NamespaceId::new("dev_test1")
+                kalamdb_commons::SchemaId::new("dev_test1")
             );
 
             let env_contents = fs::read_to_string(temp.path().join(".env")).unwrap();

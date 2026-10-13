@@ -55,13 +55,12 @@ use kalamdb_commons::{
 };
 use sqlparser::{
     ast::{ObjectName, ObjectNamePart, SetExpr, Statement, TableFactor},
-    dialect::{GenericDialect, PostgreSqlDialect},
+    tokenizer::Token,
 };
 
 use super::DdlResult;
 use crate::parser::{
-    query_parser::QueryParser,
-    utils::{normalize_context_keyword_calls_for_sqlparser, parse_sql_statements},
+    query_parser::QueryParser, utils::normalize_context_keyword_calls_for_sqlparser, KalamParser,
 };
 
 /// SUBSCRIBE TO statement for live query subscriptions.
@@ -134,9 +133,7 @@ impl SubscribeStatement {
             std::borrow::Cow::Owned(normalized) => normalized,
         };
 
-        // Parse the SELECT statement using sqlparser
-        let dialect = PostgreSqlDialect {};
-        let mut ast = match parse_sql_statements(&select_sql, &dialect) {
+        let mut ast = match KalamParser::parse(&select_sql) {
             Ok(ast) => ast,
             Err(e) => return Err(format!("Failed to parse SUBSCRIBE TO as SELECT: {}", e)),
         };
@@ -189,14 +186,7 @@ impl SubscribeStatement {
     fn extract_options_clause(
         sql: &str,
     ) -> DdlResult<(String, SubscriptionOptions, ResumeDomainParts)> {
-        use sqlparser::tokenizer::{Token, Tokenizer};
-
-        let dialect = GenericDialect {};
-        let mut tokenizer = Tokenizer::new(&dialect, sql);
-
-        // Tokenize to get list of tokens
-        let tokens = tokenizer
-            .tokenize()
+        let tokens = KalamParser::tokenize(sql)
             .map_err(|e| format!("Failed to tokenize SUBSCRIBE TO: {}", e))?;
 
         let mut saw_options = false;
@@ -780,9 +770,7 @@ mod tests {
 
     #[test]
     fn test_parse_subscribe_negative_from() {
-        use kalamdb_commons::ids::VersionId;
-
-        // Negative seq_id should be valid (might be used for special cases)
+        // Negative seq_id is rejected rather than stored as a version.
         let stmt =
             SubscribeStatement::parse("SUBSCRIBE TO app.messages OPTIONS (from=-1)").unwrap();
         assert_eq!(stmt.options.from, None /* negative versions rejected */);

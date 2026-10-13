@@ -173,7 +173,7 @@ mod tests {
         models::{
             datatypes::KalamDataType,
             schemas::{ColumnDefinition, TableDefinition, TableOptions},
-            NamespaceId, TableId, TableName,
+            SchemaId, TableId, TableName,
         },
         schemas::{ColumnDefault, TableType},
         Role, UserId,
@@ -197,7 +197,7 @@ mod tests {
         app_ctx.set_sql_executor(sql_executor.clone());
 
         // Build a minimal STREAM table definition (avoids storage registry requirements).
-        let namespace = NamespaceId::new("test_ns");
+        let namespace = SchemaId::new("test_ns");
         let table_name = TableName::new("test_table");
         let table_id = TableId::new(namespace.clone(), table_name.clone());
 

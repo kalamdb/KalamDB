@@ -16,7 +16,7 @@ use crate::{
     error::{SystemError, SystemResultExt},
     providers::{
         base::{extract_filter_value, system_rows_to_batch, SimpleProviderDefinition},
-        namespaces::models::Namespace,
+        schemas::models::Namespace,
     },
     system_row_mapper::{model_to_system_row, system_row_to_model},
 };

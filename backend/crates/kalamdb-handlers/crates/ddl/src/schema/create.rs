@@ -18,9 +18,9 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::CreateNamespaceStatement;
+use kalamdb_sql::ddl::{CreateNamespaceStatement, CreateSchemaStatement};
 
-use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
+use crate::helpers::{async_blocking::run_blocking, audit, guards::require_admin};
 
 /// Typed handler for CREATE NAMESPACE statements
 pub struct CreateNamespaceHandler {
@@ -76,19 +76,16 @@ impl CreateNamespaceHandler {
     }
 }
 
-impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
-    async fn execute(
+impl CreateNamespaceHandler {
+    async fn create_catalog_schema(
         &self,
-        statement: CreateNamespaceStatement,
-        _params: Vec<ScalarValue>,
+        name: &str,
+        if_not_exists: bool,
         context: &ExecutionContext,
+        audit_kind: &str,
     ) -> Result<ExecutionResult, KalamDbError> {
-        let name = statement.name.as_str();
-
-        // Validate namespace name
         kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
-        // Check if namespace already exists
         let namespace_id = NamespaceId::new(name);
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
@@ -97,22 +94,19 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
                 .await?;
 
         if existing.is_some() {
-            if statement.if_not_exists {
+            if if_not_exists {
                 self.register_namespace_schema(&namespace_id)?;
-                let message = format!("Namespace '{}' already exists", name);
+                let message = format!("Schema '{name}' already exists");
                 return Ok(ExecutionResult::Success { message });
             }
-            return Err(KalamDbError::AlreadyExists(format!(
-                "Namespace '{}' already exists",
-                name
-            )));
+            return Err(KalamDbError::AlreadyExists(format!("Schema '{name}' already exists")));
         }
 
-        // In cluster mode, route through executor for Raft replication
-        // In standalone mode, the executor calls the provider directly
+        // Cluster mode replicates through Raft. The command name stays
+        // CreateNamespace so stored meta bytes do not change.
         let executor = self.app_context.executor();
         let created_by = Some(UserId::new(context.user_id().as_str()));
-        let cmd = if statement.if_not_exists {
+        let cmd = if if_not_exists {
             kalamdb_raft::MetaCommand::CreateNamespaceIfNotExists {
                 namespace_id: namespace_id.clone(),
                 created_by,
@@ -125,29 +119,42 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
         };
 
         if let Err(error) = executor.execute_meta(cmd).await {
-            if statement.if_not_exists && is_namespace_already_exists_error(&error) {
+            if if_not_exists && is_namespace_already_exists_error(&error) {
                 self.register_namespace_schema(&namespace_id)?;
-                let message = format!("Namespace '{}' already exists", name);
+                let message = format!("Schema '{name}' already exists");
                 return Ok(ExecutionResult::Success { message });
             }
 
             return Err(KalamDbError::ExecutionError(format!(
-                "Failed to create namespace via executor: {}",
-                error
+                "Failed to create schema via executor: {error}"
             )));
         }
 
-        // Register namespace as DataFusion schema for SQL queries
         self.register_namespace_schema(&namespace_id)?;
 
-        // Log DDL operation
-        use crate::helpers::audit;
-        let audit_entry =
-            audit::log_ddl_operation(context, "CREATE", "NAMESPACE", name, None, None);
+        let audit_entry = audit::log_ddl_operation(context, "CREATE", audit_kind, name, None, None);
         audit::persist_audit_entry(&self.app_context, &audit_entry).await?;
 
-        let message = format!("Namespace '{}' created successfully", name);
-        Ok(ExecutionResult::Success { message })
+        Ok(ExecutionResult::Success {
+            message: format!("Schema '{name}' created successfully"),
+        })
+    }
+}
+
+impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler {
+    async fn execute(
+        &self,
+        statement: CreateNamespaceStatement,
+        _params: Vec<ScalarValue>,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        self.create_catalog_schema(
+            statement.name.as_str(),
+            statement.if_not_exists,
+            context,
+            "NAMESPACE",
+        )
+        .await
     }
 
     async fn check_authorization(
@@ -157,10 +164,36 @@ impl TypedStatementHandler<CreateNamespaceStatement> for CreateNamespaceHandler 
     ) -> Result<(), KalamDbError> {
         use crate::helpers::guards::block_anonymous_write;
 
-        // T050: Block anonymous users from DDL operations
         block_anonymous_write(context, "CREATE NAMESPACE")?;
-
         require_admin(context, "create namespace")
+    }
+}
+
+impl TypedStatementHandler<CreateSchemaStatement> for CreateNamespaceHandler {
+    async fn execute(
+        &self,
+        statement: CreateSchemaStatement,
+        _params: Vec<ScalarValue>,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        self.create_catalog_schema(
+            statement.name.as_str(),
+            statement.if_not_exists,
+            context,
+            "SCHEMA",
+        )
+        .await
+    }
+
+    async fn check_authorization(
+        &self,
+        _statement: &CreateSchemaStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        use crate::helpers::guards::block_anonymous_write;
+
+        block_anonymous_write(context, "CREATE SCHEMA")?;
+        require_admin(context, "create schema")
     }
 }
 

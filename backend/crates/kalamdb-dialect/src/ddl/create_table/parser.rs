@@ -17,7 +17,7 @@ use super::types::CreateTableStatement;
 use crate::{
     compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::column_default::expr_to_column_default,
-    parser::utils::{format_span, parse_sql_statements},
+    parser::{utils::format_span, KalamParser},
     validation::validate_column_name,
 };
 
@@ -44,11 +44,7 @@ impl CreateTableStatement {
         normalized_sql = normalized_sql.replace("AUTO INCREMENT", "DEFAULT SNOWFLAKE_ID()");
         normalized_sql = normalized_sql.replace("auto increment", "DEFAULT SNOWFLAKE_ID()");
 
-        // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
-        // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
-        let dialect = sqlparser::dialect::PostgreSqlDialect {};
-        let mut statements =
-            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
+        let mut statements = KalamParser::parse(&normalized_sql).map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
         }

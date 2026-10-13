@@ -219,7 +219,7 @@ impl HandlerRegistry {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{NamespaceId, UserId},
+        models::{SchemaId, UserId},
         Role,
     };
 
@@ -242,7 +242,7 @@ mod tests {
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE test_registry_ns".to_string(),
             SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          NamespaceId::new("test_registry_ns"),
+                name:          SchemaId::new("test_registry_ns"),
                 if_not_exists: false,
             }),
         );
@@ -338,7 +338,7 @@ mod tests {
         // Register stub handler for CreateNamespace
         let key = std::mem::discriminant(&SqlStatementKind::CreateNamespace(
             kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          kalamdb_commons::models::NamespaceId::new("_"),
+                name:          kalamdb_commons::models::SchemaId::new("_"),
                 if_not_exists: false,
             },
         ));
@@ -353,7 +353,7 @@ mod tests {
         let stmt = SqlStatement::new(
             "CREATE NAMESPACE unauthorized_ns".to_string(),
             SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          NamespaceId::new("unauthorized_ns"),
+                name:          SchemaId::new("unauthorized_ns"),
                 if_not_exists: false,
             }),
         );

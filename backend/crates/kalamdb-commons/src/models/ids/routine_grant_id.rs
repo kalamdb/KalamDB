@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn routine_grant_id_round_trips_role_grantee() {
         let id = RoutineGrantId::new(
-            &RoutineId::from_parts(Some(&crate::models::NamespaceId::new("api")), "create_order"),
+            &RoutineId::from_parts(Some(&crate::models::SchemaId::new("api")), "create_order"),
             &RoutineGrantee::Role("moderator".to_string()),
         );
         assert_eq!(id.as_str(), "api.create_order:role=moderator");

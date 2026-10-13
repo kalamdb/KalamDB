@@ -3,7 +3,7 @@
 DROP NAMESPACE IF EXISTS sql_file_case_25 CASCADE;
 DROP STORAGE IF EXISTS case25_storage;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_25;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_25;
 ALTER NAMESPACE sql_file_case_25 SET DESCRIPTION 'case 25 namespace description';
 
 SHOW NAMESPACES;

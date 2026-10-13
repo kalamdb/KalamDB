@@ -1527,14 +1527,14 @@ mod tests {
         datatypes::KalamDataType,
         models::schemas::{ColumnDefinition, TableDefinition},
         schemas::{ColumnDefault, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::SchemaRegistry;
 
     fn base_table_definition() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("reconcile_test"),
             TableType::System,
             vec![

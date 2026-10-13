@@ -1,12 +1,9 @@
 //! COMMENT ON TYPE / COMMENT ON PROCEDURE via sqlparser.
 
 use kalamdb_commons::models::{NamespaceId, RoutineId};
-use sqlparser::{
-    ast::{CommentObject, ObjectName, ObjectNamePart, Statement},
-    dialect::PostgreSqlDialect,
-};
+use sqlparser::ast::{CommentObject, ObjectName, ObjectNamePart, Statement};
 
-use crate::{ddl::DdlResult, parser::utils::parse_sql_statements};
+use crate::{ddl::DdlResult, parser::KalamParser};
 
 /// Catalog object targeted by `COMMENT ON`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,8 +29,7 @@ pub struct CommentOnStatement {
 
 impl CommentOnStatement {
     pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
-        let dialect = PostgreSqlDialect {};
-        let mut statements = parse_sql_statements(sql, &dialect)
+        let mut statements = KalamParser::parse(sql)
             .map_err(|error| format!("Failed to parse COMMENT ON statement: {error}"))?;
         if statements.len() != 1 {
             return Err("Expected exactly one COMMENT ON statement".to_string());

@@ -25,6 +25,7 @@
 pub mod auth_session;
 pub mod error;
 pub mod permissions;
+pub mod schema_search_path;
 pub mod user_context;
 
 // Re-export main types
@@ -38,5 +39,9 @@ pub use permissions::{
     can_write_shared_table, can_write_stream_table, can_write_user_table,
     check_shared_table_write_access_level, check_stream_table_write_access_level,
     check_user_table_write_access_level, is_admin_role, is_system_role,
+};
+pub use schema_search_path::{
+    catalog_entries_for_stored_keys, Catalog, ObjectClass, PathError, PreparedPlan, Resolved,
+    SchemaEntry, SearchPath, SessionSearchPath,
 };
 pub use user_context::UserContext;

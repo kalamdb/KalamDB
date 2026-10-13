@@ -13,7 +13,7 @@ use std::sync::Once;
 use datafusion::prelude::SessionContext;
 // ── Imports needed by init_test_app_context / test_app_context ─────────────────
 #[cfg(any(test, feature = "test-helpers"))]
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_commons::{
     models::{NodeId, StorageId},
     storage::KvIterator,
@@ -150,7 +150,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
-        let default_namespace = NamespaceId::default();
+        let default_namespace = SchemaId::default();
         if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {

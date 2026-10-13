@@ -23,8 +23,8 @@ ALTER USER 'case30_user' SET ROLE service;
 ALTER USER 'case30_user' SET ROLE user;
 
 DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_30_main;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_30_other;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_30_main;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_30_other;
 
 USE sql_file_case_30_main;
 
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS case30_other_table (
 ) WITH (TYPE = 'USER', STORAGE_ID = 'local', FLUSH_POLICY = 'rows:10,interval:5');
 
 DROP NAMESPACE IF EXISTS sql_file_case_30_other CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_30_other;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_30_other;
 USE sql_file_case_30_other;
 CREATE TABLE IF NOT EXISTS case30_other_table2 (
   id BIGINT PRIMARY KEY,

@@ -2,12 +2,9 @@
 use std::collections::HashSet;
 
 use kalamdb_commons::models::{NamespaceId, RoutineId, ScheduleId};
-use sqlparser::{
-    dialect::PostgreSqlDialect,
-    tokenizer::{Token, Tokenizer},
-};
+use sqlparser::tokenizer::Token;
 
-use crate::ddl::DdlResult;
+use crate::{ddl::DdlResult, parser::KalamParser};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateScheduleStatement {
@@ -100,8 +97,7 @@ pub(super) struct ScheduleParser {
 }
 impl ScheduleParser {
     pub fn new(sql: &str) -> DdlResult<Self> {
-        let tokens = Tokenizer::new(&PostgreSqlDialect {}, sql)
-            .tokenize()
+        let tokens = KalamParser::tokenize(sql)
             .map_err(|e| e.to_string())?
             .into_iter()
             .filter(|t| !matches!(t, Token::Whitespace(_)))

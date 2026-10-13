@@ -1,0 +1,14 @@
+[package]
+name = "kalam-pg18-harness"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "PostgreSQL 18 differential and performance harness"
+publish = false
+
+[[bin]]
+name = "kalam-pg18-harness"
+path = "src/main.rs"
+
+[dependencies]
+sqlparser = "=0.62.0"

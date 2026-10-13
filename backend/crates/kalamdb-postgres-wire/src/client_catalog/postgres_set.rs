@@ -3,8 +3,8 @@
 /// Outcome of recognizing a PostgreSQL-style `SET` that DataFusion cannot handle natively.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PostgresSetAction {
-    /// Switch the session default schema (first entry of `search_path`).
-    SetSearchPath { schema: String },
+    /// Replace the session `search_path`. Resolution uses `kalamdb_session::SearchPath`.
+    SetSearchPath { path: String },
     /// Accepted no-op (`client_encoding`, `timezone`, …).
     NoOp,
 }
@@ -17,7 +17,7 @@ pub fn classify_postgres_set(sql: &str) -> Option<PostgresSetAction> {
     let trimmed = sql.trim().trim_end_matches(';').trim();
     if is_reset_search_path(trimmed) {
         return Some(PostgresSetAction::SetSearchPath {
-            schema: "default".to_string(),
+            path: POSTGRES_DEFAULT_SEARCH_PATH.to_string(),
         });
     }
     let bytes = trimmed.as_bytes();
@@ -45,8 +45,12 @@ pub fn classify_postgres_set(sql: &str) -> Option<PostgresSetAction> {
 
     match name.as_str() {
         "search_path" => {
-            let schema = first_search_path_entry(value).unwrap_or_else(|| "default".to_string());
-            Some(PostgresSetAction::SetSearchPath { schema })
+            let path = if value.eq_ignore_ascii_case("default") {
+                POSTGRES_DEFAULT_SEARCH_PATH.to_string()
+            } else {
+                value.to_string()
+            };
+            Some(PostgresSetAction::SetSearchPath { path })
         },
         "client_encoding"
         | "application_name"
@@ -121,35 +125,7 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     None
 }
 
-fn first_search_path_entry(value: &str) -> Option<String> {
-    let first = value.split(',').next()?.trim();
-    let unquoted = unquote_ident(first);
-    if unquoted.is_empty() {
-        return None;
-    }
-    Some(normalize_search_path_schema(&unquoted))
-}
-
-fn unquote_ident(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.len() >= 2 {
-        let bytes = trimmed.as_bytes();
-        if (bytes[0] == b'"' && bytes[trimmed.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'')
-        {
-            return trimmed[1..trimmed.len() - 1].replace("\"\"", "\"");
-        }
-    }
-    trimmed.to_string()
-}
-
-/// Map PostgreSQL search_path aliases onto Kalam namespaces.
-pub fn normalize_search_path_schema(name: &str) -> String {
-    match name {
-        "$user" | "public" | "PUBLIC" | "default" | "DEFAULT" => "default".to_string(),
-        other => other.to_string(),
-    }
-}
+const POSTGRES_DEFAULT_SEARCH_PATH: &str = "\"$user\", public";
 
 #[cfg(test)]
 mod tests {
@@ -160,25 +136,31 @@ mod tests {
         assert_eq!(
             classify_postgres_set(r#"SET search_path TO "system""#),
             Some(PostgresSetAction::SetSearchPath {
-                schema: "system".to_string(),
+                path: "\"system\"".to_string(),
             })
         );
         assert_eq!(
             classify_postgres_set("SET search_path = public, default"),
             Some(PostgresSetAction::SetSearchPath {
-                schema: "default".to_string(),
+                path: "public, default".to_string(),
             })
         );
         assert_eq!(
             classify_postgres_set("SET SESSION search_path TO app"),
             Some(PostgresSetAction::SetSearchPath {
-                schema: "app".to_string(),
+                path: "app".to_string(),
             })
         );
         assert_eq!(
             classify_postgres_set("RESET search_path"),
             Some(PostgresSetAction::SetSearchPath {
-                schema: "default".to_string(),
+                path: "\"$user\", public".to_string(),
+            })
+        );
+        assert_eq!(
+            classify_postgres_set("SET search_path TO DEFAULT"),
+            Some(PostgresSetAction::SetSearchPath {
+                path: "\"$user\", public".to_string(),
             })
         );
     }

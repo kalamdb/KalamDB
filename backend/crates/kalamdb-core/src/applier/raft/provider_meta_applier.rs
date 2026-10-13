@@ -11,8 +11,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kalamdb_commons::{
     models::{
-        schemas::TableDefinition, FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId,
-        TableId, UserId,
+        schemas::TableDefinition, FunctionRevisionId, JobId, NodeId, SchemaId, StorageId, TableId,
+        UserId,
     },
     schemas::TableType,
 };
@@ -64,7 +64,7 @@ impl MetaApplier for ProviderMetaApplier {
 
     async fn create_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         created_by: Option<&UserId>,
     ) -> Result<String, RaftError> {
         log::debug!("ProviderMetaApplier: Creating namespace {} by {:?}", namespace_id, created_by);
@@ -79,7 +79,7 @@ impl MetaApplier for ProviderMetaApplier {
         Ok(message)
     }
 
-    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<String, RaftError> {
+    async fn delete_namespace(&self, namespace_id: &SchemaId) -> Result<String, RaftError> {
         log::debug!("ProviderMetaApplier: Deleting namespace {}", namespace_id);
 
         let message = self

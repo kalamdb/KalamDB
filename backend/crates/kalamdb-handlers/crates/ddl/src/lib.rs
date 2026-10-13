@@ -3,10 +3,10 @@ use kalamdb_sql::ddl::{AlterScheduleStatement, CreateScheduleStatement, DropSche
 pub mod catalog_type;
 pub mod comment;
 pub mod helpers;
-pub mod namespace;
 pub mod policy;
 pub mod procedure;
 mod schedule;
+pub mod schema;
 pub mod storage;
 pub mod table;
 pub mod trigger;
@@ -42,8 +42,18 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             name:          NamespaceId::new("_placeholder"),
             if_not_exists: false,
         }),
-        namespace::CreateNamespaceHandler::new(app_context.clone()),
+        schema::CreateNamespaceHandler::new(app_context.clone()),
         SqlStatementKind::CreateNamespace
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
+            name:          NamespaceId::new("_placeholder"),
+            if_not_exists: false,
+        }),
+        schema::CreateNamespaceHandler::new(app_context.clone()),
+        SqlStatementKind::CreateSchema
     );
 
     register_typed_handler!(
@@ -52,7 +62,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             name:    NamespaceId::new("_placeholder"),
             options: HashMap::new(),
         }),
-        namespace::AlterNamespaceHandler::new(app_context.clone()),
+        schema::AlterNamespaceHandler::new(app_context.clone()),
         SqlStatementKind::AlterNamespace
     );
 
@@ -63,14 +73,14 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
             if_exists: false,
             cascade:   false,
         }),
-        namespace::DropNamespaceHandler::new(app_context.clone()),
+        schema::DropNamespaceHandler::new(app_context.clone()),
         SqlStatementKind::DropNamespace
     );
 
     register_typed_handler!(
         registry,
         SqlStatementKind::ShowNamespaces(kalamdb_sql::ddl::ShowNamespacesStatement),
-        namespace::ShowNamespacesHandler::new(app_context.clone()),
+        schema::ShowNamespacesHandler::new(app_context.clone()),
         SqlStatementKind::ShowNamespaces
     );
 
@@ -79,7 +89,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         SqlStatementKind::UseNamespace(kalamdb_sql::ddl::UseNamespaceStatement {
             namespace: NamespaceId::new("_placeholder"),
         }),
-        namespace::UseNamespaceHandler::new(app_context.clone()),
+        schema::UseNamespaceHandler::new(app_context.clone()),
         SqlStatementKind::UseNamespace
     );
 

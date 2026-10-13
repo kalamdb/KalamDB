@@ -2,7 +2,7 @@
 
 DROP NAMESPACE IF EXISTS sql_file_case_15 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_15;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_15;
 USE sql_file_case_15;
 
 CREATE TABLE IF NOT EXISTS parents (
@@ -29,7 +29,7 @@ INSERT INTO children (id, parent_id, body, state) VALUES (1511, 1501, 'c1-reinse
 
 DROP NAMESPACE IF EXISTS sql_file_case_15 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_15;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_15;
 USE sql_file_case_15;
 
 CREATE TABLE IF NOT EXISTS parents (

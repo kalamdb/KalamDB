@@ -52,7 +52,7 @@ pub struct SqlStatement {
 #[derive(Debug, Clone)]
 pub enum SqlStatementKind {
     // ===== Namespace Operations =====
-    /// CREATE NAMESPACE <name>
+    /// Historical `CREATE NAMESPACE` tree. The classifier rejects this statement.
     CreateNamespace(CreateNamespaceStatement),
     /// ALTER NAMESPACE <name> ...
     AlterNamespace(AlterNamespaceStatement),
@@ -78,7 +78,7 @@ pub enum SqlStatementKind {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable(CreateTableStatement),
-    /// CREATE SCHEMA ... (PostgreSQL alias of CREATE NAMESPACE)
+    /// CREATE SCHEMA ...
     CreateSchema(CreateSchemaStatement),
     /// SET search_path TO ...
     SetSearchPath(SetSearchPathStatement),

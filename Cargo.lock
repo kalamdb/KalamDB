@@ -5409,6 +5409,7 @@ dependencies = [
  "kalamdb-core",
  "kalamdb-dialect",
  "kalamdb-observability",
+ "kalamdb-session",
  "kalamdb-system",
  "log",
  "ntest",
@@ -5508,6 +5509,7 @@ version = "0.7.1"
 dependencies = [
  "datafusion-common",
  "kalamdb-commons",
+ "kalamdb-dialect",
  "regex",
  "sqlparser",
  "thiserror 2.0.21",

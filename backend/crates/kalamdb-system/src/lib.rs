@@ -78,7 +78,7 @@ pub use providers::{
         VectorMetric,
     },
     migrations::models::Migration,
-    namespaces::models::Namespace,
+    schemas::models::Namespace,
     storages::models::{Storage, StorageType},
     users::models::{
         AuthData, User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS,

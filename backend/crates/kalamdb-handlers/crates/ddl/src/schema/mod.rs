@@ -1,4 +1,7 @@
-//! Namespace handlers module
+//! Schema DDL handlers.
+//!
+//! The module used to live at `namespace/`. Stored catalog rows and Raft
+//! `CreateNamespace` commands stay on the folded name.
 
 pub mod alter;
 pub mod create;

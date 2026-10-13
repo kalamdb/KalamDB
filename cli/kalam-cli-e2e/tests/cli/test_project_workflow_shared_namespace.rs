@@ -1,7 +1,7 @@
 use std::{fs, process::Stdio, time::Duration};
 
 use kalam_cli::workflow::project::config::{KalamProjectConfig, KALAM_TOML};
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use tempfile::TempDir;
 
 use crate::{
@@ -91,7 +91,7 @@ fn configure_shared_namespace(project_dir: &std::path::Path, generate_types: boo
     let config_path = project_dir.join(KALAM_TOML);
     let mut config = KalamProjectConfig::load_from_path(&config_path).expect("load kalam.toml");
     let connection = config.connection.get_mut("dev").expect("dev connection");
-    connection.namespace = NamespaceId::new(SHARED_NAMESPACE);
+    connection.namespace = SchemaId::new(SHARED_NAMESPACE);
     config.dev.processes.clear();
     config.dev.apply_schema = true;
     config.dev.generate_types = generate_types;

@@ -2,8 +2,8 @@
 
 DROP NAMESPACE IF EXISTS sql_file_case_04_a CASCADE;
 DROP NAMESPACE IF EXISTS sql_file_case_04_b CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_04_a;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_04_b;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_04_a;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_04_b;
 
 USE sql_file_case_04_a;
 CREATE TABLE IF NOT EXISTS sql_file_case_04_a.items (

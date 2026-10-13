@@ -15,7 +15,7 @@ use kalamdb_auth::CachedUsersRepo;
 use kalamdb_backend::manager::BackendSessionManager;
 use kalamdb_commons::{
     constants::{ColumnFamilyNames, SYSTEM_NAMESPACE},
-    models::{NamespaceId, TransactionOrigin, UserId},
+    models::{SchemaId, TransactionOrigin, UserId},
     NodeId, TableId,
 };
 use kalamdb_configs::ServerConfig;
@@ -369,7 +369,7 @@ impl AppContext {
             // This ensures all namespaces persisted in RocksDB are available for SQL queries
             let namespaces_provider = system_tables.namespaces();
 
-            let default_namespace_id = NamespaceId::default();
+            let default_namespace_id = SchemaId::default();
             if namespaces_provider
                 .get_namespace(&default_namespace_id)
                 .expect("Failed to read namespaces")

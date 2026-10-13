@@ -1,7 +1,7 @@
 -- Multiple topics in one namespace sharing source tables.
 
 DROP NAMESPACE IF EXISTS sql_file_case_09 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_09;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_09;
 USE sql_file_case_09;
 
 CREATE TABLE IF NOT EXISTS sessions (

@@ -26,7 +26,7 @@ CREATE USER 'case27_user'
 ALTER USER 'case27_user' SET STORAGE_MODE table;
 ALTER USER 'case27_user' SET STORAGE_ID 'case27_storage';
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_27;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_27;
 USE sql_file_case_27;
 
 CREATE TABLE IF NOT EXISTS case27_orders (

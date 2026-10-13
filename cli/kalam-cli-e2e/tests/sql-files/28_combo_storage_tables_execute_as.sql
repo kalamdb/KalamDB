@@ -22,8 +22,8 @@ CREATE USER 'case28_user'
 
 ALTER USER 'case28_user' SET EMAIL 'case28_user_new@example.com';
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_28_a;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_28_b;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_28_a;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_28_b;
 
 USE sql_file_case_28_a;
 

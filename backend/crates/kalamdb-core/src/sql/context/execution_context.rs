@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{models::ReadContext, NamespaceId, Role, TransactionId, UserId};
+use kalamdb_commons::{models::ReadContext, Role, SchemaId, TransactionId, UserId};
 use kalamdb_session::AuthSession;
 use kalamdb_session_datafusion::{install_extension, SessionUserContext};
 use once_cell::sync::OnceCell;
@@ -15,7 +15,7 @@ pub struct ExecutionContext {
     /// Authenticated session with user identity and metadata
     auth_session:            AuthSession,
     /// Optional namespace for this query execution
-    namespace_id:            Option<NamespaceId>,
+    namespace_id:            Option<SchemaId>,
     /// Optional existing transaction supplied by a connection-scoped caller.
     transaction_id:          Option<TransactionId>,
     /// When true, STREAM DML from this context autocommits instead of joining
@@ -63,7 +63,7 @@ impl ExecutionContext {
     pub fn with_namespace(
         user_id: UserId,
         user_role: Role,
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self::bare(AuthSession::new(user_id, user_role), Some(namespace_id), base_session_context)
@@ -71,7 +71,7 @@ impl ExecutionContext {
 
     fn bare(
         auth_session: AuthSession,
-        namespace_id: Option<NamespaceId>,
+        namespace_id: Option<SchemaId>,
         base_session_context: Arc<SessionContext>,
     ) -> Self {
         Self {
@@ -130,7 +130,7 @@ impl ExecutionContext {
     }
 
     /// Set the namespace for this execution context
-    pub fn with_namespace_id(mut self, namespace_id: NamespaceId) -> Self {
+    pub fn with_namespace_id(mut self, namespace_id: SchemaId) -> Self {
         self.namespace_id = Some(namespace_id);
         self.session_context_cache = Arc::new(OnceCell::new());
         self
@@ -247,11 +247,11 @@ impl ExecutionContext {
     ///
     /// # Returns
     /// The current default namespace as a NamespaceId (defaults to "default")
-    pub fn default_namespace(&self) -> NamespaceId {
+    pub fn default_namespace(&self) -> SchemaId {
         if let Some(session) = self.session_context_cache.get() {
             let default_schema =
                 session.state_ref().read().config().options().catalog.default_schema.clone();
-            return NamespaceId::from_session_schema(&default_schema, self.namespace_id.as_ref());
+            return SchemaId::from_session_schema(&default_schema, self.namespace_id.as_ref());
         }
 
         self.namespace_id.clone().unwrap_or_default()

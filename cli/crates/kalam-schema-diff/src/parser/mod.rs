@@ -3,7 +3,7 @@ mod index;
 mod table;
 mod topic;
 
-use sqlparser::{ast::Statement, dialect::PostgreSqlDialect, parser::Parser};
+use sqlparser::ast::Statement;
 
 use crate::{
     diff::SchemaDiffError,
@@ -26,7 +26,6 @@ use crate::{
 };
 
 pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffError> {
-    let dialect = PostgreSqlDialect {};
     let mut schema = Schema::default();
     let mut pending_topic_sources = Vec::new();
     let mut pending_policies = Vec::new();
@@ -97,13 +96,14 @@ pub(crate) fn parse_schema(path: &str, sql: &str) -> Result<Schema, SchemaDiffEr
             &remove_kalam_table_kind(custom_stmt),
         ));
 
-        let parsed = Parser::parse_sql(&dialect, &parseable_stmt).map_err(|source| {
-            SchemaDiffError::Parse {
-                message: format!(
-                    "{path}: failed to parse statement:\n{raw_stmt}\nparser error: {source}"
-                ),
-            }
-        })?;
+        let parsed =
+            kalamdb_sql::parser::KalamParser::parse(&parseable_stmt).map_err(|source| {
+                SchemaDiffError::Parse {
+                    message: format!(
+                        "{path}: failed to parse statement:\n{raw_stmt}\nparser error: {source}"
+                    ),
+                }
+            })?;
 
         for stmt in parsed {
             match stmt {

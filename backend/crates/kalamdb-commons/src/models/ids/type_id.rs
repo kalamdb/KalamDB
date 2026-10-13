@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use super::namespace_id::NamespaceId;
+use super::namespace_id::SchemaId;
 #[cfg(feature = "storage")]
 use crate::ids::SnowflakeGenerator;
 #[cfg(feature = "storage")]
@@ -60,7 +60,7 @@ impl TypeId {
     }
 
     /// Qualified SQL alias used by contract compile when no identity manifest exists.
-    pub fn from_parts(namespace: Option<&NamespaceId>, name: &str) -> Self {
+    pub fn from_parts(namespace: Option<&SchemaId>, name: &str) -> Self {
         let name = name.trim();
         assert!(!name.is_empty(), "TypeId cannot be empty");
         match namespace {
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn type_id_from_parts() {
         assert_eq!(
-            TypeId::from_parts(Some(&NamespaceId::new("chat")), "message").as_str(),
+            TypeId::from_parts(Some(&SchemaId::new("chat")), "message").as_str(),
             "chat.message"
         );
         assert_eq!(TypeId::from_parts(None, "address").as_str(), "address");

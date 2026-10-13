@@ -41,6 +41,20 @@ use crate::sql::{
 /// Public SQL parser dialect. PostgreSQL is the only dialect on this session.
 pub const SQL_PARSER_DIALECT: &str = "postgresql";
 
+/// Accept only the PostgreSQL parser dialect.
+///
+/// `None` and `postgresql` (any ASCII case) select the installed dialect.
+/// Any other name is rejected.
+pub fn require_sql_parser_dialect(requested: Option<&str>) -> Result<&'static str, String> {
+    match requested {
+        None => Ok(SQL_PARSER_DIALECT),
+        Some(dialect) if dialect.eq_ignore_ascii_case(SQL_PARSER_DIALECT) => Ok(SQL_PARSER_DIALECT),
+        Some(dialect) => Err(format!(
+            "SQL dialect '{dialect}' is not supported; postgresql is the only dialect"
+        )),
+    }
+}
+
 /// DataFusion session factory with parallelism configuration
 ///
 /// Creates DataFusion sessions with optimized settings for parallel query execution.
@@ -90,8 +104,10 @@ impl DataFusionSessionFactory {
 
         // Higher-order UDFs such as array_transform stay registered. Public
         // `x ->` lambda syntax is rejected because this session parses PostgreSQL.
+        let dialect = require_sql_parser_dialect(Some(SQL_PARSER_DIALECT))
+            .map_err(|error| datafusion::error::DataFusionError::Configuration(error))?;
         let config = SessionConfig::new()
-            .set_str("datafusion.sql_parser.dialect", SQL_PARSER_DIALECT)
+            .set_str("datafusion.sql_parser.dialect", dialect)
             .with_information_schema(false)
             .with_parquet_bloom_filter_pruning(true)
             .with_parquet_page_index_pruning(true)
@@ -389,5 +405,14 @@ mod tests {
             result.is_err(),
             "public x -> lambda syntax must be rejected under the PostgreSQL dialect"
         );
+    }
+
+    #[test]
+    fn postgresql_is_the_only_sql_parser_dialect() {
+        assert_eq!(require_sql_parser_dialect(None).unwrap(), "postgresql");
+        assert_eq!(require_sql_parser_dialect(Some("postgresql")).unwrap(), "postgresql");
+        assert_eq!(require_sql_parser_dialect(Some("PostgreSQL")).unwrap(), "postgresql");
+        assert!(require_sql_parser_dialect(Some("generic")).is_err());
+        assert!(require_sql_parser_dialect(Some("duckdb")).is_err());
     }
 }

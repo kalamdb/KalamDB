@@ -1,10 +1,10 @@
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use super::CLISession;
 
 impl CLISession {
     pub(in crate::session) fn request_namespace(&self) -> Option<&str> {
-        self.current_namespace.as_ref().map(NamespaceId::as_str)
+        self.current_namespace.as_ref().map(SchemaId::as_str)
     }
 
     pub(in crate::session) fn effective_namespace(&self) -> &str {
@@ -16,14 +16,14 @@ impl CLISession {
     }
 
     pub(in crate::session) fn current_namespace_label_if_set(&self) -> Option<&str> {
-        self.current_namespace.as_ref().map(NamespaceId::as_str)
+        self.current_namespace.as_ref().map(SchemaId::as_str)
     }
 
-    pub fn set_current_namespace(&mut self, namespace: NamespaceId) {
+    pub fn set_current_namespace(&mut self, namespace: SchemaId) {
         self.current_namespace = Some(namespace);
     }
 
-    pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<NamespaceId> {
+    pub(in crate::session) fn parse_namespace_switch(sql: &str) -> Option<SchemaId> {
         let trimmed = Self::strip_leading_sql_comments(sql).trim().trim_end_matches(';').trim();
         if trimmed.is_empty() {
             return None;
@@ -87,7 +87,7 @@ impl CLISession {
         Some(&value[prefix_len..])
     }
 
-    fn parse_namespace_identifier(input: &str) -> Option<NamespaceId> {
+    fn parse_namespace_identifier(input: &str) -> Option<SchemaId> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return None;
@@ -112,10 +112,10 @@ impl CLISession {
             return None;
         }
 
-        NamespaceId::try_new(namespace).ok()
+        SchemaId::try_new(namespace).ok()
     }
 
-    fn parse_quoted_namespace_identifier(input: &str, quote: char) -> Option<NamespaceId> {
+    fn parse_quoted_namespace_identifier(input: &str, quote: char) -> Option<SchemaId> {
         let mut namespace = String::new();
         let mut chars = input.char_indices().peekable();
         let (_, opening_quote) = chars.next()?;
@@ -139,7 +139,7 @@ impl CLISession {
                     return None;
                 }
 
-                return NamespaceId::try_new(namespace).ok();
+                return SchemaId::try_new(namespace).ok();
             }
 
             namespace.push(ch);

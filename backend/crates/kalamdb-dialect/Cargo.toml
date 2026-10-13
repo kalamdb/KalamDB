@@ -17,7 +17,7 @@ kalamdb-system = { path = "../kalamdb-system" }
 arrow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlparser = { workspace = true, features = ["visitor"] }
+sqlparser = { workspace = true, features = ["visitor", "derive-dialect"] }
 regex = { workspace = true }
 once_cell = { workspace = true }
 anyhow = { workspace = true }

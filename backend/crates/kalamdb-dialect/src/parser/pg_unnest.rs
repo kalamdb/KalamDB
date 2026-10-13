@@ -23,8 +23,6 @@ use sqlparser::ast::{
     TableFactor, UnaryOperator, Value, Visit, VisitMut, Visitor, VisitorMut,
 };
 
-use crate::{dialect::KalamDbDialect, parser::utils::parse_sql_statements};
-
 pub fn apply_pg_table_function_rewrites(statements: &mut Vec<Statement>) {
     let mut int_alias_visitor = PgIntAliasRewriter;
     let _ = statements.visit(&mut int_alias_visitor);
@@ -384,8 +382,7 @@ fn quoted_ident(ident: &Ident) -> String {
 }
 
 fn parse_single_table_factor(sql: &str) -> Option<TableFactor> {
-    let dialect = KalamDbDialect::default();
-    let statements = parse_sql_statements(sql, &dialect).ok()?;
+    let statements = super::KalamParser::parse(sql).ok()?;
     let Statement::Query(query) = statements.into_iter().next()? else {
         return None;
     };
@@ -431,13 +428,12 @@ fn function_arg_expr(arg: &FunctionArg) -> Option<&Expr> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{super::KalamParser, *};
 
     #[test]
     fn unnest_rewrite_quotes_hostile_column_aliases() {
         let sql = r#"SELECT 1 FROM unnest(xs) AS t("col; DROP TABLE secrets")"#;
-        let mut statements =
-            parse_sql_statements(sql, &KalamDbDialect::default()).expect("parse unnest");
+        let mut statements = KalamParser::parse(sql).expect("parse unnest");
         apply_pg_table_function_rewrites(&mut statements);
         let rewritten = statements[0].to_string();
         assert!(

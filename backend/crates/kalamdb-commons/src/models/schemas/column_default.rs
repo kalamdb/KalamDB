@@ -233,7 +233,7 @@ mod tests {
             ColumnDefault::literal(json!(42)),
             ColumnDefault::function("NOW", vec![]),
             ColumnDefault::procedure(
-                RoutineId::from_parts(Some(&crate::models::NamespaceId::new("app")), "gen_id"),
+                RoutineId::from_parts(Some(&crate::models::SchemaId::new("app")), "gen_id"),
                 vec![CallArgument::bigint(1)],
             ),
         ];

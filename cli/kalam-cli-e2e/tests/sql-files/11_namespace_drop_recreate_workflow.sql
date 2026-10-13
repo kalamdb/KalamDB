@@ -2,7 +2,7 @@
 
 DROP NAMESPACE IF EXISTS sql_file_case_11 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_11;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_11;
 USE sql_file_case_11;
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -29,7 +29,7 @@ CONSUME FROM account_events LIMIT 20;
 DROP TOPIC account_events;
 DROP NAMESPACE IF EXISTS sql_file_case_11 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_11;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_11;
 USE sql_file_case_11;
 
 CREATE TABLE IF NOT EXISTS accounts (

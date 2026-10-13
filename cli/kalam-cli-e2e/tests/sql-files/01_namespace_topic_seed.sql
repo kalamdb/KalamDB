@@ -1,7 +1,7 @@
 -- Namespace-local table and topic bootstrap with seed data.
 
 DROP NAMESPACE IF EXISTS sql_file_case_01 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_01;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_01;
 USE sql_file_case_01;
 
 CREATE TABLE IF NOT EXISTS case01_conversations (

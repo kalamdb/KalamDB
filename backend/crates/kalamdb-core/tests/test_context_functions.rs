@@ -384,13 +384,13 @@ async fn test_current_schema_returns_default_namespace() {
 
 #[tokio::test]
 async fn test_current_schema_respects_execution_namespace() {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
     use kalamdb_sql::rewrite_context_functions_for_datafusion;
 
     let exec_ctx = ExecutionContext::with_namespace(
         UserId::new("u_wire"),
         Role::System,
-        NamespaceId::new("tenant_app"),
+        SchemaId::new("tenant_app"),
         create_test_session(),
     )
     .with_request_id("wire:test");

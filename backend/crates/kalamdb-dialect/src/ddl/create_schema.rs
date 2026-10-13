@@ -1,4 +1,7 @@
-//! PostgreSQL-style CREATE SCHEMA (alias of CREATE NAMESPACE).
+//! PostgreSQL `CREATE SCHEMA`.
+//!
+//! The classifier rejects `CREATE NAMESPACE`. [`crate::ddl::CreateNamespaceStatement`] still
+//! parses that text for historical migration files.
 
 use kalamdb_commons::models::NamespaceId;
 

@@ -1,7 +1,7 @@
 -- Exercise clear topic and reseed data in the active namespace.
 
 DROP NAMESPACE IF EXISTS sql_file_case_08 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_08;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_08;
 USE sql_file_case_08;
 
 CREATE TABLE IF NOT EXISTS sensor_events (

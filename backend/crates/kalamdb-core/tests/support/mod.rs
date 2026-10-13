@@ -16,7 +16,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        KalamCellValue, NamespaceId, StorageId, TableId, TableName, UserId,
+        KalamCellValue, SchemaId, StorageId, TableId, TableName, UserId,
     },
     schemas::ColumnDefault,
     BoundExprShape, NodeId, PolicyCommand, PolicyId, PolicyProgram, PolicyTarget, Role,
@@ -124,13 +124,13 @@ pub async fn create_cluster_app_context_with_shared_shards(
     (app_ctx, test_db)
 }
 
-pub fn unique_namespace(prefix: &str) -> NamespaceId {
-    NamespaceId::new(format!("{}_{}", prefix, Uuid::now_v7().simple()))
+pub fn unique_namespace(prefix: &str) -> SchemaId {
+    SchemaId::new(format!("{}_{}", prefix, Uuid::now_v7().simple()))
 }
 
 pub async fn create_shared_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
@@ -198,7 +198,7 @@ pub async fn grant_public_all_policy(app_ctx: &Arc<AppContext>, table_id: &Table
 
 pub async fn create_shared_table_with_public_policy(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = create_shared_table(app_ctx, namespace, table_name).await;
@@ -208,7 +208,7 @@ pub async fn create_shared_table_with_public_policy(
 
 pub async fn create_user_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));
@@ -249,7 +249,7 @@ pub async fn create_user_table(
 
 pub async fn create_context_files_table(
     app_ctx: &Arc<AppContext>,
-    namespace: &NamespaceId,
+    namespace: &SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));

@@ -1,7 +1,7 @@
 -- Simple consume flow after namespace-local inserts.
 
 DROP NAMESPACE IF EXISTS sql_file_case_06 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_06;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_06;
 USE sql_file_case_06;
 
 CREATE TABLE IF NOT EXISTS sql_file_case_06.notifications (

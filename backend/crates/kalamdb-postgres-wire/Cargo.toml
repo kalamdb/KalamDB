@@ -17,6 +17,7 @@ chrono = { workspace = true }
 datafusion = { workspace = true }
 futures-util = { workspace = true }
 kalamdb-core = { path = "../kalamdb-core" }
+kalamdb-session = { path = "../kalamdb-session" }
 kalamdb-backend = { path = "../kalamdb-backend" }
 kalamdb-auth = { path = "../kalamdb-auth", default-features = false }
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }

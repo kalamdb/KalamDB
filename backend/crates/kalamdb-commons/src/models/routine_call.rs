@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn qualified_procedure_is_not_builtin() {
         let call = RoutineCall::new(
-            RoutineId::from_parts(Some(&crate::models::NamespaceId::new("chat")), "next_id"),
+            RoutineId::from_parts(Some(&crate::models::SchemaId::new("chat")), "next_id"),
             Vec::new(),
         );
         assert!(!call.is_builtin_default());
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn qualified_snowflake_id_is_user_procedure() {
         let call = RoutineCall::new(
-            RoutineId::from_parts(Some(&crate::models::NamespaceId::new("app")), "snowflake_id"),
+            RoutineId::from_parts(Some(&crate::models::SchemaId::new("app")), "snowflake_id"),
             Vec::new(),
         );
         assert!(!call.is_builtin_default());

@@ -12,18 +12,15 @@ use kalamdb_commons::{
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::{
-    ast::{
-        AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
-        DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
-    },
-    dialect::GenericDialect,
+use sqlparser::ast::{
+    AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
+    DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
 };
 
 use crate::{
     compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::{column_default::expr_to_column_default, parsing::parse_table_reference, DdlResult},
-    parser::utils::parse_sql_statements,
+    parser::KalamParser,
 };
 
 /// Column alteration operation
@@ -146,11 +143,12 @@ impl AlterTableStatement {
         if let Some(stmt) = parse_vector_index_operation(sql, current_namespace)? {
             return Ok(stmt);
         }
+        if alter_add_index(sql) {
+            return Err("ALTER TABLE ... ADD INDEX is not supported; use CREATE INDEX".to_string());
+        }
 
         let normalized_sql = normalize_alter_sql(sql);
-        let dialect = GenericDialect {};
-        let mut statements =
-            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
+        let mut statements = KalamParser::parse(&normalized_sql).map_err(|e| e.to_string())?;
 
         if statements.len() != 1 {
             return Err("Expected exactly one ALTER TABLE statement".to_string());
@@ -177,6 +175,16 @@ impl AlterTableStatement {
             operation,
         })
     }
+}
+
+fn alter_add_index(sql: &str) -> bool {
+    let mut parts = sql.split_whitespace();
+    let alter = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("alter"));
+    let table = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("table"));
+    let _table_name = parts.next();
+    let add = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("add"));
+    let index = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("index"));
+    alter && table && add && index
 }
 
 fn parse_vector_index_operation(
