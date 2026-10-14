@@ -823,7 +823,7 @@ fn assert_named_type_graphs(types: &BTreeMap<String, ContractType>) -> Result<()
                         let inner = if let Some(type_id) = &field.type_id {
                             kalamdb_commons::LogicalTypeRef::named(type_id.clone())
                         } else {
-                            kalamdb_commons::LogicalTypeRef::Builtin(
+                            kalamdb_commons::LogicalTypeRef::from_builtin(
                                 field.data_type.unwrap_or(kalamdb_commons::KalamDataType::Text),
                             )
                         };

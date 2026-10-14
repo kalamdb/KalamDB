@@ -52,6 +52,7 @@ pub mod row_level_security;
 mod session_origin;
 mod topic_op;
 mod transaction;
+mod vector_metric;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "rows")]
@@ -91,6 +92,7 @@ pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use session_origin::SessionOrigin;
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
+pub use vector_metric::VectorMetric;
 
 #[cfg(test)]
 mod tests {

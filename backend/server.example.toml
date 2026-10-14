@@ -429,9 +429,9 @@ trusted_proxy_ranges = []
 # CORS Configuration (uses actix-cors)
 # See: https://docs.rs/actix-cors
 [security.cors]
-# Allowed origins for CORS requests
-# Bind-to-all-interfaces still needs an explicit browser allowlist.
-# Add your public hostname(s) here for reverse-proxy or production deployments.
+# Allowed origins for CORS and WebSocket upgrades.
+# server.public_origin is added automatically (KALAMDB_SERVER_PUBLIC_ORIGIN or
+# KALAMDB_PUBLIC_URL). List any additional application origins here.
 allowed_origins = [
 	"http://localhost:4173",
 	"http://127.0.0.1:4173",

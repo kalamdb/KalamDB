@@ -219,18 +219,18 @@ impl CatalogTypeField {
             type_id.clone(),
             column.column_name.clone(),
             ordinal,
-            column.named_type_id.clone(),
-            if column.named_type_id.is_some() {
+            column.named_type_id().cloned(),
+            if column.named_type_id().is_some() {
                 None
             } else {
-                Some(column.data_type)
+                Some(column.data_type())
             },
-            column.data_type.sql_name(),
-            column.is_array,
+            column.data_type().sql_name(),
+            column.is_array(),
             !column.is_nullable,
             false,
         )?;
-        field.element_nullable = column.element_nullable;
+        field.element_nullable = column.element_nullable();
         Ok(field)
     }
 

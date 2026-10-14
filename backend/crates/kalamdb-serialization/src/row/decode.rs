@@ -6,14 +6,14 @@ use datafusion_common::ScalarValue;
 use kalamdb_commons::{
     ids::VersionId,
     models::{
-        rows::{Row, StreamTableRow, UserTableRow},
+        rows::{Row, SharedTableRow, StreamTableRow, UserTableRow},
         UserId,
     },
 };
 
 use super::{
     schema::StorageSchema,
-    value::{decode_value, skip_value, Reader},
+    value::{decode_value, null_for_type, skip_value, Reader},
 };
 use crate::{
     error::{Result, SerializationError},
@@ -63,9 +63,13 @@ pub fn decode_shared_row(
     bytes: &[u8],
     schema: &StorageSchema,
     version: VersionId,
-) -> Result<(VersionId, bool, Row)> {
+) -> Result<SharedTableRow> {
     let decoded = decode_row_body(bytes, schema)?;
-    Ok((version, decoded.deleted, decoded.fields))
+    Ok(SharedTableRow {
+        _version: version,
+        _deleted: decoded.deleted,
+        fields:   decoded.fields,
+    })
 }
 
 /// Decode only the requested schema ordinals from a shared-table row.
@@ -74,9 +78,13 @@ pub fn decode_shared_row_selected(
     schema: &StorageSchema,
     version: VersionId,
     ordinals: &[usize],
-) -> Result<(VersionId, bool, Row)> {
+) -> Result<SharedTableRow> {
     let decoded = decode_row_body_selected(bytes, schema, ordinals)?;
-    Ok((version, decoded.deleted, decoded.fields))
+    Ok(SharedTableRow {
+        _version: version,
+        _deleted: decoded.deleted,
+        fields:   decoded.fields,
+    })
 }
 
 /// Decode a stream-table row. Identity comes from the storage key.
@@ -96,55 +104,48 @@ pub fn decode_stream_row(
     })
 }
 
-pub(crate) struct DecodedSlots {
-    pub deleted: bool,
-    pub fields:  Vec<ScalarValue>,
-}
-
 pub(crate) struct DecodedRow {
     deleted: bool,
     fields:  Row,
 }
 
-pub(crate) fn decode_row_body_slots(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedSlots> {
+/// Decode a row payload's live (non-dropped) fields directly into columnar `Vec<ScalarValue>`
+/// buffers without allocating an intermediate per-row `Vec<ScalarValue>` or cloning values.
+pub(crate) fn decode_row_body_into_columns(
+    bytes: &[u8],
+    schema: &StorageSchema,
+    columns: &mut [Vec<ScalarValue>],
+    mut on_value: impl FnMut(&ScalarValue) -> Result<()>,
+) -> Result<bool> {
     let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
     let mut reader = Reader::new(payload);
     let deleted = read_row_header(&mut reader, schema, header.flags)?;
-    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
-    let fields = decode_slot_fields(&mut reader, schema, indexed)?;
-    if !reader.is_empty() {
-        return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
-    }
-    Ok(DecodedSlots { deleted, fields })
-}
-
-fn decode_slot_fields(
-    reader: &mut Reader<'_>,
-    schema: &StorageSchema,
-    indexed: bool,
-) -> Result<Vec<ScalarValue>> {
     let stored_field_count = reader.u16()? as usize;
-    if indexed {
-        skip_offset_table(reader, stored_field_count)?;
-    }
-    let mut values = Vec::with_capacity(schema.fields.len());
+    skip_offset_table(&mut reader, stored_field_count)?;
     let live_count = stored_field_count.min(schema.fields.len());
+    let mut output_index = 0usize;
     for (index, field) in schema.fields.iter().enumerate() {
         if index < live_count {
             if field.dropped {
-                skip_value(reader)?;
-                values.push(ScalarValue::Null);
+                skip_value(&mut reader)?;
                 continue;
             }
-            values.push(decode_value(reader, &field.data_type)?);
-        } else {
-            values.push(ScalarValue::Null);
+            let value = decode_value(&mut reader, &field.data_type)?;
+            on_value(&value)?;
+            columns[output_index].push(value);
+            output_index += 1;
+        } else if !field.dropped {
+            columns[output_index].push(null_for_type(&field.data_type));
+            output_index += 1;
         }
     }
     for _ in live_count..stored_field_count {
-        skip_value(reader)?;
+        skip_value(&mut reader)?;
     }
-    Ok(values)
+    if !reader.is_empty() {
+        return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
+    }
+    Ok(deleted)
 }
 
 /// Decode ordinal field payloads produced by [`super::encode::encode_row_fields`].
@@ -158,22 +159,14 @@ pub fn decode_row_fields(bytes: &[u8], schema: &StorageSchema) -> Result<Row> {
 }
 
 pub(crate) fn decode_row_body(bytes: &[u8], schema: &StorageSchema) -> Result<DecodedRow> {
-    let slots = decode_row_body_slots(bytes, schema)?;
-    Ok(DecodedRow {
-        deleted: slots.deleted,
-        fields:  slots_to_named_row(schema, &slots.fields),
-    })
-}
-
-fn slots_to_named_row(schema: &StorageSchema, slots: &[ScalarValue]) -> Row {
-    let mut values = BTreeMap::new();
-    for (index, field) in schema.fields.iter().enumerate() {
-        if field.dropped {
-            continue;
-        }
-        values.insert(field.name.clone(), slots.get(index).cloned().unwrap_or(ScalarValue::Null));
+    let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
+    let mut reader = Reader::new(payload);
+    let deleted = read_row_header(&mut reader, schema, header.flags)?;
+    let fields = decode_fields(&mut reader, schema, true)?;
+    if !reader.is_empty() {
+        return Err(SerializationError::Decode("trailing bytes after row payload".to_string()));
     }
-    Row { values }
+    Ok(DecodedRow { deleted, fields })
 }
 
 fn decode_row_body_selected(
@@ -184,8 +177,7 @@ fn decode_row_body_selected(
     let (header, payload) = decode_envelope(bytes, ObjectKind::Row)?;
     let mut reader = Reader::new(payload);
     let deleted = read_row_header(&mut reader, schema, header.flags)?;
-    let indexed = header.flags & FLAG_COLUMN_OFFSETS != 0;
-    let fields = decode_selected_fields(&mut reader, schema, indexed, ordinals)?;
+    let fields = decode_selected_fields(&mut reader, schema, ordinals)?;
     Ok(DecodedRow { deleted, fields })
 }
 
@@ -193,6 +185,11 @@ fn read_row_header(reader: &mut Reader<'_>, schema: &StorageSchema, flags: u16) 
     if flags & FLAG_VERSION_IN_KEY == 0 {
         return Err(SerializationError::Decode(
             "unsupported row format: legacy commit sequence header".to_string(),
+        ));
+    }
+    if flags & FLAG_COLUMN_OFFSETS == 0 {
+        return Err(SerializationError::Decode(
+            "unsupported row format: missing column offset table".to_string(),
         ));
     }
     let stored_version = reader.u16()?;
@@ -229,7 +226,7 @@ fn decode_named_fields(
             let value = decode_value(reader, &field.data_type)?;
             values.insert(field.name.clone(), value);
         } else if !field.dropped {
-            values.insert(field.name.clone(), ScalarValue::Null);
+            values.insert(field.name.clone(), null_for_type(&field.data_type));
         }
     }
     for _ in live_count..stored_field_count {
@@ -241,52 +238,21 @@ fn decode_named_fields(
 fn decode_selected_fields(
     reader: &mut Reader<'_>,
     schema: &StorageSchema,
-    indexed: bool,
     ordinals: &[usize],
 ) -> Result<Row> {
     let stored_field_count = reader.u16()? as usize;
-    if indexed {
-        let offsets = read_offset_table(reader, stored_field_count)?;
-        decode_selected_indexed(reader, schema, &offsets, ordinals)
-    } else {
-        decode_selected_sequential(reader, schema, stored_field_count, ordinals)
-    }
+    let table_bytes = stored_field_count.checked_mul(4).ok_or(SerializationError::Truncated)?;
+    let offset_table = reader.take(table_bytes)?;
+    decode_selected_indexed(reader, schema, stored_field_count, offset_table, ordinals)
 }
 
 fn decode_selected_indexed(
     reader: &mut Reader<'_>,
     schema: &StorageSchema,
-    offsets: &[u32],
-    ordinals: &[usize],
-) -> Result<Row> {
-    let mut values = BTreeMap::new();
-    for &ordinal in ordinals {
-        let Some(field) = schema.fields.get(ordinal) else {
-            return Err(SerializationError::Decode(format!(
-                "column ordinal {ordinal} is out of schema range"
-            )));
-        };
-        if field.dropped || values.contains_key(&field.name) {
-            continue;
-        }
-        if ordinal >= offsets.len() {
-            values.insert(field.name.clone(), ScalarValue::Null);
-            continue;
-        }
-        reader.seek(offsets[ordinal] as usize)?;
-        let value = decode_value(reader, &field.data_type)?;
-        values.insert(field.name.clone(), value);
-    }
-    Ok(Row { values })
-}
-
-fn decode_selected_sequential(
-    reader: &mut Reader<'_>,
-    schema: &StorageSchema,
     stored_field_count: usize,
+    offset_table: &[u8],
     ordinals: &[usize],
 ) -> Result<Row> {
-    let mut wanted: Vec<usize> = Vec::with_capacity(ordinals.len());
     let mut values = BTreeMap::new();
     for &ordinal in ordinals {
         let Some(field) = schema.fields.get(ordinal) else {
@@ -298,38 +264,26 @@ fn decode_selected_sequential(
             continue;
         }
         if ordinal >= stored_field_count {
-            values.insert(field.name.clone(), ScalarValue::Null);
+            values.insert(field.name.clone(), null_for_type(&field.data_type));
             continue;
         }
-        wanted.push(ordinal);
-    }
-    wanted.sort_unstable();
-    wanted.dedup();
-
-    let mut wanted_index = 0;
-    for stored_index in 0..stored_field_count {
-        if wanted_index < wanted.len() && wanted[wanted_index] == stored_index {
-            let field = &schema.fields[stored_index];
-            let value = decode_value(reader, &field.data_type)?;
-            values.insert(field.name.clone(), value);
-            wanted_index += 1;
-        } else {
-            skip_value(reader)?;
-        }
+        let slot = ordinal * 4;
+        let offset = u32::from_le_bytes([
+            offset_table[slot],
+            offset_table[slot + 1],
+            offset_table[slot + 2],
+            offset_table[slot + 3],
+        ]) as usize;
+        reader.seek(offset)?;
+        let value = decode_value(reader, &field.data_type)?;
+        values.insert(field.name.clone(), value);
     }
     Ok(Row { values })
 }
 
+#[inline]
 fn skip_offset_table(reader: &mut Reader<'_>, count: usize) -> Result<()> {
     let bytes = count.checked_mul(4).ok_or(SerializationError::Truncated)?;
     reader.take(bytes)?;
     Ok(())
-}
-
-fn read_offset_table(reader: &mut Reader<'_>, count: usize) -> Result<Vec<u32>> {
-    let mut offsets = Vec::with_capacity(count);
-    for _ in 0..count {
-        offsets.push(reader.u32()?);
-    }
-    Ok(offsets)
 }

@@ -29,6 +29,51 @@ fn endpoint_is_localhost(value: &str) -> bool {
     is_localhost_host(extract_host_component(value))
 }
 
+/// Browser `Origin` for a public URL: scheme, host, and non-default port, with no path.
+fn browser_origin(value: &str) -> Option<String> {
+    let (scheme, rest) = value.trim().split_once("://")?;
+    let scheme = if scheme.eq_ignore_ascii_case("https") {
+        "https"
+    } else if scheme.eq_ignore_ascii_case("http") {
+        "http"
+    } else {
+        return None;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority.rsplit_once('@').map(|(_, hostport)| hostport).unwrap_or(authority);
+    if authority.is_empty() {
+        return None;
+    }
+
+    let (host, port) = if let Some(host) = authority.strip_prefix('[') {
+        let (host, rest) = host.split_once(']')?;
+        let port = match rest.strip_prefix(':') {
+            Some(port) => Some(port.parse::<u16>().ok()?),
+            None => None,
+        };
+        (format!("[{host}]"), port)
+    } else if let Some((host, port_text)) = authority.rsplit_once(':') {
+        if port_text.chars().all(|ch| ch.is_ascii_digit()) {
+            (host.to_string(), Some(port_text.parse::<u16>().ok()?))
+        } else {
+            (authority.to_string(), None)
+        }
+    } else {
+        (authority.to_string(), None)
+    };
+
+    if host.is_empty() || host == "[]" {
+        return None;
+    }
+
+    let default_port = if scheme == "https" { 443 } else { 80 };
+    match port {
+        Some(port) if port == default_port => Some(format!("{scheme}://{host}")),
+        Some(port) => Some(format!("{scheme}://{host}:{port}")),
+        None => Some(format!("{scheme}://{host}")),
+    }
+}
+
 fn has_configured_origin_policy(origins: &[String]) -> bool {
     origins.iter().any(|origin| !origin.trim().is_empty())
 }
@@ -308,10 +353,29 @@ impl ServerConfig {
     pub fn finalize(&mut self) -> anyhow::Result<()> {
         // Normalize local filesystem paths (rocksdb/logs/storage/snapshots)
         self.normalize_paths();
+        self.allow_configured_public_origin();
 
         self.validate()?;
 
         Ok(())
+    }
+
+    /// The Admin UI is served from `public_origin`, so that browser origin must be allowed
+    /// for CORS and the WebSocket upgrade. Extra application origins stay in the explicit list.
+    fn allow_configured_public_origin(&mut self) {
+        if uses_wildcard_origin_policy(&self.security.cors.allowed_origins) {
+            return;
+        }
+        let Some(public_origin) = self.server.configured_public_origin() else {
+            return;
+        };
+        let Some(origin) = browser_origin(&public_origin) else {
+            return;
+        };
+        if self.security.cors.allowed_origins.iter().any(|allowed| allowed == &origin) {
+            return;
+        }
+        self.security.cors.allowed_origins.push(origin);
     }
 
     /// Returns true when startup should emit a security warning because the
@@ -564,6 +628,49 @@ mod tests {
         let mut config = ServerConfig::default();
         config.security.trusted_proxy_ranges = vec!["nope".to_string()];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_finalize_appends_public_origin_for_browser_clients() {
+        let mut config = ServerConfig::default();
+        config.server.host = "0.0.0.0".to_string();
+        config.server.public_origin =
+            Some("https://user:secret@db.example.com:443/ui/".to_string());
+        config.security.cors.allowed_origins = vec!["http://localhost:2900".to_string()];
+
+        config.finalize().expect("public origin should satisfy the browser allowlist");
+
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec![
+                "http://localhost:2900".to_string(),
+                "https://db.example.com".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_finalize_keeps_non_default_public_origin_port() {
+        let mut config = ServerConfig::default();
+        config.server.public_origin = Some("https://[2001:db8::1]:8443/ui".to_string());
+
+        config.finalize().expect("ipv6 public origin should be allowed");
+
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec!["https://[2001:db8::1]:8443".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_finalize_leaves_wildcard_origins_unchanged() {
+        let mut config = ServerConfig::default();
+        config.server.public_origin = Some("https://db.example.com".to_string());
+        config.security.cors.allowed_origins = vec!["*".to_string()];
+
+        config.finalize().expect("wildcard policy should stay intact");
+
+        assert_eq!(config.security.cors.allowed_origins, vec!["*".to_string()]);
     }
 
     #[test]

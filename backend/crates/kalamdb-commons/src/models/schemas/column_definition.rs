@@ -1,4 +1,10 @@
-//! Column definition for table schemas
+//! Column definition for table schemas.
+//!
+//! [`LogicalTypeRef`] is the stored type. `data_type()`, `named_type_id()`, and
+//! `is_array()` project it for codecs. 0.8 does not read a column saved under
+//! the old field names.
+
+use std::{fmt::Write, mem};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,12 +35,14 @@ pub struct ColumnDefinition {
     pub column_name: String,
 
     /// Optional column comment/description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column_comment: Option<String>,
 
-    /// Data type - can change via type promotion only
-    pub data_type: KalamDataType,
+    /// Builtin, named, array, or composite type. The only type authority.
+    pub logical_type: LogicalTypeRef,
 
     /// Default value specification for INSERT operations
+    #[serde(default, skip_serializing_if = "ColumnDefault::is_none")]
     pub default_value: ColumnDefault,
 
     /// Ordinal position in table (1-indexed, sequential)
@@ -49,18 +57,6 @@ pub struct ColumnDefinition {
 
     /// Whether this column is part of the partition key (for distributed tables)
     pub is_partition_key: bool,
-
-    /// Named `CREATE TYPE` identity when this column is not a builtin.
-    #[serde(default)]
-    pub named_type_id: Option<TypeId>,
-
-    /// True when the column is an array of `data_type` / `named_type_id`.
-    #[serde(default)]
-    pub is_array: bool,
-
-    /// List-element nullability. Independent of [`Self::is_nullable`].
-    #[serde(default = "LogicalTypeRef::default_element_nullable")]
-    pub element_nullable: bool,
 }
 
 impl ColumnDefinition {
@@ -92,33 +88,117 @@ impl ColumnDefinition {
             column_id,
             column_name: column_name.into().to_lowercase(),
             ordinal_position,
-            data_type,
+            logical_type: LogicalTypeRef::from_builtin(data_type),
             is_nullable,
             is_primary_key,
             is_partition_key,
             default_value,
             column_comment,
-            named_type_id: None,
-            is_array: false,
-            element_nullable: LogicalTypeRef::default_element_nullable(),
         }
     }
 
-    /// Logical type for this column: builtin, named TypeId, and optional list.
+    /// Storage payload. Named types report [`KalamDataType::Text`]. Modifiers
+    /// such as `jsonb` stay on [`Self::logical_type`].
+    #[inline]
+    pub const fn data_type(&self) -> KalamDataType {
+        storage_payload(&self.logical_type)
+    }
+
+    /// Named `CREATE TYPE` identity, including the element of an array.
+    #[inline]
+    pub const fn named_type_id(&self) -> Option<&TypeId> {
+        self.logical_type.named_type_id()
+    }
+
+    /// True when the column is an array.
+    #[inline]
+    pub const fn is_array(&self) -> bool {
+        self.logical_type.is_array()
+    }
+
+    /// List-element nullability (defaults to `true` for scalar columns).
+    #[inline]
+    pub const fn element_nullable(&self) -> bool {
+        self.logical_type.element_nullable()
+    }
+
+    /// Replace a builtin payload in place. A named type keeps its [`TypeId`].
+    pub fn set_data_type(&mut self, data_type: KalamDataType) {
+        let leaf = match self.logical_type.peel_list() {
+            LogicalTypeRef::Jsonb if data_type == KalamDataType::Json => LogicalTypeRef::Jsonb,
+            LogicalTypeRef::TimestampTz if data_type == KalamDataType::Timestamp => {
+                LogicalTypeRef::TimestampTz
+            },
+            LogicalTypeRef::Builtin(_) | LogicalTypeRef::Jsonb | LogicalTypeRef::TimestampTz => {
+                LogicalTypeRef::from_builtin(data_type)
+            },
+            LogicalTypeRef::Named { .. }
+            | LogicalTypeRef::List { .. }
+            | LogicalTypeRef::Map { .. } => return,
+        };
+        match &mut self.logical_type {
+            LogicalTypeRef::List { element, .. } => **element = leaf,
+            slot => *slot = leaf,
+        }
+    }
+
+    /// Wrap or unwrap the current type as an array in place.
+    pub fn set_array(&mut self, is_array: bool) {
+        match (&mut self.logical_type, is_array) {
+            (LogicalTypeRef::List { .. }, true) => {},
+            (LogicalTypeRef::List { element, .. }, false) => {
+                let inner = mem::replace(
+                    element.as_mut(),
+                    LogicalTypeRef::from_builtin(KalamDataType::Boolean),
+                );
+                self.logical_type = inner;
+            },
+            (slot, true) => {
+                let inner = mem::replace(
+                    slot,
+                    LogicalTypeRef::from_builtin(KalamDataType::Boolean),
+                );
+                *slot = LogicalTypeRef::array(inner, LogicalTypeRef::default_element_nullable());
+            },
+            (_, false) => {},
+        }
+    }
+
+    /// Update list-element nullability in place.
+    pub fn set_element_nullable(&mut self, element_nullable: bool) {
+        if let LogicalTypeRef::List {
+            element_nullable: current,
+            ..
+        } = &mut self.logical_type
+        {
+            *current = element_nullable;
+        }
+    }
+
+    /// Point this column at a named catalog type in place.
+    pub fn set_named_type_id(&mut self, type_id: TypeId) {
+        let inner = LogicalTypeRef::named(type_id);
+        match &mut self.logical_type {
+            LogicalTypeRef::List { element, .. } => **element = inner,
+            slot => *slot = inner,
+        }
+    }
+
+    /// Logical type for this column.
+    #[inline]
     pub fn type_ref(&self) -> Result<LogicalTypeRef, String> {
-        LogicalTypeRef::stored(
-            &format!("column '{}'", self.column_name),
-            self.named_type_id.as_ref(),
-            Some(self.data_type),
-            self.is_array,
-            self.element_nullable,
-        )
+        Ok(self.logical_type.clone())
     }
 
     pub fn with_named_type(mut self, type_id: TypeId, is_array: bool) -> Self {
-        self.named_type_id = Some(type_id);
-        self.is_array = is_array;
-        self.data_type = KalamDataType::Text;
+        self.logical_type = if is_array {
+            LogicalTypeRef::array(
+                LogicalTypeRef::named(type_id),
+                LogicalTypeRef::default_element_nullable(),
+            )
+        } else {
+            LogicalTypeRef::named(type_id)
+        };
         self
     }
 
@@ -170,29 +250,37 @@ impl ColumnDefinition {
 
     /// Get SQL DDL fragment for this column
     pub fn to_sql(&self) -> String {
-        let type_sql = self
-            .type_ref()
-            .map(|type_ref| type_ref.to_string())
-            .unwrap_or_else(|_| self.data_type.sql_name());
-        let mut parts = vec![self.column_name.clone(), type_sql];
+        let type_sql = self.logical_type.sql_name_cow();
+        let mut sql = String::with_capacity(self.column_name.len() + type_sql.len() + 24);
+        let _ = write!(sql, "{} {}", self.column_name, type_sql);
 
         if self.is_primary_key {
-            parts.push("PRIMARY KEY".to_string());
-        }
-
-        if !self.is_nullable && !self.is_primary_key {
-            parts.push("NOT NULL".to_string());
+            sql.push_str(" PRIMARY KEY");
+        } else if !self.is_nullable {
+            sql.push_str(" NOT NULL");
         }
 
         if !self.default_value.is_none() {
-            parts.push(format!("DEFAULT {}", self.default_value.to_sql()));
+            let _ = write!(sql, " DEFAULT {}", self.default_value.to_sql());
         }
 
         if let Some(ref comment) = self.column_comment {
-            parts.push(format!("COMMENT '{}'", comment.replace('\'', "''")));
+            let _ = write!(sql, " COMMENT '{}'", comment.replace('\'', "''"));
         }
 
-        parts.join(" ")
+        sql
+    }
+}
+
+#[inline]
+const fn storage_payload(type_ref: &LogicalTypeRef) -> KalamDataType {
+    match type_ref {
+        LogicalTypeRef::Builtin(data_type) => *data_type,
+        LogicalTypeRef::Jsonb => KalamDataType::Json,
+        LogicalTypeRef::TimestampTz => KalamDataType::Timestamp,
+        LogicalTypeRef::Named { .. } => KalamDataType::Text,
+        LogicalTypeRef::List { element, .. } => storage_payload(element),
+        LogicalTypeRef::Map { value, .. } => storage_payload(value),
     }
 }
 
@@ -322,6 +410,30 @@ mod tests {
             None,
         );
         assert_eq!(full.column_name, "createdat");
+    }
+
+    #[test]
+    fn serialization_stores_logical_type_only() {
+        let column = ColumnDefinition::simple(1, "amount", 1, KalamDataType::Int);
+        let json = serde_json::to_value(&column).unwrap();
+        assert!(json.get("logical_type").is_some());
+        assert!(json.get("data_type").is_none());
+        assert!(json.get("named_type_id").is_none());
+        assert!(json.get("is_array").is_none());
+        let decoded: ColumnDefinition = serde_json::from_value(json).unwrap();
+        assert_eq!(column, decoded);
+
+        let old = r#"{
+            "column_id": 7,
+            "column_name": "amount",
+            "data_type": "Int",
+            "default_value": "None",
+            "ordinal_position": 1,
+            "is_nullable": true,
+            "is_primary_key": false,
+            "is_partition_key": false
+        }"#;
+        assert!(serde_json::from_str::<ColumnDefinition>(old).is_err());
     }
 
     #[test]

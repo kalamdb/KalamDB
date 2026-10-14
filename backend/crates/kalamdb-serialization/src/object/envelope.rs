@@ -77,7 +77,7 @@ pub struct EnvelopeHeader {
     pub flags:            u16,
 }
 
-const HEADER_LEN: usize = 4 + 2 + 1 + 2 + 2 + 4;
+pub(crate) const HEADER_LEN: usize = 4 + 2 + 1 + 2 + 2 + 4;
 
 /// True when `bytes` starts with the Kalam object magic (`KOBJ`).
 pub fn has_object_magic(bytes: &[u8]) -> bool {
@@ -88,6 +88,31 @@ pub fn has_object_magic(bytes: &[u8]) -> bool {
 pub(crate) const FLAG_COLUMN_OFFSETS: u16 = 1 << 0;
 /// Row payload stores the tombstone flag only. `_version` lives on the storage key.
 pub(crate) const FLAG_VERSION_IN_KEY: u16 = 1 << 1;
+
+#[inline]
+pub(crate) fn begin_envelope(
+    object_kind: ObjectKind,
+    schema_version: u16,
+    flags: u16,
+    estimated_payload_len: usize,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(HEADER_LEN + estimated_payload_len);
+    bytes.extend_from_slice(&MAGIC);
+    bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+    bytes.push(object_kind as u8);
+    bytes.extend_from_slice(&schema_version.to_le_bytes());
+    bytes.extend_from_slice(&flags.to_le_bytes());
+    bytes.extend_from_slice(&[0u8; 4]);
+    bytes
+}
+
+#[inline]
+pub(crate) fn finish_envelope(mut bytes: Vec<u8>) -> Result<EncodedObject> {
+    let payload_len = u32::try_from(bytes.len() - HEADER_LEN)
+        .map_err(|_| SerializationError::Encode("payload exceeds u32 length".to_string()))?;
+    bytes[HEADER_LEN - 4..HEADER_LEN].copy_from_slice(&payload_len.to_le_bytes());
+    Ok(EncodedObject::from_bytes(bytes))
+}
 
 pub(crate) fn encode_envelope(
     object_kind: ObjectKind,
@@ -103,17 +128,9 @@ pub(crate) fn encode_envelope_with_flags(
     flags: u16,
     payload: &[u8],
 ) -> Result<EncodedObject> {
-    let payload_len = u32::try_from(payload.len())
-        .map_err(|_| SerializationError::Encode("payload exceeds u32 length".to_string()))?;
-    let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
-    bytes.extend_from_slice(&MAGIC);
-    bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
-    bytes.push(object_kind as u8);
-    bytes.extend_from_slice(&schema_version.to_le_bytes());
-    bytes.extend_from_slice(&flags.to_le_bytes());
-    bytes.extend_from_slice(&payload_len.to_le_bytes());
+    let mut bytes = begin_envelope(object_kind, schema_version, flags, payload.len());
     bytes.extend_from_slice(payload);
-    Ok(EncodedObject::from_bytes(bytes))
+    finish_envelope(bytes)
 }
 
 pub(crate) fn decode_envelope(

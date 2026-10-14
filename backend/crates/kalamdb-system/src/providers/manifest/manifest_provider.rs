@@ -440,7 +440,7 @@ mod tests {
             .find(|column| column.column_name == "manifest_json")
             .expect("manifest_json column exists");
 
-        assert_eq!(manifest_json.data_type, KalamDataType::Json);
+        assert_eq!(manifest_json.data_type(), KalamDataType::Json);
     }
 
     #[tokio::test]

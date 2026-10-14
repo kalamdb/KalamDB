@@ -103,6 +103,9 @@ pub struct CachedTableData {
     /// Named-type overlay schema (Struct/List). Falls back to builtin `to_arrow_schema`.
     resolved_arrow: OnceLock<Arc<datafusion::arrow::datatypes::Schema>>,
 
+    /// Memoized ordinal storage schema for RocksDB row & Raft DML encoding/decoding.
+    storage_schema: OnceLock<Arc<kalamdb_serialization::StorageSchema>>,
+
     /// Monotonic LRU stamp written by SchemaRegistry on access.
     last_access: AtomicU64,
 }
@@ -121,15 +124,24 @@ impl std::fmt::Debug for CachedTableData {
 
 impl Clone for CachedTableData {
     fn clone(&self) -> Self {
+        let resolved_arrow = OnceLock::new();
+        if let Some(arrow) = self.resolved_arrow.get() {
+            let _ = resolved_arrow.set(Arc::clone(arrow));
+        }
+        let storage_schema = OnceLock::new();
+        if let Some(schema) = self.storage_schema.get() {
+            let _ = storage_schema.set(Arc::clone(schema));
+        }
         Self {
-            table:                Arc::clone(&self.table),
-            storage_id:           self.storage_id.clone(),
-            schema_version:       self.schema_version,
+            table: Arc::clone(&self.table),
+            storage_id: self.storage_id.clone(),
+            schema_version: self.schema_version,
             bloom_filter_columns: self.bloom_filter_columns.clone(),
-            indexed_columns:      self.indexed_columns.clone(),
-            provider:             Arc::clone(&self.provider),
-            resolved_arrow:       OnceLock::new(),
-            last_access:          AtomicU64::new(self.last_access()),
+            indexed_columns: self.indexed_columns.clone(),
+            provider: Arc::clone(&self.provider),
+            resolved_arrow,
+            storage_schema,
+            last_access: AtomicU64::new(self.last_access()),
         }
     }
 }
@@ -148,6 +160,7 @@ impl CachedTableData {
             indexed_columns,
             provider: Arc::new(ProviderSlot::new()),
             resolved_arrow: OnceLock::new(),
+            storage_schema: OnceLock::new(),
             last_access: AtomicU64::new(0),
         }
     }
@@ -195,7 +208,7 @@ impl CachedTableData {
             Self::push_indexed_column(
                 col.column_id,
                 &col.column_name,
-                col.data_type.supports_equality_bloom(),
+                col.data_type().supports_equality_bloom(),
                 &mut bloom_filter_columns,
                 &mut indexed_columns,
                 &mut seen_column_ids,
@@ -211,7 +224,7 @@ impl CachedTableData {
                     .columns
                     .iter()
                     .find(|column| column.column_id == column_id.as_u64())
-                    .is_some_and(|column| column.data_type.supports_equality_bloom());
+                    .is_some_and(|column| column.data_type().supports_equality_bloom());
                 if !bloom {
                     continue;
                 }
@@ -275,9 +288,28 @@ impl CachedTableData {
         if let Some(provider) = self.get_provider() {
             return Ok(provider.schema());
         }
-        self.table
+        let schema = self
+            .table
             .to_arrow_schema()
-            .into_schema_error("Failed to convert to Arrow schema")
+            .into_schema_error("Failed to convert to Arrow schema")?;
+        let _ = self.resolved_arrow.set(Arc::clone(&schema));
+        Ok(schema)
+    }
+
+    /// Get or lazily compute the ordinal `StorageSchema` for this table version.
+    pub fn storage_schema(&self) -> Result<Arc<kalamdb_serialization::StorageSchema>, String> {
+        if let Some(schema) = self.storage_schema.get() {
+            return Ok(Arc::clone(schema));
+        }
+        let built = match self.arrow_schema() {
+            Ok(arrow) => {
+                kalamdb_tables::storage_schema_for_table_with_arrow(&self.table, arrow.as_ref())
+                    .or_else(|_| kalamdb_tables::storage_schema_for_table(&self.table))?
+            },
+            Err(_) => kalamdb_tables::storage_schema_for_table(&self.table)?,
+        };
+        let _ = self.storage_schema.set(Arc::clone(&built));
+        Ok(built)
     }
 
     /// Build a `TableEntry` from this cached data

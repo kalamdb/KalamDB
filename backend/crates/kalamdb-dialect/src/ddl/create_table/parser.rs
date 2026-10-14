@@ -350,7 +350,11 @@ impl CreateTableStatement {
                             "item", data_type, true,
                         )));
                     }
-                    if type_ref.builtin_data_type().is_none() || type_ref.is_array {
+                    if type_ref.builtin_data_type().is_none()
+                        || type_ref.is_array
+                        || type_ref.name.eq_ignore_ascii_case("jsonb")
+                        || type_ref.name.eq_ignore_ascii_case("timestamptz")
+                    {
                         column_type_refs.insert(col_name.clone(), type_ref);
                     }
                     let is_nullable = true;

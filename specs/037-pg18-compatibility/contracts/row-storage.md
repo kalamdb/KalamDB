@@ -34,7 +34,7 @@ Validate kind, supported protocol/body version and flags, total length, slot spa
 
 Enforce checked aggregate lengths and bounds before allocation, including recursion, array cardinality, maximum cell/row size, and decoded expansion. Preserve or tighten the existing batch limits (16,384 rows / 32 MiB input, nesting 32, list length 1,048,576) until T096 establishes explicit alternatives; also budget output, scratch space, and retained owners. Input bytes alone do not bound decoded memory. Split oversized batches; a single oversized value fails with a deterministic resource error before a partial write.
 
-No automatic out-of-row pointers in the initial v2 implementation. Keep bounded inline values. Larger values require a separate design for replication, atomic publication, snapshot lifetime, access control, garbage collection, backup, restore, and crash recovery. FILE is a user-visible extension, not an interchangeable TOAST implementation. Limits remain explicit compatibility gaps where narrower than PostgreSQL.
+No automatic out-of-row pointers in the initial v2 implementation. Keep bounded inline values. Larger values require a separate design for replication, atomic publication, snapshot lifetime, access control, garbage collection, backup, restore, and crash recovery. `file` is a user-visible extension, not an interchangeable TOAST implementation. Its public type is the built-in `pg_catalog.file` type in [type-system.md](type-system.md); the row still stores the reference, and the bytes stay in the filestore. Limits remain explicit compatibility gaps where narrower than PostgreSQL.
 
 ## Schema history and DDL
 

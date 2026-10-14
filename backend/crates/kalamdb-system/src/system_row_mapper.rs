@@ -7,9 +7,7 @@ pub fn model_to_system_row<T: Serialize>(
     model: &T,
     table_def: &TableDefinition,
 ) -> Result<SystemTableRow, SystemError> {
-    let mut fields = kalamdb_serialization::model_to_row(model, table_def)
-        .map_err(|error| SystemError::SerializationError(error.to_string()))?;
-    kalamdb_serialization::model_ms_to_storage_micros(&mut fields, table_def)
+    let fields = kalamdb_serialization::model_ms_to_row(model, table_def)
         .map_err(|error| SystemError::SerializationError(error.to_string()))?;
     Ok(SystemTableRow { fields })
 }
@@ -18,10 +16,7 @@ pub fn system_row_to_model<T: DeserializeOwned>(
     row: &SystemTableRow,
     table_def: &TableDefinition,
 ) -> Result<T, SystemError> {
-    let mut fields = row.fields.clone();
-    kalamdb_serialization::storage_micros_to_model_ms(&mut fields, table_def)
-        .map_err(|error| SystemError::SerializationError(error.to_string()))?;
-    kalamdb_serialization::row_to_model(&fields, table_def)
+    kalamdb_serialization::row_to_model_ms(&row.fields, table_def)
         .map_err(|error| SystemError::SerializationError(error.to_string()))
 }
 

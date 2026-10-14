@@ -20,22 +20,27 @@ use super::{
 };
 use crate::error::{Result, SerializationError};
 
+#[inline]
 pub(crate) fn write_u8(buf: &mut Vec<u8>, value: u8) {
     buf.push(value);
 }
 
+#[inline]
 pub(crate) fn write_u16(buf: &mut Vec<u8>, value: u16) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_u32(buf: &mut Vec<u8>, value: u32) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_i64(buf: &mut Vec<u8>, value: i64) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     let len = u32::try_from(bytes.len())
         .map_err(|_| SerializationError::Encode("bytes length exceeds u32".to_string()))?;
@@ -44,6 +49,7 @@ pub(crate) fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[inline]
 pub(crate) fn write_str(buf: &mut Vec<u8>, value: &str) -> Result<()> {
     write_bytes(buf, value.as_bytes())
 }
@@ -54,6 +60,7 @@ pub(crate) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[inline]
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self {
             origin: bytes,
@@ -61,10 +68,12 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.rest.is_empty()
     }
 
+    #[inline]
     pub(crate) fn seek(&mut self, offset: usize) -> Result<()> {
         if offset > self.origin.len() {
             return Err(SerializationError::Truncated);
@@ -73,6 +82,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.rest.len() < n {
             return Err(SerializationError::Truncated);
@@ -82,25 +92,30 @@ impl<'a> Reader<'a> {
         Ok(head)
     }
 
+    #[inline]
     pub(crate) fn u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
+    #[inline]
     pub(crate) fn u16(&mut self) -> Result<u16> {
         let bytes = self.take(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
+    #[inline]
     pub(crate) fn u32(&mut self) -> Result<u32> {
         let bytes = self.take(4)?;
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn i32(&mut self) -> Result<i32> {
         let bytes = self.take(4)?;
         Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn i64(&mut self) -> Result<i64> {
         let bytes = self.take(8)?;
         Ok(i64::from_le_bytes([
@@ -108,11 +123,13 @@ impl<'a> Reader<'a> {
         ]))
     }
 
+    #[inline]
     pub(crate) fn f32(&mut self) -> Result<f32> {
         let bytes = self.take(4)?;
         Ok(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn f64(&mut self) -> Result<f64> {
         let bytes = self.take(8)?;
         Ok(f64::from_le_bytes([
@@ -120,14 +137,17 @@ impl<'a> Reader<'a> {
         ]))
     }
 
+    #[inline]
     pub(crate) fn bytes(&mut self) -> Result<&'a [u8]> {
         let len = self.u32()? as usize;
         self.take(len)
     }
 
+    #[inline]
     pub(crate) fn string(&mut self) -> Result<String> {
         let bytes = self.bytes()?;
-        String::from_utf8(bytes.to_vec())
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
             .map_err(|err| SerializationError::Decode(format!("invalid utf8: {err}")))
     }
 }
@@ -320,9 +340,23 @@ pub(crate) fn decode_value(
         (TAG_TS_MS, StorageDataType::TimestampMillisecond) => {
             Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()?), None))
         },
+        (TAG_TS_MS, StorageDataType::TimestampMicrosecond) => Ok(
+            ScalarValue::TimestampMicrosecond(Some(reader.i64()?.saturating_mul(1_000)), None),
+        ),
+        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
+            Some(reader.i64()?.saturating_mul(1_000_000)),
+            None,
+        )),
+        (TAG_TS_US, StorageDataType::TimestampMillisecond) => {
+            Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()? / 1_000), None))
+        },
         (TAG_TS_US, StorageDataType::TimestampMicrosecond) => {
             Ok(ScalarValue::TimestampMicrosecond(Some(reader.i64()?), None))
         },
+        (TAG_TS_US, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
+            Some(reader.i64()?.saturating_mul(1_000)),
+            None,
+        )),
         (TAG_TS_NS, StorageDataType::TimestampNanosecond) => {
             Ok(ScalarValue::TimestampNanosecond(Some(reader.i64()?), None))
         },
@@ -423,7 +457,7 @@ fn decode_list(reader: &mut Reader<'_>, inner: &StorageDataType) -> Result<Scala
     Ok(ScalarValue::List(ScalarValue::new_list(&items, &items[0].data_type(), true)))
 }
 
-fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
+pub(crate) fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
     match data_type {
         StorageDataType::Boolean => ScalarValue::Boolean(None),
         StorageDataType::Int8 => ScalarValue::Int8(None),

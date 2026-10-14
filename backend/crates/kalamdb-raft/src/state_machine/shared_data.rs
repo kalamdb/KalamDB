@@ -26,8 +26,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::SharedDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand,
@@ -599,7 +599,7 @@ impl KalamStateMachine for SharedDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -615,7 +615,7 @@ impl KalamStateMachine for SharedDataStateMachine {
                 "Cannot restore another shared shard's history".into(),
             ));
         }
-        let data: SharedDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: SharedDataSnapshot = decode(&snapshot.data)?;
 
         {
             let mut ops = self.recent_operations.write();

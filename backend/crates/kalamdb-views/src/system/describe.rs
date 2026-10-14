@@ -219,7 +219,7 @@ impl DescribeView {
             names.append_value(&c.column_name);
             ordinals.push(c.ordinal_position as i32); // Convert u32 to i32 for Int
             column_ids.push(c.column_id as i64); // Convert u64 to i64 for BigInt
-            types.append_value(c.data_type.sql_name());
+            types.append_value(c.data_type().sql_name());
             nulls.push(c.is_nullable);
             pks.push(c.is_primary_key);
 

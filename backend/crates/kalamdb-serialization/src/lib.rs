@@ -12,17 +12,25 @@ mod protocol;
 pub mod row;
 mod stream_frame;
 mod version;
+mod vix_snapshot;
 
 pub use error::{Result, SerializationError};
 pub use function_value::{decode_function_value, encode_function_value, FunctionValueEncoder};
-pub use model::{
-    model_ms_to_storage_micros, model_to_row, row_to_model, storage_micros_to_model_ms,
-};
+pub use model::{model_ms_to_row, model_to_row, row_to_model, row_to_model_ms};
 pub use object::{
     decode_object, decode_string_list, encode_object, encode_object_versioned, encode_string_list,
     has_object_magic, EncodedObject, ObjectKind,
 };
-pub use protocol::{decode_protocol, encode_protocol, ProtocolKind};
+pub use protocol::{
+    decode_packed_data_response, decode_packed_delete, decode_packed_insert, decode_packed_log_id,
+    decode_protocol, decode_raft_log_record, encode_packed_data_response, encode_packed_delete,
+    encode_packed_insert, encode_packed_log_id, encode_protocol, encode_raft_log_record_parts,
+    encode_raft_log_record_with_tag, raft_log_tagged_payload, PackedDataResponse, PackedDelete,
+    PackedInsert, ProtocolKind, PACKED_DATA_RESPONSE, PACKED_LOG_ID_LEN, PACKED_SHARED_DELETE,
+    PACKED_SHARED_INSERT, PACKED_USER_DELETE, PACKED_USER_INSERT, RAFT_LOG_ID_VERSION,
+    RAFT_LOG_PAYLOAD_BLANK, RAFT_LOG_PAYLOAD_MEMBERSHIP, RAFT_LOG_PAYLOAD_NORMAL,
+    RAFT_LOG_RECORD_HEADER_LEN, RAFT_LOG_RECORD_VERSION,
+};
 pub use row::{
     decode_payloads_to_arrow_batch, decode_row_fields, decode_row_metadata, decode_shared_row,
     decode_shared_row_selected, decode_stream_row, decode_user_row, decode_user_row_selected,
@@ -32,50 +40,9 @@ pub use row::{
     RowMetadata, StorageDataType, StorageField, StorageSchema,
 };
 pub use stream_frame::{
-    decode_stream, decode_stream_frame_payload, encode_stream, encode_stream_frame,
+    append_stream_delete_frame, append_stream_put_frame, decode_raw_stream_record, RawStreamRecord,
 };
 pub use version::{MAGIC, PROTOCOL_VERSION};
-
-/// Reusable encoder for batch hot paths. Buffers are kept inside this crate.
-#[derive(Debug, Default)]
-pub struct ObjectEncoder {
-    _private: (),
-}
-
-impl ObjectEncoder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn encode_object<T: serde::Serialize + ?Sized>(
-        &mut self,
-        value: &T,
-    ) -> Result<EncodedObject> {
-        encode_object(value)
-    }
-
-    pub fn encode_user_row(
-        &mut self,
-        row: &kalamdb_commons::models::rows::UserTableRow,
-        schema: &StorageSchema,
-    ) -> Result<EncodedObject> {
-        encode_user_row(row, schema)
-    }
-
-    pub fn encode_shared_row(
-        &mut self,
-        deleted: bool,
-        fields: &kalamdb_commons::models::rows::Row,
-        schema: &StorageSchema,
-    ) -> Result<EncodedObject> {
-        encode_shared_row(deleted, fields, schema)
-    }
-
-    pub fn encode_stream_row(
-        &mut self,
-        row: &kalamdb_commons::models::rows::StreamTableRow,
-        schema: &StorageSchema,
-    ) -> Result<EncodedObject> {
-        encode_stream_row(row, schema)
-    }
-}
+pub use vix_snapshot::{
+    decode_vix_snapshot, encode_vix_snapshot, VixSnapshotEntry, VixSnapshotFile,
+};

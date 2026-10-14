@@ -23,8 +23,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
@@ -521,7 +521,7 @@ impl KalamStateMachine for UserDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -532,7 +532,7 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let data: UserDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: UserDataSnapshot = decode(&snapshot.data)?;
 
         if data.shard != self.shard {
             return Err(RaftError::InvalidState(format!(

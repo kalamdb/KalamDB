@@ -489,10 +489,13 @@ impl SchemaRegistry {
                 )));
             }
 
-            if !Self::is_safe_type_widening(&old_col.data_type, &new_col.data_type) {
+            if !Self::is_safe_type_widening(&old_col.data_type(), &new_col.data_type()) {
                 return Err(KalamDbError::invalid_schema_evolution(format!(
                     "incompatible type change for column '{}' (id={}): {} -> {}",
-                    old_col.column_name, old_col.column_id, old_col.data_type, new_col.data_type
+                    old_col.column_name,
+                    old_col.column_id,
+                    old_col.data_type(),
+                    new_col.data_type()
                 )));
             }
         }
@@ -808,7 +811,7 @@ impl SchemaRegistry {
         use kalamdb_sharding::ShardRouter;
         use kalamdb_tables::{
             new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
-            storage_schema_for_table, storage_schema_for_table_with_arrow, StreamTableStoreConfig,
+            StreamTableStoreConfig,
         };
 
         use crate::{
@@ -872,18 +875,17 @@ impl SchemaRegistry {
 
         // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
         let table_def_arc = Arc::new(table_def.clone());
+        let core = Arc::new(TableProviderCore::new(
+            table_def_arc,
+            services,
+            pk_field.clone(),
+            arrow_schema,
+            column_defaults,
+        ));
+        let storage_schema = Arc::clone(core.storage_schema());
 
         match table_def.table_type {
             TableType::User => {
-                let storage_schema =
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?;
                 let user_table_store = Arc::new(new_indexed_user_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -893,27 +895,10 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
-                ));
-
                 let provider = Arc::new(UserTableProvider::new(core, user_table_store));
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
             },
             TableType::Shared => {
-                let storage_schema =
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?;
                 let shared_store = Arc::new(new_indexed_shared_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -921,14 +906,6 @@ impl SchemaRegistry {
                     storage_schema,
                     &table_def.scalar_indexes,
                     &table_def.columns,
-                ));
-
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
                 ));
 
                 let provider = Arc::new(SharedTableProvider::new(core, shared_store));
@@ -955,22 +932,7 @@ impl SchemaRegistry {
                         ttl_seconds: Some(ttl_seconds),
                         storage_mode: kalamdb_tables::StreamTableStorageMode::File,
                     },
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?,
-                ));
-
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
+                    storage_schema,
                 ));
 
                 let provider =
@@ -1011,7 +973,7 @@ impl SchemaRegistry {
             .iter()
             .filter_map(|entry| {
                 let uses_type = entry.value().table.columns.iter().any(|column| {
-                    column.named_type_id.as_ref().is_some_and(|type_id| wanted.contains(type_id))
+                    column.named_type_id().is_some_and(|type_id| wanted.contains(type_id))
                 });
                 uses_type.then(|| entry.value().table.as_ref().clone())
             })
@@ -1627,7 +1589,7 @@ mod tests {
     fn test_validate_schema_evolution_rejects_incompatible_type_change() {
         let current = base_table_definition();
         let mut expected = current.clone();
-        expected.columns[1].data_type = KalamDataType::Int;
+        expected.columns[1].set_data_type(KalamDataType::Int);
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
         assert!(validation.is_err());
@@ -1636,9 +1598,9 @@ mod tests {
     #[test]
     fn test_validate_schema_evolution_accepts_safe_numeric_widening() {
         let mut current = base_table_definition();
-        current.columns[1].data_type = KalamDataType::Int;
+        current.columns[1].set_data_type(KalamDataType::Int);
         let mut expected = current.clone();
-        expected.columns[1].data_type = KalamDataType::BigInt;
+        expected.columns[1].set_data_type(KalamDataType::BigInt);
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
         assert!(validation.is_ok(), "{validation:?}");

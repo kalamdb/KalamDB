@@ -5,8 +5,8 @@ mod generic;
 mod payload;
 
 pub(crate) use envelope::{
-    decode_envelope, encode_envelope, encode_envelope_with_flags, FLAG_COLUMN_OFFSETS,
-    FLAG_VERSION_IN_KEY,
+    begin_envelope, decode_envelope, encode_envelope, finish_envelope, FLAG_COLUMN_OFFSETS,
+    FLAG_VERSION_IN_KEY, HEADER_LEN,
 };
 pub use envelope::{has_object_magic, EncodedObject, ObjectKind};
 pub use generic::{

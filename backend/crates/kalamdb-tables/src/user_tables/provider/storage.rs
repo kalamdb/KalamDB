@@ -396,7 +396,7 @@ impl UserTableProvider {
         row_key: &UserTableRowId,
         version: VersionId,
     ) -> Result<(), KalamDbError> {
-        let mut row = self
+        let row = self
             .store
             .get(row_key)
             .into_kalamdb_error("Failed to load row for commit_seq patch")?

@@ -3,7 +3,7 @@
 //! Identity (`user_id`, `_version`) is not written. Reconstruct it from the RocksDB key.
 
 use datafusion_common::ScalarValue;
-use kalamdb_commons::models::rows::{Row, RowEnvelope, StreamTableRow, UserTableRow};
+use kalamdb_commons::models::rows::{Row, RowEnvelope, SharedTableRow, StreamTableRow, UserTableRow};
 
 use super::{
     scalar::TAG_NULL,
@@ -13,8 +13,8 @@ use super::{
 use crate::{
     error::{Result, SerializationError},
     object::{
-        encode_envelope_with_flags, EncodedObject, ObjectKind, FLAG_COLUMN_OFFSETS,
-        FLAG_VERSION_IN_KEY,
+        begin_envelope, finish_envelope, EncodedObject, ObjectKind, FLAG_COLUMN_OFFSETS,
+        FLAG_VERSION_IN_KEY, HEADER_LEN,
     },
 };
 
@@ -42,12 +42,8 @@ pub fn encode_row_envelope(
 }
 
 /// Encode a shared-table row. `_version` lives on the key.
-pub fn encode_shared_row(
-    deleted: bool,
-    fields: &Row,
-    schema: &StorageSchema,
-) -> Result<EncodedObject> {
-    encode_row_body(deleted, RowValues::Map(fields), schema)
+pub fn encode_shared_row(row: &SharedTableRow, schema: &StorageSchema) -> Result<EncodedObject> {
+    encode_row_body(row._deleted, RowValues::Map(&row.fields), schema)
 }
 
 /// Encode a stream-table row. `_version` and `_timestamp` are not repeated in the value header.
@@ -59,7 +55,7 @@ pub fn encode_stream_row(row: &StreamTableRow, schema: &StorageSchema) -> Result
 ///
 /// Raft DML commands store this blob instead of FlexBuffering `ScalarValue` maps.
 pub fn encode_row_fields(fields: &Row, schema: &StorageSchema) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(2 + schema.fields.len() * 12);
     encode_fields_sequential(&mut buf, RowValues::Map(fields), schema)?;
     Ok(buf)
 }
@@ -69,7 +65,7 @@ pub fn encode_row_fields_from_columns(
     columns: &[ScalarValue],
     schema: &StorageSchema,
 ) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(2 + schema.fields.len() * 12);
     encode_fields_sequential(&mut buf, RowValues::Columns(columns), schema)?;
     Ok(buf)
 }
@@ -84,16 +80,16 @@ fn encode_row_body(
     fields: RowValues<'_>,
     schema: &StorageSchema,
 ) -> Result<EncodedObject> {
-    let mut payload = Vec::new();
-    write_u16(&mut payload, schema.version);
-    write_u8(&mut payload, u8::from(deleted));
-    encode_fields_indexed(&mut payload, fields, schema)?;
-    encode_envelope_with_flags(
+    let mut buf = begin_envelope(
         ObjectKind::Row,
         schema.version,
         FLAG_COLUMN_OFFSETS | FLAG_VERSION_IN_KEY,
-        &payload,
-    )
+        5 + schema.fields.len() * 16,
+    );
+    write_u16(&mut buf, schema.version);
+    write_u8(&mut buf, u8::from(deleted));
+    encode_fields_indexed(&mut buf, HEADER_LEN, fields, schema)?;
+    finish_envelope(buf)
 }
 
 fn encode_fields_sequential(
@@ -111,6 +107,7 @@ fn encode_fields_sequential(
 
 fn encode_fields_indexed(
     buf: &mut Vec<u8>,
+    payload_start: usize,
     fields: RowValues<'_>,
     schema: &StorageSchema,
 ) -> Result<()> {
@@ -119,7 +116,7 @@ fn encode_fields_indexed(
     let offset_slot = buf.len();
     buf.resize(offset_slot + usize::from(count) * 4, 0);
     for (index, field) in schema.fields.iter().enumerate() {
-        let offset = u32::try_from(buf.len()).map_err(|_| {
+        let offset = u32::try_from(buf.len() - payload_start).map_err(|_| {
             SerializationError::Encode("row payload exceeds u32 offset".to_string())
         })?;
         let slot = offset_slot + index * 4;

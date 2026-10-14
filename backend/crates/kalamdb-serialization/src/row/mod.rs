@@ -41,7 +41,7 @@ mod tests {
     use kalamdb_commons::{
         ids::VersionId,
         models::{
-            rows::{Row, StreamTableRow, UserTableRow},
+            rows::{Row, SharedTableRow, StreamTableRow, UserTableRow},
             UserId,
         },
     };
@@ -253,18 +253,22 @@ mod tests {
         let fields = Row { values };
 
         let version = VersionId::try_from_i64(77).unwrap();
-        let encoded = encode_shared_row(true, &fields, &schema).unwrap();
-        let (decoded_version, deleted, decoded_fields) =
-            decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
-        assert_eq!(decoded_version, version);
-        assert!(deleted);
-        assert_eq!(decoded_fields.values.get("id"), fields.values.get("id"));
+        let shared = SharedTableRow {
+            _version: version,
+            _deleted: true,
+            fields:   fields.clone(),
+        };
+        let encoded = encode_shared_row(&shared, &schema).unwrap();
+        let decoded = decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
+        assert_eq!(decoded._version, version);
+        assert!(decoded._deleted);
+        assert_eq!(decoded.fields.values.get("id"), fields.values.get("id"));
 
         let selected =
             decode_shared_row_selected(encoded.as_slice(), &schema, version, &[0]).unwrap();
-        assert_eq!(selected.0, version);
-        assert!(selected.1);
-        assert_eq!(selected.2.values.get("id"), fields.values.get("id"));
+        assert_eq!(selected._version, version);
+        assert!(selected._deleted);
+        assert_eq!(selected.fields.values.get("id"), fields.values.get("id"));
 
         let stream = StreamTableRow {
             user_id:    UserId::new("owner"),

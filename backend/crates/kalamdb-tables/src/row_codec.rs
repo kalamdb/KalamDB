@@ -61,17 +61,6 @@ impl UserRowCodec {
     pub fn new(schema: Arc<StorageSchema>) -> Self {
         Self { schema }
     }
-
-    /// Decode only the requested schema ordinals.
-    pub fn decode_selected(
-        &self,
-        key: &UserTableRowId,
-        bytes: &[u8],
-        ordinals: &[usize],
-    ) -> kalamdb_store::storage_trait::Result<UserTableRow> {
-        decode_user_row_selected(bytes, &self.schema, key.user_id.clone(), key.version, ordinals)
-            .map_err(map_ser)
-    }
 }
 
 impl EntityCodec<UserTableRowId, UserTableRow> for UserRowCodec {
@@ -122,7 +111,7 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         _key: &SharedTableRowId,
         entity: &SharedTableRow,
     ) -> kalamdb_store::storage_trait::Result<Vec<u8>> {
-        encode_shared_row(entity._deleted, &entity.fields, &self.schema)
+        encode_shared_row(entity, &self.schema)
             .map(|encoded| encoded.into_bytes())
             .map_err(map_ser)
     }
@@ -132,13 +121,7 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         key: &SharedTableRowId,
         bytes: &[u8],
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        let (version, deleted, fields) =
-            decode_shared_row(bytes, &self.schema, *key).map_err(map_ser)?;
-        Ok(SharedTableRow {
-            _version: version,
-            _deleted: deleted,
-            fields,
-        })
+        decode_shared_row(bytes, &self.schema, *key).map_err(map_ser)
     }
 
     fn decode_selected(
@@ -147,12 +130,6 @@ impl EntityCodec<SharedTableRowId, SharedTableRow> for SharedRowCodec {
         bytes: &[u8],
         ordinals: &[usize],
     ) -> kalamdb_store::storage_trait::Result<SharedTableRow> {
-        let (version, deleted, fields) =
-            decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)?;
-        Ok(SharedTableRow {
-            _version: version,
-            _deleted: deleted,
-            fields,
-        })
+        decode_shared_row_selected(bytes, &self.schema, *key, ordinals).map_err(map_ser)
     }
 }

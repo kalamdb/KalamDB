@@ -54,7 +54,8 @@ impl ServerConfig {
     /// - KALAMDB_SERVER_HOST: Override server.host
     /// - KALAMDB_SERVER_PORT: Override server.port
     /// - KALAMDB_SERVER_PUBLIC_ORIGIN: Override server.public_origin (empty keeps Admin UI
-    ///   browser-origin fallback)
+    ///   browser-origin fallback). `KALAMDB_PUBLIC_URL` is the same setting when the canonical
+    ///   variable is unset. Startup adds that origin to `security.cors.allowed_origins`.
     /// - KALAMDB_LOG_LEVEL: Override logging.level
     /// - KALAMDB_LOG_FORMAT: Override logging.format ("compact" | "json")
     /// - KALAMDB_LOGS_DIR: Override logging.logs_path
@@ -171,7 +172,9 @@ impl ServerConfig {
         if let Some(port) = parse_env("KALAMDB_SERVER_PORT")? {
             self.server.port = port;
         }
-        if let Ok(origin) = env::var("KALAMDB_SERVER_PUBLIC_ORIGIN") {
+        if let Ok(origin) =
+            env::var("KALAMDB_SERVER_PUBLIC_ORIGIN").or_else(|_| env::var("KALAMDB_PUBLIC_URL"))
+        {
             self.server.public_origin = Some(origin);
         }
         Ok(())
@@ -511,6 +514,44 @@ mod tests {
         assert_eq!(config.server.configured_public_origin(), None);
 
         env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::remove_var("KALAMDB_PUBLIC_URL");
+    }
+
+    #[test]
+    fn test_public_url_alias_fills_public_origin() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::set_var("KALAMDB_PUBLIC_URL", "https://kalamdb.example.com");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+        config.finalize().unwrap();
+
+        assert_eq!(
+            config.server.configured_public_origin().as_deref(),
+            Some("https://kalamdb.example.com")
+        );
+        assert_eq!(
+            config.security.cors.allowed_origins,
+            vec!["https://kalamdb.example.com".to_string()]
+        );
+
+        env::remove_var("KALAMDB_PUBLIC_URL");
+    }
+
+    #[test]
+    fn test_server_public_origin_wins_over_public_url_alias() {
+        let _guard = acquire_env_lock();
+        env::set_var("KALAMDB_SERVER_PUBLIC_ORIGIN", "https://canonical.example.com");
+        env::set_var("KALAMDB_PUBLIC_URL", "https://alias.example.com");
+
+        let mut config = ServerConfig::default();
+        config.apply_env_overrides().unwrap();
+
+        assert_eq!(config.server.public_origin.as_deref(), Some("https://canonical.example.com"));
+
+        env::remove_var("KALAMDB_SERVER_PUBLIC_ORIGIN");
+        env::remove_var("KALAMDB_PUBLIC_URL");
     }
 
     #[test]

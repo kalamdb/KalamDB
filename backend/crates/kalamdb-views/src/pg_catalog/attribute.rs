@@ -94,7 +94,7 @@ impl PgCatalogView for PgAttributeView {
             for column in &table.columns {
                 relation_oids.append_value(relation_oid);
                 names.append_value(column.column_name.as_str());
-                type_oids.append_value(pg_type_oid(&column.data_type));
+                type_oids.append_value(pg_type_oid(&column.data_type()));
                 stat_targets.append_value(-1);
                 lengths.append_value(-1);
                 attnums.append_value(column.ordinal_position as i64);

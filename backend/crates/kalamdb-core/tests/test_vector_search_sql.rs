@@ -18,7 +18,7 @@ use kalamdb_core::{
         context::{ExecutionContext, ExecutionResult},
         executor::{handler_registry::HandlerRegistry, SqlExecutor},
     },
-    vector::flush_shared_scope_vectors,
+    vector::{flush_shared_scope_vectors, flush_user_scope_vectors},
 };
 use kalamdb_jobs::{
     executors::{
@@ -1192,3 +1192,233 @@ async fn test_multiple_vector_indexes_with_mixed_rows_and_null_embeddings() {
         other => panic!("Expected rows for alt embedding query, got {:?}", other),
     }
 }
+
+#[tokio::test]
+#[ntest::timeout(120000)]
+async fn test_vector_index_survives_column_rename() {
+    let (app_context, _temp_dir) = create_test_app_context().await;
+    let exec_ctx = create_exec_context(app_context.clone());
+    let executor = create_executor(app_context.clone());
+
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "CREATE TABLE test_ns.docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding EMBEDDING(3)) WITH (TYPE='SHARED')",
+    )
+    .await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "ALTER TABLE test_ns.docs_rename_vec CREATE INDEX embedding USING COSINE",
+    )
+    .await;
+
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (1, 'first', '[1.0,0.0,0.0]')",
+    )
+    .await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (2, 'second', '[0.0,1.0,0.0]')",
+    )
+    .await;
+
+    let table_id = TableId::from_strings("test_ns", "docs_rename_vec");
+    let cached_table = app_context.schema_registry().get(&table_id).expect("cached table");
+    let storage_cached = cached_table
+        .storage_cached(&app_context.storage_registry())
+        .expect("storage cached");
+    let schema = app_context
+        .schema_registry()
+        .get_arrow_schema(&table_id)
+        .expect("docs_rename_vec schema");
+    flush_shared_scope_vectors(&app_context, &table_id, &schema, &storage_cached)
+        .expect("initial flush vector snapshot for docs_rename_vec");
+
+    // Stage an additional hot vector op before renaming the column.
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (3, 'third', '[0.9,0.1,0.0]')",
+    )
+    .await;
+
+    // Rename the vector-indexed column.
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "ALTER TABLE test_ns.docs_rename_vec RENAME COLUMN embedding TO embedding_v2",
+    )
+    .await;
+
+    // Verify vector search on the renamed column combines the pre-rename .vix snapshot and migrated hot ops.
+    let result_after_rename = execute_sql(
+        &executor,
+        &exec_ctx,
+        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, '[1.0,0.0,0.0]') LIMIT 3",
+    )
+    .await;
+    match result_after_rename {
+        ExecutionResult::Rows {
+            batches, row_count, ..
+        } => {
+            assert_eq!(row_count, 3);
+            let ids = extract_id_values(&batches);
+            assert_eq!(ids, vec![1, 3, 2]);
+        },
+        other => panic!("Expected rows after column rename, got {:?}", other),
+    }
+
+    // Insert another row under the new column name and flush again to ensure the previous .vix snapshot
+    // loads cleanly without column_name mismatch and writes a new snapshot for embedding_v2.
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding_v2) VALUES (4, 'fourth', '[0.98,0.02,0.0]')",
+    )
+    .await;
+
+    let cached_table = app_context.schema_registry().get(&table_id).expect("cached table");
+    let storage_cached = cached_table
+        .storage_cached(&app_context.storage_registry())
+        .expect("storage cached");
+    let schema = app_context
+        .schema_registry()
+        .get_arrow_schema(&table_id)
+        .expect("docs_rename_vec schema after rename");
+    flush_shared_scope_vectors(&app_context, &table_id, &schema, &storage_cached)
+        .expect("second flush vector snapshot after column rename");
+
+    let manifest = app_context
+        .manifest_service()
+        .ensure_manifest_initialized(&table_id, None)
+        .expect("manifest after rename flush");
+    assert!(
+        !manifest.vector_indexes.contains_key("embedding"),
+        "old column key must not remain in manifest.vector_indexes"
+    );
+    let meta = manifest
+        .vector_indexes
+        .get("embedding_v2")
+        .expect("renamed vector index metadata must exist");
+    assert_eq!(meta.column_name, "embedding_v2");
+    assert_eq!(meta.snapshot_version, 2);
+    assert_eq!(
+        meta.snapshot_path.as_deref(),
+        Some("vec-embedding_v2-snapshot-2.vix")
+    );
+
+    let result_after_second_flush = execute_sql(
+        &executor,
+        &exec_ctx,
+        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, '[1.0,0.0,0.0]') LIMIT 4",
+    )
+    .await;
+    match result_after_second_flush {
+        ExecutionResult::Rows {
+            batches, row_count, ..
+        } => {
+            assert_eq!(row_count, 4);
+            let ids = extract_id_values(&batches);
+            assert_eq!(ids, vec![1, 4, 3, 2]);
+        },
+        other => panic!("Expected rows after second flush, got {:?}", other),
+    }
+
+    // Also verify USER table vector index across column rename.
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "CREATE TABLE test_ns.user_docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding EMBEDDING(3)) WITH (TYPE='USER')",
+    )
+    .await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "ALTER TABLE test_ns.user_docs_rename_vec CREATE INDEX embedding USING COSINE",
+    )
+    .await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (1, 'u1', '[1.0,0.0,0.0]')",
+    )
+    .await;
+
+    let user_table_id = TableId::from_strings("test_ns", "user_docs_rename_vec");
+    let user_id = exec_ctx.user_id().clone();
+    let user_cached = app_context
+        .schema_registry()
+        .get(&user_table_id)
+        .expect("user cached table");
+    let user_storage = user_cached
+        .storage_cached(&app_context.storage_registry())
+        .expect("user storage cached");
+    let user_schema = app_context
+        .schema_registry()
+        .get_arrow_schema(&user_table_id)
+        .expect("user_docs_rename_vec schema");
+    flush_user_scope_vectors(
+        &app_context,
+        &user_table_id,
+        &user_id,
+        &user_schema,
+        &user_storage,
+    )
+    .expect("initial user flush vector snapshot");
+
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (2, 'u2', '[0.85,0.15,0.0]')",
+    )
+    .await;
+    execute_sql(
+        &executor,
+        &exec_ctx,
+        "ALTER TABLE test_ns.user_docs_rename_vec RENAME COLUMN embedding TO vec_renamed",
+    )
+    .await;
+
+    let user_cached = app_context
+        .schema_registry()
+        .get(&user_table_id)
+        .expect("user cached table after rename");
+    let user_storage = user_cached
+        .storage_cached(&app_context.storage_registry())
+        .expect("user storage cached after rename");
+    let user_schema = app_context
+        .schema_registry()
+        .get_arrow_schema(&user_table_id)
+        .expect("user_docs_rename_vec schema after rename");
+    flush_user_scope_vectors(
+        &app_context,
+        &user_table_id,
+        &user_id,
+        &user_schema,
+        &user_storage,
+    )
+    .expect("second user flush vector snapshot after column rename");
+
+    let user_query = execute_sql(
+        &executor,
+        &exec_ctx,
+        "SELECT id FROM test_ns.user_docs_rename_vec ORDER BY COSINE_DISTANCE(vec_renamed, '[1.0,0.0,0.0]') LIMIT 2",
+    )
+    .await;
+    match user_query {
+        ExecutionResult::Rows {
+            batches, row_count, ..
+        } => {
+            assert_eq!(row_count, 2);
+            let ids = extract_id_values(&batches);
+            assert_eq!(ids, vec![1, 2]);
+        },
+        other => panic!("Expected user rows after rename + flush, got {:?}", other),
+    }
+}
+

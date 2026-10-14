@@ -47,11 +47,10 @@ Compared:
 
 Storage and wire: this choice does not change row bytes or enable a v2 writer. Hot rows keep their current encoding until the row-storage gates measure a replacement. Builtin OIDs stay the PostgreSQL numbers. Custom OIDs are allocated and stored; `TypeId`'s hash is not an OID. Unknown types are rejected or reported as unknown.
 
+`ColumnDefinition` stores `logical_type`. `data_type()`, `named_type_id()`, and `is_array()` project that value for storage codecs. They are not fields and they are not written. 0.8 does not decode a column saved with only `data_type`, `named_type_id`, and `is_array`. See the fresh-start decision in [plan.md](../plan.md).
+
 Deletion list, after every reader uses `LogicalTypeRef`:
 
-- `ColumnDefinition.data_type`
-- `ColumnDefinition.named_type_id`
-- `ColumnDefinition.is_array`
 - wire-owned type maps that duplicate the logical type
 
 Budgets for allocations, retained memory, resolution cost, throughput, and latency are the Phase 2 and T087/T096/T098 gates. This record does not invent those numbers and does not authorize the format switch.
@@ -85,6 +84,51 @@ Then prove, against PostgreSQL 18:
 through parse, plan, hot storage, Parquet, prepared metadata, and text and binary results. Include nulls, casts, modifier rejection, and schema-revision invalidation.
 
 Wide `numeric` beyond the fixed-width fast path needs its own written design or a matrix exclusion before `numeric` is marked verified.
+
+## Built-in file and embedding extensions
+
+Date: 2026-10-13. `file` and `embedding` stay documented Kalam extensions on `LogicalTypeRef`. They are not PostgreSQL types. Stock clients must see them as extension types, not as built-in PostgreSQL type names.
+
+Install both in `pg_catalog` when the database is created, once. Startup does not re-run `CREATE TYPE`. Restart, replay, and a new connection see the same type identity and OID. `DROP TYPE`, `ALTER TYPE`, and `CREATE OR REPLACE` of these types fail because they are system types. They are not rows a user migration inserts, and they are not scaffolds under `functions/src`.
+
+The handlers are Rust in the server binary. Registration is one required extension, created with the database and recorded so a later optional extension can use the same catalog path. File is not optional and is not a SQL or JavaScript module. Loadable third-party packages are out of scope for T154.
+
+`pg_catalog.file` is the SQL type for a file reference. The column stores that reference. The bytes stay in the filestore, with the existing upload, quota, authorization, and cleanup rules. A composite, JSON object, or `FileRef` written by `INSERT` or cast is rejected. Only `file_put` returns a valid value. The current storage tag may remain the physical encoding; it is not a second logical type and it is not a `FILE` keyword outside the catalog.
+
+Fields, all required except `shard`:
+
+| Field | Type | Generated TypeScript |
+| --- | --- | --- |
+| `id` | `text` | `string` |
+| `sub` | `text` | `string` |
+| `name` | `text` | `string` |
+| `size` | `bigint` | `bigint` |
+| `mime` | `text` | `string` |
+| `sha256` | `text` | `string` |
+| `shard` | `integer` null | `number \| null` |
+
+Built-in functions in `pg_catalog`. `DROP FUNCTION` fails.
+
+| Function | Returns | Behavior |
+| --- | --- | --- |
+| `file_put(placeholder text)` | `file` | Mints the reference from the multipart part `file:<placeholder>`. The part carries the bytes, original filename, and MIME type. Size and MIME checks run while that part is staged. The SQL text does not contain the bytes. `FILE('contract')` in a statement is this call, not a second constructor. |
+| `file_read(file file)` | `bytea` | Returns the bytes when the caller may read them. Large bodies stream through the existing download route; that route is the transport for this function, not a second client. |
+| `file_delete(file file)` | `void` | Deletes the blob. Removing a row that stores the reference still deletes it. |
+
+There is no `file_stat`. The fields are the metadata. Size formatting and MIME labels such as image or PDF stay client derivations from those fields. They are not SQL functions.
+
+SDK generation coverage:
+
+- Merge the required extension into the contract snapshot in `cli/src/workflow/schema/load.rs`. A project `schema.sql` does not declare `file` or these functions, and generation must not skip `pg_catalog`.
+- Emit the field type from `cli/src/workflow/schema/typescript/schema.rs`, `dart/`, and `rust.rs` the same way as a user composite. A TypeScript property completes every field above. Do not emit `unknown`, `any`, `Map`, or `KalamFileColumn`.
+- Emit `file_put`, `file_read`, and `file_delete` from `typescript/client.rs` and `dart/functions.rs` the same way as a user `CREATE FUNCTION`, including argument and result types. Rust generation includes the same signatures.
+- `file_put` accepts `File`, `Blob`, or `KalamFileUpload` as the multipart part. The generated call sends that part beside the SQL statement and passes only the placeholder name. Those inputs are not the column type, not the function result, and not a `bytea` parameter.
+- `@kalamdb/client` `FileRef` wraps the generated fields. Delete the handwritten `FileRefData` list and the download, path, and type-label methods on that class in `link/sdks/typescript/client/src/file_ref.ts`. Delete the Dart `Map<String, Object?>` fallback in `cli/src/workflow/schema/types.rs`.
+- A nullable `file` column is `File | null`. A present value still requires every field except a null `shard`.
+
+`pg_catalog.embedding` keeps a required dimension in `1..=8192`. It is not a plain composite and not an unconstrained array. Its modifier is part of the logical type, the same way precision and scale belong to `numeric`.
+
+Catalog projection lists both in `pg_type` with their built-in functions in `pg_proc`. The compatibility matrix marks them as Kalam extensions. Implementation is T154.
 
 ## Routines
 

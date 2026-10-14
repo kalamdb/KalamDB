@@ -168,7 +168,7 @@ impl PgCatalogView for PgTypeView {
             let namespace_oid = stable_oid(&["namespace", namespace]);
 
             for column in &table.columns {
-                let typname = pg_type_name(&column.data_type);
+                let typname = pg_type_name(&column.data_type());
                 let key = (namespace_oid, typname);
                 if !seen_listing.insert(key) {
                     continue;
@@ -180,7 +180,7 @@ impl PgCatalogView for PgTypeView {
                     listing_type_oid(namespace, typname),
                     typname,
                     namespace_oid,
-                    typlen_for_oid(pg_type_oid(&column.data_type)),
+                    typlen_for_oid(pg_type_oid(&column.data_type())),
                 );
             }
         }

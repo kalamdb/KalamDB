@@ -55,7 +55,7 @@ One meaning for a column, composite field, parameter, routine argument, or resul
 | category | PostgreSQL type category once inventoried |
 | nullability | Separate from identity. Column nullability is not element nullability. |
 
-`CREATE FUNCTION` discards parenthesized modifiers. Domains hold reusable constraints. File and embedding values stay documented Kalam extensions on this same model.
+`CREATE FUNCTION` discards parenthesized modifiers. Domains hold reusable constraints. File and embedding values stay documented Kalam extensions on this same model. `pg_catalog.file` is a required extension whose Rust handlers are `file_put`, `file_read`, and `file_delete`. The type and those functions are system objects and cannot be dropped. Generation merges them into the SDK the same way it emits a user-defined type and its functions. SDKs do not declare a second file shape or a private file API.
 
 Derived, not stored as authorities:
 

@@ -65,7 +65,7 @@ impl UserDataApplier for ProviderUserDataApplier {
 
         self.executor
             .dml()
-            .insert_user_data_with_versions(table_id, user_id, &rows, versions)
+            .insert_user_data_with_versions(table_id, user_id, rows, versions)
             .await
             .map_err(ApplierError::into_raft)
     }

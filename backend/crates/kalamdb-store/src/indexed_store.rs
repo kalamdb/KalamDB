@@ -605,8 +605,8 @@ where
     /// Batch insert with pre-encoded entity bytes.
     ///
     /// Unlike [`insert_batch`] which encodes each entity at the storage boundary,
-    /// this method accepts pre-encoded bytes produced by `ObjectEncoder` /
-    /// `encode_user_row` (or the matching shared/stream helpers).
+    /// this method accepts pre-encoded bytes produced by `encode_user_row`
+    /// (or the matching shared/stream helpers).
     ///
     /// The caller is responsible for ensuring that `encoded_values[i]`
     /// corresponds to `entries[i]`. The entries are still needed for index

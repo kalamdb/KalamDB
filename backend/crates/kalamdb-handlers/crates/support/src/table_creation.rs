@@ -324,21 +324,34 @@ pub fn apply_column_type_ref(
     column: &mut kalamdb_commons::models::schemas::ColumnDefinition,
     type_ref: &TypeReference,
 ) -> Result<(), KalamDbError> {
-    column.is_array = type_ref.is_array;
-    column.element_nullable = !type_ref.not_null || type_ref.is_array;
-    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
-        return Ok(());
+    let element_nullable = !type_ref.not_null || type_ref.is_array;
+    let base_type = if let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) {
+        let stores = app_context.system_tables().catalog_stores();
+        let catalog = stores
+            .find_type(&namespace_id, &name)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("type {namespace_id}.{name} not found"))
+            })?;
+        if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
+            return Err(KalamDbError::InvalidSql(format!(
+                "topic payload type {namespace_id}.{name} cannot be stored as a column"
+            )));
+        }
+        kalamdb_commons::LogicalTypeRef::named(catalog.type_id)
+    } else if type_ref.name.eq_ignore_ascii_case("jsonb") {
+        kalamdb_commons::LogicalTypeRef::jsonb()
+    } else if type_ref.name.eq_ignore_ascii_case("timestamptz") {
+        kalamdb_commons::LogicalTypeRef::timestamptz()
+    } else {
+        kalamdb_commons::LogicalTypeRef::from_builtin(
+            type_ref.builtin_data_type().unwrap_or_else(|| column.data_type()),
+        )
     };
-    let stores = app_context.system_tables().catalog_stores();
-    let catalog = stores
-        .find_type(&namespace_id, &name)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .ok_or_else(|| KalamDbError::NotFound(format!("type {namespace_id}.{name} not found")))?;
-    if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
-        return Err(KalamDbError::InvalidSql(format!(
-            "topic payload type {namespace_id}.{name} cannot be stored as a column"
-        )));
-    }
-    column.named_type_id = Some(catalog.type_id);
+    column.logical_type = if type_ref.is_array {
+        kalamdb_commons::LogicalTypeRef::array(base_type, element_nullable)
+    } else {
+        base_type
+    };
     Ok(())
 }

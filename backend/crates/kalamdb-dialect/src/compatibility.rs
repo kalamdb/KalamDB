@@ -75,7 +75,7 @@ pub fn map_sql_type_to_kalam(sql_type: &SQLDataType) -> Result<KalamDataType, St
         Datetime(_) => Ok(KalamDataType::DateTime),
         Time(_, _) => Ok(KalamDataType::Time),
         SQLDataType::Uuid => Ok(KalamDataType::Uuid),
-        Decimal(info) => map_decimal_kalam_type(info),
+        Decimal(info) | Numeric(info) => map_decimal_kalam_type(info),
         Custom(name, modifiers) => map_custom_kalam_type(name, modifiers),
         Array(_) | Enum(_, _) | Set(_) | Struct(_, _) => Ok(KalamDataType::Text),
         other => Err(format!("Unsupported data type: {other:?}")),
@@ -99,8 +99,32 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
             Ok(type_ref)
         },
         Custom(name, modifiers) => match map_custom_kalam_type(name, modifiers) {
-            Ok(data_type) => Ok(builtin_type_reference(data_type)),
+            Ok(data_type) => {
+                let ident = custom_type_identifier(name);
+                let mut tr = builtin_type_reference(data_type);
+                if ident.eq_ignore_ascii_case("jsonb") {
+                    tr.name = "JSONB".to_string();
+                } else if ident.eq_ignore_ascii_case("timestamptz") {
+                    tr.name = "TIMESTAMPTZ".to_string();
+                }
+                Ok(tr)
+            },
             Err(_) => Ok(named_type_reference(name)?),
+        },
+        SQLDataType::JSONB => {
+            let mut tr = builtin_type_reference(KalamDataType::Json);
+            tr.name = "JSONB".to_string();
+            Ok(tr)
+        },
+        Timestamp(_, tz)
+            if matches!(
+                tz,
+                sqlparser::ast::TimezoneInfo::WithTimeZone | sqlparser::ast::TimezoneInfo::Tz
+            ) =>
+        {
+            let mut tr = builtin_type_reference(KalamDataType::Timestamp);
+            tr.name = "TIMESTAMPTZ".to_string();
+            Ok(tr)
         },
         other => Ok(builtin_type_reference(map_sql_type_to_kalam(other)?)),
     }
@@ -215,6 +239,21 @@ mod tests {
     fn maps_sql_type_to_kalam() {
         let dtype = map_sql_type_to_kalam(&SQLDataType::Text).unwrap();
         assert_eq!(dtype, KalamDataType::Text);
+    }
+
+    #[test]
+    fn maps_numeric_precision_and_scale_onto_decimal128() {
+        let dtype = map_sql_type_to_kalam(&SQLDataType::Numeric(
+            sqlparser::ast::ExactNumberInfo::PrecisionAndScale(12, 2),
+        ))
+        .unwrap();
+        assert_eq!(
+            dtype,
+            KalamDataType::Decimal {
+                precision: 12,
+                scale:     2,
+            }
+        );
     }
 
     #[test]

@@ -233,16 +233,9 @@ fn validate_named_type(
                 let child = TypeSpec {
                     display:   format!("{} field '{}'", spec.display, field.name),
                     type_id:   field.type_ref.named_type_id().cloned(),
-                    data_type: match &field.type_ref {
-                        kalamdb_commons::LogicalTypeRef::Builtin(dt) => Some(*dt),
-                        kalamdb_commons::LogicalTypeRef::List { element, .. } => {
-                            match element.as_ref() {
-                                kalamdb_commons::LogicalTypeRef::Builtin(dt) => Some(*dt),
-                                _ => None,
-                            }
-                        },
-                        _ => None,
-                    },
+                    data_type: field.type_ref.builtin().or_else(|| {
+                        field.type_ref.element().and_then(kalamdb_commons::LogicalTypeRef::builtin)
+                    }),
                     is_array:  field.type_ref.is_array(),
                     not_null:  field.not_null,
                     nonempty:  false,

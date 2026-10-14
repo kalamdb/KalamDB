@@ -125,10 +125,10 @@ fn load_existing_vector_state(
         ))
     })?;
 
-    if !snapshot.column_name.eq_ignore_ascii_case(column_name) {
+    if &snapshot.table_id != table_id {
         return Err(VectorFlushError::new(format!(
-            "Snapshot column mismatch: expected '{}', found '{}'",
-            column_name, snapshot.column_name
+            "Snapshot table_id mismatch for '{}': expected '{}', found '{}'",
+            column_name, table_id, snapshot.table_id
         )));
     }
     if snapshot.dimensions != dimensions {
@@ -162,7 +162,6 @@ fn load_existing_vector_state(
 
 fn build_snapshot_bytes(
     table_id: &TableId,
-    column_name: &str,
     dimensions: u32,
     metric: VectorMetric,
     last_applied_seq: SeqId,
@@ -197,8 +196,7 @@ fn build_snapshot_bytes(
         .map_err(|e| VectorFlushError::new(format!("Failed to serialize index: {}", e)))?;
 
     let snapshot = VixSnapshotFile {
-        table_id: table_id.to_string(),
-        column_name: column_name.to_string(),
+        table_id: table_id.clone(),
         dimensions,
         metric,
         generated_at: chrono::Utc::now().timestamp_millis(),
@@ -347,7 +345,6 @@ pub fn flush_user_scope_vectors(
         let snapshot_path = vector_snapshot_filename(&column_name, next_version);
         let bytes = build_snapshot_bytes(
             table_id,
-            &column_name,
             dimensions,
             metric,
             max_seq,
@@ -455,7 +452,6 @@ pub fn flush_shared_scope_vectors(
         let snapshot_path = vector_snapshot_filename(&column_name, next_version);
         let bytes = build_snapshot_bytes(
             table_id,
-            &column_name,
             dimensions,
             metric,
             max_seq,

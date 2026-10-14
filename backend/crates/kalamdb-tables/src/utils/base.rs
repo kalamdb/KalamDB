@@ -2521,9 +2521,9 @@ pub fn embedding_columns(table_def: &TableDefinition) -> Vec<(String, u32)> {
     table_def
         .columns
         .iter()
-        .filter_map(|column| match &column.data_type {
-            KalamDataType::Embedding(dim) if *dim > 0 => {
-                Some((column.column_name.clone(), *dim as u32))
+        .filter_map(|column| match column.data_type() {
+            KalamDataType::Embedding(dim) if dim > 0 => {
+                Some((column.column_name.clone(), u32::from(dim)))
             },
             _ => None,
         })

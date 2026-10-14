@@ -73,7 +73,40 @@ pub struct TableDefinition {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
+struct TableDefinitionSerializeRepr<'a> {
+    namespace_id:   &'a SchemaId,
+    table_name:     &'a TableName,
+    table_type:     TableType,
+    columns:        &'a [ColumnDefinition],
+    schema_version: u32,
+    next_column_id: u64,
+    table_options:  &'a TableOptions,
+    table_comment:  &'a Option<String>,
+    scalar_indexes: &'a [ScalarIndexDefinition],
+    created_at:     DateTime<Utc>,
+    updated_at:     DateTime<Utc>,
+}
+
+impl<'a> From<&'a TableDefinition> for TableDefinitionSerializeRepr<'a> {
+    fn from(table: &'a TableDefinition) -> Self {
+        Self {
+            namespace_id:   &table.namespace_id,
+            table_name:     &table.table_name,
+            table_type:     table.table_type,
+            columns:        &table.columns,
+            schema_version: table.schema_version,
+            next_column_id: table.next_column_id,
+            table_options:  &table.table_options,
+            table_comment:  &table.table_comment,
+            scalar_indexes: &table.scalar_indexes,
+            created_at:     table.created_at,
+            updated_at:     table.updated_at,
+        }
+    }
+}
+
+#[derive(Deserialize)]
 struct TableDefinitionRepr {
     namespace_id:   SchemaId,
     table_name:     TableName,
@@ -87,24 +120,6 @@ struct TableDefinitionRepr {
     scalar_indexes: Vec<ScalarIndexDefinition>,
     created_at:     DateTime<Utc>,
     updated_at:     DateTime<Utc>,
-}
-
-impl From<&TableDefinition> for TableDefinitionRepr {
-    fn from(table: &TableDefinition) -> Self {
-        Self {
-            namespace_id:   table.namespace_id.clone(),
-            table_name:     table.table_name.clone(),
-            table_type:     table.table_type,
-            columns:        table.columns.clone(),
-            schema_version: table.schema_version,
-            next_column_id: table.next_column_id,
-            table_options:  table.table_options.clone(),
-            table_comment:  table.table_comment.clone(),
-            scalar_indexes: table.scalar_indexes.clone(),
-            created_at:     table.created_at,
-            updated_at:     table.updated_at,
-        }
-    }
 }
 
 #[derive(PartialEq, Serialize)]
@@ -188,7 +203,7 @@ impl Serialize for TableDefinition {
         S: Serializer,
     {
         if serializer.is_human_readable() {
-            TableDefinitionRepr::from(self).serialize(serializer)
+            TableDefinitionSerializeRepr::from(self).serialize(serializer)
         } else {
             (
                 &self.namespace_id,
@@ -364,11 +379,11 @@ impl TableDefinition {
             .columns
             .iter()
             .map(|col| {
-                let arrow_type = col.data_type.to_arrow_type()?;
+                let arrow_type = col.data_type().to_arrow_type()?;
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
 
                 // Store KalamDataType in metadata for lossless round-trip conversion
-                field = with_kalam_data_type_metadata(field, &col.data_type);
+                field = with_kalam_data_type_metadata(field, &col.data_type());
 
                 if let Some(flags) =
                     SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)

@@ -20,12 +20,13 @@ use kalamdb_core::{
     },
 };
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
-use kalamdb_store::Partition;
+use kalamdb_store::{EntityStore, Partition};
 use kalamdb_system::{VectorEngine, VectorIndexState, VectorMetric};
 use kalamdb_vector::{
-    normalize_vector_column_name, shared_vector_ops_partition_name,
-    shared_vector_pk_index_partition_name, user_vector_ops_partition_name,
-    user_vector_pk_index_partition_name,
+    invalidate_hot_query_cache_for_table, new_indexed_shared_vector_hot_store,
+    new_indexed_user_vector_hot_store, normalize_vector_column_name,
+    shared_vector_ops_partition_name, shared_vector_pk_index_partition_name,
+    user_vector_ops_partition_name, user_vector_pk_index_partition_name,
 };
 
 use crate::helpers::guards::block_system_namespace_modification;
@@ -53,7 +54,7 @@ impl AlterTableHandler {
                 KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
             })?;
 
-        let dimensions = match column.data_type {
+        let dimensions = match column.data_type() {
             kalamdb_commons::models::datatypes::KalamDataType::Embedding(dim) if dim > 0 => dim,
             _ => {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -256,6 +257,7 @@ impl AlterTableHandler {
         table_type: TableType,
         manifest_user: Option<&UserId>,
         column_name: &str,
+        extra_snapshot_path: Option<&str>,
     ) -> Result<(), KalamDbError> {
         let registry = self.app_context.schema_registry();
         let cached_table = registry.get(table_id).ok_or_else(|| {
@@ -282,8 +284,9 @@ impl AlterTableHandler {
                 listed_path
             };
 
-            let is_current_snapshot = relative_path.starts_with(&vector_snapshot_prefix)
-                && relative_path.ends_with(".vix");
+            let is_current_snapshot = (relative_path.starts_with(&vector_snapshot_prefix)
+                && relative_path.ends_with(".vix"))
+                || extra_snapshot_path.is_some_and(|extra| extra == relative_path);
             if !is_current_snapshot {
                 continue;
             }
@@ -298,6 +301,158 @@ impl AlterTableHandler {
                 })?;
         }
 
+        Ok(())
+    }
+
+    fn rename_vector_index_if_present(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+        old_column_name: &str,
+        new_column_name: &str,
+        actor_user: &UserId,
+    ) -> Result<(), KalamDbError> {
+        if !matches!(table_def.table_type, TableType::User | TableType::Shared) {
+            return Ok(());
+        }
+
+        let is_embedding_column = table_def.columns.iter().any(|col| {
+            col.column_name.eq_ignore_ascii_case(new_column_name)
+                && matches!(
+                    col.data_type(),
+                    kalamdb_commons::models::datatypes::KalamDataType::Embedding(_)
+                )
+        });
+        if !is_embedding_column {
+            return Ok(());
+        }
+
+        let manifest_service = self.app_context.manifest_service();
+        let scopes =
+            self.manifest_scopes_for_vector_op(table_id, table_def.table_type, actor_user)?;
+        let mut renamed_any_manifest = false;
+
+        for scope in &scopes {
+            let mut manifest = manifest_service
+                .ensure_manifest_initialized(table_id, scope.as_ref())
+                .map_err(|e| {
+                    KalamDbError::ExecutionError(format!(
+                        "Failed to initialize manifest for {}: {}",
+                        table_id, e
+                    ))
+                })?;
+
+            let old_key = manifest
+                .vector_indexes
+                .keys()
+                .find(|key| key.eq_ignore_ascii_case(old_column_name))
+                .cloned();
+            if let Some(old_key) = old_key {
+                if let Some(mut entry) = manifest.vector_indexes.remove(&old_key) {
+                    entry.column_name = new_column_name.to_string();
+                    entry.updated_at = chrono::Utc::now().timestamp_millis();
+                    manifest
+                        .vector_indexes
+                        .insert(new_column_name.to_string(), entry);
+                    manifest_service
+                        .persist_manifest(table_id, scope.as_ref(), &manifest)
+                        .map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to persist manifest for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    renamed_any_manifest = true;
+                }
+            }
+        }
+
+        let backend = self.app_context.storage_backend();
+        match table_def.table_type {
+            TableType::User => {
+                let old_store = new_indexed_user_vector_hot_store(
+                    Arc::clone(&backend),
+                    table_id,
+                    old_column_name,
+                );
+                let existing = old_store.scan_all_typed(None, None, None).unwrap_or_default();
+                if renamed_any_manifest || !existing.is_empty() {
+                    self.ensure_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        new_column_name,
+                    )?;
+                    if !existing.is_empty() {
+                        let new_store = new_indexed_user_vector_hot_store(
+                            Arc::clone(&backend),
+                            table_id,
+                            new_column_name,
+                        );
+                        let migrated: Vec<_> = existing
+                            .into_iter()
+                            .map(|(id, mut op)| {
+                                op.column_name = new_column_name.to_string();
+                                (id, op)
+                            })
+                            .collect();
+                        new_store.insert_batch(&migrated).map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to migrate user hot vector ops for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    }
+                    self.drop_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        old_column_name,
+                    );
+                }
+            },
+            TableType::Shared => {
+                let old_store = new_indexed_shared_vector_hot_store(
+                    Arc::clone(&backend),
+                    table_id,
+                    old_column_name,
+                );
+                let existing = old_store.scan_all_typed(None, None, None).unwrap_or_default();
+                if renamed_any_manifest || !existing.is_empty() {
+                    self.ensure_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        new_column_name,
+                    )?;
+                    if !existing.is_empty() {
+                        let new_store = new_indexed_shared_vector_hot_store(
+                            Arc::clone(&backend),
+                            table_id,
+                            new_column_name,
+                        );
+                        let migrated: Vec<_> = existing
+                            .into_iter()
+                            .map(|(id, mut op)| {
+                                op.column_name = new_column_name.to_string();
+                                (id, op)
+                            })
+                            .collect();
+                        new_store.insert_batch(&migrated).map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to migrate shared hot vector ops for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    }
+                    self.drop_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        old_column_name,
+                    );
+                }
+            },
+            TableType::System | TableType::Stream => {},
+        }
+
+        invalidate_hot_query_cache_for_table(table_id);
         Ok(())
     }
 
@@ -383,13 +538,6 @@ impl AlterTableHandler {
                 let (resolved_column_name, dimensions) =
                     self.resolve_vector_column(table_def.as_ref(), column_name)?;
                 for scope in &scopes {
-                    self.delete_vector_cold_artifacts(
-                        &table_id,
-                        table_type,
-                        scope.as_ref(),
-                        &resolved_column_name,
-                    )?;
-
                     let mut manifest = manifest_service
                         .ensure_manifest_initialized(&table_id, scope.as_ref())
                         .map_err(|e| {
@@ -398,6 +546,17 @@ impl AlterTableHandler {
                                 table_id, e
                             ))
                         })?;
+                    let extra_snapshot_path = manifest
+                        .vector_indexes
+                        .get(&resolved_column_name)
+                        .and_then(|meta| meta.snapshot_path.clone());
+                    self.delete_vector_cold_artifacts(
+                        &table_id,
+                        table_type,
+                        scope.as_ref(),
+                        &resolved_column_name,
+                        extra_snapshot_path.as_deref(),
+                    )?;
                     let existing_metric = manifest
                         .vector_indexes
                         .get(&resolved_column_name)
@@ -606,6 +765,19 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             }
             if let Some(name) = dropped_index_name {
                 self.drop_scalar_index_partition(&table_id, table_def.table_type, &name);
+            }
+            if let ColumnOperation::Rename {
+                old_column_name,
+                new_column_name,
+            } = &statement.operation
+            {
+                self.rename_vector_index_if_present(
+                    &table_id,
+                    &table_def,
+                    old_column_name,
+                    new_column_name,
+                    context.user_id(),
+                )?;
             }
 
             // Log DDL operation
@@ -853,12 +1025,12 @@ fn apply_alter_operation(
 
             // Track if anything actually changes
             let new_type = new_data_type.clone();
-            let type_changed = col.data_type != new_type;
+            let type_changed = col.data_type() != new_type;
             let nullable_changed = nullable.is_some_and(|n| col.is_nullable != n);
             let changed = type_changed || nullable_changed;
 
             if type_changed {
-                col.data_type = new_type;
+                col.set_data_type(new_type);
             }
             if let Some(n) = nullable {
                 col.is_nullable = *n;

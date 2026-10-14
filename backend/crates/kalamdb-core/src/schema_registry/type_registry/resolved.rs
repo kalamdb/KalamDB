@@ -22,6 +22,17 @@ pub struct ResolvedType {
     pub arrow_type:   DataType,
 }
 
+/// Arrow layout for one [`LogicalTypeRef`], including builtin modifiers.
+///
+/// Named types point at an interned [`ResolvedType`]. The modifier stays on
+/// `type_ref`; Arrow does not have a separate jsonb or timestamptz type.
+#[derive(Debug, Clone)]
+pub struct ResolvedLayout {
+    pub type_ref:   LogicalTypeRef,
+    pub arrow_type: DataType,
+    pub nested:     Option<Arc<ResolvedType>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedTypeField {
     pub name:              String,

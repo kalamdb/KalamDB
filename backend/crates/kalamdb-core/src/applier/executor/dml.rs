@@ -241,7 +241,7 @@ impl DmlExecutor {
     fn table_has_file_columns(&self, table_id: &TableId) -> bool {
         match self.app_context.schema_registry().get_table_if_exists(table_id) {
             Ok(Some(table_def)) => table_def.columns.iter().any(|column| {
-                column.data_type == kalamdb_commons::models::datatypes::KalamDataType::File
+                column.data_type() == kalamdb_commons::models::datatypes::KalamDataType::File
             }),
             Ok(None) => false,
             Err(error) => {
@@ -422,14 +422,15 @@ impl DmlExecutor {
         rows: &[Row],
     ) -> Result<usize, ApplierError> {
         let (_log_index, versions) = self.local_versions(rows.len())?;
-        self.insert_user_data_with_versions(table_id, user_id, rows, &versions).await
+        self.insert_user_data_with_versions(table_id, user_id, rows.to_vec(), &versions)
+            .await
     }
 
     pub async fn insert_user_data_with_versions(
         &self,
         table_id: &TableId,
         user_id: &UserId,
-        rows: &[Row],
+        rows: Vec<Row>,
         versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         if rows.is_empty() {
@@ -444,7 +445,7 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
             let row_ids = provider
-                .insert_batch_with_versions(user_id, rows.to_vec(), versions)
+                .insert_batch_with_versions(user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::User, Some(user_id), log_index);
@@ -454,7 +455,7 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
         {
             let row_ids =
-                provider.insert_batch(user_id, rows.to_vec(), versions).await.map_err(|e| {
+                provider.insert_batch(user_id, rows, versions).await.map_err(|e| {
                     ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
                 })?;
             self.defer_observe(table_id, TableType::Stream, Some(user_id), log_index);
@@ -656,7 +657,7 @@ impl DmlExecutor {
         rows: &[Row],
     ) -> Result<usize, ApplierError> {
         let (_log_index, versions) = self.local_versions(rows.len())?;
-        self.insert_shared_data_with_versions(table_id, actor_user_id, rows, &versions)
+        self.insert_shared_data_with_versions(table_id, actor_user_id, rows.to_vec(), &versions)
             .await
     }
 
@@ -664,7 +665,7 @@ impl DmlExecutor {
         &self,
         table_id: &TableId,
         actor_user_id: Option<&UserId>,
-        rows: &[Row],
+        rows: Vec<Row>,
         versions: &[VersionId],
     ) -> Result<usize, ApplierError> {
         if rows.is_empty() {
@@ -678,7 +679,7 @@ impl DmlExecutor {
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
         {
             let row_ids = provider
-                .insert_batch_with_versions(actor_user_id, rows.to_vec(), versions)
+                .insert_batch_with_versions(actor_user_id, rows, versions)
                 .await
                 .map_err(|e| ApplierError::from_table(e, "Failed to insert batch"))?;
             self.defer_observe(table_id, TableType::Shared, actor_user_id, log_index);

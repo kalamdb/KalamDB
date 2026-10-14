@@ -10,10 +10,54 @@ use kalamdb_commons::{
 };
 use kalamdb_system::{CatalogStores, CatalogType, CatalogTypeField};
 
-use super::{ResolvedType, ResolvedTypeField, RevisionKey, TypeRegistry};
+use super::{ResolvedLayout, ResolvedType, ResolvedTypeField, RevisionKey, TypeRegistry};
 use crate::error::KalamDbError;
 
 impl TypeRegistry {
+    /// Resolve a logical type to an Arrow layout. Named types come from the
+    /// interned revision cache. Builtin modifiers stay on the logical type.
+    pub fn resolve(
+        &self,
+        stores: &CatalogStores,
+        type_ref: &LogicalTypeRef,
+    ) -> Result<ResolvedLayout, KalamDbError> {
+        match type_ref {
+            LogicalTypeRef::Builtin(_) | LogicalTypeRef::Jsonb | LogicalTypeRef::TimestampTz => {
+                Ok(ResolvedLayout {
+                    type_ref:   type_ref.clone(),
+                    arrow_type: arrow_type_for_ref(type_ref, None)?,
+                    nested:     None,
+                })
+            },
+            LogicalTypeRef::Named { type_id } => {
+                let nested = self.get_or_load(stores, type_id)?;
+                Ok(ResolvedLayout {
+                    type_ref:   type_ref.clone(),
+                    arrow_type: nested.arrow_type.clone(),
+                    nested:     Some(nested),
+                })
+            },
+            LogicalTypeRef::List {
+                element,
+                element_nullable,
+            } => {
+                let inner = self.resolve(stores, element)?;
+                Ok(ResolvedLayout {
+                    type_ref:   type_ref.clone(),
+                    arrow_type: DataType::List(Arc::new(Field::new(
+                        "item",
+                        inner.arrow_type,
+                        *element_nullable,
+                    ))),
+                    nested:     inner.nested,
+                })
+            },
+            LogicalTypeRef::Map { .. } => Err(KalamDbError::InvalidSql(
+                "MAP types are reserved and cannot be stored".to_string(),
+            )),
+        }
+    }
+
     pub(super) fn load_current(
         &self,
         stores: &CatalogStores,
@@ -147,7 +191,7 @@ impl TypeRegistry {
                 name:              catalog_field.name.clone(),
                 slot:              catalog_field.physical_slot(),
                 ordinal:           catalog_field.ordinal,
-                type_ref:          LogicalTypeRef::Builtin(KalamDataType::Text),
+                type_ref:          LogicalTypeRef::from_builtin(KalamDataType::Text),
                 not_null:          true,
                 dropped:           false,
                 nested:            None,
@@ -192,6 +236,12 @@ fn arrow_type_for_ref(
 ) -> Result<DataType, KalamDbError> {
     match type_ref {
         LogicalTypeRef::Builtin(data_type) => data_type
+            .to_arrow_type()
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
+        LogicalTypeRef::Jsonb => KalamDataType::Json
+            .to_arrow_type()
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
+        LogicalTypeRef::TimestampTz => KalamDataType::Timestamp
             .to_arrow_type()
             .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
         LogicalTypeRef::Named { .. } => {
