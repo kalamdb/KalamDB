@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
     },
 };
 
@@ -77,6 +77,13 @@ pub struct SchemaRegistry {
 
     /// DataFusion base session context for table registration (set once during init)
     base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
+
+    /// Serializes DataFusion catalog register/deregister.
+    ///
+    /// `MemorySchemaProvider::register_table` checks existence and inserts as two
+    /// steps. Concurrent ALTER and provider reloads otherwise fail with
+    /// "table already exists" and abort the Raft apply.
+    catalog_registration: Mutex<()>,
 }
 
 impl std::fmt::Debug for SchemaRegistry {
@@ -112,6 +119,7 @@ impl SchemaRegistry {
             version_cache_counter:   AtomicU64::new(0),
             type_registry:           TypeRegistry::new(),
             base_session_context:    OnceLock::new(),
+            catalog_registration:    Mutex::new(()),
         }
     }
 
@@ -1149,6 +1157,10 @@ impl SchemaRegistry {
         table_id: &TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
+        let _registration = self
+            .catalog_registration
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(base_session) = self.base_session_context.get() {
             // Use constant catalog name "kalam"
             let catalog = base_session.catalog("kalam").ok_or_else(|| {
@@ -1208,12 +1220,32 @@ impl SchemaRegistry {
                 provider.schema().fields().len()
             );
 
-            schema.register_table(table_name.to_string(), provider).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to register table {} with DataFusion: {}",
-                    table_id, e
-                ))
-            })?;
+            let replacement_provider = Arc::clone(&provider);
+            if let Err(error) = schema.register_table(table_name.to_string(), provider) {
+                let message = error.to_string();
+                if !message.contains("already exists") {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Failed to register table {} with DataFusion: {}",
+                        table_id, message
+                    )));
+                }
+                // Lost a race with a registration that bypassed this lock, or the
+                // existence check observed a stale entry. Replace and retry once.
+                schema.deregister_table(table_name).map_err(|deregister_error| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to deregister existing table {} from DataFusion: {}",
+                        table_id, deregister_error
+                    ))
+                })?;
+                schema.register_table(table_name.to_string(), replacement_provider).map_err(
+                    |retry_error| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to register table {} with DataFusion: {}",
+                            table_id, retry_error
+                        ))
+                    },
+                )?;
+            }
 
             log::debug!("[SchemaRegistry] Registered table {} with DataFusion catalog", table_id);
         }
@@ -1223,6 +1255,10 @@ impl SchemaRegistry {
 
     /// Deregister a table from DataFusion's catalog
     fn deregister_from_datafusion(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        let _registration = self
+            .catalog_registration
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(base_session) = self.base_session_context.get() {
             let catalog_name =
                 base_session.state().config().options().catalog.default_catalog.clone();
