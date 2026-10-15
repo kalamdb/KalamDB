@@ -37,8 +37,8 @@ async fn test_scenario_01_chat_app_core() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // =========================================================
     // Step 2: Create tables
@@ -375,8 +375,8 @@ async fn test_scenario_01_service_writes_as_user() -> anyhow::Result<()> {
     let ns = unique_ns("chat_svc");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -444,8 +444,8 @@ async fn test_scenario_01_stream_table_ttl() -> anyhow::Result<()> {
     let ns = unique_ns("chat_stream");
 
     // Create namespace
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Create STREAM table with short TTL for testing
     let resp = server

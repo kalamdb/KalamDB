@@ -39,7 +39,7 @@ fn nodes_from(leader: &str, followers: &[String]) -> Vec<String> {
 fn setup_namespace(leader: &str, label: &str) -> String {
     let namespace = generate_unique_namespace(label);
     let _ = execute_on_node(leader, &format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
-    execute_on_node(leader, &format!("CREATE NAMESPACE {namespace}"))
+    execute_on_node(leader, &format!("CREATE SCHEMA {namespace}"))
         .unwrap_or_else(|err| panic!("create namespace {namespace}: {err}"));
     namespace
 }

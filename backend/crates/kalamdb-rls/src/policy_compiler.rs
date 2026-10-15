@@ -293,7 +293,7 @@ fn resolve_column_id(table: &TableDefinition, column_name: &str) -> Result<u64, 
 
 fn object_name_to_table_id(
     name: &ObjectName,
-    default_namespace: &kalamdb_commons::NamespaceId,
+    default_namespace: &kalamdb_commons::SchemaId,
 ) -> Result<TableId, String> {
     let parts = name
         .0

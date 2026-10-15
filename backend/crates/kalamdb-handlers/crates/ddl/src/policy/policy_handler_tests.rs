@@ -8,7 +8,7 @@ use kalamdb_commons::{
         },
         ColumnId,
     },
-    BoundExprShape, NamespaceId, PolicyId, PolicyProgram, PrincipalExpr, Role, TableId, TableName,
+    BoundExprShape, SchemaId, PolicyId, PolicyProgram, PrincipalExpr, Role, TableId, TableName,
     UserId,
 };
 use kalamdb_core::{
@@ -38,7 +38,7 @@ fn with_user_id_index(mut table: TableDefinition) -> TableDefinition {
 
 fn shared_table(name: &str) -> TableDefinition {
     TableDefinition::new(
-        NamespaceId::new("chat"),
+        SchemaId::new("chat"),
         TableName::new(name),
         TableType::Shared,
         vec![
@@ -76,7 +76,7 @@ async fn create_policy_compiles_and_persists_definition() {
     let statement = CreatePolicyStatement::parse(
         "CREATE POLICY owner_read ON chat.documents FOR SELECT TO user USING (owner_id = \
          CURRENT_USER)",
-        &NamespaceId::new("chat"),
+        &SchemaId::new("chat"),
     )
     .expect("parse policy");
     let handler = CreatePolicyHandler::new(app_context.clone());
@@ -121,7 +121,7 @@ async fn alter_recompiles_and_drop_removes_policy() {
         .execute(
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_mutation FOR SELECT USING (true)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -135,7 +135,7 @@ async fn alter_recompiles_and_drop_removes_policy() {
             AlterPolicyStatement::parse(
                 "ALTER POLICY owner_read ON chat.documents_mutation USING (owner_id = \
                  CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -164,7 +164,7 @@ async fn alter_recompiles_and_drop_removes_policy() {
         .execute(
             DropPolicyStatement::parse(
                 "DROP POLICY owner_read ON chat.documents_mutation",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -235,7 +235,7 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_scan FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -280,7 +280,7 @@ async fn shared_scan_default_denies_and_filters_post_bind() {
 async fn membership_rls_runs_after_mvcc_winner_selection() {
     let app_context = test_app_context_simple();
     let mut messages = TableDefinition::new(
-        NamespaceId::new("chat"),
+        SchemaId::new("chat"),
         TableName::new("mvcc_messages"),
         TableType::Shared,
         vec![
@@ -293,7 +293,7 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
     .unwrap();
     let mut members = with_user_id_index(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("mvcc_members"),
             TableType::Shared,
             vec![
@@ -352,7 +352,7 @@ async fn membership_rls_runs_after_mvcc_winner_selection() {
                 "CREATE POLICY member_read ON chat.mvcc_messages FOR SELECT TO user USING \
                  (group_id IN (SELECT group_id FROM chat.mvcc_members WHERE user_id = \
                  CURRENT_USER))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -567,7 +567,7 @@ async fn shared_dml_applies_using_and_with_check_atomically() {
     ] {
         CreatePolicyHandler::new(app_context.clone())
             .execute(
-                CreatePolicyStatement::parse(sql, &NamespaceId::new("chat")).unwrap(),
+                CreatePolicyStatement::parse(sql, &SchemaId::new("chat")).unwrap(),
                 Vec::new(),
                 &admin,
             )
@@ -739,7 +739,7 @@ async fn client_or_true_cannot_bypass_row_local_rls() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_bypass FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -799,7 +799,7 @@ async fn nested_query_cannot_bypass_row_local_rls() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_nested FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -863,7 +863,7 @@ async fn plan_cache_binds_current_user_after_lookup() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_plan_cache FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -902,7 +902,7 @@ async fn user_on_conflict_on_shared_tables_is_rejected() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_write ON chat.documents_on_conflict FOR ALL TO user USING \
                  (owner_id = CURRENT_USER) WITH CHECK (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -960,7 +960,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_live_revoke FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -979,7 +979,7 @@ async fn live_authorization_fail_closes_when_policy_catalog_changes() {
         .execute(
             DropPolicyStatement::parse(
                 "DROP POLICY owner_read ON chat.documents_live_revoke",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1038,7 +1038,7 @@ async fn live_authorization_does_not_pick_up_grants_until_rebind() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_live_grant FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1099,7 +1099,7 @@ async fn rejects_unbounded_not_owner_policy() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY not_owner_read ON chat.documents_null_owner FOR SELECT TO user \
                  USING (NOT (owner_id = CURRENT_USER))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1125,7 +1125,7 @@ async fn alter_rejects_unbounded_not_policy_for_indexed_live_routing() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_alter_not FOR SELECT USING (owner_id \
                  = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1139,7 +1139,7 @@ async fn alter_rejects_unbounded_not_policy_for_indexed_live_routing() {
             AlterPolicyStatement::parse(
                 "ALTER POLICY owner_read ON chat.documents_alter_not USING (NOT (owner_id = \
                  CURRENT_USER))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1154,7 +1154,7 @@ async fn alter_rejects_unbounded_not_policy_for_indexed_live_routing() {
 async fn membership_policy_hides_rows_with_null_join_key() {
     let app_context = test_app_context_simple();
     let mut messages = TableDefinition::new(
-        NamespaceId::new("chat"),
+        SchemaId::new("chat"),
         TableName::new("null_key_messages"),
         TableType::Shared,
         vec![
@@ -1167,7 +1167,7 @@ async fn membership_policy_hides_rows_with_null_join_key() {
     .unwrap();
     let mut members = with_user_id_index(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("null_key_members"),
             TableType::Shared,
             vec![
@@ -1248,7 +1248,7 @@ async fn membership_policy_hides_rows_with_null_join_key() {
                 "CREATE POLICY member_read ON chat.null_key_messages FOR SELECT TO user USING \
                  (group_id IN (SELECT group_id FROM chat.null_key_members WHERE user_id = \
                  CURRENT_USER AND status <> 'blocked'))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1308,7 +1308,7 @@ async fn union_cannot_bypass_row_local_rls() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_union FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1335,7 +1335,7 @@ async fn union_cannot_bypass_row_local_rls() {
 async fn live_authorization_fails_closed_when_membership_is_revoked() {
     let app_context = test_app_context_simple();
     let mut messages = TableDefinition::new(
-        NamespaceId::new("chat"),
+        SchemaId::new("chat"),
         TableName::new("live_membership_messages"),
         TableType::Shared,
         vec![
@@ -1348,7 +1348,7 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
     .unwrap();
     let mut members = with_user_id_index(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("live_membership_members"),
             TableType::Shared,
             vec![
@@ -1408,7 +1408,7 @@ async fn live_authorization_fails_closed_when_membership_is_revoked() {
                 "CREATE POLICY member_read ON chat.live_membership_messages FOR SELECT TO user \
                  USING (group_id IN (SELECT group_id FROM chat.live_membership_members WHERE \
                  user_id = CURRENT_USER))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1465,7 +1465,7 @@ async fn service_role_does_not_inherit_user_targeted_policies() {
             CreatePolicyStatement::parse(
                 "CREATE POLICY owner_read ON chat.documents_service_role FOR SELECT TO user USING \
                  (owner_id = CURRENT_USER)",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),
@@ -1489,7 +1489,7 @@ async fn service_role_does_not_inherit_user_targeted_policies() {
 async fn membership_bind_uses_indexed_principal_among_many_rows() {
     let app_context = test_app_context_simple();
     let mut messages = TableDefinition::new(
-        NamespaceId::new("chat"),
+        SchemaId::new("chat"),
         TableName::new("scaled_messages"),
         TableType::Shared,
         vec![
@@ -1502,7 +1502,7 @@ async fn membership_bind_uses_indexed_principal_among_many_rows() {
     .unwrap();
     let mut members = with_user_id_index(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("scaled_members"),
             TableType::Shared,
             vec![
@@ -1590,7 +1590,7 @@ async fn membership_bind_uses_indexed_principal_among_many_rows() {
                 "CREATE POLICY member_read ON chat.scaled_messages FOR SELECT TO user USING \
                  (group_id IN (SELECT group_id FROM chat.scaled_members WHERE user_id = \
                  CURRENT_USER))",
-                &NamespaceId::new("chat"),
+                &SchemaId::new("chat"),
             )
             .unwrap(),
             Vec::new(),

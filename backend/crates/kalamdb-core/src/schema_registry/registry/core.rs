@@ -1266,7 +1266,8 @@ impl SchemaRegistry {
         let tables_provider = self.app_context().system_tables().tables();
 
         // Scan all tables from storage
-        let all_entries = tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")?;
+        let all_entries =
+            tables_provider.list_tables().into_kalamdb_error("Failed to scan tables")?;
         Ok(all_entries)
     }
 

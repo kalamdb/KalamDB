@@ -16,7 +16,7 @@ fn test_cli_subscription_initial_and_changes() {
     let table_full = format!("{}.items", namespace);
 
     // Ensure namespace exists
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace));
 
     // Create user table
     let _ = execute_sql_as_root_via_cli(&format!(

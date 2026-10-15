@@ -230,7 +230,7 @@ mod tests {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
     }
 
-    #[ignore = "Requires Raft for CREATE NAMESPACE"]
+    #[ignore = "Requires Raft for CREATE SCHEMA"]
     #[tokio::test]
     async fn test_registry_create_namespace() {
         use kalamdb_sql::classifier::SqlStatementKind;
@@ -240,7 +240,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = SqlStatement::new(
-            "CREATE NAMESPACE test_registry_ns".to_string(),
+            "CREATE SCHEMA test_registry_ns".to_string(),
             SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
                 name:          SchemaId::new("test_registry_ns"),
                 if_not_exists: false,
@@ -351,7 +351,7 @@ mod tests {
         );
 
         let stmt = SqlStatement::new(
-            "CREATE NAMESPACE unauthorized_ns".to_string(),
+            "CREATE SCHEMA unauthorized_ns".to_string(),
             SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
                 name:          SchemaId::new("unauthorized_ns"),
                 if_not_exists: false,

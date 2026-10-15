@@ -19,7 +19,8 @@ pub use function_value::{decode_function_value, encode_function_value, FunctionV
 pub use model::{model_ms_to_row, model_to_row, row_to_model, row_to_model_ms};
 pub use object::{
     decode_object, decode_string_list, encode_object, encode_object_versioned, encode_string_list,
-    has_object_magic, EncodedObject, ObjectKind,
+    has_object_magic, is_row_v2_writer_enabled, set_row_v2_writer_enabled, EncodedObject,
+    ObjectKind, FLAG_ROW_BODY_V2, FLAG_TOMBSTONE_ONLY, SUPPORTED_ROW_FLAGS,
 };
 pub use protocol::{
     decode_packed_data_response, decode_packed_delete, decode_packed_insert, decode_packed_log_id,
@@ -35,9 +36,10 @@ pub use row::{
     decode_payloads_to_arrow_batch, decode_row_fields, decode_row_metadata, decode_shared_row,
     decode_shared_row_selected, decode_stream_row, decode_user_row, decode_user_row_selected,
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
-    encode_stream_row, encode_user_row, encode_user_row_from_columns, storage_data_type_from_arrow,
+    encode_shared_row_v2, encode_stream_row, encode_tombstone_row_v2, encode_user_row,
+    encode_user_row_from_columns, encode_user_row_v2, storage_data_type_from_arrow,
     storage_data_type_from_kalam, storage_schema_from_table, storage_schema_from_table_with_arrow,
-    RowMetadata, StorageDataType, StorageField, StorageSchema,
+    RowMetadata, RowView, StorageDataType, StorageField, StorageSchema, StorageVersionLayout,
 };
 pub use stream_frame::{
     append_stream_delete_frame, append_stream_put_frame, decode_raw_stream_record, RawStreamRecord,

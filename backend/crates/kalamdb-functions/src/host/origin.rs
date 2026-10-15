@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_commons::{
-    models::{FunctionRevisionId, NamespaceId, RoutineId, UserId},
+    models::{FunctionRevisionId, SchemaId, RoutineId, UserId},
     Role, RoutineSecurityMode,
 };
 use parking_lot::Mutex;
@@ -73,18 +73,19 @@ impl FunctionCallOrigin {
 pub struct PrincipalKey {
     pub user:      UserId,
     pub role:      Role,
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // revision_id/security are kept on the frame for nested INVOKER/DEFINER
+#[allow(dead_code)] // revision_id/security/volatility are kept on the frame for nested INVOKER/DEFINER & volatility enforcement
 pub struct ProcedureFrame {
     pub routine_id:     RoutineId,
     pub revision_id:    FunctionRevisionId,
-    pub namespace_id:   NamespaceId,
+    pub namespace_id:   SchemaId,
     pub principal_user: UserId,
     pub principal_role: Role,
     pub security:       RoutineSecurityMode,
+    pub volatility:     kalamdb_commons::models::RoutineVolatility,
 }
 
 impl ProcedureFrame {
@@ -113,10 +114,11 @@ mod tests {
         let frame = ProcedureFrame {
             routine_id:     RoutineId::new("api.child"),
             revision_id:    FunctionRevisionId::new("backend:rev"),
-            namespace_id:   NamespaceId::new("api"),
+            namespace_id:   SchemaId::new("api"),
             principal_user: UserId::new("alice"),
             principal_role: Role::User,
             security:       RoutineSecurityMode::Invoker,
+            volatility:     kalamdb_commons::models::RoutineVolatility::default(),
         };
         assert_eq!(frame.principal_user.as_str(), "alice");
         assert_eq!(frame.principal_role, Role::User);
@@ -127,10 +129,11 @@ mod tests {
         let frame = ProcedureFrame {
             routine_id:     RoutineId::new("api.child"),
             revision_id:    FunctionRevisionId::new("backend:rev"),
-            namespace_id:   NamespaceId::new("api"),
+            namespace_id:   SchemaId::new("api"),
             principal_user: UserId::new("owner"),
             principal_role: Role::Service,
             security:       RoutineSecurityMode::Definer,
+            volatility:     kalamdb_commons::models::RoutineVolatility::default(),
         };
         assert_eq!(frame.principal_user.as_str(), "owner");
         assert_eq!(frame.security, RoutineSecurityMode::Definer);

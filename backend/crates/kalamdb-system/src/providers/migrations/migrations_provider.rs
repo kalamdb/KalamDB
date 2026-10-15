@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use datafusion::arrow::{array::RecordBatch, datatypes::SchemaRef};
 use kalamdb_commons::{
-    models::{rows::SystemTableRow, MigrationId, NamespaceId},
+    models::{rows::SystemTableRow, MigrationId, SchemaId},
     SystemTable,
 };
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
@@ -58,7 +58,7 @@ impl MigrationsTableProvider {
 
     pub fn delete_migrations_for_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<usize, SystemError> {
         let rows = self.store.scan_all_typed(None, None, None)?;
         let mut keys = Vec::new();
@@ -171,7 +171,7 @@ mod tests {
         provider.upsert_migration_async(app_migration).await.unwrap();
         provider.upsert_migration_async(prod_migration).await.unwrap();
 
-        let deleted = provider.delete_migrations_for_namespace(&NamespaceId::new("app")).unwrap();
+        let deleted = provider.delete_migrations_for_namespace(&SchemaId::new("app")).unwrap();
 
         assert_eq!(deleted, 1);
         assert!(provider

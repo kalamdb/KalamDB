@@ -107,7 +107,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{NamespaceId, TableId, TableName},
+        models::{SchemaId, TableId, TableName},
     };
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 
@@ -116,7 +116,7 @@ mod tests {
 
     fn create_store(pk_field_name: &str) -> Arc<SharedTableIndexedStore> {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let table_id = TableId::new(NamespaceId::new("dba"), TableName::new("stats"));
+        let table_id = TableId::new(SchemaId::new("dba"), TableName::new("stats"));
         let schema = Arc::new(kalamdb_serialization::StorageSchema::new(
             1,
             vec![kalamdb_serialization::StorageField::new(
@@ -187,7 +187,7 @@ mod tests {
     fn hard_delete_string_primary_keys_removes_all_versions_for_pk() {
         let store = create_store("id");
         let pk_index = SharedTablePkIndex::new(
-            &TableId::new(NamespaceId::new("dba"), TableName::new("stats")),
+            &TableId::new(SchemaId::new("dba"), TableName::new("stats")),
             "id",
         );
 

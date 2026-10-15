@@ -1975,10 +1975,7 @@ build_test_cmd() {
 
     if [ -n "$test_filter" ]; then
         if [ -z "$TEST_TARGET" ] && [ "$filter_targets_smoke" = true ]; then
-            TEST_CMD+=(--test e2e)
-            if [[ "$test_filter" != "smoke" ]]; then
-                TEST_CMD+=("$test_filter")
-            fi
+            TEST_CMD+=(--test e2e "$test_filter")
         else
             TEST_CMD+=("$test_filter")
         fi

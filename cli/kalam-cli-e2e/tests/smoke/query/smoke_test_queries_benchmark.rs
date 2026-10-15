@@ -49,7 +49,7 @@ fn smoke_queries_benchmark() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace");
 
     // Defensive: drop any leftover table from previous runs if it exists

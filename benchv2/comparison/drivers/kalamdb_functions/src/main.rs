@@ -5,7 +5,7 @@
 //! - 100k insert wall time
 //! - 10k insert latency + 1M point-read latency
 //!
-//! Setup still uses SQL HTTP (`CREATE NAMESPACE` / `CREATE TABLE` /
+//! Setup still uses SQL HTTP (`CREATE SCHEMA` / `CREATE TABLE` /
 //! `CREATE PROCEDURE`). Timed insert/read go through
 //! `POST /v1/functions/{namespace}/{procedure}` only.
 //!
@@ -278,7 +278,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
+        &format!("CREATE SCHEMA IF NOT EXISTS {KALAMDB_NAMESPACE}"),
         None,
     )
     .await?;

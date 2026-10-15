@@ -5,7 +5,7 @@
 
 use std::string::String;
 
-use kalamdb_commons::models::{datatypes::KalamDataType, NamespaceId};
+use kalamdb_commons::models::{datatypes::KalamDataType, SchemaId};
 use sqlparser::ast::{
     ArrayElemTypeDef, DataType as SQLDataType, DataType::*, ObjectName, ObjectNamePart,
 };
@@ -98,18 +98,23 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
             type_ref.is_array = true;
             Ok(type_ref)
         },
-        Custom(name, modifiers) => match map_custom_kalam_type(name, modifiers) {
-            Ok(data_type) => {
-                let ident = custom_type_identifier(name);
-                let mut tr = builtin_type_reference(data_type);
-                if ident.eq_ignore_ascii_case("jsonb") {
-                    tr.name = "JSONB".to_string();
-                } else if ident.eq_ignore_ascii_case("timestamptz") {
-                    tr.name = "TIMESTAMPTZ".to_string();
-                }
-                Ok(tr)
-            },
-            Err(_) => Ok(named_type_reference(name)?),
+        Custom(name, modifiers) => {
+            let ident = custom_type_identifier(name);
+            if matches!(ident.as_str(), "embedding" | "pg_catalog.embedding") {
+                return Ok(builtin_type_reference(map_custom_kalam_type(name, modifiers)?));
+            }
+            match map_custom_kalam_type(name, modifiers) {
+                Ok(data_type) => {
+                    let mut tr = builtin_type_reference(data_type);
+                    if ident.eq_ignore_ascii_case("jsonb") {
+                        tr.name = "JSONB".to_string();
+                    } else if ident.eq_ignore_ascii_case("timestamptz") {
+                        tr.name = "TIMESTAMPTZ".to_string();
+                    }
+                    Ok(tr)
+                },
+                Err(_) => Ok(named_type_reference(name)?),
+            }
         },
         SQLDataType::JSONB => {
             let mut tr = builtin_type_reference(KalamDataType::Json);
@@ -146,15 +151,19 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
     let mut parts = Vec::new();
     for part in &name.0 {
         match part {
-            ObjectNamePart::Identifier(ident) => parts.push(ident.value.clone()),
-            other => parts.push(other.to_string()),
+            ObjectNamePart::Identifier(ident) => {
+                if ident.quote_style.is_some() {
+                    parts.push(ident.value.clone());
+                } else {
+                    parts.push(ident.value.to_ascii_lowercase());
+                }
+            },
+            other => parts.push(other.to_string().to_ascii_lowercase()),
         }
     }
     let (namespace_id, type_name) = match parts.as_slice() {
         [type_name] => (None, type_name.clone()),
-        [schema, type_name] => {
-            (Some(NamespaceId::new(schema.to_ascii_lowercase())), type_name.clone())
-        },
+        [schema, type_name] => (Some(SchemaId::new(schema.clone())), type_name.clone()),
         _ => {
             return Err(format!(
                 "named type '{}' must be unqualified or schema-qualified",
@@ -164,7 +173,7 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
     };
     Ok(TypeReference {
         namespace_id,
-        name: type_name.to_ascii_lowercase(),
+        name: type_name,
         data_type: None,
         syntactic_modifier: None,
         is_array: false,
@@ -174,10 +183,15 @@ fn named_type_reference(name: &ObjectName) -> Result<TypeReference, String> {
 }
 
 fn map_custom_kalam_type(name: &ObjectName, modifiers: &[String]) -> Result<KalamDataType, String> {
+    if let Some(ObjectNamePart::Identifier(ident)) = name.0.last() {
+        if ident.quote_style.is_some() && ident.value.chars().any(|c| c.is_ascii_uppercase()) {
+            return Err(format!("Quoted custom type '{}' is not a builtin data type", ident.value));
+        }
+    }
     let ident = custom_type_identifier(name);
     match ident.as_str() {
-        "file" => Ok(KalamDataType::File),
-        "embedding" => {
+        "file" | "pg_catalog.file" => Ok(KalamDataType::File),
+        "embedding" | "pg_catalog.embedding" => {
             let dim = parse_embedding_dimension(modifiers)?;
             Ok(KalamDataType::Embedding(dim))
         },
@@ -186,7 +200,7 @@ fn map_custom_kalam_type(name: &ObjectName, modifiers: &[String]) -> Result<Kala
         "smallserial" | "serial2" | "int1" | "int2" => Ok(KalamDataType::SmallInt),
         "int4" => Ok(KalamDataType::Int),
         "int8" => Ok(KalamDataType::BigInt),
-        other if other.ends_with("text") || other.ends_with("string") => Ok(KalamDataType::Text),
+        "tinytext" | "mediumtext" | "longtext" | "ntext" | "citext" => Ok(KalamDataType::Text),
         other => KalamDataType::from_sql_name(other)
             .ok_or_else(|| format!("Unsupported custom data type '{other}'")),
     }

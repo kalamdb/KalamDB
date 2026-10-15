@@ -79,10 +79,10 @@ fn test_namespace_operations() {
     // Generate unique namespace name
     let ns_name = generate_unique_namespace("smoke_core_ops");
 
-    // CREATE NAMESPACE
+    // CREATE SCHEMA
     println!("  Creating namespace: {}", ns_name);
-    let create_sql = format!("CREATE NAMESPACE {}", ns_name);
-    execute_sql_as_root_via_client(&create_sql).expect("CREATE NAMESPACE should succeed");
+    let create_sql = format!("CREATE SCHEMA {}", ns_name);
+    execute_sql_as_root_via_client(&create_sql).expect("CREATE SCHEMA should succeed");
     println!("    ✓ Namespace created");
 
     // SELECT from system.namespaces to verify
@@ -268,8 +268,8 @@ fn test_flush_operations() {
 
     // Setup: Create namespace and table
     println!("  Setting up test namespace and table");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", ns_name))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", ns_name))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', FLUSH_POLICY = \

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use arrow::util::display::array_value_to_string;
 use kalamdb_commons::{
+    conversions::read_logical_type_modifier,
     models::{
         datatypes::WireFormat, CatalogTypeKind, KalamDataType, LogicalTypeRef, TableId, TableName,
     },
@@ -249,7 +250,7 @@ fn plan_gaps(
     );
     note(
         gaps,
-        payload.logical_type.sql_name() != "JSONB",
+        !payload.logical_type.is_jsonb() || payload.logical_type.sql_name() != "JSONB",
         format!(
             "plan jsonb collapsed to {} (wire {:02x?})",
             payload.logical_type.sql_name(),
@@ -258,7 +259,8 @@ fn plan_gaps(
     );
     note(
         gaps,
-        charged_at.logical_type.sql_name() != "TIMESTAMPTZ",
+        !charged_at.logical_type.is_timestamptz()
+            || charged_at.logical_type.sql_name() != "TIMESTAMPTZ",
         format!(
             "plan timestamptz collapsed to {} (wire {:02x?})",
             charged_at.logical_type.sql_name(),
@@ -267,32 +269,18 @@ fn plan_gaps(
     );
     note(
         gaps,
-        wire_bytes(payload.data_type()) == wire_bytes(KalamDataType::Json),
-        "binary jsonb uses the json type tag",
-    );
-    note(
-        gaps,
-        wire_bytes(charged_at.data_type()) == wire_bytes(KalamDataType::Timestamp),
-        "binary timestamptz uses the timestamp type tag",
-    );
-    note(
-        gaps,
         status.named_type_id() != Some(enum_id),
         "plan enum column is not the catalog charge_status identity",
     );
-    let lines_type = lines.type_ref().ok();
     let lines_are_composite_array = matches!(
-        lines_type,
-        Some(LogicalTypeRef::List { ref element, .. })
+        &lines.logical_type,
+        LogicalTypeRef::List { element, .. }
             if matches!(element.as_ref(), LogicalTypeRef::Named { type_id } if type_id == composite_id)
     );
     note(
         gaps,
         !lines_are_composite_array,
-        format!(
-            "plan composite array became {}",
-            lines.type_ref().map(|ty| ty.to_string()).unwrap_or_else(|error| error)
-        ),
+        format!("plan composite array became {}", lines.logical_type),
     );
 }
 
@@ -317,12 +305,6 @@ fn result_gaps(gaps: &mut Vec<String>, result: ExecutionResult) {
     for (index, field) in batch.schema().fields().iter().enumerate() {
         let column = batch.column(index);
         let text = array_value_to_string(column, 0).unwrap_or_else(|error| error.to_string());
-        let binary_is_text = matches!(
-            field.data_type(),
-            arrow::datatypes::DataType::Utf8
-                | arrow::datatypes::DataType::LargeUtf8
-                | arrow::datatypes::DataType::Utf8View
-        );
         match field.name().as_str() {
             "amount" => {
                 note(
@@ -337,12 +319,25 @@ fn result_gaps(gaps: &mut Vec<String>, result: ExecutionResult) {
                 );
             },
             "payload" => {
-                note(gaps, binary_is_text, format!("binary jsonb result is text ({text})"));
+                note(
+                    gaps,
+                    read_logical_type_modifier(field) != Some("jsonb"),
+                    format!(
+                        "jsonb result field lost jsonb modifier ({:?})",
+                        read_logical_type_modifier(field)
+                    ),
+                );
+                note(
+                    gaps,
+                    text != "{\"a\":1,\"b\":2}",
+                    format!("jsonb result text is {text:?}"),
+                );
             },
             "charged_at" => {
                 note(
                     gaps,
-                    !matches!(field.data_type(), arrow::datatypes::DataType::Timestamp(_, Some(_))),
+                    !matches!(field.data_type(), arrow::datatypes::DataType::Timestamp(_, Some(_)))
+                        || read_logical_type_modifier(field) != Some("timestamptz"),
                     format!("binary timestamptz arrow type is {:?}", field.data_type()),
                 );
             },

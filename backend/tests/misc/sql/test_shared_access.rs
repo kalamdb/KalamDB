@@ -12,7 +12,7 @@ async fn test_access_level_is_rejected() {
     let admin_id = server.create_user("system", "SystemPass123!", Role::System).await;
     let namespace = consolidated_helpers::unique_namespace("shared_reject_access");
     let res = server
-        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id.as_str())
+        .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), admin_id.as_str())
         .await;
     assert_eq!(res.status, ResponseStatus::Success);
 
@@ -56,7 +56,7 @@ async fn test_omitted_policy_is_dba_system_only() {
     let namespace = consolidated_helpers::unique_namespace("shared_default_deny");
     assert_eq!(
         server
-            .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id_str)
+            .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), admin_id_str)
             .await
             .status,
         ResponseStatus::Success
@@ -130,7 +130,7 @@ async fn test_select_policy_grants_user_reads_not_writes() {
     let namespace = consolidated_helpers::unique_namespace("shared_select_policy");
     assert_eq!(
         server
-            .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id.as_str())
+            .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), admin_id.as_str())
             .await
             .status,
         ResponseStatus::Success
@@ -195,7 +195,7 @@ async fn test_service_role_does_not_inherit_user_only_policy() {
     let namespace = consolidated_helpers::unique_namespace("shared_service_role");
     assert_eq!(
         server
-            .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id.as_str())
+            .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), admin_id.as_str())
             .await
             .status,
         ResponseStatus::Success
@@ -261,7 +261,7 @@ async fn test_public_all_policy_allows_user_writes() {
     let namespace = consolidated_helpers::unique_namespace("shared_public_all");
     assert_eq!(
         server
-            .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), admin_id.as_str())
+            .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), admin_id.as_str())
             .await
             .status,
         ResponseStatus::Success

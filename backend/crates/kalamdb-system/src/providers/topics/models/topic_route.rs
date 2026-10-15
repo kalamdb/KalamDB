@@ -102,14 +102,14 @@ impl TopicRoute {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
     #[test]
     fn test_topic_route_builder() {
         let route = TopicRoute::new(
-            TableId::new(NamespaceId::new("default"), TableName::new("messages")),
+            TableId::new(SchemaId::new("default"), TableName::new("messages")),
             TopicOp::Insert,
         )
         .with_payload_mode(PayloadMode::Full)
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_topic_route_serialization() {
         let route = TopicRoute::new(
-            TableId::new(NamespaceId::new("default"), TableName::new("events")),
+            TableId::new(SchemaId::new("default"), TableName::new("events")),
             TopicOp::Update,
         );
 

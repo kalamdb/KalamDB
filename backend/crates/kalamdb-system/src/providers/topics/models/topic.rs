@@ -206,7 +206,7 @@ impl Topic {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableId, TableName, TopicOp};
+    use kalamdb_commons::models::{SchemaId, TableId, TableName, TopicOp};
 
     use super::*;
 
@@ -225,7 +225,7 @@ mod tests {
         let mut topic = Topic::new(TopicId::new("topic_123"), "app.events".to_string());
 
         let route = TopicRoute::new(
-            TableId::new(NamespaceId::new("default"), TableName::new("messages")),
+            TableId::new(SchemaId::new("default"), TableName::new("messages")),
             TopicOp::Insert,
         );
 
@@ -238,7 +238,7 @@ mod tests {
     fn test_topic_remove_route() {
         let mut topic = Topic::new(TopicId::new("topic_123"), "app.events".to_string());
 
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("messages"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("messages"));
         topic.add_route(TopicRoute::new(table_id.clone(), TopicOp::Insert));
         topic.add_route(TopicRoute::new(table_id.clone(), TopicOp::Update));
 

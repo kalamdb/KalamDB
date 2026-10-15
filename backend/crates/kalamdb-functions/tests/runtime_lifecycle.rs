@@ -47,6 +47,25 @@ impl FunctionHost for Host {
                 tokio::time::sleep(Duration::from_millis(30)).await;
                 return Ok(RoutineValue::new(ScalarValue::Utf8(Some(name))));
             }
+            if sql == "rows" {
+                use arrow::{
+                    array::{Int64Array, RecordBatch, StringArray},
+                    datatypes::{DataType, Field, Schema},
+                };
+                let schema = Arc::new(Schema::new(vec![
+                    Field::new("id", DataType::Int64, false),
+                    Field::new("label", DataType::Utf8, false),
+                ]));
+                let batch = RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(Int64Array::from(vec![101, 202])),
+                        Arc::new(StringArray::from(vec!["first", "second"])),
+                    ],
+                )
+                .unwrap();
+                return Ok(RoutineValue::from_row_batches(vec![batch]));
+            }
             self.sql(&sql, &[])
         })
     }
@@ -338,3 +357,31 @@ fn synchronous_rejection_releases_pending_host_references() {
         .is_err());
     assert_eq!(Arc::strong_count(&host), 1);
 }
+
+#[tokio::test]
+#[ntest::timeout(1500)]
+async fn query_view_and_query_batches_project_and_forward_to_nested_call() {
+    let engine = FunctionEngine::new(EngineConfig::default()).unwrap();
+    let (invocation, host) = request(
+        r#"
+async function kalamInvoke(name, args) {
+    const ctx = __kalamCtx;
+    if (name === 'inspect_row') {
+        const row = args[0];
+        return `${row.id}:${row.label}`;
+    }
+    const view = await ctx.db.queryView('rows');
+    const forwarded = await ctx.functions.call('inspect_row', [view.at(1)]);
+    let batchTotal = 0;
+    for await (const batch of ctx.db.queryBatches('rows')) {
+        batchTotal += batch.length;
+    }
+    return `${view.length}:${forwarded}:${batchTotal}`;
+}
+"#,
+        Duration::from_secs(2),
+    );
+    let result = engine.invoke(invocation, host).await.unwrap();
+    assert_eq!(result.value, ScalarValue::Utf8(Some("2:202:second:2".to_string())));
+}
+

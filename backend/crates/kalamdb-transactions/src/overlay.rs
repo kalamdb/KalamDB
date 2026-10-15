@@ -214,7 +214,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn update_after_insert_preserves_inserted_columns() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
 
         overlay.apply_entry(TransactionOverlayEntry {
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn preserves_distinct_user_scopes_for_same_primary_key() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let first_user = UserId::new("user-a");
         let second_user = UserId::new("user-b");
         let mut overlay = TransactionOverlay::new(transaction_id.clone());

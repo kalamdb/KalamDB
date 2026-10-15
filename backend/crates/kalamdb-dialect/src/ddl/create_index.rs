@@ -3,7 +3,7 @@
 //! Vector indexes stay on the no-parentheses `USING COSINE|L2|DOT` form in
 //! [`super::alter_table`]. Parentheses select the scalar catalog path.
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -39,7 +39,7 @@ static CREATE_INDEX_ON_RE: Lazy<Regex> = Lazy::new(|| {
 /// `CREATE INDEX col USING COSINE` which has no parentheses).
 pub fn parse_alter_table_scalar_index(
     sql: &str,
-    current_namespace: &NamespaceId,
+    current_namespace: &SchemaId,
 ) -> DdlResult<Option<AlterTableStatement>> {
     let upper = sql.to_ascii_uppercase();
     if upper.contains("CREATE") && upper.contains(" INDEX") && sql.contains('(') {
@@ -106,7 +106,7 @@ pub fn parse_alter_table_scalar_index(
 /// Parse PostgreSQL-shaped `CREATE [UNIQUE] INDEX name ON table (cols)`.
 pub fn parse_create_index_on(
     sql: &str,
-    current_namespace: &NamespaceId,
+    current_namespace: &SchemaId,
 ) -> DdlResult<AlterTableStatement> {
     reject_vector_using(sql)?;
     let caps = CREATE_INDEX_ON_RE.captures(sql).ok_or_else(|| {
@@ -178,12 +178,12 @@ fn reject_vector_using(sql: &str) -> DdlResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
-    fn ns() -> NamespaceId {
-        NamespaceId::new("public")
+    fn ns() -> SchemaId {
+        SchemaId::new("public")
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(stmt.namespace_id, NamespaceId::new("app"));
+        assert_eq!(stmt.namespace_id, SchemaId::new("app"));
         assert_eq!(stmt.table_name, TableName::new("messages"));
         match stmt.operation {
             ColumnOperation::CreateScalarIndex {

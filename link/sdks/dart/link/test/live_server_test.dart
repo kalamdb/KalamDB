@@ -176,7 +176,7 @@ void main() {
 
         try {
           final createNamespace = await client.query(
-            'CREATE NAMESPACE IF NOT EXISTS $namespace',
+            'CREATE SCHEMA IF NOT EXISTS $namespace',
           );
           expect(createNamespace.success, isTrue);
 
@@ -226,7 +226,7 @@ void main() {
 
         try {
           final createNamespace = await subscriberClient.query(
-            'CREATE NAMESPACE IF NOT EXISTS $namespace',
+            'CREATE SCHEMA IF NOT EXISTS $namespace',
           );
           expect(createNamespace.success, isTrue);
 
@@ -352,7 +352,7 @@ void main() {
 
         try {
           final createNamespace = await subscriberClient.query(
-            'CREATE NAMESPACE IF NOT EXISTS $namespace',
+            'CREATE SCHEMA IF NOT EXISTS $namespace',
           );
           expect(createNamespace.success, isTrue);
 

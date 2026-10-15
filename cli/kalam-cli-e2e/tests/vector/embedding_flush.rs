@@ -22,7 +22,7 @@ fn test_minio_embedding_flush_multiple_common_dimensions() {
         let full_table = format!("{}.{}", namespace, table);
 
         setup_minio_storage(&storage_id, &format!("MinIO Embedding {} Storage", dimension));
-        execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+        execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
             .expect("namespace creation");
         execute_sql_as_root_via_cli(&format!(
             "CREATE TABLE {} (id BIGINT PRIMARY KEY, embedding EMBEDDING({}), body TEXT NOT NULL) \

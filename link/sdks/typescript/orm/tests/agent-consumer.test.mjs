@@ -87,7 +87,7 @@ before(async () => {
   });
   workerDb = drizzle(kalamDriver(workerClient));
 
-  await execSql(adminClient, `CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
+  await execSql(adminClient, `CREATE SCHEMA IF NOT EXISTS ${namespace}`);
   await execSql(
     adminClient,
     `
@@ -102,13 +102,13 @@ before(async () => {
   await execSql(
     adminClient,
     `
-    CREATE USER TABLE ${processedTableName} (
+    CREATE TABLE ${processedTableName} (
       id TEXT PRIMARY KEY,
       source_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       bucket TEXT NOT NULL,
       summary TEXT NOT NULL
-    )
+    ) WITH (TYPE = 'USER')
   `,
   );
   await execSql(adminClient, `CREATE TOPIC ${topicName}`);

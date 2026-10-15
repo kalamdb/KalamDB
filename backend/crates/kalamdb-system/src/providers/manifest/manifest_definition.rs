@@ -4,7 +4,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, SystemTable, TableName,
+    SchemaId, SystemTable, TableName,
 };
 
 pub fn manifest_table_definition() -> TableDefinition {
@@ -122,7 +122,7 @@ pub fn manifest_table_definition() -> TableDefinition {
     ];
 
     TableDefinition::new(
-        NamespaceId::system(),
+        SchemaId::system(),
         TableName::new(SystemTable::Manifest.table_name()),
         TableType::System,
         columns,

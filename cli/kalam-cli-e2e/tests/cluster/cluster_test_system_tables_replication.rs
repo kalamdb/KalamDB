@@ -42,14 +42,14 @@ fn cluster_test_system_tables_replication() {
     // Setup: Create namespace and tables on first node
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create multiple table types
     execute_on_node(
         &urls[0],
         &format!(
-            "CREATE USER TABLE {}.users_data (id BIGINT PRIMARY KEY, name STRING)",
+            "CREATE TABLE {}.users_data (id BIGINT PRIMARY KEY, name STRING) WITH (TYPE = 'USER')",
             namespace
         ),
     )
@@ -151,7 +151,7 @@ fn cluster_test_system_namespaces_replication() {
     }
 
     for ns in &namespaces {
-        execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", ns))
+        execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", ns))
             .expect(&format!("Failed to create namespace {}", ns));
     }
 
@@ -212,7 +212,7 @@ fn cluster_test_system_users_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Wait for namespace to replicate
@@ -327,7 +327,7 @@ fn cluster_test_alter_table_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -406,7 +406,7 @@ fn cluster_test_drop_replication() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(

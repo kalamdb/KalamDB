@@ -3,12 +3,23 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use arrow::{
+    array::{new_empty_array, ListArray, StructArray},
+    buffer::OffsetBuffer,
+    datatypes::{DataType, Field, SchemaRef},
+};
 use chrono::Utc;
 use datafusion::scalar::ScalarValue;
 use kalamdb_commons::{
-    conversions::{arrow_json_conversion::coerce_rows, json_value_to_scalar},
+    conversions::{
+        arrow_json_conversion::{
+            coerce_rows, coerce_scalar_to_field, materialize_domain_default_for_field,
+        },
+        json_value_to_scalar,
+        schema_metadata::read_kalam_data_type_metadata,
+    },
     ids::SnowflakeGenerator,
-    models::{rows::row::Row, OperationKind, TransactionId, UserId},
+    models::{datatypes::KalamDataType, rows::row::Row, OperationKind, TransactionId, UserId},
     schemas::{ColumnDefault, TableType},
     PolicyCommand, Role, TableId,
 };
@@ -21,7 +32,10 @@ use kalamdb_sql::{
 };
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
-use sqlparser::ast::{Expr, Parens, SelectItem, Statement};
+use sqlparser::ast::{
+    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Parens, SelectItem, Statement,
+    UnaryOperator, Value as SqlValue,
+};
 use ulid::Ulid;
 use uuid::Uuid;
 
@@ -163,6 +177,7 @@ async fn try_build_insert_rows_from_values_rows(
     value_rows: &[Parens<Vec<Expr>>],
     insert_metadata: &FastInsertMetadata,
     cached_table: &CachedTableData,
+    schema: &SchemaRef,
     exec_ctx: &ExecutionContext,
     params: &[ScalarValue],
     app_context: Arc<AppContext>,
@@ -171,6 +186,7 @@ async fn try_build_insert_rows_from_values_rows(
         value_rows,
         &insert_metadata.column_names,
         cached_table,
+        schema,
         exec_ctx,
         params,
         Arc::clone(&app_context),
@@ -194,6 +210,7 @@ async fn build_insert_rows_from_values_rows(
     value_rows: &[Parens<Vec<Expr>>],
     column_names: &[String],
     cached_table: &CachedTableData,
+    schema: &SchemaRef,
     exec_ctx: &ExecutionContext,
     params: &[ScalarValue],
     app_context: Arc<AppContext>,
@@ -208,11 +225,13 @@ async fn build_insert_rows_from_values_rows(
 
         let mut values = BTreeMap::new();
         for (expr, column_name) in value_row.content.iter().zip(column_names.iter()) {
+            let target_field = schema.field_with_name(column_name).ok();
             values.insert(
                 column_name.clone(),
                 insert_value_expr_to_scalar(
                     expr,
                     column_name,
+                    target_field,
                     cached_table,
                     exec_ctx,
                     params,
@@ -231,6 +250,7 @@ async fn build_insert_rows_from_values_rows(
 async fn insert_value_expr_to_scalar(
     expr: &Expr,
     column_name: &str,
+    target_field: Option<&Field>,
     cached_table: &CachedTableData,
     exec_ctx: &ExecutionContext,
     params: &[ScalarValue],
@@ -249,7 +269,285 @@ async fn insert_value_expr_to_scalar(
         .map_err(InsertValuesRowsError::Execution);
     }
 
-    expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported)
+    if let Expr::Function(func) = expr {
+        let func_name = func.name.to_string().to_ascii_lowercase();
+        if matches!(func_name.as_str(), "file_put" | "pg_catalog.file_put") {
+            let arg_expr = match &func.args {
+                FunctionArguments::List(list) if list.args.len() == 1 => match &list.args[0] {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) => inner,
+                    _ => return Err(InsertValuesRowsError::Unsupported),
+                },
+                _ => {
+                    return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                        "file_put expects a single placeholder argument".to_string(),
+                    )));
+                },
+            };
+            let placeholder_scalar = expr_to_scalar_with_params(arg_expr, params)
+                .map_err(|_| InsertValuesRowsError::Unsupported)?;
+            let placeholder = match placeholder_scalar {
+                ScalarValue::Utf8(Some(s))
+                | ScalarValue::LargeUtf8(Some(s))
+                | ScalarValue::Utf8View(Some(s)) => s,
+                _ => {
+                    return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                        "file_put argument must be a non-null string placeholder".to_string(),
+                    )));
+                },
+            };
+            let file_ref = app_context
+                .file_storage_service()
+                .resolve_placeholder(&placeholder)
+                .map_err(|e| {
+                    InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(e.to_string()))
+                })?;
+            return Ok(ScalarValue::Utf8(Some(file_ref.to_json())));
+        }
+
+        if app_context.system_tables().catalog_stores().has_user_routines() {
+            if let Ok(call) =
+                kalamdb_sql::ddl::column_default::function_to_routine_call_with_placeholders(
+                    func,
+                    &exec_ctx.default_namespace(),
+                )
+            {
+                let stores = app_context.system_tables().catalog_stores();
+                if let Ok(Some(routine)) = stores.get_routine(&call.routine_id) {
+                    if routine.language.as_deref() != Some("INTERNAL") {
+                        if routine.kind == kalamdb_commons::models::RoutineKind::Procedure {
+                            return Err(InsertValuesRowsError::Execution(
+                                KalamDbError::InvalidSql(format!(
+                                    "{} is a procedure, not a function; invoke it with CALL",
+                                    call.routine_id
+                                )),
+                            ));
+                        }
+                        let rv = crate::functions::FunctionService::execute_scalar_function_call(
+                            Arc::clone(app_context),
+                            exec_ctx,
+                            &call,
+                            params,
+                        )
+                        .await
+                        .map_err(InsertValuesRowsError::Execution)?;
+                        if let Some(field) = target_field {
+                            return coerce_scalar_to_field(rv.value, field).map_err(|error| {
+                                InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                                    error,
+                                ))
+                            });
+                        }
+                        return Ok(rv.value);
+                    }
+                }
+            }
+        }
+    }
+
+    eval_typed_insert_expr(expr, target_field, params)
+}
+
+fn validate_file_columns_in_rows(
+    rows: &[Row],
+    cached_table: &CachedTableData,
+    table_id: &TableId,
+    user_id: Option<&UserId>,
+    app_context: &Arc<AppContext>,
+) -> Result<(), KalamDbError> {
+    crate::applier::executor::dml::validate_and_commit_file_columns_for_rows(
+        app_context,
+        cached_table,
+        table_id,
+        cached_table.table_entry().table_type,
+        user_id,
+        rows,
+    )
+    .map_err(KalamDbError::InvalidOperation)
+}
+
+fn eval_typed_insert_expr(
+    expr: &Expr,
+    target_field: Option<&Field>,
+    params: &[ScalarValue],
+) -> Result<ScalarValue, InsertValuesRowsError> {
+    match expr {
+        Expr::Nested(inner) => eval_typed_insert_expr(inner, target_field, params),
+        Expr::Cast { expr: inner, .. } => {
+            let Some(field) = target_field else {
+                return Err(InsertValuesRowsError::Unsupported);
+            };
+            let scalar = eval_typed_insert_expr(inner, Some(field), params)?;
+            coerce_scalar_to_field(scalar, field).map_err(|error| {
+                InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
+            })
+        },
+        Expr::TypedString(typed) => {
+            let scalar =
+                expr_to_scalar_with_params(&Expr::Value(typed.value.clone()), params)
+                    .map_err(|_| InsertValuesRowsError::Unsupported)?;
+            if let Some(field) = target_field {
+                coerce_scalar_to_field(scalar, field).map_err(|error| {
+                    InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
+                })
+            } else {
+                Ok(scalar)
+            }
+        },
+        Expr::Value(val)
+            if matches!(target_field.map(Field::data_type), Some(DataType::Decimal128(_, _))) =>
+        {
+            if let SqlValue::Number(num_str, _) = &val.value {
+                return Ok(ScalarValue::Utf8(Some(num_str.clone())));
+            }
+            expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported)
+        },
+        Expr::UnaryOp { op, expr: inner }
+            if matches!(op, UnaryOperator::Minus | UnaryOperator::Plus)
+                && matches!(
+                    target_field.map(Field::data_type),
+                    Some(DataType::Decimal128(_, _))
+                ) =>
+        {
+            if let Expr::Value(val) = inner.as_ref() {
+                if let SqlValue::Number(num_str, _) = &val.value {
+                    let signed = if matches!(op, UnaryOperator::Minus) {
+                        format!("-{num_str}")
+                    } else {
+                        num_str.clone()
+                    };
+                    return Ok(ScalarValue::Utf8(Some(signed)));
+                }
+            }
+            expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported)
+        },
+        Expr::Array(array) => {
+            let Some(field) = target_field else {
+                return Err(InsertValuesRowsError::Unsupported);
+            };
+            let DataType::List(item_field) = field.data_type() else {
+                return Err(InsertValuesRowsError::Unsupported);
+            };
+            let mut items = Vec::with_capacity(array.elem.len());
+            for elem_expr in &array.elem {
+                let elem_scalar =
+                    eval_typed_insert_expr(elem_expr, Some(item_field.as_ref()), params)?;
+                if elem_scalar.is_null() && !item_field.is_nullable() {
+                    return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                        format!("array element in column '{}' cannot be null", field.name()),
+                    )));
+                }
+                let coerced =
+                    coerce_scalar_to_field(elem_scalar, item_field).map_err(|error| {
+                        InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
+                    })?;
+                items.push(coerced);
+            }
+            let child_array = if items.is_empty() {
+                new_empty_array(item_field.data_type())
+            } else if matches!(item_field.data_type(), DataType::Struct(fields) if fields.is_empty()) {
+                let DataType::Struct(fields) = item_field.data_type() else {
+                    unreachable!();
+                };
+                let len = items.len();
+                let validity: Vec<bool> = items.iter().map(|v| !v.is_null()).collect();
+                let nulls = if validity.iter().all(|valid| *valid) {
+                    None
+                } else {
+                    Some(arrow::buffer::NullBuffer::from(validity))
+                };
+                let sa = StructArray::try_new_with_length(fields.clone(), Vec::new(), nulls, len)
+                    .map_err(|error| {
+                        InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                            error.to_string(),
+                        ))
+                    })?;
+                Arc::new(sa)
+            } else {
+                ScalarValue::iter_to_array(items).map_err(|error| {
+                    InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                        error.to_string(),
+                    ))
+                })?
+            };
+            let offsets = OffsetBuffer::from_lengths([child_array.len()]);
+            Ok(ScalarValue::List(Arc::new(ListArray::new(
+                item_field.clone(),
+                offsets,
+                child_array,
+                None,
+            ))))
+        },
+        Expr::Tuple(elems) => eval_struct_tuple_expr(elems, target_field, params),
+        Expr::Function(func) if func.name.to_string().eq_ignore_ascii_case("row") => {
+            let exprs: Vec<Expr> = match &func.args {
+                FunctionArguments::None => Vec::new(),
+                FunctionArguments::Subquery(_) => return Err(InsertValuesRowsError::Unsupported),
+                FunctionArguments::List(list) => {
+                    let mut out = Vec::with_capacity(list.args.len());
+                    for arg in &list.args {
+                        match arg {
+                            FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => out.push(e.clone()),
+                            _ => return Err(InsertValuesRowsError::Unsupported),
+                        }
+                    }
+                    out
+                },
+            };
+            eval_struct_tuple_expr(&exprs, target_field, params)
+        },
+        _ => expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported),
+    }
+}
+
+fn eval_struct_tuple_expr(
+    elems: &[Expr],
+    target_field: Option<&Field>,
+    params: &[ScalarValue],
+) -> Result<ScalarValue, InsertValuesRowsError> {
+    let Some(field) = target_field else {
+        return Err(InsertValuesRowsError::Unsupported);
+    };
+    if read_kalam_data_type_metadata(field) == Some(KalamDataType::File) {
+        return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(format!(
+            "column '{}' is of type pg_catalog.file and cannot be constructed from a composite literal; use file_put()",
+            field.name()
+        ))));
+    }
+    let DataType::Struct(fields) = field.data_type() else {
+        return Err(InsertValuesRowsError::Unsupported);
+    };
+    if elems.len() != fields.len() {
+        return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(format!(
+            "composite value for column '{}' has {} fields, expected {}",
+            field.name(),
+            elems.len(),
+            fields.len()
+        ))));
+    }
+    let mut child_arrays = Vec::with_capacity(fields.len());
+    for (elem_expr, child_field) in elems.iter().zip(fields.iter()) {
+        let child_scalar =
+            eval_typed_insert_expr(elem_expr, Some(child_field.as_ref()), params)?;
+        if child_scalar.is_null() && !child_field.is_nullable() {
+            return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(format!(
+                "field '{}' of composite column '{}' cannot be null",
+                child_field.name(),
+                field.name()
+            ))));
+        }
+        let coerced = coerce_scalar_to_field(child_scalar, child_field).map_err(|error| {
+            InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
+        })?;
+        let arr = coerced.to_array().map_err(|error| {
+            InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error.to_string()))
+        })?;
+        child_arrays.push(arr);
+    }
+    let struct_array = StructArray::try_new_with_length(fields.clone(), child_arrays, None, 1)
+        .map_err(|error| {
+            InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error.to_string()))
+        })?;
+    Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 
 async fn materialize_explicit_default(
@@ -283,6 +581,15 @@ fn prepare_explicit_default(
         })?;
 
     if column.default_value.is_none() {
+        if let Ok(schema) = cached_table.arrow_schema() {
+            if let Ok(field) = schema.field_with_name(&column.column_name) {
+                if let Some(domain_default) = materialize_domain_default_for_field(field)
+                    .map_err(KalamDbError::InvalidOperation)?
+                {
+                    return Ok(PreparedDefaultValue::Constant(domain_default));
+                }
+            }
+        }
         return Ok(PreparedDefaultValue::Constant(ScalarValue::Null));
     }
 
@@ -408,10 +715,12 @@ async fn build_literal_insert_rows_from_values(
         },
     };
 
+    let schema = cached_table.arrow_schema()?;
     let rows = match try_build_insert_rows_from_values_rows(
         value_rows,
         &insert_metadata,
         cached_table.as_ref(),
+        &schema,
         exec_ctx,
         params,
         Arc::clone(&app_context),
@@ -422,9 +731,15 @@ async fn build_literal_insert_rows_from_values(
         None => return Ok(None),
     };
 
-    let schema = cached_table.arrow_schema()?;
     let rows = coerce_rows(rows, &schema)
         .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+    validate_file_columns_in_rows(
+        &rows,
+        cached_table.as_ref(),
+        table_id,
+        staged_mutation_user_id(insert_metadata.table_type, exec_ctx).as_ref(),
+        &app_context,
+    )?;
 
     Ok(Some(LiteralInsertRows {
         table_type: insert_metadata.table_type,
@@ -810,6 +1125,7 @@ pub(crate) async fn try_batch_inserts_in_transaction(
             view.value_rows,
             &insert_metadata,
             cached_table.as_ref(),
+            &schema,
             exec_ctx,
             &[],
             Arc::clone(&app_context),
@@ -827,6 +1143,13 @@ pub(crate) async fn try_batch_inserts_in_transaction(
 
     let all_rows = coerce_rows(all_rows, &schema)
         .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+    validate_file_columns_in_rows(
+        &all_rows,
+        cached_table.as_ref(),
+        table_id,
+        user_id.as_ref(),
+        &app_context,
+    )?;
     if table_type == TableType::Shared {
         let provider = cached_table.get_provider().ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Shared table provider not found: {table_id}"))

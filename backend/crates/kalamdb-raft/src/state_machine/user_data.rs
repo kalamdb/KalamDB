@@ -572,7 +572,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind},
+        models::{rows::Row, SchemaId, OperationKind},
         TableId, UserId,
     };
 
@@ -635,7 +635,7 @@ mod tests {
         let sm = UserDataStateMachine::new(0);
 
         let cmd = UserDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "users".into()),
+            table_id:            TableId::new(SchemaId::default(), "users".into()),
             user_id:             UserId::new("user123"),
             rows:                vec![],
             encoded_fields:      Vec::new(),
@@ -654,7 +654,7 @@ mod tests {
     async fn test_user_data_state_machine_transaction_commit() {
         let sm = UserDataStateMachine::with_applier(0, Arc::new(TransactionBatchUserApplier));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::default(), "users".into());
+        let table_id = TableId::new(SchemaId::default(), "users".into());
 
         let cmd = RaftCommand::TransactionCommit {
             required_meta_index: 0,

@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::common::*;
 
 fn create_namespace(ns: &str) {
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns));
 }
 
 fn extract_first_id_from_json(json_output: &str) -> Option<String> {

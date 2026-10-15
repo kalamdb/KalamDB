@@ -90,13 +90,17 @@ fn host_operation(
         if values.length() > 1024 {
             return Err(FunctionsError::ResourceLimit("host arguments".into()));
         }
+        let is_named_call =
+            kind == "call" && args.length() > 3 && args.get(3).boolean_value(scope);
         let mut budget = ConversionBudget::new(scope);
         let mut params = Vec::with_capacity(values.length() as usize);
         for index in 0..values.length() {
             let value = values
                 .get_index(scope, index)
                 .ok_or_else(|| FunctionsError::Invalid("missing argument".into()))?;
-            params.push(RoutineValue::new(infer_value(scope, value, &mut budget, 0)?));
+            let rv = RoutineValue::new(infer_value(scope, value, &mut budget, 0)?)
+                .with_host_named_input(is_named_call && values.length() == 1);
+            params.push(rv);
         }
         let resolver = v8::PromiseResolver::new(scope)
             .ok_or_else(|| FunctionsError::ResourceLimit("promise".into()))?;
@@ -135,6 +139,8 @@ fn host_operation(
             }
             match kind.as_str() {
                 "query" => host.query(name, params).await,
+                "query_view" => host.query_view(name, params).await,
+                "query_batches" => host.query_batches(name, params).await,
                 "execute" => host.execute(name, params).await,
                 "call" => host.call_async(name, params).await,
                 "publish" => {

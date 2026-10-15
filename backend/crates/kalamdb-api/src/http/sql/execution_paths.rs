@@ -6,7 +6,7 @@ use std::{
 
 use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use bytes::Bytes;
-use kalamdb_commons::{models::NamespaceId, schemas::TableType};
+use kalamdb_commons::{models::SchemaId, schemas::TableType};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -340,7 +340,7 @@ async fn forward_batch_statement_to_group(
     target_group: GroupId,
     statement: &PreparedApiExecutionStatement,
     http_req: &HttpRequest,
-    request_namespace: Option<NamespaceId>,
+    request_namespace: Option<SchemaId>,
     app_context: &AppContext,
     request_id: Option<&str>,
     start_time: Instant,

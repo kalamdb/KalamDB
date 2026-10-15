@@ -327,7 +327,7 @@ impl BatchSubscriptionListener {
 }
 
 fn create_namespace(ns: &str) {
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns));
 }
 
 fn collect_events_with_retry(

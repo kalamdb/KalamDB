@@ -158,7 +158,7 @@ fn cluster_test_write_routing() {
     for (i, url) in urls.iter().enumerate() {
         let test_ns = format!("{}_{}", namespace, i);
 
-        let result = execute_on_node(url, &format!("CREATE NAMESPACE {}", test_ns));
+        let result = execute_on_node(url, &format!("CREATE SCHEMA {}", test_ns));
         match result {
             Ok(_) => {
                 println!("  ✓ Write from node {} succeeded", i);

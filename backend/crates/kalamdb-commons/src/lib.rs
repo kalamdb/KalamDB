@@ -9,7 +9,7 @@
 //!
 //! The crate provides type-safe wrappers for common identifiers:
 //! - `UserId`: User identifier wrapper
-//! - `SchemaId`: Schema identifier wrapper. `NamespaceId` is a temporary alias
+//! - `SchemaId`: Schema identifier wrapper
 //! - `TableName`: Table name wrapper
 //! - `TableType`: Enum for USER/SHARED/STREAM tables
 //!
@@ -125,7 +125,6 @@ pub use models::{
     LiveQueryId,
     LogicalTypeRef,
     ManifestId,
-    NamespaceId,
     NodeId,
     OperationKind,
     PolicyCommand,

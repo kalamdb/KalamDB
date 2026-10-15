@@ -245,7 +245,7 @@ impl TableDefinition {
     /// ```rust,ignore
     /// use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
     /// use kalamdb_commons::models::datatypes::KalamDataType;
-    /// use kalamdb_commons::{NamespaceId, TableName, TableId, StorageId};
+    /// use kalamdb_commons::{SchemaId, TableName, TableId, StorageId};
     ///
     /// let columns = vec![
     ///     ColumnDefinition::primary_key("id", 1, KalamDataType::Uuid),
@@ -253,13 +253,13 @@ impl TableDefinition {
     ///     ColumnDefinition::simple("age", 3, KalamDataType::Int),
     /// ];
     ///
-    /// let namespace_id = NamespaceId::new("my_namespace");
+    /// let namespace_id = SchemaId::new("my_namespace");
     /// let table_name = TableName::new("users");
     /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
     ///
     /// let table = TableDefinition::new(namespace_id, table_name, TableType::User, columns, TableOptions::user(), Some("User accounts table".into())).unwrap();
     ///
-    /// assert_eq!(table.namespace_id, NamespaceId::new("my_namespace"));
+    /// assert_eq!(table.namespace_id, SchemaId::new("my_namespace"));
     /// assert_eq!(table.table_name, TableName::new("users"));
     /// assert_eq!(table.columns.len(), 3);
     /// assert_eq!(table.schema_version, 1);
@@ -379,16 +379,39 @@ impl TableDefinition {
             .columns
             .iter()
             .map(|col| {
-                let arrow_type = col.data_type().to_arrow_type()?;
+                let arrow_type = if col.logical_type.is_timestamptz() && !col.logical_type.is_array()
+                {
+                    crate::models::datatypes::KalamDataType::DateTime.to_arrow_type()?
+                } else {
+                    col.data_type().to_arrow_type()?
+                };
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
 
                 // Store KalamDataType in metadata for lossless round-trip conversion
                 field = with_kalam_data_type_metadata(field, &col.data_type());
+                field = crate::conversions::schema_metadata::with_logical_type_modifier(
+                    field,
+                    &col.logical_type,
+                );
+                if let Some(type_id) = col.named_type_id() {
+                    field = crate::conversions::schema_metadata::with_kalam_type_id_metadata(
+                        field, type_id,
+                    );
+                }
 
                 if let Some(flags) =
                     SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)
                 {
                     field = with_kalam_column_flags_metadata(field, &flags);
+                }
+
+                if let Some(crate::models::schemas::ColumnDefault::Literal(ref default_json)) =
+                    col.missing_default
+                {
+                    field = crate::conversions::schema_metadata::with_kalam_missing_default(
+                        field,
+                        default_json,
+                    );
                 }
 
                 field =

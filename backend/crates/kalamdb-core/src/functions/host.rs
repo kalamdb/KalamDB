@@ -207,6 +207,26 @@ impl CoreFunctionHost {
                 "transaction control is not allowed inside a procedure".into(),
             ));
         }
+        if let Some(frame) = self.session.stack.last() {
+            if matches!(
+                frame.volatility,
+                kalamdb_commons::models::RoutineVolatility::Immutable
+                    | kalamdb_commons::models::RoutineVolatility::Stable
+            ) && metadata.classified_statement.as_ref().is_some_and(|statement| {
+                !matches!(
+                    statement.kind(),
+                    kalamdb_sql::SqlStatementKind::Select
+                        | kalamdb_sql::SqlStatementKind::DataFusionMetaCommand
+                        | kalamdb_sql::SqlStatementKind::SetSearchPath(_)
+                )
+            }) {
+                return Err(FunctionsError::Invalid(format!(
+                    "{} routine {} cannot execute read-write or DDL statements",
+                    frame.volatility.as_str(),
+                    frame.routine_id
+                )));
+            }
+        }
         let result = executor.execute_with_metadata(
             &metadata,
             &ctx,
@@ -223,6 +243,18 @@ impl CoreFunctionHost {
         } else {
             super::convert::execution_result_to_routine(result).map_err(map_core)
         }
+    }
+
+    async fn run_sql_view(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> kalamdb_functions::Result<RoutineValue> {
+        let mut res = self.run_sql(sql, params, true).await?;
+        if let Some(batches) = res.row_batches.take() {
+            res.read_view_batches = Some(batches);
+        }
+        Ok(res)
     }
 }
 
@@ -243,6 +275,26 @@ impl FunctionHost for CoreFunctionHost {
             .await
             .map_err(map_join)?
         })
+    }
+
+    fn query_view(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
+        let host = self.clone();
+        let handle = host.handle.clone();
+        Box::pin(async move {
+            AbortOnDropHandle::new(
+                handle.spawn(async move { host.run_sql_view(sql, params).await }),
+            )
+            .await
+            .map_err(map_join)?
+        })
+    }
+
+    fn query_batches(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> HostFuture<'_, RoutineValue> {
+        self.query_view(sql, params)
     }
 
     fn execute(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
@@ -294,7 +346,11 @@ impl FunctionHost for CoreFunctionHost {
         let mut child = self.clone();
         child.scope = self.scope.child(max_depth)?;
         let id = resolve_routine_id(&procedure, &child.session.exec_ctx.default_namespace());
-        let (invocation, host) = executor::prepare_call(&child, id, &args).map_err(map_core)?;
+        let Some((invocation, host)) =
+            executor::prepare_nested_v8_call(&child, id, &args).map_err(map_core)?
+        else {
+            return Ok(None);
+        };
         if invocation.revision.revision_id != caller.revision_id {
             return Ok(None);
         }

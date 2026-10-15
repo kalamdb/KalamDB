@@ -894,7 +894,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::{StreamTableRowId, VersionId},
-        models::{rows::Row, NamespaceId, StreamTableRow, TableId, TableName, UserId},
+        models::{rows::Row, SchemaId, StreamTableRow, TableId, TableName, UserId},
     };
     use kalamdb_serialization::StorageSchema;
     use kalamdb_sharding::ShardRouter;
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn test_delete_old_logs_cleans_files_and_folders() {
         let base_dir = temp_base_dir("kalamdb_streams_delete_old");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let shard_router = ShardRouter::new(4, 1);
         let bucket = StreamTimeBucket::Hour;
 
@@ -1057,7 +1057,7 @@ mod tests {
     #[test]
     fn test_concurrent_writes_from_multiple_users() {
         let base_dir = temp_base_dir("kalamdb_streams_concurrent");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = std::sync::Arc::new(create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn test_open_segment_cache_is_bounded() {
         let base_dir = temp_base_dir("kalamdb_streams_segment_cap");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1146,7 +1146,7 @@ mod tests {
     #[test]
     fn test_flush_all_and_close_idle() {
         let base_dir = temp_base_dir("kalamdb_streams_flush");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),
@@ -1180,7 +1180,7 @@ mod tests {
     #[test]
     fn test_append_puts_roundtrips_in_seq_order() {
         let base_dir = temp_base_dir("kalamdb_streams_append_puts");
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = create_store(
             base_dir.clone(),
             table_id.clone(),

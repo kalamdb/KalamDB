@@ -81,7 +81,7 @@ fn cluster_test_namespace_replication() {
 
     // Create namespace on first node
     println!("Creating namespace on node 0: {}", namespace);
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Verify namespace exists on all nodes
@@ -109,7 +109,7 @@ fn cluster_test_table_replication() {
 
     // Setup namespace
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create tables of different types
@@ -117,7 +117,8 @@ fn cluster_test_table_replication() {
         (
             "users_tbl",
             format!(
-                "CREATE USER TABLE {}.users_tbl (id BIGINT PRIMARY KEY, name STRING)",
+                "CREATE TABLE {}.users_tbl (id BIGINT PRIMARY KEY, name STRING) WITH (TYPE = \
+                 'USER')",
                 namespace
             ),
         ),
@@ -183,7 +184,7 @@ fn cluster_test_data_consistency() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(

@@ -137,7 +137,7 @@ impl UserDataCommand {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -146,7 +146,7 @@ mod tests {
         let mut cmd = UserDataCommand::Insert {
             required_meta_index: 100,
             transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("table")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("table")),
             user_id:             UserId::from("user_1"),
             rows:                vec![],
             encoded_fields:      Vec::new(),
@@ -163,7 +163,7 @@ mod tests {
         let cmd = UserDataCommand::Delete {
             required_meta_index: 50,
             transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("table")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("table")),
             user_id:             user_id.clone(),
             pk_values:           None,
         };
@@ -177,7 +177,7 @@ mod tests {
             required_meta_index: 123,
             transaction_id:      None,
             table_id:            TableId::new(
-                NamespaceId::from("test_ns"),
+                SchemaId::from("test_ns"),
                 TableName::from("test_table"),
             ),
             user_id:             UserId::from("user_456"),
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_all_user_command_variants_get_watermark() {
-        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+        let table_id = TableId::new(SchemaId::from("n"), TableName::from("t"));
         let user_id = UserId::from("u");
 
         let commands = vec![
@@ -230,7 +230,7 @@ mod tests {
         // DML commands should support setting watermark to 0 for performance optimization
         // See spec 021 section 5.4.1 "Watermark Nuance"
         let user_id = UserId::from("user123");
-        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+        let table_id = TableId::new(SchemaId::from("ns"), TableName::from("table"));
 
         let mut insert = UserDataCommand::Insert {
             required_meta_index: 100, // Initially non-zero

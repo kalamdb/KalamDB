@@ -8,7 +8,7 @@
 //! This sets the default schema for the current session using DataFusion's
 //! native configuration: `datafusion.catalog.default_schema`
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::DdlResult;
 
@@ -20,7 +20,7 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseSchemaStatement {
     /// Namespace name to switch to
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
 }
 
 impl UseSchemaStatement {
@@ -65,7 +65,7 @@ impl UseSchemaStatement {
         let namespace_name = namespace_name.trim_matches('\'').trim_matches('"').trim_matches('`');
 
         Ok(Self {
-            namespace: NamespaceId::new(namespace_name),
+            namespace: SchemaId::new(namespace_name),
         })
     }
 }

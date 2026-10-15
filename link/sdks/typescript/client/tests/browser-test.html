@@ -206,11 +206,11 @@
 
         try {
           const createSQL = `
-            CREATE USER TABLE IF NOT EXISTS ${FULL_TABLE_NAME} (
+            CREATE TABLE IF NOT EXISTS ${FULL_TABLE_NAME} (
               id BIGINT,
               title TEXT,
               completed BOOLEAN
-            )
+            ) WITH (TYPE = 'USER')
           `;
           const result = JSON.parse(await client.query(createSQL));
           

@@ -85,3 +85,18 @@ Delete superseded map/scalar materialization only after all consumers move and s
 ## Function consumption
 
 Function consumers retain the same bounded Arrow owners produced by this path; do not decode into maps or serialize KOBJ/JSON again merely to call a routine. A storage RowView borrowed from a temporary scan buffer cannot cross an async/V8 lifetime. Native reference ownership, projected authorization and V8 mutability rules are in [functions-v8.md](functions-v8.md). Returned compatible views can reuse native data before the final write/wire encoder; this does not remove validation, transaction semantics or output-encoding costs.
+
+## Implemented Evidence (T086–T098, T101–T102)
+
+- **Envelope & capability barrier (`T097`, `T090`)**:
+  - `SUPPORTED_ROW_FLAGS = 0x0037` (`FLAG_DELETED | FLAG_SHARED_ROW | FLAG_SYSTEM_ROW | FLAG_ROW_BODY_V2 | FLAG_TOMBSTONE_ONLY`) in `backend/crates/kalamdb-serialization/src/object/envelope.rs`. Unknown flags and unsupported protocol versions fail closed with `SerializationError::InvalidEnvelope`.
+  - Read-old/write-old deployment stage controlled by `is_row_v2_writer_enabled()` / `set_row_v2_writer_enabled(bool)` (defaults to `false` until cluster capability barrier completes).
+  - Tombstone-only body (`FLAG_ROW_BODY_V2 | FLAG_TOMBSTONE_ONLY`) carries `u16(0)` with no column slots (`encode_tombstone_row_v2`).
+- **Per-version layout & schema history (`T088`, `T089`, `T101`)**:
+  - `StorageVersionLayout` (`backend/crates/kalamdb-serialization/src/row/schema.rs`) precomputes `slot_span`, `fixed_slots`, `fixed_offsets`, `fixed_size`, `var_slots`, and `slot_to_col` once per schema version.
+  - `StorageSchema::register_historical_version` and `StorageSchema::layout_for_version` resolve historical row layouts by envelope `schema_version`.
+  - `ColumnDefinition.missing_default` (`KALAM_MISSING_DEFAULT_METADATA_KEY`) captures non-volatile `ADD COLUMN ... DEFAULT` values at DDL time; subsequent `SET/DROP DEFAULT` does not alter existing rows (`backend/crates/kalamdb-core/tests/pg18_schema_evolution.rs`).
+- **v2 encoder, `RowView<'a>`, and batch decoding (`T086`, `T091`–`T095`, `T098`, `T102`)**:
+  - `RowView::parse` validates slot span, null-bitmap length, fixed region bounds, offset width (`0|1|2|4`), monotone variable end offsets, and zero trailing bytes before exposing `fixed_bytes`, `variable_slice`, or `decode_field`.
+  - `decode_payloads_to_arrow_batch` resolves per-row `envelope.schema_version` against historical `StorageSchema` versions and writes directly into columnar accumulators (`ColumnAccum::Scalar`), verified across schema evolution (`v1_and_v2_row_decodes_across_add_drop_rename_and_alter_type` in `row/mod.rs`) and adversarial truncation/overflow cases (`row/decode.rs`).
+  - Extended `backend/crates/kalamdb-serialization/benches/codec.rs` with `row_codec_text_heavy` and `payloads_to_record_batch` (`v1_128_rows` and `v2_128_rows`).

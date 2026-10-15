@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, Role, TableId};
+use kalamdb_commons::{models::SchemaId, Role, TableId};
 use sqlparser::ast::{ObjectName, Owner, Statement};
 
 use crate::{ddl::DdlResult, parser::KalamParser};
@@ -23,7 +23,7 @@ fn parse_one(sql: &str) -> DdlResult<Statement> {
     Ok(statements.remove(0))
 }
 
-fn resolve_table_id(name: &ObjectName, default_namespace: &NamespaceId) -> DdlResult<TableId> {
+fn resolve_table_id(name: &ObjectName, default_namespace: &SchemaId) -> DdlResult<TableId> {
     let identifiers = name
         .0
         .iter()

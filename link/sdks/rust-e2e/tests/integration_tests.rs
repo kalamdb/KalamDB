@@ -75,7 +75,7 @@ async fn setup_namespace(ns: &str) {
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
     let _ = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 }
@@ -469,9 +469,9 @@ async fn test_create_namespace() {
 
     // Create
     let result = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None)
         .await;
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed");
 
     // Cleanup
     cleanup_namespace(&ns).await;

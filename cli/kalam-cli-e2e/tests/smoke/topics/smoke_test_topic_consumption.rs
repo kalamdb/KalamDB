@@ -469,7 +469,7 @@ async fn test_topic_consume_insert_events() {
     let topic = unique_topic(&namespace, "insert_topic");
 
     // Setup
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
         "CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT, value DOUBLE)",
         namespace, table
@@ -539,7 +539,7 @@ async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("sql_ack_topic"));
     let group_id = format!("sql-ack-group-{}", common::random_string(10));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, body TEXT)", full_table)).await;
     common::grant_public_shared_table_access(&full_table);
     create_topic_with_sources(&topic, &full_table, &["INSERT"]).await;
@@ -593,7 +593,7 @@ async fn test_topic_consume_update_events() {
     let table = common::generate_unique_table("updates");
     let topic = unique_topic(&namespace, "update_topic");
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
         "CREATE TABLE {}.{} (id INT PRIMARY KEY, status TEXT, counter INT)",
         namespace, table
@@ -675,7 +675,7 @@ async fn test_topic_consume_delete_events() {
     let table = common::generate_unique_table("deletes");
     let topic = unique_topic(&namespace, "delete_topic");
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, name TEXT)", namespace, table))
         .await;
     common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
@@ -744,7 +744,7 @@ async fn test_topic_consume_mixed_operations() {
     let table = common::generate_unique_table("mixed");
     let topic = unique_topic(&namespace, "mixed_topic");
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
         "CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT, version INT)",
         namespace, table
@@ -814,7 +814,7 @@ async fn test_topic_consume_offset_persistence() {
     let topic = unique_topic(&namespace, "offset_topic");
     let group_id = format!("test-offset-group-{}", common::random_string(10));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, data TEXT)", namespace, table))
         .await;
     common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
@@ -956,7 +956,7 @@ async fn test_topic_consume_from_earliest() {
     let table = common::generate_unique_table("earliest");
     let topic = unique_topic(&namespace, "earliest_topic");
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
         .await;
     common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
@@ -1005,7 +1005,7 @@ async fn test_topic_consume_from_latest() {
     let table = common::generate_unique_table("latest");
     let topic = unique_topic(&namespace, "latest_topic");
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!("CREATE TABLE {}.{} (id INT PRIMARY KEY, msg TEXT)", namespace, table))
         .await;
     common::grant_public_shared_table_access(&format!("{}.{}", namespace, table));
@@ -1156,7 +1156,7 @@ async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
             common::random_string(8)
         );
 
-        execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+        execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
         execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table_id)).await;
         common::grant_public_shared_table_access(&table_id);
         create_topic_with_sources(&topic, &table_id, &["INSERT"]).await;
@@ -1394,9 +1394,10 @@ async fn test_topic_http_consume_preserves_impersonated_user_and_payloads() {
     let bob_user = common::generate_unique_namespace("topic_bob");
     let password = "topic_pass_123";
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, body TEXT, status TEXT, version INT)",
+        "CREATE TABLE {} (id INT PRIMARY KEY, body TEXT, status TEXT, version INT) WITH (TYPE = \
+         'USER')",
         full_table
     ))
     .await;
@@ -1558,10 +1559,10 @@ async fn test_topic_sql_consume_docs_getting_started_flow() {
     let full_table = format!("{}.{}", namespace, table_name);
     let topic = format!("{}.{}", namespace, common::generate_unique_table("message_events"));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id TEXT PRIMARY KEY DEFAULT ULID(), author TEXT NOT NULL, msg TEXT \
-         NOT NULL, attachment FILE, created TIMESTAMP NOT NULL DEFAULT NOW())",
+        "CREATE TABLE {} (id TEXT PRIMARY KEY DEFAULT ULID(), author TEXT NOT NULL, msg TEXT NOT \
+         NULL, attachment FILE, created TIMESTAMP NOT NULL DEFAULT NOW()) WITH (TYPE = 'USER')",
         full_table
     ))
     .await;
@@ -1642,9 +1643,9 @@ async fn test_topic_http_consume_direct_multi_user_publishers_no_missing_changes
     let user_c = common::generate_unique_namespace("topic_user_c");
     let password = "topic_multi_pass_123";
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, body TEXT, version INT)",
+        "CREATE TABLE {} (id INT PRIMARY KEY, body TEXT, version INT) WITH (TYPE = 'USER')",
         full_table
     ))
     .await;

@@ -87,6 +87,7 @@ impl SystemColumnsService {
             is_primary_key:   false,
             is_partition_key: false,
             default_value:    ColumnDefault::None,
+            missing_default:  None,
             column_comment:   Some(
                 "Canonical row version assigned from the committed Raft entry".to_string(),
             ),
@@ -107,6 +108,7 @@ impl SystemColumnsService {
                 is_primary_key:   false,
                 is_partition_key: false,
                 default_value:    ColumnDefault::None,
+                missing_default:  None,
                 column_comment:   Some(
                     "Server ingestion time in UTC epoch milliseconds".to_string(),
                 ),
@@ -128,6 +130,7 @@ impl SystemColumnsService {
             is_primary_key:   false,
             is_partition_key: false,
             default_value:    ColumnDefault::Literal(serde_json::json!(false)),
+            missing_default:  None,
             column_comment:   Some("Soft delete flag".to_string()),
         });
         table_def.next_column_id += 1;
@@ -166,12 +169,12 @@ mod tests {
     fn test_add_system_columns() {
         use kalamdb_commons::{
             models::schemas::{TableOptions, TableType},
-            NamespaceId, TableName,
+            SchemaId, TableName,
         };
 
         let svc = SystemColumnsService::new(1);
         let mut table_def = TableDefinition::new(
-            NamespaceId::new("test"),
+            SchemaId::new("test"),
             TableName::new("table"),
             TableType::User,
             vec![],

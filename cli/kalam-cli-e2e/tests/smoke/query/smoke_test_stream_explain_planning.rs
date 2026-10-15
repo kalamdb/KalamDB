@@ -15,8 +15,8 @@ fn smoke_test_stream_explain_planning() {
     let stream_table = generate_unique_table("events");
     let full_stream_table = format!("{}.{}", namespace, stream_table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (event_id TEXT PRIMARY KEY, payload TEXT) WITH (TYPE = 'STREAM', \
          TTL_SECONDS = 60)",

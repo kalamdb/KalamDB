@@ -95,7 +95,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::{Row, RowMetadata},
         schemas::TableDefinition,
-        NamespaceId, TableName, UserId,
+        SchemaId, TableName, UserId,
     },
     schemas::TableType,
     try_pk_bucket_key, NotLeaderError, StorageKey, TableId,
@@ -728,7 +728,7 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
     }
 
     /// Get namespace ID from table_id (default implementation)
-    fn namespace_id(&self) -> &NamespaceId {
+    fn namespace_id(&self) -> &SchemaId {
         self.table_id().namespace_id()
     }
 
@@ -2658,7 +2658,7 @@ mod tests {
 
     #[test]
     fn cached_empty_manifest_is_hot_only() {
-        let table_id = TableId::new(NamespaceId::new("ns"), TableName::new("t"));
+        let table_id = TableId::new(SchemaId::new("ns"), TableName::new("t"));
         let entry = ManifestCacheEntry::new(
             Manifest::new(table_id, None),
             None,

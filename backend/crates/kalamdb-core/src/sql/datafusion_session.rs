@@ -24,16 +24,17 @@ use datafusion::{
     prelude::SessionConfig,
 };
 use kalamdb_configs::DataFusionSettings;
+use kalamdb_filestore::FileStorageService;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::sql::{
     functions::{
         AlwaysTruePrivilegeFunction, ColDescriptionFunction, CosineDistanceFunction,
         CurrentDatabaseFunction, CurrentRoleFunction, CurrentSchemaFunction,
-        CurrentSettingFunction, CurrentUserFunction, FormatTypeFunction, ObjDescriptionFunction,
-        PgBackendPidFunction, PgGetExprFunction, PgGetFunctionResultFunction,
-        PgGetFunctionTextFunction, PgGetIndexdefFunction, SnowflakeIdFunction, UlidFunction,
-        UuidV7Function, VersionFunction,
+        CurrentSettingFunction, CurrentUserFunction, FileStorageFunction, FormatTypeFunction,
+        ObjDescriptionFunction, PgBackendPidFunction, PgGetExprFunction,
+        PgGetFunctionResultFunction, PgGetFunctionTextFunction, PgGetIndexdefFunction,
+        SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -230,6 +231,11 @@ impl DataFusionSessionFactory {
 
         // Register vector search table function (TABLE(vector_search(...))).
         ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::unavailable()));
+
+        // Register built-in file extension stubs (overwritten once AppContext is created).
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_put(None)));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_read(None)));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_delete(None)));
     }
 
     /// Register catalog-backed `pg_get_functiondef` / argument helpers on a live session.
@@ -250,6 +256,22 @@ impl DataFusionSessionFactory {
             &system_tables,
         ))));
         ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::result(system_tables)));
+    }
+
+    /// Register built-in `file_put`, `file_read`, and `file_delete` functions backed by `FileStorageService`.
+    pub fn register_file_storage_functions(
+        ctx: &SessionContext,
+        file_storage_service: Arc<FileStorageService>,
+    ) {
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_put(Some(Arc::clone(
+            &file_storage_service,
+        )))));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_read(Some(Arc::clone(
+            &file_storage_service,
+        )))));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_delete(Some(
+            file_storage_service,
+        ))));
     }
 
     /// Register all existing namespaces as DataFusion schemas

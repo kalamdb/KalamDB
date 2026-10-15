@@ -86,7 +86,7 @@ async function runTest() {
   const table = `${namespace}.messages`;
   
   console.log(`\n📋 Setup: Creating ${table}`);
-  await executeSQL(`CREATE NAMESPACE ${namespace}`);
+  await executeSQL(`CREATE SCHEMA ${namespace}`);
   await executeSQL(`CREATE TABLE ${table} (id INT PRIMARY KEY, msg TEXT) WITH (TYPE='USER')`);
   
   // Insert initial data BEFORE subscribing

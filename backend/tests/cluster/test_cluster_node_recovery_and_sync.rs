@@ -11,7 +11,7 @@ async fn test_cluster_node_offline_and_recovery() -> Result<()> {
     let test_namespace = "test_recovery";
     let test_table = "test_data";
 
-    let create_ns = format!("CREATE NAMESPACE {}", test_namespace);
+    let create_ns = format!("CREATE SCHEMA {}", test_namespace);
     cluster.execute_sql_on_random(&create_ns).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
@@ -102,7 +102,7 @@ async fn test_cluster_execute_on_all_skips_offline() -> Result<()> {
     let test_namespace = "test_skip_offline";
     let test_table = "data";
 
-    let create_ns = format!("CREATE NAMESPACE {}", test_namespace);
+    let create_ns = format!("CREATE SCHEMA {}", test_namespace);
     cluster.execute_sql_on_random(&create_ns).await?;
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 

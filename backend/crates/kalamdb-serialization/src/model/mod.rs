@@ -47,7 +47,7 @@ mod tests {
     use kalamdb_commons::{
         models::datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
     use serde::{Deserialize, Serialize};
 
@@ -65,7 +65,7 @@ mod tests {
 
     fn sample_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("samples"),
             TableType::System,
             vec![
@@ -126,7 +126,7 @@ mod tests {
 
     fn enum_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("sample_enums"),
             TableType::System,
             vec![
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn json_column_tagged_enum_roundtrips() {
         let table = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("sample_programs"),
             TableType::System,
             vec![

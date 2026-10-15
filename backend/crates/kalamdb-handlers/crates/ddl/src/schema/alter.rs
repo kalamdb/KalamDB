@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -34,7 +34,7 @@ impl TypedStatementHandler<AlterSchemaStatement> for AlterSchemaHandler {
         _context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         let name = statement.name.as_str();
-        let namespace_id = NamespaceId::new(name);
+        let namespace_id = SchemaId::new(name);
 
         // Check if namespace exists and update (offload sync RocksDB read/write)
         let app_ctx = self.app_context.clone();
@@ -119,7 +119,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = AlterSchemaHandler::new(app_ctx);
         let stmt = AlterSchemaStatement {
-            name:    NamespaceId::new("test"),
+            name:    SchemaId::new("test"),
             options: std::collections::HashMap::new(),
         };
 
@@ -140,7 +140,7 @@ mod tests {
         options.insert("max_tables".to_string(), serde_json::json!(100));
 
         let stmt = AlterSchemaStatement {
-            name: NamespaceId::new("test_namespace"),
+            name: SchemaId::new("test_namespace"),
             options,
         };
         let ctx = create_test_context();

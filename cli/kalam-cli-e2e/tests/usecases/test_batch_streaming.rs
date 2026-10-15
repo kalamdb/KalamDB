@@ -38,7 +38,7 @@ fn test_websocket_batch_streaming_rows() {
 
     // Create namespace
     println!("Creating namespace {}...", namespace);
-    if let Err(e) = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace)) {
+    if let Err(e) = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace)) {
         eprintln!("⚠️  Failed to create namespace: {:?}", e);
         return;
     }

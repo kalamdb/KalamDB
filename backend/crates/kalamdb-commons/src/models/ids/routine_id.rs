@@ -31,7 +31,7 @@ impl RoutineId {
     }
 
     pub fn from_parts(namespace: Option<&SchemaId>, name: &str) -> Self {
-        let name = name.trim().to_ascii_lowercase();
+        let name = name.trim();
         assert!(!name.is_empty(), "RoutineId cannot be empty");
         match namespace {
             Some(namespace) => Self::new(format!("{}.{name}", namespace.as_str())),
@@ -40,7 +40,7 @@ impl RoutineId {
     }
 
     pub fn namespace_id(&self) -> Option<SchemaId> {
-        self.as_str().rsplit_once('.').map(|(namespace, _)| SchemaId::new(namespace))
+        self.as_str().split_once('.').map(|(namespace, _)| SchemaId::new(namespace))
     }
 }
 

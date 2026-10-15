@@ -239,7 +239,7 @@ async fn e2e_ddl_kalam_exec_passthrough_statements() {
     let ns = unique_name("exec_ns");
     let table = unique_name("exec_tbl");
 
-    let create_ns = pg_kalam_exec(&pg, &format!("CREATE NAMESPACE IF NOT EXISTS {ns}")).await;
+    let create_ns = pg_kalam_exec(&pg, &format!("CREATE SCHEMA IF NOT EXISTS {ns}")).await;
     assert!(
         contains_status(&create_ns, &["created", "ok", "already exists"]),
         "unexpected CREATE NAMESPACE response: {create_ns}"

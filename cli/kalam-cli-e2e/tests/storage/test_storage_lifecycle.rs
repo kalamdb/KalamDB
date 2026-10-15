@@ -32,7 +32,7 @@ fn test_storage_drop_requires_detached_tables() {
     }
     let base_dir_sql = escape_single_quotes(base_dir.to_str().expect("valid storage path"));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
 
     let create_storage_sql = format!(

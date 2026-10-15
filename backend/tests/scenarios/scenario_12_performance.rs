@@ -22,7 +22,7 @@ async fn test_scenario_12_insert_performance() -> anyhow::Result<()> {
     let ns = unique_ns("perf_insert");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -115,7 +115,7 @@ async fn test_scenario_12_query_time_growth() -> anyhow::Result<()> {
     let ns = unique_ns("perf_query");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -221,7 +221,7 @@ async fn test_scenario_12_subscription_snapshot_timing() -> anyhow::Result<()> {
     let ns = unique_ns("perf_sub");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -316,7 +316,7 @@ async fn test_scenario_12_memory_baseline() -> anyhow::Result<()> {
     let ns = unique_ns("perf_memory");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::models::{SchemaId, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -42,7 +42,7 @@ impl DropSchemaHandler {
     /// Note: DataFusion's MemoryCatalogProvider doesn't have a direct deregister_schema method.
     /// We log the drop and rely on the fact that the namespace metadata is deleted from RocksDB.
     /// Any subsequent queries to tables in this namespace will fail with "table not found".
-    fn deregister_namespace_schema(&self, namespace_id: &NamespaceId) {
+    fn deregister_namespace_schema(&self, namespace_id: &SchemaId) {
         // DataFusion doesn't provide a deregister_schema API on CatalogProvider trait.
         // The schema will remain in memory until server restart, but since the namespace
         // metadata is deleted, any table lookups will fail appropriately.
@@ -57,7 +57,7 @@ impl DropSchemaHandler {
 
     async fn delete_namespace_migrations(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<usize, KalamDbError> {
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
@@ -287,7 +287,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropSchemaHandler::new(app_ctx);
         let stmt = DropSchemaStatement {
-            name:      kalamdb_commons::models::NamespaceId::new("test_namespace"),
+            name:      kalamdb_commons::models::SchemaId::new("test_namespace"),
             if_exists: false,
             cascade:   false,
         };
@@ -306,7 +306,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropSchemaHandler::new(app_ctx);
         let stmt = DropSchemaStatement {
-            name:      kalamdb_commons::models::NamespaceId::new("test"),
+            name:      kalamdb_commons::models::SchemaId::new("test"),
             if_exists: false,
             cascade:   false,
         };
@@ -325,7 +325,7 @@ mod tests {
         let app_ctx = init_app_context();
         let handler = DropSchemaHandler::new(app_ctx);
         let stmt = DropSchemaStatement {
-            name:      kalamdb_commons::models::NamespaceId::new("nonexistent"),
+            name:      kalamdb_commons::models::SchemaId::new("nonexistent"),
             if_exists: true,
             cascade:   false,
         };
@@ -343,8 +343,8 @@ mod tests {
     async fn test_delete_namespace_migrations_only_removes_target_namespace() {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
-        let namespace_id = NamespaceId::new(format!("drop_migrations_{}", suffix));
-        let other_namespace_id = NamespaceId::new(format!("keep_migrations_{}", suffix));
+        let namespace_id = SchemaId::new(format!("drop_migrations_{}", suffix));
+        let other_namespace_id = SchemaId::new(format!("keep_migrations_{}", suffix));
         let handler = DropSchemaHandler::new(app_ctx.clone());
 
         for ns_id in [&namespace_id, &other_namespace_id] {
@@ -426,7 +426,7 @@ mod tests {
     async fn test_drop_namespace_cascade_cleanup_releases_user_table_partitions() {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
-        let namespace_id = NamespaceId::new(format!("drop_ns_{}", suffix));
+        let namespace_id = SchemaId::new(format!("drop_ns_{}", suffix));
         let table_name = TableName::new(format!("docs_{}", suffix));
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
@@ -500,7 +500,7 @@ mod tests {
     async fn drop_namespace_removes_procedures_and_types() {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
-        let namespace_id = NamespaceId::new(format!("drop_catalog_{}", suffix));
+        let namespace_id = SchemaId::new(format!("drop_catalog_{}", suffix));
         let handler = DropSchemaHandler::new(app_ctx.clone());
 
         app_ctx
@@ -548,6 +548,13 @@ mod tests {
                 return_data_type:   None,
                 inline_source_hash: None,
                 inline_artifact_id: None,
+                kind:               kalamdb_commons::models::RoutineKind::default(),
+                volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+                null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+                parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+                cost:               None,
+                rows:               None,
+                config_params:      None,
             })
             .expect("upsert routine");
 
@@ -565,7 +572,7 @@ mod tests {
     async fn drop_namespace_if_exists_cleans_orphan_catalog() {
         let app_ctx = test_app_context_simple();
         let suffix = unique_suffix();
-        let namespace_id = NamespaceId::new(format!("orphan_catalog_{}", suffix));
+        let namespace_id = SchemaId::new(format!("orphan_catalog_{}", suffix));
         let handler = DropSchemaHandler::new(app_ctx.clone());
         let stores = app_ctx.system_tables().catalog_stores();
         let routine_id = RoutineId::from_parts(Some(&namespace_id), "book_tickets");
@@ -586,6 +593,13 @@ mod tests {
                 return_data_type:   None,
                 inline_source_hash: None,
                 inline_artifact_id: None,
+                kind:               kalamdb_commons::models::RoutineKind::default(),
+                volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+                null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+                parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+                cost:               None,
+                rows:               None,
+                config_params:      None,
             })
             .expect("upsert orphan routine");
 

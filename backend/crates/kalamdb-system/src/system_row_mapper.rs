@@ -23,7 +23,7 @@ pub fn system_row_to_model<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::rows::SystemTableRow, schemas::TableDefinition, NamespaceId, TableName,
+        models::rows::SystemTableRow, schemas::TableDefinition, SchemaId, TableName,
     };
     use serde::{Deserialize, Serialize};
 
@@ -54,7 +54,7 @@ mod tests {
         };
 
         let table_def = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("test_models"),
             kalamdb_commons::schemas::TableType::System,
             vec![
@@ -107,7 +107,7 @@ mod tests {
         };
 
         let table_def = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("uuid_decimal_models"),
             kalamdb_commons::schemas::TableType::System,
             vec![

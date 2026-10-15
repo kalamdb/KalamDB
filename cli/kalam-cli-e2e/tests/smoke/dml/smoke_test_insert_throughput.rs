@@ -39,8 +39,8 @@ fn smoke_test_insert_throughput_single() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT NOT NULL, created_at TIMESTAMP \
@@ -123,8 +123,8 @@ fn smoke_test_insert_throughput_batched() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT NOT NULL, batch_id INT)",
@@ -219,8 +219,8 @@ fn smoke_test_insert_throughput_parallel() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     // Use AUTO_INCREMENT to avoid PK conflicts between parallel workers
     let create_table_sql = format!(
@@ -326,8 +326,8 @@ fn smoke_test_insert_throughput_summary() {
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     let namespace = generate_unique_namespace("bench_summary");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     // Test 1: Single-row inserts
     let single_table = format!("{}.single_test", namespace);

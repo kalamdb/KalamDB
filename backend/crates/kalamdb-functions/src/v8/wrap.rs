@@ -10,7 +10,7 @@ pub fn wrap_procedure_source(body: &str) -> String {
     }
     format!(
         "function kalamInvoke(name, args) {{\nconst ctx = globalThis.__kalamCtx;\nconst input = \
-         args.length === 1 ? args[0] : Array.from(args);\nreturn (function (ctx, input) \
+         args.length === 1 ? args[0] : Array.from(args);\nreturn (async function (ctx, input) \
          {{\n{body}\n}})(ctx, input);\n}}\n"
     )
 }

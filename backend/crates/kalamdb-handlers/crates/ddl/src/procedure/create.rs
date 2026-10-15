@@ -67,11 +67,22 @@ impl TypedStatementHandler<CreateProcedureStatement> for CreateProcedureHandler 
                 .get_routine(&statement.routine_id)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
         };
-        if existing.is_some() && !statement.or_replace {
-            return Err(KalamDbError::AlreadyExists(format!(
-                "procedure {} already exists",
-                statement.routine_id
-            )));
+        if let Some(previous) = existing.as_ref() {
+            if previous.kind != statement.kind {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "cannot change routine kind of {}: existing is {}, statement is {}",
+                    statement.routine_id,
+                    previous.kind.as_str(),
+                    statement.kind.as_str()
+                )));
+            }
+            if !statement.or_replace {
+                return Err(KalamDbError::AlreadyExists(format!(
+                    "{} {} already exists",
+                    statement.kind.as_str().to_ascii_lowercase(),
+                    statement.routine_id
+                )));
+            }
         }
         let replaced = existing.is_some();
         if routine.comment.is_none() {
@@ -112,7 +123,7 @@ mod tests {
     use std::sync::Arc;
 
     use kalamdb_commons::{
-        models::{NamespaceId, UserId},
+        models::{SchemaId, UserId},
         Role,
     };
     use kalamdb_core::test_helpers::{create_test_session_for, test_app_context_simple};
@@ -191,7 +202,7 @@ mod tests {
         );
         let statement = CreateProcedureStatement::parse(
             "CREATE PROCEDURE missing_ns.echo(msg TEXT) LANGUAGE JAVASCRIPT AS $$ return input; $$",
-            &NamespaceId::default(),
+            &SchemaId::default(),
         )
         .expect("parse create procedure");
         let error = handler.execute(statement, vec![], &ctx).await.unwrap_err();
@@ -204,7 +215,7 @@ mod tests {
     async fn unknown_parameter_type_is_rejected() {
         let app_ctx = test_app_context_simple();
         let namespaces = app_ctx.system_tables().namespaces();
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         if namespaces.get_namespace(&ns).unwrap().is_none() {
             namespaces.create_namespace(kalamdb_system::Namespace::new("app")).unwrap();
         }
@@ -230,7 +241,7 @@ mod tests {
     async fn topic_payload_type_can_be_used_as_return_type() {
         let app_ctx = test_app_context_simple();
         let namespaces = app_ctx.system_tables().namespaces();
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         if namespaces.get_namespace(&ns).unwrap().is_none() {
             namespaces.create_namespace(kalamdb_system::Namespace::new("app")).unwrap();
         }
@@ -246,11 +257,11 @@ mod tests {
             create_test_session_for(&app_ctx),
         );
         let statement = CreateProcedureStatement::parse(
-            "CREATE PROCEDURE app.send() RETURNS app.inbox SECURITY INVOKER",
+            "CREATE FUNCTION app.send() RETURNS app.inbox SECURITY INVOKER",
             &ns,
         )
-        .expect("parse create procedure");
-        handler.execute(statement, vec![], &ctx).await.expect("create procedure");
+        .expect("parse create function");
+        handler.execute(statement, vec![], &ctx).await.expect("create function");
     }
 }
 
@@ -259,6 +270,29 @@ fn catalog_routine(
     statement: &CreateProcedureStatement,
     owner: UserId,
 ) -> Result<CatalogRoutine, KalamDbError> {
+    let out_params: Vec<&_> = statement
+        .parameters
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.mode,
+                kalamdb_commons::models::RoutineParameterMode::Out
+                    | kalamdb_commons::models::RoutineParameterMode::InOut
+            )
+        })
+        .collect();
+    let effective_return_type = statement.return_type.as_ref().or_else(|| {
+        if statement.kind == kalamdb_commons::models::RoutineKind::Function
+            && out_params.len() == 1
+        {
+            Some(&out_params[0].type_ref)
+        } else {
+            None
+        }
+    });
+    let multi_out_record = statement.kind == kalamdb_commons::models::RoutineKind::Function
+        && statement.return_type.is_none()
+        && out_params.len() > 1;
     Ok(CatalogRoutine {
         routine_id: statement.routine_id.clone(),
         namespace_id: statement.namespace_id.clone(),
@@ -267,27 +301,35 @@ fn catalog_routine(
         security: statement.security,
         language: statement.language.clone(),
         body: statement.body.clone(),
-        return_type_id: statement
-            .return_type
-            .as_ref()
+        return_type_id: effective_return_type
             .map(|ty| {
                 crate::catalog_type::resolve_named_type_id(stores, &statement.namespace_id, ty)
             })
             .transpose()?
             .flatten(),
-        return_type_name: statement
-            .return_type
-            .as_ref()
-            .map(|ty| ty.resolved_type_name(&statement.namespace_id)),
-        return_is_array: statement.return_type.as_ref().is_some_and(|ty| ty.is_array),
-        return_not_null: statement.return_type.as_ref().is_some_and(|ty| ty.not_null),
+        return_type_name: if multi_out_record {
+            Some("RECORD".to_string())
+        } else {
+            effective_return_type.map(|ty| ty.resolved_type_name(&statement.namespace_id))
+        },
+        return_is_array: effective_return_type.is_some_and(|ty| ty.is_array),
+        return_not_null: effective_return_type.is_some_and(|ty| ty.not_null),
         comment: statement.comment.clone(),
-        return_data_type: statement
-            .return_type
-            .as_ref()
-            .and_then(|ty| ty.function_signature_type().builtin_data_type()),
+        return_data_type: if multi_out_record {
+            Some(kalamdb_commons::KalamDataType::Json)
+        } else {
+            effective_return_type
+                .and_then(|ty| ty.function_signature_type().builtin_data_type())
+        },
         inline_source_hash: None,
         inline_artifact_id: None,
+        kind: statement.kind,
+        volatility: statement.volatility,
+        null_safety: statement.null_safety,
+        parallel_safety: statement.parallel_safety,
+        cost: statement.cost,
+        rows: statement.rows,
+        config_params: statement.config_params_json(),
     })
 }
 
@@ -314,6 +356,8 @@ fn catalog_parameters(
             not_null: parameter.type_ref.not_null,
             nonempty: parameter.type_ref.nonempty,
             data_type: parameter.type_ref.function_signature_type().builtin_data_type(),
+            mode: parameter.mode,
+            default_expr: parameter.default_expr.clone(),
         });
     }
     Ok(parameters)

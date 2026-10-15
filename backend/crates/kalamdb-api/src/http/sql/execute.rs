@@ -28,7 +28,7 @@ use std::{future::Future, sync::Arc, time::Instant};
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
@@ -160,7 +160,7 @@ pub async fn execute_sql_v1(
     }
 
     // 4. Build execution context
-    let default_namespace = namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
+    let default_namespace = namespace_id.clone().unwrap_or_else(|| SchemaId::new("default"));
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace);

@@ -88,6 +88,29 @@ pub fn has_object_magic(bytes: &[u8]) -> bool {
 pub(crate) const FLAG_COLUMN_OFFSETS: u16 = 1 << 0;
 /// Row payload stores the tombstone flag only. `_version` lives on the storage key.
 pub(crate) const FLAG_VERSION_IN_KEY: u16 = 1 << 1;
+/// Row payload uses the packed v2 fixed/variable body layout (`RowView`).
+pub const FLAG_ROW_BODY_V2: u16 = 1 << 2;
+/// Row payload is a tombstone-only body with no column values.
+pub const FLAG_TOMBSTONE_ONLY: u16 = 1 << 3;
+
+/// Supported flag mask for `ObjectKind::Row` envelopes.
+pub const SUPPORTED_ROW_FLAGS: u16 =
+    FLAG_COLUMN_OFFSETS | FLAG_VERSION_IN_KEY | FLAG_ROW_BODY_V2 | FLAG_TOMBSTONE_ONLY;
+
+static ROW_V2_WRITERS_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Query whether row v2 writers are enabled past the durable format capability barrier (T097).
+/// Read-old/write-old deployment stage defaults to `false`.
+#[inline]
+pub fn is_row_v2_writer_enabled() -> bool {
+    ROW_V2_WRITERS_ENABLED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Enable or disable row v2 writers (T097 durable format activation gate).
+pub fn set_row_v2_writer_enabled(enabled: bool) {
+    ROW_V2_WRITERS_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
+}
 
 #[inline]
 pub(crate) fn begin_envelope(
@@ -159,6 +182,15 @@ pub(crate) fn decode_envelope(
     }
     let schema_version = u16::from_le_bytes([bytes[7], bytes[8]]);
     let flags = u16::from_le_bytes([bytes[9], bytes[10]]);
+    let supported_mask = match object_kind {
+        ObjectKind::Row => SUPPORTED_ROW_FLAGS,
+        _ => 0,
+    };
+    if flags & !supported_mask != 0 {
+        return Err(SerializationError::Decode(format!(
+            "unsupported envelope flags 0x{flags:04x} for {object_kind:?} (supported mask 0x{supported_mask:04x})"
+        )));
+    }
     let payload_len = u32::from_le_bytes([bytes[11], bytes[12], bytes[13], bytes[14]]) as usize;
     let payload_start = HEADER_LEN;
     let payload_end =

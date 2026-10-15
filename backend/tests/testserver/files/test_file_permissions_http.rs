@@ -157,9 +157,9 @@ async fn test_file_download_permissions_user_table() -> anyhow::Result<()> {
         let table_name = format!("user_files_{}", unique_suffix());
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let create_table_sql = format!(
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT, doc FILE) WITH (TYPE='USER')",
@@ -234,9 +234,9 @@ async fn test_insert_with_files_permission_denied() -> anyhow::Result<()> {
         let table_name = format!("shared_files_{}", unique_suffix());
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let create_table_sql = format!(
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, doc FILE) WITH (TYPE='SHARED')",
@@ -300,9 +300,9 @@ async fn test_failed_insert_cleans_up_files() -> anyhow::Result<()> {
         let table_name = format!("cleanup_files_{}", unique_suffix());
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let create_table_sql = format!(
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL, doc FILE) WITH \
@@ -357,9 +357,9 @@ async fn test_user_file_access_matrix() -> anyhow::Result<()> {
         let table_name = format!("access_files_{}", unique_suffix());
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let create_table_sql = format!(
             "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT, doc FILE) WITH (TYPE='USER')",
@@ -522,9 +522,9 @@ async fn test_file_download_rejects_invalid_user_id_query() -> anyhow::Result<()
         let table_name = format!("query_guard_{}", unique_suffix());
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let resp = server
             .execute_sql(&format!(
@@ -587,9 +587,9 @@ async fn test_multibyte_file_upload_and_owner_download() -> anyhow::Result<()> {
         let content = "hello from KalamDB: مرحبا, こんにちは, Здравствуйте";
 
         let resp = server
-            .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+            .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .await?;
-        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE NAMESPACE failed");
+        assert_eq!(resp.status, LinkResponseStatus::Success, "CREATE SCHEMA failed");
 
         let resp = server
             .execute_sql(&format!(

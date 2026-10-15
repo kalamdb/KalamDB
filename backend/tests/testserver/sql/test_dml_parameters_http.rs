@@ -50,8 +50,8 @@ async fn test_parameterized_dml_over_http() {
         let ns = unique_namespace("params");
         let table = "items";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
         let auth = create_user_auth_header(
             server,

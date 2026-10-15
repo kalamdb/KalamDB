@@ -35,7 +35,7 @@ fn create_client() -> KalamLinkClient {
 async fn setup_topic_and_table(client: &KalamLinkClient, topic_name: &str, table_name: &str) {
     let ns = topic_name.split('.').next().unwrap_or("test");
     client
-        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {ns}"), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA IF NOT EXISTS {ns}"), None, None, None)
         .await
         .expect("create namespace");
 

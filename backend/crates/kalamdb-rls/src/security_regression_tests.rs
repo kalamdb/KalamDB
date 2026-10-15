@@ -17,7 +17,7 @@ use kalamdb_commons::{
     datatypes::KalamDataType,
     models::rows::Row,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    AuthorizationRelation, BoundExprShape, InvalidationStrategy, NamespaceId, PolicyCommand,
+    AuthorizationRelation, BoundExprShape, InvalidationStrategy, SchemaId, PolicyCommand,
     PolicyId, PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, Role,
     ScalarPredicate, TableId, TableName, TablePolicy, UserId,
 };
@@ -29,7 +29,7 @@ use crate::{
 
 fn documents_table() -> TableDefinition {
     TableDefinition::new(
-        NamespaceId::new("app"),
+        SchemaId::new("app"),
         TableName::new("documents"),
         TableType::Shared,
         vec![
@@ -219,7 +219,7 @@ fn null_principal_membership_row_is_ignored() {
         invalidation:      InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
-        NamespaceId::new("app"),
+        SchemaId::new("app"),
         TableName::new("members"),
         TableType::Shared,
         vec![
@@ -262,7 +262,7 @@ fn equality_static_predicate_rejects_null_column() {
         invalidation:      InvalidationStrategy::TargetedPrincipal,
     };
     let members = TableDefinition::new(
-        NamespaceId::new("app"),
+        SchemaId::new("app"),
         TableName::new("members"),
         TableType::Shared,
         vec![

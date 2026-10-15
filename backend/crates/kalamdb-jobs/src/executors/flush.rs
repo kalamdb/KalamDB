@@ -648,7 +648,7 @@ impl Default for FlushExecutor {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
 
     use super::*;
 
@@ -663,7 +663,7 @@ mod tests {
     fn test_flush_params_validate() {
         let params = FlushParams {
             table_id:        TableId::new(
-                NamespaceId::default(),
+                SchemaId::default(),
                 kalamdb_commons::TableName::new("users"),
             ),
             table_type:      TableType::User,
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn segment_compaction_idempotency_keys_are_scope_specific() {
         let table_id =
-            TableId::new(NamespaceId::new("app"), kalamdb_commons::TableName::new("events"));
+            TableId::new(SchemaId::new("app"), kalamdb_commons::TableName::new("events"));
         let user_a = UserId::from("user-a");
         let user_b = UserId::from("user-b");
 

@@ -6,7 +6,7 @@ use std::{
 use arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_commons::{
     conversions::with_kalam_data_type_metadata,
-    models::{datatypes::ToArrowType, NamespaceId, StorageId, TableName},
+    models::{datatypes::ToArrowType, SchemaId, StorageId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 use once_cell::sync::Lazy;
@@ -31,7 +31,7 @@ static USING_ACCESS_METHOD_RE: Lazy<Regex> =
 
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> Result<Self, String> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> Result<Self, String> {
         crate::ddl::reject_access_level_sql(sql)?;
         let (mut normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
 
@@ -64,7 +64,7 @@ impl CreateTableStatement {
                     (default_namespace.clone(), TableName::from(name.0[0].to_string().as_str()))
                 } else if name.0.len() == 2 {
                     (
-                        NamespaceId::from(name.0[0].to_string().as_str()),
+                        SchemaId::from(name.0[0].to_string().as_str()),
                         TableName::from(name.0[1].to_string().as_str()),
                     )
                 } else {
@@ -74,7 +74,7 @@ impl CreateTableStatement {
                 };
 
                 // Validate names using shared commons rules.
-                if let Err(error) = NamespaceId::try_parse_reference(namespace_id.as_str()) {
+                if let Err(error) = SchemaId::try_parse_reference(namespace_id.as_str()) {
                     let span = name.0.first().and_then(|part| match part {
                         ObjectNamePart::Identifier(ident) => Some(ident.span),
                         _ => None,
@@ -546,8 +546,8 @@ mod tests {
 
     const DEFAULT_NS: &str = "sales";
 
-    fn default_ns() -> NamespaceId {
-        NamespaceId::new(DEFAULT_NS)
+    fn default_ns() -> SchemaId {
+        SchemaId::new(DEFAULT_NS)
     }
 
     #[test]
@@ -868,7 +868,7 @@ CREATE TABLE sales.orders (
             stmt.column_defaults.get("id"),
             Some(&ColumnDefault::procedure(
                 RoutineId::from_parts(
-                    Some(&kalamdb_commons::models::NamespaceId::new("sales")),
+                    Some(&kalamdb_commons::models::SchemaId::new("sales")),
                     "next_id"
                 ),
                 vec![CallArgument::text("v1")],
@@ -879,7 +879,7 @@ CREATE TABLE sales.orders (
             Some(&ColumnDefault::function("NOW", vec![]))
         );
 
-        let ns = kalamdb_commons::models::NamespaceId::new(DEFAULT_NS);
+        let ns = kalamdb_commons::models::SchemaId::new(DEFAULT_NS);
         let call = crate::ddl::CallStatement::parse("CALL next_id('v1')", &ns).unwrap();
         assert_eq!(stmt.column_defaults.get("id").unwrap().as_routine_call(), Some(&call.call));
     }

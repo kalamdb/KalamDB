@@ -49,7 +49,7 @@ async fn test_timestamp_column_defaults_return_microseconds() -> anyhow::Result<
     let auth = create_user_auth_header_default(server, &user).await?;
 
     let response = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .await?;
     anyhow::ensure!(response.status == ResponseStatus::Success);
 

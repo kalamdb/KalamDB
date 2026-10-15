@@ -1359,6 +1359,13 @@ fn insert_catalog_procedure(
             return_data_type:   Some(KalamDataType::Text),
             inline_source_hash: None,
             inline_artifact_id: None,
+            kind:               kalamdb_commons::models::RoutineKind::default(),
+            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost:               None,
+            rows:               None,
+            config_params:      None,
         })
         .expect("upsert catalog routine");
     stores
@@ -1373,6 +1380,8 @@ fn insert_catalog_procedure(
             not_null: false,
             nonempty: false,
             data_type: Some(KalamDataType::Text),
+            mode: kalamdb_commons::models::RoutineParameterMode::default(),
+            default_expr: None,
         })
         .expect("upsert catalog routine parameter");
 }

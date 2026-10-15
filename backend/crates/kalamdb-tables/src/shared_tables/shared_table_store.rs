@@ -130,7 +130,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{rows::Row, NamespaceId, TableId, TableName},
+        models::{rows::Row, SchemaId, TableId, TableName},
         StorageKey,
     };
 
@@ -139,7 +139,7 @@ mod tests {
 
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         new_shared_table_store(backend, &table_id)
     }
 
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn test_scan_with_raw_prefix_uses_backend_prefix() {
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let store = new_shared_table_store(backend.clone(), &table_id);
 
         let prefix_key = VersionId::try_from_i64(100).unwrap();
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn indexed_shared_store_writes_ordinal_kobj_and_rebuilds_seq() {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("name", kalamdb_serialization::StorageDataType::Utf8),
@@ -250,7 +250,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("conversation_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -332,7 +332,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("room_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -392,7 +392,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("members"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("members"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Utf8),
             ("user_id", kalamdb_serialization::StorageDataType::Utf8),

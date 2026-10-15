@@ -110,14 +110,14 @@ pub struct FunctionExecutionRoot {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{NamespaceId, RoutineId, RoutineSecurityMode, UserId},
+        models::{SchemaId, RoutineId, RoutineSecurityMode, UserId},
         ArtifactId, FunctionModuleId, Role,
     };
 
     use super::*;
 
     fn routine(name: &str, body: Option<&str>) -> CatalogRoutine {
-        let namespace = NamespaceId::new("api");
+        let namespace = SchemaId::new("api");
         CatalogRoutine {
             routine_id:         RoutineId::from_parts(Some(&namespace), name),
             namespace_id:       namespace,
@@ -134,6 +134,13 @@ mod tests {
             return_data_type:   None,
             inline_source_hash: None,
             inline_artifact_id: None,
+            kind:               kalamdb_commons::models::RoutineKind::default(),
+            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost:               None,
+            rows:               None,
+            config_params:      None,
         }
     }
 

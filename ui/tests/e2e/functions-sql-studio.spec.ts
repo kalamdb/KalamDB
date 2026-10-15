@@ -44,7 +44,7 @@ function uniqueNamespace(): string {
 
 function deploySql(ns: string): string {
   return `
-CREATE NAMESPACE ${ns};
+CREATE SCHEMA ${ns};
 
 CREATE TABLE ${ns}.venues (
   venue_id TEXT PRIMARY KEY,
@@ -55,31 +55,29 @@ CREATE TABLE ${ns}.venues (
 INSERT INTO ${ns}.venues (venue_id, city, capacity) VALUES ('hall-a', 'Cairo', 1200);
 
 CREATE TYPE ${ns}.ticket_status AS ENUM ('hold', 'confirmed', 'cancelled');
-CREATE TYPE ${ns}.venue FROM TABLE ${ns}.venues;
 CREATE TYPE ${ns}.guest AS (
-  display_name TEXT NOT NULL,
-  vip BOOLEAN NOT NULL
+  display_name TEXT,
+  vip BOOLEAN
 );
 CREATE TYPE ${ns}.booking AS (
-  confirmation_id TEXT NOT NULL,
-  venue ${ns}.venue NOT NULL,
-  guest ${ns}.guest NOT NULL,
-  status ${ns}.ticket_status NOT NULL,
-  seats INT NOT NULL,
+  confirmation_id TEXT,
+  venue ${ns}.venues,
+  guest ${ns}.guest,
+  status ${ns}.ticket_status,
+  seats INT,
   notes TEXT
 );
 
-CREATE OR REPLACE PROCEDURE ${ns}.book_tickets(
-  venue_id TEXT NOT NULL,
-  display_name TEXT NOT NULL,
-  vip BOOLEAN NOT NULL,
-  status ${ns}.ticket_status NOT NULL,
-  seats INT NOT NULL,
+CREATE OR REPLACE FUNCTION ${ns}.book_tickets(
+  venue_id TEXT,
+  display_name TEXT,
+  vip BOOLEAN,
+  status ${ns}.ticket_status,
+  seats INT,
   notes TEXT
 )
 RETURNS ${ns}.booking
 LANGUAGE JAVASCRIPT
-COMMENT 'Playwright concert booking'
 AS $$
   var venueId = input.venue_id || input.venueId;
   var guestName = input.display_name || input.displayName;
@@ -118,13 +116,15 @@ AS $$
     };
   });
 $$;
+COMMENT ON FUNCTION ${ns}.book_tickets IS 'Playwright concert booking';
 
-CREATE PROCEDURE ${ns}.later() RETURNS TEXT COMMENT 'Not implemented yet';
+CREATE FUNCTION ${ns}.later() RETURNS TEXT;
+COMMENT ON FUNCTION ${ns}.later IS 'Not implemented yet';
 `.trim();
 }
 
 function callSql(ns: string): string {
-  return `CALL ${ns}.book_tickets('hall-a', 'Ada Lovelace', TRUE, 'confirmed', 2, 'aisle');`;
+  return `SELECT ${ns}.book_tickets('hall-a', 'Ada Lovelace', TRUE, 'confirmed', 2, 'aisle') AS result;`;
 }
 
 function catalogSql(ns: string): string {
@@ -248,10 +248,14 @@ test("SQL Studio deploys a typed booking function and Test UI can invoke it", as
       await fillLabeledInput(page, "seats", "2");
       await fillLabeledInput(page, "notes", "aisle");
 
-      const vip = page.getByRole("switch", { name: "vip" });
-      await expect(vip).toBeVisible();
-      if ((await vip.getAttribute("data-state")) !== "checked") {
-        await vip.click();
+      const vipSwitch = page.getByRole("switch", { name: "vip" });
+      if (await vipSwitch.isVisible().catch(() => false)) {
+        if ((await vipSwitch.getAttribute("data-state")) !== "checked") {
+          await vipSwitch.click();
+        }
+      } else {
+        await page.getByRole("combobox", { name: "vip" }).click();
+        await page.getByRole("option", { name: "true" }).click();
       }
 
       await page.getByRole("combobox", { name: "status" }).click();

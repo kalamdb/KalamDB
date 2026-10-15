@@ -55,8 +55,8 @@ fn smoke_test_00_parallel_query_burst() {
     let full_table_name = format!("{}.{}", namespace, table);
 
     // Ensure namespace exists
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
 
     // Create the user table with simple schema
     let create_table_sql = format!(

@@ -21,8 +21,21 @@ export interface ProcedureContext {
   sleep(ms: number): Promise<void>;
 }
 
+export interface ReadRowView<T = Record<string, unknown>> {
+  materialize(): T;
+}
+
+export interface ReadView<T = Record<string, unknown>> {
+  readonly length: number;
+  at(index: number): (T & ReadRowView<T>) | undefined;
+  materialize(): T[];
+  toArray(): T[];
+}
+
 export interface DbHost {
   query(sql: string, params?: unknown[]): Promise<unknown>;
+  queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<ReadView<T>>;
+  queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): AsyncIterableIterator<ReadView<T>>;
   execute(sql: string, params?: unknown[]): Promise<unknown>;
 }
 

@@ -3079,7 +3079,7 @@ pub fn is_cluster_url_reachable(url: &str) -> bool {
 
 fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
     let upper = sql.trim_start().to_ascii_uppercase();
-    upper.starts_with("CREATE NAMESPACE")
+    upper.starts_with("CREATE SCHEMA")
         || upper.starts_with("CREATE TABLE")
         || upper.starts_with("CREATE SHARED TABLE")
         || upper.starts_with("CREATE USER TABLE")
@@ -4980,7 +4980,7 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     let _ = execute_sql_as_root_via_cli(&drop_sql);
 
     // Create namespace if it doesn't exist
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     let _ = execute_sql_as_root_via_cli(&ns_sql);
 
     // Create test table

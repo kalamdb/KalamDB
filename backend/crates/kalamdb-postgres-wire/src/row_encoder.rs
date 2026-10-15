@@ -2,28 +2,31 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        Array, BooleanArray, Date32Array, Date64Array, Float32Array, Float64Array, Int16Array,
-        Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray, RecordBatch, StringArray,
-        StringViewArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-        TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
-        UInt8Array,
+        Array, BooleanArray, Date32Array, Date64Array, FixedSizeBinaryArray, Float32Array,
+        Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeStringArray, ListArray,
+        RecordBatch, StringArray, StringViewArray, Time32MillisecondArray, Time32SecondArray,
+        Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
+        TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt16Array,
+        UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::{DataType, Field, SchemaRef, TimeUnit},
     util::display::array_value_to_string,
 };
-use chrono::{DateTime, NaiveDate};
+use chrono::{DateTime, NaiveDate, NaiveTime};
 use futures_util::{stream, StreamExt};
+use kalamdb_commons::models::datatypes::{KalamDataType, LogicalTypeRef};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
     api::{
         portal::Format,
         results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response, Tag},
-        Type,
     },
     error::{ErrorInfo, PgWireError, PgWireResult},
 };
 
-use crate::pg_types::pg_type_for_named_field;
+use crate::pg_types::{
+    logical_type_ref_for_field, pg_type_for_logical_type, unsupported_arrow_type_error,
+};
 
 pub fn execution_result_to_responses(result: ExecutionResult) -> PgWireResult<Vec<Response>> {
     execution_result_to_responses_with_format(result, None)
@@ -91,21 +94,24 @@ fn record_batches_to_query_response(
         .map(RecordBatch::schema)
         .or(empty_schema)
         .unwrap_or_else(|| Arc::new(arrow::datatypes::Schema::empty()));
-    let fields = Arc::new(
-        schema_ref
-            .fields()
-            .iter()
-            .enumerate()
-            .map(|(index, field)| field_info_for_arrow(field, index, column_format))
-            .collect::<PgWireResult<Vec<_>>>()?,
-    );
-    let rows = rows_from_batches(&fields, batches)?;
+    let mut logical_types = Vec::with_capacity(schema_ref.fields().len());
+    let mut field_infos = Vec::with_capacity(schema_ref.fields().len());
+    for (index, field) in schema_ref.fields().iter().enumerate() {
+        let logical_type = logical_type_ref_for_field(field)?;
+        let pg_type = pg_type_for_logical_type(&logical_type)?;
+        let format = column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
+        field_infos.push(FieldInfo::new(field.name().clone(), None, None, pg_type, format));
+        logical_types.push(logical_type);
+    }
+    let fields = Arc::new(field_infos);
+    let rows = rows_from_batches(&fields, &logical_types, batches)?;
     let stream = stream::iter(rows).map(Ok);
     Ok(QueryResponse::new(fields, stream))
 }
 
 fn rows_from_batches(
     fields: &Arc<Vec<FieldInfo>>,
+    logical_types: &[LogicalTypeRef],
     batches: Vec<RecordBatch>,
 ) -> PgWireResult<Vec<pgwire::messages::data::DataRow>> {
     let mut rows = Vec::new();
@@ -113,8 +119,8 @@ fn rows_from_batches(
 
     for batch in batches {
         for row_index in 0..batch.num_rows() {
-            for column in batch.columns() {
-                encode_array_value(&mut encoder, column.as_ref(), row_index)?;
+            for (column, logical_type) in batch.columns().iter().zip(logical_types.iter()) {
+                encode_array_value(&mut encoder, column.as_ref(), logical_type, row_index)?;
             }
             rows.push(encoder.take_row());
         }
@@ -123,69 +129,10 @@ fn rows_from_batches(
     Ok(rows)
 }
 
-fn field_info_for_arrow(
-    field: &Field,
-    index: usize,
-    column_format: Option<&Format>,
-) -> PgWireResult<FieldInfo> {
-    let format = column_format.map(|fmt| fmt.format_for(index)).unwrap_or(FieldFormat::Text);
-    Ok(FieldInfo::new(
-        field.name().clone(),
-        None,
-        None,
-        pg_type_for_field(field)?,
-        format,
-    ))
-}
-
-fn pg_type_for_field(field: &Field) -> PgWireResult<Type> {
-    if let Some(pg_type) = pg_type_for_named_field(field) {
-        return Ok(pg_type);
-    }
-    pg_type_for_arrow(field.data_type())
-}
-
-fn pg_type_for_arrow(data_type: &DataType) -> PgWireResult<Type> {
-    Ok(match data_type {
-        DataType::Null => Type::TEXT,
-        DataType::Boolean => Type::BOOL,
-        DataType::Int8 | DataType::Int16 => Type::INT2,
-        DataType::Int32 | DataType::UInt8 | DataType::UInt16 => Type::INT4,
-        DataType::Int64 | DataType::UInt32 => Type::INT8,
-        DataType::UInt64 => Type::TEXT,
-        DataType::Float32 => Type::FLOAT4,
-        DataType::Float64 => Type::FLOAT8,
-        DataType::Date32 | DataType::Date64 => Type::DATE,
-        DataType::Timestamp(_, _) => Type::TIMESTAMP,
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Type::TEXT,
-        DataType::Decimal128(_, _) | DataType::Decimal256(_, _) => Type::TEXT,
-        DataType::List(item) => pg_array_type_for_arrow(item.data_type())?,
-        _ => return Err(unsupported_type_error(data_type)),
-    })
-}
-
-fn pg_array_type_for_arrow(item_type: &DataType) -> PgWireResult<Type> {
-    Ok(match item_type {
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => Type::TEXT_ARRAY,
-        DataType::Int8 | DataType::Int16 => Type::INT2_ARRAY,
-        DataType::Int32 | DataType::UInt8 | DataType::UInt16 => Type::INT4_ARRAY,
-        DataType::Int64 | DataType::UInt32 => Type::INT8_ARRAY,
-        DataType::Boolean => Type::BOOL_ARRAY,
-        DataType::Float32 => Type::FLOAT4_ARRAY,
-        DataType::Float64 => Type::FLOAT8_ARRAY,
-        _ => {
-            return Err(unsupported_type_error(&DataType::List(Arc::new(Field::new(
-                "item",
-                item_type.clone(),
-                true,
-            )))))
-        },
-    })
-}
-
 fn encode_array_value(
     encoder: &mut DataRowEncoder,
     array: &dyn Array,
+    logical_type: &LogicalTypeRef,
     row_index: usize,
 ) -> PgWireResult<()> {
     if array.is_null(row_index) {
@@ -235,27 +182,48 @@ fn encode_array_value(
         return encoder.encode_field(&array.value(row_index));
     }
     if let Some(array) = array.as_any().downcast_ref::<ListArray>() {
-        return encode_list_array_value(encoder, array, row_index);
+        let element_type = match logical_type {
+            LogicalTypeRef::List { element, .. } => element.as_ref(),
+            other => other,
+        };
+        return encode_list_array_value(encoder, array, element_type, row_index);
     }
+
+    let is_timestamptz = matches!(
+        logical_type,
+        LogicalTypeRef::TimestampTz | LogicalTypeRef::Builtin(KalamDataType::DateTime)
+    ) || matches!(array.data_type(), DataType::Timestamp(_, Some(_)));
 
     match array.data_type() {
         DataType::Timestamp(TimeUnit::Second, _) => {
             let array = downcast_array::<TimestampSecondArray>(array, "timestamp(second)")?;
-            return encode_timestamp_micros(encoder, seconds_to_micros(array.value(row_index))?);
+            return encode_timestamp_micros(
+                encoder,
+                seconds_to_micros(array.value(row_index))?,
+                is_timestamptz,
+            );
         },
         DataType::Timestamp(TimeUnit::Millisecond, _) => {
             let array =
                 downcast_array::<TimestampMillisecondArray>(array, "timestamp(millisecond)")?;
-            return encode_timestamp_micros(encoder, millis_to_micros(array.value(row_index))?);
+            return encode_timestamp_micros(
+                encoder,
+                millis_to_micros(array.value(row_index))?,
+                is_timestamptz,
+            );
         },
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
             let array =
                 downcast_array::<TimestampMicrosecondArray>(array, "timestamp(microsecond)")?;
-            return encode_timestamp_micros(encoder, array.value(row_index));
+            return encode_timestamp_micros(encoder, array.value(row_index), is_timestamptz);
         },
         DataType::Timestamp(TimeUnit::Nanosecond, _) => {
             let array = downcast_array::<TimestampNanosecondArray>(array, "timestamp(nanosecond)")?;
-            return encode_timestamp_micros(encoder, array.value(row_index) / 1_000);
+            return encode_timestamp_micros(
+                encoder,
+                array.value(row_index) / 1_000,
+                is_timestamptz,
+            );
         },
         DataType::Date32 => {
             let array = downcast_array::<Date32Array>(array, "date32")?;
@@ -265,11 +233,33 @@ fn encode_array_value(
             let array = downcast_array::<Date64Array>(array, "date64")?;
             return encode_date64(encoder, array.value(row_index));
         },
+        DataType::Time32(TimeUnit::Second) => {
+            let array = downcast_array::<Time32SecondArray>(array, "time32(second)")?;
+            return encode_time_micros(encoder, i64::from(array.value(row_index)) * 1_000_000);
+        },
+        DataType::Time32(TimeUnit::Millisecond) => {
+            let array = downcast_array::<Time32MillisecondArray>(array, "time32(millisecond)")?;
+            return encode_time_micros(encoder, i64::from(array.value(row_index)) * 1_000);
+        },
+        DataType::Time64(TimeUnit::Microsecond) => {
+            let array = downcast_array::<Time64MicrosecondArray>(array, "time64(microsecond)")?;
+            return encode_time_micros(encoder, array.value(row_index));
+        },
+        DataType::Time64(TimeUnit::Nanosecond) => {
+            let array = downcast_array::<Time64NanosecondArray>(array, "time64(nanosecond)")?;
+            return encode_time_micros(encoder, array.value(row_index) / 1_000);
+        },
+        DataType::FixedSizeBinary(16) => {
+            let array = downcast_array::<FixedSizeBinaryArray>(array, "fixed_size_binary(16)")?;
+            let uuid = uuid::Uuid::from_slice(array.value(row_index))
+                .map_err(|e| encode_value_error(format!("invalid UUID bytes: {e}")))?;
+            return encoder.encode_field(&uuid.hyphenated().to_string());
+        },
         _ => {},
     }
 
     if !supports_display_fallback(array.data_type()) {
-        return Err(unsupported_type_error(array.data_type()));
+        return Err(unsupported_arrow_type_error(array.data_type()));
     }
 
     let value = array_value_to_string(array, row_index).map_err(|error| {
@@ -285,9 +275,11 @@ fn encode_array_value(
 fn encode_list_array_value(
     encoder: &mut DataRowEncoder,
     list: &ListArray,
+    element_type: &LogicalTypeRef,
     row_index: usize,
 ) -> PgWireResult<()> {
     let values = list.value(row_index);
+    let _ = element_type;
     match values.data_type() {
         DataType::Utf8 => {
             let strings = downcast_array::<StringArray>(values.as_ref(), "utf8 list values")?;
@@ -300,6 +292,48 @@ fn encode_list_array_value(
                     }
                 })
                 .collect::<Vec<Option<String>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::LargeUtf8 => {
+            let strings =
+                downcast_array::<LargeStringArray>(values.as_ref(), "large_utf8 list values")?;
+            let items = (0..strings.len())
+                .map(|index| {
+                    if strings.is_null(index) {
+                        None
+                    } else {
+                        Some(strings.value(index).to_string())
+                    }
+                })
+                .collect::<Vec<Option<String>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Utf8View => {
+            let strings =
+                downcast_array::<StringViewArray>(values.as_ref(), "utf8_view list values")?;
+            let items = (0..strings.len())
+                .map(|index| {
+                    if strings.is_null(index) {
+                        None
+                    } else {
+                        Some(strings.value(index).to_string())
+                    }
+                })
+                .collect::<Vec<Option<String>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Int16 => {
+            let ints = downcast_array::<Int16Array>(values.as_ref(), "int16 list values")?;
+            let items = (0..ints.len())
+                .map(|index| (!ints.is_null(index)).then(|| ints.value(index)))
+                .collect::<Vec<Option<i16>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Int8 => {
+            let ints = downcast_array::<Int8Array>(values.as_ref(), "int8 list values")?;
+            let items = (0..ints.len())
+                .map(|index| (!ints.is_null(index)).then(|| i16::from(ints.value(index))))
+                .collect::<Vec<Option<i16>>>();
             encoder.encode_field(&items)
         },
         DataType::Int64 => {
@@ -328,6 +362,20 @@ fn encode_list_array_value(
                 .collect::<Vec<Option<i32>>>();
             encoder.encode_field(&items)
         },
+        DataType::Float32 => {
+            let floats = downcast_array::<Float32Array>(values.as_ref(), "float32 list values")?;
+            let items = (0..floats.len())
+                .map(|index| (!floats.is_null(index)).then(|| floats.value(index)))
+                .collect::<Vec<Option<f32>>>();
+            encoder.encode_field(&items)
+        },
+        DataType::Float64 => {
+            let floats = downcast_array::<Float64Array>(values.as_ref(), "float64 list values")?;
+            let items = (0..floats.len())
+                .map(|index| (!floats.is_null(index)).then(|| floats.value(index)))
+                .collect::<Vec<Option<f64>>>();
+            encoder.encode_field(&items)
+        },
         DataType::Boolean => {
             let flags = downcast_array::<BooleanArray>(values.as_ref(), "bool list values")?;
             let items = (0..flags.len())
@@ -341,7 +389,7 @@ fn encode_list_array_value(
                 .collect::<Vec<Option<bool>>>();
             encoder.encode_field(&items)
         },
-        other => Err(unsupported_type_error(&DataType::List(Arc::new(Field::new(
+        other => Err(unsupported_arrow_type_error(&DataType::List(Arc::new(Field::new(
             "item",
             other.clone(),
             true,
@@ -349,10 +397,29 @@ fn encode_list_array_value(
     }
 }
 
-fn encode_timestamp_micros(encoder: &mut DataRowEncoder, micros: i64) -> PgWireResult<()> {
+fn encode_timestamp_micros(
+    encoder: &mut DataRowEncoder,
+    micros: i64,
+    is_timestamptz: bool,
+) -> PgWireResult<()> {
     let datetime = DateTime::from_timestamp_micros(micros)
         .ok_or_else(|| encode_value_error(format!("timestamp value {micros} is out of range")))?;
-    encoder.encode_field(&datetime.naive_utc())
+    if is_timestamptz {
+        encoder.encode_field(&datetime)
+    } else {
+        encoder.encode_field(&datetime.naive_utc())
+    }
+}
+
+fn encode_time_micros(encoder: &mut DataRowEncoder, micros: i64) -> PgWireResult<()> {
+    if !(0..86_400_000_000).contains(&micros) {
+        return Err(encode_value_error(format!("time value {micros} is out of range")));
+    }
+    let secs = (micros / 1_000_000) as u32;
+    let nanos = ((micros % 1_000_000) * 1_000) as u32;
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
+        .ok_or_else(|| encode_value_error(format!("time value {micros} is out of range")))?;
+    encoder.encode_field(&time)
 }
 
 fn encode_date32(encoder: &mut DataRowEncoder, days: i32) -> PgWireResult<()> {
@@ -402,16 +469,11 @@ fn downcast_array<'a, T: 'static>(array: &'a dyn Array, expected: &str) -> PgWir
 fn supports_display_fallback(data_type: &DataType) -> bool {
     matches!(
         data_type,
-        DataType::Null | DataType::Decimal128(_, _) | DataType::Decimal256(_, _)
+        DataType::Null
+            | DataType::Decimal128(_, _)
+            | DataType::Decimal256(_, _)
+            | DataType::Struct(_)
     )
-}
-
-fn unsupported_type_error(data_type: &DataType) -> PgWireError {
-    PgWireError::UserError(Box::new(ErrorInfo::new(
-        "ERROR".to_string(),
-        "0A000".to_string(),
-        format!("unsupported Arrow type for PostgreSQL wire row encoding: {data_type}"),
-    )))
 }
 
 #[cfg(test)]
@@ -425,7 +487,13 @@ mod tests {
         },
         datatypes::{DataType, Field, Schema, TimeUnit},
     };
-    use pgwire::api::portal::Format;
+    use kalamdb_commons::{
+        conversions::{
+            with_kalam_data_type_metadata, with_kalam_type_id_metadata, with_logical_type_modifier,
+        },
+        models::{datatypes::KalamDataType, TypeId},
+    };
+    use pgwire::api::{portal::Format, Type};
 
     use super::*;
 
@@ -698,5 +766,90 @@ mod tests {
 
         assert_eq!(payloads[0].len(), 4, "DATE binary is i32 days since 2000-01-01");
         assert_eq!(payloads[1].len(), 8, "TIMESTAMP binary is i64 microseconds since 2000-01-01");
+    }
+
+    #[test]
+    fn derives_logical_type_oids_and_codecs_for_jsonb_timestamptz_and_named_types() {
+        let named_type_id = TypeId::new("type:app:mood");
+        let json_field = with_kalam_data_type_metadata(
+            Field::new("raw_json", DataType::Utf8, false),
+            &KalamDataType::Json,
+        );
+        let jsonb_field = with_logical_type_modifier(
+            with_kalam_data_type_metadata(
+                Field::new("norm_jsonb", DataType::Utf8, false),
+                &KalamDataType::Json,
+            ),
+            &LogicalTypeRef::Jsonb,
+        );
+        let timestamptz_field = with_logical_type_modifier(
+            with_kalam_data_type_metadata(
+                Field::new(
+                    "occurred_at",
+                    DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+                    false,
+                ),
+                &KalamDataType::DateTime,
+            ),
+            &LogicalTypeRef::TimestampTz,
+        );
+        let named_field = with_kalam_type_id_metadata(
+            Field::new("mood", DataType::Utf8, false),
+            &named_type_id,
+        );
+
+        let schema = Arc::new(Schema::new(vec![
+            json_field,
+            jsonb_field,
+            timestamptz_field,
+            named_field,
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec![r#"{"a": 1}"#])) as ArrayRef,
+                Arc::new(StringArray::from(vec![r#"{"a":1}"#])) as ArrayRef,
+                Arc::new(
+                    TimestampMicrosecondArray::from(vec![1_000_000]).with_timezone("UTC"),
+                ) as ArrayRef,
+                Arc::new(StringArray::from(vec!["happy"])) as ArrayRef,
+            ],
+        )
+        .expect("batch is valid");
+
+        let responses = execution_result_to_responses(ExecutionResult::Rows {
+            batches:   vec![batch],
+            row_count: 1,
+            schema:    Some(schema),
+        })
+        .expect("logical-typed values encode");
+
+        let Response::Query(query) = &responses[0] else {
+            panic!("expected query response");
+        };
+        let types = query
+            .row_schema
+            .iter()
+            .map(|field| field.datatype().clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            types,
+            vec![
+                Type::JSON,
+                Type::JSONB,
+                Type::TIMESTAMPTZ,
+                crate::pg_types::pg_type_for_type_id(&named_type_id),
+            ]
+        );
+        assert_eq!(types[3].oid(), named_type_id.pg_oid());
+
+        let row = first_encoded_row(responses);
+        let payloads = field_payloads(&row);
+        let timestamptz_text = std::str::from_utf8(payloads[2]).expect("timestamptz text");
+        assert!(
+            timestamptz_text.starts_with("1970-01-01 00:00:01")
+                && (timestamptz_text.ends_with("+00") || timestamptz_text.ends_with("+00:00")),
+            "expected UTC offset in TIMESTAMPTZ text, got {timestamptz_text}"
+        );
     }
 }

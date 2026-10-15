@@ -370,7 +370,7 @@ async fn test_topic_high_load_concurrent_publishers() {
     eprintln!("[TEST] Starting high-load test with namespace: {}", namespace);
 
     // Create namespace
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("Failed to create namespace");
 
@@ -387,8 +387,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let user_table = format!("{}.user_profiles", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, \
-         verified BOOLEAN)",
+        "CREATE TABLE {} (id INT PRIMARY KEY, username TEXT, score DOUBLE, level INT, verified \
+         BOOLEAN) WITH (TYPE = 'USER')",
         user_table
     ))
     .await
@@ -415,8 +415,8 @@ async fn test_topic_high_load_concurrent_publishers() {
 
     let session_table = format!("{}.user_sessions", namespace);
     execute_sql(&format!(
-        "CREATE USER TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active \
-         BOOLEAN, score DOUBLE)",
+        "CREATE TABLE {} (session_id BIGINT PRIMARY KEY, user_id INT, duration INT, active \
+         BOOLEAN, score DOUBLE) WITH (TYPE = 'USER')",
         session_table
     ))
     .await
@@ -1052,7 +1052,7 @@ async fn test_topic_high_load_two_consumers_same_group_single_delivery() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("same_group"));
     let group_id = format!("same-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("Failed to create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1165,7 +1165,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
     let group_a = format!("fanout-group-a-{}", common::random_string(8));
     let group_b = format!("fanout-group-b-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
@@ -1254,7 +1254,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("stress4"));
     let group_id = format!("stress4-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
@@ -1368,7 +1368,7 @@ async fn test_topic_ack_failure_recovery_no_message_loss_with_latency() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("ack_topic"));
     let group_id = format!("ack-recovery-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1471,7 +1471,7 @@ async fn test_topic_redelivery_waits_for_visibility_timeout_and_late_ack_does_no
     let topic = format!("{}.{}", namespace, common::generate_unique_table("late_ack_topic"));
     let group_id = format!("late-ack-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1618,7 +1618,7 @@ async fn test_topic_partial_commit_then_crash_recovers_from_first_unacked_offset
     let topic = format!("{}.{}", namespace, common::generate_unique_table("partial_commit_topic"));
     let group_id = format!("partial-commit-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, payload TEXT)", table))
@@ -1791,7 +1791,7 @@ async fn test_topic_slow_consumer_large_payloads_preserve_order_and_no_loss() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("large_payload"));
     let group_id = format!("large-payload-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create namespace");
     execute_sql(&format!(

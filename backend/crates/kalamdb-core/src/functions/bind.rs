@@ -1,14 +1,15 @@
 //! Contract argument and return validation for procedure CALL.
 
 use kalamdb_commons::{
-    models::{CatalogTypeKind, RoutineId, TypeId},
+    models::{CatalogTypeKind, RoutineCall, RoutineId, RoutineKind, RoutineParameterMode, TypeId},
     KalamDataType,
 };
 use kalamdb_functions::{FunctionsError, RoutineValue};
+use kalamdb_sql::ddl::column_default::parse_call_argument_sql;
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, CatalogStores};
 use serde_json::Value as JsonValue;
 
-use super::convert::{json_to_routine_value, routine_value_as_json};
+use super::convert::{bind_call_arguments, json_to_routine_value, routine_value_as_json};
 use crate::{error::KalamDbError, schema_registry::TypeRegistry};
 
 struct TypeSpec {
@@ -62,6 +63,99 @@ impl TypeSpec {
     }
 }
 
+pub(super) fn bind_sql_routine_call(
+    stores: &CatalogStores,
+    call: &RoutineCall,
+    params: &[datafusion::scalar::ScalarValue],
+) -> Result<Vec<RoutineValue>, KalamDbError> {
+    let raw_args = bind_call_arguments(&call.arguments, params)?;
+    if call.named_arguments.is_empty() || call.named_arguments.iter().all(|name| name.is_none()) {
+        return Ok(raw_args);
+    }
+
+    let routine_params = stores.list_parameters(&call.routine_id).map_err(|error| {
+        KalamDbError::CatalogError(format!(
+            "failed to load parameters for routine {}: {error}",
+            call.routine_id
+        ))
+    })?;
+    let input_params: Vec<&CatalogRoutineParameter> = routine_params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.mode,
+                RoutineParameterMode::In
+                    | RoutineParameterMode::InOut
+                    | RoutineParameterMode::Variadic
+            )
+        })
+        .collect();
+
+    if raw_args.len() > input_params.len()
+        && !input_params.last().is_some_and(|param| param.mode == RoutineParameterMode::Variadic)
+    {
+        return Err(invalid_args(format!(
+            "procedure {} expected {} argument(s), got {}",
+            call.routine_id,
+            input_params.len(),
+            raw_args.len()
+        )));
+    }
+
+    let mut assigned: Vec<Option<RoutineValue>> = vec![None; input_params.len()];
+    for (idx, arg) in raw_args.into_iter().enumerate() {
+        let maybe_name = call.named_arguments.get(idx).and_then(|name| name.as_deref());
+        if let Some(arg_name) = maybe_name {
+            let Some(param_idx) = input_params
+                .iter()
+                .position(|param| param.name.eq_ignore_ascii_case(arg_name))
+            else {
+                return Err(invalid_args(format!(
+                    "routine {} has no input parameter named '{}'",
+                    call.routine_id, arg_name
+                )));
+            };
+            if assigned[param_idx].is_some() {
+                return Err(invalid_args(format!(
+                    "argument for parameter '{}' of routine {} specified more than once",
+                    input_params[param_idx].name, call.routine_id
+                )));
+            }
+            assigned[param_idx] = Some(arg);
+        } else {
+            if idx >= assigned.len() {
+                return Err(invalid_args(format!(
+                    "procedure {} expected {} argument(s)",
+                    call.routine_id,
+                    input_params.len()
+                )));
+            }
+            if assigned[idx].is_some() {
+                return Err(invalid_args(format!(
+                    "argument for parameter '{}' of routine {} specified more than once",
+                    input_params[idx].name, call.routine_id
+                )));
+            }
+            assigned[idx] = Some(arg);
+        }
+    }
+
+    let mut resolved = Vec::with_capacity(input_params.len());
+    for (param, slot) in input_params.iter().zip(assigned.into_iter()) {
+        if let Some(val) = slot {
+            resolved.push(val);
+        } else if let Some(default_expr) = param.default_expr.as_deref() {
+            resolved.push(evaluate_parameter_default(param, default_expr)?);
+        } else {
+            return Err(invalid_args(format!(
+                "missing required argument for parameter '{}' of routine {}",
+                param.name, call.routine_id
+            )));
+        }
+    }
+    Ok(resolved)
+}
+
 pub(super) fn validate_call_arguments(
     type_registry: &TypeRegistry,
     stores: &CatalogStores,
@@ -73,11 +167,52 @@ pub(super) fn validate_call_arguments(
             "failed to load parameters for procedure {routine_id}: {error}"
         ))
     })?;
-    let positional = positional_args(routine_id, &params, args)?;
-    for (parameter, value) in params.iter().zip(positional.iter()) {
+    let input_params: Vec<&CatalogRoutineParameter> = params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.mode,
+                RoutineParameterMode::In
+                    | RoutineParameterMode::InOut
+                    | RoutineParameterMode::Variadic
+            )
+        })
+        .collect();
+    let positional = positional_args(type_registry, stores, routine_id, &input_params, args)?;
+    for (parameter, value) in input_params.iter().zip(positional.iter()) {
         validate_spec(type_registry, stores, &TypeSpec::from_parameter(parameter), value)?;
     }
     Ok(())
+}
+
+pub(super) fn resolve_input_arguments(
+    type_registry: &TypeRegistry,
+    stores: &CatalogStores,
+    routine_id: &RoutineId,
+    args: &[RoutineValue],
+) -> Result<Vec<(CatalogRoutineParameter, RoutineValue)>, KalamDbError> {
+    let params = stores.list_parameters(routine_id).map_err(|error| {
+        KalamDbError::CatalogError(format!(
+            "failed to load parameters for procedure {routine_id}: {error}"
+        ))
+    })?;
+    let input_params: Vec<&CatalogRoutineParameter> = params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.mode,
+                RoutineParameterMode::In
+                    | RoutineParameterMode::InOut
+                    | RoutineParameterMode::Variadic
+            )
+        })
+        .collect();
+    let positional = positional_args(type_registry, stores, routine_id, &input_params, args)?;
+    Ok(input_params
+        .into_iter()
+        .cloned()
+        .zip(positional)
+        .collect())
 }
 
 pub(super) fn validate_call_return(
@@ -86,15 +221,56 @@ pub(super) fn validate_call_return(
     routine: &CatalogRoutine,
     value: &RoutineValue,
 ) -> Result<(), KalamDbError> {
-    let Some(spec) = TypeSpec::from_return(routine) else {
-        return Ok(());
-    };
-    validate_spec(type_registry, stores, &spec, value)
+    if let Some(spec) = TypeSpec::from_return(routine) {
+        return validate_spec(type_registry, stores, &spec, value);
+    }
+    if routine.kind == RoutineKind::Procedure {
+        let params = stores.list_parameters(&routine.routine_id).map_err(|error| {
+            KalamDbError::CatalogError(format!(
+                "failed to load parameters for procedure {}: {error}",
+                routine.routine_id
+            ))
+        })?;
+        let out_params: Vec<&CatalogRoutineParameter> = params
+            .iter()
+            .filter(|param| {
+                matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+            })
+            .collect();
+        if !out_params.is_empty() {
+            let json = structured_json(value).unwrap_or(JsonValue::Null);
+            if out_params.len() == 1 {
+                let param = out_params[0];
+                let field_val = match &json {
+                    JsonValue::Object(map) => map.get(&param.name).unwrap_or(&json),
+                    _ => &json,
+                };
+                let mut spec = TypeSpec::from_parameter(param);
+                spec.display = format!("OUT parameter '{}'", param.name);
+                return validate_json(type_registry, stores, &spec, field_val);
+            }
+            let JsonValue::Object(map) = &json else {
+                return Err(invalid_args(format!(
+                    "procedure {} with OUT/INOUT parameters must return an object",
+                    routine.routine_id
+                )));
+            };
+            for param in out_params {
+                let field_val = map.get(&param.name).unwrap_or(&JsonValue::Null);
+                let mut spec = TypeSpec::from_parameter(param);
+                spec.display = format!("OUT parameter '{}'", param.name);
+                validate_json(type_registry, stores, &spec, field_val)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn positional_args(
+    type_registry: &TypeRegistry,
+    stores: &CatalogStores,
     routine_id: &RoutineId,
-    params: &[CatalogRoutineParameter],
+    params: &[&CatalogRoutineParameter],
     args: &[RoutineValue],
 ) -> Result<Vec<RoutineValue>, KalamDbError> {
     if params.is_empty() {
@@ -107,39 +283,167 @@ fn positional_args(
         )));
     }
     if is_named_record(args, params) {
-        return extract_named(&args[0], params);
+        let extracted = extract_named(&args[0], params)?;
+        return coerce_positional_parameters(type_registry, stores, params, extracted);
     }
-    if args.len() != params.len() {
+
+    if params.last().is_some_and(|param| param.mode == RoutineParameterMode::Variadic) {
+        let fixed_count = params.len() - 1;
+        if args.len() < fixed_count {
+            return Err(invalid_args(format!(
+                "procedure {routine_id} expected at least {fixed_count} argument(s), got {}",
+                args.len()
+            )));
+        }
+        let mut resolved = args[..fixed_count].to_vec();
+        let packed = if args.len() == fixed_count + 1 && is_array_routine_value(&args[fixed_count])
+        {
+            args[fixed_count].clone()
+        } else {
+            let mut items = Vec::with_capacity(args.len() - fixed_count);
+            for arg in &args[fixed_count..] {
+                items.push(structured_json(arg).unwrap_or(JsonValue::Null));
+            }
+            json_to_routine_value(&JsonValue::Array(items), None)?
+        };
+        resolved.push(packed);
+        return coerce_positional_parameters(type_registry, stores, params, resolved);
+    }
+
+    if args.len() > params.len() {
         return Err(invalid_args(format!(
             "procedure {routine_id} expected {} argument(s), got {}",
             params.len(),
             args.len()
         )));
     }
-    Ok(args.to_vec())
+    if args.len() < params.len() {
+        let mut resolved = args.to_vec();
+        for param in &params[args.len()..] {
+            let Some(default_expr) = param.default_expr.as_deref() else {
+                return Err(invalid_args(format!(
+                    "procedure {routine_id} expected {} argument(s), got {}",
+                    params.len(),
+                    args.len()
+                )));
+            };
+            resolved.push(evaluate_parameter_default(param, default_expr)?);
+        }
+        return coerce_positional_parameters(type_registry, stores, params, resolved);
+    }
+    coerce_positional_parameters(type_registry, stores, params, args.to_vec())
 }
 
-fn is_named_record(args: &[RoutineValue], params: &[CatalogRoutineParameter]) -> bool {
-    if args.len() != 1 {
+fn coerce_positional_parameters(
+    type_registry: &TypeRegistry,
+    stores: &CatalogStores,
+    params: &[&CatalogRoutineParameter],
+    values: Vec<RoutineValue>,
+) -> Result<Vec<RoutineValue>, KalamDbError> {
+    let mut out = Vec::with_capacity(values.len());
+    for (param, value) in params.iter().zip(values.into_iter()) {
+        out.push(coerce_parameter_value(type_registry, stores, param, value)?);
+    }
+    Ok(out)
+}
+
+fn coerce_parameter_value(
+    type_registry: &TypeRegistry,
+    stores: &CatalogStores,
+    param: &CatalogRoutineParameter,
+    value: RoutineValue,
+) -> Result<RoutineValue, KalamDbError> {
+    if !param.is_array {
+        if let Some(type_id) = &param.type_id {
+            let resolved = type_registry.get_or_load(stores, type_id)?;
+            if matches!(
+                resolved.kind,
+                CatalogTypeKind::Composite
+                    | CatalogTypeKind::ImplicitTableRow
+                    | CatalogTypeKind::RowAlias
+            ) {
+                if let Some(JsonValue::Array(items)) = structured_json(&value) {
+                    let active_fields: Vec<_> =
+                        resolved.fields.iter().filter(|f| !f.dropped).collect();
+                    if items.len() != active_fields.len() {
+                        return Err(invalid_args(format!(
+                            "argument '{}' expected {} composite field(s) for {}, got {}",
+                            param.name,
+                            active_fields.len(),
+                            type_id,
+                            items.len()
+                        )));
+                    }
+                    let mut map = serde_json::Map::with_capacity(active_fields.len());
+                    for (field, item) in active_fields.iter().zip(items.into_iter()) {
+                        map.insert(field.name.clone(), item);
+                    }
+                    return json_to_routine_value(&JsonValue::Object(map), None);
+                }
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn is_array_routine_value(value: &RoutineValue) -> bool {
+    matches!(
+        &value.value,
+        datafusion::scalar::ScalarValue::List(_)
+            | datafusion::scalar::ScalarValue::LargeList(_)
+            | datafusion::scalar::ScalarValue::FixedSizeList(_)
+    ) || matches!(structured_json(value), Some(JsonValue::Array(_)))
+}
+
+fn evaluate_parameter_default(
+    param: &CatalogRoutineParameter,
+    default_expr: &str,
+) -> Result<RoutineValue, KalamDbError> {
+    let call_arg = parse_call_argument_sql(default_expr).map_err(|error| {
+        invalid_args(format!(
+            "invalid default expression '{}' for parameter '{}': {error}",
+            default_expr, param.name
+        ))
+    })?;
+    let mut values = bind_call_arguments(&[call_arg], &[])?;
+    let value = values
+        .pop()
+        .unwrap_or_else(|| RoutineValue::new(datafusion::scalar::ScalarValue::Null));
+    if let Some(json) = structured_json(&value) {
+        return json_to_routine_value(&json, param.builtin_data_type().as_ref());
+    }
+    Ok(value)
+}
+
+fn is_named_record(args: &[RoutineValue], params: &[&CatalogRoutineParameter]) -> bool {
+    if args.len() != 1 || !args[0].host_named_input {
         return false;
     }
     let Some(JsonValue::Object(map)) = structured_json(&args[0]) else {
         return false;
     };
-    params.iter().all(|parameter| map.contains_key(&parameter.name))
+    params
+        .iter()
+        .all(|parameter| map.contains_key(&parameter.name) || parameter.default_expr.is_some())
+        && params.iter().any(|parameter| map.contains_key(&parameter.name))
 }
 
 fn extract_named(
     arg: &RoutineValue,
-    params: &[CatalogRoutineParameter],
+    params: &[&CatalogRoutineParameter],
 ) -> Result<Vec<RoutineValue>, KalamDbError> {
     let Some(JsonValue::Object(map)) = structured_json(arg) else {
         return Err(invalid_args("expected a named argument object".to_string()));
     };
     let mut values = Vec::with_capacity(params.len());
     for parameter in params {
-        let json = map.get(&parameter.name).unwrap_or(&JsonValue::Null);
-        values.push(json_to_routine_value(json, parameter.builtin_data_type().as_ref())?);
+        if let Some(json) = map.get(&parameter.name) {
+            values.push(json_to_routine_value(json, parameter.builtin_data_type().as_ref())?);
+        } else if let Some(default_expr) = parameter.default_expr.as_deref() {
+            values.push(evaluate_parameter_default(parameter, default_expr)?);
+        } else {
+            values.push(json_to_routine_value(&JsonValue::Null, parameter.builtin_data_type().as_ref())?);
+        }
     }
     Ok(values)
 }
@@ -163,6 +467,18 @@ fn validate_json(
     if json.is_null() {
         if spec.not_null {
             return Err(invalid_args(format!("{} cannot be null", spec.display)));
+        }
+        if !spec.is_array {
+            if let Some(type_id) = &spec.type_id {
+                let resolved = type_registry.get_or_load(stores, type_id)?;
+                if resolved.kind == CatalogTypeKind::Domain {
+                    kalamdb_commons::conversions::arrow_json_conversion::validate_domain_specs(
+                        &resolved.domain_constraints(),
+                        &datafusion::scalar::ScalarValue::Null,
+                    )
+                    .map_err(invalid_args)?;
+                }
+            }
         }
         return Ok(());
     }
@@ -256,6 +572,34 @@ fn validate_named_type(
                     spec.display
                 ))),
             }
+        },
+        CatalogTypeKind::Domain => {
+            if let Some(base_field) =
+                resolved.fields.iter().find(|field| field.name == "__base" && !field.dropped)
+            {
+                let base_spec = TypeSpec {
+                    display:   spec.display.clone(),
+                    type_id:   base_field.type_ref.named_type_id().cloned(),
+                    data_type: base_field.type_ref.builtin().or_else(|| {
+                        base_field
+                            .type_ref
+                            .element()
+                            .and_then(kalamdb_commons::LogicalTypeRef::builtin)
+                    }),
+                    is_array:  base_field.type_ref.is_array(),
+                    not_null:  base_field.not_null,
+                    nonempty:  false,
+                };
+                validate_json(type_registry, stores, &base_spec, json)?;
+            }
+            let scalar = kalamdb_commons::conversions::json_value_to_scalar_strict(json)
+                .map_err(invalid_args)?;
+            kalamdb_commons::conversions::arrow_json_conversion::validate_domain_specs(
+                &resolved.domain_constraints(),
+                &scalar,
+            )
+            .map_err(invalid_args)?;
+            Ok(())
         },
     }
 }

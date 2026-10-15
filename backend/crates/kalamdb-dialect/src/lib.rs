@@ -2,7 +2,7 @@
 //!
 //! This crate is the extraction point for KalamDB SQL parsing concerns.
 
-use kalamdb_commons::{models::NamespaceId, Role};
+use kalamdb_commons::{models::SchemaId, Role};
 
 pub mod batch_execution;
 pub mod classifier;
@@ -65,7 +65,7 @@ pub use validation::{
 
 pub fn classify_statement(
     sql: &str,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
     role: Role,
 ) -> Result<SqlStatement, StatementClassificationError> {
     SqlStatement::classify_and_parse(sql, default_namespace, role)

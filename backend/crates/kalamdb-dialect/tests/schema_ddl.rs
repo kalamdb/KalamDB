@@ -1,8 +1,8 @@
-use kalamdb_commons::{models::NamespaceId, Role, TableType};
+use kalamdb_commons::{models::SchemaId, Role, TableType};
 use kalamdb_dialect::classifier::{SqlStatement, SqlStatementKind};
 
 fn classify(sql: &str, role: Role) -> Result<SqlStatement, String> {
-    SqlStatement::classify_and_parse(sql, &NamespaceId::new("public"), role)
+    SqlStatement::classify_and_parse(sql, &SchemaId::new("public"), role)
         .map_err(|error| error.user_message().to_string())
 }
 

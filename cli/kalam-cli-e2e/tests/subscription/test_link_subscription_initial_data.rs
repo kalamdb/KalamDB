@@ -24,7 +24,7 @@ fn test_link_subscription_initial_batch_then_inserts() {
     let table_full = format!("{}.messages", namespace);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
 
     // Create user table
     let create_result = execute_sql_as_root_via_client(&format!(
@@ -123,7 +123,7 @@ fn test_link_subscription_empty_table_then_inserts() {
     let table_full = format!("{}.events", namespace);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
 
     // Create user table (empty)
     let create_result = execute_sql_as_root_via_client(&format!(
@@ -199,7 +199,7 @@ fn test_link_subscription_batch_status_transition() {
     let table_full = format!("{}.items", namespace);
 
     // Setup
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
 
     let _ = execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', \
@@ -275,7 +275,7 @@ fn test_link_subscription_multiple_live_inserts() {
     let table_full = format!("{}.logs", namespace);
 
     // Setup
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
 
     let _ = execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, level VARCHAR, message VARCHAR) WITH (TYPE='USER')",
@@ -355,7 +355,7 @@ fn test_link_subscription_delete_events() {
     let table_full = format!("{}.items", namespace);
 
     // Setup
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
 
     let _ = execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER')",

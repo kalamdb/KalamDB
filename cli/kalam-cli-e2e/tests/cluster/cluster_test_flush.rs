@@ -39,7 +39,7 @@ fn cluster_test_flush_data_consistency() {
 
     // Step 1: Create namespace on first node
     println!("  1. Creating namespace on node 0...");
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Step 2: Create shared table
@@ -170,7 +170,7 @@ fn cluster_test_multiple_flushes() {
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Setup
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -280,7 +280,7 @@ fn cluster_test_flush_during_reads() {
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Setup
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(

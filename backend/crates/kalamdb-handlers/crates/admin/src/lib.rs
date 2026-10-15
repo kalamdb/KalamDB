@@ -14,7 +14,7 @@ use kalamdb_handlers_support::{register_dynamic_handler, register_typed_handler}
 use kalamdb_sql::classifier::SqlStatementKind;
 
 pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppContext>) {
-    use kalamdb_commons::models::{LiveQueryId, NamespaceId, TableName};
+    use kalamdb_commons::models::{LiveQueryId, SchemaId, TableName};
     use kalamdb_sql::ddl::{
         BackupDatabaseStatement, ExportUserDataStatement, FlushAllTablesStatement,
         FlushTableStatement, JobCommand, KillLiveQueryStatement, RestoreDatabaseStatement,
@@ -31,7 +31,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::FlushTable(FlushTableStatement {
-            namespace:  NamespaceId::new("_placeholder"),
+            namespace:  SchemaId::new("_placeholder"),
             table_name: TableName::new("_placeholder"),
         }),
         flush::FlushTableHandler::new(app_context.clone()),
@@ -41,7 +41,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::FlushAllTables(FlushAllTablesStatement {
-            namespace: NamespaceId::new("_placeholder"),
+            namespace: SchemaId::new("_placeholder"),
         }),
         flush::FlushAllTablesHandler::new(app_context.clone()),
         SqlStatementKind::FlushAllTables,
@@ -50,7 +50,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::CompactTable(kalamdb_sql::ddl::CompactTableStatement {
-            namespace:  NamespaceId::new("_placeholder"),
+            namespace:  SchemaId::new("_placeholder"),
             table_name: TableName::new("_placeholder"),
         }),
         compact::CompactTableHandler::new(app_context.clone()),
@@ -60,7 +60,7 @@ pub fn register_admin_handlers(registry: &HandlerRegistry, app_context: Arc<AppC
     register_typed_handler!(
         registry,
         SqlStatementKind::CompactAllTables(kalamdb_sql::ddl::CompactAllTablesStatement {
-            namespace: NamespaceId::new("_placeholder"),
+            namespace: SchemaId::new("_placeholder"),
         }),
         compact::CompactAllTablesHandler::new(app_context.clone()),
         SqlStatementKind::CompactAllTables,

@@ -9,6 +9,7 @@ pub mod policy_commands;
 #[cfg(test)]
 mod policy_commands_tests;
 
+pub mod alter_domain;
 pub mod alter_namespace;
 pub mod alter_table;
 pub mod alter_type;
@@ -17,6 +18,7 @@ pub mod call;
 pub mod column_default;
 pub mod comment;
 pub mod compact_commands;
+pub mod create_domain;
 pub mod create_index;
 pub mod create_namespace;
 pub mod create_procedure;
@@ -26,6 +28,7 @@ pub mod create_trigger;
 pub mod create_type;
 pub mod create_view;
 pub mod describe_table;
+pub mod drop_domain;
 pub mod drop_namespace;
 pub mod drop_table;
 pub mod export_commands;
@@ -65,6 +68,7 @@ pub(crate) fn reject_access_level_sql(sql: &str) -> DdlResult<()> {
     }
 }
 
+pub use alter_domain::{AlterDomainOperation, AlterDomainStatement};
 pub use alter_namespace::AlterSchemaStatement;
 pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
 pub use alter_type::{AlterTypeOperation, AlterTypeStatement, EnumValueNeighbor};
@@ -72,9 +76,13 @@ pub use backup_namespace::BackupDatabaseStatement;
 pub use call::CallStatement;
 pub use comment::{CommentOnStatement, CommentOnTarget};
 pub use compact_commands::{CompactAllTablesStatement, CompactTableStatement};
+pub use create_domain::{CreateDomainStatement, DomainCheckClause};
 pub use create_index::parse_create_index_on;
 pub use create_namespace::CreateNamespaceStatement;
-pub use create_procedure::{CreateProcedureStatement, DropProcedureStatement, ProcedureParameter};
+pub use create_procedure::{
+    encode_config_changes, AlterRoutineAction, AlterRoutineStatement, CreateProcedureStatement,
+    DropProcedureStatement, ProcedureParameter, RoutineConfigChange,
+};
 pub use create_schema::CreateSchemaStatement;
 pub use create_table::CreateTableStatement;
 pub use create_trigger::{AlterTriggerStatement, CreateTriggerStatement, DropTriggerStatement};
@@ -83,11 +91,14 @@ pub use create_type::{
 };
 pub use create_view::CreateViewStatement;
 pub use describe_table::DescribeTableStatement;
+pub use drop_domain::{DropDomainStatement, QualifiedDomainName};
 pub use drop_namespace::DropSchemaStatement;
 pub use drop_table::{DropTableStatement, TableKind};
 pub use export_commands::{ExportUserDataStatement, ShowExportStatement};
 pub use flush_commands::{FlushAllTablesStatement, FlushTableStatement};
-pub use grant_execute::{ExecuteGrantee, GrantExecuteStatement, RevokeExecuteStatement};
+pub use grant_execute::{
+    ExecuteGrantee, ExecuteTarget, GrantExecuteStatement, RevokeExecuteStatement,
+};
 pub use job_commands::{parse_job_command, JobCommand};
 // Re-export SubscriptionOptions from kalamdb_commons for convenience
 pub use kalamdb_commons::websocket::SubscriptionOptions;

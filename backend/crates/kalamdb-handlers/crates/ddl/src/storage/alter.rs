@@ -212,7 +212,7 @@ mod tests {
             created_at:             chrono::Utc::now().timestamp_millis(),
             updated_at:             chrono::Utc::now().timestamp_millis(),
         };
-        storages_provider.insert_storage(storage).unwrap();
+        storages_provider.create_storage(storage).unwrap();
 
         // Now alter it
         let handler = AlterStorageHandler::new(app_ctx);

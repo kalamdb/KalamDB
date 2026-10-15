@@ -77,7 +77,7 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
     let _ =
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
 
     execute_sql_as_root_via_client(&format!(

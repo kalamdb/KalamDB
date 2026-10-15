@@ -144,7 +144,7 @@ fn smoke_test_cluster_namespace_consistency() {
     // Create all namespaces
     println!("Creating {} namespaces...", namespaces.len());
     for ns in &namespaces {
-        let sql = format!("CREATE NAMESPACE {}", ns);
+        let sql = format!("CREATE SCHEMA {}", ns);
         execute_sql_as_root_via_client(&sql)
             .unwrap_or_else(|e| panic!("Failed to create namespace {}: {}", ns, e));
     }
@@ -197,7 +197,7 @@ fn smoke_test_cluster_table_type_consistency() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table
@@ -316,7 +316,7 @@ fn smoke_test_cluster_user_data_partitioning() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and user table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -416,7 +416,7 @@ fn smoke_test_cluster_shared_table_consistency() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -486,7 +486,7 @@ fn smoke_test_cluster_concurrent_operations() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared counter table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -561,7 +561,7 @@ fn smoke_test_cluster_batch_insert_consistency() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -642,7 +642,7 @@ fn smoke_test_cluster_job_tracking() {
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -731,7 +731,7 @@ fn smoke_test_cluster_storage_operations() {
     let _ =
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(

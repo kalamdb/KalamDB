@@ -3,7 +3,7 @@
 //! Produces a typed AST that mirrors sqlparser's semantics so kalamdb-core can
 //! route CREATE VIEW requests through a dedicated handler.
 
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{SchemaId, TableName};
 use sqlparser::ast::{ObjectName, Statement};
 
 use crate::{ddl::DdlResult, parser::KalamParser};
@@ -12,7 +12,7 @@ use crate::{ddl::DdlResult, parser::KalamParser};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateViewStatement {
     /// Resolved namespace/schema for the view
-    pub namespace_id:  NamespaceId,
+    pub namespace_id:  SchemaId,
     /// Unqualified view name
     pub view_name:     TableName,
     /// Whether `OR REPLACE` was specified
@@ -29,7 +29,7 @@ pub struct CreateViewStatement {
 
 impl CreateViewStatement {
     /// Parse a CREATE VIEW statement.
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let mut statements = KalamParser::parse(sql)
             .map_err(|e| format!("Failed to parse CREATE VIEW statement: {}", e))?;
 
@@ -83,13 +83,13 @@ impl CreateViewStatement {
 
 fn resolve_object_name(
     name: &ObjectName,
-    default_namespace: &NamespaceId,
-) -> DdlResult<(NamespaceId, TableName)> {
+    default_namespace: &SchemaId,
+) -> DdlResult<(SchemaId, TableName)> {
     let parts: Vec<String> = name.0.iter().map(|part| part.to_string()).collect();
 
     match parts.as_slice() {
         [view] => Ok((default_namespace.clone(), TableName::from(view.as_str()))),
-        [namespace, view] => Ok((NamespaceId::new(namespace), TableName::from(view.as_str()))),
+        [namespace, view] => Ok((SchemaId::new(namespace), TableName::from(view.as_str()))),
         _ => Err("CREATE VIEW expects either <view> or <namespace>.<view>".to_string()),
     }
 }
@@ -98,8 +98,8 @@ fn resolve_object_name(
 mod tests {
     use super::*;
 
-    fn default_ns() -> NamespaceId {
-        NamespaceId::default()
+    fn default_ns() -> SchemaId {
+        SchemaId::default()
     }
 
     #[test]

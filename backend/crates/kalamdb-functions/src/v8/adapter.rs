@@ -404,6 +404,21 @@ fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
             },
         }
     }
+    bind_native(
+        scope,
+        "__kalamReadViewAt",
+        crate::convert::read_view_batches_at_callback,
+    )?;
+    bind_native(
+        scope,
+        "__kalamReadViewMaterialize",
+        crate::convert::read_view_batches_materialize_callback,
+    )?;
+    bind_native(
+        scope,
+        "__kalamReadViewRowMaterialize",
+        crate::convert::read_view_row_materialize_callback,
+    )?;
     Ok(())
 }
 
@@ -1276,7 +1291,7 @@ function kalamInvoke(name, args) {
                     id:   kalamdb_commons::UserId::new("alice"),
                     role: kalamdb_commons::Role::User,
                 },
-                namespace:  kalamdb_commons::NamespaceId::new("api"),
+                namespace:  kalamdb_commons::SchemaId::new("api"),
                 request_id: "req-1".into(),
             })
         }

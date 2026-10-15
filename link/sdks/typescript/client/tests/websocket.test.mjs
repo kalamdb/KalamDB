@@ -147,7 +147,7 @@ async function runTests() {
   console.log('\n📋 Test 2: Setup Test Tables');
   try {
     // Create namespace
-    const nsResult = await executeSQL(`CREATE NAMESPACE IF NOT EXISTS ${TEST_NAMESPACE}`);
+    const nsResult = await executeSQL(`CREATE SCHEMA IF NOT EXISTS ${TEST_NAMESPACE}`);
     pass(`Namespace ${TEST_NAMESPACE} created`);
     
     // Create todos table

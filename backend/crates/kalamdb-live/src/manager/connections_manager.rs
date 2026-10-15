@@ -1027,7 +1027,7 @@ mod tests {
 
     // ==================== Shared Table Subscription Tests ====================
 
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::super::super::models::{SubscriptionFlowControl, SubscriptionRuntimeMetadata};
 
@@ -1052,7 +1052,7 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
-        TableId::new(NamespaceId::from(ns), TableName::from(table))
+        TableId::new(SchemaId::from(ns), TableName::from(table))
     }
 
     fn make_wire_notification(sub_id: &str) -> WireNotification {

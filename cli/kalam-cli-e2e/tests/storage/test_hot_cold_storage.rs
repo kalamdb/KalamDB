@@ -31,8 +31,8 @@ fn test_hot_cold_storage_data_integrity() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (
@@ -174,8 +174,8 @@ fn test_duplicate_primary_key_insert_fails() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (
@@ -282,8 +282,8 @@ fn test_update_operations_hot_and_cold() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (

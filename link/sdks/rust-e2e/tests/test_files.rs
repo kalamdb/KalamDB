@@ -28,7 +28,7 @@ async fn file_upload_select_and_download_roundtrip() {
     let table = "documents";
 
     client
-        .execute_query(&format!("CREATE NAMESPACE {ns}"), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA {ns}"), None, None, None)
         .await
         .expect("create namespace");
 

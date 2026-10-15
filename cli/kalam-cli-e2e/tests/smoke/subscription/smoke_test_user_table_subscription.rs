@@ -17,7 +17,7 @@ fn smoke_user_table_subscription_lifecycle() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     // 2) Create user table

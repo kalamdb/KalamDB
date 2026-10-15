@@ -1,10 +1,17 @@
 //! Compile the project schema contract from local SQL files.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
+use kalamdb_commons::{
+    datatypes::ToArrowType,
+    models::{RoutineId, RoutineSecurityMode, TypeId},
+    KalamDataType,
+};
 use kalamdb_sql::{
-    apply_identity_manifest, canonical_contract_hash, compile_contract, ContractSnapshot,
-    ContractSource, TypeIdentityManifest,
+    apply_identity_manifest, canonical_contract_hash, compile_contract,
+    contracts::{ContractField, ContractRoutine, ContractType, ContractTypeKind},
+    ContractSnapshot, ContractSource, TypeIdentityManifest,
 };
 
 use crate::{
@@ -94,8 +101,194 @@ pub fn compile_project_contract(
             })?;
         }
     }
+    merge_builtin_file_extension(&mut snapshot);
     let hash = canonical_contract_hash(&snapshot);
     Ok((snapshot, hash))
+}
+
+/// Merge the built-in `pg_catalog.file` composite type and its three filestore
+/// functions (`file_put`, `file_read`, `file_delete`) into a [`ContractSnapshot`].
+pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
+    let file_type_id = TypeId::new("pg_catalog.file");
+    snapshot.schemas.insert("pg_catalog".to_string());
+
+    let file_fields = vec![
+        builtin_field("id", "TEXT", KalamDataType::Text, true, 1),
+        builtin_field("sub", "TEXT", KalamDataType::Text, true, 2),
+        builtin_field("name", "TEXT", KalamDataType::Text, true, 3),
+        builtin_field("size", "BIGINT", KalamDataType::BigInt, true, 4),
+        builtin_field("mime", "TEXT", KalamDataType::Text, true, 5),
+        builtin_field("sha256", "TEXT", KalamDataType::Text, true, 6),
+        builtin_field("shard", "INT", KalamDataType::Int, false, 7),
+    ];
+    let file_arrow = KalamDataType::File
+        .to_arrow_type()
+        .expect("KalamDataType::File has a canonical Arrow DataType");
+
+    snapshot.types.entry("pg_catalog.file".to_string()).or_insert_with(|| ContractType {
+        type_id: file_type_id.clone(),
+        schema:  "pg_catalog".to_string(),
+        name:    "file".to_string(),
+        kind:    ContractTypeKind::Composite {
+            fields: file_fields,
+        },
+        arrow:   file_arrow,
+        comment: None,
+    });
+
+    for table in snapshot.tables.values_mut() {
+        for field in &mut table.fields {
+            rewrite_file_field(field, &file_type_id);
+        }
+    }
+    for ty in snapshot.types.values_mut() {
+        if let ContractTypeKind::Composite { fields }
+        | ContractTypeKind::ImplicitTableRow { fields, .. } = &mut ty.kind
+        {
+            for field in fields {
+                rewrite_file_field(field, &file_type_id);
+            }
+        }
+    }
+    for routine in snapshot.routines.values_mut() {
+        for param in &mut routine.parameters {
+            rewrite_file_field(param, &file_type_id);
+        }
+        if let Some(ret) = &mut routine.return_type {
+            rewrite_file_field(ret, &file_type_id);
+        }
+    }
+
+    snapshot
+        .routines
+        .entry("pg_catalog.file_put".to_string())
+        .or_insert_with(|| ContractRoutine {
+            routine_id:  RoutineId::new("pg_catalog.file_put"),
+            schema:      "pg_catalog".to_string(),
+            name:        "file_put".to_string(),
+            kind:        kalamdb_commons::models::RoutineKind::Function,
+            parameters:  vec![builtin_field(
+                "upload_key",
+                "TEXT",
+                KalamDataType::Text,
+                true,
+                1,
+            )],
+            return_type: Some(ContractField {
+                name:        "returns".to_string(),
+                type_name:   "pg_catalog.file".to_string(),
+                type_id:     Some(file_type_id.clone()),
+                data_type:   Some(KalamDataType::File),
+                is_array:    false,
+                not_null:    true,
+                nonempty:    false,
+                primary_key: false,
+                has_default: false,
+                slot:        0,
+                dropped:     false,
+            }),
+            language:    Some("INTERNAL".to_string()),
+            security:    RoutineSecurityMode::Invoker,
+            body:        None,
+            grants:      BTreeSet::new(),
+            comment:     None,
+        });
+
+    snapshot
+        .routines
+        .entry("pg_catalog.file_read".to_string())
+        .or_insert_with(|| ContractRoutine {
+            routine_id:  RoutineId::new("pg_catalog.file_read"),
+            schema:      "pg_catalog".to_string(),
+            name:        "file_read".to_string(),
+            kind:        kalamdb_commons::models::RoutineKind::Function,
+            parameters:  vec![ContractField {
+                name:        "file".to_string(),
+                type_name:   "pg_catalog.file".to_string(),
+                type_id:     Some(file_type_id.clone()),
+                data_type:   Some(KalamDataType::File),
+                is_array:    false,
+                not_null:    true,
+                nonempty:    false,
+                primary_key: false,
+                has_default: false,
+                slot:        1,
+                dropped:     false,
+            }],
+            return_type: Some(builtin_field(
+                "returns",
+                "BYTES",
+                KalamDataType::Bytes,
+                true,
+                0,
+            )),
+            language:    Some("INTERNAL".to_string()),
+            security:    RoutineSecurityMode::Invoker,
+            body:        None,
+            grants:      BTreeSet::new(),
+            comment:     None,
+        });
+
+    snapshot
+        .routines
+        .entry("pg_catalog.file_delete".to_string())
+        .or_insert_with(|| ContractRoutine {
+            routine_id:  RoutineId::new("pg_catalog.file_delete"),
+            schema:      "pg_catalog".to_string(),
+            name:        "file_delete".to_string(),
+            kind:        kalamdb_commons::models::RoutineKind::Function,
+            parameters:  vec![ContractField {
+                name:        "file".to_string(),
+                type_name:   "pg_catalog.file".to_string(),
+                type_id:     Some(file_type_id.clone()),
+                data_type:   Some(KalamDataType::File),
+                is_array:    false,
+                not_null:    true,
+                nonempty:    false,
+                primary_key: false,
+                has_default: false,
+                slot:        1,
+                dropped:     false,
+            }],
+            return_type: None,
+            language:    Some("INTERNAL".to_string()),
+            security:    RoutineSecurityMode::Invoker,
+            body:        None,
+            grants:      BTreeSet::new(),
+            comment:     None,
+        });
+}
+
+fn builtin_field(
+    name: &str,
+    type_name: &str,
+    data_type: KalamDataType,
+    not_null: bool,
+    slot: i32,
+) -> ContractField {
+    ContractField {
+        name: name.to_string(),
+        type_name: type_name.to_string(),
+        type_id: None,
+        data_type: Some(data_type),
+        is_array: false,
+        not_null,
+        nonempty: false,
+        primary_key: false,
+        has_default: false,
+        slot,
+        dropped: false,
+    }
+}
+
+fn rewrite_file_field(field: &mut ContractField, file_type_id: &TypeId) {
+    if field.type_id.is_none()
+        && (field.type_name.eq_ignore_ascii_case("FILE")
+            || field.data_type == Some(KalamDataType::File))
+    {
+        field.type_id = Some(file_type_id.clone());
+        field.type_name = "pg_catalog.file".to_string();
+    }
 }
 
 /// Unqualified SQL in schema.sql belongs to the project's connection namespace.

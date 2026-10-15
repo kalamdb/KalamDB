@@ -70,6 +70,19 @@ impl TypeRegistry {
         self.current.get(type_id).map(|entry| Arc::clone(entry.value()))
     }
 
+    /// Look up a specific pinned revision without mutating the current pointer.
+    pub fn get_revision(
+        &self,
+        type_id: &TypeId,
+        revision: kalamdb_commons::TypeRevision,
+    ) -> Option<Arc<ResolvedType>> {
+        let key = RevisionKey {
+            type_id:  type_id.clone(),
+            revision: revision.get(),
+        };
+        self.revisions.get(&key).map(|entry| Arc::clone(entry.value()))
+    }
+
     /// Load or intern the current revision. Name lookup happens in the catalog, not here.
     pub fn get_or_load(
         &self,
@@ -82,17 +95,14 @@ impl TypeRegistry {
         self.load_current(stores, type_id)
     }
 
-    /// Drop current pointer, interned revisions, and reverse dependents.
-    /// In-flight Arcs stay valid.
+    /// Drop current pointer and reverse dependents.
+    /// Historical revisions stay pinned by `(TypeId, revision)` and in-flight Arcs stay valid.
     pub fn invalidate(&self, type_id: &TypeId) {
-        let mut drop_ids = vec![type_id.clone()];
-        if let Some((_, dependents)) = self.reverse_deps.remove(type_id) {
-            drop_ids.extend(dependents);
-        }
+        let mut drop_ids = self.dependent_type_ids(type_id);
+        drop_ids.insert(0, type_id.clone());
         for id in &drop_ids {
             self.current.remove(id);
         }
-        self.revisions.retain(|key, _| drop_ids.iter().all(|id| &key.type_id != id));
         for id in &drop_ids {
             let Some((_, keys)) = self.table_deps.remove(id) else {
                 continue;
@@ -103,12 +113,21 @@ impl TypeRegistry {
         }
     }
 
-    /// Types that currently store a field of `type_id` (nested composites).
+    /// Types that transitively store a field of `type_id` (nested composites).
     pub fn dependent_type_ids(&self, type_id: &TypeId) -> Vec<TypeId> {
-        self.reverse_deps
-            .get(type_id)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_default()
+        let mut out = Vec::new();
+        let mut queue = vec![type_id.clone()];
+        while let Some(current) = queue.pop() {
+            if let Some(entry) = self.reverse_deps.get(&current) {
+                for dep in entry.value() {
+                    if dep != type_id && !out.contains(dep) {
+                        out.push(dep.clone());
+                        queue.push(dep.clone());
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -377,5 +396,69 @@ mod tests {
             reloaded.field_with_name("status").unwrap().data_type(),
             &arrow::datatypes::DataType::Utf8
         );
+    }
+
+    #[test]
+    fn eviction_past_max_entries_does_not_deadlock() {
+        use kalamdb_commons::{
+            schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
+            KalamDataType, TableName,
+        };
+
+        let stores = CatalogStores::new(Arc::new(InMemoryBackend::new()));
+        let ns = SchemaId::new("chat");
+        let registry = TypeRegistry::new();
+
+        for idx in 0..(super::TYPE_CACHE_MAX_ENTRIES + 8) {
+            let type_name = format!("status_{idx}");
+            let type_id = TypeId::from_parts(Some(&ns), &type_name);
+            stores
+                .upsert_type(CatalogType::named(
+                    type_id.clone(),
+                    ns.clone(),
+                    &type_name,
+                    CatalogTypeKind::Enum,
+                ))
+                .unwrap();
+            stores
+                .upsert_type_field(
+                    CatalogTypeField::new(
+                        type_id.clone(),
+                        "open",
+                        1,
+                        None,
+                        None,
+                        "open",
+                        false,
+                        true,
+                        false,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let table = TableDefinition::new(
+                ns.clone(),
+                TableName::new(format!("tbl_{idx}")),
+                TableType::Shared,
+                vec![ColumnDefinition::new(
+                    1,
+                    "status",
+                    1,
+                    KalamDataType::Text,
+                    false,
+                    false,
+                    false,
+                    ColumnDefault::None,
+                    None,
+                )
+                .with_named_type(type_id, false)],
+                TableOptions::shared(),
+                None,
+            )
+            .unwrap();
+            let _ = registry.arrow_schema_for_table(&stores, &table).unwrap();
+        }
+        assert!(registry.table_layouts.len() <= super::TYPE_CACHE_MAX_ENTRIES);
+        assert!(registry.revisions.len() <= super::TYPE_CACHE_MAX_ENTRIES);
     }
 }

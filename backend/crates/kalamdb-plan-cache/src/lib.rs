@@ -8,7 +8,7 @@ use std::{
 };
 
 use datafusion::{logical_expr::LogicalPlan, scalar::ScalarValue};
-use kalamdb_commons::{models::UserId, schemas::TableType, NamespaceId, Role, TableId};
+use kalamdb_commons::{models::UserId, schemas::TableType, SchemaId, Role, TableId};
 use moka::{notification::RemovalCause, sync::Cache};
 
 const DEFAULT_PLAN_MAX_ENTRIES: u64 = 1000;
@@ -69,7 +69,7 @@ pub enum PlanAdmission {
 /// type, and collation epochs extend this key. They do not add a second cache.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlanCacheKey {
-    pub namespace:    NamespaceId,
+    pub namespace:    SchemaId,
     pub role:         Role,
     pub sql:          String,
     database:         String,
@@ -84,7 +84,7 @@ pub struct PlanCacheKey {
 }
 
 impl PlanCacheKey {
-    pub fn new(namespace: NamespaceId, role: Role, sql: impl Into<String>) -> Self {
+    pub fn new(namespace: SchemaId, role: Role, sql: impl Into<String>) -> Self {
         Self {
             namespace,
             role,
@@ -483,7 +483,7 @@ mod tests {
     }
 
     fn key(sql: &str) -> PlanCacheKey {
-        PlanCacheKey::new(NamespaceId::new("default"), Role::User, sql)
+        PlanCacheKey::new(SchemaId::new("default"), Role::User, sql)
     }
 
     #[test]

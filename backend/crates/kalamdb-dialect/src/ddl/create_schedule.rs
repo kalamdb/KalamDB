@@ -1,7 +1,7 @@
 //! KalamDB schedule extension, tokenized with PostgreSQL quoting and comments.
 use std::collections::HashSet;
 
-use kalamdb_commons::models::{NamespaceId, RoutineId, ScheduleId};
+use kalamdb_commons::models::{SchemaId, RoutineId, ScheduleId};
 use sqlparser::tokenizer::Token;
 
 use crate::{ddl::DdlResult, parser::KalamParser};
@@ -9,7 +9,7 @@ use crate::{ddl::DdlResult, parser::KalamParser};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateScheduleStatement {
     pub schedule_id:  ScheduleId,
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
     pub name:         String,
     pub routine_id:   RoutineId,
     pub cron:         Option<String>,
@@ -19,7 +19,7 @@ pub struct CreateScheduleStatement {
 }
 
 impl CreateScheduleStatement {
-    pub fn parse(sql: &str, namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, namespace: &SchemaId) -> DdlResult<Self> {
         let mut p = ScheduleParser::new(sql)?;
         p.keyword("CREATE")?;
         p.keyword("SCHEDULE")?;
@@ -151,10 +151,10 @@ impl ScheduleParser {
             _ => Err("Expected PostgreSQL identifier".into()),
         }
     }
-    pub fn name(&mut self, namespace: &NamespaceId) -> DdlResult<(NamespaceId, String)> {
+    pub fn name(&mut self, namespace: &SchemaId) -> DdlResult<(SchemaId, String)> {
         let first = self.ident()?;
         if self.take(Token::Period) {
-            Ok((NamespaceId::new(first), self.ident()?))
+            Ok((SchemaId::new(first), self.ident()?))
         } else {
             Ok((namespace.clone(), first))
         }

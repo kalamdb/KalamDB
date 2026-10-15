@@ -3,12 +3,12 @@
 -- Read kalam/schema.sql for the commented walkthrough of this demo.
 
 -- UP
-CREATE NAMESPACE IF NOT EXISTS chat_demo;
+CREATE SCHEMA IF NOT EXISTS chat_demo;
 
 DROP TRIGGER IF EXISTS chat_demo.process_user_message;
 DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
-DROP PROCEDURE IF EXISTS chat_demo.send_message;
-DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP FUNCTION IF EXISTS chat_demo.send_message;
+DROP FUNCTION IF EXISTS chat_demo.join_room;
 DROP TYPE IF EXISTS chat_demo.message_target;
 DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;
@@ -40,7 +40,7 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.messages (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
+CREATE TABLE IF NOT EXISTS chat_demo.direct_messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     role TEXT NOT NULL,
     author TEXT NOT NULL,
@@ -48,7 +48,7 @@ CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
     content TEXT NOT NULL,
     reply_to BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 CREATE INDEX IF NOT EXISTS idx_messages_room ON chat_demo.messages (room);
 CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON chat_demo.messages (reply_to);
@@ -119,11 +119,11 @@ CREATE TOPIC IF NOT EXISTS chat_demo.ai_inbox;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT;
 
-CREATE PROCEDURE chat_demo.join_room(room_id TEXT NOT NULL)
+CREATE FUNCTION chat_demo.join_room(room_id TEXT NOT NULL)
 RETURNS TEXT
 SECURITY INVOKER;
 
-CREATE PROCEDURE chat_demo.send_message(
+CREATE FUNCTION chat_demo.send_message(
     target chat_demo.message_target NOT NULL,
     target_id TEXT NOT NULL,
     content TEXT NOT NULL
@@ -134,8 +134,8 @@ SECURITY INVOKER;
 CREATE PROCEDURE chat_demo.on_user_message(payload chat_demo.ai_inbox NOT NULL)
 SECURITY DEFINER;
 
-GRANT EXECUTE ON PROCEDURE chat_demo.join_room TO user;
-GRANT EXECUTE ON PROCEDURE chat_demo.send_message TO user;
+GRANT EXECUTE ON FUNCTION chat_demo.join_room TO user;
+GRANT EXECUTE ON FUNCTION chat_demo.send_message TO user;
 
 INSERT INTO chat_demo.rooms (id, title)
 VALUES ('main', 'Main');
@@ -163,8 +163,8 @@ CREATE TRIGGER chat_demo.process_user_message
 -- DOWN
 DROP TRIGGER IF EXISTS chat_demo.process_user_message;
 DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
-DROP PROCEDURE IF EXISTS chat_demo.send_message;
-DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP FUNCTION IF EXISTS chat_demo.send_message;
+DROP FUNCTION IF EXISTS chat_demo.join_room;
 DROP TYPE IF EXISTS chat_demo.message_target;
 DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;

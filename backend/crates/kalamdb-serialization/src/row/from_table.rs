@@ -160,11 +160,35 @@ fn build_storage_schema(
             continue;
         }
         let storage_type = storage_type_for_column(column, arrow)?;
+        let missing_default = resolve_missing_default(column, arrow);
         let slot = (column.column_id as usize) - 1;
-        fields[slot] = StorageField::new(column.column_name.clone(), storage_type);
+        fields[slot] = StorageField::new(column.column_name.clone(), storage_type)
+            .with_missing_default(missing_default);
     }
 
     Ok(StorageSchema::new(version, fields))
+}
+
+fn resolve_missing_default(
+    column: &kalamdb_commons::schemas::ColumnDefinition,
+    arrow: Option<&arrow::datatypes::Schema>,
+) -> Option<datafusion_common::ScalarValue> {
+    let kalamdb_commons::schemas::ColumnDefault::Literal(ref default_json) =
+        column.missing_default.as_ref()?
+    else {
+        return None;
+    };
+    if let Some(schema) = arrow {
+        if let Ok(field) = schema.field_with_name(&column.column_name) {
+            let scalar = kalamdb_commons::conversions::json_value_to_scalar(default_json);
+            if let Ok(coerced) = kalamdb_commons::conversions::coerce_scalar_to_field(scalar, field)
+            {
+                return Some(coerced);
+            }
+        }
+    }
+    kalamdb_commons::conversions::json_value_to_scalar_for_column(default_json, &column.data_type())
+        .ok()
 }
 
 fn storage_type_for_column(
@@ -191,7 +215,7 @@ mod tests {
     use kalamdb_commons::{
         models::datatypes::KalamDataType,
         schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::*;
@@ -213,7 +237,7 @@ mod tests {
     #[test]
     fn slots_follow_column_id_with_drop_holes() {
         let table = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("orders"),
             TableType::User,
             vec![
@@ -236,7 +260,7 @@ mod tests {
     #[test]
     fn rename_keeps_physical_slot() {
         let original = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("t"),
             TableType::User,
             vec![column(2, "old_name", 1, KalamDataType::Text)],
@@ -245,7 +269,7 @@ mod tests {
         )
         .unwrap();
         let renamed = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("t"),
             TableType::User,
             vec![column(2, "new_name", 1, KalamDataType::Text)],
@@ -266,7 +290,7 @@ mod tests {
     #[test]
     fn shared_table_keeps_user_id_payload_column() {
         let table = TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("members"),
             TableType::Shared,
             vec![
@@ -286,7 +310,7 @@ mod tests {
     #[test]
     fn user_table_keeps_declared_user_id_payload_column() {
         let table = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("profiles"),
             TableType::User,
             vec![

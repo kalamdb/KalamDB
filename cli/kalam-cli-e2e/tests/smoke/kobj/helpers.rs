@@ -18,8 +18,8 @@ pub fn setup_namespace(prefix: &str) -> String {
     let namespace = generate_unique_namespace(prefix);
     let _ =
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {namespace}"))
-        .unwrap_or_else(|err| panic!("CREATE NAMESPACE {namespace}: {err}"));
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {namespace}"))
+        .unwrap_or_else(|err| panic!("CREATE SCHEMA {namespace}: {err}"));
     namespace
 }
 

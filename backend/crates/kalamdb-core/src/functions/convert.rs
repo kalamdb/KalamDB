@@ -45,6 +45,20 @@ fn json_sql_value(value: &JsonValue) -> RoutineValue {
 }
 
 pub fn routine_value_as_json(arg: &RoutineValue) -> Option<JsonValue> {
+    if let Some(fields) = &arg.named_fields {
+        if fields.iter().all(|(name, _)| name.is_empty()) {
+            let mut arr = Vec::with_capacity(fields.len());
+            for (_, val) in fields.iter() {
+                arr.push(routine_value_as_json(val)?);
+            }
+            return Some(JsonValue::Array(arr));
+        }
+        let mut map = serde_json::Map::with_capacity(fields.len());
+        for (name, val) in fields.iter() {
+            map.insert(name.clone(), routine_value_as_json(val)?);
+        }
+        return Some(JsonValue::Object(map));
+    }
     if arg.json_sql {
         return match &arg.value {
             ScalarValue::Utf8(Some(text)) | ScalarValue::LargeUtf8(Some(text)) => {
@@ -74,6 +88,11 @@ pub fn bind_call_arguments(
                 RoutineValue::new(params.get(index - 1).cloned().ok_or_else(|| {
                     KalamDbError::InvalidSql(format!("missing CALL parameter ${index}"))
                 })?)
+            },
+            CallArgument::Tuple(items) => {
+                let bound = bind_call_arguments(items, params)?;
+                let fields = bound.into_iter().map(|item| (String::new(), item)).collect();
+                RoutineValue::named_object(fields)
             },
         };
         values.push(value);
@@ -184,7 +203,18 @@ pub fn execution_result_to_rows(result: ExecutionResult) -> Result<RoutineValue,
             rows.push(scalar_struct_from_row(batch, row)?);
         }
     }
-    Ok(wrap_query_list(rows))
+    Ok(wrap_query_list(rows).with_row_batches_internal(batches))
+}
+
+trait RoutineValueBatchExt {
+    fn with_row_batches_internal(self, batches: Vec<arrow::array::RecordBatch>) -> Self;
+}
+
+impl RoutineValueBatchExt for RoutineValue {
+    fn with_row_batches_internal(mut self, batches: Vec<arrow::array::RecordBatch>) -> Self {
+        self.row_batches = Some(std::sync::Arc::from(batches));
+        self
+    }
 }
 
 fn rows_to_routine(batches: &[arrow::array::RecordBatch]) -> Result<RoutineValue, KalamDbError> {
@@ -300,18 +330,18 @@ fn scalar_struct_from_row(
     batch: &arrow::array::RecordBatch,
     row: usize,
 ) -> Result<ScalarValue, KalamDbError> {
-    let mut columns = Vec::with_capacity(batch.num_columns());
-    for (index, field) in batch.schema().fields().iter().enumerate() {
-        let scalar = ScalarValue::try_from_array(batch.column(index), row)
-            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-        let array = scalar
-            .to_array()
-            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-        columns.push((std::sync::Arc::clone(field), array));
-    }
-    Ok(ScalarValue::Struct(std::sync::Arc::new(arrow::array::StructArray::from(
+    let schema = batch.schema();
+    let columns: Vec<_> = (0..batch.num_columns())
+        .map(|index| batch.column(index).slice(row, 1))
+        .collect();
+    let struct_array = arrow::array::StructArray::try_new_with_length(
+        schema.fields().clone(),
         columns,
-    ))))
+        None,
+        1,
+    )
+    .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    Ok(ScalarValue::Struct(std::sync::Arc::new(struct_array)))
 }
 
 #[cfg(test)]

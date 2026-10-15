@@ -11,7 +11,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use kalamdb_commons::{
-    models::{rows::Row, NamespaceId, UserId},
+    models::{rows::Row, SchemaId, UserId},
     TableId,
 };
 use kalamdb_raft::{
@@ -225,7 +225,7 @@ async fn test_user_data_buffering_when_meta_behind() {
 
     // Create a command with required_meta_index higher than current
     let cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::default(), "users".into()),
+        table_id:            TableId::new(SchemaId::default(), "users".into()),
         user_id:             UserId::new("user1"),
         rows:                vec![Row {
             values: BTreeMap::new(),
@@ -248,7 +248,7 @@ async fn test_user_data_buffering_when_meta_behind() {
 
     // Apply another command (with lower requirement) which will trigger drain
     let cmd2 = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::default(), "users".into()),
+        table_id:            TableId::new(SchemaId::default(), "users".into()),
         user_id:             UserId::new("user2"),
         rows:                vec![Row {
             values: BTreeMap::new(),
@@ -276,7 +276,7 @@ async fn test_user_data_immediate_apply_when_meta_caught_up() {
 
     // Create a command with required_meta_index lower than current
     let cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::default(), "orders".into()),
+        table_id:            TableId::new(SchemaId::default(), "orders".into()),
         user_id:             UserId::new("user2"),
         rows:                vec![Row {
             values: BTreeMap::new(),
@@ -311,7 +311,7 @@ async fn test_user_data_snapshot_includes_pending_commands() {
 
     // Create and buffer a command (well above current meta)
     let cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::new("ns"), "table".into()),
+        table_id:            TableId::new(SchemaId::new("ns"), "table".into()),
         user_id:             UserId::new("user"),
         rows:                vec![Row {
             values: BTreeMap::new(),
@@ -353,7 +353,7 @@ async fn test_shared_data_buffering() {
 
     // Create a command with required_meta_index well above current
     let cmd = SharedDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::system(), "shared_table".into()),
+        table_id:            TableId::new(SchemaId::system(), "shared_table".into()),
         rows:                vec![Row {
             values: BTreeMap::new(),
         }],
@@ -375,7 +375,7 @@ async fn test_shared_data_buffering() {
 
     // Apply another command to trigger drain
     let cmd2 = SharedDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::system(), "other".into()),
+        table_id:            TableId::new(SchemaId::system(), "other".into()),
         rows:                vec![Row {
             values: BTreeMap::new(),
         }],
@@ -401,7 +401,7 @@ async fn test_shared_data_snapshot_roundtrip() {
     let current_meta = get_coordinator().current_index();
 
     let cmd = SharedDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::system(), "config".into()),
+        table_id:            TableId::new(SchemaId::system(), "config".into()),
         rows:                vec![Row {
             values: BTreeMap::new(),
         }],
@@ -459,7 +459,7 @@ async fn test_rejoin_ordering_scenario() {
 
     for (log_index, term, required_meta) in &entries {
         let cmd = UserDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "test".into()),
+            table_id:            TableId::new(SchemaId::default(), "test".into()),
             user_id:             UserId::new("user"),
             rows:                vec![Row {
                 values: BTreeMap::new(),
@@ -481,7 +481,7 @@ async fn test_rejoin_ordering_scenario() {
 
     // Apply another command to trigger drain
     let trigger_cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::default(), "trigger".into()),
+        table_id:            TableId::new(SchemaId::default(), "trigger".into()),
         user_id:             UserId::new("trigger"),
         rows:                vec![Row {
             values: BTreeMap::new(),
@@ -501,7 +501,7 @@ async fn test_rejoin_ordering_scenario() {
 
     // Trigger drain again
     let trigger_cmd2 = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::default(), "trigger2".into()),
+        table_id:            TableId::new(SchemaId::default(), "trigger2".into()),
         user_id:             UserId::new("trigger2"),
         rows:                vec![Row {
             values: BTreeMap::new(),

@@ -99,7 +99,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
     };
     use datafusion::datasource::MemTable;
-    use kalamdb_commons::{NamespaceId, TableName};
+    use kalamdb_commons::{SchemaId, TableName};
 
     use super::*;
 
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn test_secured_provider_creation() {
         let inner = create_mock_provider();
-        let table_id = TableId::new(NamespaceId::system(), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::system(), TableName::new("test_table"));
         let secured = secure_provider(inner, table_id.clone());
 
         assert_eq!(secured.table_id().namespace_id().as_str(), "system");
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn test_secured_provider_schema() {
         let inner = create_mock_provider();
-        let table_id = TableId::new(NamespaceId::system(), TableName::new("users"));
+        let table_id = TableId::new(SchemaId::system(), TableName::new("users"));
         let secured = secure_provider(inner, table_id);
 
         let schema = secured.schema();

@@ -96,11 +96,18 @@ impl DdlExecutor {
                 }
                 // Index keys live in each replica's RocksDB. Backfill before the
                 // new schema is published so a reader never sees the index empty.
-                kalamdb_tables::sync_scalar_indexes(
+                let stores = app_context.system_tables().catalog_stores();
+                let resolved_arrow = app_context
+                    .schema_registry()
+                    .type_registry()
+                    .arrow_schema_for_table(&stores, &table_def)
+                    .ok();
+                kalamdb_tables::sync_scalar_indexes_with_arrow(
                     app_context.storage_backend(),
                     &table_id,
                     previous.as_deref(),
                     &table_def,
+                    resolved_arrow.as_deref(),
                 )
                 .map_err(|e| {
                     ApplierError::Execution(format!(

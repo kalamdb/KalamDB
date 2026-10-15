@@ -54,8 +54,8 @@ async fn test_drop_namespace_cascade_removes_all_table_state_over_http() -> Resu
     let user = unique_table("ns_drop_user");
     let user_auth = create_user_auth_header_default(server, &user).await?;
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
     let resp = server
         .execute_sql(&format!(

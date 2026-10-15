@@ -266,6 +266,34 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         }
 
         let app_ctx = self.app_context.clone();
+        let ns_for_type = statement.namespace_id.clone();
+        let tn_for_type = statement.table_name.as_str().to_string();
+        let implicit_row_type_id = run_blocking(move || {
+            let stores = app_ctx.system_tables().catalog_stores();
+            if let Some(catalog_type) = stores
+                .find_type(&ns_for_type, &tn_for_type)
+                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            {
+                if catalog_type.kind == kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow {
+                    if let Some(dependent) = stores
+                        .type_is_referenced(&catalog_type.type_id)
+                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+                    {
+                        return Err(KalamDbError::InvalidOperation(format!(
+                            "cannot drop table {}.{}: row type is referenced by {dependent}",
+                            ns_for_type, tn_for_type
+                        )));
+                    }
+                    return Ok::<Option<kalamdb_commons::models::TypeId>, KalamDbError>(Some(
+                        catalog_type.type_id,
+                    ));
+                }
+            }
+            Ok(None)
+        })
+        .await?;
+
+        let app_ctx = self.app_context.clone();
         let tid = table_id.clone();
         let at = actual_type;
         let storage_details =
@@ -348,6 +376,19 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             .await
             .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
+        if let Some(type_id) = implicit_row_type_id {
+            let app_ctx = self.app_context.clone();
+            let tid = type_id.clone();
+            let _ = run_blocking(move || {
+                let stores = app_ctx.system_tables().catalog_stores();
+                let _ = stores.drop_type(&tid);
+                app_ctx.schema_registry().type_registry().invalidate(&tid);
+                Ok::<(), KalamDbError>(())
+            })
+            .await;
+            let _ = crate::catalog_type::replicate_dropped_type(&self.app_context, type_id).await;
+        }
+
         self.app_context
             .system_tables()
             .table_policies()
@@ -425,7 +466,7 @@ mod tests {
 
     use arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::{
-        models::{NamespaceId, TableName, UserId},
+        models::{SchemaId, TableName, UserId},
         schemas::TableType,
         Role,
     };
@@ -453,7 +494,7 @@ mod tests {
         ]));
 
         CreateTableStatement {
-            namespace_id: NamespaceId::default(),
+            namespace_id: SchemaId::default(),
             table_name,
             table_type: TableType::User,
             schema,
@@ -477,7 +518,7 @@ mod tests {
         let app_ctx = test_app_context_simple();
         let table_name =
             TableName::new(format!("cleanup_drop_{}", chrono::Utc::now().timestamp_millis()));
-        let table_id = kalamdb_commons::models::TableId::new(NamespaceId::default(), table_name);
+        let table_id = kalamdb_commons::models::TableId::new(SchemaId::default(), table_name);
 
         let store = kalamdb_tables::new_indexed_user_table_store(
             app_ctx.storage_backend(),
@@ -517,7 +558,7 @@ mod tests {
         assert!(create_result.is_ok(), "CREATE TABLE failed: {:?}", create_result);
 
         let table_id =
-            kalamdb_commons::models::TableId::new(NamespaceId::default(), table_name.clone());
+            kalamdb_commons::models::TableId::new(SchemaId::default(), table_name.clone());
         let main_partition =
             kalamdb_store::storage_trait::Partition::new(format!("user_{}", table_id));
         let pk_partition =
@@ -529,7 +570,7 @@ mod tests {
         let drop_result = drop_handler
             .execute(
                 DropTableStatement {
-                    namespace_id: NamespaceId::default(),
+                    namespace_id: SchemaId::default(),
                     table_name,
                     table_type: TableKind::User,
                     if_exists: false,

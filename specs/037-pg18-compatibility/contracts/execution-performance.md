@@ -52,6 +52,16 @@ On extended-query error, drain to Sync and emit the correct ReadyForQuery transa
 
 HTTP SQL is stateless unless a documented session/transaction handle pins its database, identity, settings and transaction. Do not leak SET/search_path/transaction state through pooled connections between requests or users. Standard PG sessions keep their own state. Document unsupported HTTP multi-request transactions truthfully rather than simulating them.
 
+### HTTP versus Wire session isolation and admission limits (T106, T107)
+
+- **HTTP `/v1/api/sql` stateless isolation**: Each HTTP SQL request constructs a fresh `ExecutionContext` bound to the authenticated principal and a per-request `RequestTransactionBatchGuard` (`request_id`). Session settings (`SET search_path`) and explicit transactions (`BEGIN ... COMMIT`) live only for the duration of that HTTP request batch and are automatically rolled back on drop if uncommitted. No `search_path`, role, or uncommitted write state is shared across pooled HTTP connections or across users.
+- **PostgreSQL wire session state (`WireConnectionState`)**: Each TCP/TLS wire connection owns an isolated `WireConnectionState` (`backend/crates/kalamdb-postgres-wire/src/connection.rs`) with its own `current_schema`, `transaction_id` (`BackendSessionManager` block transaction), bounded `PreparedStatementMap`, and bounded `PortalMap`.
+- **Byte and slot admission limits**:
+  - `max_statement_sql_bytes` (default `1 MiB` / `MAX_SQL_QUERY_LENGTH`): rejects oversized simple or extended query strings before parsing (`SQLSTATE 54000`).
+  - `max_prepared_statements` (default `256`) and `max_prepared_statement_bytes` (default `4 MiB` per session): bounds retained AST/logical-plan metadata per connection; replacing an existing statement name reclaims its previous byte charge, and `Close` frees the slot and bytes immediately.
+  - `max_portals` (default `64`): bounds concurrent open portals per connection (`SQLSTATE 54000` on exhaustion).
+- **ReadyForQuery and aborted transaction state**: On extended-query failure, `pgwire` drains until `Sync` and `KalamQueryHandler::send_ready_for_query` queries `BackendSessionManager::block_state` to emit `'I'` (idle), `'T'` (open transaction), or `'E'` (aborted transaction block requiring `ROLLBACK` or `ROLLBACK TO SAVEPOINT`).
+
 ## Performance experiments before format commitment
 
 T096 creates an executable harness under `benchv2/pg18/` and records fixed workload parameters and budgets before behavior changes. T005 unit tests establish correctness only; they cannot establish allocation or latency baselines. Every experiment compares:

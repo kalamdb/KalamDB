@@ -220,7 +220,7 @@ fn test_cli_live_query_with_filter() {
     let table = format!("{}.{}", namespace_name, table_name);
 
     let _ =
-        execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name));
+        execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace_name));
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, content VARCHAR NOT NULL, created_at TIMESTAMP \
          DEFAULT CURRENT_TIMESTAMP) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -303,7 +303,7 @@ fn test_cli_subscription_with_initial_data() {
         namespace_name
     ));
 
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace_name));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT) WITH \
@@ -373,7 +373,7 @@ fn test_cli_binary_projected_subscription_receives_live_changes() {
         "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_name))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace_name))
         .expect("namespace should be created");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, role TEXT NOT NULL, author TEXT NOT NULL, \
@@ -445,7 +445,7 @@ fn test_cli_subscription_comprehensive_crud() {
         namespace_name
     ));
 
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace_name));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT) \

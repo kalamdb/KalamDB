@@ -43,7 +43,11 @@ impl DdlAst for CreateViewStatement {}
 impl DdlAst for CreateTypeStatement {}
 impl DdlAst for DropTypeStatement {}
 impl DdlAst for AlterTypeStatement {}
+impl DdlAst for CreateDomainStatement {}
+impl DdlAst for AlterDomainStatement {}
+impl DdlAst for DropDomainStatement {}
 impl DdlAst for CreateProcedureStatement {}
+impl DdlAst for AlterRoutineStatement {}
 impl DdlAst for DropProcedureStatement {}
 impl DdlAst for CreateTriggerStatement {}
 impl DdlAst for CreateScheduleStatement {}

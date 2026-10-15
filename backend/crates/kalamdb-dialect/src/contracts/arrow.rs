@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use arrow::datatypes::{DataType, Field};
 use kalamdb_commons::{
-    models::{datatypes::ToArrowType, NamespaceId},
+    models::{datatypes::ToArrowType, SchemaId},
     KalamDataType,
 };
 
@@ -31,7 +31,7 @@ pub fn resolve_arrow_type(
     } else {
         resolve_named_or_builtin(
             &type_ref.name,
-            type_ref.namespace_id.as_ref().map(NamespaceId::as_str),
+            type_ref.namespace_id.as_ref().map(SchemaId::as_str),
             types,
             visiting,
         )?
@@ -77,6 +77,24 @@ fn resolve_named_or_builtin(
         ContractTypeKind::RowAlias { source } => {
             resolve_named_or_builtin(source.as_str(), None, types, visiting)?
         },
+        ContractTypeKind::Domain { base_type, .. } => {
+            let mut nested = TypeReference {
+                namespace_id:       None,
+                name:               base_type.type_name.clone(),
+                data_type:          base_type.data_type,
+                syntactic_modifier: None,
+                is_array:           base_type.is_array,
+                not_null:           base_type.not_null,
+                nonempty:           base_type.nonempty,
+            };
+            if let Some(type_id) = &base_type.type_id {
+                let (schema, name) = split_type_id(type_id.as_str());
+                nested.namespace_id = schema.map(SchemaId::new);
+                nested.name = name;
+                nested.data_type = None;
+            }
+            resolve_arrow_type(&nested, types, visiting)?
+        },
         ContractTypeKind::ImplicitTableRow { fields, .. }
         | ContractTypeKind::Composite { fields } => {
             let mut arrow_fields = Vec::with_capacity(fields.len());
@@ -92,7 +110,7 @@ fn resolve_named_or_builtin(
                 };
                 if let Some(type_id) = &field.type_id {
                     let (schema, name) = split_type_id(type_id.as_str());
-                    nested.namespace_id = schema.map(NamespaceId::new);
+                    nested.namespace_id = schema.map(SchemaId::new);
                     nested.name = name;
                     nested.data_type = None;
                 }

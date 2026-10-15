@@ -168,13 +168,13 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         models::{rows::Row, TableName, TransactionId, UserId},
-        NamespaceId, TableId, TableType,
+        SchemaId, TableId, TableType,
     };
 
     use super::{build_insert_staged_mutations, StagedInsertBuildError};
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::new("app"), TableName::new("items"))
+        TableId::new(SchemaId::new("app"), TableName::new("items"))
     }
 
     fn test_transaction_id() -> TransactionId {

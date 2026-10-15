@@ -30,21 +30,31 @@ impl DartColumn {
         snapshot: &ContractSnapshot,
     ) -> Self {
         let dart_type = render_field_type(field, names, TargetLang::Dart);
-        let is_enum = field
-            .type_id
-            .as_ref()
-            .and_then(|id| snapshot.types.get(id.as_str()))
+        let resolved_type = field.type_id.as_ref().and_then(|id| snapshot.types.get(id.as_str()));
+        let is_enum = resolved_type
             .is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Enum { .. }));
-        let base_type = if let Some(type_id) = &field.type_id {
+        let is_domain = resolved_type
+            .is_some_and(|ty| matches!(ty.kind, ContractTypeKind::Domain { .. }));
+        let base_type = if let Some(ContractTypeKind::Domain { base_type, .. }) =
+            resolved_type.map(|ty| &ty.kind)
+        {
+            crate::workflow::schema::types::builtin(&base_type.type_name, TargetLang::Dart)
+                .to_string()
+        } else if let Some(type_id) = &field.type_id {
             names.type_ident(type_id.as_str()).to_string()
         } else {
             crate::workflow::schema::types::builtin(&field.type_name, TargetLang::Dart).to_string()
+        };
+        let named_type = if is_domain {
+            None
+        } else {
+            field.type_id.as_ref().map(|id| names.type_ident(id.as_str()).to_string())
         };
         Self {
             sql_name: field.name.clone(),
             field_name: dart_field_name(&field.name),
             dart_type,
-            named_type: field.type_id.as_ref().map(|id| names.type_ident(id.as_str()).to_string()),
+            named_type,
             is_enum,
             nullable: !field.not_null,
             is_key: field.name.eq_ignore_ascii_case("id"),

@@ -151,6 +151,18 @@ The ownership diagram is conceptual, not permission for a dependency cycle. Seri
 
 Custom OIDs are allocated transactionally with uniqueness and dependency integrity, survive rename/restart, and are not reused while observable references remain. Builtin OIDs are fixed; internal IDs and wire OIDs remain distinct. Error/rollback must not leave a published dangling OID. Routine-language parsing is not runtime support; each required language has execution and dependency tests before its matrix row can pass.
 
+### Unsupported edge cases recorded by T100, T124, and T127
+
+- **Unconstrained and wide `numeric`**: Precision > 38, negative scales, `scale > precision`, and `NaN` / `±Infinity` on bounded `Decimal128` columns are rejected explicitly rather than silently truncated or stored as text.
+- **Multi-dimensional custom lower-bound array literals**: `[2:4]={...}` lower-bound decorations and non-1D array storage layouts are not supported; 1D homogeneous arrays carry full element `LogicalTypeRef` metadata (enum labels, `TypeId`, `jsonb`/`timestamptz` modifiers, `Decimal128(p, s)`, domain constraints, and composite `Struct` fields).
+- **Range, multirange, base, and shell types (`T127`)**:
+  - `CREATE TYPE name AS RANGE (...)` and multirange companion types are rejected with an explicit diagnostic (`CREATE TYPE ... AS RANGE is not supported`).
+  - `CREATE TYPE name;` (shell types) and `CREATE TYPE name (INPUT = ..., OUTPUT = ...)` (base types) are rejected with explicit diagnostics.
+  - Nonstandard `CREATE TYPE ... FROM TABLE ...` and inline `COMMENT '...'` clauses on `CREATE TYPE` are removed; every user/shared/stream table automatically registers an implicit composite row type `<schema>.<table>` and array `<schema>.<table>[]`, and comments use standard `COMMENT ON TYPE` / `COMMENT ON DOMAIN`.
+- **PostgreSQL domains (`T124` / `T127`)**:
+  - `CREATE DOMAIN`, `ALTER DOMAIN` (`SET/DROP DEFAULT`, `SET/DROP NOT NULL`, `ADD/DROP/RENAME/VALIDATE CONSTRAINT`, `RENAME TO`, `SET SCHEMA`, `OWNER TO`), `DROP DOMAIN`, and `COMMENT ON DOMAIN` are implemented.
+  - Domain `CHECK (VALUE ...)` constraints follow three-valued SQL logic (`NULL` passes `CHECK` unless `NOT NULL` is set), stack across nested domains (`CREATE DOMAIN child AS parent_domain ...`), and enforce constraints across scalar columns, `domain[]` array elements, composite attributes, and routine parameter/return bindings.
+
 ## Function ABI uses the same types
 
 The logical descriptor also governs native call values, named inputs, V8 views, materialization and returned values per [functions-v8.md](functions-v8.md). JS type inference is not a second authority for already-typed database values. Direct view forwarding retains enum/array/domain/numeric/temporal meaning even when no JS property was read. A physical Arrow type or JS Number alone cannot reconstruct that meaning. G3 tests now cross this boundary as well as storage/wire; SQL/plpgsql execution remains separate from JS/TS.

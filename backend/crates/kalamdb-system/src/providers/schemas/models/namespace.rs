@@ -1,6 +1,6 @@
 //! Namespace entity for system.namespaces table.
 
-use kalamdb_commons::{datatypes::KalamDataType, models::ids::NamespaceId};
+use kalamdb_commons::{datatypes::KalamDataType, models::ids::SchemaId};
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,11 +23,11 @@ use serde_json::Value;
 /// ## Example
 ///
 /// ```rust
-/// use kalamdb_commons::NamespaceId;
+/// use kalamdb_commons::SchemaId;
 /// use kalamdb_system::Namespace;
 ///
 /// let namespace = Namespace {
-///     namespace_id: NamespaceId::default(),
+///     namespace_id: SchemaId::default(),
 ///     name:         "default".to_string(),
 ///     created_at:   1730000000000,
 ///     options:      Some(serde_json::json!({})),
@@ -58,7 +58,7 @@ pub struct Namespace {
         default = "None",
         comment = "Namespace identifier"
     )]
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
     #[column(
         id = 2,
         ordinal = 2,
@@ -109,7 +109,7 @@ impl Namespace {
     pub fn new(name: impl Into<String>) -> Self {
         let name_str = name.into();
         Self {
-            namespace_id: NamespaceId::new(&name_str),
+            namespace_id: SchemaId::new(&name_str),
             name:         name_str,
             created_at:   chrono::Utc::now().timestamp_millis(),
             options:      Some(serde_json::json!({})),
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn test_namespace_serialization() {
         let namespace = Namespace {
-            namespace_id: NamespaceId::default(),
+            namespace_id: SchemaId::default(),
             name:         "default".to_string(),
             created_at:   1730000000000,
             options:      Some(serde_json::json!({})),

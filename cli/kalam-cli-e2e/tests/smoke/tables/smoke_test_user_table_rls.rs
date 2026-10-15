@@ -30,7 +30,7 @@ fn smoke_user_table_rls_isolation() {
     let user_pass = "smoke_pass_123";
 
     // 0) As root: create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // 1) As root: create a user table

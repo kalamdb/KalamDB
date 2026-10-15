@@ -187,7 +187,7 @@ async fn execute_sql(
 }
 
 async fn setup_vector_table(executor: &SqlExecutor, exec_ctx: &ExecutionContext) {
-    execute_sql(executor, exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(executor, exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         executor,
         exec_ctx,
@@ -501,7 +501,7 @@ async fn test_vector_search_with_hundred_rows_real_embeddings() {
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,
@@ -609,7 +609,7 @@ async fn test_cosine_distance_query_combines_hot_and_cold_rows_after_index_flush
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,
@@ -724,7 +724,7 @@ async fn test_vector_index_multiple_flush_cycles_and_watermark() {
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,
@@ -873,7 +873,7 @@ async fn test_cosine_distance_query_combines_hot_and_cold_rows() {
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,
@@ -923,7 +923,7 @@ async fn test_vector_delete_stages_hot_tombstone_and_flushes_cleanup() {
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,
@@ -1079,7 +1079,7 @@ async fn test_multiple_vector_indexes_with_mixed_rows_and_null_embeddings() {
     let exec_ctx = create_exec_context(app_context.clone());
     let executor = create_executor(app_context.clone());
 
-    execute_sql(&executor, &exec_ctx, "CREATE NAMESPACE test_ns").await;
+    execute_sql(&executor, &exec_ctx, "CREATE SCHEMA test_ns").await;
     execute_sql(
         &executor,
         &exec_ctx,

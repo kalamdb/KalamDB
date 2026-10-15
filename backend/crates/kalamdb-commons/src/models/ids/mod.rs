@@ -56,7 +56,7 @@ pub use job_node_id::JobNodeId;
 pub use live_query_id::LiveQueryId;
 pub use manifest_id::ManifestId;
 pub use migration_id::MigrationId;
-pub use namespace_id::{NamespaceId, NamespaceIdValidationError, SchemaId};
+pub use namespace_id::{NamespaceIdValidationError, SchemaId};
 pub use node_id::NodeId;
 pub use routine_grant_id::RoutineGrantId;
 pub use routine_id::RoutineId;

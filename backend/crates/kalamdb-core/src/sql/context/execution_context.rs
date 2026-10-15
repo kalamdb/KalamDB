@@ -245,7 +245,7 @@ impl ExecutionContext {
     /// - `SET SCHEMA namespace`
     ///
     /// # Returns
-    /// The current default namespace as a NamespaceId (defaults to "default")
+    /// The current default namespace as a SchemaId (defaults to "default")
     pub fn default_namespace(&self) -> SchemaId {
         if let Some(session) = self.session_context_cache.get() {
             let default_schema =

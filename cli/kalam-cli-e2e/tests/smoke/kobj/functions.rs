@@ -299,11 +299,11 @@ fn kobj_functions_rest_json_in_out() {
     }
     let ns = setup_namespace("kobj_json_fn");
     exec(&format!(
-        "CREATE OR REPLACE PROCEDURE {ns}.send_message(body JSON NOT NULL) RETURNS JSON LANGUAGE \
+        "CREATE OR REPLACE FUNCTION {ns}.send_message(body JSON NOT NULL) RETURNS JSON LANGUAGE \
          JAVASCRIPT AS $$\n  return {{ ok: true, conversationId: input.body.conversationId, text: \
          input.body.text }};\n$$"
     ));
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.send_message TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.send_message TO user"));
 
     let payload = json!({
         "conversationId": "c1",
@@ -603,10 +603,14 @@ fn kobj_functions_create_type_and_inline_procedure() {
         dup.to_ascii_lowercase().contains("duplicate"),
         "duplicate enum labels must fail: {dup}"
     );
-    let empty = exec_err(&format!("CREATE TYPE {ns}.empty_status AS ENUM ('')"));
-    assert!(
-        empty.to_ascii_lowercase().contains("empty"),
-        "empty enum labels must fail: {empty}"
+    exec(&format!("CREATE TYPE {ns}.empty_status AS ENUM ()"));
+    assert_eq!(
+        count_sql(&format!(
+            "SELECT COUNT(*) AS n FROM system.types WHERE namespace_id = '{ns}' AND name = \
+             'empty_status'"
+        )),
+        1,
+        "PostgreSQL 18 empty enum should create in system.types"
     );
     let missing = exec_err(&format!("CREATE TYPE {ns}.envelope AS (status {ns}.does_not_exist)"));
     assert!(
@@ -870,7 +874,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     }
     let ns = setup_namespace("kobj_fnlint");
     let log_as_fn = exec_err(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          ctx.log('ttt');\n  return 'ok';\n$$"
     ));
     assert!(
@@ -879,7 +883,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     );
 
     let created = exec(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          console.log('ok');\n  ctx.log.info('ok');\n  return 'ok';\n$$"
     ));
     assert!(
@@ -894,7 +898,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
         !created.contains("module_revision:") || created.contains("not created by this statement"),
         "inline CREATE must not claim a new module revision: {created}"
     );
-    let health = query_rows(&format!("CALL {ns}.health()"));
+    let health = query_rows(&format!("SELECT {ns}.health() AS result"));
     let health_value = cell(&health[0], "result");
     assert!(
         health_value.as_str() == Some("ok") || health_value.to_string().contains("ok"),
@@ -902,7 +906,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     );
 
     let replaced = exec(&format!(
-        "CREATE OR REPLACE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE OR REPLACE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          ctx.log.info('ok2');\n  return 'ok2';\n$$"
     ));
     assert!(replaced.contains("replaced"), "OR REPLACE should report replaced: {replaced}");
@@ -922,13 +926,13 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     let ident = js_namespace_ident(&ns);
     let schema_sql = format!(
         "CREATE TYPE {ns}.address AS (city TEXT, country TEXT);\nCREATE TYPE {ns}.status AS ENUM \
-         ('active', 'blocked');\nCREATE PROCEDURE {ns}.health() RETURNS TEXT;\nCREATE PROCEDURE \
-         {ns}.inc(x INT) RETURNS INT;\nCREATE PROCEDURE {ns}.plus_one(x INT) RETURNS INT;\nCREATE \
-         PROCEDURE {ns}.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return 'inline'; $$;\n"
+         ('active', 'blocked');\nCREATE FUNCTION {ns}.health() RETURNS TEXT;\nCREATE FUNCTION \
+         {ns}.inc(x INT) RETURNS INT;\nCREATE FUNCTION {ns}.plus_one(x INT) RETURNS INT;\nCREATE \
+         FUNCTION {ns}.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return 'inline'; $$;\n"
     );
     exec(&schema_sql);
 
-    let missing = exec_err(&format!("CALL {ns}.health()"));
+    let missing = exec_err(&format!("SELECT {ns}.health() AS result"));
     let missing_lower = missing.to_ascii_lowercase();
     assert!(
         missing_lower.contains("not implemented")
@@ -1053,19 +1057,19 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     );
     assert!((200..300).contains(&status), "activate should succeed: {status} {body}");
 
-    let health = query_rows(&format!("CALL {ns}.health()"));
+    let health = query_rows(&format!("SELECT {ns}.health() AS result"));
     let health_value = cell(&health[0], "result");
     assert!(
         health_value.as_str() == Some("ok") || health_value.to_string().contains("ok"),
         "project-backed health should return ok after activate: {health:?}"
     );
 
-    let inc = query_rows(&format!("CALL {ns}.inc(41)"));
+    let inc = query_rows(&format!("SELECT {ns}.inc(41) AS result"));
     let inc_value = cell_i64(&inc[0], "result")
         .unwrap_or_else(|| cell(&inc[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(inc_value, 42, "two named handlers in one file should dispatch: {inc:?}");
 
-    let unimplemented = exec_err(&format!("CALL {ns}.plus_one(41)"));
+    let unimplemented = exec_err(&format!("SELECT {ns}.plus_one(41) AS result"));
     let unimplemented_lower = unimplemented.to_ascii_lowercase();
     assert!(
         unimplemented_lower.contains("not implemented")
@@ -1073,7 +1077,7 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
         "unimplemented bodyless routine must stay PROCEDURE_NOT_IMPLEMENTED: {unimplemented}"
     );
 
-    let greet = query_rows(&format!("CALL {ns}.greet()"));
+    let greet = query_rows(&format!("SELECT {ns}.greet() AS result"));
     let greet_value = cell(&greet[0], "result");
     assert!(
         greet_value.as_str() == Some("inline") || greet_value.to_string().contains("inline"),
@@ -1124,14 +1128,14 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     );
     assert!((200..300).contains(&status), "second activate should succeed: {status} {body}");
 
-    let nested = query_rows(&format!("CALL {ns}.plus_one(41)"));
+    let nested = query_rows(&format!("SELECT {ns}.plus_one(41) AS result"));
     let nested_value = cell_i64(&nested[0], "result")
         .unwrap_or_else(|| cell(&nested[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(
         nested_value, 42,
         "project-backed typed nested CALL should return 42: {nested:?}"
     );
-    let greet = query_rows(&format!("CALL {ns}.greet()"));
+    let greet = query_rows(&format!("SELECT {ns}.greet() AS result"));
     let greet_value = cell(&greet[0], "result");
     assert!(
         greet_value.as_str() == Some("project") || greet_value.to_string().contains("project"),

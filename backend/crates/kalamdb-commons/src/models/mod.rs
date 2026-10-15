@@ -47,7 +47,12 @@ mod read_context;
 mod role;
 mod routine_call;
 mod routine_grantee;
+mod routine_kind;
+mod routine_null_safety;
+mod routine_parallel_safety;
+mod routine_parameter_mode;
 mod routine_security;
+mod routine_volatility;
 pub mod row_level_security;
 mod session_origin;
 mod topic_op;
@@ -80,7 +85,12 @@ pub use read_context::ReadContext;
 pub use role::Role;
 pub use routine_call::{is_builtin_default_name, normalize_builtin_name, RoutineCall};
 pub use routine_grantee::RoutineGrantee;
+pub use routine_kind::RoutineKind;
+pub use routine_null_safety::RoutineNullSafety;
+pub use routine_parallel_safety::RoutineParallelSafety;
+pub use routine_parameter_mode::RoutineParameterMode;
 pub use routine_security::RoutineSecurityMode;
+pub use routine_volatility::RoutineVolatility;
 pub use row_level_security::{
     AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
     PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, ScalarPredicate,

@@ -1425,7 +1425,7 @@ mod tests {
     use datafusion::arrow::datatypes::{Schema, SchemaRef};
     use kalamdb_commons::{
         schemas::{TableDefinition, TableOptions, TableType},
-        NamespaceId, StorageId, TableName,
+        SchemaId, StorageId, TableName,
     };
     use kalamdb_configs::RemoteStorageTimeouts;
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -1498,7 +1498,7 @@ mod tests {
     }
 
     fn build_table_id(ns: &str, tbl: &str) -> TableId {
-        TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+        TableId::new(SchemaId::new(ns), TableName::new(tbl))
     }
 
     fn test_segment(path: &str, min_seq: i64, max_seq: i64, row_count: u64) -> SegmentMetadata {
@@ -1936,7 +1936,7 @@ mod tests {
     #[test]
     fn test_invalidate() {
         let service = create_test_service();
-        let namespace = NamespaceId::new("ns1");
+        let namespace = SchemaId::new("ns1");
         let table = TableName::new("tbl1");
         let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));

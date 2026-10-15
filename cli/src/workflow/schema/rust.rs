@@ -109,6 +109,15 @@ fn rust_decls(
             ContractTypeKind::Composite { fields } => {
                 decls.push(struct_decl(names.type_ident(id), fields, names, ty.comment.as_deref()));
             },
+            ContractTypeKind::Domain { base_type, .. } => {
+                decls.push(RustDecl {
+                    doc: line_docs(ty.comment.as_deref(), "/// "),
+                    ident: names.type_ident(id).to_string(),
+                    is_alias: true,
+                    alias_of: render_field_type(base_type, names, TargetLang::Rust),
+                    ..RustDecl::default()
+                });
+            },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
             | ContractTypeKind::TopicPayload { .. } => {},
@@ -283,8 +292,10 @@ ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
     fn comments_emit_rust_docs() {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';
-             CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe';",
+             CREATE TYPE chat.address AS (city TEXT);
+             COMMENT ON TYPE chat.address IS 'Postal address';
+             CREATE FUNCTION chat.ping() RETURNS TEXT;
+             COMMENT ON FUNCTION chat.ping IS 'Liveness probe';",
             "public",
         )
         .unwrap();

@@ -52,11 +52,11 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
             .ctx
             .system_tables()
             .namespaces()
-            .scan_all()
+            .list_namespaces()
             .map(|rows| rows.len())
             .unwrap_or(0);
         let total_tables =
-            self.ctx.system_tables().tables().scan_all().map(|rows| rows.len()).unwrap_or(0);
+            self.ctx.system_tables().tables().list_tables().map(|rows| rows.len()).unwrap_or(0);
         let total_storages = self
             .ctx
             .system_tables()

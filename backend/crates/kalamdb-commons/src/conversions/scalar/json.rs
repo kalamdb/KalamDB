@@ -93,8 +93,10 @@ pub fn json_value_to_scalar_for_column(
         },
         KalamDataType::Decimal { precision, scale } => {
             let parsed = match value {
-                Value::String(s) => parse_decimal_value(s, *scale)?,
-                Value::Number(n) => parse_decimal_value(&n.to_string(), *scale)?,
+                Value::String(s) => parse_decimal_value_bounded(s, *precision, *scale as i8)?,
+                Value::Number(n) => {
+                    parse_decimal_value_bounded(&n.to_string(), *precision, *scale as i8)?
+                },
                 _ => 0,
             };
             ScalarValue::Decimal128(Some(parsed), *precision, *scale as i8)
@@ -171,45 +173,108 @@ pub fn scalar_to_json_for_column(
     Ok(json)
 }
 
-fn parse_decimal_value(value: &str, scale: u8) -> Result<i128, String> {
+/// Parse a decimal string into an unscaled `i128` for `NUMERIC(precision, scale)`.
+///
+/// Rounds fractional digits half-away-from-zero, rejects `NaN` / `Infinity`,
+/// and checks that the rounded magnitude fits within `precision` digits.
+pub fn parse_decimal_value_bounded(
+    value: &str,
+    precision: u8,
+    scale: i8,
+) -> Result<i128, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Ok(0);
+        return Err("cannot parse empty string as numeric".to_string());
+    }
+    if trimmed.eq_ignore_ascii_case("nan")
+        || trimmed.eq_ignore_ascii_case("infinity")
+        || trimmed.eq_ignore_ascii_case("-infinity")
+        || trimmed.eq_ignore_ascii_case("+infinity")
+        || trimmed.eq_ignore_ascii_case("inf")
+        || trimmed.eq_ignore_ascii_case("-inf")
+        || trimmed.eq_ignore_ascii_case("+inf")
+    {
+        return Err(format!(
+            "numeric value '{value}' is not supported by bounded NUMERIC({precision}, {scale})"
+        ));
+    }
+    if precision == 0 || precision > 38 || scale < 0 || (scale as u8) > precision {
+        return Err(format!("invalid NUMERIC({precision}, {scale}) bounds"));
     }
 
     let negative = trimmed.starts_with('-');
-    let unsigned = trimmed.strip_prefix('-').unwrap_or(trimmed);
-    let mut parts = unsigned.splitn(2, '.');
-    let integer_part = parts.next().unwrap_or("0");
-    let fractional_part = parts.next().unwrap_or("");
-
-    let mut normalized_fraction = fractional_part.to_string();
-    while normalized_fraction.len() < scale as usize {
-        normalized_fraction.push('0');
+    let unsigned = trimmed
+        .strip_prefix('-')
+        .or_else(|| trimmed.strip_prefix('+'))
+        .unwrap_or(trimmed);
+    let mut parts = unsigned.split('.');
+    let integer_raw = parts.next().unwrap_or("");
+    let fractional_raw = parts.next().unwrap_or("");
+    if parts.next().is_some()
+        || (integer_raw.is_empty() && fractional_raw.is_empty())
+        || !integer_raw.bytes().all(|b| b.is_ascii_digit())
+        || !fractional_raw.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(format!("invalid numeric literal '{value}'"));
     }
-    if normalized_fraction.len() > scale as usize {
-        normalized_fraction.truncate(scale as usize);
+
+    let integer_part = if integer_raw.is_empty() { "0" } else { integer_raw };
+    let scale_usize = scale as usize;
+    let round_up = fractional_raw
+        .as_bytes()
+        .get(scale_usize)
+        .is_some_and(|&digit| digit >= b'5');
+
+    let mut normalized_fraction = String::with_capacity(scale_usize);
+    if fractional_raw.len() >= scale_usize {
+        normalized_fraction.push_str(&fractional_raw[..scale_usize]);
+    } else {
+        normalized_fraction.push_str(fractional_raw);
+        while normalized_fraction.len() < scale_usize {
+            normalized_fraction.push('0');
+        }
     }
 
     let joined = format!("{integer_part}{normalized_fraction}");
-    let mut parsed = joined
+    let mut magnitude = joined
         .parse::<i128>()
-        .map_err(|e| format!("decimal parse failed for '{value}': {e}"))?;
-    if negative {
-        parsed = -parsed;
+        .map_err(|_| format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})"))?;
+    if round_up {
+        magnitude = magnitude.checked_add(1).ok_or_else(|| {
+            format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})")
+        })?;
     }
-    Ok(parsed)
+
+    let limit = if precision == 38 {
+        10_i128.pow(38)
+    } else {
+        10_i128.pow(u32::from(precision))
+    };
+    if magnitude >= limit {
+        return Err(format!(
+            "numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})"
+        ));
+    }
+
+    if negative && magnitude != 0 {
+        Ok(-magnitude)
+    } else {
+        Ok(magnitude)
+    }
 }
 
-fn format_decimal_value(value: i128, scale: u8) -> String {
+/// Format an unscaled `i128` decimal value with `scale` fractional digits.
+pub fn format_decimal_value(value: i128, scale: u8) -> String {
     if scale == 0 {
         return value.to_string();
     }
 
-    let divisor = 10_i128.pow(scale as u32);
-    let integer = value / divisor;
-    let fraction = (value % divisor).abs();
-    format!("{integer}.{fraction:0width$}", width = scale as usize)
+    let sign = if value < 0 { "-" } else { "" };
+    let abs = value.unsigned_abs();
+    let divisor = 10_u128.pow(u32::from(scale));
+    let integer = abs / divisor;
+    let fraction = abs % divisor;
+    format!("{sign}{integer}.{fraction:0width$}", width = scale as usize)
 }
 
 pub(crate) fn extract_bool(scalar: &ScalarValue) -> Option<bool> {
@@ -298,6 +363,9 @@ pub(crate) fn extract_string(scalar: &ScalarValue) -> Option<String> {
         ScalarValue::TimestampNanosecond(v, _) => v.map(|t| t.to_string()),
         ScalarValue::Binary(Some(bytes)) | ScalarValue::LargeBinary(Some(bytes)) => {
             Some(String::from_utf8_lossy(bytes).to_string())
+        },
+        ScalarValue::Decimal128(Some(val), _precision, scale) => {
+            Some(format_decimal_value(*val, (*scale).max(0) as u8))
         },
         _ => Some(format!("{scalar:?}")),
     }

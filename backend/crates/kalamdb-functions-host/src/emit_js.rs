@@ -53,7 +53,7 @@ function __kalamMakeCtx() {
       contentType: value => kalamHostHttpSetHeader("content-type", String(value)),
     }),
   }) : null;
-  const call = (name, args = []) => kalamAsyncOp("call", name, Array.isArray(args) ? args : [args]);
+  const call = (name, args = []) => kalamAsyncOp("call", name, Array.isArray(args) ? args : [args], true);
   let typed = {};
   try {
     typed = JSON.parse(typeof kalamHostRoutineMap === "function" ? kalamHostRoutineMap() : "{}");
@@ -66,17 +66,40 @@ function __kalamMakeCtx() {
     const boxed = {};
     for (const jsName of Object.keys(methods)) {
       const routineId = methods[jsName];
-      boxed[jsName] = (input) => call(routineId, input === undefined ? [] : [input]);
+      boxed[jsName] = (input) => kalamAsyncOp("call", routineId, input === undefined ? [] : [input], true);
     }
     namespaces[namespace] = Object.freeze(boxed);
   }
   return Object.freeze({
     ...metadata,
+    user: metadata.principal,
+    session: Object.freeze({ user: metadata.actor }),
     source: Object.freeze(kalamHostSource()),
     parent: kalamHostParent(),
     sleep: (ms) => kalamAsyncOp("sleep", "", [ms]),
     db: Object.freeze({
       query: (sql, params = []) => kalamAsyncOp("query", sql, params),
+      queryView: (sql, params = []) => kalamAsyncOp("query_view", sql, params),
+      queryBatches: (sql, params = []) => {
+        let fetched = false;
+        let batches = [];
+        let index = 0;
+        const iter = {
+          [Symbol.asyncIterator]() { return this; },
+          async next() {
+            if (!fetched) {
+              fetched = true;
+              const view = await kalamAsyncOp("query_batches", sql, params);
+              batches = view ? [view] : [];
+            }
+            if (index >= batches.length) {
+              return { value: undefined, done: true };
+            }
+            return { value: batches[index++], done: false };
+          }
+        };
+        return iter;
+      },
       execute: (sql, params = []) => kalamAsyncOp("execute", sql, params),
     }),
     functions: Object.freeze(Object.assign({ call: call }, namespaces)),

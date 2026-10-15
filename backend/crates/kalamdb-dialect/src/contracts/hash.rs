@@ -49,6 +49,31 @@ fn canonical_bytes(snapshot: &ContractSnapshot) -> Vec<u8> {
                 out.push_str(&labels.join(","));
                 out.push('\n');
             },
+            ContractTypeKind::Domain {
+                base_type,
+                collation,
+                default_expr,
+                not_null,
+                checks,
+            } => {
+                out.push_str("domain\t");
+                out.push_str(if *not_null { "1" } else { "0" });
+                out.push('\t');
+                out.push_str(collation.as_deref().unwrap_or(""));
+                out.push('\t');
+                out.push_str(default_expr.as_deref().unwrap_or(""));
+                out.push('\n');
+                write_field(&mut out, base_type);
+                for check in checks {
+                    out.push_str("check\t");
+                    out.push_str(check.name.as_deref().unwrap_or(""));
+                    out.push('\t');
+                    out.push_str(if check.validated { "1" } else { "0" });
+                    out.push('\t');
+                    out.push_str(&check.expression);
+                    out.push('\n');
+                }
+            },
             ContractTypeKind::TopicPayload { topic_id, sources } => {
                 out.push_str("topic_payload\t");
                 out.push_str(topic_id);

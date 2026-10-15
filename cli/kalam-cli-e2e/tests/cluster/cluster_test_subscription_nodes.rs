@@ -179,12 +179,12 @@ fn cluster_test_subscription_leader_to_leader() {
     // Setup
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table instead of SHARED - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create table");
 
@@ -270,12 +270,12 @@ fn cluster_test_subscription_follower_to_leader() {
     // Setup on leader
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create table");
 
@@ -357,12 +357,12 @@ fn cluster_test_subscription_multi_node_identical() {
     // Setup
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create table");
 
@@ -452,12 +452,12 @@ fn cluster_test_subscription_initial_data_consistency() {
     // Setup and insert data
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create table");
 
@@ -569,11 +569,11 @@ fn cluster_test_subscription_user_table_any_node() {
     // Setup
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, event TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, event TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create user table");
 

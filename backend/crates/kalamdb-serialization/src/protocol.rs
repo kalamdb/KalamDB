@@ -1,7 +1,7 @@
 //! Typed protocol objects (Raft commands, state-machine snapshots, etc.).
 
 use kalamdb_commons::{
-    models::{NamespaceId, TableName, TransactionId, UserId},
+    models::{SchemaId, TableName, TransactionId, UserId},
     TableId,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -200,7 +200,7 @@ pub fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert> {
     };
     let ns = read_u16_str(bytes, &mut pos)?;
     let table = read_u16_str(bytes, &mut pos)?;
-    let table_id = TableId::new(NamespaceId::new(ns), TableName::new(table));
+    let table_id = TableId::new(SchemaId::new(ns), TableName::new(table));
     let user_id = if flags & FLAG_HAS_USER != 0 {
         Some(UserId::new(read_u16_str(bytes, &mut pos)?))
     } else {
@@ -301,7 +301,7 @@ pub fn decode_packed_delete(tag: u8, bytes: &[u8]) -> Result<PackedDelete> {
     };
     let ns = read_u16_str(bytes, &mut pos)?;
     let table = read_u16_str(bytes, &mut pos)?;
-    let table_id = TableId::new(NamespaceId::new(ns), TableName::new(table));
+    let table_id = TableId::new(SchemaId::new(ns), TableName::new(table));
     let user_id = if flags & FLAG_HAS_USER != 0 {
         Some(UserId::new(read_u16_str(bytes, &mut pos)?))
     } else {

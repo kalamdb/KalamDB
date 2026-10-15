@@ -26,7 +26,7 @@ fn setup_json_table(prefix: &str, extra_cols: &str) -> (String, String) {
 
     let _ =
         execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {namespace}"))
         .expect("create namespace");
 
     let cols = if extra_cols.is_empty() {

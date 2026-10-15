@@ -67,7 +67,7 @@ fn seed_backup_fixture_data(prefix: &str) -> (String, String, String) {
     let table = generate_unique_table(&format!("{}_tbl", prefix));
     let table_fqn = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create fixture namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', \

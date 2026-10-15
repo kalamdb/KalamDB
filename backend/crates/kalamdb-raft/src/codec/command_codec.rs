@@ -237,7 +237,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, TableName},
+        models::{rows::Row, SchemaId, TableName},
         TableId, TableType,
     };
     use kalamdb_transactions::StagedMutation;
@@ -295,7 +295,7 @@ mod tests {
             ),
             mutations:           vec![StagedMutation::new(
                 kalamdb_commons::models::TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d"),
-                TableId::new(NamespaceId::from("ns"), TableName::from("items")),
+                TableId::new(SchemaId::from("ns"), TableName::from("items")),
                 TableType::Shared,
                 None,
                 kalamdb_commons::models::OperationKind::Insert,
@@ -326,7 +326,7 @@ mod tests {
             required_meta_index: 1,
             transaction_id:      None,
             actor_user_id:       None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("t")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
             rows:                vec![],
             encoded_fields:      vec![vec![1, 2, 3, 4]],
         };
@@ -351,7 +351,7 @@ mod tests {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
             transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("t")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
             user_id:             kalamdb_commons::models::UserId::from("u1"),
             rows:                vec![],
             encoded_fields:      vec![vec![9, 8, 7]],
@@ -381,7 +381,7 @@ mod tests {
             required_meta_index: 0,
             transaction_id:      None,
             table_id:            TableId::new(
-                NamespaceId::new(namespace.clone()),
+                SchemaId::new(namespace.clone()),
                 TableName::from("items"),
             ),
             user_id:             kalamdb_commons::models::UserId::from(
@@ -404,7 +404,7 @@ mod tests {
         let user_cmd = UserDataCommand::Delete {
             required_meta_index: 42,
             transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("t")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
             user_id:             kalamdb_commons::models::UserId::from("u1"),
             pk_values:           Some(vec!["pk1".to_string(), "pk2".to_string()]),
         };
@@ -428,7 +428,7 @@ mod tests {
             required_meta_index: 7,
             transaction_id:      None,
             actor_user_id:       None,
-            table_id:            TableId::new(NamespaceId::from("ns"), TableName::from("t")),
+            table_id:            TableId::new(SchemaId::from("ns"), TableName::from("t")),
             pk_values:           Some(vec!["s1".to_string()]),
         };
         let shared_bytes = encode_shared_data_command(&shared_cmd).expect("encode shared delete");

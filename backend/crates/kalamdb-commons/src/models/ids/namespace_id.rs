@@ -1,9 +1,7 @@
 //! Type-safe wrapper for schema identifiers.
 //!
-//! The type is [`SchemaId`]. [`NamespaceId`] is a temporary alias for crates that
-//! have not been renamed yet. Stored keys stay the folded name. Stable schema
-//! identity and quoted names live in [`super::schema_identity`] and are not written
-//! through this type.
+//! Stored keys stay the folded name. Stable schema identity and quoted names live in
+//! [`super::schema_identity`] and are not written through this type.
 
 use std::{
     fmt,
@@ -71,12 +69,6 @@ static DEFAULT_NS: OnceLock<Arc<str>> = OnceLock::new();
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SchemaId(Arc<str>);
 
-/// Temporary name for dependents that still import `NamespaceId`.
-///
-/// Owner: T032. Remove this alias when T036–T038 have dropped the last import
-/// and T041 closes the ledger. Stored bytes stay on [`SchemaId`].
-pub type NamespaceId = SchemaId;
-
 impl SchemaId {
     /// Validates a namespace ID for security issues.
     ///
@@ -117,7 +109,7 @@ impl SchemaId {
         Ok(())
     }
 
-    /// Creates a new NamespaceId from a string, with validation.
+    /// Creates a new SchemaId from a string, with validation.
     ///
     /// Returns an error if the ID fails security, SQL identifier, or reserved-name validation.
     ///
@@ -146,10 +138,10 @@ impl SchemaId {
         Ok(Self(Arc::<str>::from(id.to_lowercase())))
     }
 
-    /// Creates a new NamespaceId from a string.
+    /// Creates a new SchemaId from a string.
     ///
     /// Namespace IDs are case-insensitive - they are normalized to lowercase internally.
-    /// For example, `NamespaceId::new("MyApp")` and `NamespaceId::new("myapp")` are equal.
+    /// For example, `SchemaId::new("MyApp")` and `SchemaId::new("myapp")` are equal.
     ///
     /// # Panics
     ///
@@ -234,12 +226,11 @@ impl SchemaId {
     ///
     /// # Example
     /// ```
-    /// use kalamdb_commons::NamespaceId;
+    /// use kalamdb_commons::SchemaId;
     ///
-    /// assert!(NamespaceId::system().is_reserved());
-    /// assert!(NamespaceId::system().is_reserved());
-    /// assert!(NamespaceId::new("kalamdb").is_reserved());
-    /// assert!(!NamespaceId::new("my_app").is_reserved());
+    /// assert!(SchemaId::system().is_reserved());
+    /// assert!(SchemaId::new("kalamdb").is_reserved());
+    /// assert!(!SchemaId::new("my_app").is_reserved());
     /// ```
     /// Values are already stored lowercase, so no allocation needed.
     #[inline]

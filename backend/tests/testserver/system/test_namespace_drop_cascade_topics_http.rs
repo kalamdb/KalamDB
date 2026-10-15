@@ -21,10 +21,10 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
     let other_ns = unique_namespace("ns_drop_topics_other");
     let other_topic = format!("{}.{}", other_ns, unique_table("keep_topic"));
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", other_ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", other_ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE other namespace failed");
 
     let resp = server
@@ -121,7 +121,7 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let recreate_ns = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let recreate_ns = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     anyhow::ensure!(
         recreate_ns.status == ResponseStatus::Success,
         "recreate namespace failed: {:?}",

@@ -22,6 +22,11 @@ impl RoutineParameterId {
         Ok(Self(format!("{}:{ordinal}", routine_id.as_str())))
     }
 
+    /// RocksDB prefix scan key `{routine_id}:`.
+    pub fn scan_prefix(routine_id: &RoutineId) -> Self {
+        Self(format!("{}:", routine_id.as_str()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

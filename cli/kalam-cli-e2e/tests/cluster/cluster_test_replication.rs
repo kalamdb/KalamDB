@@ -64,7 +64,7 @@ fn cluster_test_metadata_replication_timing() {
     // Create namespace and immediately check replication
     println!("Creating namespace on node 0...");
     let start = std::time::Instant::now();
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Poll all nodes for the namespace
@@ -115,7 +115,7 @@ fn cluster_test_operation_ordering() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -194,7 +194,7 @@ fn cluster_test_concurrent_writes() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(

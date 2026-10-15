@@ -734,7 +734,7 @@ fn extract_parquet_filenames(list_result: &ListResult) -> Vec<String> {
 mod tests {
     use std::env;
 
-    use kalamdb_commons::{models::ids::StorageId, NamespaceId, TableName};
+    use kalamdb_commons::{models::ids::StorageId, SchemaId, TableName};
     use kalamdb_system::providers::storages::models::StorageType;
 
     use super::*;
@@ -765,7 +765,7 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, tbl: &str) -> TableId {
-        TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+        TableId::new(SchemaId::new(ns), TableName::new(tbl))
     }
 
     #[test]

@@ -255,25 +255,34 @@ impl DmlExecutor {
         }
     }
 
-    async fn collect_user_file_refs_for_mutation(
+    fn validate_file_columns_for_rows(
         &self,
-        provider: &UserTableProvider,
         table_id: &TableId,
-        user_id: &UserId,
-        pk_value: &str,
+        table_type: TableType,
+        user_id: Option<&UserId>,
+        rows: &[Row],
+    ) -> Result<(), ApplierError> {
+        let Some(cached) = self.app_context.schema_registry().get(table_id) else {
+            return Ok(());
+        };
+        validate_and_commit_file_columns_for_rows(
+            &self.app_context,
+            &cached,
+            table_id,
+            table_type,
+            user_id,
+            rows,
+        )
+        .map_err(ApplierError::Validation)
+    }
+
+    fn collect_file_refs_for_prior_row(
+        &self,
+        table_id: &TableId,
+        prior_row: &Row,
         operation_kind: OperationKind,
         payload: Option<&Row>,
     ) -> Vec<FileRef> {
-        if !self.table_has_file_columns(table_id) {
-            return Vec::new();
-        }
-
-        let Some(prior_row) =
-            self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await
-        else {
-            return Vec::new();
-        };
-
         match operation_kind {
             OperationKind::Update => {
                 let Some(payload) = payload else {
@@ -286,15 +295,35 @@ impl DmlExecutor {
                 collect_replaced_file_refs_for_update(
                     self.app_context.as_ref(),
                     table_id,
-                    &prior_row,
+                    prior_row,
                     payload,
                 )
             },
             OperationKind::Delete => {
-                collect_file_refs_from_row(self.app_context.as_ref(), table_id, &prior_row)
+                collect_file_refs_from_row(self.app_context.as_ref(), table_id, prior_row)
             },
             OperationKind::Insert => Vec::new(),
         }
+    }
+
+    async fn collect_user_file_refs_for_mutation(
+        &self,
+        provider: &UserTableProvider,
+        table_id: &TableId,
+        user_id: &UserId,
+        pk_value: &str,
+        operation_kind: OperationKind,
+        payload: Option<&Row>,
+    ) -> Vec<FileRef> {
+        if !self.table_has_file_columns(table_id) {
+            return Vec::new();
+        }
+        let Some(prior_row) =
+            self.load_user_row_for_cleanup(provider, table_id, user_id, pk_value).await
+        else {
+            return Vec::new();
+        };
+        self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
     }
 
     async fn collect_shared_file_refs_for_mutation(
@@ -308,33 +337,11 @@ impl DmlExecutor {
         if !self.table_has_file_columns(table_id) {
             return Vec::new();
         }
-
         let Some(prior_row) = self.load_shared_row_for_cleanup(provider, table_id, pk_value).await
         else {
             return Vec::new();
         };
-
-        match operation_kind {
-            OperationKind::Update => {
-                let Some(payload) = payload else {
-                    log::warn!(
-                        "Missing update payload while collecting file refs for {}",
-                        table_id
-                    );
-                    return Vec::new();
-                };
-                collect_replaced_file_refs_for_update(
-                    self.app_context.as_ref(),
-                    table_id,
-                    &prior_row,
-                    payload,
-                )
-            },
-            OperationKind::Delete => {
-                collect_file_refs_from_row(self.app_context.as_ref(), table_id, &prior_row)
-            },
-            OperationKind::Insert => Vec::new(),
-        }
+        self.collect_file_refs_for_prior_row(table_id, &prior_row, operation_kind, payload)
     }
 
     fn emit_autocommit_notification(
@@ -342,36 +349,7 @@ impl DmlExecutor {
         user_id: Option<&UserId>,
         notification: ChangeNotification,
     ) {
-        let has_live_subscribers = NotificationServiceTrait::has_subscribers(
-            self.app_context.notification_service().as_ref(),
-            user_id,
-            &notification.table_id,
-        );
-        let scoped_user = user_id.cloned();
-        let table_id = notification.table_id.clone();
-        let notification_service = Arc::clone(self.app_context.notification_service());
-        let topic_publisher = self.app_context.topic_publisher();
-        let publish_user = user_id.cloned();
-        kalamdb_store::defer_after_persist(move || {
-            if topic_publisher.has_topics_for_table(&notification.table_id) {
-                let op = Self::topic_op_for_change(&notification.change_type);
-                if let Err(error) = topic_publisher.publish_for_table(
-                    &notification.table_id,
-                    op,
-                    &notification.row_data,
-                    publish_user.as_ref(),
-                ) {
-                    log::warn!(
-                        "Topic publish failed for autocommit change on table {}: {}",
-                        notification.table_id,
-                        error
-                    );
-                }
-            }
-            if has_live_subscribers {
-                notification_service.notify_table_change(scoped_user, table_id, notification);
-            }
-        });
+        self.emit_autocommit_notification_with_scope(user_id, user_id, notification);
     }
 
     fn emit_shared_autocommit_notification(
@@ -379,11 +357,21 @@ impl DmlExecutor {
         actor_user_id: Option<&UserId>,
         notification: ChangeNotification,
     ) {
+        self.emit_autocommit_notification_with_scope(None, actor_user_id, notification);
+    }
+
+    fn emit_autocommit_notification_with_scope(
+        &self,
+        subscriber_user_id: Option<&UserId>,
+        actor_user_id: Option<&UserId>,
+        notification: ChangeNotification,
+    ) {
         let has_live_subscribers = NotificationServiceTrait::has_subscribers(
             self.app_context.notification_service().as_ref(),
-            None,
+            subscriber_user_id,
             &notification.table_id,
         );
+        let scoped_user = subscriber_user_id.cloned();
         let table_id = notification.table_id.clone();
         let notification_service = Arc::clone(self.app_context.notification_service());
         let topic_publisher = self.app_context.topic_publisher();
@@ -405,7 +393,7 @@ impl DmlExecutor {
                 }
             }
             if has_live_subscribers {
-                notification_service.notify_table_change(None, table_id, notification);
+                notification_service.notify_table_change(scoped_user, table_id, notification);
             }
         });
     }
@@ -437,6 +425,7 @@ impl DmlExecutor {
             return Ok(0);
         }
         let log_index = Self::log_index_from_versions(versions)?;
+        self.validate_file_columns_for_rows(table_id, TableType::User, Some(user_id), &rows)?;
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
@@ -499,6 +488,7 @@ impl DmlExecutor {
         })?;
         let log_index = Self::log_index_from_versions(versions)?;
         let version = *versions.first().expect("version");
+        self.validate_file_columns_for_rows(table_id, TableType::User, Some(user_id), updates)?;
 
         let provider_arc = self.load_provider(table_id, "Table provider").await?;
 
@@ -672,6 +662,7 @@ impl DmlExecutor {
             return Ok(0);
         }
         let log_index = Self::log_index_from_versions(versions)?;
+        self.validate_file_columns_for_rows(table_id, TableType::Shared, None, &rows)?;
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
@@ -727,6 +718,7 @@ impl DmlExecutor {
         }
         let targets = shared_update_targets(updates, pk_values, filter, versions)?;
         let log_index = Self::log_index_from_versions(versions)?;
+        self.validate_file_columns_for_rows(table_id, TableType::Shared, None, updates)?;
 
         let provider_arc = self.load_provider(table_id, "Shared table provider").await?;
 
@@ -1036,6 +1028,16 @@ impl DmlExecutor {
         versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
         let log_index = Self::log_index_from_versions(versions)?;
+        for mutation in mutations {
+            if matches!(mutation.operation_kind, OperationKind::Insert | OperationKind::Update) {
+                self.validate_file_columns_for_rows(
+                    &mutation.table_id,
+                    TableType::User,
+                    mutation.user_id.as_ref(),
+                    std::slice::from_ref(&mutation.payload),
+                )?;
+            }
+        }
         self.prevalidate_user_transaction_batch(transaction_id, mutations).await?;
 
         let mut affected_rows = 0;
@@ -1233,6 +1235,16 @@ impl DmlExecutor {
         versions: &[VersionId],
     ) -> Result<TransactionApplyResult, ApplierError> {
         let log_index = Self::log_index_from_versions(versions)?;
+        for mutation in mutations {
+            if matches!(mutation.operation_kind, OperationKind::Insert | OperationKind::Update) {
+                self.validate_file_columns_for_rows(
+                    &mutation.table_id,
+                    TableType::Shared,
+                    None,
+                    std::slice::from_ref(&mutation.payload),
+                )?;
+            }
+        }
         self.prevalidate_shared_transaction_batch(transaction_id, mutations).await?;
 
         let mut affected_rows = 0;
@@ -1425,35 +1437,6 @@ impl DmlExecutor {
         }
     }
 
-    #[allow(dead_code)]
-    async fn publish_transaction_notification(
-        &self,
-        user_id: Option<&UserId>,
-        notification: &ChangeNotification,
-    ) -> bool {
-        let topic_publisher = self.app_context.topic_publisher();
-        if !topic_publisher.has_topics_for_table(&notification.table_id) {
-            return false;
-        }
-
-        let op = Self::topic_op_for_change(&notification.change_type);
-        if let Err(error) = topic_publisher.publish_for_table(
-            &notification.table_id,
-            op,
-            &notification.row_data,
-            user_id,
-        ) {
-            log::warn!(
-                "Topic publish failed for transaction change on table {}: {}",
-                notification.table_id,
-                error
-            );
-            return false;
-        }
-
-        true
-    }
-
     async fn load_user_row_for_cleanup(
         &self,
         provider: &UserTableProvider,
@@ -1616,4 +1599,66 @@ impl DmlExecutor {
             Err(e) => Err(ApplierError::Execution(format!("Failed to update row: {}", e))),
         }
     }
+}
+
+pub(crate) fn validate_and_commit_file_columns_for_rows(
+    app_context: &Arc<AppContext>,
+    cached_table: &crate::schema_registry::CachedTableData,
+    table_id: &TableId,
+    table_type: TableType,
+    user_id: Option<&UserId>,
+    rows: &[Row],
+) -> Result<(), String> {
+    let file_columns: Vec<&str> = cached_table
+        .table
+        .columns
+        .iter()
+        .filter(|col| col.data_type() == kalamdb_commons::models::datatypes::KalamDataType::File)
+        .map(|col| col.column_name.as_str())
+        .collect();
+    if file_columns.is_empty() {
+        return Ok(());
+    }
+    let storage_id = cached_table.storage_id.clone();
+    let file_service = app_context.file_storage_service();
+    for row in rows {
+        for &col_name in &file_columns {
+            let Some(scalar) = row.values.get(col_name) else {
+                continue;
+            };
+            if scalar.is_null() {
+                continue;
+            }
+            let raw_text = match scalar {
+                datafusion::scalar::ScalarValue::Utf8(Some(text))
+                | datafusion::scalar::ScalarValue::LargeUtf8(Some(text))
+                | datafusion::scalar::ScalarValue::Utf8View(Some(text)) => text.as_str(),
+                other => {
+                    return Err(format!(
+                        "column '{col_name}' is of type pg_catalog.file and cannot be constructed from {:?}; use file_put()",
+                        other.data_type()
+                    ));
+                },
+            };
+            let file_ref = FileRef::try_from_json(raw_text).map_err(|error| {
+                format!(
+                    "invalid or forged pg_catalog.file reference in column '{col_name}': {error}"
+                )
+            })?;
+            file_service
+                .validate_and_commit_file_ref(
+                    &file_ref,
+                    &storage_id,
+                    table_type,
+                    table_id,
+                    user_id,
+                )
+                .map_err(|error| {
+                    format!(
+                        "forged or invalid pg_catalog.file reference in column '{col_name}': {error}"
+                    )
+                })?;
+        }
+    }
+    Ok(())
 }

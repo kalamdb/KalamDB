@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use datafusion::catalog::MemorySchemaProvider;
-use kalamdb_commons::models::{NamespaceId, UserId};
+use kalamdb_commons::models::{SchemaId, UserId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -41,7 +41,7 @@ impl CreateSchemaHandler {
     ///
     /// This enables queries like `SELECT * FROM namespace.table` to work.
     /// Uses DataFusion's native MemorySchemaProvider for dynamic schema registration.
-    fn register_namespace_schema(&self, namespace_id: &NamespaceId) -> Result<(), KalamDbError> {
+    fn register_namespace_schema(&self, namespace_id: &SchemaId) -> Result<(), KalamDbError> {
         let base_session = self.app_context.base_session_context();
 
         // Get the "kalam" catalog (default catalog configured in DataFusionSessionFactory)
@@ -86,7 +86,7 @@ impl CreateSchemaHandler {
     ) -> Result<ExecutionResult, KalamDbError> {
         kalamdb_sql::validation::validate_namespace_name(name).map_err(|e| e.to_string())?;
 
-        let namespace_id = NamespaceId::new(name);
+        let namespace_id = SchemaId::new(name);
         let app_ctx = self.app_context.clone();
         let ns_id = namespace_id.clone();
         let existing =
@@ -198,7 +198,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateSchemaStatement {
-            name:          NamespaceId::new("test_typed_ns"),
+            name:          SchemaId::new("test_typed_ns"),
             if_not_exists: false,
         };
 
@@ -222,7 +222,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = CreateSchemaStatement {
-            name:          NamespaceId::new("test_typed_ns_ine"),
+            name:          SchemaId::new("test_typed_ns_ine"),
             if_not_exists: true,
         };
 
@@ -251,7 +251,7 @@ mod tests {
         );
 
         let stmt = CreateSchemaStatement {
-            name:          NamespaceId::new("unauthorized_ns"),
+            name:          SchemaId::new("unauthorized_ns"),
             if_not_exists: false,
         };
 
@@ -277,7 +277,7 @@ mod tests {
         let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateSchemaStatement {
-            name:          NamespaceId::new("existing_ns"),
+            name:          SchemaId::new("existing_ns"),
             if_not_exists: false,
         };
 
@@ -297,7 +297,7 @@ mod tests {
         let handler = CreateSchemaHandler::new(app_ctx);
         let ctx = test_context();
         let stmt = CreateSchemaStatement {
-            name:          NamespaceId::new("existing_ns_if"),
+            name:          SchemaId::new("existing_ns_if"),
             if_not_exists: true,
         };
 

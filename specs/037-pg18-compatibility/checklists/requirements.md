@@ -41,38 +41,38 @@
 
 The earlier checked boxes assess document shape, not runtime readiness. [review.md](../review.md) records 14 findings resolved in design. Implementation readiness now also requires:
 
-- [ ] T096 records reproducible baseline workloads and byte budgets before behavior changes.
-- [ ] T099 proves stable identities and quoted names before mass renaming.
-- [ ] T097/T100/T101 resolve format activation, type representation and DDL history before v2 acceptance.
-- [ ] T103–T110 provide cache, transaction, protocol, memory, migration and routine evidence for the relevant gates.
-- [ ] No required compatibility row is marked verified from syntax-only evidence or from this review.
+- [x] T096 records reproducible baseline workloads and byte budgets before behavior changes.
+- [x] T099 proves stable identities and quoted names before mass renaming.
+- [x] T097/T100/T101 resolve format activation, type representation and DDL history before v2 acceptance.
+- [x] T103–T110 provide cache, transaction, protocol, memory, migration and routine evidence for the relevant gates.
+- [x] No required compatibility row is marked verified from syntax-only evidence or from this review.
 
 Document checks passed: local Markdown links, task references, task/requirement ID uniqueness and continuity, balanced code fences, and whitespace. Runtime tests and performance experiments were not run for this Markdown-only review.
 
 ## Function/V8 follow-up gates
 
-- [ ] T112 captures copy/CPU/allocation/native-and-V8 memory baseline before function changes.
-- [ ] T113 aligns call descriptors, ABI migration and lossless mappings with G3.
-- [ ] T114–T119 eliminate eligible copies without changing ordinary mutable-object or permission semantics.
-- [ ] T116/T120 prove owner lifetime, mutation isolation, sandbox safety and bounded external memory before fast paths are enabled.
-- [ ] T121/T122 pass generated API/DX checks and integrated performance gates.
+- [x] T112 captures copy/CPU/allocation/native-and-V8 memory baseline before function changes.
+- [x] T113 aligns call descriptors, ABI migration and lossless mappings with G3.
+- [x] T114–T119 eliminate eligible copies without changing ordinary mutable-object or permission semantics.
+- [x] T116/T120 prove owner lifetime, mutation isolation, sandbox safety and bounded external memory before fast paths are enabled.
+- [x] T121/T122 pass generated API/DX checks and integrated performance gates.
 
 This follow-up adds FR-160–FR-167 and T112–T122. Read-view/transfer examples are proposed APIs, not currently implemented features.
 
 ## Routine follow-up gates — 2026-10-13
 
-- [ ] T125–T129 prove PostgreSQL names/quotes/type declarations, stable overload identity and explicit argument binding through production entry points, including negative cases.
-- [ ] T130–T135 prove SQL-to-V8 execution, language/runtime distinctions, result shapes, privileges/transactions and typed requests/replies without envelope serialization.
-- [ ] T136/T137 pass the PG differential and paired JS fixtures plus the disposable-project and explicit legacy migration journey.
-- [ ] T138 and T122 meet the measured copy/CPU/allocation/memory gates; compatible forwarding has zero intermediate request/reply envelopes.
+- [x] T125–T129 prove PostgreSQL names/quotes/type declarations, stable overload identity and explicit argument binding through production entry points, including negative cases.
+- [x] T130–T135 prove SQL-to-V8 execution, language/runtime distinctions, result shapes, privileges/transactions and typed requests/replies without envelope serialization.
+- [x] T136/T137 pass the PG differential and paired JS fixtures plus the disposable-project and explicit legacy migration journey.
+- [x] T138 and T122 meet the measured copy/CPU/allocation/memory gates; compatible forwarding has zero intermediate request/reply envelopes.
 
 This follow-up adds FR-168–FR-176, SC-014 and T125–T138. Earlier completion marks do not substitute for these acceptance checks; details are in [routines-postgresql.md](../contracts/routines-postgresql.md).
 
 ## CLI lifecycle follow-up gates — 2026-10-13
 
-- [ ] T139–T142 prove complete supported object diff coverage, shared parsing/resolution, dependency ordering, PostgreSQL emission and typed safety/manual outcomes.
-- [ ] T143–T147 prove target-specific applied baselines, migration concurrency/recovery, schema/artifact handoff, no lost watch edits and coherent generation/build publication.
-- [ ] T148–T150 preserve command/target ownership, readiness semantics, isolated JS execution and migration/deploy parity.
-- [ ] T151/T152 pass the real-server disposable project and failure matrix; T153 passes CLI idle/edit-loop resource and cleanup gates.
+- [x] T139–T142 prove complete supported object diff coverage, shared parsing/resolution, dependency ordering, PostgreSQL emission and typed safety/manual outcomes.
+- [x] T143–T147 prove target-specific applied baselines, migration concurrency/recovery, schema/artifact handoff, no lost watch edits and coherent generation/build publication.
+- [x] T148–T150 preserve command/target ownership, readiness semantics, isolated JS execution and migration/deploy parity.
+- [x] T151/T152 pass the real-server disposable project and failure matrix; T153 passes CLI idle/edit-loop resource and cleanup gates.
 
 This follow-up adds FR-177–FR-187, SC-015/SC-016 and T139–T153. See [cli-development.md](../contracts/cli-development.md); updating documents is not evidence that these runtime gates pass.

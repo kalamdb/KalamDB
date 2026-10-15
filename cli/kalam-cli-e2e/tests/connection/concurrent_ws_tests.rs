@@ -45,7 +45,7 @@ fn test_concurrent_websocket_subscriptions() {
         let full = format!("{}.{}", namespace, table);
 
         // Setup: create namespace and table
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .expect("create namespace");
         let create_sql = format!(
             r#"CREATE TABLE {} (
@@ -237,7 +237,7 @@ fn test_rapid_connect_disconnect() {
         let full = format!("{}.{}", namespace, table);
 
         // Setup
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
             .expect("create namespace");
         let create_sql = format!(
             r#"CREATE TABLE {} (

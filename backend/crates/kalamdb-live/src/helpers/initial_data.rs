@@ -561,7 +561,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{LiveQueryId, NamespaceId, TableName, UserId},
+        models::{LiveQueryId, SchemaId, TableName, UserId},
         schemas::TableDefinition,
     };
     use parking_lot::Mutex;
@@ -795,7 +795,7 @@ mod tests {
         });
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -830,7 +830,7 @@ mod tests {
         });
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -870,7 +870,7 @@ mod tests {
             calls: AtomicUsize::new(0),
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -910,7 +910,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -960,7 +960,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1007,7 +1007,7 @@ mod tests {
         }));
         fetcher.set_sql_executor(executor.clone());
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1089,7 +1089,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1144,7 +1144,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1202,7 +1202,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1264,7 +1264,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),
@@ -1322,7 +1322,7 @@ mod tests {
             batches: vec![batch],
         }));
 
-        let table_id = TableId::new(NamespaceId::from("app"), TableName::from("items"));
+        let table_id = TableId::new(SchemaId::from("app"), TableName::from("items"));
         let live_id = LiveQueryId::new(
             UserId::new("u1"),
             kalamdb_commons::models::ConnectionId::new("c1"),

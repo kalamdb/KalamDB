@@ -71,7 +71,7 @@ fn smoke_as_user_role_matrix_allows_privileged_roles_and_denies_user() {
     let full_table = format!("{}.{}", namespace, table);
     let password = "test_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
@@ -160,7 +160,7 @@ fn smoke_as_user_self_target_dml_stays_under_actor_user_id() {
     let actor = generate_unique_namespace("service_self");
     let other = generate_unique_namespace("other_user");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
@@ -251,7 +251,7 @@ fn smoke_as_user_allowed_select_update_delete_runs_in_target_scope() {
     let actor = generate_unique_namespace("dba_actor");
     let target = generate_unique_namespace("target_user");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='USER')",
@@ -345,7 +345,7 @@ fn smoke_as_user_shared_table_denied_without_mutation() {
     let actor = generate_unique_namespace("dba_actor");
     let target = generate_unique_namespace("target_user");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id VARCHAR PRIMARY KEY, value VARCHAR) WITH (TYPE='SHARED')",

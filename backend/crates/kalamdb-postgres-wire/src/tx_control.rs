@@ -28,10 +28,17 @@ pub fn classify_transaction_control(sql: &str) -> Option<WireTransactionControl>
     if upper == "COMMIT" || upper.starts_with("COMMIT ") {
         return Some(WireTransactionControl::Commit);
     }
-    if upper == "ROLLBACK" || upper.starts_with("ROLLBACK ") {
+    if upper == "ROLLBACK"
+        || (upper.starts_with("ROLLBACK ") && !upper.starts_with("ROLLBACK TO"))
+    {
         return Some(WireTransactionControl::Rollback);
     }
     if upper == "BEGIN" || upper.starts_with("BEGIN ") || upper.starts_with("START TRANSACTION") {
+        if upper.contains("ISOLATION LEVEL SERIALIZABLE")
+            || upper.contains("ISOLATION LEVEL READ UNCOMMITTED")
+        {
+            return None;
+        }
         return Some(WireTransactionControl::Begin {
             read_only: upper.contains("READ ONLY"),
         });

@@ -86,9 +86,17 @@ pub enum SqlStatementKind {
     AlterType(AlterTypeStatement),
     /// DROP TYPE ...
     DropType(DropTypeStatement),
-    /// CREATE PROCEDURE ...
+    /// CREATE DOMAIN ...
+    CreateDomain(CreateDomainStatement),
+    /// ALTER DOMAIN ...
+    AlterDomain(AlterDomainStatement),
+    /// DROP DOMAIN ...
+    DropDomain(DropDomainStatement),
+    /// CREATE FUNCTION / CREATE PROCEDURE ...
     CreateProcedure(CreateProcedureStatement),
-    /// DROP PROCEDURE ...
+    /// ALTER FUNCTION / ALTER PROCEDURE ...
+    AlterRoutine(AlterRoutineStatement),
+    /// DROP FUNCTION / DROP PROCEDURE ...
     DropProcedure(DropProcedureStatement),
     /// COMMENT ON TYPE|PROCEDURE ...
     CommentOn(CommentOnStatement),
@@ -225,6 +233,14 @@ pub enum SqlStatementKind {
     CommitTransaction,
     /// ROLLBACK [WORK]
     RollbackTransaction,
+    /// SAVEPOINT <name>
+    Savepoint(String),
+    /// RELEASE [SAVEPOINT] <name>
+    ReleaseSavepoint(String),
+    /// ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] <name>
+    RollbackToSavepoint(String),
+    /// SET [SESSION CHARACTERISTICS AS] TRANSACTION ...
+    SetTransaction,
 
     // ===== DataFusion Meta Commands (Admin Only) =====
     /// DataFusion built-in commands (EXPLAIN, SET, SHOW COLUMNS, etc.)
@@ -300,7 +316,11 @@ impl SqlStatement {
             | SqlStatementKind::CreateType(_)
             | SqlStatementKind::AlterType(_)
             | SqlStatementKind::DropType(_)
+            | SqlStatementKind::CreateDomain(_)
+            | SqlStatementKind::AlterDomain(_)
+            | SqlStatementKind::DropDomain(_)
             | SqlStatementKind::CreateProcedure(_)
+            | SqlStatementKind::AlterRoutine(_)
             | SqlStatementKind::DropProcedure(_)
             | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::GrantExecute(_)
@@ -350,6 +370,10 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
+            | SqlStatementKind::Savepoint(_)
+            | SqlStatementKind::ReleaseSavepoint(_)
+            | SqlStatementKind::RollbackToSavepoint(_)
+            | SqlStatementKind::SetTransaction
             | SqlStatementKind::ClusterSnapshot
             | SqlStatementKind::ClusterPurge(_)
             | SqlStatementKind::ClusterTriggerElection
@@ -373,8 +397,21 @@ impl SqlStatement {
             SqlStatementKind::CreateType(_) => "CREATE TYPE",
             SqlStatementKind::AlterType(_) => "ALTER TYPE",
             SqlStatementKind::DropType(_) => "DROP TYPE",
-            SqlStatementKind::CreateProcedure(_) => "CREATE PROCEDURE",
-            SqlStatementKind::DropProcedure(_) => "DROP PROCEDURE",
+            SqlStatementKind::CreateDomain(_) => "CREATE DOMAIN",
+            SqlStatementKind::AlterDomain(_) => "ALTER DOMAIN",
+            SqlStatementKind::DropDomain(_) => "DROP DOMAIN",
+            SqlStatementKind::CreateProcedure(stmt) => match stmt.kind {
+                kalamdb_commons::models::RoutineKind::Function => "CREATE FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "CREATE PROCEDURE",
+            },
+            SqlStatementKind::AlterRoutine(stmt) => match stmt.expected_kind {
+                kalamdb_commons::models::RoutineKind::Function => "ALTER FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "ALTER PROCEDURE",
+            },
+            SqlStatementKind::DropProcedure(stmt) => match stmt.expected_kind {
+                kalamdb_commons::models::RoutineKind::Function => "DROP FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "DROP PROCEDURE",
+            },
             SqlStatementKind::CommentOn(_) => "COMMENT ON",
             SqlStatementKind::GrantExecute(_) => "GRANT EXECUTE",
             SqlStatementKind::RevokeExecute(_) => "REVOKE EXECUTE",
@@ -418,6 +455,10 @@ impl SqlStatement {
             SqlStatementKind::BeginTransaction => "BEGIN",
             SqlStatementKind::CommitTransaction => "COMMIT",
             SqlStatementKind::RollbackTransaction => "ROLLBACK",
+            SqlStatementKind::Savepoint(_) => "SAVEPOINT",
+            SqlStatementKind::ReleaseSavepoint(_) => "RELEASE SAVEPOINT",
+            SqlStatementKind::RollbackToSavepoint(_) => "ROLLBACK TO SAVEPOINT",
+            SqlStatementKind::SetTransaction => "SET TRANSACTION",
             SqlStatementKind::Subscribe(_) => "SUBSCRIBE TO",
             SqlStatementKind::CreateTopic(_) => "CREATE TOPIC",
             SqlStatementKind::DropTopic(_) => "DROP TOPIC",

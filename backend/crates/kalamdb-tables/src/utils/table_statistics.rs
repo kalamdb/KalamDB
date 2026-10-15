@@ -201,14 +201,14 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         models::schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::*;
 
     fn test_table_def() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("items"),
             TableType::Shared,
             vec![

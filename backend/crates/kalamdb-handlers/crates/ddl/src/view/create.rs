@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -54,7 +54,7 @@ impl CreateViewHandler {
         sql
     }
 
-    fn ensure_namespace_schema(&self, namespace: &NamespaceId) -> Result<(), KalamDbError> {
+    fn ensure_namespace_schema(&self, namespace: &SchemaId) -> Result<(), KalamDbError> {
         let session = self.app_context.base_session_context();
         // Use constant catalog name "kalam" instead of catalog_names().first()
         // This avoids unnecessary Vec allocation and is clearer since we always use "kalam"
@@ -129,7 +129,7 @@ impl TypedStatementHandler<CreateViewStatement> for CreateViewHandler {
 #[cfg(test)]
 mod tests {
     use arrow::array::Int64Array;
-    use kalamdb_commons::models::{NamespaceId, UserId};
+    use kalamdb_commons::models::{SchemaId, UserId};
     use kalamdb_core::test_helpers::test_app_context_simple;
 
     use super::*;
@@ -141,7 +141,7 @@ mod tests {
 
         let stmt = CreateViewStatement::parse(
             "CREATE VIEW default.test_view AS SELECT 1 AS value",
-            &NamespaceId::default(),
+            &SchemaId::default(),
         )
         .expect("parse view");
 
@@ -169,7 +169,7 @@ mod tests {
         let handler = CreateViewHandler::new(app_ctx.clone());
         let stmt = CreateViewStatement::parse(
             "CREATE VIEW default.restricted_view AS SELECT 1",
-            &NamespaceId::default(),
+            &SchemaId::default(),
         )
         .expect("parse view");
 

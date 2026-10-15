@@ -5,14 +5,14 @@
 -- Generated KalamDB schema evolution
 -- Review before applying in production.
 
-CREATE NAMESPACE IF NOT EXISTS okf_sync;
+CREATE SCHEMA IF NOT EXISTS okf_sync;
 
-CREATE USER TABLE okf_sync.context_files (
+CREATE TABLE okf_sync.context_files (
   path TEXT PRIMARY KEY,
   file_ref FILE NOT NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 -- DOWN
 -- automatic rollback generation is not available for semantic schema diffs

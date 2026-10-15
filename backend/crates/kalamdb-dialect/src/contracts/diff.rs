@@ -21,7 +21,20 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
             continue;
         }
         match current.types.get(id) {
-            None => statements.push(emit_create_type(ty)),
+            None => {
+                let create_sql = emit_create_type(ty);
+                if !create_sql.is_empty() {
+                    statements.push(create_sql);
+                }
+                if let Some(comment) = ty.comment.as_deref() {
+                    let obj_kind = if matches!(ty.kind, ContractTypeKind::Domain { .. }) {
+                        "DOMAIN"
+                    } else {
+                        "TYPE"
+                    };
+                    statements.push(emit_comment_on(obj_kind, ty.type_id.as_str(), Some(comment)));
+                }
+            },
             Some(prev) => statements.extend(diff_type(prev, ty)),
         }
     }
@@ -34,17 +47,31 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
             continue;
         }
         if !target.types.contains_key(id) {
-            statements.push(format!("DROP TYPE {};", ty.type_id));
+            let obj_kind = if matches!(ty.kind, ContractTypeKind::Domain { .. }) {
+                "DOMAIN"
+            } else {
+                "TYPE"
+            };
+            statements.push(format!("DROP {obj_kind} {};", ty.type_id));
         }
     }
 
     for (id, routine) in &target.routines {
+        let kind_kw = routine.kind.as_str();
         match current.routines.get(id) {
             None => {
                 statements.push(emit_create_procedure(routine));
+                if let Some(comment) = routine.comment.as_deref() {
+                    statements.push(emit_comment_on(
+                        kind_kw,
+                        routine.routine_id.as_str(),
+                        Some(comment),
+                    ));
+                }
                 for grant in &routine.grants {
                     statements.push(format!(
-                        "GRANT EXECUTE ON PROCEDURE {} TO {};",
+                        "GRANT EXECUTE ON {} {} TO {};",
+                        kind_kw,
                         routine.routine_id,
                         grant.as_sql()
                     ));
@@ -56,7 +83,11 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
 
     for (id, routine) in &current.routines {
         if !target.routines.contains_key(id) {
-            statements.push(format!("DROP PROCEDURE {};", routine.routine_id));
+            statements.push(format!(
+                "DROP {} {};",
+                routine.kind.as_str(),
+                routine.routine_id
+            ));
         }
     }
 
@@ -96,14 +127,14 @@ fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
                     None => out.push(format!(
                         "ALTER TYPE {} ADD ATTRIBUTE {};",
                         target.type_id,
-                        emit_field(field)
+                        emit_composite_field(field)
                     )),
                     Some(prev) if field_signature(prev) != field_signature(field) => {
                         out.push(format!(
                             "ALTER TYPE {} ALTER ATTRIBUTE {} TYPE {};",
                             target.type_id,
                             field.name,
-                            emit_type_sql(field)
+                            emit_composite_type_sql(field)
                         ))
                     },
                     _ => {},
@@ -129,45 +160,139 @@ fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
                 recreated = true;
             }
         },
+        (
+            ContractTypeKind::Domain {
+                base_type: b_base,
+                collation: b_coll,
+                default_expr: b_def,
+                not_null: b_nn,
+                checks: b_checks,
+            },
+            ContractTypeKind::Domain {
+                base_type: a_base,
+                collation: a_coll,
+                default_expr: a_def,
+                not_null: a_nn,
+                checks: a_checks,
+            },
+        ) => {
+            if field_signature(b_base) != field_signature(a_base) || b_coll != a_coll {
+                out.push(format!("DROP DOMAIN {};", current.type_id));
+                out.push(emit_create_type(target));
+                recreated = true;
+            } else {
+                if b_def != a_def {
+                    match a_def {
+                        Some(expr) => {
+                            out.push(format!("ALTER DOMAIN {} SET DEFAULT {expr};", target.type_id));
+                        },
+                        None => {
+                            out.push(format!("ALTER DOMAIN {} DROP DEFAULT;", target.type_id));
+                        },
+                    }
+                }
+                if b_nn != a_nn {
+                    if *a_nn {
+                        out.push(format!("ALTER DOMAIN {} SET NOT NULL;", target.type_id));
+                    } else {
+                        out.push(format!("ALTER DOMAIN {} DROP NOT NULL;", target.type_id));
+                    }
+                }
+                if b_checks != a_checks {
+                    for check in b_checks {
+                        if !a_checks.contains(check) {
+                            if let Some(name) = &check.name {
+                                out.push(format!(
+                                    "ALTER DOMAIN {} DROP CONSTRAINT {name};",
+                                    target.type_id
+                                ));
+                            } else {
+                                out.push(format!("DROP DOMAIN {};", current.type_id));
+                                out.push(emit_create_type(target));
+                                recreated = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !recreated {
+                        for check in a_checks {
+                            if !b_checks.contains(check) {
+                                let cname = check
+                                    .name
+                                    .as_ref()
+                                    .map(|n| format!("CONSTRAINT {n} "))
+                                    .unwrap_or_default();
+                                let nv = if check.validated { "" } else { " NOT VALID" };
+                                out.push(format!(
+                                    "ALTER DOMAIN {} ADD {cname}CHECK ({}){nv};",
+                                    target.type_id, check.expression
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        },
         (left, right) if left != right => {
-            out.push(format!("DROP TYPE {};", current.type_id));
+            let drop_kw = if matches!(left, ContractTypeKind::Domain { .. }) {
+                "DOMAIN"
+            } else {
+                "TYPE"
+            };
+            out.push(format!("DROP {drop_kw} {};", current.type_id));
             out.push(emit_create_type(target));
             recreated = true;
         },
         _ => {},
     }
-    if !recreated && current.comment != target.comment {
-        out.push(emit_comment_on("TYPE", target.type_id.as_str(), target.comment.as_deref()));
+    let comment_kw = if matches!(target.kind, ContractTypeKind::Domain { .. }) {
+        "DOMAIN"
+    } else {
+        "TYPE"
+    };
+    if recreated {
+        if let Some(comment) = target.comment.as_deref() {
+            out.push(emit_comment_on(comment_kw, target.type_id.as_str(), Some(comment)));
+        }
+    } else if current.comment != target.comment {
+        out.push(emit_comment_on(comment_kw, target.type_id.as_str(), target.comment.as_deref()));
     }
     out
 }
 
 fn diff_routine(current: &ContractRoutine, target: &ContractRoutine) -> Vec<String> {
     let mut out = Vec::new();
-    let signature_changed = current.parameters != target.parameters
+    let kind_kw = target.kind.as_str();
+    let signature_changed = current.kind != target.kind
+        || current.parameters != target.parameters
         || current.return_type != target.return_type
         || current.security != target.security
         || current.language != target.language
         || current.body.as_deref().map(str::trim) != target.body.as_deref().map(str::trim);
     if signature_changed {
         out.push(emit_create_procedure(target));
+        if let Some(comment) = target.comment.as_deref() {
+            out.push(emit_comment_on(kind_kw, target.routine_id.as_str(), Some(comment)));
+        }
     } else if current.comment != target.comment {
         out.push(emit_comment_on(
-            "PROCEDURE",
+            kind_kw,
             target.routine_id.as_str(),
             target.comment.as_deref(),
         ));
     }
     for grant in target.grants.difference(&current.grants) {
         out.push(format!(
-            "GRANT EXECUTE ON PROCEDURE {} TO {};",
+            "GRANT EXECUTE ON {} {} TO {};",
+            kind_kw,
             target.routine_id,
             grant.as_sql()
         ));
     }
     for grant in current.grants.difference(&target.grants) {
         out.push(format!(
-            "REVOKE EXECUTE ON PROCEDURE {} FROM {};",
+            "REVOKE EXECUTE ON {} {} FROM {};",
+            kind_kw,
             target.routine_id,
             grant.as_sql()
         ));
@@ -176,11 +301,18 @@ fn diff_routine(current: &ContractRoutine, target: &ContractRoutine) -> Vec<Stri
 }
 
 fn emit_create_type(ty: &ContractType) -> String {
-    let comment = emit_comment_clause(ty.comment.as_deref());
     match &ty.kind {
         ContractTypeKind::Composite { fields } => {
-            let body = fields.iter().map(emit_field).collect::<Vec<_>>().join(",\n  ");
-            format!("CREATE TYPE {} AS (\n  {}\n){};", ty.type_id, body, comment)
+            if fields.is_empty() {
+                format!("CREATE TYPE {} AS ();", ty.type_id)
+            } else {
+                let body = fields
+                    .iter()
+                    .map(emit_composite_field)
+                    .collect::<Vec<_>>()
+                    .join(",\n  ");
+                format!("CREATE TYPE {} AS (\n  {}\n);", ty.type_id, body)
+            }
         },
         ContractTypeKind::Enum { labels } => {
             let labels = labels
@@ -188,23 +320,59 @@ fn emit_create_type(ty: &ContractType) -> String {
                 .map(|label| format!("'{}'", escape_sql_string(label)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("CREATE TYPE {} AS ENUM ({}){};", ty.type_id, labels, comment)
+            format!("CREATE TYPE {} AS ENUM ({});", ty.type_id, labels)
         },
-        ContractTypeKind::RowAlias { source } => {
-            format!("CREATE TYPE {} FROM TABLE {}{};", ty.type_id, source, comment)
+        ContractTypeKind::Domain {
+            base_type,
+            collation,
+            default_expr,
+            not_null,
+            checks,
+        } => {
+            let mut sql = format!("CREATE DOMAIN {} AS {}", ty.type_id, emit_composite_type_sql(base_type));
+            if let Some(coll) = collation {
+                sql.push_str(" COLLATE ");
+                sql.push_str(coll);
+            }
+            if let Some(def) = default_expr {
+                sql.push_str(" DEFAULT ");
+                sql.push_str(def);
+            }
+            if *not_null {
+                sql.push_str(" NOT NULL");
+            }
+            for check in checks {
+                sql.push(' ');
+                if let Some(cname) = &check.name {
+                    sql.push_str("CONSTRAINT ");
+                    sql.push_str(cname);
+                    sql.push(' ');
+                }
+                sql.push_str("CHECK (");
+                sql.push_str(&check.expression);
+                sql.push(')');
+                if !check.validated {
+                    sql.push_str(" NOT VALID");
+                }
+            }
+            sql.push(';');
+            sql
         },
-        ContractTypeKind::ImplicitTableRow { .. } | ContractTypeKind::TopicPayload { .. } => {
-            String::new()
-        },
+        ContractTypeKind::RowAlias { .. }
+        | ContractTypeKind::ImplicitTableRow { .. }
+        | ContractTypeKind::TopicPayload { .. } => String::new(),
     }
 }
 
 fn emit_create_procedure(routine: &ContractRoutine) -> String {
     let params = routine.parameters.iter().map(emit_field).collect::<Vec<_>>().join(", ");
-    let mut sql = format!("CREATE OR REPLACE PROCEDURE {}({})", routine.routine_id, params);
-    if let Some(ret) = &routine.return_type {
-        sql.push_str("\nRETURNS ");
-        sql.push_str(&emit_type_sql(ret));
+    let kind_kw = routine.kind.as_str();
+    let mut sql = format!("CREATE OR REPLACE {} {}({})", kind_kw, routine.routine_id, params);
+    if routine.kind == kalamdb_commons::models::RoutineKind::Function {
+        if let Some(ret) = &routine.return_type {
+            sql.push_str("\nRETURNS ");
+            sql.push_str(&emit_type_sql(ret));
+        }
     }
     if let Some(language) = &routine.language {
         sql.push_str("\nLANGUAGE ");
@@ -212,11 +380,6 @@ fn emit_create_procedure(routine: &ContractRoutine) -> String {
     }
     sql.push_str("\nSECURITY ");
     sql.push_str(routine.security.as_str());
-    if let Some(comment) = &routine.comment {
-        sql.push_str("\nCOMMENT '");
-        sql.push_str(&escape_sql_string(comment));
-        sql.push('\'');
-    }
     if let Some(body) = &routine.body {
         sql.push_str("\nAS $$");
         sql.push_str(body);
@@ -224,13 +387,6 @@ fn emit_create_procedure(routine: &ContractRoutine) -> String {
     }
     sql.push(';');
     sql
-}
-
-fn emit_comment_clause(comment: Option<&str>) -> String {
-    match comment {
-        Some(text) => format!(" COMMENT '{}'", escape_sql_string(text)),
-        None => String::new(),
-    }
 }
 
 fn emit_comment_on(kind: &str, id: &str, comment: Option<&str>) -> String {
@@ -260,6 +416,18 @@ fn emit_create_trigger(trigger: &ContractTrigger) -> String {
     sql.push_str(" WITH (");
     sql.push_str(&options.join(", "));
     sql.push_str(");");
+    sql
+}
+
+fn emit_composite_field(field: &ContractField) -> String {
+    format!("{} {}", field.name, emit_composite_type_sql(field))
+}
+
+fn emit_composite_type_sql(field: &ContractField) -> String {
+    let mut sql = field.type_name.clone();
+    if field.is_array {
+        sql.push_str("[]");
+    }
     sql
 }
 

@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ns = "default";
     let _ = client
-        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {ns}"), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA IF NOT EXISTS {ns}"), None, None, None)
         .await;
 
     client

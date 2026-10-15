@@ -47,7 +47,7 @@ async fn test_root_can_create_namespace() {
 
     // Create namespace as root
     let result =
-        match execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await {
+        match execute_sql_via_http_as_root(&format!("CREATE SCHEMA {}", namespace_name)).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("execute_sql_as_root failed: {:?}", e);
@@ -57,8 +57,8 @@ async fn test_root_can_create_namespace() {
 
     // Should succeed
     if result["status"] != "success" {
-        eprintln!("CREATE NAMESPACE failed: {:?}", result);
-        panic!("CREATE NAMESPACE failed: {:?}", result);
+        eprintln!("CREATE SCHEMA failed: {:?}", result);
+        panic!("CREATE SCHEMA failed: {:?}", result);
     }
 
     // Verify namespace was created
@@ -116,7 +116,7 @@ async fn test_root_can_create_drop_tables() {
 
     // Ensure namespace exists
     let _ =
-        execute_sql_via_http_as_root(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name))
+        execute_sql_via_http_as_root(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace_name))
             .await;
 
     // Create table as root
@@ -146,7 +146,7 @@ async fn test_root_can_create_drop_tables() {
         execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
-/// Test CREATE NAMESPACE via CLI with root authentication
+/// Test CREATE SCHEMA via CLI with root authentication
 #[tokio::test]
 async fn test_cli_create_namespace_as_root() {
     let _guard = admin_cli_test_mutex().lock().await;
@@ -171,8 +171,8 @@ async fn test_cli_create_namespace_as_root() {
         }
     }
 
-    // Execute CREATE NAMESPACE via CLI with root auth
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name))
+    // Execute CREATE SCHEMA via CLI with root auth
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace_name))
         .expect("CLI should succeed when creating namespace as root");
 
     // Verify namespace was created
@@ -213,7 +213,7 @@ async fn test_regular_user_cannot_create_namespace() {
 
     // Try to create namespace as regular user
     let result =
-        execute_sql_via_http_as("testuser", "testpass", "CREATE NAMESPACE user_test_ns").await;
+        execute_sql_via_http_as("testuser", "testpass", "CREATE SCHEMA user_test_ns").await;
 
     // Should fail with authorization error
     if let Ok(response) = result {
@@ -285,7 +285,7 @@ async fn test_cli_admin_operations() {
     // Execute statements individually to avoid batch execution bug with Raft
     // Step 1: Create namespace
     let _ =
-        execute_sql_via_http_as_root(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name))
+        execute_sql_via_http_as_root(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace_name))
             .await;
 
     // Step 2: Create table
@@ -361,7 +361,7 @@ async fn test_cli_flush_table() {
     ))
     .await;
 
-    let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("CREATE SCHEMA {}", namespace_name)).await;
 
     // Create a USER table with flush policy (SHARED tables cannot be flushed)
     let result = execute_sql_via_http_as_root(&format!(
@@ -575,7 +575,7 @@ async fn test_cli_flush_all_tables() {
     ))
     .await;
 
-    let _ = execute_sql_via_http_as_root(&format!("CREATE NAMESPACE {}", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("CREATE SCHEMA {}", namespace_name)).await;
 
     // Create multiple USER tables (SHARED tables cannot be flushed)
     let _ = execute_sql_via_http_as_root(&format!(

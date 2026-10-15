@@ -63,12 +63,25 @@ impl WireSqlExecutor {
         params: Vec<ScalarValue>,
         column_format: Option<&Format>,
     ) -> PgWireResult<Vec<Response>> {
-        if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
-            return Ok(vec![Response::Error(Box::new(error_info(
-                "ERROR",
-                IN_FAILED_SQLSTATE,
-                error.to_string(),
-            )))]);
+        let is_rollback_to_savepoint = metadata
+            .classified_statement
+            .as_ref()
+            .is_some_and(|stmt| {
+                matches!(
+                    stmt.kind(),
+                    kalamdb_sql::classifier::SqlStatementKind::RollbackToSavepoint(_)
+                )
+            })
+            || is_rollback_to_savepoint_sql(metadata.sql.as_str());
+
+        if !is_rollback_to_savepoint {
+            if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
+                return Ok(vec![Response::Error(Box::new(error_info(
+                    "ERROR",
+                    IN_FAILED_SQLSTATE,
+                    error.to_string(),
+                )))]);
+            }
         }
 
         if let Some(response) = self.apply_postgres_client_set(state, metadata.sql.as_str()) {
@@ -88,6 +101,10 @@ impl WireSqlExecutor {
             async {
                 match self.sql_executor.execute_with_metadata(metadata, &exec_ctx, params).await {
                     Ok(result) => {
+                        if is_rollback_to_savepoint {
+                            let _ =
+                                self.session_manager.recover_failed_transaction(state.session_id());
+                        }
                         let _span = kalamdb_observability::kdb_info_span_entered!("wire.encode");
                         execution_result_to_responses_with_format(result, column_format)
                     },
@@ -106,12 +123,15 @@ impl WireSqlExecutor {
         state: &WireConnectionState,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
-        if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
-            return Ok(vec![Response::Error(Box::new(error_info(
-                "ERROR",
-                IN_FAILED_SQLSTATE,
-                error.to_string(),
-            )))]);
+        let is_rollback_to_savepoint = is_rollback_to_savepoint_sql(sql);
+        if !is_rollback_to_savepoint {
+            if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
+                return Ok(vec![Response::Error(Box::new(error_info(
+                    "ERROR",
+                    IN_FAILED_SQLSTATE,
+                    error.to_string(),
+                )))]);
+            }
         }
 
         if let Some(response) = self.apply_postgres_client_set(state, sql) {
@@ -127,7 +147,12 @@ impl WireSqlExecutor {
             exec_ctx = exec_ctx.with_transaction_id(transaction_id);
         }
         match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
-            Ok(result) => execution_result_to_responses(result),
+            Ok(result) => {
+                if is_rollback_to_savepoint {
+                    let _ = self.session_manager.recover_failed_transaction(state.session_id());
+                }
+                execution_result_to_responses(result)
+            },
             Err(error) => {
                 self.mark_statement_failed_if_in_block(state);
                 Ok(vec![Response::Error(Box::new(sql_error_info(&error)))])
@@ -186,10 +211,48 @@ impl WireSqlExecutor {
             let _ = self.session_manager.mark_statement_failed(state.session_id());
         }
     }
+
+    pub fn statement_supports_implicit_batch_transaction(
+        &self,
+        sql: &str,
+        state: &WireConnectionState,
+    ) -> bool {
+        if classify_postgres_set(sql).is_some() {
+            return true;
+        }
+        let exec_ctx = self.execution_context(state);
+        let Ok(metadata) = self.sql_executor.prepare_statement_metadata(sql, &exec_ctx) else {
+            return true;
+        };
+        let Some(classified) = metadata.classified_statement.as_ref() else {
+            return true;
+        };
+        use kalamdb_sql::classifier::SqlStatementKind;
+        matches!(
+            classified.kind(),
+            SqlStatementKind::Select
+                | SqlStatementKind::Insert(_)
+                | SqlStatementKind::Update(_)
+                | SqlStatementKind::Delete(_)
+                | SqlStatementKind::SetSearchPath(_)
+                | SqlStatementKind::Savepoint(_)
+                | SqlStatementKind::ReleaseSavepoint(_)
+                | SqlStatementKind::RollbackToSavepoint(_)
+                | SqlStatementKind::SetTransaction
+                | SqlStatementKind::Call(_)
+                | SqlStatementKind::DataFusionMetaCommand
+        )
+    }
 }
 
 pub fn backend_session_error_to_response(error: BackendSessionError) -> Response {
-    Response::Error(Box::new(error_info("ERROR", SQL_ERROR_SQLSTATE, error.to_string())))
+    let sqlstate = match &error {
+        BackendSessionError::FailedBlock(_) => IN_FAILED_SQLSTATE,
+        BackendSessionError::ActiveBlock(msg) if msg.contains("no active") => "25P01",
+        BackendSessionError::ActiveBlock(_) => "25001",
+        _ => SQL_ERROR_SQLSTATE,
+    };
+    Response::Error(Box::new(error_info("ERROR", sqlstate, error.to_string())))
 }
 
 pub fn pg_error(message: impl Into<String>) -> PgWireError {
@@ -197,13 +260,21 @@ pub fn pg_error(message: impl Into<String>) -> PgWireError {
 }
 
 fn sql_error_info(error: &kalamdb_core::error::KalamDbError) -> ErrorInfo {
-    let sqlstate = match error {
-        kalamdb_core::error::KalamDbError::Coded(coded) => {
-            coded.leaf_code().sqlstate().unwrap_or(SQL_ERROR_SQLSTATE)
-        },
-        _ => SQL_ERROR_SQLSTATE,
-    };
-    error_info("ERROR", sqlstate, error.user_message())
+    error_info("ERROR", error.sqlstate(), error.user_message())
+}
+
+fn is_rollback_to_savepoint_sql(sql: &str) -> bool {
+    let words: Vec<String> = sql
+        .trim()
+        .trim_end_matches(';')
+        .split_whitespace()
+        .take(3)
+        .map(|w| w.to_ascii_uppercase())
+        .collect();
+    matches!(
+        words.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
+        ["ROLLBACK", "TO", ..] | ["ROLLBACK", "WORK", "TO"]
+    )
 }
 
 fn error_info(

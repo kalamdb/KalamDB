@@ -24,7 +24,7 @@ before(async () => {
   await client.initialize();
   db = drizzle(kalamDriver(client));
 
-  await client.query(`CREATE NAMESPACE IF NOT EXISTS ${NS}`);
+  await client.query(`CREATE SCHEMA IF NOT EXISTS ${NS}`);
   await client.query(`DROP TABLE IF EXISTS ${NS}.users`);
   await client.query(`
     CREATE TABLE ${NS}.users (

@@ -54,7 +54,7 @@ fn test_live_subscription_default_options() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // Create user table
@@ -127,7 +127,7 @@ fn test_live_subscription_with_batch_size() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -202,7 +202,7 @@ fn test_live_subscription_with_last_rows() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -284,7 +284,7 @@ fn test_live_subscription_seq_id_tracking() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -371,7 +371,7 @@ fn test_live_multiple_subscriptions() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -480,7 +480,7 @@ fn test_live_subscription_change_event_order() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(

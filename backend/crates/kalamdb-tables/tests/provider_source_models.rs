@@ -20,7 +20,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition, TableOptions},
-        ColumnId, NamespaceId, ReadContext, Role, StorageId, TableId, TableName,
+        ColumnId, SchemaId, ReadContext, Role, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,
@@ -536,7 +536,7 @@ fn overlay_context(
 #[tokio::test]
 async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("events"));
     let table_def = build_stream_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_stream_table_store(
@@ -612,7 +612,7 @@ async fn stream_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
 #[tokio::test]
 async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec_plain"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("users_exec_plain"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -688,7 +688,7 @@ async fn user_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
 #[tokio::test]
 async fn user_provider_dba_session_reads_only_subject_rows() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec_scoped"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("users_exec_scoped"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -763,7 +763,7 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
 async fn user_provider_delete_only_tombstones_subject_row() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
     let table_id =
-        TableId::new(NamespaceId::new("app"), TableName::new("users_exec_delete_scoped"));
+        TableId::new(SchemaId::new("app"), TableName::new("users_exec_delete_scoped"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -849,7 +849,7 @@ async fn user_provider_delete_only_tombstones_subject_row() {
 #[tokio::test]
 async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("users_exec"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("users_exec"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -915,7 +915,7 @@ async fn user_provider_scan_with_overlay_uses_transaction_overlay_exec() {
 #[tokio::test]
 async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_exec_plain"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_exec_plain"));
     let table_def = build_shared_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(
@@ -990,7 +990,7 @@ async fn shared_provider_scan_uses_deferred_batch_exec_and_returns_rows() {
 #[tokio::test]
 async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_exec"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_exec"));
     let table_def = build_shared_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(
@@ -1055,7 +1055,7 @@ async fn shared_provider_scan_with_overlay_uses_transaction_overlay_exec() {
 #[tokio::test]
 async fn shared_provider_conversation_filter_seeks_scalar_index() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_indexed_messages"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_indexed_messages"));
     let table_def = build_indexed_shared_messages_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(
@@ -1120,7 +1120,7 @@ async fn shared_provider_conversation_filter_seeks_scalar_index() {
 #[ntest::timeout(1500)]
 async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_numeric_range"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_numeric_range"));
     let table_def = build_indexed_shared_messages_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(
@@ -1181,7 +1181,7 @@ async fn shared_provider_numeric_range_filters_index_keys_before_row_fetch() {
 #[tokio::test]
 async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_indexed_update"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_indexed_update"));
     let table_def = build_indexed_shared_messages_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(
@@ -1282,7 +1282,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
 #[tokio::test]
 async fn user_provider_conversation_filter_seeks_scalar_index() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("user_indexed_messages"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("user_indexed_messages"));
     let table_def = build_indexed_user_messages_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -1424,7 +1424,7 @@ fn build_indexed_user_messages_definition(table_id: &TableId) -> Arc<TableDefini
 async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     let recording = Arc::new(recording_backend::RecordingBackend::new());
     let backend: Arc<dyn StorageBackend> = recording.clone();
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("user_dml_once"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("user_dml_once"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -1564,7 +1564,7 @@ async fn user_sql_dml_writes_each_version_once_with_statement_commit_seq() {
 async fn shared_sql_dml_writes_each_version_once_with_statement_commit_seq() {
     let recording = Arc::new(recording_backend::RecordingBackend::new());
     let backend: Arc<dyn StorageBackend> = recording.clone();
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("shared_dml_once"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("shared_dml_once"));
     let table_def = build_shared_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_shared_table_store(

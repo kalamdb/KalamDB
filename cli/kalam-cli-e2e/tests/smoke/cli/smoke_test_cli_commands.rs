@@ -56,7 +56,7 @@ fn smoke_cli_list_tables_command() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Setup: create a table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='SHARED')",
@@ -101,7 +101,7 @@ fn smoke_cli_describe_table_command() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Setup: create a table with various column types
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (
@@ -189,10 +189,10 @@ fn smoke_cli_sql_execution() {
     let table = generate_unique_table("sql_test");
     let full_table = format!("{}.{}", namespace, table);
 
-    // Test CREATE NAMESPACE
+    // Test CREATE SCHEMA
     let result =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed: {:?}", result);
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed: {:?}", result);
 
     // Test CREATE TABLE
     let result = execute_sql_as_root_via_client(&format!(
@@ -351,7 +351,7 @@ fn smoke_cli_flush_command() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, data VARCHAR) WITH (TYPE='SHARED')",
@@ -415,7 +415,7 @@ fn smoke_cli_backslash_flush_qualified_table() {
     let table = generate_unique_table("users");
     let full_table = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, data VARCHAR) WITH (TYPE='SHARED')",
@@ -468,7 +468,7 @@ fn smoke_cli_backslash_flush_uses_session_namespace() {
     let table = generate_unique_table("users");
     let full_table = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, data VARCHAR) WITH (TYPE='SHARED')",
@@ -534,7 +534,7 @@ fn smoke_cli_backslash_describe_qualified_table() {
     let table = generate_unique_table("users");
     let full_table = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (
@@ -625,10 +625,10 @@ fn smoke_cli_namespace_management() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 
-    // Test CREATE NAMESPACE
+    // Test CREATE SCHEMA
     let result =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed: {:?}", result);
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed: {:?}", result);
 
     // Verify namespace exists
     let result = execute_sql_as_root_via_client(&format!(
@@ -638,14 +638,14 @@ fn smoke_cli_namespace_management() {
     .expect("Failed to query namespace");
     assert!(result.contains(&namespace), "Namespace should exist: {}", result);
 
-    // Test CREATE NAMESPACE again (should error because it already exists)
-    let result = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace));
-    assert!(result.is_err(), "CREATE NAMESPACE should fail when namespace already exists");
+    // Test CREATE SCHEMA again (should error because it already exists)
+    let result = execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace));
+    assert!(result.is_err(), "CREATE SCHEMA should fail when namespace already exists");
 
-    // Test CREATE NAMESPACE IF NOT EXISTS (should not error)
+    // Test CREATE SCHEMA IF NOT EXISTS (should not error)
     let result =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
-    assert!(result.is_ok(), "CREATE NAMESPACE IF NOT EXISTS should succeed: {:?}", result);
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
+    assert!(result.is_ok(), "CREATE SCHEMA IF NOT EXISTS should succeed: {:?}", result);
 
     // Create a table, then drop schema without CASCADE.
     let table = generate_unique_table("ns_drop_table");
@@ -690,7 +690,7 @@ fn smoke_cli_alter_table() {
     let full_table = format!("{}.{}", namespace, table);
 
     // Setup
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name STRING) WITH (TYPE='USER')",

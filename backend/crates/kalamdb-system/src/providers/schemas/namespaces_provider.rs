@@ -1,7 +1,7 @@
 //! System.namespaces table provider
 //!
 //! This module provides a DataFusion TableProvider implementation for the system.namespaces table.
-//! Uses the new EntityStore architecture with NamespaceId keys.
+//! Uses the new EntityStore architecture with SchemaId keys.
 
 use std::sync::{Arc, OnceLock};
 
@@ -9,7 +9,7 @@ use datafusion::{
     arrow::{array::RecordBatch, datatypes::SchemaRef},
     logical_expr::Expr,
 };
-use kalamdb_commons::{models::rows::SystemTableRow, NamespaceId, SystemTable};
+use kalamdb_commons::{models::rows::SystemTableRow, SchemaId, SystemTable};
 use kalamdb_store::{entity_store::EntityStore, IndexedEntityStore, StorageBackend};
 
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
 /// System.namespaces table provider using EntityStore architecture
 #[derive(Clone)]
 pub struct NamespacesTableProvider {
-    store: IndexedEntityStore<NamespaceId, SystemTableRow>,
+    store: IndexedEntityStore<SchemaId, SystemTableRow>,
 }
 
 impl NamespacesTableProvider {
@@ -54,20 +54,12 @@ impl NamespacesTableProvider {
     }
 
     /// Get a namespace by ID
-    pub fn get_namespace_by_id(
+    pub fn get_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<Option<Namespace>, SystemError> {
         let row = self.store.get(namespace_id)?;
         row.map(|value| Self::decode_namespace_row(&value)).transpose()
-    }
-
-    /// Alias for get_namespace_by_id (for backward compatibility)
-    pub fn get_namespace(
-        &self,
-        namespace_id: &NamespaceId,
-    ) -> Result<Option<Namespace>, SystemError> {
-        self.get_namespace_by_id(namespace_id)
     }
 
     /// Async version of `get_namespace()` - offloads to blocking thread pool.
@@ -75,7 +67,7 @@ impl NamespacesTableProvider {
     /// Use this in async contexts to avoid blocking the Tokio runtime.
     pub async fn get_namespace_async(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<Option<Namespace>, SystemError> {
         let row = self
             .store
@@ -101,7 +93,7 @@ impl NamespacesTableProvider {
     }
 
     /// Delete a namespace entry
-    pub fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
+    pub fn delete_namespace(&self, namespace_id: &SchemaId) -> Result<(), SystemError> {
         self.store.delete(namespace_id)?;
         Ok(())
     }
@@ -115,11 +107,6 @@ impl NamespacesTableProvider {
             namespaces.push(Self::decode_namespace_row(&row)?);
         }
         Ok(namespaces)
-    }
-
-    /// Alias for list_namespaces (backward compatibility)
-    pub fn scan_all(&self) -> Result<Vec<Namespace>, SystemError> {
-        self.list_namespaces()
     }
 
     /// Scan all namespaces and return as RecordBatch
@@ -139,7 +126,7 @@ impl NamespacesTableProvider {
     ) -> Result<RecordBatch, SystemError> {
         // Check for primary key equality filter → O(1) point lookup
         if let Some(ns_id_str) = extract_filter_value(filters, "namespace_id") {
-            let namespace_id = NamespaceId::new(&ns_id_str);
+            let namespace_id = SchemaId::new(&ns_id_str);
             if let Some(row) = self.store.get(&namespace_id)? {
                 return system_rows_to_batch(&Self::schema(), vec![row]);
             }
@@ -180,7 +167,7 @@ crate::impl_system_table_provider_metadata!(
 
 crate::impl_simple_system_table_provider!(
     provider = NamespacesTableProvider,
-    key = NamespaceId,
+    key = SchemaId,
     value = SystemTableRow,
     definition = provider_definition,
     scan_all = scan_all_namespaces,
@@ -199,7 +186,7 @@ mod tests {
         NamespacesTableProvider::new(backend)
     }
 
-    fn create_test_namespace(namespace_id: &NamespaceId, name: &str) -> Namespace {
+    fn create_test_namespace(namespace_id: &SchemaId, name: &str) -> Namespace {
         Namespace {
             namespace_id: namespace_id.clone(),
             name:         name.to_string(),
@@ -212,11 +199,11 @@ mod tests {
     #[test]
     fn test_create_and_get_namespace() {
         let provider = create_test_provider();
-        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
+        let namespace = create_test_namespace(&SchemaId::new("app"), "app");
 
         provider.create_namespace(namespace.clone()).unwrap();
 
-        let namespace_id = NamespaceId::new("app");
+        let namespace_id = SchemaId::new("app");
         let retrieved = provider.get_namespace(&namespace_id).unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
@@ -227,7 +214,7 @@ mod tests {
     #[test]
     fn test_update_namespace() {
         let provider = create_test_provider();
-        let mut namespace = create_test_namespace(&NamespaceId::new("app"), "app");
+        let mut namespace = create_test_namespace(&SchemaId::new("app"), "app");
         provider.create_namespace(namespace.clone()).unwrap();
 
         // Update
@@ -235,7 +222,7 @@ mod tests {
         provider.update_namespace(namespace.clone()).unwrap();
 
         // Verify
-        let namespace_id = NamespaceId::new("app");
+        let namespace_id = SchemaId::new("app");
         let retrieved = provider.get_namespace(&namespace_id).unwrap().unwrap();
         assert_eq!(retrieved.table_count, 5);
     }
@@ -243,11 +230,11 @@ mod tests {
     #[test]
     fn test_delete_namespace() {
         let provider = create_test_provider();
-        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
+        let namespace = create_test_namespace(&SchemaId::new("app"), "app");
 
         provider.create_namespace(namespace).unwrap();
 
-        let namespace_id = NamespaceId::new("app");
+        let namespace_id = SchemaId::new("app");
         provider.delete_namespace(&namespace_id).unwrap();
 
         let retrieved = provider.get_namespace(&namespace_id).unwrap();
@@ -261,7 +248,7 @@ mod tests {
         // Insert multiple namespaces
         for i in 1..=3 {
             let namespace = create_test_namespace(
-                &NamespaceId::new(&format!("ns{}", i)),
+                &SchemaId::new(&format!("ns{}", i)),
                 &format!("namespace{}", i),
             );
             provider.create_namespace(namespace).unwrap();
@@ -277,7 +264,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
+        let namespace = create_test_namespace(&SchemaId::new("app"), "app");
         provider.create_namespace(namespace).unwrap();
 
         // Scan
@@ -291,7 +278,7 @@ mod tests {
         let provider = create_test_provider();
 
         // Insert test data
-        let namespace = create_test_namespace(&NamespaceId::new("app"), "app");
+        let namespace = create_test_namespace(&SchemaId::new("app"), "app");
         provider.create_namespace(namespace).unwrap();
 
         // Create DataFusion session

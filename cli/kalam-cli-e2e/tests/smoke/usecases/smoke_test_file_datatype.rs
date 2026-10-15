@@ -31,7 +31,7 @@ async fn test_file_datatype_upload_and_download() {
         .expect("Failed to get access token");
 
     // 1. Create namespace
-    let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
+    let create_ns_sql = format!("CREATE SCHEMA {}", ns);
     let ns_result =
         execute_sql_via_http_as_for_url(&client, &base_url, &token, &create_ns_sql).await;
     assert!(ns_result.is_ok(), "Failed to create namespace: {:?}", ns_result);

@@ -13,15 +13,170 @@ pub fn starts_with_ci(input: &str, prefix: &str) -> bool {
     input.len() >= prefix.len() && input[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
+/// Advance past leading ASCII whitespace, `--` line comments, and nested `/* ... */` block comments.
+///
+/// If an unterminated `/*` block comment is encountered, returns the slice starting at `/*` so
+/// the caller sees remaining unparsed input and fails cleanly.
+pub fn skip_ws_and_comments(mut input: &str) -> &str {
+    loop {
+        input = input.trim_start();
+        if let Some(after_line) = input.strip_prefix("--") {
+            match after_line.find('\n') {
+                Some(nl) => input = &after_line[nl + 1..],
+                None => return "",
+            }
+            continue;
+        }
+        if input.starts_with("/*") {
+            let bytes = input.as_bytes();
+            let mut i = 2;
+            let mut depth = 1usize;
+            while i + 1 < bytes.len() && depth > 0 {
+                if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    depth += 1;
+                    i += 2;
+                } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if depth == 0 {
+                input = &input[i..];
+                continue;
+            }
+            return input;
+        }
+        return input;
+    }
+}
+
+/// Strip leading/trailing whitespace, SQL comments, and optional trailing semicolons.
+pub fn trim_sql_comments_and_semicolons(sql: &str) -> DdlResult<&str> {
+    let mut s = skip_ws_and_comments(sql);
+    if s.starts_with("/*") {
+        return Err("Unterminated block comment".to_string());
+    }
+    // Find where the statement content ends before any trailing `;` and trailing comments/whitespace.
+    // Scan top-level tokens to track the last non-trivia, non-semicolon byte offset.
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut last_content_end = 0usize;
+    let mut saw_semicolon_after_content = false;
+    while i < bytes.len() {
+        let rem = &s[i..];
+        let after_ws = skip_ws_and_comments(rem);
+        let skipped = rem.len() - after_ws.len();
+        if skipped > 0 {
+            i += skipped;
+            continue;
+        }
+        if after_ws.starts_with("/*") {
+            return Err("Unterminated block comment".to_string());
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        if bytes[i] == b';' {
+            saw_semicolon_after_content = true;
+            i += 1;
+            continue;
+        }
+        if saw_semicolon_after_content {
+            return Err(format!("Unexpected tokens after ';': '{}'", &s[i..]));
+        }
+        // Advance past string literals, quoted identifiers, dollar-quoted strings, or one char
+        if bytes[i] == b'\'' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\'' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'\'' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if (bytes[i] == b'e' || bytes[i] == b'E') && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if bytes[i] == b'\'' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'\'' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if bytes[i] == b'"' {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'"' {
+                    i += 1;
+                    if i < bytes.len() && bytes[i] == b'"' {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            last_content_end = i;
+            continue;
+        }
+        if bytes[i] == b'$' {
+            let after_dollar = &s[i + 1..];
+            if let Some(tag_end) = after_dollar.find('$') {
+                let tag_inner = &after_dollar[..tag_end];
+                let valid_tag = tag_inner.is_empty()
+                    || (tag_inner
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                        && tag_inner.chars().all(|c| c.is_alphanumeric() || c == '_'));
+                if valid_tag {
+                    let tag = &s[i..i + tag_end + 2];
+                    let body_start = i + tag.len();
+                    if let Some(close_rel) = s[body_start..].find(tag) {
+                        i = body_start + close_rel + tag.len();
+                        last_content_end = i;
+                        continue;
+                    }
+                }
+            }
+        }
+        let ch_len = s[i..].chars().next().map_or(1, char::len_utf8);
+        i += ch_len;
+        last_content_end = i;
+    }
+    s = &s[..last_content_end];
+    Ok(s)
+}
+
 /// If `input` starts with an ASCII keyword (or keyword phrase), return the remainder.
 ///
-/// Words in `keyword` may be separated by any ASCII whitespace in `input`. The match
+/// Words in `keyword` may be separated by any ASCII whitespace or SQL comments in `input`. The match
 /// is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
 #[inline]
 pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
-    let mut rest = input.trim_start();
+    let mut rest = skip_ws_and_comments(input);
     for word in keyword.split_ascii_whitespace() {
-        rest = rest.trim_start();
+        rest = skip_ws_and_comments(rest);
         if !starts_with_ci(rest, word) {
             return None;
         }
@@ -30,7 +185,7 @@ pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
             return None;
         }
     }
-    Some(rest.trim_start())
+    Some(skip_ws_and_comments(rest))
 }
 
 /// Consume `keyword` from the start of `input` when present.
@@ -58,22 +213,46 @@ pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, 
     Ok((Some(value), leftover))
 }
 
-/// Parse a SQL string literal and return leftover input after the closing quote.
+/// Parse a SQL string literal (including PostgreSQL `E'...'` escape strings) and return leftover input.
 pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
-    let input = input.trim_start();
-    let mut chars = input.char_indices();
-    let Some((_, '\'')) = chars.next() else {
+    let input = skip_ws_and_comments(input);
+    let (escaped_mode, body_input) = if let Some(after_e) = input
+        .strip_prefix("E'")
+        .or_else(|| input.strip_prefix("e'"))
+    {
+        (true, after_e)
+    } else if let Some(after_q) = input.strip_prefix('\'') {
+        (false, after_q)
+    } else {
         return Err(format!("Expected string literal, got '{input}'"));
     };
+    let mut chars = body_input.char_indices();
     let mut out = String::new();
     while let Some((idx, ch)) = chars.next() {
+        if escaped_mode && ch == '\\' {
+            let Some((_, esc)) = chars.next() else {
+                return Err("Unterminated escape sequence in E'...' string literal".to_string());
+            };
+            match esc {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'b' => out.push('\u{0008}'),
+                'f' => out.push('\u{000c}'),
+                '\\' => out.push('\\'),
+                '\'' => out.push('\''),
+                '"' => out.push('"'),
+                other => out.push(other),
+            }
+            continue;
+        }
         if ch == '\'' {
             if chars.as_str().starts_with('\'') {
                 chars.next();
                 out.push('\'');
                 continue;
             }
-            return Ok((out, &input[idx + 1..]));
+            return Ok((out, &body_input[idx + 1..]));
         }
         out.push(ch);
     }

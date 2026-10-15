@@ -6,7 +6,7 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::scalar_value_to_json,
-    models::{NamespaceId, RoutineId},
+    models::{SchemaId, RoutineId},
     KalamDataType,
 };
 use kalamdb_core::{
@@ -33,7 +33,7 @@ pub async fn invoke_function_v1(
 ) -> impl Responder {
     let session: AuthSession = extractor.into();
     let (namespace, procedure) = path.into_inner();
-    let namespace_id = NamespaceId::new(namespace);
+    let namespace_id = SchemaId::new(namespace);
     let routine_id = RoutineId::from_parts(Some(&namespace_id), &procedure);
 
     if let Some(key) = rejected_context_key(&body) {
@@ -290,7 +290,7 @@ mod tests {
     use std::collections::HashMap;
 
     use kalamdb_commons::{
-        models::{NamespaceId, RoutineId, RoutineParameterId},
+        models::{SchemaId, RoutineId, RoutineParameterId},
         KalamDataType,
     };
     use kalamdb_core::{error::KalamDbError, functions::routine_value_as_json};
@@ -303,7 +303,7 @@ mod tests {
     };
 
     fn json_parameter(name: &str) -> CatalogRoutineParameter {
-        let namespace = NamespaceId::new("app");
+        let namespace = SchemaId::new("app");
         let routine_id = RoutineId::from_parts(Some(&namespace), "send");
         CatalogRoutineParameter {
             parameter_id: RoutineParameterId::new(&routine_id, 0).expect("parameter id"),
@@ -316,6 +316,8 @@ mod tests {
             not_null: true,
             nonempty: false,
             data_type: Some(KalamDataType::Json),
+            mode: kalamdb_commons::models::RoutineParameterMode::default(),
+            default_expr: None,
         }
     }
 

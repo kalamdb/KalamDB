@@ -277,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
         &http,
         &base,
         &token,
-        &format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
+        &format!("CREATE SCHEMA IF NOT EXISTS {KALAMDB_NAMESPACE}"),
         None,
     )
     .await?;

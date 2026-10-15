@@ -19,7 +19,7 @@ async fn repro_duplicate_column_error() {
 
     // Setup
     let _ = execute_sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace)).await;
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await.unwrap();
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await.unwrap();
 
     execute_sql(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE='USER')",

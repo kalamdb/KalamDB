@@ -43,7 +43,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
         let user_auth = create_user_auth_header(server, &user, password, &Role::User).await?;
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
         let resp = server
@@ -129,7 +129,7 @@ async fn test_user_table_manifest_persistence_over_http() -> anyhow::Result<()> 
 
         let user_auth = create_user_auth_header(server, &user, password, &Role::User).await?;
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success, "resp.error={:?}", resp.error);
 
         let resp = server

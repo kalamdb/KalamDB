@@ -128,9 +128,9 @@ fn smoke_storage_custom_templates() {
     });
 
     // Create namespaces
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_user))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace_user))
         .expect("create namespace (user)");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_shared))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace_shared))
         .expect("create namespace (shared)");
 
     // Create test user to generate userId component in path templates

@@ -143,7 +143,7 @@ fn test_update_all_types_user_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     // Note: Skipping EMBEDDING and BYTES for simplicity in SQL literals for now,
@@ -428,7 +428,7 @@ fn test_update_all_types_shared_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     let create_sql = format!(

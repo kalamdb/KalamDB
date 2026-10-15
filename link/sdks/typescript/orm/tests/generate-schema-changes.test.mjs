@@ -27,7 +27,7 @@ let client;
 before(async () => {
   client = createTestClient();
   await client.initialize();
-  await client.query(`CREATE NAMESPACE IF NOT EXISTS ${NS}`);
+  await client.query(`CREATE SCHEMA IF NOT EXISTS ${NS}`);
 });
 
 after(async () => {

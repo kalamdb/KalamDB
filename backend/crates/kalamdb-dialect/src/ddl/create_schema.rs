@@ -3,13 +3,13 @@
 //! The classifier rejects `CREATE NAMESPACE`. [`crate::ddl::CreateNamespaceStatement`] still
 //! parses that text for historical migration files.
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::DdlResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSchemaStatement {
-    pub name:          NamespaceId,
+    pub name:          SchemaId,
     pub if_not_exists: bool,
 }
 
@@ -30,7 +30,7 @@ impl CreateSchemaStatement {
             return Err("Unexpected tokens after CREATE SCHEMA name".to_string());
         }
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             if_not_exists,
         })
     }

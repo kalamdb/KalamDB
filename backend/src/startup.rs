@@ -44,7 +44,7 @@ pub fn create_default_storage_if_needed(
         created_at:             now,
         updated_at:             now,
     };
-    storages_provider.insert_storage(default_storage)?;
+    storages_provider.create_storage(default_storage)?;
     info!("Default 'local' storage created successfully");
 
     Ok(0)

@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 use kalamdb_commons::models::{
     schemas::{TableDefinition, TableType},
-    FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId, TableId, UserId,
+    FunctionRevisionId, JobId, SchemaId, NodeId, StorageId, TableId, UserId,
 };
 use kalamdb_system::{
     providers::jobs::models::Job, CatalogFunctionArtifact, CatalogFunctionModule,
@@ -43,12 +43,12 @@ pub trait MetaApplier: Send + Sync {
     /// Create a namespace in persistent storage
     async fn create_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         created_by: Option<&UserId>,
     ) -> Result<String, RaftError>;
 
     /// Delete a namespace from persistent storage
-    async fn delete_namespace(&self, namespace_id: &NamespaceId) -> Result<String, RaftError>;
+    async fn delete_namespace(&self, namespace_id: &SchemaId) -> Result<String, RaftError>;
 
     // =========================================================================
     // Table Operations
@@ -249,12 +249,12 @@ impl MetaApplier for NoOpMetaApplier {
     // Namespace operations
     async fn create_namespace(
         &self,
-        _: &NamespaceId,
+        _: &SchemaId,
         _: Option<&UserId>,
     ) -> Result<String, RaftError> {
         Ok(String::new())
     }
-    async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
+    async fn delete_namespace(&self, _: &SchemaId) -> Result<String, RaftError> {
         Ok(String::new())
     }
 
@@ -372,7 +372,7 @@ mod tests {
     };
 
     use kalamdb_commons::{
-        models::{AuthType, NamespaceId, TableName},
+        models::{AuthType, SchemaId, TableName},
         Role,
     };
     use kalamdb_system::JobType;
@@ -414,13 +414,13 @@ mod tests {
     impl MetaApplier for MockMetaApplier {
         async fn create_namespace(
             &self,
-            _: &NamespaceId,
+            _: &SchemaId,
             _: Option<&UserId>,
         ) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
-        async fn delete_namespace(&self, _: &NamespaceId) -> Result<String, RaftError> {
+        async fn delete_namespace(&self, _: &SchemaId) -> Result<String, RaftError> {
             self.namespace_ops.fetch_add(1, Ordering::SeqCst);
             Ok(String::new())
         }
@@ -551,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn test_namespace_operations() {
         let applier = MockMetaApplier::new();
-        let ns_id = NamespaceId::from("test_namespace");
+        let ns_id = SchemaId::from("test_namespace");
         let user_id = UserId::from("user_123");
 
         applier.create_namespace(&ns_id, Some(&user_id)).await.unwrap();
@@ -564,9 +564,9 @@ mod tests {
     async fn test_table_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
-        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("table"));
+        let table_id = TableId::new(SchemaId::from("ns"), TableName::from("table"));
         let table_def = TableDefinition::new_with_defaults(
-            NamespaceId::from("ns"),
+            SchemaId::from("ns"),
             TableName::from("table"),
             TableType::User,
             vec![],
@@ -678,7 +678,7 @@ mod tests {
     async fn test_noop_applier_all_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = NoOpMetaApplier;
-        let ns_id = NamespaceId::from("test");
+        let ns_id = SchemaId::from("test");
         let table_id = TableId::new(ns_id.clone(), TableName::from("table"));
         let table_def = TableDefinition::new_with_defaults(
             ns_id.clone(),
@@ -828,7 +828,7 @@ mod tests {
     async fn test_mixed_operations() {
         use kalamdb_commons::models::schemas::TableDefinition;
         let applier = MockMetaApplier::new();
-        let ns_id = NamespaceId::from("mixed");
+        let ns_id = SchemaId::from("mixed");
         let table_id = TableId::new(ns_id.clone(), TableName::from("t1"));
         let table_def = TableDefinition::new_with_defaults(
             ns_id.clone(),

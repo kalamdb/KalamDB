@@ -18,7 +18,7 @@ fn test_shared_catalog_select_without_write() {
     let user = common::generate_unique_namespace("catalog_reader");
     let password = "smoke_pass_123";
 
-    common::execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    common::execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     common::execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (
@@ -73,7 +73,7 @@ fn test_shared_default_deny_without_policy() {
     let user = common::generate_unique_namespace("denied_reader");
     let password = "smoke_pass_123";
 
-    common::execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    common::execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     common::execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id BIGINT PRIMARY KEY, content TEXT NOT NULL) WITH (TYPE='SHARED')"

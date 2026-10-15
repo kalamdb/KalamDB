@@ -15,7 +15,7 @@ async fn setup_topic_with_sources(
     operations: &[&str],
 ) {
     writer
-        .execute_query(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace), None, None, None)
         .await
         .expect("create topic test namespace");
     writer

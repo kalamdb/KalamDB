@@ -20,6 +20,11 @@ impl RoutineGrantId {
         Self(format!("{}:{}", routine_id.as_str(), grantee.catalog_key()))
     }
 
+    /// RocksDB prefix scan key `{routine_id}:`.
+    pub fn scan_prefix(routine_id: &RoutineId) -> Self {
+        Self(format!("{}:", routine_id.as_str()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

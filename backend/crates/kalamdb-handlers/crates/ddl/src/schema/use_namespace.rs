@@ -113,7 +113,7 @@ mod tests {
         let ctx = test_context();
 
         let stmt = UseSchemaStatement {
-            namespace: kalamdb_commons::models::NamespaceId::new("nonexistent"),
+            namespace: kalamdb_commons::models::SchemaId::new("nonexistent"),
         };
 
         let result = handler.execute(stmt, vec![], &ctx).await;

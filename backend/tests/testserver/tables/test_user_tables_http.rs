@@ -39,7 +39,7 @@ async fn test_user_tables_lifecycle_and_isolation_over_http() -> anyhow::Result<
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("ut");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
     let user1 = unique_table("user1");

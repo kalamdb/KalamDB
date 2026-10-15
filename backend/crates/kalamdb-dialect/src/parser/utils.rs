@@ -6,7 +6,7 @@
 use core::ops::ControlFlow;
 use std::hash::{Hash, Hasher};
 
-use kalamdb_commons::{NamespaceId, TableId};
+use kalamdb_commons::{SchemaId, TableId};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::{
@@ -1208,7 +1208,7 @@ pub fn parse_single_statement(sql: &str) -> Result<Option<Statement>, ParserErro
 /// Extract the target table for INSERT/UPDATE/DELETE DML statements.
 ///
 /// Returns None if parsing fails or the statement is not INSERT/UPDATE/DELETE.
-pub fn extract_dml_table_id(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
+pub fn extract_dml_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
     let statements = super::KalamParser::parse(sql).ok()?;
     statements
         .first()
@@ -1220,7 +1220,7 @@ pub fn extract_dml_table_id(sql: &str, default_namespace: &NamespaceId) -> Optio
 ///
 /// Returns `None` for complex or unrecognized token layouts so callers can
 /// fall back to the full parser when exact syntax support is required.
-pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
+pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
     let dialect = KalamDbDialect::default();
     let tokens = collect_non_whitespace_tokens(sql, &dialect).ok()?;
     extract_dml_table_id_from_tokens(&tokens, default_namespace)
@@ -1229,7 +1229,7 @@ pub fn extract_dml_table_id_fast(sql: &str, default_namespace: &NamespaceId) -> 
 /// Extract the target table for INSERT/UPDATE/DELETE from a parsed SQL statement.
 pub fn extract_dml_table_id_from_statement(
     statement: &Statement,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> Option<TableId> {
     match statement {
         Statement::Insert(insert) => {
@@ -1348,7 +1348,7 @@ fn object_name_matches(name: &ObjectName, expected: &str) -> bool {
     expected_parts.next().is_none()
 }
 
-fn table_id_from_parts(parts: &[String], default_namespace: &NamespaceId) -> Option<TableId> {
+fn table_id_from_parts(parts: &[String], default_namespace: &SchemaId) -> Option<TableId> {
     match parts.len() {
         1 => Some(TableId::from_namespace(default_namespace.clone(), &parts[0])),
         2 => Some(TableId::from_strings(&parts[0], &parts[1])),
@@ -1358,7 +1358,7 @@ fn table_id_from_parts(parts: &[String], default_namespace: &NamespaceId) -> Opt
 
 fn extract_dml_table_id_from_tokens(
     tokens: &[Token],
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> Option<TableId> {
     let compact_tokens: Vec<&Token> =
         tokens.iter().filter(|token| !matches!(token, Token::Whitespace(_))).collect();
@@ -1730,8 +1730,8 @@ mod tests {
 
     #[test]
     fn test_extract_dml_table_id_insert_update_delete() {
-        let default_ns = NamespaceId::default_ns();
-        let chat_ns = NamespaceId::new("chat");
+        let default_ns = SchemaId::default_ns();
+        let chat_ns = SchemaId::new("chat");
         let insert = extract_dml_table_id("INSERT INTO chat.messages (id) VALUES (1)", &default_ns)
             .expect("insert table id");
         assert_eq!(insert.full_name(), "chat.messages");
@@ -1747,8 +1747,8 @@ mod tests {
 
     #[test]
     fn test_extract_dml_table_id_fast_insert_update_delete() {
-        let default_ns = NamespaceId::default_ns();
-        let chat_ns = NamespaceId::new("chat");
+        let default_ns = SchemaId::default_ns();
+        let chat_ns = SchemaId::new("chat");
         let insert =
             extract_dml_table_id_fast("INSERT INTO chat.messages (id) VALUES (1)", &default_ns)
                 .expect("fast insert table id");

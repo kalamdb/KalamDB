@@ -255,8 +255,8 @@ fn smoke_export_user_data_job_completes() {
     ))
     .expect("CREATE USER failed");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql_as_root_via_client(&format!(
         r#"CREATE TABLE {} (
@@ -329,8 +329,8 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, val TEXT) WITH (TYPE='USER')",
         full_table
@@ -450,8 +450,8 @@ fn smoke_export_download_zip_is_valid() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, data TEXT) WITH (TYPE='USER', \
          FLUSH_POLICY='rows:5')",
@@ -662,8 +662,8 @@ fn smoke_export_user_data_download_and_reimport() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, data TEXT) WITH (TYPE='USER', \
          FLUSH_POLICY='rows:5')",
@@ -968,8 +968,8 @@ fn smoke_export_download_forbidden_for_other_user() {
         user_b, pass_b
     ))
     .expect("CREATE USER B failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
         full_table

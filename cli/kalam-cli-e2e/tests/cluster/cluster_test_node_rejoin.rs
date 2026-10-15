@@ -140,7 +140,7 @@ fn cluster_test_node_rejoin_system_metadata() {
     println!("\nStep 2: Making changes while node3 is down...");
 
     // Create namespace
-    execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     println!("  ✓ Created namespace: {}", namespace);
 
@@ -288,7 +288,7 @@ fn cluster_test_node_rejoin_dml_operations() {
 
     // Setup: Create namespace and table
     let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         leader_url,
@@ -541,7 +541,7 @@ fn cluster_test_multiple_rejoin_cycles() {
 
     // Setup
     let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         leader_url,
@@ -635,7 +635,7 @@ fn cluster_test_node_rejoin_schema_changes() {
 
     // Setup: Create namespace and initial table
     let _ = execute_on_node(leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         leader_url,

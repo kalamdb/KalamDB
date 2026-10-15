@@ -4,7 +4,7 @@
 //! `is_array()` project it for codecs. 0.8 does not read a column saved under
 //! the old field names.
 
-use std::{fmt::Write, mem};
+use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,10 @@ pub struct ColumnDefinition {
     /// Default value specification for INSERT operations
     #[serde(default, skip_serializing_if = "ColumnDefault::is_none")]
     pub default_value: ColumnDefault,
+
+    /// Materialized missing-column default for rows/segments written before `ADD COLUMN ... DEFAULT <expr>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_default: Option<ColumnDefault>,
 
     /// Ordinal position in table (1-indexed, sequential)
     /// Determines SELECT * column ordering. Can change via reordering.
@@ -93,6 +97,7 @@ impl ColumnDefinition {
             is_primary_key,
             is_partition_key,
             default_value,
+            missing_default: None,
             column_comment,
         }
     }
@@ -140,54 +145,6 @@ impl ColumnDefinition {
             LogicalTypeRef::List { element, .. } => **element = leaf,
             slot => *slot = leaf,
         }
-    }
-
-    /// Wrap or unwrap the current type as an array in place.
-    pub fn set_array(&mut self, is_array: bool) {
-        match (&mut self.logical_type, is_array) {
-            (LogicalTypeRef::List { .. }, true) => {},
-            (LogicalTypeRef::List { element, .. }, false) => {
-                let inner = mem::replace(
-                    element.as_mut(),
-                    LogicalTypeRef::from_builtin(KalamDataType::Boolean),
-                );
-                self.logical_type = inner;
-            },
-            (slot, true) => {
-                let inner = mem::replace(
-                    slot,
-                    LogicalTypeRef::from_builtin(KalamDataType::Boolean),
-                );
-                *slot = LogicalTypeRef::array(inner, LogicalTypeRef::default_element_nullable());
-            },
-            (_, false) => {},
-        }
-    }
-
-    /// Update list-element nullability in place.
-    pub fn set_element_nullable(&mut self, element_nullable: bool) {
-        if let LogicalTypeRef::List {
-            element_nullable: current,
-            ..
-        } = &mut self.logical_type
-        {
-            *current = element_nullable;
-        }
-    }
-
-    /// Point this column at a named catalog type in place.
-    pub fn set_named_type_id(&mut self, type_id: TypeId) {
-        let inner = LogicalTypeRef::named(type_id);
-        match &mut self.logical_type {
-            LogicalTypeRef::List { element, .. } => **element = inner,
-            slot => *slot = inner,
-        }
-    }
-
-    /// Logical type for this column.
-    #[inline]
-    pub fn type_ref(&self) -> Result<LogicalTypeRef, String> {
-        Ok(self.logical_type.clone())
     }
 
     pub fn with_named_type(mut self, type_id: TypeId, is_array: bool) -> Self {

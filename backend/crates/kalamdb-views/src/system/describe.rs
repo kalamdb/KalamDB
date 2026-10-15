@@ -289,7 +289,7 @@ impl VirtualView for DescribeView {
 mod tests {
     use kalamdb_commons::{
         schemas::{TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::*;
@@ -323,7 +323,7 @@ mod tests {
         ];
 
         let table_def = TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("uploads"),
             TableType::User,
             columns,

@@ -160,12 +160,12 @@ fn cluster_test_ws_follower_receives_leader_changes() {
 
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER TABLE - subscriptions only work on USER/STREAM tables
     execute_on_node(
         &leader_url,
-        &format!("CREATE USER TABLE {} (id BIGINT PRIMARY KEY, value TEXT)", full),
+        &format!("CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT) WITH (TYPE = 'USER')", full),
     )
     .expect("Failed to create table");
 

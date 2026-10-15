@@ -1,10 +1,10 @@
 //! Tests for CREATE TABLE IF NOT EXISTS with constraints.
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_dialect::ddl::create_table::CreateTableStatement;
 
-fn default_ns() -> NamespaceId {
-    NamespaceId::new("default")
+fn default_ns() -> SchemaId {
+    SchemaId::new("default")
 }
 
 #[test]

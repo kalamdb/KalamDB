@@ -67,7 +67,7 @@ async fn test_pk_uniqueness_hot_and_cold_over_http() {
         let table_user = "items_user";
         let table_shared = "items_shared";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
         assert_eq!(resp.status, ResponseStatus::Success);
 
         let auth_a = create_user_auth_header_default(server, &unique_table("user_a")).await?;

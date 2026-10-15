@@ -17,8 +17,8 @@ fn smoke_test_provider_exec_models() {
     let full_shared_table = format!("{}.{}", namespace, shared_table);
     let full_stream_table = format!("{}.{}", namespace, stream_table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')",
         full_shared_table

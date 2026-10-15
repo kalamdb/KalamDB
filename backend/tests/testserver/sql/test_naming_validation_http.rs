@@ -11,7 +11,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     // Reserved namespace names
     let reserved_names = ["system", "sys", "root", "kalamdb"];
     for name in reserved_names {
-        let sql = format!("CREATE NAMESPACE {}", name);
+        let sql = format!("CREATE SCHEMA {}", name);
         let response = server.execute_sql(&sql).await?;
         assert_eq!(
             response.status,
@@ -28,7 +28,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
         unique_namespace("validns3"),
     ];
     for name in valid_names {
-        let sql = format!("CREATE NAMESPACE {}", name);
+        let sql = format!("CREATE SCHEMA {}", name);
         let response = server.execute_sql(&sql).await?;
         assert_eq!(
             response.status,
@@ -42,7 +42,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     // Reserved column names
     let test_cols = unique_namespace("test_cols");
     let response = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_cols))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", test_cols))
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
@@ -65,7 +65,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
 
     // Valid column names
     let ns = unique_namespace("test_valid_cols");
-    let response = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let response = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
     let valid_columns = [("user_id", "users"), ("firstName", "profiles")];
@@ -87,7 +87,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     // No auto id injection / basic CRUD
     let test_no_id = unique_namespace("test_no_id");
     let response = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_no_id))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", test_no_id))
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
@@ -115,7 +115,7 @@ async fn test_naming_validation_over_http() -> anyhow::Result<()> {
     // Users can use "id" as a column name
     let test_user_id = unique_namespace("test_user_id");
     let response = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_user_id))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", test_user_id))
         .await?;
     assert_eq!(response.status, ResponseStatus::Success);
     let sql = format!(

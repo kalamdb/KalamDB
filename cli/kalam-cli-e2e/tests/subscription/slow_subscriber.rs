@@ -143,7 +143,7 @@ fn subscription_slow_consumer_initial_data() {
     let tbl = generate_unique_table("slow_init");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -224,7 +224,7 @@ fn subscription_3g_like_high_latency() {
     let tbl = generate_unique_table("latency_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -304,7 +304,7 @@ fn subscription_slow_consumer_concurrent_writes() {
     let tbl = generate_unique_table("backpressure");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -390,7 +390,7 @@ fn subscription_reconnect_after_drop() {
     let tbl = generate_unique_table("reconnect");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 8);
@@ -468,7 +468,7 @@ fn subscription_timeout_graceful_then_reconnect() {
     let tbl = generate_unique_table("tmo_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     // Insert enough rows to make initial snapshot delivery take some time
@@ -583,7 +583,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
     let tbl = generate_unique_table("fanout_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'SHARED')",
@@ -726,7 +726,7 @@ fn subscription_large_initial_data_slow_batch_consumer() {
     let tbl = generate_unique_table("large_batch");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -814,7 +814,7 @@ fn subscription_repeated_reconnect_loop() {
     let tbl = generate_unique_table("loop_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 5);
@@ -884,7 +884,7 @@ fn subscription_stable_after_idle_pause() {
     let tbl = generate_unique_table("idle_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 3);
@@ -953,7 +953,7 @@ fn subscription_burst_then_slow_catchup() {
     let tbl = generate_unique_table("burst_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 

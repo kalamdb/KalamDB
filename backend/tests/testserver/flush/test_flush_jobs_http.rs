@@ -10,9 +10,9 @@ use super::test_support::{consolidated_helpers::unique_namespace, flush::flush_t
 async fn test_flush_table_persists_job_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("app_flush_jobs");
-    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let create_ns = format!("CREATE SCHEMA IF NOT EXISTS {}", ns);
     let resp = server.execute_sql(&create_ns).await?;
-    assert_eq!(resp.status, ResponseStatus::Success, "CREATE NAMESPACE failed");
+    assert_eq!(resp.status, ResponseStatus::Success, "CREATE SCHEMA failed");
 
     let create_table = format!(
         "CREATE TABLE {}.logs (log_id TEXT PRIMARY KEY, message TEXT) WITH (TYPE = 'USER')",

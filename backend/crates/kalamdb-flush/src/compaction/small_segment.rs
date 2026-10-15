@@ -928,12 +928,12 @@ fn is_missing_parquet_file_error_msg(message: &str) -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use kalamdb_commons::{ids::SeqId, NamespaceId, TableName};
+    use kalamdb_commons::{ids::SeqId, SchemaId, TableName};
 
     use super::*;
 
     fn manifest_with_segments(row_counts: &[u64]) -> Manifest {
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("events"));
         let mut manifest = Manifest::new(table_id, None);
 
         for (index, row_count) in row_counts.iter().enumerate() {

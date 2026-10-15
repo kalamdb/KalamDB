@@ -146,11 +146,11 @@ async fn test_sql_transaction_forwarded_from_follower_preserves_atomic_staging()
     let namespace = unique_namespace("tx_cluster_http_forward");
 
     let create_namespace = meta_leader
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(
         create_namespace.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 
@@ -269,11 +269,11 @@ async fn test_sql_transaction_forwarded_from_follower_rejects_stream_table_write
     let namespace = unique_namespace("tx_cluster_stream_forward");
 
     let create_namespace = meta_leader
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(
         create_namespace.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 
@@ -356,11 +356,11 @@ async fn test_sql_transaction_forwarded_from_follower_unclosed_request_rolls_bac
     let namespace = unique_namespace("tx_cluster_unclosed_forward");
 
     let create_namespace = meta_leader
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(
         create_namespace.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 

@@ -11,14 +11,14 @@
 //! | [`deploy`] | `kalam deploy` |
 //! | [`functions`] | `kalam functions` |
 
-pub(crate) mod agent;
+pub mod agent;
 pub(crate) mod auth;
 pub mod context;
 pub mod db;
 pub mod deploy;
 pub mod dev;
 pub mod functions;
-pub(crate) mod instance;
+pub mod instance;
 pub(crate) mod io;
 pub mod lifecycle;
 pub mod project;

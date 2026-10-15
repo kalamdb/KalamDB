@@ -59,8 +59,8 @@ fn smoke_test_filter_pushdown() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed");
     execute_sql_as_root_via_client(&format!(
         "CREATE USER {} WITH PASSWORD 'pushdown_pass_123' ROLE 'user'",
         user

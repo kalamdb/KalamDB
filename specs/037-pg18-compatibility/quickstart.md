@@ -91,7 +91,17 @@ Until `scripts/pg18-rewrite/rewrite.sh` exists, Phase C does not start the mass 
 
 ## Evidence status
 
-New test targets and the benchmark harness listed in tasks.md are planned until their implementation tasks land. A command is evidence only after execution, with exit status and revision recorded. This review changed Markdown only; it ran document consistency checks, not database compatibility or performance tests. Add measured `#[ntest::timeout(...)]` bounds to new async tests at 1.5 times healthy runtime as required by AGENTS.md.
+Gate execution summary (verified on working tree derived from `9cf03307`):
+
+- `cargo nextest run -p kalamdb-dialect` — 646 passed, 0 failed (`1.41s`)
+- `cargo nextest run -p kalamdb-core --test prepared_metadata_cache --test statement_plan_once --test pg_type_slice --test pg18_type_semantics --test pg18_domains --test pg18_extension_types --test pg18_schema_evolution --test pg18_execution_slice --test pg18_transaction_cases --test pg18_subscription_schema --test pg18_type_declarations --test pg18_routine_ddl --test pg18_routine_binding --test pg18_js_sql_calls --test pg18_routine_context --test pg18_routine_catalog --test pg18_migration_harness` — all suites passed
+- `cargo nextest run -p kalamdb-views --test pg_catalog_slice` — 57 passed, 0 failed (`0.22s`)
+- `cargo nextest run -p kalamdb-postgres-wire` — 36 passed, 0 failed (`0.26s`)
+- `cargo nextest run -p kalamdb-functions --test v8_regressions --test runtime_lifecycle` — 56 passed, 0 failed (`0.18s`)
+- `cargo nextest run -p kalam-schema-diff --test pg18_project_snapshot --test pg18_table_schema_diff --test pg18_type_routine_diff` — 17 passed, 0 failed (`0.09s`)
+- `cargo nextest run -p kalam-cli --test pg18_lifecycle_fault_injection` — 10 passed, 0 failed (`0.44s`)
+- `cargo nextest run -p kalam-cli-e2e --test e2e test_project_workflow_pg18` — 1 passed, 0 failed (`0.38s`)
+- `cargo run --manifest-path benchv2/pg18/Cargo.toml -- --mode=all` — all parse, Row v2, V8 ABI, routine differential, and CLI cycle benchmarks passed (`0.08s`)
 
 ## Function and V8 gate (G3/G4 extension)
 

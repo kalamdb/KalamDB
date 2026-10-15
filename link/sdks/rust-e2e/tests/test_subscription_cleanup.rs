@@ -65,7 +65,7 @@ async fn sql(query: &str) {
 /// Create a namespace + table and return the fully-qualified table name.
 async fn setup_table(ns: &str, tbl: &str) -> String {
     let full = format!("{}.{}", ns, tbl);
-    sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     sleep(Duration::from_millis(30)).await;
     sql(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id BIGINT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",

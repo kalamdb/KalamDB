@@ -34,16 +34,21 @@ use crate::{
     system::{sessions::SessionsSnapshotCallback, system_view_table_definition},
 };
 
+pub mod attrdef;
 pub mod attribute;
 pub mod class;
 pub mod constraint;
 pub mod database;
+pub mod description;
 pub mod empty;
+pub mod enum_view;
 pub mod get_keywords;
 pub mod index;
+pub mod language;
 pub mod namespace;
 pub mod proc;
 pub use proc::{function_definition, function_result, identity_arguments};
+pub mod roles;
 pub mod settings;
 pub mod stat_activity;
 pub mod tables;
@@ -259,6 +264,40 @@ impl PgCatalogSchemaProvider {
             "pg_settings".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(settings::PgSettingsView))),
         );
+        providers.insert(
+            "pg_enum".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(enum_view::PgEnumView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_language".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(language::PgLanguageView))),
+        );
+        providers.insert(
+            "pg_attrdef".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(attrdef::PgAttrdefView::new(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_description".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(
+                description::PgDescriptionView::new(Arc::clone(&system_registry)),
+            ))),
+        );
+        providers.insert(
+            "pg_roles".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(roles::PgRolesView::roles(
+                Arc::clone(&system_registry),
+            )))),
+        );
+        providers.insert(
+            "pg_authid".to_string(),
+            Arc::new(PgCatalogViewTableProvider::new(Arc::new(roles::PgRolesView::authid(
+                Arc::clone(&system_registry),
+            )))),
+        );
         register_empty_pg_catalog_views(&mut providers);
 
         Self { providers }
@@ -272,7 +311,7 @@ fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn Tabl
     mod wire_empty_tables;
 
     for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
-        if name == "pg_settings" {
+        if providers.contains_key(name) {
             continue;
         }
         providers.insert(

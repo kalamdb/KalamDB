@@ -33,7 +33,7 @@ async fn test_scenario_11_multi_storage_basic() -> anyhow::Result<()> {
     // Step 2: Create a namespace
     // =========================================================
     let ns = unique_ns("multi_storage");
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     // =========================================================
@@ -185,7 +185,7 @@ async fn test_scenario_11_storage_constraints() -> anyhow::Result<()> {
     let ns = unique_ns("storage_constraints");
 
     // Create namespace
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     // Create table with specific configuration
@@ -246,7 +246,7 @@ async fn test_scenario_11_table_types_storage() -> anyhow::Result<()> {
     let ns = unique_ns("types_storage");
 
     // Create namespace
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     // Create USER table

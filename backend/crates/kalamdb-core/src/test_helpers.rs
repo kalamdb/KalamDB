@@ -151,7 +151,7 @@ pub fn init_test_app_context() -> Arc<TestDb> {
         // Ensure default namespace exists
         let namespaces = app_ctx.system_tables().namespaces();
         let default_namespace = SchemaId::default();
-        if namespaces.get_namespace_by_id(&default_namespace).unwrap().is_none() {
+        if namespaces.get_namespace(&default_namespace).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {
                     namespace_id: default_namespace,

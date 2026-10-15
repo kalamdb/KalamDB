@@ -259,7 +259,7 @@ pub fn check_shared_table_write_access_level(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{NamespaceId, TableName};
+    use kalamdb_commons::{SchemaId, TableName};
 
     use super::*;
 
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn test_session_error_display() {
         let err = SessionError::AccessDenied {
-            namespace_id: NamespaceId::system(),
+            namespace_id: SchemaId::system(),
             table_name:   TableName::new("users"),
             role:         Role::User,
             reason:       "Test reason".to_string(),

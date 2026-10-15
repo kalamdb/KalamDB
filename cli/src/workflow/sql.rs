@@ -41,7 +41,7 @@ pub(crate) async fn ensure_namespace_exists(
     namespace: &SchemaId,
     output: &WorkflowOutput,
 ) -> Result<()> {
-    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace.as_str());
+    let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace.as_str());
     {
         let _spinner = output.status_spinner(format!("ensuring namespace {}", namespace.as_str()));
         execute_single_statement(client, &sql, None, "namespace bootstrap").await?;

@@ -7,7 +7,7 @@
 //! - DROP TABLE IF EXISTS messages
 
 use kalamdb_commons::{
-    models::{NamespaceId, TableName},
+    models::{SchemaId, TableName},
     schemas::TableType,
 };
 
@@ -38,7 +38,7 @@ pub struct DropTableStatement {
     pub table_name: TableName,
 
     /// Namespace ID (defaults to current namespace)
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
 
     /// Table type (User, Shared, or Stream)
     pub table_type: TableKind,
@@ -56,7 +56,7 @@ impl DropTableStatement {
     /// - DROP STREAM TABLE name
     /// - DROP TABLE IF EXISTS name (defaults to USER TABLE)
     /// - DROP USER TABLE IF EXISTS name
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, current_namespace: &SchemaId) -> DdlResult<Self> {
         use crate::ddl::parsing;
 
         let sql_upper = sql.trim().to_uppercase();
@@ -86,7 +86,7 @@ impl DropTableStatement {
         let (namespace_id, table_name) = if let Some(dot_pos) = name.find('.') {
             let ns = &name[..dot_pos];
             let tbl = &name[dot_pos + 1..];
-            (NamespaceId::new(ns), TableName::new(tbl))
+            (SchemaId::new(ns), TableName::new(tbl))
         } else {
             (current_namespace.clone(), TableName::new(&name))
         };
@@ -104,8 +104,8 @@ impl DropTableStatement {
 mod tests {
     use super::*;
 
-    fn test_namespace() -> NamespaceId {
-        NamespaceId::new("test_app")
+    fn test_namespace() -> SchemaId {
+        SchemaId::new("test_app")
     }
 
     #[test]

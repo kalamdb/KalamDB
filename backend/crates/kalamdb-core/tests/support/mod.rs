@@ -49,7 +49,9 @@ fn next_test_ports() -> (u16, u16) {
 }
 
 pub fn create_executor(app_ctx: Arc<AppContext>) -> SqlExecutor {
-    SqlExecutor::new(app_ctx, Arc::new(HandlerRegistry::new()))
+    let registry = Arc::new(HandlerRegistry::new());
+    kalamdb_handlers::register_all_handlers(&registry, Arc::clone(&app_ctx), false);
+    SqlExecutor::new(app_ctx, registry)
 }
 
 pub async fn create_cluster_app_context() -> (Arc<AppContext>, TestDb) {
@@ -100,6 +102,11 @@ pub async fn create_cluster_app_context_with_shared_shards(
     app_ctx.executor().start().await.expect("start raft");
     app_ctx.executor().initialize_cluster().await.expect("initialize raft cluster");
     app_ctx.wire_raft_appliers();
+    kalamdb_jobs::init_job_manager(&app_ctx);
+    let _ = kalamdb_jobs::JobsManagerRuntime::start(
+        kalamdb_jobs::AppContextJobsExt::job_manager(app_ctx.as_ref()),
+        4,
+    );
 
     let storages = app_ctx.system_tables().storages();
     let storage_id = StorageId::from("local");

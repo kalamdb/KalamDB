@@ -50,7 +50,7 @@ fn smoke_all_datatypes_user_shared_stream() {
     let stream_full = format!("{}.{}", namespace, stream_table);
 
     // 0) Create namespace
-    execute_sql_as_root_via_http(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_http(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // Simplified column list (only types currently stable in end-to-end path).

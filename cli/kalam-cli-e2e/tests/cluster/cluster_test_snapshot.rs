@@ -72,7 +72,7 @@ fn test_snapshot_creation() {
     let client = create_cluster_client(base_url);
 
     cluster_runtime().block_on(async {
-        execute_query_with_retry(&client, &format!("CREATE NAMESPACE {}", namespace))
+        execute_query_with_retry(&client, &format!("CREATE SCHEMA {}", namespace))
             .await
             .expect("create namespace");
         execute_query_with_retry(
@@ -144,7 +144,7 @@ fn test_snapshot_with_high_write_load() {
     let client = create_cluster_client(base_url);
 
     cluster_runtime().block_on(async {
-        execute_query_with_retry(&client, &format!("CREATE NAMESPACE {}", namespace))
+        execute_query_with_retry(&client, &format!("CREATE SCHEMA {}", namespace))
             .await
             .expect("create namespace");
         execute_query_with_retry(

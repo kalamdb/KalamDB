@@ -1,8 +1,9 @@
-//! Empty `pg_catalog` table schemas for PostgreSQL GUI probes.
+//! Empty `pg_catalog` table schemas for PostgreSQL GUI probes that do not
+//! correspond to persisted KalamDB catalog entities (`pg_inherits`, `pg_matviews`, etc.).
 //!
-//! Sourced from datafusion-postgres P0/P1 backlog and Tabularis/DBeaver startup
-//! queries. Keep column sets minimal but name-compatible so `SELECT … LIMIT 0`
-//! and existence checks succeed.
+//! Populated catalog tables (`pg_attrdef`, `pg_description`, `pg_enum`,
+//! `pg_settings`, `pg_roles`, `pg_authid`, `pg_language`) are served by live
+//! `kalamdb-views` providers backed by authoritative `system.*` stores.
 //!
 //! Also compiled into `kalamdb-views` via `#[path]` so providers and wire share
 //! one definition without a crate dependency cycle.
@@ -10,19 +11,13 @@
 use datafusion::arrow::datatypes::{DataType, Field};
 
 /// Number of empty `pg_catalog` tables registered for wire client probes.
-pub const EMPTY_PG_CATALOG_TABLE_COUNT: usize = 19;
+pub const EMPTY_PG_CATALOG_TABLE_COUNT: usize = 12;
 
 /// Names of empty `pg_catalog` tables (for coverage tests).
 pub fn empty_pg_catalog_table_names() -> &'static [&'static str] {
     &[
-        "pg_attrdef",
-        "pg_description",
         "pg_inherits",
-        "pg_enum",
         "pg_matviews",
-        "pg_settings",
-        "pg_roles",
-        "pg_authid",
         "pg_auth_members",
         "pg_collation",
         "pg_am",
@@ -30,7 +25,6 @@ pub fn empty_pg_catalog_table_names() -> &'static [&'static str] {
         "pg_depend",
         "pg_tablespace",
         "pg_trigger",
-        "pg_language",
         "pg_extension",
         "pg_range",
         "pg_sequence",
@@ -49,46 +43,15 @@ fn bool_field(name: &str, nullable: bool) -> Field {
     Field::new(name, DataType::Boolean, nullable)
 }
 
-fn float64(name: &str, nullable: bool) -> Field {
-    Field::new(name, DataType::Float64, nullable)
-}
-
 /// Schema definitions for empty `pg_catalog` probe tables.
 pub fn empty_pg_catalog_table_defs() -> Vec<(&'static str, Vec<Field>)> {
     vec![
-        (
-            "pg_attrdef",
-            vec![
-                int64("oid", false),
-                int64("adrelid", false),
-                int64("adnum", false),
-                utf8("adbin", false),
-            ],
-        ),
-        (
-            "pg_description",
-            vec![
-                int64("objoid", false),
-                int64("classoid", false),
-                int64("objsubid", false),
-                utf8("description", false),
-            ],
-        ),
         (
             "pg_inherits",
             vec![
                 int64("inhrelid", false),
                 int64("inhparent", false),
                 int64("inhseqno", false),
-            ],
-        ),
-        (
-            "pg_enum",
-            vec![
-                int64("oid", false),
-                int64("enumtypid", false),
-                float64("enumsortorder", false),
-                utf8("enumlabel", false),
             ],
         ),
         (
@@ -101,48 +64,6 @@ pub fn empty_pg_catalog_table_defs() -> Vec<(&'static str, Vec<Field>)> {
                 bool_field("hasindexes", false),
                 bool_field("ispopulated", false),
                 utf8("definition", true),
-            ],
-        ),
-        (
-            "pg_settings",
-            vec![
-                utf8("name", false),
-                utf8("setting", false),
-                utf8("unit", true),
-                utf8("category", true),
-                utf8("short_desc", true),
-                utf8("context", true),
-                utf8("vartype", true),
-                utf8("source", true),
-                bool_field("pending_restart", true),
-            ],
-        ),
-        (
-            "pg_roles",
-            vec![
-                int64("oid", false),
-                utf8("rolname", false),
-                bool_field("rolsuper", false),
-                bool_field("rolinherit", false),
-                bool_field("rolcreaterole", false),
-                bool_field("rolcreatedb", false),
-                bool_field("rolcanlogin", false),
-                bool_field("rolreplication", false),
-                bool_field("rolbypassrls", false),
-            ],
-        ),
-        (
-            "pg_authid",
-            vec![
-                int64("oid", false),
-                utf8("rolname", false),
-                bool_field("rolsuper", false),
-                bool_field("rolinherit", false),
-                bool_field("rolcreaterole", false),
-                bool_field("rolcreatedb", false),
-                bool_field("rolcanlogin", false),
-                bool_field("rolreplication", false),
-                bool_field("rolbypassrls", false),
             ],
         ),
         (
@@ -225,16 +146,6 @@ pub fn empty_pg_catalog_table_defs() -> Vec<(&'static str, Vec<Field>)> {
             ],
         ),
         (
-            "pg_language",
-            vec![
-                int64("oid", false),
-                utf8("lanname", false),
-                int64("lanowner", true),
-                bool_field("lanispl", true),
-                bool_field("lanpltrusted", true),
-            ],
-        ),
-        (
             "pg_extension",
             vec![
                 int64("oid", false),
@@ -286,16 +197,28 @@ mod tests {
     }
 
     #[test]
-    fn covers_datafusion_postgres_p0_probe_tables() {
+    fn populated_catalog_tables_are_not_registered_as_empty_stubs() {
         let names = empty_pg_catalog_table_names();
-        for required in [
+        for populated in [
             "pg_settings",
             "pg_roles",
+            "pg_authid",
             "pg_description",
-            "pg_collation",
             "pg_attrdef",
+            "pg_enum",
+            "pg_language",
+            "pg_namespace",
+            "pg_class",
+            "pg_attribute",
+            "pg_type",
+            "pg_proc",
+            "pg_constraint",
+            "pg_index",
         ] {
-            assert!(names.contains(&required), "missing P0 empty shim {required}");
+            assert!(
+                !names.contains(&populated),
+                "populated catalog view {populated} must not be served from empty_tables"
+            );
         }
     }
 }

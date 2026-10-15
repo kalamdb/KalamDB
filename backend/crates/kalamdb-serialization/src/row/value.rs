@@ -74,6 +74,11 @@ impl<'a> Reader<'a> {
     }
 
     #[inline]
+    pub(crate) fn remaining(&self) -> usize {
+        self.rest.len()
+    }
+
+    #[inline]
     pub(crate) fn seek(&mut self, offset: usize) -> Result<()> {
         if offset > self.origin.len() {
             return Err(SerializationError::Truncated);
@@ -363,7 +368,7 @@ pub(crate) fn decode_value(
         (TAG_DECIMAL128, StorageDataType::Decimal { precision, scale }) => {
             let got_p = reader.u8()?;
             let got_s = reader.u8()? as i8;
-            if got_p != *precision || got_s != *scale {
+            if got_p > *precision || got_s != *scale {
                 return Err(SerializationError::Decode(format!(
                     "decimal metadata mismatch: stored ({got_p},{got_s}) schema \
                      ({precision},{scale})"
@@ -420,7 +425,8 @@ fn decode_struct(
 ) -> Result<ScalarValue> {
     let count = reader.u16()? as usize;
     let live_count = count.min(fields.len());
-    let mut columns: Vec<(Arc<Field>, ArrayRef)> = Vec::with_capacity(fields.len());
+    let mut fields_vec: Vec<Arc<Field>> = Vec::with_capacity(fields.len());
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(fields.len());
     for (index, field) in fields.iter().enumerate() {
         let value = if index < live_count {
             decode_value(reader, &field.data_type)?
@@ -431,12 +437,15 @@ fn decode_struct(
         let array = value.to_array().map_err(|err| {
             SerializationError::Decode(format!("struct field '{}': {err}", field.name))
         })?;
-        columns.push((Arc::new(Field::new(&field.name, array.data_type().clone(), true)), array));
+        fields_vec.push(Arc::new(Field::new(&field.name, array.data_type().clone(), true)));
+        columns.push(array);
     }
     for _ in live_count..count {
         skip_value(reader)?;
     }
-    let struct_array = StructArray::from(columns);
+    let struct_array =
+        StructArray::try_new_with_length(Fields::from(fields_vec), columns, None, 1)
+            .map_err(|err| SerializationError::Decode(format!("struct array: {err}")))?;
     Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 
@@ -502,7 +511,13 @@ pub(crate) fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
                 .iter()
                 .map(|field| new_null_array(&arrow_type(&field.data_type), 1))
                 .collect();
-            let array = StructArray::new(arrow_fields, columns, Some(NullBuffer::new_null(1)));
+            let array = StructArray::try_new_with_length(
+                arrow_fields,
+                columns,
+                Some(NullBuffer::new_null(1)),
+                1,
+            )
+            .expect("valid null struct array");
             ScalarValue::Struct(Arc::new(array))
         },
         StorageDataType::List(inner) => {

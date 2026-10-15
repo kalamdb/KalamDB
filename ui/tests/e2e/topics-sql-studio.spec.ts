@@ -20,7 +20,7 @@ test("SQL Studio creates a topic and the Topics UI shows the new chrome", async 
 
     await test.step("create a namespaced topic from SQL Studio", async () => {
       await runSql(page, `
-CREATE NAMESPACE ${ns};
+CREATE SCHEMA ${ns};
 CREATE TOPIC ${topicId} PARTITIONS 2;
 `.trim());
       await page.getByRole("tab", { name: /^Log/ }).click();

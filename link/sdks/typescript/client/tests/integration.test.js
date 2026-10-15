@@ -60,13 +60,13 @@ test('KalamDB Integration Tests', async (t) => {
 
   await t.test('should create namespace', async () => {
     await client.connect();
-    const result = await client.query('CREATE NAMESPACE IF NOT EXISTS test_sdk');
+    const result = await client.query('CREATE SCHEMA IF NOT EXISTS test_sdk');
     assert.strictEqual(result.status, 'success');
   });
 
   await t.test('should create table', async () => {
     await client.connect();
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_sdk');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_sdk');
     
     const result = await client.query(`
       CREATE TABLE IF NOT EXISTS test_sdk.users (
@@ -81,7 +81,7 @@ test('KalamDB Integration Tests', async (t) => {
 
   await t.test('should insert data using query method', async () => {
     await client.connect();
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_sdk');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_sdk');
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_sdk.test_insert (
         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -98,7 +98,7 @@ test('KalamDB Integration Tests', async (t) => {
 
   await t.test('should query inserted data', async () => {
     await client.connect();
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_sdk');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_sdk');
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_sdk.test_query (
         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -126,7 +126,7 @@ test('KalamDB Integration Tests', async (t) => {
 
   await t.test('should subscribe to table changes', { timeout: 10000 }, async () => {
     await client.connect();
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_sdk');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_sdk');
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_sdk.test_subscribe (
         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),

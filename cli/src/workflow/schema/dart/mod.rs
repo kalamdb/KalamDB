@@ -93,6 +93,7 @@ fn dart_context(
     let (mut classes, result_aliases) = procedure_types(snapshot, names, procedures);
     let mut named_classes = Vec::new();
     let mut enums = Vec::new();
+    let mut aliases = Vec::new();
     for (id, ty) in &snapshot.types {
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
@@ -121,13 +122,22 @@ fn dart_context(
                     true,
                 ));
             },
+            ContractTypeKind::Domain { base_type, .. } => {
+                aliases.push(AliasContext {
+                    ident:    names.type_ident(id).to_string(),
+                    alias_of: crate::workflow::schema::types::render_field_type(
+                        base_type,
+                        names,
+                        crate::workflow::schema::types::TargetLang::Dart,
+                    ),
+                });
+            },
             ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. }
             | ContractTypeKind::TopicPayload { .. } => {},
         }
     }
 
-    let mut aliases = Vec::new();
     for table in snapshot.tables.values() {
         let canonical_id = canonical_row_type_id(table).to_string();
         named_classes.push(row_class_context(
@@ -341,7 +351,8 @@ CREATE TABLE chat.users (
     fn comments_emit_dart_docs() {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';",
+             CREATE TYPE chat.address AS (city TEXT);
+             COMMENT ON TYPE chat.address IS 'Postal address';",
             "public",
         )
         .unwrap();
@@ -367,10 +378,10 @@ CREATE TABLE chat.users (
   id BIGINT PRIMARY KEY,
   email TEXT NOT NULL
 ) ROW TYPE chat.user;
-CREATE PROCEDURE chat.create_message(user_id TEXT NOT NULL, body TEXT NOT NULL)
+CREATE FUNCTION chat.create_message(user_id TEXT NOT NULL, body TEXT NOT NULL)
 RETURNS chat.user;
 CREATE PROCEDURE chat.ping();
-CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
+CREATE FUNCTION app.send_message(body JSON NOT NULL) RETURNS JSON;
 "#,
             "public",
         )
@@ -408,7 +419,7 @@ CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
             ),
             "{source}"
         );
-        assert!(source.contains("CALL chat.create_message($1, $2)"), "{source}");
+        assert!(source.contains("SELECT chat.create_message($1, $2) AS result"), "{source}");
         assert!(source.contains("input.userId, input.body"), "{source}");
         assert!(source.contains("final result = _kalamCallResult(response);"), "{source}");
         assert!(source.contains("ChatUser.fromJson(_asJsonMap(result))"), "{source}");

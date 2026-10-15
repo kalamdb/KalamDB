@@ -36,7 +36,7 @@ pub fn register_all_handlers(
     app_context: Arc<AppContext>,
     enforce_password_complexity: bool,
 ) {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
     use kalamdb_sql::classifier::SqlStatementKind;
 
     register_admin_handlers(registry, app_context.clone());
@@ -53,7 +53,7 @@ pub fn register_all_handlers(
         registry,
         SqlStatementKind::Subscribe(SubscribeStatement {
             select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
-            namespace:    NamespaceId::new("_placeholder"),
+            namespace:    SchemaId::new("_placeholder"),
             table_name:   TableName::new("_placeholder"),
             options:      SubscriptionOptions::default(),
         }),

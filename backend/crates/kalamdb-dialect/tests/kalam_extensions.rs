@@ -1,8 +1,8 @@
-use kalamdb_commons::{models::NamespaceId, Role};
+use kalamdb_commons::{models::SchemaId, Role};
 use kalamdb_dialect::classifier::{SqlStatement, SqlStatementKind};
 
 fn classify(sql: &str, role: Role) -> Result<SqlStatement, String> {
-    SqlStatement::classify_and_parse(sql, &NamespaceId::new("public"), role)
+    SqlStatement::classify_and_parse(sql, &SchemaId::new("public"), role)
         .map_err(|error| error.user_message().to_string())
 }
 
@@ -57,26 +57,27 @@ fn ordinary_create_trigger_is_not_captured() {
 }
 
 #[test]
-fn ordinary_create_procedure_is_not_captured() {
-    for sql in [
-        "CREATE PROCEDURE api.health() LANGUAGE sql AS $$ SELECT 1 $$",
-        "CREATE OR REPLACE PROCEDURE api.health() LANGUAGE plpgsql AS $$ BEGIN END $$",
+fn ordinary_create_procedure_parses_through_shared_routine_ddl() {
+    for (sql, expected_lang) in [
+        ("CREATE PROCEDURE api.health() LANGUAGE sql AS $$ SELECT 1 $$", "SQL"),
+        ("CREATE OR REPLACE PROCEDURE api.health() LANGUAGE plpgsql AS $$ BEGIN END $$", "PLPGSQL"),
     ] {
-        let result = classify(sql, Role::Dba);
-        assert!(
-            result.is_err()
-                || result.is_ok_and(|statement| {
-                    !matches!(statement.kind(), SqlStatementKind::CreateProcedure(_))
-                }),
-            "{sql} must not become a Kalam procedure"
-        );
+        let statement = classify(sql, Role::Dba)
+            .unwrap_or_else(|err| panic!("{sql} must parse as PostgreSQL routine DDL: {err}"));
+        match statement.kind() {
+            SqlStatementKind::CreateProcedure(stmt) => {
+                assert_eq!(stmt.language.as_deref(), Some(expected_lang));
+                assert!(stmt.body.is_some());
+            },
+            other => panic!("expected CreateProcedure, got {other:?}"),
+        }
     }
 }
 
 #[test]
 fn javascript_procedure_stays_kalam() {
     let statement = classify(
-        "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$",
+        "CREATE PROCEDURE api.health() LANGUAGE JAVASCRIPT AS $$ return; $$",
         Role::Dba,
     )
     .expect("javascript procedure");

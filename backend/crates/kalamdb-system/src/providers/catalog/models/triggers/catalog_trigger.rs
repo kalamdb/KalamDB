@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{NamespaceId, RoutineId, TopicId, TriggerId, UserId},
+    models::{SchemaId, RoutineId, TopicId, TriggerId, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub struct CatalogTrigger {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:      NamespaceId,
+    pub namespace_id:      SchemaId,
     #[column(
         id = 3,
         ordinal = 3,

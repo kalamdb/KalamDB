@@ -21,7 +21,7 @@ fn smoke_shared_table_rls_rejects_access_level() {
     let table = generate_unique_table("rls_access_tbl");
     let full = format!("{namespace}.{table}");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
 
     let create_err = execute_sql_as_root_via_client(&format!(
@@ -78,7 +78,7 @@ fn smoke_shared_table_rls_default_deny_and_policy_grant() {
     let service = generate_unique_namespace("rls_svc");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (
@@ -202,7 +202,7 @@ fn smoke_shared_table_rls_plan_cache_isolation() {
     let bob = generate_unique_namespace("rls_bob");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL) WITH (TYPE='SHARED')"
@@ -268,7 +268,7 @@ fn smoke_shared_table_rls_on_conflict_rejected_for_subjects() {
     let user = generate_unique_namespace("rls_conflict_user");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL) WITH (TYPE='SHARED')"
@@ -332,7 +332,7 @@ fn smoke_shared_table_rls_live_grant_revoke() {
     let password = "smoke_pass_123";
     let query = format!("SELECT id, owner_id, body FROM {full}");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (
@@ -426,7 +426,7 @@ fn smoke_shared_table_rls_multi_subscriber_conversation_membership() {
     let password = "smoke_pass_123";
     const SUBSCRIBER_COUNT: usize = 10;
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {messages_full} (
@@ -563,7 +563,7 @@ fn smoke_shared_table_rls_raw_download_denied() {
     let user = generate_unique_namespace("rls_dl_user");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id TEXT PRIMARY KEY, body TEXT) WITH (TYPE='SHARED')"
@@ -620,7 +620,7 @@ fn smoke_shared_table_rls_role_policy_targets() {
     let service = generate_unique_namespace("rls_role_svc");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, label TEXT) WITH \
@@ -704,7 +704,7 @@ fn smoke_shared_table_rls_membership_cache_and_performance() {
     let user = generate_unique_namespace("rls_mem_user");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {messages_full} (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) WITH \
@@ -785,7 +785,7 @@ fn smoke_shared_table_rls_membership_revoke_invalidates_cache() {
     let user = generate_unique_namespace("rls_revoke_user");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {messages_full} (id TEXT PRIMARY KEY, group_id TEXT NOT NULL) WITH \
@@ -850,7 +850,7 @@ fn smoke_shared_table_rls_null_not_policy_and_union_bypass() {
     let user = generate_unique_namespace("rls_null_user");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {namespace}"))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {full} (id TEXT PRIMARY KEY, owner_id TEXT) WITH (TYPE='SHARED')"

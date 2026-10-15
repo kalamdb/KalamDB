@@ -1,10 +1,10 @@
 //! Modifier fixtures for routine signatures and composite attributes.
 
-use kalamdb_commons::{models::NamespaceId, KalamDataType};
+use kalamdb_commons::{models::SchemaId, KalamDataType};
 use kalamdb_dialect::ddl::{CreateProcedureStatement, CreateTypeBody, CreateTypeStatement};
 
-fn app() -> NamespaceId {
-    NamespaceId::new("app")
+fn app() -> SchemaId {
+    SchemaId::new("app")
 }
 
 #[test]
@@ -51,13 +51,23 @@ fn ast_keeps_routine_argument_modifiers() {
 }
 
 #[test]
-fn procedure_returns_stays_on_the_procedure() {
+fn function_returns_keeps_syntactic_modifier_and_procedure_returns_is_rejected() {
     let statement = CreateProcedureStatement::parse(
+        "CREATE FUNCTION app.charge(amount numeric(12,2)) RETURNS numeric(4,1)",
+        &app(),
+    )
+    .expect("function");
+    let returned = statement.return_type.expect("RETURNS is recorded on the function");
+    assert_eq!(returned.syntactic_modifier.as_deref(), Some("4,1"));
+    assert_eq!(statement.parameters[0].type_ref.syntactic_modifier.as_deref(), Some("12,2"));
+
+    let err = CreateProcedureStatement::parse(
         "CREATE PROCEDURE app.charge(amount numeric(12,2)) RETURNS numeric(4,1)",
         &app(),
     )
-    .expect("procedure");
-    let returned = statement.return_type.expect("RETURNS is recorded on the procedure");
-    assert_eq!(returned.syntactic_modifier.as_deref(), Some("4,1"));
-    assert_eq!(statement.parameters[0].type_ref.syntactic_modifier.as_deref(), Some("12,2"));
+    .expect_err("CREATE PROCEDURE ... RETURNS must be rejected in PG18");
+    assert!(
+        err.contains("CREATE PROCEDURE cannot declare a RETURNS clause"),
+        "unexpected error: {err}"
+    );
 }

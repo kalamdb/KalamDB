@@ -22,7 +22,7 @@ pub fn decode_row_metadata(bytes: &[u8]) -> Result<RowMetadata> {
             "unsupported row format: legacy commit sequence header".to_string(),
         ));
     }
-    if header.flags & crate::object::FLAG_COLUMN_OFFSETS == 0 {
+    if header.flags & (crate::object::FLAG_COLUMN_OFFSETS | crate::object::FLAG_ROW_BODY_V2) == 0 {
         return Err(crate::error::SerializationError::Decode(
             "unsupported row format: missing column offset table".to_string(),
         ));

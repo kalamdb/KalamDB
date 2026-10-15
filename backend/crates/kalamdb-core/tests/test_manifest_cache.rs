@@ -119,12 +119,12 @@ fn test_update_after_flush_atomic_write() {
 
 //     // Service 1: Add entries
 //     let service1 = ManifestService::new(Arc::clone(&backend), "/tmp/test".to_string(),
-// config.clone());     let namespace1 = NamespaceId::new("ns1");
+// config.clone());     let namespace1 = SchemaId::new("ns1");
 //     let table1 = TableName::new("products");
 //     let table_id1 = TableId::new(namespace1.clone(), table1.clone());
 //     let manifest1 = create_test_manifest("ns1", "products", Some("u_123"));
 
-//     let namespace2 = NamespaceId::new("ns2");
+//     let namespace2 = SchemaId::new("ns2");
 //     let table2 = TableName::new("orders");
 //     let table_id2 = TableId::new(namespace2.clone(), table2.clone());
 //     let manifest2 = create_test_manifest("ns2", "orders", None);

@@ -177,6 +177,9 @@ fn kalam_procedure_batch(
     let mut syntax_example = StringBuilder::new();
 
     for routine in routines {
+        if routine.language.as_deref() == Some("INTERNAL") {
+            continue;
+        }
         let return_type = routine.return_type_name.as_deref().unwrap_or("void");
         specific_catalog.append_value(CATALOG_NAME);
         specific_schema.append_value(routine.namespace_id.as_str());
@@ -184,10 +187,12 @@ fn kalam_procedure_batch(
         routine_catalog.append_value(CATALOG_NAME);
         routine_schema.append_value(routine.namespace_id.as_str());
         routine_name.append_value(&routine.name);
-        routine_type.append_value("PROCEDURE");
-        is_deterministic.append_value(false);
+        routine_type.append_value(routine.kind.as_str());
+        is_deterministic.append_value(
+            routine.volatility == kalamdb_commons::models::RoutineVolatility::Immutable,
+        );
         data_type.append_value(return_type);
-        function_type.append_value("SQL");
+        function_type.append_value(routine.language.as_deref().unwrap_or("SQL"));
         description.append_option(routine.comment.as_deref());
         syntax_example.append_value(routine.routine_id.as_str());
     }

@@ -11,7 +11,13 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "drizzle-orm": ["./node_modules/drizzle-orm"],
+      "drizzle-orm/*": ["./node_modules/drizzle-orm/*"],
+      "@kalamdb/client": ["./node_modules/@kalamdb/client"],
+      "@kalamdb/client/*": ["./node_modules/@kalamdb/client/*"]
+    }
   },
   "include": ["src", "tests"]
 }

@@ -425,7 +425,7 @@ crate::impl_simple_system_table_provider!(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{datatypes::KalamDataType, NamespaceId, TableId, TableName};
+    use kalamdb_commons::{datatypes::KalamDataType, SchemaId, TableId, TableName};
     use kalamdb_store::{entity_store::EntityStore, test_utils::InMemoryBackend};
 
     use super::*;
@@ -459,7 +459,7 @@ mod tests {
         let provider = ManifestTableProvider::new(backend.clone());
 
         // Insert test entries directly via store
-        let table_id = TableId::new(NamespaceId::new("ns1"), TableName::new("tbl1"));
+        let table_id = TableId::new(SchemaId::new("ns1"), TableName::new("tbl1"));
         let manifest = Manifest::new(table_id, None);
         let entry =
             ManifestCacheEntry::new(manifest, Some("etag123".to_string()), 1000, SyncState::InSync);

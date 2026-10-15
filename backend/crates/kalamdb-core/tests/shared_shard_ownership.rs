@@ -30,7 +30,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
     let mut owners = HashSet::new();
     for i in 0..16 {
         let namespace = format!("own{i}");
-        execute_ok(&executor, &observer, &format!("CREATE NAMESPACE {namespace}")).await;
+        execute_ok(&executor, &observer, &format!("CREATE SCHEMA {namespace}")).await;
         execute_ok(
             &executor,
             &observer,
@@ -98,7 +98,7 @@ async fn shared_owners_concurrent_versions_transactions_and_catalog_recovery() {
         assert!(versions.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
-    execute_ok(&executor, &observer, "CREATE NAMESPACE ownhot").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA ownhot").await;
     execute_ok(
         &executor,
         &observer,

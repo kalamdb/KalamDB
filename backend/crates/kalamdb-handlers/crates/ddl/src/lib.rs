@@ -16,7 +16,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use datafusion::arrow::datatypes::Schema as ArrowSchema;
 use kalamdb_commons::{
-    models::{NamespaceId, RoutineId, StorageId, TableName, TriggerId},
+    models::{
+        RoutineId, RoutineKind, RoutineNullSafety, RoutineParallelSafety, RoutineVolatility,
+        SchemaId, StorageId, TableName, TriggerId,
+    },
     RoutineSecurityMode, TableType,
 };
 use kalamdb_core::{app_context::AppContext, sql::executor::handler_registry::HandlerRegistry};
@@ -24,14 +27,15 @@ use kalamdb_handlers_support::register_typed_handler;
 use kalamdb_sql::{
     classifier::SqlStatementKind,
     ddl::{
-        AlterPolicyOperation, AlterPolicyStatement, AlterTableStatement, AlterTriggerStatement,
-        AlterTypeOperation, AlterTypeStatement, CommentOnStatement, CommentOnTarget,
+        AlterDomainOperation, AlterDomainStatement, AlterPolicyOperation, AlterPolicyStatement,
+        AlterRoutineStatement, AlterTableStatement, AlterTriggerStatement, AlterTypeOperation,
+        AlterTypeStatement, CommentOnStatement, CommentOnTarget, CreateDomainStatement,
         CreatePolicyStatement, CreateProcedureStatement, CreateTableStatement,
         CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, CreateViewStatement,
-        DescribeTableStatement, DropPolicyStatement, DropProcedureStatement, DropTableStatement,
-        DropTriggerStatement, DropTypeStatement, ExecuteGrantee, GrantExecuteStatement,
-        PolicyCommand, PolicyTarget, RevokeExecuteStatement, ShowTableStatsStatement,
-        ShowTablesStatement, TypeReference,
+        DescribeTableStatement, DropDomainStatement, DropPolicyStatement, DropProcedureStatement,
+        DropTableStatement, DropTriggerStatement, DropTypeStatement, ExecuteGrantee, ExecuteTarget,
+        GrantExecuteStatement, PolicyCommand, PolicyTarget, RevokeExecuteStatement,
+        ShowTableStatsStatement, ShowTablesStatement, TypeReference,
     },
 };
 
@@ -39,7 +43,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
-            name:          NamespaceId::new("_placeholder"),
+            name:          SchemaId::new("_placeholder"),
             if_not_exists: false,
         }),
         schema::CreateSchemaHandler::new(app_context.clone()),
@@ -49,7 +53,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::AlterSchema(kalamdb_sql::ddl::AlterSchemaStatement {
-            name:    NamespaceId::new("_placeholder"),
+            name:    SchemaId::new("_placeholder"),
             options: HashMap::new(),
         }),
         schema::AlterSchemaHandler::new(app_context.clone()),
@@ -59,7 +63,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::DropSchema(kalamdb_sql::ddl::DropSchemaStatement {
-            name:      NamespaceId::new("_placeholder"),
+            name:      SchemaId::new("_placeholder"),
             if_exists: false,
             cascade:   false,
         }),
@@ -77,7 +81,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::UseSchema(kalamdb_sql::ddl::UseSchemaStatement {
-            namespace: NamespaceId::new("_placeholder"),
+            namespace: SchemaId::new("_placeholder"),
         }),
         schema::UseSchemaHandler::new(app_context.clone()),
         SqlStatementKind::UseSchema
@@ -146,7 +150,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::CreateTable(CreateTableStatement {
             table_name:              TableName::new("_placeholder"),
-            namespace_id:            NamespaceId::new("_placeholder"),
+            namespace_id:            SchemaId::new("_placeholder"),
             table_type:              TableType::Shared,
             schema:                  Arc::new(ArrowSchema::empty()),
             column_defaults:         HashMap::new(),
@@ -169,7 +173,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateView(CreateViewStatement {
-            namespace_id:  NamespaceId::new("_placeholder"),
+            namespace_id:  SchemaId::new("_placeholder"),
             view_name:     TableName::new("_placeholder"),
             or_replace:    false,
             if_not_exists: false,
@@ -185,7 +189,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::AlterTable(AlterTableStatement {
             table_name:   TableName::new("_placeholder"),
-            namespace_id: NamespaceId::new("_placeholder"),
+            namespace_id: SchemaId::new("_placeholder"),
             operation:    kalamdb_sql::ddl::ColumnOperation::Drop {
                 column_name: "_placeholder".to_string(),
             },
@@ -198,7 +202,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::DropTable(DropTableStatement {
             table_name:   TableName::new("_placeholder"),
-            namespace_id: NamespaceId::new("_placeholder"),
+            namespace_id: SchemaId::new("_placeholder"),
             table_type:   kalamdb_sql::ddl::TableKind::Shared,
             if_exists:    false,
         }),
@@ -250,7 +254,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::CreateType(CreateTypeStatement {
-            namespace_id:  NamespaceId::new("_placeholder"),
+            namespace_id:  SchemaId::new("_placeholder"),
             name:          String::new(),
             if_not_exists: false,
             body:          CreateTypeBody::Composite { fields: Vec::new() },
@@ -263,7 +267,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::AlterType(AlterTypeStatement {
-            namespace_id: NamespaceId::new("_placeholder"),
+            namespace_id: SchemaId::new("_placeholder"),
             name:         String::new(),
             operation:    AlterTypeOperation::AddAttribute {
                 field:    String::new(),
@@ -285,8 +289,9 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::DropType(DropTypeStatement {
-            namespace_id: NamespaceId::new("_placeholder"),
+            namespace_id: SchemaId::new("_placeholder"),
             name:         String::new(),
+            targets:      Vec::new(),
             if_exists:    false,
             cascade:      false,
         }),
@@ -296,17 +301,73 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
 
     register_typed_handler!(
         registry,
-        SqlStatementKind::CreateProcedure(CreateProcedureStatement {
-            routine_id:   RoutineId::new("_placeholder.proc"),
-            namespace_id: NamespaceId::new("_placeholder"),
+        SqlStatementKind::CreateDomain(CreateDomainStatement {
+            namespace_id: SchemaId::new("_placeholder"),
             name:         String::new(),
-            or_replace:   false,
-            parameters:   Vec::new(),
-            return_type:  None,
-            language:     None,
-            security:     RoutineSecurityMode::Invoker,
-            body:         None,
-            comment:      None,
+            base_type:    TypeReference {
+                namespace_id:       None,
+                name:               "text".to_string(),
+                data_type:          Some(kalamdb_commons::KalamDataType::Text),
+                syntactic_modifier: None,
+                is_array:           false,
+                not_null:           false,
+                nonempty:           false,
+            },
+            default_expr: None,
+            collation:    None,
+            not_null:     false,
+            checks:       Vec::new(),
+        }),
+        catalog_type::CreateDomainHandler::new(app_context.clone()),
+        SqlStatementKind::CreateDomain
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::AlterDomain(AlterDomainStatement {
+            namespace_id: SchemaId::new("_placeholder"),
+            name:         String::new(),
+            operation:    AlterDomainOperation::DropDefault,
+        }),
+        catalog_type::AlterDomainHandler::new(app_context.clone()),
+        SqlStatementKind::AlterDomain
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::DropDomain(DropDomainStatement {
+            namespace_id: SchemaId::new("_placeholder"),
+            name:         String::new(),
+            targets:      Vec::new(),
+            if_exists:    false,
+            cascade:      false,
+        }),
+        catalog_type::DropDomainHandler::new(app_context.clone()),
+        SqlStatementKind::DropDomain
+    );
+
+    register_typed_handler!(
+        registry,
+        SqlStatementKind::CreateProcedure(CreateProcedureStatement {
+            routine_id:      RoutineId::new("_placeholder.proc"),
+            namespace_id:    SchemaId::new("_placeholder"),
+            name:            String::new(),
+            kind:            RoutineKind::Procedure,
+            or_replace:      false,
+            parameters:      Vec::new(),
+            return_type:     None,
+            returns_setof:   false,
+            returns_table:   Vec::new(),
+            language:        None,
+            security:        RoutineSecurityMode::Invoker,
+            volatility:      RoutineVolatility::Volatile,
+            null_safety:     RoutineNullSafety::CalledOnNullInput,
+            parallel_safety: RoutineParallelSafety::Unsafe,
+            cost:            None,
+            rows:            None,
+            config_changes:  Vec::new(),
+            body:            None,
+            comment:         None,
         }),
         procedure::CreateProcedureHandler::new(app_context.clone()),
         SqlStatementKind::CreateProcedure
@@ -314,9 +375,26 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
 
     register_typed_handler!(
         registry,
+        SqlStatementKind::AlterRoutine(AlterRoutineStatement {
+            routine_id:    RoutineId::new("_placeholder.proc"),
+            namespace_id:  SchemaId::new("_placeholder"),
+            name:          String::new(),
+            expected_kind: RoutineKind::Procedure,
+            action:        kalamdb_sql::ddl::AlterRoutineAction::RenameTo {
+                new_name: String::new(),
+            },
+        }),
+        procedure::AlterRoutineHandler::new(app_context.clone()),
+        SqlStatementKind::AlterRoutine
+    );
+
+    register_typed_handler!(
+        registry,
         SqlStatementKind::DropProcedure(DropProcedureStatement {
-            routine_id: RoutineId::new("_placeholder.proc"),
-            if_exists:  false,
+            routine_id:    RoutineId::new("_placeholder.proc"),
+            expected_kind: RoutineKind::Procedure,
+            if_exists:     false,
+            cascade:       false,
         }),
         procedure::DropProcedureHandler::new(app_context.clone()),
         SqlStatementKind::DropProcedure
@@ -326,7 +404,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::CommentOn(CommentOnStatement {
             target:    CommentOnTarget::Type {
-                namespace_id: NamespaceId::new("_placeholder"),
+                namespace_id: SchemaId::new("_placeholder"),
                 name:         String::new(),
             },
             comment:   None,
@@ -340,7 +418,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::CreateSchedule(CreateScheduleStatement {
             schedule_id:  ScheduleId::new("_placeholder.schedule"),
-            namespace_id: NamespaceId::new("_placeholder"),
+            namespace_id: SchemaId::new("_placeholder"),
             name:         String::new(),
             routine_id:   RoutineId::new("_placeholder.proc"),
             cron:         None,
@@ -374,7 +452,7 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
         registry,
         SqlStatementKind::CreateTrigger(CreateTriggerStatement {
             trigger_id:       TriggerId::new("_placeholder.trig"),
-            namespace_id:     NamespaceId::new("_placeholder"),
+            namespace_id:     SchemaId::new("_placeholder"),
             name:             String::new(),
             topic_id:         kalamdb_commons::models::TopicId::new("_placeholder.topic"),
             routine_id:       RoutineId::new("_placeholder.proc"),
@@ -411,6 +489,10 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::GrantExecute(GrantExecuteStatement {
+            target:     ExecuteTarget::Routine {
+                routine_id:    RoutineId::new("_placeholder.proc"),
+                expected_kind: RoutineKind::Procedure,
+            },
             routine_id: RoutineId::new("_placeholder.proc"),
             grantee:    ExecuteGrantee::Public,
         }),
@@ -421,6 +503,10 @@ pub fn register_ddl_handlers(registry: &HandlerRegistry, app_context: Arc<AppCon
     register_typed_handler!(
         registry,
         SqlStatementKind::RevokeExecute(RevokeExecuteStatement {
+            target:     ExecuteTarget::Routine {
+                routine_id:    RoutineId::new("_placeholder.proc"),
+                expected_kind: RoutineKind::Procedure,
+            },
             routine_id: RoutineId::new("_placeholder.proc"),
             grantee:    ExecuteGrantee::Public,
         }),

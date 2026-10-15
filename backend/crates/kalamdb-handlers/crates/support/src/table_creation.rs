@@ -146,6 +146,20 @@ pub fn build_table_definition(
         }
     }
 
+    if let Some(existing_type) = app_context
+        .system_tables()
+        .catalog_stores()
+        .find_type(&stmt.namespace_id, stmt.table_name.as_str())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    {
+        if existing_type.kind != kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "type {}.{} already exists",
+                existing_type.namespace_id, existing_type.name
+            )));
+        }
+    }
+
     // Resolve storage
     let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
@@ -320,7 +334,7 @@ pub fn validate_column_default(
 
 pub fn apply_column_type_ref(
     app_context: &AppContext,
-    current_schema: &kalamdb_commons::models::NamespaceId,
+    current_schema: &kalamdb_commons::models::SchemaId,
     column: &mut kalamdb_commons::models::schemas::ColumnDefinition,
     type_ref: &TypeReference,
 ) -> Result<(), KalamDbError> {

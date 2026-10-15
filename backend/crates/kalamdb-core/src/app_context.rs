@@ -309,6 +309,10 @@ impl AppContext {
             // Create system table providers registry FIRST (needed by StorageRegistry and
             // information_schema)
             let system_tables = Arc::new(SystemTablesRegistry::new(storage_backend.clone()));
+            system_tables
+                .catalog_stores()
+                .ensure_builtin_extension_catalog()
+                .expect("Failed to initialize built-in extension catalog");
 
             // Create storage registry (uses StoragesTableProvider from system_tables)
             let storage_registry = Arc::new(StorageRegistry::new(
@@ -574,6 +578,10 @@ impl AppContext {
             DataFusionSessionFactory::register_routine_catalog_functions(
                 &app_ctx.base_session_context,
                 app_ctx.system_tables(),
+            );
+            DataFusionSessionFactory::register_file_storage_functions(
+                &app_ctx.base_session_context,
+                app_ctx.file_storage_service(),
             );
 
             // Set AppContext in SchemaRegistry to break circular dependency

@@ -57,7 +57,7 @@ const TEST_TABLES = ['messages', 'counters', 'encoded', 'composite'] as const;
 export async function setupSchema(suffix: string): Promise<string> {
   const schemaName = `react_e2e_${suffix}`;
   await runSql(`DROP SCHEMA IF EXISTS ${schemaName}`);
-  await runSql(`CREATE NAMESPACE ${schemaName}`);
+  await runSql(`CREATE SCHEMA ${schemaName}`);
   await runSql(`CREATE TABLE ${schemaName}.messages (
     id TEXT PRIMARY KEY,
     room_id TEXT NOT NULL,

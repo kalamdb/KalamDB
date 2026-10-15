@@ -1,6 +1,9 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{ArtifactId, NamespaceId, RoutineId, RoutineSecurityMode, TypeId, UserId},
+    models::{
+        ArtifactId, RoutineId, RoutineKind, RoutineNullSafety, RoutineParallelSafety,
+        RoutineSecurityMode, RoutineVolatility, SchemaId, TypeId, UserId,
+    },
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -28,7 +31,7 @@ pub struct CatalogRoutine {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:       NamespaceId,
+    pub namespace_id:       SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -167,6 +170,83 @@ pub struct CatalogRoutine {
     )]
     #[serde(default)]
     pub inline_artifact_id: Option<ArtifactId>,
+    #[column(
+        id = 16,
+        ordinal = 16,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Routine kind: FUNCTION or PROCEDURE"
+    )]
+    #[serde(default)]
+    pub kind:               RoutineKind,
+    #[column(
+        id = 17,
+        ordinal = 17,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Volatility: IMMUTABLE, STABLE, or VOLATILE"
+    )]
+    #[serde(default)]
+    pub volatility:         RoutineVolatility,
+    #[column(
+        id = 18,
+        ordinal = 18,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Null handling: CALLED ON NULL INPUT or RETURNS NULL ON NULL INPUT"
+    )]
+    #[serde(default)]
+    pub null_safety:        RoutineNullSafety,
+    #[column(
+        id = 19,
+        ordinal = 19,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Parallel safety: UNSAFE, RESTRICTED, or SAFE"
+    )]
+    #[serde(default)]
+    pub parallel_safety:    RoutineParallelSafety,
+    #[column(
+        id = 20,
+        ordinal = 20,
+        data_type(KalamDataType::Double),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Estimated execution cost"
+    )]
+    #[serde(default)]
+    pub cost:               Option<f64>,
+    #[column(
+        id = 21,
+        ordinal = 21,
+        data_type(KalamDataType::BigInt),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Estimated result rows for set-returning functions"
+    )]
+    #[serde(default)]
+    pub rows:               Option<i64>,
+    #[column(
+        id = 22,
+        ordinal = 22,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Routine configuration parameters (SET/RESET)"
+    )]
+    #[serde(default)]
+    pub config_params:      Option<String>,
 }
 
 impl kalamdb_commons::KSerializable for CatalogRoutine {}

@@ -37,7 +37,7 @@ fn cluster_test_leader_only_flush_jobs() {
     let _ =
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
@@ -288,7 +288,7 @@ fn cluster_test_job_claiming() {
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 
@@ -349,7 +349,7 @@ fn cluster_test_flush_job_nodes_completion() {
         execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     thread::sleep(Duration::from_millis(20));
 
-    execute_on_node(&leader_url, &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     thread::sleep(Duration::from_millis(20));
 

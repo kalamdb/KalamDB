@@ -210,7 +210,7 @@ fn smoke_table_export_import_shared_via_api_and_show_export() {
     let source_fqn = format!("{}.{}", namespace, source_table);
     let target_fqn = format!("{}.{}", namespace, target_table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', \
@@ -360,7 +360,7 @@ fn smoke_table_export_user_requires_user_id() {
     let table = generate_unique_table("tbl_xfer_user");
     let table_fqn = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='USER')",
@@ -431,7 +431,7 @@ fn smoke_table_export_import_user_table_flushed_and_hot_data() {
     ))
     .expect("create transfer user");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='USER', \

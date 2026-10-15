@@ -29,7 +29,7 @@ fn test_cli_list_tables() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     let _ =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -78,7 +78,7 @@ fn test_cli_describe_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     let _ =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -142,7 +142,7 @@ fn test_cli_batch_file_execution() {
         &sql_file,
         format!(
             r#"-- SQL-file importer must ignore semicolons in comments;
-CREATE NAMESPACE {};
+CREATE SCHEMA {};
 CREATE USER {} WITH PASSWORD 'demo123' ROLE 'user';
 /* Block comments with ; should not split the file. */
 CREATE TABLE {} (id BIGINT PRIMARY KEY, name VARCHAR) WITH (TYPE='USER', FLUSH_POLICY='rows:10');

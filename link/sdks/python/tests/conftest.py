@@ -71,7 +71,7 @@ async def temp_namespace(client):
     Prevents integration tests from leaving tables behind in the shared DB.
     """
     namespace = f"test_{uuid.uuid4().hex[:12]}"
-    await client.query(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
+    await client.query(f"CREATE SCHEMA IF NOT EXISTS {namespace}")
     yield namespace
     try:
         await client.query(f"DROP SCHEMA IF EXISTS {namespace} CASCADE")

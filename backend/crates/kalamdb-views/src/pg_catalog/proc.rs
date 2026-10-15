@@ -8,13 +8,17 @@ use datafusion::arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use kalamdb_commons::{datatypes::KalamDataType, Role};
+use kalamdb_commons::{
+    datatypes::KalamDataType,
+    models::{RoutineKind, RoutineParameterMode},
+    Role,
+};
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, SystemTablesRegistry};
 
 use crate::{
     error::RegistryError,
     pg_catalog::{
-        namespace_oid, proc_oid,
+        namespace_oid, proc_oid, stable_oid,
         type_mapping::{pg_type_oid, PG_VOID_OID},
         PgCatalogView,
     },
@@ -116,19 +120,41 @@ impl PgCatalogView for PgProcView {
             oids.append_value(proc_oid(namespace, &routine.name));
             names.append_value(&routine.name);
             namespaces.append_value(namespace_oid(namespace));
-            kinds.append_value("p");
+            let prokind = if routine.language.as_deref() == Some("INTERNAL") {
+                "f"
+            } else {
+                routine.kind.prokind()
+            };
+            kinds.append_value(prokind);
             return_types.append_value(routine_prorettype(&routine));
             arg_types.append_value(proargtypes_text(parameters));
             if parameters.is_empty() {
                 arg_names.append_null();
+                arg_modes.append_null();
+                all_arg_types.append_null();
             } else {
                 for parameter in parameters {
                     arg_names.values().append_value(&parameter.name);
                 }
                 arg_names.append(true);
+
+                let has_non_in = parameters
+                    .iter()
+                    .any(|p| p.mode != RoutineParameterMode::In);
+                if has_non_in {
+                    for parameter in parameters {
+                        arg_modes.values().append_value(parameter.mode.pg_arg_mode());
+                    }
+                    arg_modes.append(true);
+                    for parameter in parameters {
+                        all_arg_types.values().append_value(parameter_type_oid(parameter));
+                    }
+                    all_arg_types.append(true);
+                } else {
+                    arg_modes.append_null();
+                    all_arg_types.append_null();
+                }
             }
-            arg_modes.append_null();
-            all_arg_types.append_null();
         }
 
         RecordBatch::try_new(
@@ -150,6 +176,11 @@ impl PgCatalogView for PgProcView {
 }
 
 pub(crate) fn routine_prorettype(routine: &CatalogRoutine) -> i64 {
+    if let Some(type_id) = routine.return_type_id.as_ref() {
+        if let Some((ns, name)) = type_id.as_str().split_once('.') {
+            return stable_oid(&["type", ns, name]);
+        }
+    }
     if let Some(data_type) = routine.return_data_type {
         return pg_type_oid(&data_type);
     }
@@ -171,6 +202,11 @@ fn proargtypes_text(parameters: &[CatalogRoutineParameter]) -> String {
 }
 
 fn parameter_type_oid(parameter: &CatalogRoutineParameter) -> i64 {
+    if let Some(type_id) = parameter.type_id.as_ref() {
+        if let Some((ns, name)) = type_id.as_str().split_once('.') {
+            return stable_oid(&["type", ns, name]);
+        }
+    }
     parameter
         .builtin_data_type()
         .map(|data_type| pg_type_oid(&data_type))
@@ -208,20 +244,32 @@ pub fn function_result(routine: &CatalogRoutine) -> String {
     }
 }
 
-/// Reconstruct a `CREATE PROCEDURE` statement for GUI browsers.
+/// Reconstruct a `CREATE FUNCTION` or `CREATE PROCEDURE` statement for GUI browsers.
 pub fn function_definition(
     routine: &CatalogRoutine,
     parameters: &[CatalogRoutineParameter],
 ) -> String {
     let arguments = identity_arguments(parameters);
-    let result = function_result(routine);
-    let header = format!(
-        "CREATE OR REPLACE PROCEDURE {}.{}({}) RETURNS {}",
-        routine.namespace_id.as_str(),
-        routine.name,
-        arguments,
-        result
-    );
+    let header = match routine.kind {
+        RoutineKind::Function => {
+            let result = function_result(routine);
+            format!(
+                "CREATE OR REPLACE FUNCTION {}.{}({}) RETURNS {}",
+                routine.namespace_id.as_str(),
+                routine.name,
+                arguments,
+                result
+            )
+        },
+        RoutineKind::Procedure => {
+            format!(
+                "CREATE OR REPLACE PROCEDURE {}.{}({})",
+                routine.namespace_id.as_str(),
+                routine.name,
+                arguments
+            )
+        },
+    };
     match routine.body.as_deref() {
         Some(body) if !body.trim().is_empty() => format!("{header}\n{body}"),
         _ => header,

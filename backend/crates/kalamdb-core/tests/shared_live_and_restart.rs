@@ -30,7 +30,7 @@ async fn shared_table_restart_keeps_owner_and_version_frontier() {
     let (app, db) = create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE restart_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA restart_ns").await;
     execute_ok(
         &executor,
         &observer,
@@ -150,7 +150,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE live_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA live_ns").await;
     let mut owner = GroupId::DataSharedShard(0);
     let mut table_name = String::new();
     for i in 0..8 {

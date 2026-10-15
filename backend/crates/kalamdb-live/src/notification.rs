@@ -874,7 +874,7 @@ mod tests {
 
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, ConnectionId, LiveQueryId, NamespaceId, TableName},
+        models::{rows::Row, ConnectionId, LiveQueryId, SchemaId, TableName},
         NodeId,
     };
     use kalamdb_row_filter::parse_where_clause;
@@ -898,7 +898,7 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
-        TableId::new(NamespaceId::from(ns), TableName::from(table))
+        TableId::new(SchemaId::from(ns), TableName::from(table))
     }
 
     fn make_row(id: i64, body: &str, seq: i64) -> Row {

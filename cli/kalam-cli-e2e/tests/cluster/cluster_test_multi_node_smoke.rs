@@ -25,11 +25,11 @@ fn cluster_test_smoke_crud_any_node() {
         let namespace = generate_unique_namespace(&format!("smoke_node{}", node_idx));
 
         // Create namespace
-        match execute_on_node(url, &format!("CREATE NAMESPACE {}", namespace)) {
-            Ok(_) => println!("    ✓ CREATE NAMESPACE succeeded"),
+        match execute_on_node(url, &format!("CREATE SCHEMA {}", namespace)) {
+            Ok(_) => println!("    ✓ CREATE SCHEMA succeeded"),
             Err(e) => {
                 // Might fail on follower if write routing not implemented
-                println!("    ⚠ CREATE NAMESPACE: {}", e);
+                println!("    ⚠ CREATE SCHEMA: {}", e);
                 continue;
             },
         }
@@ -144,13 +144,16 @@ fn cluster_test_smoke_table_types_any_node() {
 
     // Setup namespace on leader
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create different table types
     execute_on_node(
         &urls[0],
-        &format!("CREATE USER TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING)", namespace),
+        &format!(
+            "CREATE TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING) WITH (TYPE = 'USER')",
+            namespace
+        ),
     )
     .expect("Failed to create user table");
 
@@ -234,7 +237,7 @@ fn cluster_test_smoke_auth_any_node() {
 
     // Setup namespace and user on leader
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create user with proper syntax: CREATE USER user WITH PASSWORD 'pass' ROLE 'role'
@@ -292,7 +295,7 @@ fn cluster_test_smoke_complex_queries_any_node() {
 
     // Setup
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -424,7 +427,7 @@ fn cluster_test_smoke_write_routing() {
     for (node_idx, url) in urls.iter().enumerate() {
         let ns = format!("{}_{}", namespace, node_idx);
 
-        match execute_on_node(url, &format!("CREATE NAMESPACE {}", ns)) {
+        match execute_on_node(url, &format!("CREATE SCHEMA {}", ns)) {
             Ok(_) => {
                 if let Some(ref leader) = leader_url {
                     if url == leader {
@@ -475,7 +478,7 @@ fn cluster_test_mixed_statement_batch_routes_per_group() {
     let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_on_node(&urls[0], &format!("DROP USER {}", user));
 
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         &urls[0],

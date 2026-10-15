@@ -9,7 +9,7 @@
 //! - DROP SCHEMA app CASCADE
 //! - DROP SCHEMA IF EXISTS app CASCADE
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::{parsing, DdlResult};
 
@@ -17,7 +17,7 @@ use crate::ddl::{parsing, DdlResult};
 #[derive(Debug, Clone, PartialEq)]
 pub struct DropSchemaStatement {
     /// Namespace name to drop
-    pub name: NamespaceId,
+    pub name: SchemaId,
 
     /// If true, don't error if namespace doesn't exist
     pub if_exists: bool,
@@ -53,7 +53,7 @@ impl DropSchemaStatement {
             parsing::parse_create_drop_statement(&sql_without_cascade, command, "IF EXISTS")?;
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             if_exists,
             cascade,
         })

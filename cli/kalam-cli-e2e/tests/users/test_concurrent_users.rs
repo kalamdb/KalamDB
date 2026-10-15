@@ -37,7 +37,7 @@ fn test_concurrent_users_isolation() {
 
     let setup_start = Instant::now();
     if let Err(e) =
-        execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
     {
         eprintln!("⚠️  Failed to create namespace: {}. Skipping test.", e);
         return;

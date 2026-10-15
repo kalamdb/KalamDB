@@ -425,7 +425,7 @@ mod tests {
         let domain = kalamdb_commons::ids::VersionDomain::new(
             "hist",
             kalamdb_commons::TableId::new(
-                kalamdb_commons::NamespaceId::new("ns"),
+                kalamdb_commons::SchemaId::new("ns"),
                 kalamdb_commons::models::TableName::new("items"),
             ),
             0,

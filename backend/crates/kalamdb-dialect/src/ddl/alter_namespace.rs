@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use serde_json::Value as JsonValue;
 
 use crate::ddl::DdlResult;
@@ -15,7 +15,7 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlterSchemaStatement {
     /// Namespace name to alter
-    pub name: NamespaceId,
+    pub name: SchemaId,
 
     /// Options to set
     pub options: HashMap<String, JsonValue>,
@@ -84,7 +84,7 @@ impl AlterSchemaStatement {
         let options = Self::parse_options(options_part)?;
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             options,
         })
     }
@@ -120,7 +120,7 @@ impl AlterSchemaStatement {
         );
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             options,
         })
     }

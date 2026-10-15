@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use arrow::datatypes::DataType;
 use kalamdb_commons::{
     datatypes::{assert_finite_type_graph, TypeGraphNode},
-    models::{NamespaceId, RoutineId, TypeId},
+    models::{SchemaId, RoutineId, TypeId},
 };
 
 use super::{
@@ -20,11 +20,13 @@ use crate::{
     ddl::{
         create_type::{matching_paren, parse_type_reference, split_qualified_ident, take_ident},
         topic_commands::{parse_alter_topic_add_source, parse_create_topic},
+        AlterDomainOperation, AlterDomainStatement, AlterRoutineAction, AlterRoutineStatement,
         AlterTypeOperation, AlterTypeStatement, CommentOnStatement, CommentOnTarget,
-        CreateNamespaceStatement, CreateProcedureStatement, CreateSchemaStatement,
-        CreateTriggerStatement, CreateTypeBody, CreateTypeStatement, EnumValueNeighbor,
-        GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement, TypeReference,
-        UseSchemaStatement,
+        CreateDomainStatement, CreateNamespaceStatement, CreateProcedureStatement,
+        CreateSchemaStatement, CreateTriggerStatement, CreateTypeBody, CreateTypeStatement,
+        DomainCheckClause, DropDomainStatement, DropProcedureStatement, DropTypeStatement,
+        EnumValueNeighbor, GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement,
+        TypeReference, UseSchemaStatement,
     },
     split_statements,
 };
@@ -57,6 +59,8 @@ pub fn compile_contract(
     let mut triggers: BTreeMap<String, ContractTrigger> = BTreeMap::new();
     let mut table_alias: HashMap<String, TypeId> = HashMap::new();
     let mut alters = Vec::new();
+    let mut domain_alters = Vec::new();
+    let mut routine_alters = Vec::new();
     let mut pending_grants = Vec::new();
     let mut pending_revokes = Vec::new();
     let mut pending_comments = Vec::new();
@@ -82,6 +86,8 @@ pub fn compile_contract(
                 &mut triggers,
                 &mut table_alias,
                 &mut alters,
+                &mut domain_alters,
+                &mut routine_alters,
                 &mut pending_grants,
                 &mut pending_revokes,
                 &mut pending_comments,
@@ -92,15 +98,55 @@ pub fn compile_contract(
     for alter in alters {
         apply_alter(&alter, &mut types)?;
     }
+    for alter in domain_alters {
+        apply_domain_alter(&alter, &mut types)?;
+    }
+    for alter in routine_alters {
+        apply_routine_alter(&alter, &mut routines)?;
+    }
     for grant in pending_grants {
-        let routine = routines.get_mut(grant.routine_id.as_str()).ok_or_else(|| {
-            ContractError::new(format!("GRANT EXECUTE on unknown procedure '{}'", grant.routine_id))
-        })?;
-        routine.grants.insert(grant.grantee);
+        match &grant.target {
+            crate::ddl::ExecuteTarget::Routine { routine_id, .. } => {
+                let routine = routines.get_mut(routine_id.as_str()).ok_or_else(|| {
+                    ContractError::new(format!(
+                        "GRANT EXECUTE on unknown routine '{routine_id}'"
+                    ))
+                })?;
+                routine.grants.insert(grant.grantee);
+            },
+            crate::ddl::ExecuteTarget::AllInSchema {
+                namespace_id,
+                expected_kind,
+            } => {
+                for routine in routines.values_mut() {
+                    if routine.schema == namespace_id.as_str()
+                        && routine.kind == *expected_kind
+                    {
+                        routine.grants.insert(grant.grantee.clone());
+                    }
+                }
+            },
+        }
     }
     for revoke in pending_revokes {
-        if let Some(routine) = routines.get_mut(revoke.routine_id.as_str()) {
-            routine.grants.remove(&revoke.grantee);
+        match &revoke.target {
+            crate::ddl::ExecuteTarget::Routine { routine_id, .. } => {
+                if let Some(routine) = routines.get_mut(routine_id.as_str()) {
+                    routine.grants.remove(&revoke.grantee);
+                }
+            },
+            crate::ddl::ExecuteTarget::AllInSchema {
+                namespace_id,
+                expected_kind,
+            } => {
+                for routine in routines.values_mut() {
+                    if routine.schema == namespace_id.as_str()
+                        && routine.kind == *expected_kind
+                    {
+                        routine.grants.remove(&revoke.grantee);
+                    }
+                }
+            },
         }
     }
 
@@ -146,6 +192,15 @@ enum RawType {
         labels:  Vec<String>,
         comment: Option<String>,
     },
+    Domain {
+        schema:       String,
+        base_type:    ContractField,
+        collation:    Option<String>,
+        default_expr: Option<String>,
+        not_null:     bool,
+        checks:       Vec<DomainCheckClause>,
+        comment:      Option<String>,
+    },
     Alias {
         schema:   String,
         table_id: String,
@@ -170,12 +225,14 @@ fn apply_statement(
     triggers: &mut BTreeMap<String, ContractTrigger>,
     table_alias: &mut HashMap<String, TypeId>,
     alters: &mut Vec<AlterTypeStatement>,
+    domain_alters: &mut Vec<AlterDomainStatement>,
+    routine_alters: &mut Vec<AlterRoutineStatement>,
     pending_grants: &mut Vec<GrantExecuteStatement>,
     pending_revokes: &mut Vec<RevokeExecuteStatement>,
     pending_comments: &mut Vec<CommentOnStatement>,
 ) -> Result<(), ContractError> {
     let current = search_path.first().cloned().unwrap_or_else(|| default_schema.to_string());
-    let ns = NamespaceId::new(current.clone());
+    let ns = SchemaId::new(current.clone());
 
     if let Ok(stmt) = SetSearchPathStatement::parse(sql) {
         *search_path = stmt.schemas.iter().map(|s| fold_ident(s.as_str())).collect();
@@ -206,9 +263,54 @@ fn apply_statement(
         alters.push(stmt);
         return Ok(());
     }
-    if starts_ci(sql, "CREATE PROCEDURE") || starts_ci(sql, "CREATE OR REPLACE PROCEDURE") {
+    if starts_ci(sql, "DROP TYPE") {
+        let stmt = DropTypeStatement::parse(sql, &ns).map_err(err(path))?;
+        for (target_ns, target_name) in stmt.targets {
+            let key = format!("{}.{}", fold_ident(target_ns.as_str()), fold_ident(&target_name));
+            types.remove(&key);
+        }
+        return Ok(());
+    }
+    if starts_ci(sql, "CREATE DOMAIN") || starts_ci(sql, "CREATE OR REPLACE DOMAIN") {
+        let stmt = CreateDomainStatement::parse(sql, &ns).map_err(err(path))?;
+        ingest_create_domain(stmt, &current, types)?;
+        return Ok(());
+    }
+    if starts_ci(sql, "ALTER DOMAIN") {
+        let stmt = AlterDomainStatement::parse(sql, &ns).map_err(err(path))?;
+        domain_alters.push(stmt);
+        return Ok(());
+    }
+    if starts_ci(sql, "DROP DOMAIN") {
+        let stmt = DropDomainStatement::parse(sql, &ns).map_err(err(path))?;
+        for target in stmt.targets {
+            let key = format!(
+                "{}.{}",
+                fold_ident(target.namespace_id.as_str()),
+                fold_ident(&target.name)
+            );
+            types.remove(&key);
+        }
+        return Ok(());
+    }
+    if starts_ci(sql, "CREATE PROCEDURE")
+        || starts_ci(sql, "CREATE OR REPLACE PROCEDURE")
+        || starts_ci(sql, "CREATE FUNCTION")
+        || starts_ci(sql, "CREATE OR REPLACE FUNCTION")
+    {
         let stmt = CreateProcedureStatement::parse(sql, &ns).map_err(err(path))?;
         ingest_procedure(stmt, &current, routines)?;
+        return Ok(());
+    }
+    if starts_ci(sql, "ALTER FUNCTION") || starts_ci(sql, "ALTER PROCEDURE") {
+        let stmt = AlterRoutineStatement::parse(sql, &ns).map_err(err(path))?;
+        routine_alters.push(stmt);
+        return Ok(());
+    }
+    if starts_ci(sql, "DROP FUNCTION") || starts_ci(sql, "DROP PROCEDURE") {
+        let stmt = DropProcedureStatement::parse(sql, &ns).map_err(err(path))?;
+        let folded = fold_ident(stmt.routine_id.as_str());
+        routines.remove(&folded);
         return Ok(());
     }
     if starts_ci(sql, "CREATE TRIGGER") {
@@ -318,6 +420,33 @@ fn ingest_create_type(
     Ok(())
 }
 
+fn ingest_create_domain(
+    stmt: CreateDomainStatement,
+    current_schema: &str,
+    types: &mut BTreeMap<String, RawType>,
+) -> Result<(), ContractError> {
+    let schema = fold_ident(stmt.namespace_id.as_str());
+    let name = fold_ident(&stmt.name);
+    let type_id = format!("{schema}.{name}");
+    if types.contains_key(&type_id) {
+        return Err(ContractError::new(format!("duplicate domain or type '{type_id}'")));
+    }
+    let base_type = field_from_ref(name, stmt.base_type, current_schema);
+    types.insert(
+        type_id,
+        RawType::Domain {
+            schema,
+            base_type,
+            collation: stmt.collation,
+            default_expr: stmt.default_expr,
+            not_null: stmt.not_null,
+            checks: stmt.checks,
+            comment: None,
+        },
+    );
+    Ok(())
+}
+
 fn ingest_procedure(
     stmt: CreateProcedureStatement,
     current_schema: &str,
@@ -347,6 +476,7 @@ fn ingest_procedure(
             routine_id,
             schema,
             name,
+            kind: stmt.kind,
             parameters,
             return_type,
             language: stmt.language,
@@ -516,7 +646,7 @@ fn parse_contract_table(
             ));
         }
         row_alias = Some(TypeId::from_parts(
-            Some(&NamespaceId::new(&alias_schema)),
+            Some(&SchemaId::new(&alias_schema)),
             &fold_ident(&alias.name),
         ));
         leftover = rest.trim_start();
@@ -578,9 +708,6 @@ fn table_kind_from_sql(sql: &str) -> ContractTableKind {
 
 fn using_kalamdb_kind(sql: &str) -> Option<ContractTableKind> {
     let upper = sql.to_ascii_uppercase();
-    if !upper.contains("USING KALAMDB") {
-        return None;
-    }
     let normalized = upper.replace('"', "'").replace(' ', "");
     if normalized.contains("TYPE='STREAM'") {
         Some(ContractTableKind::Stream)
@@ -588,8 +715,10 @@ fn using_kalamdb_kind(sql: &str) -> Option<ContractTableKind> {
         Some(ContractTableKind::Shared)
     } else if normalized.contains("TYPE='USER'") {
         Some(ContractTableKind::User)
-    } else {
+    } else if upper.contains("USING KALAMDB") {
         Some(ContractTableKind::Unspecified)
+    } else {
+        None
     }
 }
 
@@ -616,7 +745,7 @@ fn apply_comment_on(
                 "COMMENT ON TYPE unknown type '{namespace_id}.{name}'"
             )))
         },
-        CommentOnTarget::Procedure(routine_id) => {
+        CommentOnTarget::Procedure(routine_id) | CommentOnTarget::Function(routine_id) => {
             let folded = fold_ident(routine_id.as_str());
             let key = if routines.contains_key(&folded) {
                 folded
@@ -624,7 +753,7 @@ fn apply_comment_on(
                 routine_id.as_str().to_string()
             };
             let routine = routines.get_mut(&key).ok_or_else(|| {
-                ContractError::new(format!("COMMENT ON PROCEDURE unknown procedure '{routine_id}'"))
+                ContractError::new(format!("COMMENT ON unknown routine '{routine_id}'"))
             })?;
             routine.comment = stmt.comment.clone();
             Ok(())
@@ -636,6 +765,7 @@ fn set_raw_type_comment(raw: &mut RawType, comment: Option<String>) {
     match raw {
         RawType::Composite { comment: slot, .. }
         | RawType::Enum { comment: slot, .. }
+        | RawType::Domain { comment: slot, .. }
         | RawType::Alias { comment: slot, .. } => {
             *slot = comment;
         },
@@ -646,6 +776,7 @@ fn raw_type_comment(raw: &RawType) -> Option<String> {
     match raw {
         RawType::Composite { comment, .. }
         | RawType::Enum { comment, .. }
+        | RawType::Domain { comment, .. }
         | RawType::Alias { comment, .. } => comment.clone(),
     }
 }
@@ -713,6 +844,9 @@ fn apply_alter(
                 | RawType::Enum {
                     schema: current, ..
                 }
+                | RawType::Domain {
+                    schema: current, ..
+                }
                 | RawType::Alias {
                     schema: current, ..
                 } => {
@@ -739,6 +873,7 @@ fn apply_alter(
     let schema = match &raw {
         RawType::Composite { schema, .. }
         | RawType::Enum { schema, .. }
+        | RawType::Domain { schema, .. }
         | RawType::Alias { schema, .. } => schema.clone(),
     };
     let name = match &stmt.operation {
@@ -750,6 +885,156 @@ fn apply_alter(
         return Err(ContractError::new(format!("type '{new_key}' already exists")));
     }
     types.insert(new_key, raw);
+    Ok(())
+}
+
+fn apply_domain_alter(
+    stmt: &AlterDomainStatement,
+    types: &mut BTreeMap<String, RawType>,
+) -> Result<(), ContractError> {
+    let key = format!("{}.{}", stmt.namespace_id.as_str(), stmt.name).to_ascii_lowercase();
+    let mut raw = types.remove(&key).ok_or_else(|| {
+        ContractError::new(format!(
+            "ALTER DOMAIN on unknown domain '{}.{}'",
+            stmt.namespace_id, stmt.name
+        ))
+    })?;
+    let mut target_name = stmt.name.clone();
+    match (&mut raw, &stmt.operation) {
+        (RawType::Domain { default_expr, .. }, AlterDomainOperation::SetDefault { expr }) => {
+            *default_expr = Some(expr.clone());
+        },
+        (RawType::Domain { default_expr, .. }, AlterDomainOperation::DropDefault) => {
+            *default_expr = None;
+        },
+        (
+            RawType::Domain { not_null, .. },
+            AlterDomainOperation::SetNotNull | AlterDomainOperation::AddNotNull { .. },
+        ) => {
+            *not_null = true;
+        },
+        (RawType::Domain { not_null, .. }, AlterDomainOperation::DropNotNull) => {
+            *not_null = false;
+        },
+        (RawType::Domain { checks, .. }, AlterDomainOperation::AddCheck { clause }) => {
+            checks.push(clause.clone());
+        },
+        (
+            RawType::Domain {
+                checks, not_null, ..
+            },
+            AlterDomainOperation::DropConstraint {
+                name, if_exists, ..
+            },
+        ) => {
+            let before_len = checks.len();
+            checks.retain(|c| {
+                !c.name
+                    .as_ref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            });
+            if checks.len() == before_len && name.to_ascii_lowercase().contains("not_null") {
+                *not_null = false;
+            } else if checks.len() == before_len && !*if_exists {
+                return Err(ContractError::new(format!(
+                    "constraint '{name}' for domain '{}.{}' does not exist",
+                    stmt.namespace_id, stmt.name
+                )));
+            }
+        },
+        (
+            RawType::Domain { checks, .. },
+            AlterDomainOperation::RenameConstraint { from, to },
+        ) => {
+            let Some(check) = checks.iter_mut().find(|c| {
+                c.name
+                    .as_ref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(from))
+            }) else {
+                return Err(ContractError::new(format!(
+                    "constraint '{from}' for domain '{}.{}' does not exist",
+                    stmt.namespace_id, stmt.name
+                )));
+            };
+            check.name = Some(to.clone());
+        },
+        (
+            RawType::Domain { checks, .. },
+            AlterDomainOperation::ValidateConstraint { name },
+        ) => {
+            if let Some(check) = checks.iter_mut().find(|c| {
+                c.name
+                    .as_ref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            }) {
+                check.validated = true;
+            }
+        },
+        (RawType::Domain { .. }, AlterDomainOperation::OwnerTo { .. }) => {},
+        (RawType::Domain { .. }, AlterDomainOperation::RenameTo { new_name }) => {
+            target_name = fold_ident(new_name);
+        },
+        (
+            RawType::Domain {
+                schema: current, ..
+            },
+            AlterDomainOperation::SetSchema { schema },
+        ) => {
+            *current = fold_ident(schema.as_str());
+        },
+        _ => {
+            return Err(ContractError::new(format!(
+                "ALTER DOMAIN '{}.{}' is not valid on a non-domain type",
+                stmt.namespace_id, stmt.name
+            )));
+        },
+    }
+    let schema = match &raw {
+        RawType::Domain { schema, .. } => schema.clone(),
+        _ => unreachable!(),
+    };
+    let new_key = format!("{schema}.{target_name}").to_ascii_lowercase();
+    if new_key != key && types.contains_key(&new_key) {
+        return Err(ContractError::new(format!("domain '{new_key}' already exists")));
+    }
+    types.insert(new_key, raw);
+    Ok(())
+}
+
+fn apply_routine_alter(
+    stmt: &AlterRoutineStatement,
+    routines: &mut BTreeMap<String, ContractRoutine>,
+) -> Result<(), ContractError> {
+    let key = fold_ident(stmt.routine_id.as_str());
+    let mut routine = routines.remove(&key).ok_or_else(|| {
+        ContractError::new(format!(
+            "ALTER {} on unknown routine '{}'",
+            stmt.expected_kind.as_str(),
+            stmt.routine_id
+        ))
+    })?;
+    match &stmt.action {
+        AlterRoutineAction::RenameTo { new_name } => {
+            let folded_name = fold_ident(new_name);
+            routine.name = folded_name.clone();
+            routine.routine_id =
+                RoutineId::from_parts(Some(&SchemaId::new(&routine.schema)), &folded_name);
+        },
+        AlterRoutineAction::SetSchema { new_namespace_id } => {
+            let folded_schema = fold_ident(new_namespace_id.as_str());
+            routine.schema = folded_schema.clone();
+            routine.routine_id =
+                RoutineId::from_parts(Some(&SchemaId::new(&folded_schema)), &routine.name);
+        },
+        AlterRoutineAction::Options { security, .. } => {
+            if let Some(sec) = security {
+                routine.security = *sec;
+            }
+        },
+        AlterRoutineAction::OwnerTo { .. } | AlterRoutineAction::DependsOnExtension { .. } => {},
+    }
+    let new_key = routine.routine_id.as_str().to_string();
+    routines.insert(new_key, routine);
     Ok(())
 }
 
@@ -792,7 +1077,7 @@ fn field_from_ref(name: String, type_ref: TypeReference, current_schema: &str) -
             .map(|ns| fold_ident(ns.as_str()))
             .unwrap_or_else(|| current_schema.to_string());
         let type_name = fold_ident(&type_ref.name);
-        let id = TypeId::from_parts(Some(&NamespaceId::new(&schema)), &type_name);
+        let id = TypeId::from_parts(Some(&SchemaId::new(&schema)), &type_name);
         (id.to_string(), Some(id))
     };
     ContractField {
@@ -839,6 +1124,13 @@ fn assert_named_type_graphs(types: &BTreeMap<String, ContractType>) -> Result<()
             ContractTypeKind::RowAlias { source } => TypeGraphNode {
                 children:    vec![source.clone()],
                 field_count: 1,
+            },
+            ContractTypeKind::Domain { base_type, .. } => {
+                let children = base_type.type_id.iter().cloned().collect();
+                TypeGraphNode {
+                    children,
+                    field_count: 1,
+                }
             },
             _ => TypeGraphNode::default(),
         };
@@ -920,6 +1212,20 @@ fn resolve_snapshot(
             },
             RawType::Enum { labels, .. } => ContractTypeKind::Enum {
                 labels: labels.clone(),
+            },
+            RawType::Domain {
+                base_type,
+                collation,
+                default_expr,
+                not_null,
+                checks,
+                ..
+            } => ContractTypeKind::Domain {
+                base_type:    base_type.clone(),
+                collation:    collation.clone(),
+                default_expr: default_expr.clone(),
+                not_null:     *not_null,
+                checks:       checks.clone(),
             },
             RawType::Alias { table_id, .. } => {
                 if !snapshot_tables.contains_key(table_id) {
@@ -1114,7 +1420,7 @@ mod tests {
              CREATE TYPE chat.person FROM TABLE chat.users;",
             "public",
         );
-        assert!(snapshot.is_err(), "second alias for the same table must fail");
+        assert!(snapshot.is_err(), "FROM TABLE must fail in PostgreSQL 18");
 
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
@@ -1138,9 +1444,9 @@ mod tests {
     fn arrays_resolve_to_list() {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.recipient_result AS (user_id TEXT NOT NULL);
+             CREATE TYPE chat.recipient_result AS (user_id TEXT);
              CREATE TYPE chat.send_message_result AS (
-               recipients chat.recipient_result[] NOT NULL NONEMPTY
+               recipients chat.recipient_result[]
              );",
             "public",
         )
@@ -1213,24 +1519,24 @@ mod tests {
         let before = compile_contract_sql(
             "CREATE SCHEMA chat;
              CREATE TYPE chat.address AS (city TEXT);
-             CREATE PROCEDURE chat.get_user(id TEXT)
+             CREATE FUNCTION chat.get_user(id TEXT)
              RETURNS chat.address
              LANGUAGE SQL
              SECURITY INVOKER
              AS $$ SELECT 1; $$;
-             GRANT EXECUTE ON PROCEDURE chat.get_user TO PUBLIC;",
+             GRANT EXECUTE ON FUNCTION chat.get_user TO PUBLIC;",
             "public",
         )
         .unwrap();
         let after = compile_contract_sql(
             "CREATE SCHEMA chat;
              CREATE TYPE chat.address AS (city TEXT, country TEXT);
-             CREATE PROCEDURE chat.get_user(id TEXT)
+             CREATE FUNCTION chat.get_user(id TEXT)
              RETURNS chat.address
              LANGUAGE SQL
              SECURITY DEFINER
              AS $$ SELECT 1; $$;
-             GRANT EXECUTE ON PROCEDURE chat.get_user TO user;",
+             GRANT EXECUTE ON FUNCTION chat.get_user TO user;",
             "public",
         )
         .unwrap();
@@ -1238,8 +1544,8 @@ mod tests {
         let joined = diff.statements.join("\n");
         assert!(joined.contains("ALTER TYPE chat.address ADD ATTRIBUTE country TEXT"));
         assert!(joined.contains("SECURITY DEFINER"));
-        assert!(joined.contains("REVOKE EXECUTE ON PROCEDURE chat.get_user FROM PUBLIC"));
-        assert!(joined.contains("GRANT EXECUTE ON PROCEDURE chat.get_user TO user"));
+        assert!(joined.contains("REVOKE EXECUTE ON FUNCTION chat.get_user FROM PUBLIC"));
+        assert!(joined.contains("GRANT EXECUTE ON FUNCTION chat.get_user TO user"));
     }
 
     #[test]
@@ -1274,7 +1580,7 @@ mod tests {
              CREATE TOPIC chat.ai_inbox;
              ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
              ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
-             CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+             CREATE FUNCTION chat.on_message(payload chat.ai_inbox NOT NULL)
              RETURNS chat.ai_inbox;",
             "public",
         )
@@ -1346,13 +1652,13 @@ mod tests {
     #[test]
     fn create_comments_are_kept_but_do_not_change_hash() {
         let without = compile_contract_sql(
-            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT NOT NULL);",
+            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT);",
             "public",
         )
         .unwrap();
         let with = compile_contract_sql(
-            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal \
-             address';",
+            "CREATE SCHEMA chat; CREATE TYPE chat.address AS (city TEXT); COMMENT ON TYPE \
+             chat.address IS 'Postal address';",
             "public",
         )
         .unwrap();
@@ -1366,11 +1672,12 @@ mod tests {
         let snapshot = compile_contract_sql(
             "CREATE SCHEMA api;
              CREATE TYPE api.point AS (x INT, y INT);
-             CREATE PROCEDURE api.health() RETURNS TEXT COMMENT 'Liveness probe';
-             CREATE OR REPLACE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ \
+             CREATE FUNCTION api.health() RETURNS TEXT;
+             COMMENT ON FUNCTION api.health IS 'Liveness probe';
+             CREATE OR REPLACE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ \
              return \"ok\"; $$;
              COMMENT ON TYPE api.point IS '2D point';
-             COMMENT ON PROCEDURE api.health IS 'HTTP liveness';",
+             COMMENT ON FUNCTION api.health IS 'HTTP liveness';",
             "public",
         )
         .unwrap();
@@ -1384,27 +1691,29 @@ mod tests {
         let before = compile_contract_sql(
             "CREATE SCHEMA chat;
              CREATE TYPE chat.address AS (city TEXT);
-             CREATE PROCEDURE chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
+             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
              $$;",
             "public",
         )
         .unwrap();
         let after = compile_contract_sql(
             "CREATE SCHEMA chat;
-             CREATE TYPE chat.address AS (city TEXT) COMMENT 'Postal address';
-             CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe' LANGUAGE \
-             JAVASCRIPT AS $$ return \"ok\"; $$;",
+             CREATE TYPE chat.address AS (city TEXT);
+             COMMENT ON TYPE chat.address IS 'Postal address';
+             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE \
+             JAVASCRIPT AS $$ return \"ok\"; $$;
+             COMMENT ON FUNCTION chat.ping IS 'Liveness probe';",
             "public",
         )
         .unwrap();
         let joined = diff_contracts(&before, &after).statements.join("\n");
         assert!(joined.contains("COMMENT ON TYPE chat.address IS 'Postal address'"), "{joined}");
         assert!(
-            joined.contains("COMMENT ON PROCEDURE chat.ping IS 'Liveness probe'"),
+            joined.contains("COMMENT ON FUNCTION chat.ping IS 'Liveness probe'"),
             "{joined}"
         );
         assert!(!joined.contains("CREATE TYPE"), "{joined}");
-        assert!(!joined.contains("CREATE OR REPLACE PROCEDURE"), "{joined}");
+        assert!(!joined.contains("CREATE OR REPLACE FUNCTION"), "{joined}");
     }
 
     #[test]

@@ -296,7 +296,7 @@ pub(crate) mod cluster_common {
 
     fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
         let upper = sql.trim_start().to_ascii_uppercase();
-        upper.starts_with("CREATE NAMESPACE")
+        upper.starts_with("CREATE SCHEMA")
             || upper.starts_with("CREATE TABLE")
             || upper.starts_with("CREATE SHARED TABLE")
             || upper.starts_with("CREATE USER TABLE")

@@ -339,14 +339,14 @@ mod tests {
     use kalamdb_commons::{
         constants::SystemColumnNames,
         ids::{VersionDomain, VersionId},
-        models::{rows::Row, NamespaceId, TableId, TableName, UserId},
+        models::{rows::Row, SchemaId, TableId, TableName, UserId},
         websocket::ChangeNotification,
     };
 
     use super::*;
 
     fn table() -> TableId {
-        TableId::new(NamespaceId::from("app"), TableName::from("items"))
+        TableId::new(SchemaId::from("app"), TableName::from("items"))
     }
 
     fn change(version: i64) -> Arc<ChangeNotification> {

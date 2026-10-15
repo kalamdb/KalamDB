@@ -181,7 +181,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
   const handleCreateNamespaceSubmit = (raw: string) => {
     setShowCreateNamespace(false);
     openSqlPreview({
-      sql: `CREATE NAMESPACE ${raw};`,
+      sql: `CREATE SCHEMA ${raw};`,
       title: `Create namespace "${raw}"`,
       onExecute: executeSqlPreviewStatement,
       onComplete: () => {

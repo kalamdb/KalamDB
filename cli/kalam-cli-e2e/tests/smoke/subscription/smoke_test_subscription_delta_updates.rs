@@ -25,7 +25,7 @@ fn smoke_subscription_update_sends_delta_only() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + shared table with multiple columns
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(

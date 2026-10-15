@@ -11,6 +11,18 @@ use v8::script_compiler::{self, CachedData, CompileOptions, NoCacheReason, Sourc
 const SOURCE: &str = r#"
 function kalamInvoke(name, args) {
   if (name === "echo") return args[0];
+  if (name === "project_first") {
+    const view = args[0];
+    const row = view.at(0);
+    return row ? row.id + row.score : 0;
+  }
+  if (name === "materialize_all") {
+    const view = args[0];
+    const rows = view.materialize();
+    let sum = 0;
+    for (let i = 0; i < rows.length; i++) sum += rows[i].score;
+    return sum;
+  }
   if (name === "math") {
     let value = args[0];
     for (let i = 0; i < 32; i++) value = (value * 1664525 + 1013904223) % 2147483647;
@@ -151,5 +163,71 @@ fn serialized_code_cache(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, warm_invoke, warm_cpu_function, cold_session, serialized_code_cache);
+fn read_view_vs_materialize(c: &mut Criterion) {
+    use std::sync::Arc;
+    use arrow::{
+        array::{Int64Array, RecordBatch, StringArray},
+        datatypes::{DataType, Field, Schema},
+    };
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("score", DataType::Int64, false),
+        Field::new("payload", DataType::Utf8, false),
+    ]));
+    let ids: Vec<i64> = (0..256).collect();
+    let scores: Vec<i64> = (0..256).map(|i| i * 10).collect();
+    let payloads: Vec<String> = (0..256).map(|i| format!("row_payload_{i:04}")).collect();
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(Int64Array::from(ids)),
+            Arc::new(Int64Array::from(scores)),
+            Arc::new(StringArray::from(payloads)),
+        ],
+    )
+    .expect("batch");
+    let view_arg = RoutineValue::from_read_view_batches(vec![batch]);
+    let mut session =
+        V8Session::load(ModuleRevision::typescript_fixture(SOURCE), RuntimeLimits::default())
+            .expect("load V8 session");
+    let cancel = CancellationToken::new();
+    let project_id = RoutineId::new("project_first");
+    let mat_id = RoutineId::new("materialize_all");
+
+    c.bench_function("v8/read_view_project_single_row_256", |b| {
+        b.iter(|| {
+            let value = session
+                .invoke(
+                    black_box(&project_id),
+                    black_box(std::slice::from_ref(&view_arg)),
+                    &cancel,
+                )
+                .expect("invoke");
+            black_box(value);
+        });
+    });
+
+    c.bench_function("v8/read_view_materialize_256_rows", |b| {
+        b.iter(|| {
+            let value = session
+                .invoke(
+                    black_box(&mat_id),
+                    black_box(std::slice::from_ref(&view_arg)),
+                    &cancel,
+                )
+                .expect("invoke");
+            black_box(value);
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    warm_invoke,
+    warm_cpu_function,
+    cold_session,
+    serialized_code_cache,
+    read_view_vs_materialize
+);
 criterion_main!(benches);

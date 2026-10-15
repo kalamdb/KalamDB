@@ -486,8 +486,8 @@ async fn wait_for_subscription_ack(
 }
 
 fn setup_test_table(namespace: &str, full_table_name: &str) {
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE should succeed for websocket capacity test");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA should succeed for websocket capacity test");
 
     let create_sql = format!(
         "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, value VARCHAR NOT NULL) WITH (TYPE = \

@@ -33,6 +33,10 @@ pgwire = { workspace = true }
 parking_lot = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true }
+kalamdb-handlers = { path = "../kalamdb-handlers" }
+kalamdb-jobs = { path = "../kalamdb-jobs" }
+kalamdb-store = { path = "../kalamdb-store" }
 kalamdb-system = { path = "../kalamdb-system" }
 ntest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

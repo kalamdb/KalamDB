@@ -32,7 +32,7 @@ async fn test_scenario_13_mixed_workload_soak() -> anyhow::Result<()> {
     // =========================================================
     // Setup: Create namespace and tables
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -356,7 +356,7 @@ async fn test_scenario_13_schema_evolution_under_load() -> anyhow::Result<()> {
     let ns = unique_ns("schema_evolution");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server
@@ -475,7 +475,7 @@ async fn test_scenario_13_concurrent_read_write() -> anyhow::Result<()> {
     let ns = unique_ns("concurrent_rw");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_success(&resp, "CREATE namespace");
 
     let resp = server

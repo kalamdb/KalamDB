@@ -88,7 +88,7 @@ async fn test_shared_flush_creates_manifest_json_over_http() -> anyhow::Result<(
     let namespace = unique_namespace("test_manifest_flush");
     let table = "products";
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server
@@ -162,7 +162,7 @@ async fn test_shared_flush_cleans_empty_segments_and_parquet_files() -> anyhow::
     let namespace = unique_namespace("test_manifest_empty_cleanup");
     let table = "metrics";
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server
