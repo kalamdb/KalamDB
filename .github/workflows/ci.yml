@@ -16,10 +16,13 @@ env:
   WASM_PACK_VERSION: "0.15.0"
   CARGO_ENCODED_RUSTFLAGS: ""
   CARGO_INCREMENTAL: "0"
-  # Keep CI test binaries small. Full debuginfo has filled the runner disk
-  # (ENOSPC creating /tmp RocksDB fixtures near the end of the suite).
+  # Keep CI artifacts small enough for the runner disk. The dev profile uses
+  # unpacked split debuginfo and 256 codegen units, which grew `target/` to
+  # ~107G and left no room for /tmp RocksDB fixtures (ENOSPC).
   CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
   CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
+  CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: "off"
+  CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
