@@ -1,4 +1,5 @@
-//! CREATE [OR REPLACE] FUNCTION / PROCEDURE, ALTER FUNCTION / PROCEDURE, and DROP FUNCTION / PROCEDURE parsers.
+//! CREATE [OR REPLACE] FUNCTION / PROCEDURE, ALTER FUNCTION / PROCEDURE, and DROP FUNCTION /
+//! PROCEDURE parsers.
 
 use kalamdb_commons::models::{
     RoutineId, RoutineKind, RoutineNullSafety, RoutineParallelSafety, RoutineParameterMode,
@@ -35,25 +36,25 @@ pub enum RoutineConfigChange {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateProcedureStatement {
-    pub routine_id:       RoutineId,
-    pub namespace_id:     SchemaId,
-    pub name:             String,
-    pub kind:             RoutineKind,
-    pub or_replace:       bool,
-    pub parameters:       Vec<ProcedureParameter>,
-    pub return_type:      Option<TypeReference>,
-    pub returns_setof:    bool,
-    pub returns_table:    Vec<(String, TypeReference)>,
-    pub language:         Option<String>,
-    pub security:         RoutineSecurityMode,
-    pub volatility:       RoutineVolatility,
-    pub null_safety:      RoutineNullSafety,
-    pub parallel_safety:  RoutineParallelSafety,
-    pub cost:             Option<f64>,
-    pub rows:             Option<i64>,
-    pub config_changes:   Vec<RoutineConfigChange>,
-    pub body:             Option<String>,
-    pub comment:          Option<String>,
+    pub routine_id:      RoutineId,
+    pub namespace_id:    SchemaId,
+    pub name:            String,
+    pub kind:            RoutineKind,
+    pub or_replace:      bool,
+    pub parameters:      Vec<ProcedureParameter>,
+    pub return_type:     Option<TypeReference>,
+    pub returns_setof:   bool,
+    pub returns_table:   Vec<(String, TypeReference)>,
+    pub language:        Option<String>,
+    pub security:        RoutineSecurityMode,
+    pub volatility:      RoutineVolatility,
+    pub null_safety:     RoutineNullSafety,
+    pub parallel_safety: RoutineParallelSafety,
+    pub cost:            Option<f64>,
+    pub rows:            Option<i64>,
+    pub config_changes:  Vec<RoutineConfigChange>,
+    pub body:            Option<String>,
+    pub comment:         Option<String>,
 }
 
 impl Eq for CreateProcedureStatement {}
@@ -84,10 +85,7 @@ impl CreateProcedureStatement {
             ));
         }
         let close = matching_paren(after).ok_or_else(|| {
-            format!(
-                "Unterminated {} parameter list",
-                kind.as_str().to_ascii_lowercase()
-            )
+            format!("Unterminated {} parameter list", kind.as_str().to_ascii_lowercase())
         })?;
         let params_body = &after[1..close];
         let parameters = parse_routine_parameters(params_body, kind)?;
@@ -145,11 +143,10 @@ impl CreateProcedureStatement {
             }
             if take_keyword_ci(&mut rest, "RETURNS TABLE") {
                 if kind == RoutineKind::Procedure {
-                    return Err(
-                        "CREATE PROCEDURE cannot declare a RETURNS clause in PostgreSQL 18; use \
-                         CREATE FUNCTION for return values or OUT/INOUT parameters on procedures"
-                            .to_string(),
-                    );
+                    return Err("CREATE PROCEDURE cannot declare a RETURNS clause in PostgreSQL \
+                                18; use CREATE FUNCTION for return values or OUT/INOUT \
+                                parameters on procedures"
+                        .to_string());
                 }
                 if saw_returns {
                     return Err("conflicting or redundant options".to_string());
@@ -169,23 +166,21 @@ impl CreateProcedureStatement {
                     }
                     let (col_name, col_rest) = take_ident(col_part)?;
                     if !seen_cols.insert(col_name.clone()) {
-                        return Err(format!(
-                            "parameter name \"{col_name}\" used more than once"
-                        ));
+                        return Err(format!("parameter name \"{col_name}\" used more than once"));
                     }
                     let (mut col_ty, col_leftover) =
                         parse_type_reference(skip_ws_and_comments(col_rest))?;
                     let after_attrs = take_type_attributes(&mut col_ty, col_leftover);
                     validate_routine_type_ref(&col_ty, true)?;
                     if col_ty.nonempty {
-                        return Err(
-                            "NONEMPTY is not supported on routine return types in PostgreSQL 18"
-                                .to_string(),
-                        );
+                        return Err("NONEMPTY is not supported on routine return types in \
+                                    PostgreSQL 18"
+                            .to_string());
                     }
                     if !skip_ws_and_comments(after_attrs).is_empty() {
                         return Err(format!(
-                            "Unexpected tokens in RETURNS TABLE column '{col_name}': '{after_attrs}'"
+                            "Unexpected tokens in RETURNS TABLE column '{col_name}': \
+                             '{after_attrs}'"
                         ));
                     }
                     returns_table.push((col_name, col_ty));
@@ -204,11 +199,10 @@ impl CreateProcedureStatement {
             }
             if take_keyword_ci(&mut rest, "RETURNS") {
                 if kind == RoutineKind::Procedure {
-                    return Err(
-                        "CREATE PROCEDURE cannot declare a RETURNS clause in PostgreSQL 18; use \
-                         CREATE FUNCTION for return values or OUT/INOUT parameters on procedures"
-                            .to_string(),
-                    );
+                    return Err("CREATE PROCEDURE cannot declare a RETURNS clause in PostgreSQL \
+                                18; use CREATE FUNCTION for return values or OUT/INOUT \
+                                parameters on procedures"
+                        .to_string());
                 }
                 if saw_returns {
                     return Err("conflicting or redundant options".to_string());
@@ -222,11 +216,9 @@ impl CreateProcedureStatement {
                 let (mut ty, leftover) = parse_type_reference(after_returns)?;
                 let leftover = take_type_attributes(&mut ty, leftover);
                 if ty.nonempty {
-                    return Err(
-                        "NONEMPTY is not supported on routine return types in PostgreSQL 18; use \
-                         a domain with a CHECK constraint instead"
-                            .to_string(),
-                    );
+                    return Err("NONEMPTY is not supported on routine return types in PostgreSQL \
+                                18; use a domain with a CHECK constraint instead"
+                        .to_string());
                 }
                 if ty.namespace_id.is_none() && ty.name.eq_ignore_ascii_case("void") && !ty.is_array
                 {
@@ -298,7 +290,8 @@ impl CreateProcedureStatement {
                 saw_volatility = true;
                 continue;
             }
-            if take_keyword_ci(&mut rest, "LEAKPROOF") || take_keyword_ci(&mut rest, "NOT LEAKPROOF")
+            if take_keyword_ci(&mut rest, "LEAKPROOF")
+                || take_keyword_ci(&mut rest, "NOT LEAKPROOF")
             {
                 if saw_leakproof {
                     return Err("conflicting or redundant options".to_string());
@@ -410,46 +403,48 @@ impl CreateProcedureStatement {
 
         if kind == RoutineKind::Procedure {
             if saw_volatility {
-                return Err(
-                    "CREATE PROCEDURE cannot specify IMMUTABLE, STABLE, or VOLATILE in PostgreSQL 18"
-                        .to_string(),
-                );
+                return Err("CREATE PROCEDURE cannot specify IMMUTABLE, STABLE, or VOLATILE in \
+                            PostgreSQL 18"
+                    .to_string());
             }
             if saw_null_safety {
-                return Err(
-                    "CREATE PROCEDURE cannot specify STRICT, RETURNS NULL ON NULL INPUT, or \
-                     CALLED ON NULL INPUT in PostgreSQL 18"
-                        .to_string(),
-                );
+                return Err("CREATE PROCEDURE cannot specify STRICT, RETURNS NULL ON NULL INPUT, \
+                            or CALLED ON NULL INPUT in PostgreSQL 18"
+                    .to_string());
             }
             if saw_parallel_safety {
-                return Err("CREATE PROCEDURE cannot specify PARALLEL mode in PostgreSQL 18".to_string());
+                return Err(
+                    "CREATE PROCEDURE cannot specify PARALLEL mode in PostgreSQL 18".to_string()
+                );
             }
             if saw_leakproof {
-                return Err("CREATE PROCEDURE cannot specify LEAKPROOF in PostgreSQL 18".to_string());
+                return Err(
+                    "CREATE PROCEDURE cannot specify LEAKPROOF in PostgreSQL 18".to_string()
+                );
             }
             if cost.is_some() || rows.is_some() {
-                return Err("CREATE PROCEDURE cannot specify COST or ROWS in PostgreSQL 18".to_string());
+                return Err(
+                    "CREATE PROCEDURE cannot specify COST or ROWS in PostgreSQL 18".to_string()
+                );
             }
         } else {
-            let out_params: Vec<&ProcedureParameter> = parameters
-                .iter()
-                .filter(|p| p.mode.is_output())
-                .collect();
+            let out_params: Vec<&ProcedureParameter> =
+                parameters.iter().filter(|p| p.mode.is_output()).collect();
             if !returns_table.is_empty() && !out_params.is_empty() {
-                return Err("OUT and INOUT parameters cannot be used with RETURNS TABLE".to_string());
+                return Err(
+                    "OUT and INOUT parameters cannot be used with RETURNS TABLE".to_string()
+                );
             }
             if saw_returns_record && out_params.is_empty() {
                 return Err(
-                    "RETURNS record requires OUT/INOUT parameters or RETURNS TABLE".to_string(),
+                    "RETURNS record requires OUT/INOUT parameters or RETURNS TABLE".to_string()
                 );
             }
             if !out_params.is_empty() && return_type.is_some() && returns_table.is_empty() {
                 if saw_returns_void {
-                    return Err(
-                        "function result type cannot be void when OUT/INOUT parameters are present"
-                            .to_string(),
-                    );
+                    return Err("function result type cannot be void when OUT/INOUT parameters \
+                                are present"
+                        .to_string());
                 }
                 if out_params.len() == 1 && !saw_returns_record {
                     let expected = &out_params[0].type_ref;
@@ -469,10 +464,9 @@ impl CreateProcedureStatement {
                         ));
                     }
                 } else if out_params.len() > 1 && !saw_returns_record {
-                    return Err(
-                        "function result type must be record because of multiple OUT parameters"
-                            .to_string(),
-                    );
+                    return Err("function result type must be record because of multiple OUT \
+                                parameters"
+                        .to_string());
                 }
             }
             // RoutineKind::Function requires a return type unless OUT/INOUT parameters determine it
@@ -481,41 +475,39 @@ impl CreateProcedureStatement {
                     return_type = Some(out_params[0].type_ref.clone());
                 } else if out_params.len() > 1 {
                     return_type = Some(TypeReference {
-                        namespace_id: None,
-                        name: "jsonb".to_string(),
-                        data_type: Some(kalamdb_commons::KalamDataType::Json),
+                        namespace_id:       None,
+                        name:               "jsonb".to_string(),
+                        data_type:          Some(kalamdb_commons::KalamDataType::Json),
                         syntactic_modifier: None,
-                        is_array: false,
-                        not_null: false,
-                        nonempty: false,
+                        is_array:           false,
+                        not_null:           false,
+                        nonempty:           false,
                     });
                 } else {
-                    return Err(
-                        "CREATE FUNCTION requires a RETURNS <type> clause (or OUT parameters) in \
-                         PostgreSQL 18; use CREATE PROCEDURE for routines without a return value"
-                            .to_string(),
-                    );
+                    return Err("CREATE FUNCTION requires a RETURNS <type> clause (or OUT \
+                                parameters) in PostgreSQL 18; use CREATE PROCEDURE for routines \
+                                without a return value"
+                        .to_string());
                 }
             }
-            if rows.is_some() && !returns_setof && !return_type.as_ref().is_some_and(|t| t.is_array) {
-                return Err("ROWS is not applicable when function does not return a set".to_string());
+            if rows.is_some() && !returns_setof && !return_type.as_ref().is_some_and(|t| t.is_array)
+            {
+                return Err(
+                    "ROWS is not applicable when function does not return a set".to_string()
+                );
             }
         }
 
         match (&language, &body) {
             (Some(_), None) => {
-                return Err(
-                    "LANGUAGE requires an AS $$ ... $$ (or string) body; omit LANGUAGE for \
-                     project-backed routines"
-                        .to_string(),
-                );
+                return Err("LANGUAGE requires an AS $$ ... $$ (or string) body; omit LANGUAGE \
+                            for project-backed routines"
+                    .to_string());
             },
             (None, Some(_)) => {
-                return Err(
-                    "inline routine body requires a LANGUAGE clause (SQL, JAVASCRIPT, or \
-                     TYPESCRIPT)"
-                        .to_string(),
-                );
+                return Err("inline routine body requires a LANGUAGE clause (SQL, JAVASCRIPT, or \
+                            TYPESCRIPT)"
+                    .to_string());
             },
             (None, None) | (Some(_), Some(_)) => {},
         }
@@ -552,9 +544,8 @@ pub fn encode_config_changes(
     changes: &[RoutineConfigChange],
     existing_json: Option<&str>,
 ) -> Option<String> {
-    let mut map: std::collections::BTreeMap<String, String> = existing_json
-        .and_then(|raw| serde_json::from_str(raw).ok())
-        .unwrap_or_default();
+    let mut map: std::collections::BTreeMap<String, String> =
+        existing_json.and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
     if changes.is_empty() && map.is_empty() {
         return None;
     }
@@ -643,10 +634,7 @@ fn validate_routine_type_ref(type_ref: &TypeReference, is_param: bool) -> DdlRes
         "record",
     ];
     if UNSUPPORTED_PSEUDO_TYPES.contains(&lower.as_str()) {
-        return Err(format!(
-            "pseudo-type \"{}\" is not supported in user routines",
-            type_ref.name
-        ));
+        return Err(format!("pseudo-type \"{}\" is not supported in user routines", type_ref.name));
     }
     Ok(())
 }
@@ -696,15 +684,13 @@ fn parse_routine_parameters(
         validate_routine_type_ref(&type_ref, true)?;
         if type_ref.nonempty {
             return Err(format!(
-                "Parameter '{name}' cannot declare NONEMPTY in PostgreSQL 18; use a domain with \
-                 a CHECK constraint instead"
+                "Parameter '{name}' cannot declare NONEMPTY in PostgreSQL 18; use a domain with a \
+                 CHECK constraint instead"
             ));
         }
         if mode == RoutineParameterMode::Variadic {
             if !type_ref.is_array {
-                return Err(format!(
-                    "VARIADIC parameter '{name}' must have an array data type"
-                ));
+                return Err(format!("VARIADIC parameter '{name}' must have an array data type"));
             }
             saw_variadic = true;
         }
@@ -737,10 +723,9 @@ fn parse_routine_parameters(
             if default_expr.is_some() {
                 saw_input_default = true;
             } else if saw_input_default && mode != RoutineParameterMode::Variadic {
-                return Err(
-                    "input parameters after one with a default value must also have defaults"
-                        .to_string(),
-                );
+                return Err("input parameters after one with a default value must also have \
+                            defaults"
+                    .to_string());
             }
         }
 
@@ -776,8 +761,8 @@ fn parse_param_name_and_type(input: &str) -> DdlResult<(String, &str)> {
     let trimmed = skip_ws_and_comments(input);
     let (first_ident, after_first) = take_ident(trimmed)?;
     let after_trimmed = skip_ws_and_comments(after_first);
-    // If nothing follows (or only `[]` / `(modifier)` / `DEFAULT` / `=`), then the parameter was unnamed
-    // and `first_ident` is actually the type name!
+    // If nothing follows (or only `[]` / `(modifier)` / `DEFAULT` / `=`), then the parameter was
+    // unnamed and `first_ident` is actually the type name!
     if after_trimmed.is_empty()
         || after_trimmed.starts_with('[')
         || after_trimmed.starts_with('(')
@@ -899,15 +884,10 @@ fn parse_procedure_body(input: &str) -> DdlResult<(String, &str)> {
             .ok_or_else(|| "Unterminated dollar-quote tag in routine body".to_string())?;
         let tag_inner = &after_first[..tag_end];
         if !tag_inner.is_empty() {
-            let valid = tag_inner
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_alphabetic() || ch == '_')
+            let valid = tag_inner.chars().next().is_some_and(|ch| ch.is_alphabetic() || ch == '_')
                 && tag_inner.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
             if !valid {
-                return Err(format!(
-                    "Invalid dollar-quote tag '${tag_inner}$' in routine body"
-                ));
+                return Err(format!("Invalid dollar-quote tag '${tag_inner}$' in routine body"));
             }
         }
         let tag = &input[..tag_end + 2];
@@ -915,10 +895,7 @@ fn parse_procedure_body(input: &str) -> DdlResult<(String, &str)> {
         let end = body_start
             .find(tag)
             .ok_or_else(|| "Unterminated dollar-quoted routine body".to_string())?;
-        return Ok((
-            body_start[..end].to_string(),
-            &body_start[end + tag.len()..],
-        ));
+        return Ok((body_start[..end].to_string(), &body_start[end + tag.len()..]));
     }
     if input.starts_with('\'') || input.starts_with("E'") || input.starts_with("e'") {
         return parse_sql_string_prefix(input);
@@ -1041,19 +1018,13 @@ impl AlterRoutineStatement {
         let action = if take_keyword_ci(&mut after, "RENAME TO") {
             let (new_name, leftover) = take_ident(after)?;
             if !skip_ws_and_comments(leftover).is_empty() {
-                return Err(format!(
-                    "Unexpected tokens after RENAME TO: '{}'",
-                    leftover.trim()
-                ));
+                return Err(format!("Unexpected tokens after RENAME TO: '{}'", leftover.trim()));
             }
             AlterRoutineAction::RenameTo { new_name }
         } else if take_keyword_ci(&mut after, "OWNER TO") {
             let (owner_ident, leftover) = take_ident(after)?;
             if !skip_ws_and_comments(leftover).is_empty() {
-                return Err(format!(
-                    "Unexpected tokens after OWNER TO: '{}'",
-                    leftover.trim()
-                ));
+                return Err(format!("Unexpected tokens after OWNER TO: '{}'", leftover.trim()));
             }
             AlterRoutineAction::OwnerTo {
                 new_owner: UserId::new(owner_ident),
@@ -1061,10 +1032,7 @@ impl AlterRoutineStatement {
         } else if take_keyword_ci(&mut after, "SET SCHEMA") {
             let (schema_ident, schema_quoted, leftover) = take_ident_with_quote(after)?;
             if !skip_ws_and_comments(leftover).is_empty() {
-                return Err(format!(
-                    "Unexpected tokens after SET SCHEMA: '{}'",
-                    leftover.trim()
-                ));
+                return Err(format!("Unexpected tokens after SET SCHEMA: '{}'", leftover.trim()));
             }
             let new_namespace_id = if schema_quoted {
                 SchemaId::try_new(schema_ident).map_err(|e| e.to_string())?
@@ -1131,8 +1099,7 @@ impl AlterRoutineStatement {
                 if take_keyword_ci(&mut after, "IMMUTABLE") {
                     if expected_kind == RoutineKind::Procedure {
                         return Err(
-                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE"
-                                .to_string(),
+                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE".to_string()
                         );
                     }
                     if volatility.is_some() {
@@ -1144,8 +1111,7 @@ impl AlterRoutineStatement {
                 if take_keyword_ci(&mut after, "STABLE") {
                     if expected_kind == RoutineKind::Procedure {
                         return Err(
-                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE"
-                                .to_string(),
+                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE".to_string()
                         );
                     }
                     if volatility.is_some() {
@@ -1157,8 +1123,7 @@ impl AlterRoutineStatement {
                 if take_keyword_ci(&mut after, "VOLATILE") {
                     if expected_kind == RoutineKind::Procedure {
                         return Err(
-                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE"
-                                .to_string(),
+                            "ALTER PROCEDURE cannot set IMMUTABLE, STABLE, or VOLATILE".to_string()
                         );
                     }
                     if volatility.is_some() {
@@ -1171,10 +1136,9 @@ impl AlterRoutineStatement {
                     || take_keyword_ci(&mut after, "STRICT")
                 {
                     if expected_kind == RoutineKind::Procedure {
-                        return Err(
-                            "ALTER PROCEDURE cannot set STRICT or RETURNS NULL ON NULL INPUT"
-                                .to_string(),
-                        );
+                        return Err("ALTER PROCEDURE cannot set STRICT or RETURNS NULL ON NULL \
+                                    INPUT"
+                            .to_string());
                     }
                     if null_safety.is_some() {
                         return Err("conflicting or redundant options".to_string());
@@ -1184,9 +1148,7 @@ impl AlterRoutineStatement {
                 }
                 if take_keyword_ci(&mut after, "CALLED ON NULL INPUT") {
                     if expected_kind == RoutineKind::Procedure {
-                        return Err(
-                            "ALTER PROCEDURE cannot set CALLED ON NULL INPUT".to_string(),
-                        );
+                        return Err("ALTER PROCEDURE cannot set CALLED ON NULL INPUT".to_string());
                     }
                     if null_safety.is_some() {
                         return Err("conflicting or redundant options".to_string());
@@ -1330,8 +1292,7 @@ mod tests {
     #[test]
     fn parse_inline_javascript_dollar_quoted_body() {
         let stmt = CreateProcedureStatement::parse(
-            "CREATE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
-             $$",
+            "CREATE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$",
             &SchemaId::new("app"),
         )
         .unwrap();
@@ -1356,7 +1317,8 @@ mod tests {
     #[test]
     fn parse_bodyless_project_backed_procedure() {
         let stmt = CreateProcedureStatement::parse(
-            "CREATE PROCEDURE api.create_order(IN request api.create_order_request, OUT result api.create_order_result)
+            "CREATE PROCEDURE api.create_order(IN request api.create_order_request, OUT result \
+             api.create_order_result)
              SECURITY DEFINER",
             &SchemaId::new("app"),
         )
@@ -1373,7 +1335,8 @@ mod tests {
     #[test]
     fn reject_procedure_with_returns_clause() {
         let err = CreateProcedureStatement::parse(
-            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$",
+            "CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
+             $$",
             &SchemaId::new("app"),
         )
         .unwrap_err();
@@ -1404,14 +1367,16 @@ mod tests {
     #[test]
     fn reject_nonempty_on_parameter_and_return_type() {
         let err = CreateProcedureStatement::parse(
-            "CREATE FUNCTION api.tags(items TEXT[] NONEMPTY) RETURNS INT LANGUAGE SQL AS $$ SELECT 1 $$",
+            "CREATE FUNCTION api.tags(items TEXT[] NONEMPTY) RETURNS INT LANGUAGE SQL AS $$ \
+             SELECT 1 $$",
             &SchemaId::new("app"),
         )
         .unwrap_err();
         assert!(err.contains("NONEMPTY"), "{err}");
 
         let err_ret = CreateProcedureStatement::parse(
-            "CREATE FUNCTION api.tags() RETURNS TEXT[] NONEMPTY LANGUAGE SQL AS $$ SELECT ARRAY['a'] $$",
+            "CREATE FUNCTION api.tags() RETURNS TEXT[] NONEMPTY LANGUAGE SQL AS $$ SELECT \
+             ARRAY['a'] $$",
             &SchemaId::new("app"),
         )
         .unwrap_err();
@@ -1453,7 +1418,8 @@ mod tests {
     #[test]
     fn parse_function_options_and_parameter_defaults() {
         let stmt = CreateProcedureStatement::parse(
-            "CREATE OR REPLACE FUNCTION app.add_tax(amount NUMERIC DEFAULT 100, rate NUMERIC = 0.2, VARIADIC tags TEXT[])
+            "CREATE OR REPLACE FUNCTION app.add_tax(amount NUMERIC DEFAULT 100, rate NUMERIC = \
+             0.2, VARIADIC tags TEXT[])
              RETURNS NUMERIC
              LANGUAGE SQL
              IMMUTABLE
@@ -1479,7 +1445,8 @@ mod tests {
     #[test]
     fn parse_alter_function_and_procedure() {
         let alter_fn = AlterRoutineStatement::parse(
-            "ALTER FUNCTION app.add_tax(NUMERIC, NUMERIC) IMMUTABLE STRICT PARALLEL SAFE COST 25 SET search_path TO app",
+            "ALTER FUNCTION app.add_tax(NUMERIC, NUMERIC) IMMUTABLE STRICT PARALLEL SAFE COST 25 \
+             SET search_path TO app",
             &SchemaId::new("public"),
         )
         .unwrap();

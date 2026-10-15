@@ -11,15 +11,15 @@
     "@kalamdb/client": "file:../../../../client",
     "@kalamdb/orm": "file:../../../../orm",
     "@kalamdb/react": "file:../../..",
-    "drizzle-orm": "^0.45.2",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "drizzle-orm": "^0.45.4",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.3.4"
   }
 }

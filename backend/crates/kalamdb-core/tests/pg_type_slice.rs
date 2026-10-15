@@ -327,11 +327,7 @@ fn result_gaps(gaps: &mut Vec<String>, result: ExecutionResult) {
                         read_logical_type_modifier(field)
                     ),
                 );
-                note(
-                    gaps,
-                    text != "{\"a\":1,\"b\":2}",
-                    format!("jsonb result text is {text:?}"),
-                );
+                note(gaps, text != "{\"a\":1,\"b\":2}", format!("jsonb result text is {text:?}"));
             },
             "charged_at" => {
                 note(

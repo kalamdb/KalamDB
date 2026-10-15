@@ -2,56 +2,33 @@
 //!
 //! Returns the current user_id from the session context.
 
-use std::sync::Arc;
-
-use datafusion::{
-    arrow::array::{ArrayRef, StringArray},
-    error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
-};
-use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
+use datafusion::error::DataFusionError;
 use kalamdb_session_datafusion::SessionUserContext;
 
-/// KDB_CURRENT_USER() scalar function implementation
-///
-/// Returns the user_id of the current session user.
-/// `CURRENT_USER_ID()` is rewritten to this function at the dialect layer.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct CurrentUserFunction;
+use super::scalar::{arity, scalar_udf, utf8_scalar, zero_arg_stable};
 
-impl CurrentUserFunction {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ScalarUDFImpl for CurrentUserFunction {
-    fn name(&self) -> &str {
-        "kdb_current_user"
-    }
-
-    fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Stable))
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("KDB_CURRENT_USER() takes no arguments".to_string()));
-        }
-
+scalar_udf! {
+    /// Returns the user_id of the current session user.
+    /// `CURRENT_USER_ID()` resolves to this function through a DataFusion alias.
+    pub struct CurrentUserFunction;
+    name = "kdb_current_user";
+    aliases = [
+        "current_user",
+        "current_user_id",
+        "session_user",
+        "user",
+        "pg_catalog.current_user",
+    ];
+    signature = zero_arg_stable();
+    returns utf8;
+    invoke(args) {
+        arity(&args, |len| len == 0, "KDB_CURRENT_USER() takes no arguments")?;
         let session_ctx =
             args.config_options.extensions.get::<SessionUserContext>().ok_or_else(|| {
                 DataFusionError::Execution(
                     "KDB_CURRENT_USER() failed: session user context not found".to_string(),
                 )
             })?;
-
-        let array = StringArray::from(vec![session_ctx.user_id.as_str()]);
-        Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
+        Ok(utf8_scalar(session_ctx.user_id.as_str()))
     }
 }

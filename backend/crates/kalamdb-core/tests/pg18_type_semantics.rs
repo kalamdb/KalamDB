@@ -1,13 +1,13 @@
 //! Differential PostgreSQL 18 type semantics suite (T100).
 //!
 //! Covers:
-//! - Bounded `numeric(p, s)` half-away-from-zero rounding, negative sub-unit formatting,
-//!   overflow rejection, `NaN`/`Infinity` rejection, and invalid `(p, s)` DDL bounds.
+//! - Bounded `numeric(p, s)` half-away-from-zero rounding, negative sub-unit formatting, overflow
+//!   rejection, `NaN`/`Infinity` rejection, and invalid `(p, s)` DDL bounds.
 //! - `json` (verbatim text preservation) vs `jsonb` (whitespace stripping, duplicate-key
 //!   deduplication, and logical modifier preservation).
 //! - `timestamp` vs `timestamptz` distinct logical & Arrow types (`None` vs `Some("UTC")`).
-//! - Stable enum member identity (`slot` + `type_field_id`) across `ADD VALUE BEFORE/AFTER`
-//!   and `RENAME VALUE`.
+//! - Stable enum member identity (`slot` + `type_field_id`) across `ADD VALUE BEFORE/AFTER` and
+//!   `RENAME VALUE`.
 //! - Complete array element metadata (`List` inner `Field` carrying enum labels, `TypeId`,
 //!   `jsonb`/`timestamptz` modifiers, `Decimal128(p, s)`, and composite `Struct` fields).
 //! - Nested composite type revision cascading and pinned historical revision retention.
@@ -66,14 +66,19 @@ async fn numeric_precision_rounding_overflow_and_edge_cases() {
     let schema = support::unique_namespace("pg18_num");
     let s = schema.as_str();
 
-    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}")).await.expect("create schema");
+    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}"))
+        .await
+        .expect("create schema");
 
     // Unsupported scale/precision forms must be rejected at DDL time.
     assert!(
         exec(
             &executor,
             &ctx,
-            &format!("CREATE TABLE {s}.bad_scale (id BIGINT PRIMARY KEY, v NUMERIC(4, 6)) WITH (TYPE = 'SHARED')"),
+            &format!(
+                "CREATE TABLE {s}.bad_scale (id BIGINT PRIMARY KEY, v NUMERIC(4, 6)) WITH (TYPE = \
+                 'SHARED')"
+            ),
         )
         .await
         .is_err(),
@@ -83,7 +88,10 @@ async fn numeric_precision_rounding_overflow_and_edge_cases() {
         exec(
             &executor,
             &ctx,
-            &format!("CREATE TABLE {s}.bad_prec (id BIGINT PRIMARY KEY, v NUMERIC(40, 2)) WITH (TYPE = 'SHARED')"),
+            &format!(
+                "CREATE TABLE {s}.bad_prec (id BIGINT PRIMARY KEY, v NUMERIC(40, 2)) WITH (TYPE = \
+                 'SHARED')"
+            ),
         )
         .await
         .is_err(),
@@ -155,13 +163,9 @@ async fn numeric_precision_rounding_overflow_and_edge_cases() {
         );
     }
 
-    let result = exec(
-        &executor,
-        &ctx,
-        &format!("SELECT id, amount FROM {s}.ledger ORDER BY id"),
-    )
-    .await
-    .expect("select ledger");
+    let result = exec(&executor, &ctx, &format!("SELECT id, amount FROM {s}.ledger ORDER BY id"))
+        .await
+        .expect("select ledger");
     let ExecutionResult::Rows { batches, .. } = result else {
         panic!("expected rows");
     };
@@ -182,7 +186,9 @@ async fn json_vs_jsonb_and_timestamp_vs_timestamptz_codecs() {
     let schema = support::unique_namespace("pg18_json_ts");
     let s = schema.as_str();
 
-    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}")).await.expect("create schema");
+    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}"))
+        .await
+        .expect("create schema");
     exec(
         &executor,
         &ctx,
@@ -205,35 +211,32 @@ async fn json_vs_jsonb_and_timestamp_vs_timestamptz_codecs() {
         &ctx,
         &format!(
             "INSERT INTO {s}.events (id, raw_doc, norm_doc, local_ts, utc_ts)
-             VALUES (1, '{raw_input}', '{raw_input}', '2026-01-15 12:30:00', '2026-01-15 12:30:00+00')"
+             VALUES (1, '{raw_input}', '{raw_input}', '2026-01-15 12:30:00', '2026-01-15 \
+             12:30:00+00')"
         ),
     )
     .await
     .expect("insert event");
 
     // Invalid JSON syntax must be rejected on both json and jsonb.
-    assert!(
-        exec(
-            &executor,
-            &ctx,
-            &format!(
-                "INSERT INTO {s}.events (id, raw_doc, norm_doc) VALUES (2, '{{bad', '{{\"ok\":1}}')"
-            ),
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        exec(
-            &executor,
-            &ctx,
-            &format!(
-                "INSERT INTO {s}.events (id, raw_doc, norm_doc) VALUES (3, '{{\"ok\":1}}', '{{bad')"
-            ),
-        )
-        .await
-        .is_err()
-    );
+    assert!(exec(
+        &executor,
+        &ctx,
+        &format!(
+            "INSERT INTO {s}.events (id, raw_doc, norm_doc) VALUES (2, '{{bad', '{{\"ok\":1}}')"
+        ),
+    )
+    .await
+    .is_err());
+    assert!(exec(
+        &executor,
+        &ctx,
+        &format!(
+            "INSERT INTO {s}.events (id, raw_doc, norm_doc) VALUES (3, '{{\"ok\":1}}', '{{bad')"
+        ),
+    )
+    .await
+    .is_err());
 
     let result = exec(
         &executor,
@@ -267,7 +270,11 @@ async fn json_vs_jsonb_and_timestamp_vs_timestamptz_codecs() {
     let norm_out = array_value_to_string(batch.column(1), 0).expect("norm_doc text");
     assert_eq!(raw_out, raw_input, "JSON must preserve original text formatting");
     let norm_parsed: serde_json::Value = serde_json::from_str(&norm_out).expect("valid jsonb");
-    assert_eq!(norm_parsed["b"], serde_json::json!(99), "JSONB duplicate key must resolve to last key");
+    assert_eq!(
+        norm_parsed["b"],
+        serde_json::json!(99),
+        "JSONB duplicate key must resolve to last key"
+    );
     assert_eq!(norm_parsed["a"], serde_json::json!([1, 2]));
     assert!(!norm_out.contains("   "), "JSONB must strip insignificant whitespace");
 }
@@ -281,7 +288,9 @@ async fn enum_stable_member_identity_and_array_metadata() {
     let schema = support::unique_namespace("pg18_enum");
     let s = schema.as_str();
 
-    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}")).await.expect("create schema");
+    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}"))
+        .await
+        .expect("create schema");
     exec(
         &executor,
         &ctx,
@@ -305,7 +314,8 @@ async fn enum_stable_member_identity_and_array_metadata() {
     assert_eq!(initial_fields[1].ordinal, 2);
     let closed_field_id = initial_fields[1].type_field_id.clone();
 
-    // ADD VALUE 'triaged' BEFORE 'closed' preserves 'closed' slot=2 and type_field_id, while ordinal becomes 3.
+    // ADD VALUE 'triaged' BEFORE 'closed' preserves 'closed' slot=2 and type_field_id, while
+    // ordinal becomes 3.
     exec(
         &executor,
         &ctx,
@@ -315,7 +325,10 @@ async fn enum_stable_member_identity_and_array_metadata() {
     .expect("add value before");
     let after_add = stores.list_type_fields(&enum_type.type_id).expect("after add");
     assert_eq!(
-        after_add.iter().map(|f| (f.name.as_str(), f.slot, f.ordinal)).collect::<Vec<_>>(),
+        after_add
+            .iter()
+            .map(|f| (f.name.as_str(), f.slot, f.ordinal))
+            .collect::<Vec<_>>(),
         vec![("open", 1, 1), ("triaged", 3, 2), ("closed", 2, 3)]
     );
     assert_eq!(after_add[2].type_field_id, closed_field_id);
@@ -364,13 +377,17 @@ async fn enum_stable_member_identity_and_array_metadata() {
     let DataType::List(states_item) = states_field.data_type() else {
         panic!("expected List for states");
     };
-    assert_eq!(
-        read_kalam_type_id_metadata(states_item).as_ref(),
-        Some(&enum_type.type_id)
-    );
+    assert_eq!(read_kalam_type_id_metadata(states_item).as_ref(), Some(&enum_type.type_id));
     assert_eq!(
         read_kalam_enum_labels(states_item).as_deref(),
-        Some(["open".to_string(), "triaged".to_string(), "archived".to_string()].as_slice())
+        Some(
+            [
+                "open".to_string(),
+                "triaged".to_string(),
+                "archived".to_string()
+            ]
+            .as_slice()
+        )
     );
 
     let payloads_field = arrow_schema.field_with_name("payloads").expect("payloads field");
@@ -396,7 +413,9 @@ async fn enum_stable_member_identity_and_array_metadata() {
         exec(
             &executor,
             &ctx,
-            &format!("INSERT INTO {s}.board (id, states, payloads) VALUES (2, ARRAY['closed'], NULL)"),
+            &format!(
+                "INSERT INTO {s}.board (id, states, payloads) VALUES (2, ARRAY['closed'], NULL)"
+            ),
         )
         .await
         .is_err(),
@@ -413,7 +432,9 @@ async fn nested_composite_type_revisions_and_pinned_history() {
     let schema = support::unique_namespace("pg18_nested");
     let s = schema.as_str();
 
-    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}")).await.expect("create schema");
+    exec(&executor, &ctx, &format!("CREATE SCHEMA {s}"))
+        .await
+        .expect("create schema");
     exec(
         &executor,
         &ctx,
@@ -441,20 +462,15 @@ async fn nested_composite_type_revisions_and_pinned_history() {
     assert_eq!(branch_rev_1.revision, rev1);
 
     // Alter inner type `leaf` -> cascades revision bump to enclosing `branch`.
-    exec(
-        &executor,
-        &ctx,
-        &format!("ALTER TYPE {s}.leaf ADD ATTRIBUTE note TEXT"),
-    )
-    .await
-    .expect("alter leaf");
+    exec(&executor, &ctx, &format!("ALTER TYPE {s}.leaf ADD ATTRIBUTE note TEXT"))
+        .await
+        .expect("alter leaf");
 
     let leaf_rev_2 = type_registry.get_or_load(&stores, &leaf_id).expect("load leaf rev 2");
     let branch_rev_2 = type_registry.get_or_load(&stores, &branch_id).expect("load branch rev 2");
     assert_eq!(leaf_rev_2.revision, rev2);
     assert_eq!(
-        branch_rev_2.revision,
-        rev2,
+        branch_rev_2.revision, rev2,
         "enclosing composite type revision must advance when nested child type changes"
     );
 
@@ -470,9 +486,7 @@ async fn nested_composite_type_revisions_and_pinned_history() {
     assert_eq!(leaf_fields_rev_2.len(), 3);
 
     // Pinned historical revision 1 remains retrievable and immutable.
-    let pinned_rev_1 = type_registry
-        .get_revision(&branch_id, rev1)
-        .expect("pinned branch rev 1");
+    let pinned_rev_1 = type_registry.get_revision(&branch_id, rev1).expect("pinned branch rev 1");
     let item_field_rev_1 = pinned_rev_1
         .arrow_fields
         .iter()

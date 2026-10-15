@@ -1,62 +1,24 @@
 //! `pg_get_expr(expr, relid)` stub for PostgreSQL wire clients.
 
-use std::sync::Arc;
+use kalamdb_commons::arrow_utils::ArrowDataType;
 
-use datafusion::{
-    arrow::array::{ArrayRef, StringBuilder},
-    error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{
-        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
-    },
-};
-use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
+use super::scalar::{arity, scalar_udf, stable_exact, utf8_nulls};
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct PgGetExprFunction;
-
-impl PgGetExprFunction {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ScalarUDFImpl for PgGetExprFunction {
-    fn name(&self) -> &str {
-        "pg_get_expr"
-    }
-
-    fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| {
-            Signature::one_of(
-                vec![
-                    TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Int64]),
-                    TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Int32]),
-                    TypeSignature::Exact(vec![ArrowDataType::Utf8, ArrowDataType::Null]),
-                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Int64]),
-                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Int32]),
-                    TypeSignature::Exact(vec![ArrowDataType::Null, ArrowDataType::Null]),
-                ],
-                Volatility::Stable,
-            )
-        })
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if args.args.len() != 2 {
-            return Err(DataFusionError::Plan(
-                "pg_get_expr(expr, relid) requires two arguments".to_string(),
-            ));
-        }
-
-        let mut builder = StringBuilder::new();
-        for _ in 0..args.number_rows {
-            builder.append_null();
-        }
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
+scalar_udf! {
+    pub struct PgGetExprFunction;
+    name = "pg_get_expr";
+    aliases = ["pg_catalog.pg_get_expr"];
+    signature = stable_exact(&[
+        &[ArrowDataType::Utf8, ArrowDataType::Int64],
+        &[ArrowDataType::Utf8, ArrowDataType::Int32],
+        &[ArrowDataType::Utf8, ArrowDataType::Null],
+        &[ArrowDataType::Null, ArrowDataType::Int64],
+        &[ArrowDataType::Null, ArrowDataType::Int32],
+        &[ArrowDataType::Null, ArrowDataType::Null],
+    ]);
+    returns utf8;
+    invoke(args) {
+        arity(&args, |len| len == 2, "pg_get_expr(expr, relid) requires two arguments")?;
+        Ok(utf8_nulls(args.number_rows))
     }
 }

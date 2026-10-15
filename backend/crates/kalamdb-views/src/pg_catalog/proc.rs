@@ -138,9 +138,7 @@ impl PgCatalogView for PgProcView {
                 }
                 arg_names.append(true);
 
-                let has_non_in = parameters
-                    .iter()
-                    .any(|p| p.mode != RoutineParameterMode::In);
+                let has_non_in = parameters.iter().any(|p| p.mode != RoutineParameterMode::In);
                 if has_non_in {
                     for parameter in parameters {
                         arg_modes.values().append_value(parameter.mode.pg_arg_mode());

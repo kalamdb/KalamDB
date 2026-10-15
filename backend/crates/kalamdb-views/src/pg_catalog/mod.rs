@@ -26,7 +26,7 @@ use kalamdb_datafusion_sources::{
     provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
 use kalamdb_session::{can_access_system_table, can_access_user_table, is_admin_role};
-use kalamdb_session_datafusion::{extract_user_role, PermissionChecker};
+use kalamdb_session_datafusion::{extract_user_role, PermissionChecker, SessionConfigValues};
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -41,6 +41,7 @@ pub mod constraint;
 pub mod database;
 pub mod description;
 pub mod empty;
+pub mod empty_tables;
 pub mod enum_view;
 pub mod get_keywords;
 pub mod index;
@@ -63,6 +64,13 @@ pub trait PgCatalogView: Send + Sync + std::fmt::Debug {
         None
     }
     fn compute_batch(&self, role: Role) -> Result<RecordBatch, RegistryError>;
+    fn compute_session_batch(
+        &self,
+        role: Role,
+        _settings: Option<&SessionConfigValues>,
+    ) -> Result<RecordBatch, RegistryError> {
+        self.compute_batch(role)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +91,7 @@ struct PgCatalogScanSource<V: PgCatalogView> {
     limit:           Option<usize>,
     output_schema:   SchemaRef,
     role:            Role,
+    settings:        Option<SessionConfigValues>,
 }
 
 impl<V: PgCatalogView> std::fmt::Debug for PgCatalogScanSource<V> {
@@ -106,13 +115,15 @@ impl<V: PgCatalogView + 'static> DeferredBatchSource for PgCatalogScanSource<V> 
     }
 
     async fn produce_batch(&self) -> DataFusionResult<RecordBatch> {
-        let batch = self.view.compute_batch(self.role).map_err(|error| {
-            DataFusionError::Execution(format!(
-                "failed to compute pg_catalog.{}: {}",
-                self.view.name(),
-                error
-            ))
-        })?;
+        let batch = self.view.compute_session_batch(self.role, self.settings.as_ref()).map_err(
+            |error| {
+                DataFusionError::Execution(format!(
+                    "failed to compute pg_catalog.{}: {}",
+                    self.view.name(),
+                    error
+                ))
+            },
+        )?;
 
         finalize_deferred_batch(
             batch,
@@ -168,6 +179,7 @@ impl<V: PgCatalogView + 'static> TableProvider for PgCatalogViewTableProvider<V>
             limit,
             output_schema,
             role,
+            settings: state.config_options().extensions.get::<SessionConfigValues>().cloned(),
         }))))
     }
 
@@ -305,12 +317,7 @@ impl PgCatalogSchemaProvider {
 }
 
 fn register_empty_pg_catalog_views(providers: &mut BTreeMap<String, Arc<dyn TableProvider>>) {
-    // Single source of truth: kalamdb-postgres-wire client_catalog (compiled in-place via path).
-    #[allow(dead_code)]
-    #[path = "../../../kalamdb-postgres-wire/src/client_catalog/empty_tables.rs"]
-    mod wire_empty_tables;
-
-    for (name, fields) in wire_empty_tables::empty_pg_catalog_table_defs() {
+    for (name, fields) in empty_tables::empty_pg_catalog_table_defs() {
         if providers.contains_key(name) {
             continue;
         }

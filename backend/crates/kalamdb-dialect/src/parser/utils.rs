@@ -25,16 +25,6 @@ use crate::dialect::KalamDbDialect;
 
 pub(crate) const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
 
-static CURRENT_SCHEMA_CALL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_SCHEMA\s*\(\s*\)").expect("valid regex"));
-static CURRENT_DATABASE_CALL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_DATABASE\s*\(\s*\)").expect("valid regex"));
-static CURRENT_SCHEMA_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_SCHEMA)([^A-Za-z0-9_(]|$)").expect("valid regex")
-});
-static CURRENT_DATABASE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_DATABASE)([^A-Za-z0-9_(]|$)").expect("valid regex")
-});
 static UNQUALIFIED_PG_CATALOG_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)(^|[\s,(])pg_(aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|get_keywords|index|inherits|init_privs|language|largeobject|largeobject_metadata|matviews|namespace|opclass|operator|opfamily|parameter_acl|partitioned_table|policy|proc|publication|publication_namespace|publication_rel|range|replication_origin|replication_slots|rewrite|roles|seclabel|sequence|settings|shdepend|shdescription|shseclabel|stat_activity|stat_gssapi|stat_user_tables|statistic|statistic_ext|statistic_ext_data|subscription|subscription_rel|tables|tablespace|transform|trigger|ts_config|ts_config_map|ts_dict|ts_parser|ts_template|type|user_mapping|views)\b",
@@ -48,18 +38,6 @@ static DBEAVER_TYPRELID_FILTER_RE: Lazy<Regex> = Lazy::new(|| {
         r"(?is)\(\s*(\w+)\.typrelid\s*=\s*0\s+OR\s+\(\s*SELECT\s+\w+\.relkind\s*=\s*'c'\s+FROM\s+pg_catalog\.pg_class\s+(?:AS\s+)?\w+\s+WHERE\s+\w+\.oid\s*=\s*(\w+)\.typrelid\s*\)\s*\)",
     )
     .expect("valid regex")
-});
-static CURRENT_USER_CALL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_USER\s*\(\s*\)").expect("valid regex"));
-static CURRENT_ROLE_CALL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_ROLE\s*\(\s*\)").expect("valid regex"));
-static CURRENT_USER_ID_CALL_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)\bCURRENT_USER_ID\s*\(\s*\)").expect("valid regex"));
-static CURRENT_USER_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_USER)([^A-Za-z0-9_(]|$)").expect("valid regex")
-});
-static CURRENT_ROLE_KEYWORD_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(^|[^A-Za-z0-9_])(CURRENT_ROLE)([^A-Za-z0-9_(]|$)").expect("valid regex")
 });
 static PG_CATALOG_COL_DESCRIPTION_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\bpg_catalog\.col_description\s*\(").expect("valid regex"));
@@ -125,14 +103,15 @@ static CURRENT_SCHEMAS_ANY_RE: Lazy<Regex> = Lazy::new(|| {
 });
 static CURRENT_SCHEMAS_REPLACE_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)replace\s*\(\s*KDB_CURRENT_SCHEMA\s*\(\s*\)\s*,\s*'pg_temp_'\s*,\s*'pg_toast_temp_'\s*\)",
+        r"(?i)replace\s*\(\s*CURRENT_SCHEMA\s*\(\s*\)\s*,\s*'pg_temp_'\s*,\s*'pg_toast_temp_'\s*\)",
     )
     .expect("valid regex")
 });
 /// JDBC `getColumns` reads `rs.getBytes("current_database")` from an unlabeled
 /// `SELECT current_database(), ...` projection.
 static JDBC_CURRENT_DATABASE_SELECT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(SELECT\s+)KDB_CURRENT_DATABASE\s*\(\s*\)\s*,").expect("valid regex")
+    Regex::new(r"(?i)(SELECT\s+)(?:pg_catalog\.)?current_database\s*\(\s*\)\s*,")
+        .expect("valid regex")
 });
 /// JDBC TypeInfoCache: search_path unnest via `generate_series` + `array_upper(current_schemas)`.
 static JDBC_TYPEINFO_SEARCH_PATH_JOIN_RE: Lazy<Regex> = Lazy::new(|| {
@@ -176,25 +155,6 @@ static TABULARIS_TABLE_FILTER_RE: Lazy<Regex> = Lazy::new(|| {
 /// Default sqlparser options used across KalamDB
 pub fn parser_options() -> ParserOptions {
     ParserOptions::new().with_trailing_commas(true)
-}
-
-/// Normalize SQL-standard context keyword calls for `sqlparser-rs`.
-///
-/// `sqlparser-rs` treats `CURRENT_USER` and `CURRENT_ROLE` as reserved keywords,
-/// not regular zero-argument function calls. Queries like `SELECT CURRENT_USER()`
-/// therefore fail parsing unless the empty parentheses are stripped first.
-pub fn normalize_context_keyword_calls_for_sqlparser(sql: &str) -> std::borrow::Cow<'_, str> {
-    use std::borrow::Cow;
-    let s1 = CURRENT_USER_CALL_RE.replace_all(sql, "CURRENT_USER");
-    let s2 = CURRENT_ROLE_CALL_RE.replace_all(&s1, "CURRENT_ROLE");
-    let s3 = CURRENT_SCHEMA_CALL_RE.replace_all(&s2, "CURRENT_SCHEMA");
-    let s4 = CURRENT_DATABASE_CALL_RE.replace_all(&s3, "CURRENT_DATABASE");
-    let result: &str = &s4;
-    if result == sql {
-        Cow::Borrowed(sql)
-    } else {
-        Cow::Owned(s4.into_owned())
-    }
 }
 
 /// Qualify bare `pg_*` catalog tables so they resolve when the session namespace
@@ -251,11 +211,11 @@ fn rewrite_pg_catalog_functions(sql: &str) -> std::borrow::Cow<'_, str> {
          VARCHAR) AS reserved3$2",
     );
     let s4 = DBEAVER_FORMAT_REGCLASS_OID_RE.replace_all(&s3j, "0");
-    let s5 = CURRENT_SCHEMAS_FIRST_ELEM_RE.replace_all(&s4, "KDB_CURRENT_SCHEMA()");
+    let s5 = CURRENT_SCHEMAS_FIRST_ELEM_RE.replace_all(&s4, "CURRENT_SCHEMA()");
     let s6 = CURRENT_SCHEMAS_ANY_RE.replace_all(&s5, "IS NOT NULL");
-    let s7 = CURRENT_SCHEMAS_REPLACE_RE.replace_all(&s6, "KDB_CURRENT_SCHEMA()");
+    let s7 = CURRENT_SCHEMAS_REPLACE_RE.replace_all(&s6, "CURRENT_SCHEMA()");
     let s8 = JDBC_CURRENT_DATABASE_SELECT_RE
-        .replace_all(&s7, "${1}KDB_CURRENT_DATABASE() AS current_database,");
+        .replace_all(&s7, "${1}current_database() AS current_database,");
     let s9 = rewrite_jdbc_typeinfo_search_path(s8.as_ref());
     let s10 = JDBC_TYPINPUT_ARRAY_IN_RE.replace_all(s9.as_ref(), "FALSE");
     let s11 = PG_GET_KEYWORDS_CALL_RE.replace_all(&s10, "pg_catalog.pg_get_keywords");
@@ -370,10 +330,10 @@ fn is_tabularis_fkey_probe(lower: &str) -> bool {
 
 fn rewrite_jdbc_get_primary_keys(sql: &str) -> std::borrow::Cow<'static, str> {
     let mut rewritten = String::from(
-        "SELECT KDB_CURRENT_DATABASE() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", \
-         table_name AS \"TABLE_NAME\", column_name AS \"COLUMN_NAME\", \
-         COALESCE(kdb_primary_key_pos, ordinal_position) AS \"KEY_SEQ\", concat(table_name, \
-         '_pkey') AS \"PK_NAME\" FROM information_schema.columns WHERE kdb_primary_key",
+        "SELECT current_database() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", table_name \
+         AS \"TABLE_NAME\", column_name AS \"COLUMN_NAME\", COALESCE(kdb_primary_key_pos, \
+         ordinal_position) AS \"KEY_SEQ\", concat(table_name, '_pkey') AS \"PK_NAME\" FROM \
+         information_schema.columns WHERE kdb_primary_key",
     );
     append_captured_filter(&mut rewritten, "table_schema", JDBC_PK_SCHEMA_RE.captures(sql));
     append_captured_filter(&mut rewritten, "table_name", JDBC_PK_TABLE_RE.captures(sql));
@@ -383,8 +343,8 @@ fn rewrite_jdbc_get_primary_keys(sql: &str) -> std::borrow::Cow<'static, str> {
 
 fn rewrite_jdbc_get_index_info(sql: &str) -> std::borrow::Cow<'static, str> {
     let mut rewritten = String::from(
-        "SELECT KDB_CURRENT_DATABASE() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", \
-         table_name AS \"TABLE_NAME\", false AS \"NON_UNIQUE\", CAST(NULL AS VARCHAR) AS \
+        "SELECT current_database() AS \"TABLE_CAT\", table_schema AS \"TABLE_SCHEM\", table_name \
+         AS \"TABLE_NAME\", false AS \"NON_UNIQUE\", CAST(NULL AS VARCHAR) AS \
          \"INDEX_QUALIFIER\", concat(table_name, '_pkey') AS \"INDEX_NAME\", 3 AS \"TYPE\", \
          COALESCE(kdb_primary_key_pos, ordinal_position) AS \"ORDINAL_POSITION\", column_name AS \
          \"COLUMN_NAME\", 'A' AS \"ASC_OR_DESC\", CAST(NULL AS DOUBLE) AS \"CARDINALITY\", \
@@ -413,7 +373,7 @@ fn rewrite_jdbc_best_row_identifier(sql: &str) -> std::borrow::Cow<'static, str>
 
 fn rewrite_jdbc_column_privileges(sql: &str) -> std::borrow::Cow<'static, str> {
     let mut rewritten = String::from(
-        "SELECT KDB_CURRENT_DATABASE() AS current_database, CAST(NULL AS VARCHAR) AS nspname, \
+        "SELECT current_database() AS current_database, CAST(NULL AS VARCHAR) AS nspname, \
          CAST(NULL AS VARCHAR) AS relname, CAST(NULL AS VARCHAR) AS rolname, CAST(NULL AS \
          VARCHAR) AS relacl, CAST(NULL AS VARCHAR) AS attacl, CAST(NULL AS VARCHAR) AS attname \
          FROM (SELECT 1) AS _kdb_jdbc_colpriv WHERE false",
@@ -424,7 +384,7 @@ fn rewrite_jdbc_column_privileges(sql: &str) -> std::borrow::Cow<'static, str> {
 
 fn rewrite_jdbc_table_privileges(sql: &str) -> std::borrow::Cow<'static, str> {
     let mut rewritten = String::from(
-        "SELECT KDB_CURRENT_DATABASE() AS current_database, CAST(NULL AS VARCHAR) AS nspname, \
+        "SELECT current_database() AS current_database, CAST(NULL AS VARCHAR) AS nspname, \
          CAST(NULL AS VARCHAR) AS relname, CAST(NULL AS VARCHAR) AS rolname, CAST(NULL AS \
          VARCHAR) AS relacl FROM (SELECT 1) AS _kdb_jdbc_tabpriv WHERE false",
     );
@@ -516,17 +476,14 @@ fn rewrite_jdbc_get_udts() -> std::borrow::Cow<'static, str> {
     )
 }
 
-/// Rewrite public context function spellings to KalamDB's internal DataFusion UDFs.
+/// Rewrite PostgreSQL wire/catalog SQL and operators (JSON `->`/`->>`/`?`, regex `~`,
+/// casts, `unnest`) for DataFusion planning.
 ///
-/// These aliases let user-facing SQL use `CURRENT_USER()`, `CURRENT_USER_ID()`,
-/// `CURRENT_ROLE()`, `CURRENT_SCHEMA()`, and `CURRENT_DATABASE()` while execution
-/// resolves to the registered `KDB_*` functions.
-/// `CURRENT_USER_ID()` is an alias for `CURRENT_USER()` (both return the user id).
-///
-/// PostgreSQL JSON operators (`->`, `->>`, `?`) are rewritten to `json_get_json`,
-/// `json_as_text`, and `json_contains` before DataFusion planning. DataFusion 55 uses
-/// the DuckDB SQL dialect for lambda array functions, and DuckDB parses bare `->` as
-/// lambda syntax instead of JSON extraction.
+/// Note: SQL context keywords and functions (`CURRENT_USER`, `CURRENT_USER()`,
+/// `CURRENT_USER_ID()`, `CURRENT_ROLE`, `CURRENT_ROLE()`, `CURRENT_SCHEMA`,
+/// `CURRENT_SCHEMA()`, `CURRENT_DATABASE`, `CURRENT_DATABASE()`) are parsed
+/// natively by [`KalamDbDialect::parse_prefix`] and resolved natively by
+/// DataFusion `ScalarUDFImpl::aliases()`.
 ///
 /// Returns `Cow::Borrowed` when no rewriting was needed, avoiding allocation.
 pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'_, str> {
@@ -536,31 +493,8 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
         return Cow::Borrowed(sql);
     }
 
-    // Perform all context-function regex rewrites on an owned String.
-    // The chain of replacements is cheap (no allocation when nothing matches),
-    // but we materialise to String once any regex matches to avoid lifetime
-    // issues with the intermediate Cow chain.
-    let rewritten_pk = rewrite_jdbc_catalog_queries(sql);
-    let source = rewritten_pk.as_ref();
-
-    let s1 = CURRENT_USER_ID_CALL_RE.replace_all(source, "KDB_CURRENT_USER()");
-    let s2 = CURRENT_USER_CALL_RE.replace_all(&s1, "KDB_CURRENT_USER()");
-    let s3 = CURRENT_ROLE_CALL_RE.replace_all(&s2, "KDB_CURRENT_ROLE()");
-    let s4 = CURRENT_SCHEMA_CALL_RE.replace_all(&s3, "KDB_CURRENT_SCHEMA()");
-    let s5 = CURRENT_DATABASE_CALL_RE.replace_all(&s4, "KDB_CURRENT_DATABASE()");
-    let s6 = replace_context_keyword(&s5, &CURRENT_USER_KEYWORD_RE, "KDB_CURRENT_USER()");
-    let s7 = replace_context_keyword(&s6, &CURRENT_ROLE_KEYWORD_RE, "KDB_CURRENT_ROLE()");
-    let s8 = replace_context_keyword(&s7, &CURRENT_SCHEMA_KEYWORD_RE, "KDB_CURRENT_SCHEMA()");
-    let s9 = replace_context_keyword(&s8, &CURRENT_DATABASE_KEYWORD_RE, "KDB_CURRENT_DATABASE()");
-
-    // The Cow variant of s9 only reflects the LAST replacement step.
-    // Earlier steps (s1–s7) may have produced Owned results, but if s8/s9
-    // found no further matches they return Borrowed (pointing into an owned
-    // intermediate). Compare the string content to detect any change.
-    let s10 = rewrite_unqualified_pg_catalog_tables(s9.as_ref());
-    let s11 = rewrite_dbeaver_typrelid_filter(&s10);
-    let s12 = rewrite_pg_catalog_functions(&s11);
-    let result: &str = &s12;
+    let text_rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
+    let result: &str = text_rewritten.as_ref();
     let rewritten_ast;
     let after_ast: &str = if needs_ast_operator_rewrite(result) {
         rewritten_ast = rewrite_ast_operators_for_datafusion(result);
@@ -578,56 +512,156 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
     }
 }
 
-/// Rewrite a PostgreSQL context keyword (`CURRENT_DATABASE`, …) to the KDB UDF call,
-/// but leave `AS current_database` aliases intact for JDBC column labels.
-fn replace_context_keyword<'a>(
-    haystack: &'a str,
-    regex: &Regex,
-    kdb_call: &str,
-) -> std::borrow::Cow<'a, str> {
-    regex.replace_all(haystack, |caps: &regex::Captures<'_>| {
-        let matched = caps.get(0).expect("keyword match");
-        let prefix = caps.get(1).expect("keyword prefix");
-        let suffix = caps.get(3).expect("keyword suffix");
-        if preceded_by_as_keyword(haystack, matched.start() + prefix.len()) {
-            matched.as_str().to_string()
-        } else {
-            format!("{}{kdb_call}{}", prefix.as_str(), suffix.as_str())
-        }
-    })
+/// Parse `sql` into a single `Statement` ready for DataFusion planning without
+/// an AST -> String -> AST round-trip.
+pub fn parse_statement_for_datafusion(
+    sql: &str,
+) -> Result<Statement, sqlparser::parser::ParserError> {
+    if sql.contains("typrelid") && sql.contains("relkind") {
+        let rewritten = rewrite_context_functions_for_datafusion(sql);
+        return super::KalamParser::parse_one(rewritten.as_ref());
+    }
+    let text_rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
+    let mut statement = super::KalamParser::parse_one(text_rewritten.as_ref())?;
+    if needs_ast_operator_rewrite(text_rewritten.as_ref()) {
+        apply_datafusion_ast_rewrites(&mut statement);
+    }
+    Ok(statement)
 }
 
-fn preceded_by_as_keyword(sql: &str, ident_start: usize) -> bool {
-    let before = sql[..ident_start].trim_end_matches(|c: char| c == '"' || c.is_ascii_whitespace());
-    let Some(without_s) = before.strip_suffix(|c: char| c.eq_ignore_ascii_case(&'S')) else {
-        return false;
-    };
-    let Some(without_as) = without_s.strip_suffix(|c: char| c.eq_ignore_ascii_case(&'A')) else {
-        return false;
-    };
-    without_as
-        .chars()
-        .next_back()
-        .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+/// Apply text-level compat rewrites needed only for complex JDBC/DBeaver/Tabularis catalog
+/// queries (`CURRENT_*` context functions are parsed natively by `KalamDbDialect` and
+/// resolved natively by DataFusion UDF aliases).
+pub fn rewrite_wire_catalog_compat_for_datafusion(sql: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+
+    if !sql_needs_wire_catalog_text_rewrite(sql) {
+        return Cow::Borrowed(sql);
+    }
+
+    let rewritten_pk = rewrite_jdbc_catalog_queries(sql);
+    let s1 = rewrite_unqualified_pg_catalog_tables(rewritten_pk.as_ref());
+    let s2 = rewrite_dbeaver_typrelid_filter(&s1);
+    let s3 = rewrite_pg_catalog_functions(&s2);
+    if s3.as_ref() == sql {
+        Cow::Borrowed(sql)
+    } else {
+        Cow::Owned(s3.into_owned())
+    }
 }
 
-/// Quick check for AST operator rewrites (JSON extraction, PostgreSQL regex).
+/// Quick check for AST operator rewrites (JSON extraction, PostgreSQL regex, casts, unnest).
 #[inline]
-fn needs_ast_operator_rewrite(sql: &str) -> bool {
-    // Cheap scan; false positives only cause an unnecessary but correct re-parse.
+pub fn needs_ast_operator_rewrite(sql: &str) -> bool {
+    // Cheap scan; false positives only cause an unnecessary but correct AST pass.
     sql.contains("->")
         || sql.contains('?')
         || sql.contains('~')
         || sql.contains("::")
-        || contains_unnest(sql)
+        || sql.contains("typrelid")
+        || contains_ast_function_or_keyword_trigger(sql)
 }
 
-fn contains_unnest(sql: &str) -> bool {
+fn contains_ast_function_or_keyword_trigger(sql: &str) -> bool {
     let bytes = sql.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if starts_with_ignore_ascii_case(bytes, i, b"unnest") {
-            return true;
+        match bytes[i] {
+            b'u' | b'U' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"unnest") {
+                    return true;
+                }
+            },
+            b'c' | b'C' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"current_database") {
+                    return true;
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Quick check for wire-catalog text-level rewrites (JDBC/DBeaver/Tabularis catalog patterns).
+#[inline]
+pub fn sql_needs_wire_catalog_text_rewrite(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'c' | b'C' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"current_schemas")
+                    || starts_with_ignore_ascii_case(bytes, i, b"current_database")
+                    || starts_with_ignore_ascii_case(bytes, i, b"col_description")
+                {
+                    return true;
+                }
+            },
+            b'p' | b'P' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"pg_")
+                    || starts_with_ignore_ascii_case(bytes, i, b"pktable_cat")
+                    || starts_with_ignore_ascii_case(bytes, i, b"proname")
+                    || starts_with_ignore_ascii_case(bytes, i, b"proargmodes")
+                {
+                    return true;
+                }
+            },
+            b't' | b'T' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"typrelid")
+                    || starts_with_ignore_ascii_case(bytes, i, b"typinput")
+                    || starts_with_ignore_ascii_case(bytes, i, b"type_cat")
+                {
+                    return true;
+                }
+            },
+            b'g' | b'G' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"get_primary") {
+                    return true;
+                }
+            },
+            b'f' | b'F' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"format_type")
+                    || starts_with_ignore_ascii_case(bytes, i, b"format(")
+                {
+                    return true;
+                }
+            },
+            b'r' | b'R' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"regclass")
+                    || starts_with_ignore_ascii_case(bytes, i, b"regproc")
+                    || starts_with_ignore_ascii_case(bytes, i, b"relacl")
+                {
+                    return true;
+                }
+            },
+            b'o' | b'O' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"obj_description") {
+                    return true;
+                }
+            },
+            b'h' | b'H' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"has_") {
+                    return true;
+                }
+            },
+            b's' | b'S' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"substring") {
+                    return true;
+                }
+            },
+            b'_' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"_pg_expandarray") {
+                    return true;
+                }
+            },
+            b'<' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"<>") {
+                    return true;
+                }
+            },
+            _ => {},
         }
         i += 1;
     }
@@ -642,57 +676,20 @@ fn starts_with_ignore_ascii_case(haystack: &[u8], offset: usize, needle: &[u8]) 
 
 /// False negatives skip a required rewrite; false positives only take the slow path.
 fn sql_needs_datafusion_compat_rewrite(sql: &str) -> bool {
-    if needs_ast_operator_rewrite(sql) {
-        return true;
+    needs_ast_operator_rewrite(sql) || sql_needs_wire_catalog_text_rewrite(sql)
+}
+
+/// Apply all DataFusion AST operator/cast/table-function rewrites in-place on a single `Statement`.
+pub fn apply_datafusion_ast_rewrites(statement: &mut Statement) {
+    let mut visitor = DataFusionAstRewriter;
+    let _ = statement.visit(&mut visitor);
+    super::pg_unnest::apply_pg_table_function_rewrite(statement);
+}
+
+fn apply_datafusion_ast_rewrites_slice(statements: &mut [Statement]) {
+    for statement in statements {
+        apply_datafusion_ast_rewrites(statement);
     }
-    let bytes = sql.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'c' | b'C' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"current_")
-                    || starts_with_ignore_ascii_case(bytes, i, b"col_description")
-                {
-                    return true;
-                }
-            },
-            b'p' | b'P' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"pg_") {
-                    return true;
-                }
-            },
-            b't' | b'T' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"typrelid") {
-                    return true;
-                }
-            },
-            b'g' | b'G' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"get_primary") {
-                    return true;
-                }
-            },
-            b'f' | b'F' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"format_type") {
-                    return true;
-                }
-            },
-            b'r' | b'R' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"regclass")
-                    || starts_with_ignore_ascii_case(bytes, i, b"regproc")
-                {
-                    return true;
-                }
-            },
-            b'u' | b'U' => {
-                if starts_with_ignore_ascii_case(bytes, i, b"unnest") {
-                    return true;
-                }
-            },
-            _ => {},
-        }
-        i += 1;
-    }
-    false
 }
 
 fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
@@ -701,22 +698,7 @@ fn rewrite_ast_operators_for_datafusion(sql: &str) -> String {
         Err(_) => return sql.to_string(),
     };
 
-    let mut json_visitor = JsonOperatorRewriter;
-    let _ = statements.visit(&mut json_visitor);
-
-    let mut pg_visitor = PgWireCompatRewriter;
-    let _ = statements.visit(&mut pg_visitor);
-
-    let mut text_cast_visitor = RedundantPgTextCastRewriter;
-    let _ = statements.visit(&mut text_cast_visitor);
-
-    let mut oid_cast_visitor = PgOidCastRewriter;
-    let _ = statements.visit(&mut oid_cast_visitor);
-
-    let mut typrelid_visitor = DbeaverTyprelidRewriter;
-    let _ = statements.visit(&mut typrelid_visitor);
-
-    super::pg_unnest::apply_pg_table_function_rewrites(&mut statements);
+    apply_datafusion_ast_rewrites_slice(&mut statements);
 
     statements_to_sql(&statements)
 }
@@ -725,16 +707,61 @@ fn statements_to_sql(statements: &[Statement]) -> String {
     statements.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")
 }
 
-struct JsonOperatorRewriter;
+struct DataFusionAstRewriter;
 
-impl VisitorMut for JsonOperatorRewriter {
+impl VisitorMut for DataFusionAstRewriter {
     type Break = ();
 
     fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         if let Some(rewritten) = rewrite_json_expr(expr) {
             *expr = rewritten;
         }
+        if let Some(rewritten) = rewrite_pg_regex_expr(expr) {
+            *expr = rewritten;
+        }
+        if let Some(rewritten) = rewrite_pg_oid_cast_expr(expr) {
+            *expr = rewritten;
+        }
+        if let Some(simplified) = simplify_dbeaver_typrelid_filter(expr) {
+            *expr = simplified;
+        }
         ControlFlow::Continue(())
+    }
+
+    fn post_visit_select(&mut self, select: &mut Select) -> ControlFlow<Self::Break> {
+        for item in &mut select.projection {
+            let SelectItem::UnnamedExpr(expr) = item else {
+                continue;
+            };
+            if let Some(unwrapped) = unwrap_redundant_pg_text_cast(expr) {
+                *expr = unwrapped;
+            }
+            if is_unlabeled_current_database_call(expr) {
+                let call = expr.clone();
+                *item = SelectItem::ExprWithAlias {
+                    expr:  call,
+                    alias: Ident::new("current_database"),
+                };
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn is_unlabeled_current_database_call(expr: &Expr) -> bool {
+    let Expr::Function(func) = expr else {
+        return false;
+    };
+    match func.name.0.as_slice() {
+        [ObjectNamePart::Identifier(ident)] => {
+            ident.value.eq_ignore_ascii_case("current_database")
+                || ident.value.eq_ignore_ascii_case("kdb_current_database")
+        },
+        [ObjectNamePart::Identifier(schema), ObjectNamePart::Identifier(ident)] => {
+            schema.value.eq_ignore_ascii_case("pg_catalog")
+                && ident.value.eq_ignore_ascii_case("current_database")
+        },
+        _ => false,
     }
 }
 
@@ -781,29 +808,6 @@ fn make_function_call(name: &str, args: Vec<Expr>) -> Expr {
     })
 }
 
-/// Strip `column::text` casts in SELECT projections.
-///
-/// PostgreSQL clients often cast catalog text columns to `text` for wire encoding.
-/// DataFusion already stores these columns as UTF-8, and keeping the cast causes
-/// duplicate projection names when the same column appears in ORDER BY.
-struct RedundantPgTextCastRewriter;
-
-impl VisitorMut for RedundantPgTextCastRewriter {
-    type Break = ();
-
-    fn post_visit_select(&mut self, select: &mut Select) -> ControlFlow<Self::Break> {
-        for item in &mut select.projection {
-            let SelectItem::UnnamedExpr(expr) = item else {
-                continue;
-            };
-            if let Some(unwrapped) = unwrap_redundant_pg_text_cast(expr) {
-                *expr = unwrapped;
-            }
-        }
-        ControlFlow::Continue(())
-    }
-}
-
 fn unwrap_redundant_pg_text_cast(expr: &Expr) -> Option<Expr> {
     let Expr::Cast {
         kind,
@@ -834,34 +838,6 @@ fn is_pg_text_cast_type(data_type: &DataType) -> bool {
 
 fn is_column_reference(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
-}
-
-struct PgWireCompatRewriter;
-
-impl VisitorMut for PgWireCompatRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        if let Some(rewritten) = rewrite_pg_regex_expr(expr) {
-            *expr = rewritten;
-        }
-        ControlFlow::Continue(())
-    }
-}
-
-/// Rewrite PostgreSQL OID-family casts (`::regclass`, `::oid`, `::regproc`, …)
-/// that DataFusion cannot plan (`Unsupported SQL type REGCLASS`).
-struct PgOidCastRewriter;
-
-impl VisitorMut for PgOidCastRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        if let Some(rewritten) = rewrite_pg_oid_cast_expr(expr) {
-            *expr = rewritten;
-        }
-        ControlFlow::Continue(())
-    }
 }
 
 fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
@@ -976,19 +952,6 @@ fn rewrite_pg_regex_expr(expr: &Expr) -> Option<Expr> {
 
 /// Strip DBeaver/pgAdmin `pg_type.typrelid` OR-filters that use a correlated `pg_class.relkind`
 /// subquery. KalamDB's `pg_type` shim always emits `typrelid = 0`, so the OR branch is dead.
-struct DbeaverTyprelidRewriter;
-
-impl VisitorMut for DbeaverTyprelidRewriter {
-    type Break = ();
-
-    fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
-        if let Some(simplified) = simplify_dbeaver_typrelid_filter(expr) {
-            *expr = simplified;
-        }
-        ControlFlow::Continue(())
-    }
-}
-
 fn simplify_dbeaver_typrelid_filter(expr: &Expr) -> Option<Expr> {
     let Expr::BinaryOp {
         left,
@@ -1135,28 +1098,11 @@ pub fn parse_sql_statements(
     sql: &str,
     dialect: &dyn Dialect,
 ) -> Result<Vec<Statement>, ParserError> {
-    let parse_with_sql = |candidate: &str| {
-        Parser::new(dialect)
-            .with_options(parser_options())
-            .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
-            .try_with_sql(candidate)?
-            .parse_statements()
-    };
-
-    match parse_with_sql(sql) {
-        Ok(statements) => Ok(statements),
-        Err(original_error)
-            if CURRENT_USER_CALL_RE.is_match(sql) || CURRENT_ROLE_CALL_RE.is_match(sql) =>
-        {
-            let normalized_sql = normalize_context_keyword_calls_for_sqlparser(sql);
-            if normalized_sql == sql {
-                return Err(original_error);
-            }
-
-            parse_with_sql(&normalized_sql).map_err(|_| original_error)
-        },
-        Err(error) => Err(error),
-    }
+    Parser::new(dialect)
+        .with_options(parser_options())
+        .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
+        .try_with_sql(sql)?
+        .parse_statements()
 }
 
 /// Parse a single SQL expression using KalamDB parser defaults.
@@ -1164,36 +1110,17 @@ pub fn parse_sql_statements(
 /// This keeps fragment parsing on sqlparser-rs instead of wrapping expressions
 /// in synthetic SELECT statements or accepting unparsed trailing tokens.
 pub fn parse_sql_expression(sql: &str, dialect: &dyn Dialect) -> Result<Expr, ParserError> {
-    let parse_with_sql = |candidate: &str| {
-        let mut parser = Parser::new(dialect)
-            .with_options(parser_options())
-            .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
-            .try_with_sql(candidate)?;
+    let mut parser = Parser::new(dialect)
+        .with_options(parser_options())
+        .with_recursion_limit(DEFAULT_SQL_RECURSION_LIMIT)
+        .try_with_sql(sql)?;
 
-        let expr = parser.parse_expr()?;
-        if !matches!(parser.peek_nth_token_ref(0).token, Token::EOF) {
-            return Err(ParserError::ParserError(
-                "expression contains trailing tokens".to_string(),
-            ));
-        }
-
-        Ok(expr)
-    };
-
-    match parse_with_sql(sql) {
-        Ok(expr) => Ok(expr),
-        Err(original_error)
-            if CURRENT_USER_CALL_RE.is_match(sql) || CURRENT_ROLE_CALL_RE.is_match(sql) =>
-        {
-            let normalized_sql = normalize_context_keyword_calls_for_sqlparser(sql);
-            if normalized_sql == sql {
-                return Err(original_error);
-            }
-
-            parse_with_sql(&normalized_sql).map_err(|_| original_error)
-        },
-        Err(error) => Err(error),
+    let expr = parser.parse_expr()?;
+    if !matches!(parser.peek_nth_token_ref(0).token, Token::EOF) {
+        return Err(ParserError::ParserError("expression contains trailing tokens".to_string()));
     }
+
+    Ok(expr)
 }
 
 /// Parse a single SQL statement using KalamDB defaults and KalamDbDialect.
@@ -1765,10 +1692,17 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_context_keyword_calls_for_sqlparser() {
-        let normalized =
-            normalize_context_keyword_calls_for_sqlparser("SELECT CURRENT_USER(), CURRENT_ROLE()");
-        assert_eq!(normalized, "SELECT CURRENT_USER, CURRENT_ROLE");
+    fn test_kalam_dialect_parses_context_keyword_calls_natively() {
+        let statement = super::super::KalamParser::parse_one(
+            "SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_SCHEMA(), CURRENT_DATABASE(), \
+             CURRENT_USER, CURRENT_ROLE, CURRENT_SCHEMA, CURRENT_DATABASE",
+        )
+        .expect("KalamDbDialect::parse_prefix should parse context keywords with or without ()");
+        assert_eq!(
+            statement.to_string(),
+            "SELECT CURRENT_USER, CURRENT_ROLE, CURRENT_SCHEMA, CURRENT_DATABASE, CURRENT_USER, \
+             CURRENT_ROLE, CURRENT_SCHEMA, CURRENT_DATABASE"
+        );
     }
 
     #[test]
@@ -1863,17 +1797,17 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
     }
 
     #[test]
-    fn test_rewrite_current_schema_for_datafusion() {
-        let rewritten =
-            rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
-        assert_eq!(rewritten, "SELECT KDB_CURRENT_SCHEMA() AS schema");
+    fn test_parse_current_schema_for_datafusion_without_rewrite() {
+        let statement =
+            parse_statement_for_datafusion("SELECT CURRENT_SCHEMA() AS schema").unwrap();
+        assert_eq!(statement.to_string(), "SELECT CURRENT_SCHEMA AS schema");
     }
 
     #[test]
-    fn test_rewrite_current_database_for_datafusion() {
-        let rewritten =
-            rewrite_context_functions_for_datafusion("SELECT CURRENT_DATABASE() AS database");
-        assert_eq!(rewritten, "SELECT KDB_CURRENT_DATABASE() AS database");
+    fn test_parse_current_database_for_datafusion_without_rewrite() {
+        let statement =
+            parse_statement_for_datafusion("SELECT CURRENT_DATABASE() AS database").unwrap();
+        assert_eq!(statement.to_string(), "SELECT CURRENT_DATABASE AS database");
     }
 
     #[test]
@@ -1889,20 +1823,20 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
     }
 
     #[test]
-    fn test_rewrite_context_functions_for_datafusion() {
-        let rewritten = rewrite_context_functions_for_datafusion(
+    fn test_parse_context_functions_for_datafusion_natively() {
+        let statement = parse_statement_for_datafusion(
             "SELECT CURRENT_USER(), CURRENT_USER_ID(), CURRENT_ROLE()",
-        );
-        // CURRENT_USER_ID() is an alias for CURRENT_USER() (both return user id).
-        assert_eq!(rewritten, "SELECT KDB_CURRENT_USER(), KDB_CURRENT_USER(), KDB_CURRENT_ROLE()");
+        )
+        .unwrap();
+        assert_eq!(statement.to_string(), "SELECT CURRENT_USER, CURRENT_USER_ID(), CURRENT_ROLE");
     }
 
     #[test]
-    fn test_rewrite_context_keywords_for_datafusion() {
-        let rewritten = rewrite_context_functions_for_datafusion(
-            "SELECT CURRENT_USER AS username, CURRENT_ROLE AS role",
-        );
-        assert_eq!(rewritten, "SELECT KDB_CURRENT_USER() AS username, KDB_CURRENT_ROLE() AS role");
+    fn test_parse_context_keywords_for_datafusion_natively() {
+        let statement =
+            parse_statement_for_datafusion("SELECT CURRENT_USER AS username, CURRENT_ROLE AS role")
+                .unwrap();
+        assert_eq!(statement.to_string(), "SELECT CURRENT_USER AS username, CURRENT_ROLE AS role");
     }
 
     #[test]
@@ -1982,7 +1916,7 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
                    (nspname !~ '^pg_temp_' OR nspname = (pg_catalog.current_schemas(true))[1])";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
-            rewritten.contains("KDB_CURRENT_SCHEMA()"),
+            rewritten.to_ascii_lowercase().contains("current_schema"),
             "expected current_schemas()[1] rewrite for JDBC getSchemas: {rewritten}"
         );
         assert!(
@@ -1998,7 +1932,10 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
                    n.oid) c WHERE true";
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         assert!(
-            rewritten.contains("KDB_CURRENT_DATABASE() AS current_database"),
+            rewritten
+                .to_ascii_lowercase()
+                .contains("current_database() as current_database")
+                || rewritten.to_ascii_lowercase().contains("current_database as current_database"),
             "expected JDBC getColumns current_database alias: {rewritten}"
         );
     }
@@ -2010,11 +1947,12 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
         let rewritten = rewrite_context_functions_for_datafusion(sql);
         let lower = rewritten.to_ascii_lowercase();
         assert!(
-            rewritten.contains("KDB_CURRENT_DATABASE() AS current_database"),
-            "expected call rewritten and alias preserved: {rewritten}"
+            lower.contains("current_database as current_database")
+                || lower.contains("current_database() as current_database"),
+            "expected call and alias preserved: {rewritten}"
         );
         assert!(
-            !lower.contains("as kdb_current_database()"),
+            !lower.contains("as current_database()"),
             "did not expect alias rewritten into a function call: {rewritten}"
         );
     }

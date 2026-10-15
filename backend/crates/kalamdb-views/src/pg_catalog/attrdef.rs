@@ -83,12 +83,7 @@ impl PgCatalogView for PgAttrdefView {
                     continue;
                 };
                 let ordinal_str = column.ordinal_position.to_string();
-                oids.append_value(stable_oid(&[
-                    "attrdef",
-                    namespace,
-                    table_name,
-                    &ordinal_str,
-                ]));
+                oids.append_value(stable_oid(&["attrdef", namespace, table_name, &ordinal_str]));
                 adrelids.append_value(relid);
                 adnums.append_value(column.ordinal_position as i64);
                 adbins.append_value(&default_expr);

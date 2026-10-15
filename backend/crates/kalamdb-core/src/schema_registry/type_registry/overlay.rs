@@ -78,11 +78,14 @@ impl TypeRegistry {
             if let Some(type_id) = column.named_type_id() {
                 occurrence = with_kalam_type_id_metadata(occurrence, type_id);
             }
-            if let Some(kalamdb_commons::models::schemas::ColumnDefault::Literal(ref default_json)) =
-                column.missing_default
+            if let Some(kalamdb_commons::models::schemas::ColumnDefault::Literal(
+                ref default_json,
+            )) = column.missing_default
             {
-                occurrence =
-                    kalamdb_commons::conversions::with_kalam_missing_default(occurrence, default_json);
+                occurrence = kalamdb_commons::conversions::with_kalam_missing_default(
+                    occurrence,
+                    default_json,
+                );
             }
             if let Some(resolved) = layout.nested {
                 if !column.is_array() {

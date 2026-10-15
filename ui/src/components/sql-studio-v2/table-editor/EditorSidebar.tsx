@@ -163,13 +163,13 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     const sql = `DROP SCHEMA ${droppedName}${cascade ? " CASCADE" : ""};`;
     openSqlPreview({
       sql,
-      title: `Drop namespace "${droppedName}"`,
+      title: `Drop schema "${droppedName}"`,
       description: cascade
-        ? "CASCADE will drop the namespace and all of its tables."
-        : "This will drop the namespace.",
+        ? "CASCADE will drop the schema and all of its tables."
+        : "This will drop the schema.",
       onExecute: executeSqlPreviewStatement,
       onComplete: () => {
-        notify({ title: `Dropped namespace "${droppedName}"`, variant: "success" });
+        notify({ title: `Dropped schema "${droppedName}"`, variant: "success" });
         const remaining = namespaces.filter((n) => n !== droppedName);
         const next = remaining.includes("default") ? "default" : remaining[0] ?? "default";
         setActiveNamespace(next);
@@ -182,10 +182,10 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
     setShowCreateNamespace(false);
     openSqlPreview({
       sql: `CREATE SCHEMA ${raw};`,
-      title: `Create namespace "${raw}"`,
+      title: `Create schema "${raw}"`,
       onExecute: executeSqlPreviewStatement,
       onComplete: () => {
-        notify({ title: `Created namespace "${raw}"`, variant: "success" });
+        notify({ title: `Created schema "${raw}"`, variant: "success" });
         setActiveNamespace(raw);
         onSchemaRefresh?.();
       },
@@ -289,8 +289,8 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
           <>
             <StudioIconButton
               onClick={() => setShowCreateNamespace(true)}
-              tooltip="Create namespace"
-              aria-label="Create namespace"
+              tooltip="Create schema"
+              aria-label="Create schema"
             >
               <FolderPlus data-icon="only" />
             </StudioIconButton>
@@ -299,17 +299,17 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
               const noNamespaces = namespaces.length === 0;
               const disabled = isSystem || noNamespaces;
               const tooltipLabel = noNamespaces
-                ? "No namespace to drop"
+                ? "No schema to drop"
                 : isSystem
-                  ? "System namespace — cannot drop"
-                  : `Drop namespace "${activeNamespace}"`;
+                  ? "System schema — cannot drop"
+                  : `Drop schema "${activeNamespace}"`;
               return (
                 <StudioIconButton
                   onClick={handleDropNamespaceClick}
                   disabled={disabled}
                   tone="destructive"
                   tooltip={tooltipLabel}
-                  aria-label="Drop namespace"
+                  aria-label="Drop schema"
                   className={cn(disabled && "cursor-not-allowed opacity-30")}
                 >
                   <Trash2 data-icon="only" />
@@ -325,7 +325,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
             className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground"
           >
             <FolderPlus className="h-3.5 w-3.5" />
-            No namespaces — create one
+            No schemas — create one
           </button>
         }
       />
@@ -387,7 +387,7 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
             </div>
           ) : undefined
         }
-        readOnlyEmptyState="No tables in this namespace."
+        readOnlyEmptyState="No tables in this schema."
         renderTableActions={(table) =>
           !activeNamespaceIsReadOnly ? (
             <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
@@ -443,10 +443,10 @@ export function EditorSidebar({ schema, defaultNamespace = "default", onSchemaRe
           </DialogHeader>
           <div className="flex flex-col gap-3 py-1">
             <div className="flex flex-col gap-1">
-              <label className="text-xs font-medium text-muted-foreground">Namespace</label>
+              <label className="text-xs font-medium text-muted-foreground">Schema</label>
               <Select value={importNamespace} onValueChange={setImportNamespace}>
                 <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Select namespace" />
+                  <SelectValue placeholder="Select schema" />
                 </SelectTrigger>
                 <SelectContent>
                   {namespaces

@@ -13,7 +13,7 @@ use arrow::{
     util::display::array_value_to_string,
 };
 use chrono::{DateTime, NaiveDate, NaiveTime};
-use futures_util::{stream, StreamExt};
+use futures_util::stream;
 use kalamdb_commons::models::datatypes::{KalamDataType, LogicalTypeRef};
 use kalamdb_core::sql::ExecutionResult;
 use pgwire::{
@@ -104,29 +104,64 @@ fn record_batches_to_query_response(
         logical_types.push(logical_type);
     }
     let fields = Arc::new(field_infos);
-    let rows = rows_from_batches(&fields, &logical_types, batches)?;
-    let stream = stream::iter(rows).map(Ok);
-    Ok(QueryResponse::new(fields, stream))
+    let rows = EncodedRows {
+        batches: batches.into_iter(),
+        columns: Vec::new(),
+        rows_in_batch: 0,
+        row: 0,
+        encoder: DataRowEncoder::new(Arc::clone(&fields)),
+        logical_types,
+    };
+    Ok(QueryResponse::new(fields, stream::iter(rows)))
 }
 
-fn rows_from_batches(
-    fields: &Arc<Vec<FieldInfo>>,
-    logical_types: &[LogicalTypeRef],
-    batches: Vec<RecordBatch>,
-) -> PgWireResult<Vec<pgwire::messages::data::DataRow>> {
-    let mut rows = Vec::new();
-    let mut encoder = DataRowEncoder::new(fields.clone());
+/// Encodes one wire row at a time so a portal can stop after `max_rows`.
+struct EncodedRows {
+    batches:       std::vec::IntoIter<RecordBatch>,
+    columns:       Vec<arrow::array::ArrayRef>,
+    rows_in_batch: usize,
+    row:           usize,
+    encoder:       DataRowEncoder,
+    logical_types: Vec<LogicalTypeRef>,
+}
 
-    for batch in batches {
-        for row_index in 0..batch.num_rows() {
-            for (column, logical_type) in batch.columns().iter().zip(logical_types.iter()) {
-                encode_array_value(&mut encoder, column.as_ref(), logical_type, row_index)?;
+impl Iterator for EncodedRows {
+    type Item = PgWireResult<pgwire::messages::data::DataRow>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.row >= self.rows_in_batch && !self.load_batch() {
+            return None;
+        }
+        let row = self.row;
+        self.row += 1;
+        Some(self.encode_row(row))
+    }
+}
+
+impl EncodedRows {
+    fn load_batch(&mut self) -> bool {
+        loop {
+            let Some(batch) = self.batches.next() else {
+                return false;
+            };
+            if batch.num_rows() == 0 {
+                continue;
             }
-            rows.push(encoder.take_row());
+            self.rows_in_batch = batch.num_rows();
+            self.row = 0;
+            self.columns = batch.columns().to_vec();
+            return true;
         }
     }
 
-    Ok(rows)
+    fn encode_row(&mut self, row: usize) -> PgWireResult<pgwire::messages::data::DataRow> {
+        for index in 0..self.columns.len() {
+            let column = Arc::clone(&self.columns[index]);
+            let logical_type = self.logical_types[index].clone();
+            encode_array_value(&mut self.encoder, column.as_ref(), &logical_type, row)?;
+        }
+        Ok(self.encoder.take_row())
+    }
 }
 
 fn encode_array_value(
@@ -793,25 +828,18 @@ mod tests {
             ),
             &LogicalTypeRef::TimestampTz,
         );
-        let named_field = with_kalam_type_id_metadata(
-            Field::new("mood", DataType::Utf8, false),
-            &named_type_id,
-        );
+        let named_field =
+            with_kalam_type_id_metadata(Field::new("mood", DataType::Utf8, false), &named_type_id);
 
-        let schema = Arc::new(Schema::new(vec![
-            json_field,
-            jsonb_field,
-            timestamptz_field,
-            named_field,
-        ]));
+        let schema =
+            Arc::new(Schema::new(vec![json_field, jsonb_field, timestamptz_field, named_field]));
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
                 Arc::new(StringArray::from(vec![r#"{"a": 1}"#])) as ArrayRef,
                 Arc::new(StringArray::from(vec![r#"{"a":1}"#])) as ArrayRef,
-                Arc::new(
-                    TimestampMicrosecondArray::from(vec![1_000_000]).with_timezone("UTC"),
-                ) as ArrayRef,
+                Arc::new(TimestampMicrosecondArray::from(vec![1_000_000]).with_timezone("UTC"))
+                    as ArrayRef,
                 Arc::new(StringArray::from(vec!["happy"])) as ArrayRef,
             ],
         )

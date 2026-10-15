@@ -8,9 +8,7 @@ use std::{
 use datafusion::{
     arrow::array::{Array, ArrayRef, BinaryBuilder, StringArray, StringBuilder},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{
-        ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
-    },
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature},
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
@@ -19,6 +17,8 @@ use kalamdb_commons::{
 };
 use kalamdb_filestore::FileStorageService;
 
+use super::scalar::{any_one_volatile, cached_signature};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FileFunctionKind {
     Put,
@@ -26,7 +26,8 @@ enum FileFunctionKind {
     Delete,
 }
 
-/// ScalarUDF implementation for `file_put(placeholder)`, `file_read(file)`, and `file_delete(file)`.
+/// ScalarUDF implementation for `file_put(placeholder)`, `file_read(file)`, and
+/// `file_delete(file)`.
 #[derive(Clone)]
 pub struct FileStorageFunction {
     name:    &'static str,
@@ -96,9 +97,7 @@ impl ScalarUDFImpl for FileStorageFunction {
     }
 
     fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE
-            .get_or_init(|| Signature::new(TypeSignature::Any(1), Volatility::Volatile))
+        cached_signature!(any_one_volatile())
     }
 
     fn return_type(&self, _arg_types: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {

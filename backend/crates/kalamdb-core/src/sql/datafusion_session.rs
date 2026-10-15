@@ -34,7 +34,7 @@ use crate::sql::{
         CurrentSettingFunction, CurrentUserFunction, FileStorageFunction, FormatTypeFunction,
         ObjDescriptionFunction, PgBackendPidFunction, PgGetExprFunction,
         PgGetFunctionResultFunction, PgGetFunctionTextFunction, PgGetIndexdefFunction,
-        SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
+        SetConfigFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -206,14 +206,17 @@ impl DataFusionSessionFactory {
         // Register CURRENT_ROLE() — resolves role from SessionUserContext at execution time
         ctx.register_udf(ScalarUDF::from(CurrentRoleFunction::new()));
 
-        // Register CURRENT_SCHEMA() / CURRENT_DATABASE() for PostgreSQL wire clients
+        // Session identity. DataFusion 55 has no current_user / current_schema /
+        // current_database; these UDFs read the Kalam session on every SQL transport.
         ctx.register_udf(ScalarUDF::from(CurrentSchemaFunction::new()));
         ctx.register_udf(ScalarUDF::from(CurrentDatabaseFunction::new()));
 
-        // PostgreSQL wire client introspection stubs
+        // PostgreSQL catalog helpers. `version` replaces DataFusion's builtin,
+        // which reports "Apache DataFusion …" instead of a PostgreSQL version string.
         ctx.register_udf(ScalarUDF::from(PgBackendPidFunction::new()));
         ctx.register_udf(ScalarUDF::from(VersionFunction::new()));
         ctx.register_udf(ScalarUDF::from(CurrentSettingFunction::new()));
+        ctx.register_udf(ScalarUDF::from(SetConfigFunction::new()));
         ctx.register_udf(ScalarUDF::from(ColDescriptionFunction::new()));
         ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));
@@ -258,7 +261,8 @@ impl DataFusionSessionFactory {
         ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::result(system_tables)));
     }
 
-    /// Register built-in `file_put`, `file_read`, and `file_delete` functions backed by `FileStorageService`.
+    /// Register built-in `file_put`, `file_read`, and `file_delete` functions backed by
+    /// `FileStorageService`.
     pub fn register_file_storage_functions(
         ctx: &SessionContext,
         file_storage_service: Arc<FileStorageService>,

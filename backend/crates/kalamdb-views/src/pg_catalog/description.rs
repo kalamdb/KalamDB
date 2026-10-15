@@ -10,7 +10,9 @@ use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    pg_catalog::{class_oid, namespace_oid, proc_oid, stable_oid, visible_table_definitions, PgCatalogView},
+    pg_catalog::{
+        class_oid, namespace_oid, proc_oid, stable_oid, visible_table_definitions, PgCatalogView,
+    },
 };
 
 const PG_CLASS_OID: i64 = 1259;
@@ -131,10 +133,8 @@ impl PgCatalogView for PgDescriptionView {
             for proc_def in procs {
                 if let Some(ref comment) = proc_def.comment {
                     if !comment.is_empty() {
-                        objoids.append_value(proc_oid(
-                            proc_def.namespace_id.as_str(),
-                            &proc_def.name,
-                        ));
+                        objoids
+                            .append_value(proc_oid(proc_def.namespace_id.as_str(), &proc_def.name));
                         classoids.append_value(PG_PROC_OID);
                         objsubids.append_value(0);
                         descriptions.append_value(comment);

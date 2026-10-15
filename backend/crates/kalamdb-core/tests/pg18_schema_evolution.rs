@@ -22,11 +22,8 @@ async fn make_executor() -> (Arc<AppContext>, SqlExecutor, ExecutionContext, Tes
     let registry = Arc::new(HandlerRegistry::new());
     register_all_handlers(&registry, app_ctx.clone(), false);
     let executor = SqlExecutor::new(app_ctx.clone(), registry);
-    let exec_ctx = ExecutionContext::new(
-        UserId::new("u_evol"),
-        Role::Dba,
-        app_ctx.base_session_context(),
-    );
+    let exec_ctx =
+        ExecutionContext::new(UserId::new("u_evol"), Role::Dba, app_ctx.base_session_context());
     (app_ctx, executor, exec_ctx, test_db)
 }
 
@@ -114,7 +111,8 @@ async fn add_drop_rename_and_missing_default_coexist_across_schema_versions() {
     exec_ok(
         &executor,
         &ctx,
-        "INSERT INTO evol.items (id, qty, legacy_note, status, opt_tag) VALUES (3, 30, 'from_v2_null', 'active', NULL)",
+        "INSERT INTO evol.items (id, qty, legacy_note, status, opt_tag) VALUES (3, 30, \
+         'from_v2_null', 'active', NULL)",
     )
     .await;
 
@@ -132,7 +130,8 @@ async fn add_drop_rename_and_missing_default_coexist_across_schema_versions() {
     exec_ok(
         &executor,
         &ctx,
-        "INSERT INTO evol.items (id, quantity, status, opt_tag, bonus) VALUES (4, 40, 'shipped', 'manual', 99)",
+        "INSERT INTO evol.items (id, quantity, status, opt_tag, bonus) VALUES (4, 40, 'shipped', \
+         'manual', 99)",
     )
     .await;
 
@@ -162,7 +161,11 @@ async fn add_drop_rename_and_missing_default_coexist_across_schema_versions() {
     assert_eq!(rows[2][0], ScalarValue::Int64(Some(3)));
     assert_eq!(rows[2][1], ScalarValue::Int32(Some(30)));
     assert_eq!(rows[2][2], ScalarValue::Utf8(Some("active".to_string())));
-    assert!(rows[2][3].is_null(), "explicitly written NULL must stay NULL, got {:?}", rows[2][3]);
+    assert!(
+        rows[2][3].is_null(),
+        "explicitly written NULL must stay NULL, got {:?}",
+        rows[2][3]
+    );
     assert_eq!(rows[2][4], ScalarValue::Int32(Some(5)));
 
     // Row 4 (written at v4)
@@ -232,11 +235,13 @@ async fn alter_column_type_widening_and_using_rewrite_with_domain_and_enum_valid
     )
     .await;
 
-    // 2. Rewrite with USING expression: raw_score TEXT -> evol_type.positive_bigint USING (raw_score::bigint + 10)
+    // 2. Rewrite with USING expression: raw_score TEXT -> evol_type.positive_bigint USING
+    //    (raw_score::bigint + 10)
     exec_ok(
         &executor,
         &ctx,
-        "ALTER TABLE evol_type.metrics ALTER COLUMN raw_score TYPE evol_type.positive_bigint USING (raw_score::bigint + 10)",
+        "ALTER TABLE evol_type.metrics ALTER COLUMN raw_score TYPE evol_type.positive_bigint \
+         USING (raw_score::bigint + 10)",
     )
     .await;
 
@@ -269,7 +274,8 @@ async fn alter_column_type_widening_and_using_rewrite_with_domain_and_enum_valid
     let err = exec_err(
         &executor,
         &ctx,
-        "ALTER TABLE evol_type.metrics ALTER COLUMN raw_score TYPE evol_type.positive_bigint USING (raw_score - 500)",
+        "ALTER TABLE evol_type.metrics ALTER COLUMN raw_score TYPE evol_type.positive_bigint \
+         USING (raw_score - 500)",
     )
     .await;
     assert!(
@@ -278,12 +284,9 @@ async fn alter_column_type_widening_and_using_rewrite_with_domain_and_enum_valid
     );
 
     // Table still reads clean values after rejected ALTER COLUMN TYPE
-    let after_err = query_scalars(
-        &executor,
-        &ctx,
-        "SELECT id, raw_score FROM evol_type.metrics ORDER BY id",
-    )
-    .await;
+    let after_err =
+        query_scalars(&executor, &ctx, "SELECT id, raw_score FROM evol_type.metrics ORDER BY id")
+            .await;
     assert_eq!(after_err[0][1], ScalarValue::Int64(Some(110)));
     assert_eq!(after_err[1][1], ScalarValue::Int64(Some(260)));
 }
@@ -299,21 +302,10 @@ async fn add_not_null_column_without_default_rejected_on_populated_table() {
         "CREATE TABLE evol_nn.t (id BIGINT PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')",
     )
     .await;
-    exec_ok(
-        &executor,
-        &ctx,
-        "INSERT INTO evol_nn.t (id, name) VALUES (1, 'alice')",
-    )
-    .await;
+    exec_ok(&executor, &ctx, "INSERT INTO evol_nn.t (id, name) VALUES (1, 'alice')").await;
 
-    let err = exec_err(
-        &executor,
-        &ctx,
-        "ALTER TABLE evol_nn.t ADD COLUMN required_col INT NOT NULL",
-    )
-    .await;
-    assert!(
-        err.to_lowercase().contains("null"),
-        "expected null violation error, got: {err}"
-    );
+    let err =
+        exec_err(&executor, &ctx, "ALTER TABLE evol_nn.t ADD COLUMN required_col INT NOT NULL")
+            .await;
+    assert!(err.to_lowercase().contains("null"), "expected null violation error, got: {err}");
 }

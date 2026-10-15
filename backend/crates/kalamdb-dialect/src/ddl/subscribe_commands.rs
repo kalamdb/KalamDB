@@ -59,9 +59,7 @@ use sqlparser::{
 };
 
 use super::DdlResult;
-use crate::parser::{
-    query_parser::QueryParser, utils::normalize_context_keyword_calls_for_sqlparser, KalamParser,
-};
+use crate::parser::{query_parser::QueryParser, KalamParser};
 
 /// SUBSCRIBE TO statement for live query subscriptions.
 ///
@@ -133,11 +131,6 @@ impl SubscribeStatement {
             select_sql.push_str("SELECT * FROM ");
             select_sql.push_str(&sql_without_options);
             select_sql
-        };
-
-        let select_sql = match normalize_context_keyword_calls_for_sqlparser(&select_sql) {
-            std::borrow::Cow::Borrowed(_) => select_sql,
-            std::borrow::Cow::Owned(normalized) => normalized,
         };
 
         let mut ast = match KalamParser::parse(&select_sql) {

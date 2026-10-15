@@ -11,77 +11,44 @@
 //! ULIDs are URL-safe, case-insensitive, and time-ordered, making them
 //! suitable for PRIMARY KEY columns and correlation IDs.
 
-use std::sync::Arc;
-
-use datafusion::{
-    arrow::array::{ArrayRef, StringArray},
-    error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
-};
-use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use ulid::Ulid;
 
-/// ULID() scalar function implementation
-///
-/// Generates a 128-bit globally unique identifier using ULID specification.
-/// The ULID includes a 48-bit timestamp for time-based ordering and is
-/// encoded as a 26-character Crockford Base32 string.
-///
-/// # Returns
-/// - STRING (Utf8) - A 26-character ULID in Crockford Base32 encoding
-///
-/// # Properties
-/// - VOLATILE: Generates a new ULID on each invocation
-/// - Time-ordered: ULIDs increase monotonically with time
-/// - URL-safe: Uses Crockford Base32 (no ambiguous characters)
-/// - Case-insensitive: Can be stored in uppercase or lowercase
-/// - Globally unique: Extremely low collision probability
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UlidFunction;
+use super::scalar::{arity, scalar_udf, utf8_values, zero_arg_volatile};
+
+scalar_udf! {
+    /// ULID() scalar function.
+    ///
+    /// Generates a 128-bit globally unique identifier using the ULID specification.
+    /// The ULID includes a 48-bit timestamp for time-based ordering and is
+    /// encoded as a 26-character Crockford Base32 string.
+    ///
+    /// # Returns
+    /// - STRING (Utf8) - A 26-character ULID in Crockford Base32 encoding
+    ///
+    /// # Properties
+    /// - VOLATILE: Generates a new ULID on each invocation
+    /// - Time-ordered: ULIDs increase monotonically with time
+    /// - URL-safe: Uses Crockford Base32 (no ambiguous characters)
+    /// - Case-insensitive: Can be stored in uppercase or lowercase
+    /// - Globally unique: Extremely low collision probability
+    pub struct UlidFunction;
+    name = "ulid";
+    signature = zero_arg_volatile();
+    returns utf8;
+    invoke(self = this, args) {
+        arity(&args, |len| len == 0, "ULID() takes no arguments")?;
+        let mut ulids = Vec::with_capacity(args.number_rows);
+        for _ in 0..args.number_rows {
+            ulids.push(this.generate_ulid());
+        }
+        Ok(utf8_values(ulids))
+    }
+}
 
 impl UlidFunction {
-    /// Create a new ULID function
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Generate a single ULID
     fn generate_ulid(&self) -> String {
         Ulid::generate().to_string()
-    }
-}
-
-impl Default for UlidFunction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ScalarUDFImpl for UlidFunction {
-    fn name(&self) -> &str {
-        "ulid"
-    }
-
-    fn signature(&self) -> &Signature {
-        // Static signature with no arguments
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("ULID() takes no arguments".to_string()));
-        }
-        let mut ulids = Vec::with_capacity(args.number_rows);
-        for _ in 0..args.number_rows {
-            ulids.push(self.generate_ulid());
-        }
-        let array = StringArray::from(ulids);
-        Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
     }
 }
 
@@ -89,7 +56,8 @@ impl ScalarUDFImpl for UlidFunction {
 mod tests {
     use std::collections::HashSet;
 
-    use datafusion::logical_expr::ScalarUDF;
+    use datafusion::logical_expr::{ScalarUDF, ScalarUDFImpl};
+    use kalamdb_commons::arrow_utils::ArrowDataType;
 
     use super::*;
 

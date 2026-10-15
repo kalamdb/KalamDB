@@ -36,11 +36,9 @@ impl CreateDomainStatement {
     pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let mut rest = sql.trim().trim_end_matches(';');
         if take_keyword_ci(&mut rest, "CREATE OR REPLACE DOMAIN") {
-            return Err(
-                "CREATE OR REPLACE DOMAIN is not supported in PostgreSQL 18; use ALTER DOMAIN \
-                 or DROP DOMAIN instead"
-                    .to_string(),
-            );
+            return Err("CREATE OR REPLACE DOMAIN is not supported in PostgreSQL 18; use ALTER \
+                        DOMAIN or DROP DOMAIN instead"
+                .to_string());
         }
         if !take_keyword_ci(&mut rest, "CREATE DOMAIN") {
             return Err("Expected CREATE DOMAIN statement".to_string());
@@ -86,8 +84,9 @@ impl CreateDomainStatement {
 
             if take_keyword_ci(&mut rest, "DEFAULT") {
                 if default_expr.is_some() {
-                    return Err("Multiple DEFAULT clauses are not allowed in CREATE DOMAIN"
-                        .to_string());
+                    return Err(
+                        "Multiple DEFAULT clauses are not allowed in CREATE DOMAIN".to_string()
+                    );
                 }
                 let (expr, next) = take_default_expression(rest)?;
                 if expr.is_empty() {
@@ -105,9 +104,7 @@ impl CreateDomainStatement {
                     return Err("Constraint name cannot be empty".to_string());
                 }
                 if !constraint_names.insert(cname.clone()) {
-                    return Err(format!(
-                        "Duplicate constraint name '{cname}' on domain '{name}'"
-                    ));
+                    return Err(format!("Duplicate constraint name '{cname}' on domain '{name}'"));
                 }
                 constraint_name = Some(cname);
                 rest = after_cname.trim_start();

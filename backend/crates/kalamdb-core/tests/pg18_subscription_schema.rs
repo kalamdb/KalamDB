@@ -28,7 +28,8 @@ async fn subscribe_to_resolves_unqualified_table_using_active_session_schema() {
     execute_ok(
         &executor,
         &exec_ctx,
-        "CREATE TABLE live_app.feed (id BIGINT PRIMARY KEY, body TEXT NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE live_app.feed (id BIGINT PRIMARY KEY, body TEXT NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
@@ -47,10 +48,7 @@ async fn subscribe_to_resolves_unqualified_table_using_active_session_schema() {
         SqlStatementKind::Subscribe(sub) => {
             assert_eq!(sub.namespace.as_str(), "live_app");
             assert_eq!(sub.table_name.as_str(), "feed");
-            assert_eq!(
-                sub.select_query,
-                "SELECT * FROM live_app.feed WHERE body = 'hello'"
-            );
+            assert_eq!(sub.select_query, "SELECT * FROM live_app.feed WHERE body = 'hello'");
         },
         other => panic!("expected Subscribe, got {other:?}"),
     }
@@ -64,10 +62,7 @@ async fn subscribe_to_resolves_unqualified_table_using_active_session_schema() {
             ..
         } => {
             assert!(subscription_id.starts_with("sub-live_app-feed-"));
-            assert_eq!(
-                select_query,
-                "SELECT * FROM live_app.feed WHERE body = 'hello'"
-            );
+            assert_eq!(select_query, "SELECT * FROM live_app.feed WHERE body = 'hello'");
         },
         other => panic!("expected Subscription result, got {other:?}"),
     }

@@ -22,8 +22,12 @@ use crate::{
 };
 
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
+static RE_CURRENT_USER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap());
+static CREATE_USER_TABLE_PREFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+USER\s+TABLE\b").unwrap());
 static CREATE_TYPED_PREFIX_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(SHARED|STREAM)\s+TABLE").unwrap());
 /// Matches `USING <identifier>` clause after the closing paren of column definitions.
 /// PostgreSQL uses this for table access methods, e.g. `CREATE TABLE t (...) USING kalamdb`.
 static USING_ACCESS_METHOD_RE: Lazy<Regex> =
@@ -33,6 +37,11 @@ impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
     pub fn parse(sql: &str, default_namespace: &SchemaId) -> Result<Self, String> {
         crate::ddl::reject_access_level_sql(sql)?;
+        if CREATE_USER_TABLE_PREFIX_RE.is_match(sql) {
+            return Err("CREATE USER TABLE syntax is no longer supported; use CREATE TABLE ... \
+                        WITH (TYPE = 'USER')"
+                .to_string());
+        }
         let (mut normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
 
         // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
@@ -502,8 +511,7 @@ fn parse_eviction_strategy_option(value: &str) -> Result<String, String> {
 fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
     // Replace CURRENT_USER() with CURRENT_USER to satisfy sqlparser GenericDialect
     // which doesn't support function calls for this keyword in DEFAULT clause
-    let re_current_user = Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
-    let mut normalized = re_current_user.replace_all(sql, "CURRENT_USER").into_owned();
+    let mut normalized = RE_CURRENT_USER.replace_all(sql, "CURRENT_USER").into_owned();
 
     // Strip `USING <access_method>` clause (PostgreSQL table access method syntax).
     // e.g. `CREATE TABLE t (...) USING kalamdb WITH (...)` → `CREATE TABLE t (...) WITH (...)`

@@ -12,10 +12,7 @@ use sqlparser::{
 
 use crate::{
     dialect::KalamDbDialect,
-    parser::utils::{
-        normalize_context_keyword_calls_for_sqlparser, parse_sql_expression, parser_options,
-        DEFAULT_SQL_RECURSION_LIMIT,
-    },
+    parser::utils::{parse_sql_expression, parser_options, DEFAULT_SQL_RECURSION_LIMIT},
 };
 
 /// PostgreSQL syntax parser used by classification, DDL, and planning.
@@ -24,16 +21,7 @@ pub struct KalamParser;
 impl KalamParser {
     /// Parse one or more statements from `sql`.
     pub fn parse(sql: &str) -> Result<Vec<Statement>, ParserError> {
-        match Self::parse_with_locations(sql) {
-            Ok(statements) => Ok(statements),
-            Err(original) => {
-                let normalized = normalize_context_keyword_calls_for_sqlparser(sql);
-                if normalized.as_ref() == sql {
-                    return Err(original);
-                }
-                Self::parse_with_locations(normalized.as_ref()).map_err(|_| original)
-            },
-        }
+        Self::parse_with_locations(sql)
     }
 
     /// Parse `sql` when it contains exactly one statement.

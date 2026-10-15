@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use kalamdb_commons::models::{SchemaId, Role, TableName};
+use kalamdb_commons::models::{Role, SchemaId, TableName};
 
 /// Result type for session operations
 pub type SessionResult<T> = Result<T, SessionError>;

@@ -22,11 +22,7 @@ async fn setup_app() -> (Arc<AppContext>, SqlExecutor, TestDb) {
 }
 
 fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_type_decls"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_type_decls"), Role::Dba, app.base_session_context())
 }
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) {
@@ -48,12 +44,7 @@ async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
         "CREATE SHARED TABLE app.empty_holders (id INT PRIMARY KEY, e app.empty_type)",
     )
     .await;
-    exec(
-        &app,
-        &executor,
-        "INSERT INTO app.empty_holders VALUES (1, NULL)",
-    )
-    .await;
+    exec(&app, &executor, "INSERT INTO app.empty_holders VALUES (1, NULL)").await;
 
     let ctx = root_ctx(&app);
     match executor
@@ -84,7 +75,8 @@ async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
     exec(
         &app,
         &executor,
-        "CREATE SHARED TABLE app.orders (id INT PRIMARY KEY, customer_snapshot app.customers, history app.customers[])",
+        "CREATE SHARED TABLE app.orders (id INT PRIMARY KEY, customer_snapshot app.customers, \
+         history app.customers[])",
     )
     .await;
 
@@ -97,20 +89,12 @@ async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
 
     // Dropping app.customers while app.orders references its implicit row type must fail
     assert!(
-        executor
-            .execute("DROP TABLE app.customers", &ctx, vec![])
-            .await
-            .is_err(),
+        executor.execute("DROP TABLE app.customers", &ctx, vec![]).await.is_err(),
         "cannot drop table whose implicit row type is referenced by another table"
     );
 
     // ALTER TABLE on app.customers syncs the implicit row type
-    exec(
-        &app,
-        &executor,
-        "ALTER TABLE app.customers ADD COLUMN tier TEXT",
-    )
-    .await;
+    exec(&app, &executor, "ALTER TABLE app.customers ADD COLUMN tier TEXT").await;
     exec(
         &app,
         &executor,
@@ -118,7 +102,8 @@ async fn test_pg18_zero_attribute_composite_and_implicit_table_row_types() {
     )
     .await;
 
-    // After dropping dependent table app.orders, app.customers can be dropped and cleans up its implicit row type
+    // After dropping dependent table app.orders, app.customers can be dropped and cleans up its
+    // implicit row type
     exec(&app, &executor, "DROP TABLE app.orders").await;
     exec(&app, &executor, "DROP TABLE app.customers").await;
 }
@@ -130,18 +115,8 @@ async fn test_pg18_quoted_type_case_collisions_and_enum_rename_value_on_rows() {
     exec(&app, &executor, "CREATE SCHEMA app").await;
 
     // 1. Quoted identifier case preservation and collision checks
-    exec(
-        &app,
-        &executor,
-        r#"CREATE TYPE app."MixedType" AS (label TEXT)"#,
-    )
-    .await;
-    exec(
-        &app,
-        &executor,
-        r#"CREATE TYPE app."mixedtype" AS (label TEXT)"#,
-    )
-    .await;
+    exec(&app, &executor, r#"CREATE TYPE app."MixedType" AS (label TEXT)"#).await;
+    exec(&app, &executor, r#"CREATE TYPE app."mixedtype" AS (label TEXT)"#).await;
 
     let ctx = root_ctx(&app);
     // Unquoted MixedType folds to mixedtype, which already exists
@@ -156,11 +131,7 @@ async fn test_pg18_quoted_type_case_collisions_and_enum_rename_value_on_rows() {
     // Table and type/domain share the same per-schema type namespace
     assert!(
         executor
-            .execute(
-                r#"CREATE SHARED TABLE app."MixedType" (id INT PRIMARY KEY)"#,
-                &ctx,
-                vec![],
-            )
+            .execute(r#"CREATE SHARED TABLE app."MixedType" (id INT PRIMARY KEY)"#, &ctx, vec![],)
             .await
             .is_err(),
         "table with same name as existing type in schema must be rejected"
@@ -176,7 +147,8 @@ async fn test_pg18_quoted_type_case_collisions_and_enum_rename_value_on_rows() {
     exec(
         &app,
         &executor,
-        "CREATE SHARED TABLE app.tickets (id INT PRIMARY KEY, status app.ticket_status, history app.ticket_status[])",
+        "CREATE SHARED TABLE app.tickets (id INT PRIMARY KEY, status app.ticket_status, history \
+         app.ticket_status[])",
     )
     .await;
     exec(

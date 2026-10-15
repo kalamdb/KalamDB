@@ -1,4 +1,5 @@
-//! Integration tests for PostgreSQL 18 routine catalog projections (`pg_catalog.pg_proc`, `information_schema.routines`, `information_schema.parameters`, and `system.procedures`).
+//! Integration tests for PostgreSQL 18 routine catalog projections (`pg_catalog.pg_proc`,
+//! `information_schema.routines`, `information_schema.parameters`, and `system.procedures`).
 
 mod support;
 
@@ -48,13 +49,15 @@ async fn pg_proc_information_schema_and_system_procedures_project_routine_metada
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION r_cat.calc_tax(IN amount INT DEFAULT 100, OUT tax INT) RETURNS INT LANGUAGE SQL IMMUTABLE STRICT AS $$ SELECT amount / 10 $$",
+        "CREATE FUNCTION r_cat.calc_tax(IN amount INT DEFAULT 100, OUT tax INT) RETURNS INT \
+         LANGUAGE SQL IMMUTABLE STRICT AS $$ SELECT amount / 10 $$",
     )
     .await;
     exec(
         &app,
         &executor,
-        "CREATE PROCEDURE r_cat.audit_log(msg TEXT, VARIADIC tags TEXT[]) LANGUAGE SQL AS $$ SELECT 1 $$",
+        "CREATE PROCEDURE r_cat.audit_log(msg TEXT, VARIADIC tags TEXT[]) LANGUAGE SQL AS $$ \
+         SELECT 1 $$",
     )
     .await;
 
@@ -62,22 +65,15 @@ async fn pg_proc_information_schema_and_system_procedures_project_routine_metada
     let pg_proc_res = exec(
         &app,
         &executor,
-        "SELECT proname, prokind FROM pg_catalog.pg_proc WHERE proname IN ('calc_tax', 'audit_log') ORDER BY proname",
+        "SELECT proname, prokind FROM pg_catalog.pg_proc WHERE proname IN ('calc_tax', \
+         'audit_log') ORDER BY proname",
     )
     .await;
     let ExecutionResult::Rows { batches, .. } = pg_proc_res else {
         panic!("expected rows from pg_proc");
     };
-    let names = batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("proname");
-    let kinds = batches[0]
-        .column(1)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("prokind");
+    let names = batches[0].column(0).as_any().downcast_ref::<StringArray>().expect("proname");
+    let kinds = batches[0].column(1).as_any().downcast_ref::<StringArray>().expect("prokind");
     assert_eq!(names.value(0), "audit_log");
     assert_eq!(kinds.value(0), "p");
     assert_eq!(names.value(1), "calc_tax");
@@ -87,7 +83,8 @@ async fn pg_proc_information_schema_and_system_procedures_project_routine_metada
     let info_routines_res = exec(
         &app,
         &executor,
-        "SELECT routine_name, routine_type, is_deterministic FROM information_schema.routines WHERE routine_schema = 'r_cat' ORDER BY routine_name",
+        "SELECT routine_name, routine_type, is_deterministic FROM information_schema.routines \
+         WHERE routine_schema = 'r_cat' ORDER BY routine_name",
     )
     .await;
     let ExecutionResult::Rows { batches, .. } = info_routines_res else {
@@ -119,7 +116,9 @@ async fn pg_proc_information_schema_and_system_procedures_project_routine_metada
     let info_params_res = exec(
         &app,
         &executor,
-        "SELECT parameter_name, parameter_mode, parameter_default, is_variadic FROM information_schema.parameters WHERE specific_schema = 'r_cat' ORDER BY specific_name, ordinal_position",
+        "SELECT parameter_name, parameter_mode, parameter_default, is_variadic FROM \
+         information_schema.parameters WHERE specific_schema = 'r_cat' ORDER BY specific_name, \
+         ordinal_position",
     )
     .await;
     let ExecutionResult::Rows { batches, .. } = info_params_res else {
@@ -162,7 +161,8 @@ async fn pg_proc_information_schema_and_system_procedures_project_routine_metada
     let sys_procs_res = exec(
         &app,
         &executor,
-        "SELECT procedure_id, implementation, language FROM system.procedures WHERE schema = 'r_cat' ORDER BY procedure_id",
+        "SELECT procedure_id, implementation, language FROM system.procedures WHERE schema = \
+         'r_cat' ORDER BY procedure_id",
     )
     .await;
     let ExecutionResult::Rows { batches, .. } = sys_procs_res else {

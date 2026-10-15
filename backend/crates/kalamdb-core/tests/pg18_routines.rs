@@ -4,7 +4,7 @@ mod support;
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Int32Array, Int64Array, StringArray};
+use datafusion::arrow::array::{Int32Array, Int64Array, StringArray, StringViewArray};
 use kalamdb_commons::{models::UserId, Role};
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -28,11 +28,7 @@ async fn setup_app() -> (Arc<AppContext>, Arc<SqlExecutor>, TestDb) {
 }
 
 fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_routines_e2e"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_routines_e2e"), Role::Dba, app.base_session_context())
 }
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
@@ -46,6 +42,9 @@ fn scalar_string(result: &ExecutionResult) -> String {
     };
     let col = batches[0].column(0);
     if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+        return arr.value(0).to_string();
+    }
+    if let Some(arr) = col.as_any().downcast_ref::<StringViewArray>() {
         return arr.value(0).to_string();
     }
     if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
@@ -66,7 +65,8 @@ async fn end_to_end_routine_lifecycle_sql_plpgsql_and_javascript() {
     exec(
         &app,
         &executor,
-        "CREATE TABLE app_r.events (id INT PRIMARY KEY, label TEXT NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE app_r.events (id INT PRIMARY KEY, label TEXT NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
@@ -74,16 +74,16 @@ async fn end_to_end_routine_lifecycle_sql_plpgsql_and_javascript() {
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION app_r.format_label(prefix TEXT DEFAULT 'ev', num INT DEFAULT 1) RETURNS TEXT LANGUAGE SQL IMMUTABLE AS $$ SELECT prefix || '-' || CAST(num AS TEXT) $$",
+        "CREATE FUNCTION app_r.format_label(prefix TEXT DEFAULT 'ev', num INT DEFAULT 1) RETURNS \
+         TEXT LANGUAGE SQL IMMUTABLE AS $$ SELECT prefix || '-' || CAST(num AS TEXT) $$",
     )
     .await;
-    let formatted = exec(
-        &app,
-        &executor,
-        "SELECT app_r.format_label(num => 42, prefix := 'task')",
-    )
-    .await;
+    let formatted =
+        exec(&app, &executor, "SELECT app_r.format_label(num => 42, prefix := 'task')").await;
     assert_eq!(scalar_string(&formatted), "task-42");
+    let preview_defaults =
+        exec(&app, &executor, r#"SELECT * FROM "app_r"."format_label"() LIMIT 501 OFFSET 0"#).await;
+    assert_eq!(scalar_string(&preview_defaults), "ev-1");
 
     // 2. PL/pgSQL routine with IF / LOOP / RETURN
     exec(
@@ -106,6 +106,20 @@ async fn end_to_end_routine_lifecycle_sql_plpgsql_and_javascript() {
     let summed = exec(&app, &executor, "SELECT app_r.sum_to(5)").await;
     assert_eq!(scalar_string(&summed), "15");
 
+    let preview =
+        exec(&app, &executor, r#"SELECT * FROM "app_r"."sum_to"(5) LIMIT 501 OFFSET 0"#).await;
+    assert_eq!(scalar_string(&preview), "15");
+    let ExecutionResult::Rows { schema, .. } = &preview else {
+        panic!("expected rows");
+    };
+    assert_eq!(schema.as_ref().expect("schema").field(0).name(), "sum_to");
+    let skipped =
+        exec(&app, &executor, r#"SELECT * FROM "app_r"."sum_to"(5) LIMIT 501 OFFSET 1"#).await;
+    let ExecutionResult::Rows { row_count, .. } = &skipped else {
+        panic!("expected rows");
+    };
+    assert_eq!(*row_count, 0);
+
     // 3. JavaScript routine invoking SQL routine and writing row
     exec(
         &app,
@@ -118,12 +132,7 @@ async fn end_to_end_routine_lifecycle_sql_plpgsql_and_javascript() {
     .await;
     exec(&app, &executor, "CALL app_r.emit_event(7, prefix => 'job')").await;
 
-    let row_label = exec(
-        &app,
-        &executor,
-        "SELECT label FROM app_r.events WHERE id = 7",
-    )
-    .await;
+    let row_label = exec(&app, &executor, "SELECT label FROM app_r.events WHERE id = 7").await;
     assert_eq!(scalar_string(&row_label), "job-7");
 
     // 4. COMMENT, ALTER, RENAME, DROP
@@ -133,19 +142,9 @@ async fn end_to_end_routine_lifecycle_sql_plpgsql_and_javascript() {
         "COMMENT ON FUNCTION app_r.sum_to(INT) IS 'Triangular number helper'",
     )
     .await;
-    exec(
-        &app,
-        &executor,
-        "ALTER FUNCTION app_r.sum_to(INT) RENAME TO triangular_sum",
-    )
-    .await;
+    exec(&app, &executor, "ALTER FUNCTION app_r.sum_to(INT) RENAME TO triangular_sum").await;
     let renamed_res = exec(&app, &executor, "SELECT app_r.triangular_sum(6)").await;
     assert_eq!(scalar_string(&renamed_res), "21");
 
-    exec(
-        &app,
-        &executor,
-        "DROP FUNCTION app_r.triangular_sum(INT)",
-    )
-    .await;
+    exec(&app, &executor, "DROP FUNCTION app_r.triangular_sum(INT)").await;
 }

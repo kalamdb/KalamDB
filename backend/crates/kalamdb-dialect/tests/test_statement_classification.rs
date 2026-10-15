@@ -1,7 +1,7 @@
 //! Unit tests for SQL statement classification.
 
-use kalamdb_commons::{SchemaId, Role};
-use kalamdb_dialect::{SqlStatement, SqlStatementKind};
+use kalamdb_commons::{Role, SchemaId};
+use kalamdb_dialect::{PostgresSetting, SqlStatement, SqlStatementKind};
 
 #[test]
 fn test_classify_simple_select() {
@@ -168,8 +168,12 @@ fn test_classify_show_transaction_isolation_level_for_jdbc() {
                 panic!("JDBC SHOW TRANSACTION ISOLATION LEVEL should classify for {role:?}: {err}")
             });
         assert!(
-            matches!(stmt.kind(), SqlStatementKind::DataFusionMetaCommand),
-            "expected DataFusionMetaCommand for {role:?}, got {:?}",
+            matches!(
+                stmt.kind(),
+                SqlStatementKind::PostgresSetting(PostgresSetting::Show { name })
+                    if name == "transaction_isolation"
+            ),
+            "expected SHOW transaction_isolation for {role:?}, got {:?}",
             stmt.kind()
         );
     }

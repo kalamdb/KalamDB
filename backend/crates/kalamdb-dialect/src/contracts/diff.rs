@@ -83,11 +83,7 @@ pub fn diff_contracts(current: &ContractSnapshot, target: &ContractSnapshot) -> 
 
     for (id, routine) in &current.routines {
         if !target.routines.contains_key(id) {
-            statements.push(format!(
-                "DROP {} {};",
-                routine.kind.as_str(),
-                routine.routine_id
-            ));
+            statements.push(format!("DROP {} {};", routine.kind.as_str(), routine.routine_id));
         }
     }
 
@@ -184,7 +180,10 @@ fn diff_type(current: &ContractType, target: &ContractType) -> Vec<String> {
                 if b_def != a_def {
                     match a_def {
                         Some(expr) => {
-                            out.push(format!("ALTER DOMAIN {} SET DEFAULT {expr};", target.type_id));
+                            out.push(format!(
+                                "ALTER DOMAIN {} SET DEFAULT {expr};",
+                                target.type_id
+                            ));
                         },
                         None => {
                             out.push(format!("ALTER DOMAIN {} DROP DEFAULT;", target.type_id));
@@ -275,11 +274,7 @@ fn diff_routine(current: &ContractRoutine, target: &ContractRoutine) -> Vec<Stri
             out.push(emit_comment_on(kind_kw, target.routine_id.as_str(), Some(comment)));
         }
     } else if current.comment != target.comment {
-        out.push(emit_comment_on(
-            kind_kw,
-            target.routine_id.as_str(),
-            target.comment.as_deref(),
-        ));
+        out.push(emit_comment_on(kind_kw, target.routine_id.as_str(), target.comment.as_deref()));
     }
     for grant in target.grants.difference(&current.grants) {
         out.push(format!(
@@ -306,11 +301,8 @@ fn emit_create_type(ty: &ContractType) -> String {
             if fields.is_empty() {
                 format!("CREATE TYPE {} AS ();", ty.type_id)
             } else {
-                let body = fields
-                    .iter()
-                    .map(emit_composite_field)
-                    .collect::<Vec<_>>()
-                    .join(",\n  ");
+                let body =
+                    fields.iter().map(emit_composite_field).collect::<Vec<_>>().join(",\n  ");
                 format!("CREATE TYPE {} AS (\n  {}\n);", ty.type_id, body)
             }
         },
@@ -329,7 +321,8 @@ fn emit_create_type(ty: &ContractType) -> String {
             not_null,
             checks,
         } => {
-            let mut sql = format!("CREATE DOMAIN {} AS {}", ty.type_id, emit_composite_type_sql(base_type));
+            let mut sql =
+                format!("CREATE DOMAIN {} AS {}", ty.type_id, emit_composite_type_sql(base_type));
             if let Some(coll) = collation {
                 sql.push_str(" COLLATE ");
                 sql.push_str(coll);

@@ -1204,7 +1204,8 @@ async fn test_vector_index_survives_column_rename() {
     execute_sql(
         &executor,
         &exec_ctx,
-        "CREATE TABLE test_ns.docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding EMBEDDING(3)) WITH (TYPE='SHARED')",
+        "CREATE TABLE test_ns.docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding \
+         EMBEDDING(3)) WITH (TYPE='SHARED')",
     )
     .await;
     execute_sql(
@@ -1217,13 +1218,15 @@ async fn test_vector_index_survives_column_rename() {
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (1, 'first', '[1.0,0.0,0.0]')",
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (1, 'first', \
+         '[1.0,0.0,0.0]')",
     )
     .await;
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (2, 'second', '[0.0,1.0,0.0]')",
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (2, 'second', \
+         '[0.0,1.0,0.0]')",
     )
     .await;
 
@@ -1243,7 +1246,8 @@ async fn test_vector_index_survives_column_rename() {
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (3, 'third', '[0.9,0.1,0.0]')",
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding) VALUES (3, 'third', \
+         '[0.9,0.1,0.0]')",
     )
     .await;
 
@@ -1255,11 +1259,13 @@ async fn test_vector_index_survives_column_rename() {
     )
     .await;
 
-    // Verify vector search on the renamed column combines the pre-rename .vix snapshot and migrated hot ops.
+    // Verify vector search on the renamed column combines the pre-rename .vix snapshot and migrated
+    // hot ops.
     let result_after_rename = execute_sql(
         &executor,
         &exec_ctx,
-        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, '[1.0,0.0,0.0]') LIMIT 3",
+        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, \
+         '[1.0,0.0,0.0]') LIMIT 3",
     )
     .await;
     match result_after_rename {
@@ -1273,12 +1279,14 @@ async fn test_vector_index_survives_column_rename() {
         other => panic!("Expected rows after column rename, got {:?}", other),
     }
 
-    // Insert another row under the new column name and flush again to ensure the previous .vix snapshot
-    // loads cleanly without column_name mismatch and writes a new snapshot for embedding_v2.
+    // Insert another row under the new column name and flush again to ensure the previous .vix
+    // snapshot loads cleanly without column_name mismatch and writes a new snapshot for
+    // embedding_v2.
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding_v2) VALUES (4, 'fourth', '[0.98,0.02,0.0]')",
+        "INSERT INTO test_ns.docs_rename_vec (id, title, embedding_v2) VALUES (4, 'fourth', \
+         '[0.98,0.02,0.0]')",
     )
     .await;
 
@@ -1307,15 +1315,13 @@ async fn test_vector_index_survives_column_rename() {
         .expect("renamed vector index metadata must exist");
     assert_eq!(meta.column_name, "embedding_v2");
     assert_eq!(meta.snapshot_version, 2);
-    assert_eq!(
-        meta.snapshot_path.as_deref(),
-        Some("vec-embedding_v2-snapshot-2.vix")
-    );
+    assert_eq!(meta.snapshot_path.as_deref(), Some("vec-embedding_v2-snapshot-2.vix"));
 
     let result_after_second_flush = execute_sql(
         &executor,
         &exec_ctx,
-        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, '[1.0,0.0,0.0]') LIMIT 4",
+        "SELECT id FROM test_ns.docs_rename_vec ORDER BY COSINE_DISTANCE(embedding_v2, \
+         '[1.0,0.0,0.0]') LIMIT 4",
     )
     .await;
     match result_after_second_flush {
@@ -1333,7 +1339,8 @@ async fn test_vector_index_survives_column_rename() {
     execute_sql(
         &executor,
         &exec_ctx,
-        "CREATE TABLE test_ns.user_docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding EMBEDDING(3)) WITH (TYPE='USER')",
+        "CREATE TABLE test_ns.user_docs_rename_vec (id INT PRIMARY KEY, title TEXT, embedding \
+         EMBEDDING(3)) WITH (TYPE='USER')",
     )
     .await;
     execute_sql(
@@ -1345,16 +1352,14 @@ async fn test_vector_index_survives_column_rename() {
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (1, 'u1', '[1.0,0.0,0.0]')",
+        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (1, 'u1', \
+         '[1.0,0.0,0.0]')",
     )
     .await;
 
     let user_table_id = TableId::from_strings("test_ns", "user_docs_rename_vec");
     let user_id = exec_ctx.user_id().clone();
-    let user_cached = app_context
-        .schema_registry()
-        .get(&user_table_id)
-        .expect("user cached table");
+    let user_cached = app_context.schema_registry().get(&user_table_id).expect("user cached table");
     let user_storage = user_cached
         .storage_cached(&app_context.storage_registry())
         .expect("user storage cached");
@@ -1362,19 +1367,14 @@ async fn test_vector_index_survives_column_rename() {
         .schema_registry()
         .get_arrow_schema(&user_table_id)
         .expect("user_docs_rename_vec schema");
-    flush_user_scope_vectors(
-        &app_context,
-        &user_table_id,
-        &user_id,
-        &user_schema,
-        &user_storage,
-    )
-    .expect("initial user flush vector snapshot");
+    flush_user_scope_vectors(&app_context, &user_table_id, &user_id, &user_schema, &user_storage)
+        .expect("initial user flush vector snapshot");
 
     execute_sql(
         &executor,
         &exec_ctx,
-        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (2, 'u2', '[0.85,0.15,0.0]')",
+        "INSERT INTO test_ns.user_docs_rename_vec (id, title, embedding) VALUES (2, 'u2', \
+         '[0.85,0.15,0.0]')",
     )
     .await;
     execute_sql(
@@ -1395,19 +1395,14 @@ async fn test_vector_index_survives_column_rename() {
         .schema_registry()
         .get_arrow_schema(&user_table_id)
         .expect("user_docs_rename_vec schema after rename");
-    flush_user_scope_vectors(
-        &app_context,
-        &user_table_id,
-        &user_id,
-        &user_schema,
-        &user_storage,
-    )
-    .expect("second user flush vector snapshot after column rename");
+    flush_user_scope_vectors(&app_context, &user_table_id, &user_id, &user_schema, &user_storage)
+        .expect("second user flush vector snapshot after column rename");
 
     let user_query = execute_sql(
         &executor,
         &exec_ctx,
-        "SELECT id FROM test_ns.user_docs_rename_vec ORDER BY COSINE_DISTANCE(vec_renamed, '[1.0,0.0,0.0]') LIMIT 2",
+        "SELECT id FROM test_ns.user_docs_rename_vec ORDER BY COSINE_DISTANCE(vec_renamed, \
+         '[1.0,0.0,0.0]') LIMIT 2",
     )
     .await;
     match user_query {
@@ -1421,4 +1416,3 @@ async fn test_vector_index_survives_column_rename() {
         other => panic!("Expected user rows after rename + flush, got {:?}", other),
     }
 }
-

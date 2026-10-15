@@ -29,30 +29,18 @@ async fn setup_app() -> (Arc<AppContext>, Arc<SqlExecutor>, TestDb) {
 }
 
 fn dba_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_ctx_dba"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_ctx_dba"), Role::Dba, app.base_session_context())
 }
 
 fn user_ctx(app: &Arc<AppContext>, id: &str) -> ExecutionContext {
     ExecutionContext::new(UserId::new(id), Role::User, app.base_session_context())
 }
 
-async fn exec_as(
-    executor: &SqlExecutor,
-    ctx: &ExecutionContext,
-    sql: &str,
-) -> ExecutionResult {
+async fn exec_as(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> ExecutionResult {
     executor.execute(sql, ctx, vec![]).await.expect(sql)
 }
 
-async fn exec_err_as(
-    executor: &SqlExecutor,
-    ctx: &ExecutionContext,
-    sql: &str,
-) -> String {
+async fn exec_err_as(executor: &SqlExecutor, ctx: &ExecutionContext, sql: &str) -> String {
     executor
         .execute(sql, ctx, vec![])
         .await
@@ -88,39 +76,25 @@ async fn security_invoker_vs_definer_switches_effective_principal() {
     exec_as(
         &executor,
         &dba,
-        "CREATE FUNCTION r_sec.who_invoker() RETURNS TEXT LANGUAGE JAVASCRIPT SECURITY INVOKER AS $$ return ctx.user.id + ':' + ctx.session.user.id; $$",
+        "CREATE FUNCTION r_sec.who_invoker() RETURNS TEXT LANGUAGE JAVASCRIPT SECURITY INVOKER AS \
+         $$ return ctx.user.id + ':' + ctx.session.user.id; $$",
     )
     .await;
     exec_as(
         &executor,
         &dba,
-        "CREATE FUNCTION r_sec.who_definer() RETURNS TEXT LANGUAGE JAVASCRIPT SECURITY DEFINER AS $$ return ctx.user.id + ':' + ctx.session.user.id; $$",
+        "CREATE FUNCTION r_sec.who_definer() RETURNS TEXT LANGUAGE JAVASCRIPT SECURITY DEFINER AS \
+         $$ return ctx.user.id + ':' + ctx.session.user.id; $$",
     )
     .await;
-    exec_as(
-        &executor,
-        &dba,
-        "GRANT EXECUTE ON FUNCTION r_sec.who_invoker TO PUBLIC",
-    )
-    .await;
-    exec_as(
-        &executor,
-        &dba,
-        "GRANT EXECUTE ON FUNCTION r_sec.who_definer TO PUBLIC",
-    )
-    .await;
+    exec_as(&executor, &dba, "GRANT EXECUTE ON FUNCTION r_sec.who_invoker TO PUBLIC").await;
+    exec_as(&executor, &dba, "GRANT EXECUTE ON FUNCTION r_sec.who_definer TO PUBLIC").await;
 
     let inv_res = exec_as(&executor, &caller, "SELECT r_sec.who_invoker()").await;
-    assert_eq!(
-        scalar_string(&inv_res),
-        "u_pg18_ctx_caller:u_pg18_ctx_caller"
-    );
+    assert_eq!(scalar_string(&inv_res), "u_pg18_ctx_caller:u_pg18_ctx_caller");
 
     let def_res = exec_as(&executor, &caller, "SELECT r_sec.who_definer()").await;
-    assert_eq!(
-        scalar_string(&def_res),
-        "u_pg18_ctx_dba:u_pg18_ctx_caller"
-    );
+    assert_eq!(scalar_string(&def_res), "u_pg18_ctx_dba:u_pg18_ctx_caller");
 }
 
 #[tokio::test]

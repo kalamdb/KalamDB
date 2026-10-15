@@ -51,6 +51,7 @@ pub struct SqlStatement {
 /// Statement type variants (internal to SqlStatement)
 #[derive(Debug, Clone)]
 pub enum SqlStatementKind {
+    PostgresSetting(crate::PostgresSetting),
     // ===== Schema operations =====
     /// ALTER SCHEMA <name> ...
     AlterSchema(AlterSchemaStatement),
@@ -253,6 +254,30 @@ pub enum SqlStatementKind {
     Unknown,
 }
 
+impl SqlStatementKind {
+    /// Statements that can share one implicit transaction inside a multi-statement batch.
+    ///
+    /// `BEGIN`, `COMMIT`, and `ROLLBACK` stay outside the batch: they own the
+    /// transaction. HTTP SQL and pgwire both use this list.
+    pub fn joins_implicit_transaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Select
+                | Self::Insert(_)
+                | Self::Update(_)
+                | Self::Delete(_)
+                | Self::SetSearchPath(_)
+                | Self::PostgresSetting(_)
+                | Self::Savepoint(_)
+                | Self::ReleaseSavepoint(_)
+                | Self::RollbackToSavepoint(_)
+                | Self::SetTransaction
+                | Self::Call(_)
+                | Self::DataFusionMetaCommand
+        )
+    }
+}
+
 impl SqlStatement {
     /// Create a SqlStatement with SQL text and kind
     pub fn new(sql_text: String, kind: SqlStatementKind) -> Self {
@@ -309,7 +334,9 @@ impl SqlStatement {
             | SqlStatementKind::Unknown => false,
 
             // SET SCHEMA / SET search_path only affect session state, not cluster state
-            SqlStatementKind::UseSchema(_) | SqlStatementKind::SetSearchPath(_) => false,
+            SqlStatementKind::UseSchema(_)
+            | SqlStatementKind::SetSearchPath(_)
+            | SqlStatementKind::PostgresSetting(_) => false,
 
             // All other operations modify data or schema - must go to leader
             SqlStatementKind::CreateSchema(_)
@@ -394,6 +421,11 @@ impl SqlStatement {
             SqlStatementKind::UseSchema(_) => "SET SCHEMA",
             SqlStatementKind::CreateSchema(_) => "CREATE SCHEMA",
             SqlStatementKind::SetSearchPath(_) => "SET SEARCH_PATH",
+            SqlStatementKind::PostgresSetting(setting) => match setting {
+                crate::PostgresSetting::Show { .. } => "SHOW",
+                crate::PostgresSetting::ResetAll => "RESET",
+                crate::PostgresSetting::Set { .. } => "SET",
+            },
             SqlStatementKind::CreateType(_) => "CREATE TYPE",
             SqlStatementKind::AlterType(_) => "ALTER TYPE",
             SqlStatementKind::DropType(_) => "DROP TYPE",

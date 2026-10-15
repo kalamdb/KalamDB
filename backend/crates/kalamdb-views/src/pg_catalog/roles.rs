@@ -75,7 +75,8 @@ impl PgCatalogView for PgRolesView {
         let mut rolreplications = BooleanBuilder::new();
         let mut rolbypassrlss = BooleanBuilder::new();
 
-        // In pg_authid, only admin roles see role rows; credentials (rolpassword) are never exposed.
+        // In pg_authid, only admin roles see role rows; credentials (rolpassword) are never
+        // exposed.
         if self.name == "pg_authid" && !is_admin_role(role) {
             return RecordBatch::try_new(
                 self.schema(),
@@ -91,7 +92,9 @@ impl PgCatalogView for PgRolesView {
                     Arc::new(rolbypassrlss.finish()) as ArrayRef,
                 ],
             )
-            .map_err(|error| RegistryError::Other(format!("failed to build {}: {error}", self.name)));
+            .map_err(|error| {
+                RegistryError::Other(format!("failed to build {}: {error}", self.name))
+            });
         }
 
         if let Ok(users) = self.system_registry.users().list_users() {

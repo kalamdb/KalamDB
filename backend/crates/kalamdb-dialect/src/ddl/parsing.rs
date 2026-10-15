@@ -13,7 +13,8 @@ pub fn starts_with_ci(input: &str, prefix: &str) -> bool {
     input.len() >= prefix.len() && input[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
-/// Advance past leading ASCII whitespace, `--` line comments, and nested `/* ... */` block comments.
+/// Advance past leading ASCII whitespace, `--` line comments, and nested `/* ... */` block
+/// comments.
 ///
 /// If an unterminated `/*` block comment is encountered, returns the slice starting at `/*` so
 /// the caller sees remaining unparsed input and fails cleanly.
@@ -58,8 +59,9 @@ pub fn trim_sql_comments_and_semicolons(sql: &str) -> DdlResult<&str> {
     if s.starts_with("/*") {
         return Err("Unterminated block comment".to_string());
     }
-    // Find where the statement content ends before any trailing `;` and trailing comments/whitespace.
-    // Scan top-level tokens to track the last non-trivia, non-semicolon byte offset.
+    // Find where the statement content ends before any trailing `;` and trailing
+    // comments/whitespace. Scan top-level tokens to track the last non-trivia, non-semicolon
+    // byte offset.
     let bytes = s.as_bytes();
     let mut i = 0usize;
     let mut last_content_end = 0usize;
@@ -144,10 +146,7 @@ pub fn trim_sql_comments_and_semicolons(sql: &str) -> DdlResult<&str> {
             if let Some(tag_end) = after_dollar.find('$') {
                 let tag_inner = &after_dollar[..tag_end];
                 let valid_tag = tag_inner.is_empty()
-                    || (tag_inner
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                    || (tag_inner.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
                         && tag_inner.chars().all(|c| c.is_alphanumeric() || c == '_'));
                 if valid_tag {
                     let tag = &s[i..i + tag_end + 2];
@@ -170,8 +169,8 @@ pub fn trim_sql_comments_and_semicolons(sql: &str) -> DdlResult<&str> {
 
 /// If `input` starts with an ASCII keyword (or keyword phrase), return the remainder.
 ///
-/// Words in `keyword` may be separated by any ASCII whitespace or SQL comments in `input`. The match
-/// is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
+/// Words in `keyword` may be separated by any ASCII whitespace or SQL comments in `input`. The
+/// match is rejected when the next character is still an identifier character (`A-Z`, `0-9`, `_`).
 #[inline]
 pub fn strip_keyword_ci<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
     let mut rest = skip_ws_and_comments(input);
@@ -213,19 +212,18 @@ pub(crate) fn parse_optional_comment(input: &str) -> DdlResult<(Option<String>, 
     Ok((Some(value), leftover))
 }
 
-/// Parse a SQL string literal (including PostgreSQL `E'...'` escape strings) and return leftover input.
+/// Parse a SQL string literal (including PostgreSQL `E'...'` escape strings) and return leftover
+/// input.
 pub(crate) fn parse_sql_string_prefix(input: &str) -> DdlResult<(String, &str)> {
     let input = skip_ws_and_comments(input);
-    let (escaped_mode, body_input) = if let Some(after_e) = input
-        .strip_prefix("E'")
-        .or_else(|| input.strip_prefix("e'"))
-    {
-        (true, after_e)
-    } else if let Some(after_q) = input.strip_prefix('\'') {
-        (false, after_q)
-    } else {
-        return Err(format!("Expected string literal, got '{input}'"));
-    };
+    let (escaped_mode, body_input) =
+        if let Some(after_e) = input.strip_prefix("E'").or_else(|| input.strip_prefix("e'")) {
+            (true, after_e)
+        } else if let Some(after_q) = input.strip_prefix('\'') {
+            (false, after_q)
+        } else {
+            return Err(format!("Expected string literal, got '{input}'"));
+        };
     let mut chars = body_input.char_indices();
     let mut out = String::new();
     while let Some((idx, ch)) = chars.next() {

@@ -1,10 +1,7 @@
-use kalamdb_commons::models::SchemaId;
-use kalamdb_commons::Role;
-use kalamdb_dialect::classifier::{
-    SqlStatement, SqlStatementKind, StatementClassificationError,
-};
-use kalamdb_dialect::ddl::{
-    AlterDomainOperation, AlterTypeOperation, CommentOnTarget, CreateTypeBody,
+use kalamdb_commons::{models::SchemaId, Role};
+use kalamdb_dialect::{
+    classifier::{SqlStatement, SqlStatementKind, StatementClassificationError},
+    ddl::{AlterDomainOperation, AlterTypeOperation, CommentOnTarget, CreateTypeBody},
 };
 
 fn classify(sql: &str) -> Result<SqlStatement, StatementClassificationError> {
@@ -24,8 +21,8 @@ fn test_pg18_composite_and_enum_type_forms() {
         other => panic!("unexpected kind: {other:?}"),
     }
 
-    let enum_stmt = classify("CREATE TYPE app.empty_enum AS ENUM ()")
-        .expect("0-label enum type should parse");
+    let enum_stmt =
+        classify("CREATE TYPE app.empty_enum AS ENUM ()").expect("0-label enum type should parse");
     match enum_stmt.kind() {
         SqlStatementKind::CreateType(stmt) => {
             assert_eq!(stmt.body, CreateTypeBody::Enum { labels: vec![] });
@@ -33,10 +30,9 @@ fn test_pg18_composite_and_enum_type_forms() {
         other => panic!("unexpected kind: {other:?}"),
     }
 
-    let quoted_stmt = classify(
-        r#"CREATE TYPE "App"."MyType" AS ("FieldOne" "INT", plain_field INT)"#,
-    )
-    .expect("quoted composite type should parse");
+    let quoted_stmt =
+        classify(r#"CREATE TYPE "App"."MyType" AS ("FieldOne" "INT", plain_field INT)"#)
+            .expect("quoted composite type should parse");
     match quoted_stmt.kind() {
         SqlStatementKind::CreateType(stmt) => {
             assert_eq!(stmt.namespace_id.as_str(), "app");
@@ -77,21 +73,13 @@ fn test_pg18_nonstandard_type_forms_rejected() {
 
     let shell_type = classify("CREATE TYPE app.shell_only");
     assert!(
-        shell_type
-            .unwrap_err()
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("shell type"),
+        shell_type.unwrap_err().to_string().to_ascii_lowercase().contains("shell type"),
         "shell CREATE TYPE must fail with explicit diagnostic"
     );
 
     let base_type = classify("CREATE TYPE app.base_t (INPUT = in_fn, OUTPUT = out_fn)");
     assert!(
-        base_type
-            .unwrap_err()
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("base type"),
+        base_type.unwrap_err().to_string().to_ascii_lowercase().contains("base type"),
         "base CREATE TYPE must fail with explicit diagnostic"
     );
 }
@@ -99,7 +87,8 @@ fn test_pg18_nonstandard_type_forms_rejected() {
 #[test]
 fn test_pg18_domain_ddl_forms() {
     let create_dom = classify(
-        "CREATE DOMAIN app.pos_int AS INTEGER DEFAULT 1 NOT NULL CONSTRAINT pos_chk CHECK (VALUE > 0)",
+        "CREATE DOMAIN app.pos_int AS INTEGER DEFAULT 1 NOT NULL CONSTRAINT pos_chk CHECK (VALUE \
+         > 0)",
     )
     .expect("CREATE DOMAIN should classify");
     match create_dom.kind() {
@@ -114,10 +103,9 @@ fn test_pg18_domain_ddl_forms() {
         other => panic!("unexpected kind: {other:?}"),
     }
 
-    let alter_dom = classify(
-        "ALTER DOMAIN app.pos_int ADD CONSTRAINT max_chk CHECK (VALUE < 1000) NOT VALID",
-    )
-    .expect("ALTER DOMAIN ADD CONSTRAINT NOT VALID should classify");
+    let alter_dom =
+        classify("ALTER DOMAIN app.pos_int ADD CONSTRAINT max_chk CHECK (VALUE < 1000) NOT VALID")
+            .expect("ALTER DOMAIN ADD CONSTRAINT NOT VALID should classify");
     match alter_dom.kind() {
         SqlStatementKind::AlterDomain(stmt) => match &stmt.operation {
             AlterDomainOperation::AddCheck { clause } => {
@@ -131,10 +119,7 @@ fn test_pg18_domain_ddl_forms() {
 
     let validate_dom = classify("ALTER DOMAIN app.pos_int VALIDATE CONSTRAINT max_chk")
         .expect("ALTER DOMAIN VALIDATE CONSTRAINT should classify");
-    assert!(matches!(
-        validate_dom.kind(),
-        SqlStatementKind::AlterDomain(_)
-    ));
+    assert!(matches!(validate_dom.kind(), SqlStatementKind::AlterDomain(_)));
 
     let drop_dom = classify("DROP DOMAIN IF EXISTS app.pos_int, app.other_dom CASCADE")
         .expect("DROP DOMAIN should classify");

@@ -22,11 +22,7 @@ async fn setup_app() -> (Arc<AppContext>, SqlExecutor, TestDb) {
 }
 
 fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_domains"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_domains"), Role::Dba, app.base_session_context())
 }
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) {
@@ -66,12 +62,7 @@ async fn test_pg18_domains_three_valued_check_stacking_and_ddl() {
     exec(&app, &executor, "CREATE SCHEMA app").await;
 
     // 1. Domain with three-valued CHECK (NULL passes CHECK when NOT NULL is absent)
-    exec(
-        &app,
-        &executor,
-        "CREATE DOMAIN app.even_int AS INT CHECK (VALUE % 2 = 0)",
-    )
-    .await;
+    exec(&app, &executor, "CREATE DOMAIN app.even_int AS INT CHECK (VALUE % 2 = 0)").await;
     exec(
         &app,
         &executor,
@@ -83,9 +74,7 @@ async fn test_pg18_domains_three_valued_check_stacking_and_ddl() {
     exec(&app, &executor, "INSERT INTO app.nums VALUES (2, NULL)").await;
 
     let ctx = root_ctx(&app);
-    let odd_err = executor
-        .execute("INSERT INTO app.nums VALUES (3, 5)", &ctx, vec![])
-        .await;
+    let odd_err = executor.execute("INSERT INTO app.nums VALUES (3, 5)", &ctx, vec![]).await;
     assert!(odd_err.is_err(), "odd value must fail domain CHECK");
 
     let vals = query_i32_col(&app, &executor, "SELECT v FROM app.nums ORDER BY id").await;
@@ -95,7 +84,8 @@ async fn test_pg18_domains_three_valued_check_stacking_and_ddl() {
     exec(
         &app,
         &executor,
-        "CREATE DOMAIN app.pos_even_int AS app.even_int DEFAULT 2 NOT NULL CONSTRAINT pos_chk CHECK (VALUE > 0)",
+        "CREATE DOMAIN app.pos_even_int AS app.even_int DEFAULT 2 NOT NULL CONSTRAINT pos_chk \
+         CHECK (VALUE > 0)",
     )
     .await;
     exec(
@@ -175,22 +165,13 @@ async fn test_pg18_domains_three_valued_check_stacking_and_ddl() {
     // VALIDATE CONSTRAINT fails until row 4 is updated/deleted
     assert!(
         executor
-            .execute(
-                "ALTER DOMAIN app.even_int VALIDATE CONSTRAINT small_chk",
-                &ctx,
-                vec![],
-            )
+            .execute("ALTER DOMAIN app.even_int VALIDATE CONSTRAINT small_chk", &ctx, vec![],)
             .await
             .is_err(),
         "VALIDATE CONSTRAINT must fail while row v=100 exists"
     );
     exec(&app, &executor, "DELETE FROM app.nums WHERE id = 4").await;
-    exec(
-        &app,
-        &executor,
-        "ALTER DOMAIN app.even_int VALIDATE CONSTRAINT small_chk",
-    )
-    .await;
+    exec(&app, &executor, "ALTER DOMAIN app.even_int VALIDATE CONSTRAINT small_chk").await;
 
     // 5. RENAME CONSTRAINT, DROP CONSTRAINT, COMMENT ON DOMAIN
     exec(
@@ -199,19 +180,9 @@ async fn test_pg18_domains_three_valued_check_stacking_and_ddl() {
         "ALTER DOMAIN app.even_int RENAME CONSTRAINT small_chk TO under_fifty",
     )
     .await;
-    exec(
-        &app,
-        &executor,
-        "ALTER DOMAIN app.even_int DROP CONSTRAINT under_fifty",
-    )
-    .await;
+    exec(&app, &executor, "ALTER DOMAIN app.even_int DROP CONSTRAINT under_fifty").await;
     exec(&app, &executor, "INSERT INTO app.nums VALUES (6, 80)").await;
-    exec(
-        &app,
-        &executor,
-        "COMMENT ON DOMAIN app.even_int IS 'even numbers domain'",
-    )
-    .await;
+    exec(&app, &executor, "COMMENT ON DOMAIN app.even_int IS 'even numbers domain'").await;
 }
 
 #[tokio::test]
@@ -235,7 +206,8 @@ async fn test_pg18_domain_arrays_and_composites() {
     exec(
         &app,
         &executor,
-        "CREATE SHARED TABLE app.catalog_items (id INT PRIMARY KEY, codes app.nonempty_code[], item app.tagged_item)",
+        "CREATE SHARED TABLE app.catalog_items (id INT PRIMARY KEY, codes app.nonempty_code[], \
+         item app.tagged_item)",
     )
     .await;
 
@@ -270,11 +242,7 @@ async fn test_pg18_domain_arrays_and_composites() {
         "empty string in composite field using domain must fail domain CHECK"
     );
 
-    let rows = query_i32_col(
-        &app,
-        &executor,
-        "SELECT id FROM app.catalog_items WHERE id = 1",
-    )
-    .await;
+    let rows =
+        query_i32_col(&app, &executor, "SELECT id FROM app.catalog_items WHERE id = 1").await;
     assert_eq!(rows, vec![Some(1)]);
 }

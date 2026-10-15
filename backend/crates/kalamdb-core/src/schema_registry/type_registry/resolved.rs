@@ -27,7 +27,8 @@ pub struct ResolvedType {
 }
 
 impl ResolvedType {
-    /// Peel domain wrappers to the underlying non-domain resolved type (or self if base is builtin).
+    /// Peel domain wrappers to the underlying non-domain resolved type (or self if base is
+    /// builtin).
     pub fn root_resolved_type(&self) -> &ResolvedType {
         let mut current = self;
         while current.kind == CatalogTypeKind::Domain {
@@ -53,10 +54,8 @@ impl ResolvedType {
         let mut current = self;
         let mut last_ref = None;
         while current.kind == CatalogTypeKind::Domain {
-            let Some(base_field) = current
-                .fields
-                .iter()
-                .find(|field| field.name == "__base" && !field.dropped)
+            let Some(base_field) =
+                current.fields.iter().find(|field| field.name == "__base" && !field.dropped)
             else {
                 break;
             };

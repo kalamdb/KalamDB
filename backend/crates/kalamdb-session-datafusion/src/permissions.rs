@@ -4,7 +4,7 @@ use datafusion::{
     execution::context::SessionState,
 };
 use kalamdb_commons::{
-    models::{SchemaId, ReadContext, Role, TableId, TableName, UserId},
+    models::{ReadContext, Role, SchemaId, TableId, TableName, UserId},
     schemas::TableDefinition,
 };
 use kalamdb_session::{

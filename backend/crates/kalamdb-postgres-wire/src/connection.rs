@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::models::SchemaId;
+use kalamdb_core::sql::SessionConfigValues;
 use parking_lot::Mutex;
 
 pub const DEFAULT_PREPARED_STATEMENT_LIMIT: usize = 1_024;
@@ -38,7 +39,8 @@ impl std::fmt::Display for WireConnectionStateError {
             Self::PreparedStatementBytesExceeded { limit, requested } => {
                 write!(
                     f,
-                    "prepared statement byte budget exceeded (requested {requested} bytes, limit {limit} bytes)"
+                    "prepared statement byte budget exceeded (requested {requested} bytes, limit \
+                     {limit} bytes)"
                 )
             },
             Self::StatementSqlBytesExceeded { limit, actual } => {
@@ -56,15 +58,16 @@ impl std::error::Error for WireConnectionStateError {}
 
 #[derive(Debug)]
 pub struct WireConnectionState {
-    session_id:                        String,
-    auth:                              BackendAuth,
-    current_schema:                    Mutex<SchemaId>,
-    prepared_statement_limit:          usize,
-    portal_limit:                      usize,
-    statement_sql_bytes_limit:         usize,
+    session_id: String,
+    auth: BackendAuth,
+    current_schema: Mutex<SchemaId>,
+    config_values: SessionConfigValues,
+    prepared_statement_limit: usize,
+    portal_limit: usize,
+    statement_sql_bytes_limit: usize,
     prepared_statement_total_bytes_limit: usize,
-    prepared_statements:               Mutex<HashMap<String, WirePreparedStatement>>,
-    portals:                           Mutex<HashMap<String, WirePortal>>,
+    prepared_statements: Mutex<HashMap<String, WirePreparedStatement>>,
+    portals: Mutex<HashMap<String, WirePortal>>,
 }
 
 impl WireConnectionState {
@@ -109,6 +112,7 @@ impl WireConnectionState {
             session_id: session_id.into(),
             auth,
             current_schema: Mutex::new(current_schema),
+            config_values: SessionConfigValues::new(),
             prepared_statement_limit,
             portal_limit,
             statement_sql_bytes_limit,
@@ -132,6 +136,10 @@ impl WireConnectionState {
 
     pub fn set_current_schema(&self, current_schema: SchemaId) {
         *self.current_schema.lock() = current_schema;
+    }
+
+    pub fn session_config(&self) -> SessionConfigValues {
+        self.config_values.clone()
     }
 
     pub fn prepared_statement_limit(&self) -> usize {

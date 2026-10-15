@@ -51,7 +51,11 @@ async fn savepoints_and_rollback_to_savepoint_recover_aborted_transaction_block(
     // Cause a runtime error inside the transaction (select from nonexistent column)
     let bad_err = executor
         .execute(
-            &format!("SELECT nonexistent_col FROM {}.{}", table_id.namespace_id(), table_id.table_name()),
+            &format!(
+                "SELECT nonexistent_col FROM {}.{}",
+                table_id.namespace_id(),
+                table_id.table_name()
+            ),
             &req_ctx,
             vec![],
         )

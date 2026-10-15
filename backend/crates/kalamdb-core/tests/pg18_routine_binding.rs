@@ -1,4 +1,5 @@
-//! Integration tests for PostgreSQL 18 routine argument binding, defaults, OUT/INOUT, and strict NULL.
+//! Integration tests for PostgreSQL 18 routine argument binding, defaults, OUT/INOUT, and strict
+//! NULL.
 
 mod support;
 
@@ -78,7 +79,8 @@ async fn positional_named_and_default_argument_binding() {
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION r_bind.weighted_sum(a INT, b INT DEFAULT 10, c INT DEFAULT 100) RETURNS INT LANGUAGE SQL AS $$ SELECT a + b * 2 + c * 3 $$",
+        "CREATE FUNCTION r_bind.weighted_sum(a INT, b INT DEFAULT 10, c INT DEFAULT 100) RETURNS \
+         INT LANGUAGE SQL AS $$ SELECT a + b * 2 + c * 3 $$",
     )
     .await;
 
@@ -119,13 +121,15 @@ async fn strict_null_short_circuits_and_called_on_null_executes() {
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION r_null.strict_double(v INT) RETURNS INT LANGUAGE SQL STRICT AS $$ SELECT COALESCE(v, 99) * 2 $$",
+        "CREATE FUNCTION r_null.strict_double(v INT) RETURNS INT LANGUAGE SQL STRICT AS $$ SELECT \
+         COALESCE(v, 99) * 2 $$",
     )
     .await;
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION r_null.coalesce_double(v INT) RETURNS INT LANGUAGE SQL CALLED ON NULL INPUT AS $$ SELECT COALESCE(v, 99) * 2 $$",
+        "CREATE FUNCTION r_null.coalesce_double(v INT) RETURNS INT LANGUAGE SQL CALLED ON NULL \
+         INPUT AS $$ SELECT COALESCE(v, 99) * 2 $$",
     )
     .await;
 
@@ -145,7 +149,8 @@ async fn out_and_inout_parameters_materialize_return_columns() {
     exec(
         &app,
         &executor,
-        "CREATE PROCEDURE r_out.bump(INOUT x INT, OUT doubled INT) LANGUAGE PLPGSQL AS $$ BEGIN doubled := x * 2; x := x + 1; END $$",
+        "CREATE PROCEDURE r_out.bump(INOUT x INT, OUT doubled INT) LANGUAGE PLPGSQL AS $$ BEGIN \
+         doubled := x * 2; x := x + 1; END $$",
     )
     .await;
 

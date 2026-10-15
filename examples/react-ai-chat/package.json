@@ -10,6 +10,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "agent": "tsx src/agent/index.ts",
     "test:e2e": "playwright test tests/kalam-dev.e2e.spec.mjs",
+    "pretest": "node scripts/use-sdk-drizzle.mjs",
     "test": "tsc && tsx --test tests/agent.test.ts && node --test tests/chat.spec.mjs"
   },
   "dependencies": {
@@ -18,7 +19,7 @@
     "@kalamdb/orm": "file:../../link/sdks/typescript/orm",
     "@kalamdb/react": "file:../../link/sdks/typescript/react",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.4",
     "lucide-react": "^1.14.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"

@@ -98,10 +98,7 @@ impl AlterDomainStatement {
             if take_keyword_ci(&mut rest, "NOT NULL") {
                 let not_valid = take_keyword_ci(&mut rest, "NOT VALID");
                 if !rest.trim().is_empty() {
-                    return Err(format!(
-                        "Unexpected tokens after ADD NOT NULL: '{}'",
-                        rest.trim()
-                    ));
+                    return Err(format!("Unexpected tokens after ADD NOT NULL: '{}'", rest.trim()));
                 }
                 AlterDomainOperation::AddNotNull {
                     constraint_name,
@@ -131,9 +128,7 @@ impl AlterDomainStatement {
                     },
                 }
             } else {
-                return Err(
-                    "Expected CHECK (...) or NOT NULL in ALTER DOMAIN ADD".to_string()
-                );
+                return Err("Expected CHECK (...) or NOT NULL in ALTER DOMAIN ADD".to_string());
             }
         } else if take_keyword_ci(&mut rest, "DROP CONSTRAINT") {
             let if_exists = take_keyword_ci(&mut rest, "IF EXISTS");
@@ -194,15 +189,13 @@ impl AlterDomainStatement {
             if !leftover.trim().is_empty() {
                 return Err(format!("Unexpected tokens after SET SCHEMA: '{}'", leftover.trim()));
             }
-            let schema = SchemaId::try_parse_reference(&schema_name)
-                .map_err(|error| error.to_string())?;
+            let schema =
+                SchemaId::try_parse_reference(&schema_name).map_err(|error| error.to_string())?;
             AlterDomainOperation::SetSchema { schema }
         } else {
-            return Err(
-                "Expected SET/DROP DEFAULT, SET/DROP NOT NULL, ADD/DROP/RENAME/VALIDATE \
-                 CONSTRAINT, OWNER TO, RENAME TO, or SET SCHEMA in ALTER DOMAIN"
-                    .to_string(),
-            );
+            return Err("Expected SET/DROP DEFAULT, SET/DROP NOT NULL, ADD/DROP/RENAME/VALIDATE \
+                        CONSTRAINT, OWNER TO, RENAME TO, or SET SCHEMA in ALTER DOMAIN"
+                .to_string());
         };
 
         Ok(Self {

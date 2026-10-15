@@ -664,9 +664,7 @@ impl TransactionCoordinator {
 
         if !matches!(
             handle.state,
-            TransactionState::OpenRead
-                | TransactionState::OpenWrite
-                | TransactionState::Aborted
+            TransactionState::OpenRead | TransactionState::OpenWrite | TransactionState::Aborted
         ) {
             return Err(Self::state_error(transaction_id, handle.state, "rollback to savepoint"));
         }

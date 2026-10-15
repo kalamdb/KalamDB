@@ -33,8 +33,8 @@ use kalamdb_sql::{
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Parens, SelectItem, Statement,
-    UnaryOperator, Value as SqlValue,
+    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName, ObjectNamePart, Parens,
+    SelectItem, Statement, UnaryOperator, Value as SqlValue,
 };
 use ulid::Ulid;
 use uuid::Uuid;
@@ -206,6 +206,26 @@ async fn try_build_insert_rows_from_values_rows(
     Ok(Some(rows))
 }
 
+#[inline]
+fn is_file_put_function_name(name: &ObjectName) -> bool {
+    match name.0.as_slice() {
+        [ObjectNamePart::Identifier(ident)] => ident.value.eq_ignore_ascii_case("file_put"),
+        [ObjectNamePart::Identifier(schema), ObjectNamePart::Identifier(ident)] => {
+            schema.value.eq_ignore_ascii_case("pg_catalog")
+                && ident.value.eq_ignore_ascii_case("file_put")
+        },
+        _ => false,
+    }
+}
+
+#[inline]
+fn is_row_function_name(name: &ObjectName) -> bool {
+    matches!(
+        name.0.as_slice(),
+        [ObjectNamePart::Identifier(ident)] if ident.value.eq_ignore_ascii_case("row")
+    )
+}
+
 async fn build_insert_rows_from_values_rows(
     value_rows: &[Parens<Vec<Expr>>],
     column_names: &[String],
@@ -217,6 +237,8 @@ async fn build_insert_rows_from_values_rows(
 ) -> Result<Vec<Row>, InsertValuesRowsError> {
     let mut rows = Vec::with_capacity(value_rows.len());
     let mut explicit_default_values = BTreeMap::new();
+    let target_fields: Vec<Option<&Field>> =
+        column_names.iter().map(|col| schema.field_with_name(col).ok()).collect();
 
     for value_row in value_rows {
         if value_row.content.len() != column_names.len() {
@@ -224,8 +246,12 @@ async fn build_insert_rows_from_values_rows(
         }
 
         let mut values = BTreeMap::new();
-        for (expr, column_name) in value_row.content.iter().zip(column_names.iter()) {
-            let target_field = schema.field_with_name(column_name).ok();
+        for ((expr, column_name), target_field) in value_row
+            .content
+            .iter()
+            .zip(column_names.iter())
+            .zip(target_fields.iter().copied())
+        {
             values.insert(
                 column_name.clone(),
                 insert_value_expr_to_scalar(
@@ -270,8 +296,7 @@ async fn insert_value_expr_to_scalar(
     }
 
     if let Expr::Function(func) = expr {
-        let func_name = func.name.to_string().to_ascii_lowercase();
-        if matches!(func_name.as_str(), "file_put" | "pg_catalog.file_put") {
+        if is_file_put_function_name(&func.name) {
             let arg_expr = match &func.args {
                 FunctionArguments::List(list) if list.args.len() == 1 => match &list.args[0] {
                     FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) => inner,
@@ -382,9 +407,8 @@ fn eval_typed_insert_expr(
             })
         },
         Expr::TypedString(typed) => {
-            let scalar =
-                expr_to_scalar_with_params(&Expr::Value(typed.value.clone()), params)
-                    .map_err(|_| InsertValuesRowsError::Unsupported)?;
+            let scalar = expr_to_scalar_with_params(&Expr::Value(typed.value.clone()), params)
+                .map_err(|_| InsertValuesRowsError::Unsupported)?;
             if let Some(field) = target_field {
                 coerce_scalar_to_field(scalar, field).map_err(|error| {
                     InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
@@ -436,15 +460,15 @@ fn eval_typed_insert_expr(
                         format!("array element in column '{}' cannot be null", field.name()),
                     )));
                 }
-                let coerced =
-                    coerce_scalar_to_field(elem_scalar, item_field).map_err(|error| {
-                        InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
-                    })?;
+                let coerced = coerce_scalar_to_field(elem_scalar, item_field).map_err(|error| {
+                    InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(error))
+                })?;
                 items.push(coerced);
             }
             let child_array = if items.is_empty() {
                 new_empty_array(item_field.data_type())
-            } else if matches!(item_field.data_type(), DataType::Struct(fields) if fields.is_empty()) {
+            } else if matches!(item_field.data_type(), DataType::Struct(fields) if fields.is_empty())
+            {
                 let DataType::Struct(fields) = item_field.data_type() else {
                     unreachable!();
                 };
@@ -457,10 +481,10 @@ fn eval_typed_insert_expr(
                 };
                 let sa = StructArray::try_new_with_length(fields.clone(), Vec::new(), nulls, len)
                     .map_err(|error| {
-                        InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
-                            error.to_string(),
-                        ))
-                    })?;
+                    InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(
+                        error.to_string(),
+                    ))
+                })?;
                 Arc::new(sa)
             } else {
                 ScalarValue::iter_to_array(items).map_err(|error| {
@@ -478,7 +502,7 @@ fn eval_typed_insert_expr(
             ))))
         },
         Expr::Tuple(elems) => eval_struct_tuple_expr(elems, target_field, params),
-        Expr::Function(func) if func.name.to_string().eq_ignore_ascii_case("row") => {
+        Expr::Function(func) if is_row_function_name(&func.name) => {
             let exprs: Vec<Expr> = match &func.args {
                 FunctionArguments::None => Vec::new(),
                 FunctionArguments::Subquery(_) => return Err(InsertValuesRowsError::Unsupported),
@@ -495,7 +519,9 @@ fn eval_typed_insert_expr(
             };
             eval_struct_tuple_expr(&exprs, target_field, params)
         },
-        _ => expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported),
+        _ => {
+            expr_to_scalar_with_params(expr, params).map_err(|_| InsertValuesRowsError::Unsupported)
+        },
     }
 }
 
@@ -509,7 +535,8 @@ fn eval_struct_tuple_expr(
     };
     if read_kalam_data_type_metadata(field) == Some(KalamDataType::File) {
         return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(format!(
-            "column '{}' is of type pg_catalog.file and cannot be constructed from a composite literal; use file_put()",
+            "column '{}' is of type pg_catalog.file and cannot be constructed from a composite \
+             literal; use file_put()",
             field.name()
         ))));
     }
@@ -526,8 +553,7 @@ fn eval_struct_tuple_expr(
     }
     let mut child_arrays = Vec::with_capacity(fields.len());
     for (elem_expr, child_field) in elems.iter().zip(fields.iter()) {
-        let child_scalar =
-            eval_typed_insert_expr(elem_expr, Some(child_field.as_ref()), params)?;
+        let child_scalar = eval_typed_insert_expr(elem_expr, Some(child_field.as_ref()), params)?;
         if child_scalar.is_null() && !child_field.is_nullable() {
             return Err(InsertValuesRowsError::Execution(KalamDbError::InvalidOperation(format!(
                 "field '{}' of composite column '{}' cannot be null",

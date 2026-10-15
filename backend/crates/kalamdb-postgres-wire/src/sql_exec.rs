@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use kalamdb_backend::manager::{BackendSessionError, BackendSessionManager};
-use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
-    sql::{ExecutionContext, ScalarValue, SqlExecutor},
+    sql::{executor::PreparedExecutionStatement, ExecutionContext, ScalarValue, SqlExecutor},
 };
-use kalamdb_session::{catalog_entries_for_stored_keys, Catalog, SearchPath};
+use kalamdb_sql::classifier::SqlStatementKind;
 use pgwire::{
     api::{
         portal::Format,
@@ -16,9 +15,9 @@ use pgwire::{
 };
 
 use crate::{
-    client_catalog::{classify_postgres_set, PostgresSetAction},
     connection::WireConnectionState,
-    row_encoder::{execution_result_to_responses, execution_result_to_responses_with_format},
+    row_encoder::execution_result_to_responses_with_format,
+    tx_control::{execute_transaction_control, WireTransactionControl, WireTransactionOutcome},
 };
 
 const IN_FAILED_SQLSTATE: &str = "25P02";
@@ -59,20 +58,17 @@ impl WireSqlExecutor {
     pub async fn execute_metadata(
         &self,
         state: &WireConnectionState,
-        metadata: &kalamdb_core::sql::executor::PreparedExecutionStatement,
+        metadata: &PreparedExecutionStatement,
         params: Vec<ScalarValue>,
         column_format: Option<&Format>,
     ) -> PgWireResult<Vec<Response>> {
-        let is_rollback_to_savepoint = metadata
-            .classified_statement
-            .as_ref()
-            .is_some_and(|stmt| {
-                matches!(
-                    stmt.kind(),
-                    kalamdb_sql::classifier::SqlStatementKind::RollbackToSavepoint(_)
-                )
-            })
-            || is_rollback_to_savepoint_sql(metadata.sql.as_str());
+        if let Some(control) = connection_transaction_control(metadata) {
+            return self.execute_connection_transaction(state, control).await;
+        }
+
+        let is_rollback_to_savepoint = metadata.classified_statement.as_ref().is_some_and(|stmt| {
+            matches!(stmt.kind(), SqlStatementKind::RollbackToSavepoint(_))
+        });
 
         if !is_rollback_to_savepoint {
             if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
@@ -82,10 +78,6 @@ impl WireSqlExecutor {
                     error.to_string(),
                 )))]);
             }
-        }
-
-        if let Some(response) = self.apply_postgres_client_set(state, metadata.sql.as_str()) {
-            return Ok(response);
         }
 
         let mut exec_ctx = self.execution_context(state);
@@ -123,77 +115,18 @@ impl WireSqlExecutor {
         state: &WireConnectionState,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
-        let is_rollback_to_savepoint = is_rollback_to_savepoint_sql(sql);
-        if !is_rollback_to_savepoint {
-            if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
+        let exec_ctx = self.execution_context(state);
+        let metadata = match self.sql_executor.prepare_statement_metadata(sql, &exec_ctx) {
+            Ok(metadata) => metadata,
+            Err(error) => {
                 return Ok(vec![Response::Error(Box::new(error_info(
                     "ERROR",
-                    IN_FAILED_SQLSTATE,
-                    error.to_string(),
-                )))]);
-            }
-        }
-
-        if let Some(response) = self.apply_postgres_client_set(state, sql) {
-            return Ok(response);
-        }
-
-        let mut exec_ctx = self.execution_context(state);
-        if let Some(transaction_id) = self
-            .session_manager
-            .transaction_id(state.session_id())
-            .map_err(|error| pg_error(error.to_string()))?
-        {
-            exec_ctx = exec_ctx.with_transaction_id(transaction_id);
-        }
-        match self.sql_executor.execute(sql, &exec_ctx, Vec::new()).await {
-            Ok(result) => {
-                if is_rollback_to_savepoint {
-                    let _ = self.session_manager.recover_failed_transaction(state.session_id());
-                }
-                execution_result_to_responses(result)
+                    "42601",
+                    error.user_message(),
+                )))])
             },
-            Err(error) => {
-                self.mark_statement_failed_if_in_block(state);
-                Ok(vec![Response::Error(Box::new(sql_error_info(&error)))])
-            },
-        }
-    }
-
-    fn apply_postgres_client_set(
-        &self,
-        state: &WireConnectionState,
-        sql: &str,
-    ) -> Option<Vec<Response>> {
-        match classify_postgres_set(sql)? {
-            PostgresSetAction::SetSearchPath { path } => {
-                self.persist_search_path(state, &path);
-                Some(vec![Response::Execution(Tag::new("SET"))])
-            },
-            PostgresSetAction::NoOp => Some(vec![Response::Execution(Tag::new("SET"))]),
-        }
-    }
-
-    fn persist_search_path(&self, state: &WireConnectionState, path_text: &str) {
-        let Ok(path) = SearchPath::parse(path_text) else {
-            return;
         };
-        let Ok(namespaces) = self.app_context.system_tables().namespaces().list_namespaces() else {
-            return;
-        };
-        let stored_keys: Vec<(&str, bool)> = namespaces
-            .iter()
-            .map(|namespace| (namespace.namespace_id.as_str(), true))
-            .collect();
-        let entries = catalog_entries_for_stored_keys(&stored_keys);
-        let catalog = Catalog {
-            user:        state.auth().user_id.as_str(),
-            temp_schema: None,
-            schemas:     &entries,
-        };
-        if let Some(stored_key) = path.current_stored_key(&catalog) {
-            state.set_current_schema(SchemaId::new(stored_key));
-        }
+        self.execute_metadata(state, &metadata, Vec::new(), None).await
     }
 
     fn execution_context(&self, state: &WireConnectionState) -> ExecutionContext {
@@ -204,6 +137,7 @@ impl WireSqlExecutor {
             self.app_context.base_session_context(),
         )
         .with_request_id(format!("wire:{}", state.session_id()))
+        .with_session_config(state.session_config())
     }
 
     fn mark_statement_failed_if_in_block(&self, state: &WireConnectionState) {
@@ -217,31 +151,49 @@ impl WireSqlExecutor {
         sql: &str,
         state: &WireConnectionState,
     ) -> bool {
-        if classify_postgres_set(sql).is_some() {
-            return true;
-        }
         let exec_ctx = self.execution_context(state);
         let Ok(metadata) = self.sql_executor.prepare_statement_metadata(sql, &exec_ctx) else {
             return true;
         };
-        let Some(classified) = metadata.classified_statement.as_ref() else {
-            return true;
-        };
-        use kalamdb_sql::classifier::SqlStatementKind;
-        matches!(
-            classified.kind(),
-            SqlStatementKind::Select
-                | SqlStatementKind::Insert(_)
-                | SqlStatementKind::Update(_)
-                | SqlStatementKind::Delete(_)
-                | SqlStatementKind::SetSearchPath(_)
-                | SqlStatementKind::Savepoint(_)
-                | SqlStatementKind::ReleaseSavepoint(_)
-                | SqlStatementKind::RollbackToSavepoint(_)
-                | SqlStatementKind::SetTransaction
-                | SqlStatementKind::Call(_)
-                | SqlStatementKind::DataFusionMetaCommand
-        )
+        metadata
+            .classified_statement
+            .as_ref()
+            .is_none_or(|statement| statement.kind().joins_implicit_transaction())
+    }
+
+    async fn execute_connection_transaction(
+        &self,
+        state: &WireConnectionState,
+        control: WireTransactionControl,
+    ) -> PgWireResult<Vec<Response>> {
+        let outcome =
+            execute_transaction_control(self.session_manager(), state.session_id(), control).await;
+        Ok(vec![match outcome {
+            Ok(WireTransactionOutcome::Began { .. }) => {
+                state.session_config().begin();
+                Response::TransactionStart(Tag::new("BEGIN"))
+            },
+            Ok(WireTransactionOutcome::Committed) => {
+                state.session_config().commit();
+                Response::TransactionEnd(Tag::new("COMMIT"))
+            },
+            Ok(WireTransactionOutcome::RolledBack) => {
+                state.session_config().rollback();
+                Response::TransactionEnd(Tag::new("ROLLBACK"))
+            },
+            Err(error) => backend_session_error_to_response(error),
+        }])
+    }
+}
+
+fn connection_transaction_control(
+    metadata: &PreparedExecutionStatement,
+) -> Option<WireTransactionControl> {
+    match metadata.classified_statement.as_ref()?.kind() {
+        SqlStatementKind::BeginTransaction => Some(WireTransactionControl::Begin),
+        SqlStatementKind::CommitTransaction => Some(WireTransactionControl::Commit),
+        SqlStatementKind::RollbackTransaction => Some(WireTransactionControl::Rollback),
+        _ => None,
     }
 }
 
@@ -261,20 +213,6 @@ pub fn pg_error(message: impl Into<String>) -> PgWireError {
 
 fn sql_error_info(error: &kalamdb_core::error::KalamDbError) -> ErrorInfo {
     error_info("ERROR", error.sqlstate(), error.user_message())
-}
-
-fn is_rollback_to_savepoint_sql(sql: &str) -> bool {
-    let words: Vec<String> = sql
-        .trim()
-        .trim_end_matches(';')
-        .split_whitespace()
-        .take(3)
-        .map(|w| w.to_ascii_uppercase())
-        .collect();
-    matches!(
-        words.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
-        ["ROLLBACK", "TO", ..] | ["ROLLBACK", "WORK", "TO"]
-    )
 }
 
 fn error_info(

@@ -50,25 +50,24 @@ impl CommentOnStatement {
                 if_exists,
             } => {
                 let (namespace_id, name) = resolve_object_name(&object_name, default_namespace)?;
-                let target = match object_type {
-                    CommentObject::Type | CommentObject::Domain => {
-                        CommentOnTarget::Type { namespace_id, name }
-                    },
-                    CommentObject::Procedure => CommentOnTarget::Procedure(RoutineId::from_parts(
-                        Some(&namespace_id),
-                        &name.to_ascii_lowercase(),
-                    )),
-                    CommentObject::Function => CommentOnTarget::Function(RoutineId::from_parts(
-                        Some(&namespace_id),
-                        &name.to_ascii_lowercase(),
-                    )),
-                    other => {
-                        return Err(format!(
-                            "COMMENT ON {other} is not supported; use COMMENT ON TYPE, COMMENT \
-                             ON DOMAIN, COMMENT ON FUNCTION, or COMMENT ON PROCEDURE"
-                        ));
-                    },
-                };
+                let target =
+                    match object_type {
+                        CommentObject::Type | CommentObject::Domain => {
+                            CommentOnTarget::Type { namespace_id, name }
+                        },
+                        CommentObject::Procedure => CommentOnTarget::Procedure(
+                            RoutineId::from_parts(Some(&namespace_id), &name.to_ascii_lowercase()),
+                        ),
+                        CommentObject::Function => CommentOnTarget::Function(
+                            RoutineId::from_parts(Some(&namespace_id), &name.to_ascii_lowercase()),
+                        ),
+                        other => {
+                            return Err(format!(
+                                "COMMENT ON {other} is not supported; use COMMENT ON TYPE, \
+                                 COMMENT ON DOMAIN, COMMENT ON FUNCTION, or COMMENT ON PROCEDURE"
+                            ));
+                        },
+                    };
                 Ok(Self {
                     target,
                     comment,

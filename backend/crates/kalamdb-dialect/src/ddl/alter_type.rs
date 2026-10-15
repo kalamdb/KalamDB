@@ -78,10 +78,9 @@ impl AlterTypeStatement {
         } else if take_keyword_ci(&mut after, "ADD ATTRIBUTE") {
             let mut rest = after.trim_start();
             if take_keyword_ci(&mut rest, "IF NOT EXISTS") {
-                return Err(
-                    "ALTER TYPE ... ADD ATTRIBUTE IF NOT EXISTS is not supported in PostgreSQL 18"
-                        .to_string(),
-                );
+                return Err("ALTER TYPE ... ADD ATTRIBUTE IF NOT EXISTS is not supported in \
+                            PostgreSQL 18"
+                    .to_string());
             }
             let (field, rest) = take_ident(rest)?;
             let (type_ref, leftover) = parse_type_reference(rest.trim_start())?;
@@ -341,8 +340,7 @@ mod tests {
 
     #[test]
     fn allow_empty_and_colon_add_value_and_reject_over_63_bytes() {
-        let stmt =
-            AlterTypeStatement::parse("ALTER TYPE app.status ADD VALUE ''", &ns()).unwrap();
+        let stmt = AlterTypeStatement::parse("ALTER TYPE app.status ADD VALUE ''", &ns()).unwrap();
         assert!(matches!(
             stmt.operation,
             AlterTypeOperation::AddValue { ref label, .. } if label.is_empty()

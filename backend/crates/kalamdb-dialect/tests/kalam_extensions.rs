@@ -60,7 +60,10 @@ fn ordinary_create_trigger_is_not_captured() {
 fn ordinary_create_procedure_parses_through_shared_routine_ddl() {
     for (sql, expected_lang) in [
         ("CREATE PROCEDURE api.health() LANGUAGE sql AS $$ SELECT 1 $$", "SQL"),
-        ("CREATE OR REPLACE PROCEDURE api.health() LANGUAGE plpgsql AS $$ BEGIN END $$", "PLPGSQL"),
+        (
+            "CREATE OR REPLACE PROCEDURE api.health() LANGUAGE plpgsql AS $$ BEGIN END $$",
+            "PLPGSQL",
+        ),
     ] {
         let statement = classify(sql, Role::Dba)
             .unwrap_or_else(|err| panic!("{sql} must parse as PostgreSQL routine DDL: {err}"));
@@ -76,10 +79,8 @@ fn ordinary_create_procedure_parses_through_shared_routine_ddl() {
 
 #[test]
 fn javascript_procedure_stays_kalam() {
-    let statement = classify(
-        "CREATE PROCEDURE api.health() LANGUAGE JAVASCRIPT AS $$ return; $$",
-        Role::Dba,
-    )
-    .expect("javascript procedure");
+    let statement =
+        classify("CREATE PROCEDURE api.health() LANGUAGE JAVASCRIPT AS $$ return; $$", Role::Dba)
+            .expect("javascript procedure");
     assert!(matches!(statement.kind(), SqlStatementKind::CreateProcedure(_)));
 }

@@ -100,6 +100,30 @@ impl SearchPath {
         }
     }
 
+    /// Resolve against a live catalog without enumerating every schema.
+    /// Only explicit path entries are visited; catalog changes are observed on each lookup.
+    pub fn first_existing(
+        &self,
+        user: &str,
+        mut exists: impl FnMut(&str) -> bool,
+    ) -> Option<String> {
+        for token in &self.tokens {
+            let name = match token {
+                PathToken::User => user,
+                PathToken::Temp => continue,
+                PathToken::Catalog => "pg_catalog",
+                PathToken::Schema(name) => name.as_str(),
+            };
+            if exists(name) {
+                return Some(name.to_string());
+            }
+            if name == "public" && exists("default") {
+                return Some("default".into());
+            }
+        }
+        None
+    }
+
     /// Parse a `search_path` value. An empty string is an empty path.
     ///
     /// # Errors

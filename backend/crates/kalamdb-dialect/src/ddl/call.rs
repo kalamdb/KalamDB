@@ -1,6 +1,6 @@
 //! CALL procedure parser.
 
-use kalamdb_commons::models::{SchemaId, RoutineCall, RoutineId};
+use kalamdb_commons::models::{RoutineCall, RoutineId, SchemaId};
 
 use crate::ddl::{
     column_default::parse_call_argument_sql, create_type::split_qualified_ident, DdlResult,
@@ -47,9 +47,7 @@ impl CallStatement {
                     named_arguments.push(Some(arg_name));
                 } else {
                     if saw_named {
-                        return Err(
-                            "positional argument cannot follow named argument".to_string()
-                        );
+                        return Err("positional argument cannot follow named argument".to_string());
                     }
                     arguments.push(parse_call_argument_sql(part)?);
                     named_arguments.push(None);

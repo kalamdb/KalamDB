@@ -28,10 +28,7 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
 
     // 1. Seed a user/schema
     let mut opts = serde_json::Map::new();
-    opts.insert(
-        "comment".to_string(),
-        serde_json::Value::String("Billing schema".to_string()),
-    );
+    opts.insert("comment".to_string(), serde_json::Value::String("Billing schema".to_string()));
     registry
         .namespaces()
         .create_namespace(Namespace {
@@ -102,10 +99,7 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
     .expect("table definition");
     table_def.schema_version = 1;
     let table_id = TableId::new(SchemaId::new("billing"), TableName::new("invoices"));
-    registry
-        .tables()
-        .create_table(&table_id, &table_def)
-        .expect("register table");
+    registry.tables().create_table(&table_id, &table_def).expect("register table");
 
     // 3. Seed an enum type and its labels
     let enum_id = TypeId::from_parts(Some(&SchemaId::new("billing")), "invoice_state");
@@ -116,10 +110,7 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         CatalogTypeKind::Enum,
     );
     enum_type.comment = Some("Invoice lifecycle state".to_string());
-    registry
-        .catalog_stores()
-        .upsert_type(enum_type)
-        .expect("put enum type");
+    registry.catalog_stores().upsert_type(enum_type).expect("put enum type");
     for (pos, label) in [(1i32, "draft"), (2i32, "paid")] {
         registry
             .catalog_stores()
@@ -175,23 +166,21 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .upsert_parameter(CatalogRoutineParameter {
             parameter_id: RoutineParameterId::new(&routine_id, 1).expect("param id"),
             routine_id,
-            name:         "amount".to_string(),
-            ordinal:      1,
-            type_id:      None,
-            type_name:    "bigint".to_string(),
-            is_array:     false,
-            not_null:     true,
-            nonempty:     false,
-            data_type:    Some(KalamDataType::BigInt),
-            mode:         RoutineParameterMode::In,
+            name: "amount".to_string(),
+            ordinal: 1,
+            type_id: None,
+            type_name: "bigint".to_string(),
+            is_array: false,
+            not_null: true,
+            nonempty: false,
+            data_type: Some(KalamDataType::BigInt),
+            mode: RoutineParameterMode::In,
             default_expr: None,
         })
         .expect("put parameter");
 
-    let pg_catalog = Arc::new(PgCatalogSchemaProvider::new(
-        Arc::clone(&registry),
-        Arc::new(Vec::new),
-    ));
+    let pg_catalog =
+        Arc::new(PgCatalogSchemaProvider::new(Arc::clone(&registry), Arc::new(Vec::new)));
     let ctx = SessionContext::new();
     ctx.catalog("datafusion")
         .expect("default catalog")
@@ -217,11 +206,7 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .await
         .expect("collect");
     assert_eq!(cls_batches[0].num_rows(), 1);
-    let relkinds = cls_batches[0]
-        .column(1)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
+    let relkinds = cls_batches[0].column(1).as_any().downcast_ref::<StringArray>().unwrap();
     assert_eq!(relkinds.value(0), "r");
 
     // Verify pg_enum (no longer an empty stub!)
@@ -233,16 +218,8 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .await
         .expect("collect");
     assert_eq!(enum_batches[0].num_rows(), 2);
-    let labels = enum_batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-    let orders = enum_batches[0]
-        .column(1)
-        .as_any()
-        .downcast_ref::<Float64Array>()
-        .unwrap();
+    let labels = enum_batches[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
+    let orders = enum_batches[0].column(1).as_any().downcast_ref::<Float64Array>().unwrap();
     assert_eq!(labels.value(0), "draft");
     assert_eq!(orders.value(0), 1.0);
     assert_eq!(labels.value(1), "paid");
@@ -250,7 +227,10 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
 
     // Verify pg_language (no longer an empty stub!)
     let lang_batches = ctx
-        .sql("SELECT lanname, lanpltrusted FROM pg_catalog.pg_language WHERE lanname IN ('sql', 'plpgsql', 'javascript') ORDER BY lanname")
+        .sql(
+            "SELECT lanname, lanpltrusted FROM pg_catalog.pg_language WHERE lanname IN ('sql', \
+             'plpgsql', 'javascript') ORDER BY lanname",
+        )
         .await
         .expect("sql")
         .collect()
@@ -267,11 +247,7 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .await
         .expect("collect");
     assert_eq!(attrdef_batches[0].num_rows(), 1);
-    let adnums = attrdef_batches[0]
-        .column(0)
-        .as_any()
-        .downcast_ref::<Int64Array>()
-        .unwrap();
+    let adnums = attrdef_batches[0].column(0).as_any().downcast_ref::<Int64Array>().unwrap();
     assert_eq!(adnums.value(0), 2);
 
     // Verify pg_description (no longer an empty stub!)
@@ -304,10 +280,6 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
         .await
         .expect("collect");
     assert_eq!(roles_batches[0].num_rows(), 1);
-    let can_login = roles_batches[0]
-        .column(1)
-        .as_any()
-        .downcast_ref::<BooleanArray>()
-        .unwrap();
+    let can_login = roles_batches[0].column(1).as_any().downcast_ref::<BooleanArray>().unwrap();
     assert!(can_login.value(0));
 }

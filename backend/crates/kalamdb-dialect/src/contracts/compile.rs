@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use arrow::datatypes::DataType;
 use kalamdb_commons::{
     datatypes::{assert_finite_type_graph, TypeGraphNode},
-    models::{SchemaId, RoutineId, TypeId},
+    models::{RoutineId, SchemaId, TypeId},
 };
 
 use super::{
@@ -108,9 +108,7 @@ pub fn compile_contract(
         match &grant.target {
             crate::ddl::ExecuteTarget::Routine { routine_id, .. } => {
                 let routine = routines.get_mut(routine_id.as_str()).ok_or_else(|| {
-                    ContractError::new(format!(
-                        "GRANT EXECUTE on unknown routine '{routine_id}'"
-                    ))
+                    ContractError::new(format!("GRANT EXECUTE on unknown routine '{routine_id}'"))
                 })?;
                 routine.grants.insert(grant.grantee);
             },
@@ -119,9 +117,7 @@ pub fn compile_contract(
                 expected_kind,
             } => {
                 for routine in routines.values_mut() {
-                    if routine.schema == namespace_id.as_str()
-                        && routine.kind == *expected_kind
-                    {
+                    if routine.schema == namespace_id.as_str() && routine.kind == *expected_kind {
                         routine.grants.insert(grant.grantee.clone());
                     }
                 }
@@ -140,9 +136,7 @@ pub fn compile_contract(
                 expected_kind,
             } => {
                 for routine in routines.values_mut() {
-                    if routine.schema == namespace_id.as_str()
-                        && routine.kind == *expected_kind
-                    {
+                    if routine.schema == namespace_id.as_str() && routine.kind == *expected_kind {
                         routine.grants.remove(&revoke.grantee);
                     }
                 }
@@ -928,11 +922,7 @@ fn apply_domain_alter(
             },
         ) => {
             let before_len = checks.len();
-            checks.retain(|c| {
-                !c.name
-                    .as_ref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
-            });
+            checks.retain(|c| !c.name.as_ref().is_some_and(|n| n.eq_ignore_ascii_case(name)));
             if checks.len() == before_len && name.to_ascii_lowercase().contains("not_null") {
                 *not_null = false;
             } else if checks.len() == before_len && !*if_exists {
@@ -942,15 +932,11 @@ fn apply_domain_alter(
                 )));
             }
         },
-        (
-            RawType::Domain { checks, .. },
-            AlterDomainOperation::RenameConstraint { from, to },
-        ) => {
-            let Some(check) = checks.iter_mut().find(|c| {
-                c.name
-                    .as_ref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(from))
-            }) else {
+        (RawType::Domain { checks, .. }, AlterDomainOperation::RenameConstraint { from, to }) => {
+            let Some(check) = checks
+                .iter_mut()
+                .find(|c| c.name.as_ref().is_some_and(|n| n.eq_ignore_ascii_case(from)))
+            else {
                 return Err(ContractError::new(format!(
                     "constraint '{from}' for domain '{}.{}' does not exist",
                     stmt.namespace_id, stmt.name
@@ -958,15 +944,11 @@ fn apply_domain_alter(
             };
             check.name = Some(to.clone());
         },
-        (
-            RawType::Domain { checks, .. },
-            AlterDomainOperation::ValidateConstraint { name },
-        ) => {
-            if let Some(check) = checks.iter_mut().find(|c| {
-                c.name
-                    .as_ref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
-            }) {
+        (RawType::Domain { checks, .. }, AlterDomainOperation::ValidateConstraint { name }) => {
+            if let Some(check) = checks
+                .iter_mut()
+                .find(|c| c.name.as_ref().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+            {
                 check.validated = true;
             }
         },
@@ -1674,8 +1656,8 @@ mod tests {
              CREATE TYPE api.point AS (x INT, y INT);
              CREATE FUNCTION api.health() RETURNS TEXT;
              COMMENT ON FUNCTION api.health IS 'Liveness probe';
-             CREATE OR REPLACE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ \
-             return \"ok\"; $$;
+             CREATE OR REPLACE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \
+             \"ok\"; $$;
              COMMENT ON TYPE api.point IS '2D point';
              COMMENT ON FUNCTION api.health IS 'HTTP liveness';",
             "public",
@@ -1691,8 +1673,7 @@ mod tests {
         let before = compile_contract_sql(
             "CREATE SCHEMA chat;
              CREATE TYPE chat.address AS (city TEXT);
-             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; \
-             $$;",
+             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$;",
             "public",
         )
         .unwrap();
@@ -1700,18 +1681,14 @@ mod tests {
             "CREATE SCHEMA chat;
              CREATE TYPE chat.address AS (city TEXT);
              COMMENT ON TYPE chat.address IS 'Postal address';
-             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE \
-             JAVASCRIPT AS $$ return \"ok\"; $$;
+             CREATE FUNCTION chat.ping() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return \"ok\"; $$;
              COMMENT ON FUNCTION chat.ping IS 'Liveness probe';",
             "public",
         )
         .unwrap();
         let joined = diff_contracts(&before, &after).statements.join("\n");
         assert!(joined.contains("COMMENT ON TYPE chat.address IS 'Postal address'"), "{joined}");
-        assert!(
-            joined.contains("COMMENT ON FUNCTION chat.ping IS 'Liveness probe'"),
-            "{joined}"
-        );
+        assert!(joined.contains("COMMENT ON FUNCTION chat.ping IS 'Liveness probe'"), "{joined}");
         assert!(!joined.contains("CREATE TYPE"), "{joined}");
         assert!(!joined.contains("CREATE OR REPLACE FUNCTION"), "{joined}");
     }

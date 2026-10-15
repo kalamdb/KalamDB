@@ -82,7 +82,8 @@ impl QueryParser for KalamQueryParser {
             state.current_schema(),
             self.app_context.base_session_context(),
         )
-        .with_request_id(format!("wire:{}", state.session_id()));
+        .with_request_id(format!("wire:{}", state.session_id()))
+        .with_session_config(state.session_config());
 
         let metadata = self
             .sql_executor
@@ -132,11 +133,11 @@ impl KalamQueryParser {
         let shown = classify_postgres_show(sql);
         let count = max_placeholder_index(sql);
         if count == 0 {
-            if let Some(shown) = shown.as_ref() {
+            if let Some(name) = shown.clone() {
                 return (
                     Vec::new(),
                     vec![WireResultColumn {
-                        name:     shown.name.clone(),
+                        name,
                         datatype: Type::TEXT,
                     }],
                 );
@@ -145,8 +146,8 @@ impl KalamQueryParser {
 
         let Ok(plan) = self.sql_executor.logical_plan_for_metadata(metadata, exec_ctx).await else {
             let columns = shown
-                .map(|shown| WireResultColumn {
-                    name:     shown.name,
+                .map(|name| WireResultColumn {
+                    name,
                     datatype: Type::TEXT,
                 })
                 .into_iter()
@@ -167,26 +168,24 @@ impl KalamQueryParser {
             for index in 1..=count {
                 let hinted = hinted_types.get(index - 1).and_then(|ty| ty.clone());
                 let parameter_id = format!("${index}");
-                types.push(
-                    hinted.unwrap_or_else(|| {
-                        mapped
-                            .as_ref()
-                            .and_then(|parameter_types| parameter_types.get(&parameter_id))
-                            .and_then(|data_type| data_type.as_ref())
-                            .map(pg_type_for_arrow)
-                            .transpose()
-                            .ok()
-                            .flatten()
-                            .unwrap_or(Type::TEXT)
-                    }),
-                );
+                types.push(hinted.unwrap_or_else(|| {
+                    mapped
+                        .as_ref()
+                        .and_then(|parameter_types| parameter_types.get(&parameter_id))
+                        .and_then(|data_type| data_type.as_ref())
+                        .map(pg_type_for_arrow)
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Type::TEXT)
+                }));
             }
             types
         };
 
-        let columns = if let Some(shown) = shown {
+        let columns = if let Some(name) = shown {
             vec![WireResultColumn {
-                name:     shown.name,
+                name,
                 datatype: Type::TEXT,
             }]
         } else {

@@ -28,11 +28,7 @@ async fn setup_app() -> (Arc<AppContext>, Arc<SqlExecutor>, TestDb) {
 }
 
 fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_js_sql_calls"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_js_sql_calls"), Role::Dba, app.base_session_context())
 }
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
@@ -66,21 +62,25 @@ async fn js_routine_calls_sql_and_plpgsql_routines_and_rolls_back_on_error() {
     exec(
         &app,
         &executor,
-        "CREATE TABLE js_sql.ledger (id INT PRIMARY KEY, delta INT NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE js_sql.ledger (id INT PRIMARY KEY, delta INT NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION js_sql.record_entry(entry_id INT, amount INT) RETURNS INT LANGUAGE SQL AS $$ INSERT INTO js_sql.ledger (id, delta) VALUES (entry_id, amount); SELECT amount * 2 $$",
+        "CREATE FUNCTION js_sql.record_entry(entry_id INT, amount INT) RETURNS INT LANGUAGE SQL \
+         AS $$ INSERT INTO js_sql.ledger (id, delta) VALUES (entry_id, amount); SELECT amount * 2 \
+         $$",
     )
     .await;
 
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION js_sql.pl_bonus(base INT) RETURNS INT LANGUAGE PLPGSQL AS $$ BEGIN RETURN base + 5; END $$",
+        "CREATE FUNCTION js_sql.pl_bonus(base INT) RETURNS INT LANGUAGE PLPGSQL AS $$ BEGIN \
+         RETURN base + 5; END $$",
     )
     .await;
 

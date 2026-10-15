@@ -9,8 +9,7 @@ use std::{
 use async_trait::async_trait;
 use chrono::Utc;
 use kalamdb_auth::{
-    repository::user_repo::UserRepository, security::password::hash_password, AuthError,
-    AuthResult,
+    repository::user_repo::UserRepository, security::password::hash_password, AuthError, AuthResult,
 };
 use kalamdb_backend::session::BackendAuth;
 use kalamdb_commons::{
@@ -34,6 +33,184 @@ use tokio::net::TcpListener;
 use tokio_postgres::{NoTls, SimpleQueryMessage};
 
 static WIRE_TEST_PORT_OFFSET: AtomicU16 = AtomicU16::new(0);
+
+async fn connect_settings_client(url: &str) -> tokio_postgres::Client {
+    let (client, connection) =
+        tokio_postgres::connect(url, NoTls).await.expect("connect settings client");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    client
+}
+
+async fn assert_application_name(client: &tokio_postgres::Client, expected: &str) {
+    for sql in [
+        "SELECT current_setting('application_name')",
+        "SHOW application_name",
+        "SELECT setting FROM pg_catalog.pg_settings WHERE name = 'application_name'",
+    ] {
+        let messages = client.simple_query(sql).await.expect("read session setting");
+        let values: Vec<_> = messages
+            .iter()
+            .filter_map(|message| match message {
+                SimpleQueryMessage::Row(row) => row.get(0),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(values, vec![expected], "setting must agree for {sql}");
+    }
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+async fn wire_settings_set_and_set_config_share_all_read_surfaces() {
+    let (url, listener, _app_ctx, _test_db) = spawn_wire_test_server().await;
+    let client = connect_settings_client(&url).await;
+
+    client
+        .batch_execute("SET application_name = 'Tabularis'")
+        .await
+        .expect("simple SET");
+    assert_application_name(&client, "Tabularis").await;
+
+    let statement = client
+        .prepare("SET application_name = 'extended-client'")
+        .await
+        .expect("prepare SET");
+    client.execute(&statement, &[]).await.expect("extended SET");
+    assert_application_name(&client, "extended-client").await;
+
+    let row = client
+        .query_one("SELECT set_config('application_name', 'function-client', false)", &[])
+        .await
+        .expect("set_config");
+    assert_eq!(row.get::<_, String>(0), "function-client");
+    assert_application_name(&client, "function-client").await;
+
+    drop(client);
+    listener.shutdown().await.expect("stop wire listener");
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+async fn wire_settings_transaction_and_savepoint_scope() {
+    let (url, listener, _app_ctx, _test_db) = spawn_wire_test_server().await;
+    let client = connect_settings_client(&url).await;
+    client
+        .batch_execute("SET application_name = 'baseline'")
+        .await
+        .expect("set baseline");
+
+    for terminal in ["COMMIT", "ROLLBACK"] {
+        client.batch_execute("BEGIN").await.expect("begin local scope");
+        client
+            .query_one("SELECT set_config('application_name', 'transaction-local', true)", &[])
+            .await
+            .expect("set local setting");
+        assert_application_name(&client, "transaction-local").await;
+        client.batch_execute(terminal).await.expect("end local scope");
+        assert_application_name(&client, "baseline").await;
+    }
+
+    client.batch_execute("BEGIN").await.expect("begin savepoint scope");
+    client
+        .batch_execute("SET LOCAL application_name = 'outer-local'")
+        .await
+        .expect("SET LOCAL");
+    client
+        .batch_execute("SAVEPOINT settings_before_change")
+        .await
+        .expect("savepoint");
+    client
+        .query_one("SELECT set_config('application_name', 'inner-local', true)", &[])
+        .await
+        .expect("set local after savepoint");
+    assert_application_name(&client, "inner-local").await;
+    client
+        .batch_execute("ROLLBACK TO SAVEPOINT settings_before_change")
+        .await
+        .expect("restore savepoint");
+    assert_application_name(&client, "outer-local").await;
+    client.batch_execute("COMMIT").await.expect("commit local scope");
+    assert_application_name(&client, "baseline").await;
+
+    for (terminal, expected) in [("ROLLBACK", "baseline"), ("COMMIT", "session-change")] {
+        client.batch_execute("BEGIN").await.expect("begin session setting scope");
+        client
+            .query_one("SELECT set_config('application_name', 'session-change', false)", &[])
+            .await
+            .expect("set session value inside transaction");
+        assert_application_name(&client, "session-change").await;
+        client.batch_execute(terminal).await.expect("end session setting scope");
+        assert_application_name(&client, expected).await;
+    }
+
+    drop(client);
+    listener.shutdown().await.expect("stop wire listener");
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+async fn wire_settings_do_not_leak_between_connections() {
+    let (url, listener, _app_ctx, _test_db) = spawn_wire_test_server().await;
+    let client_a = connect_settings_client(&url).await;
+    let client_b = connect_settings_client(&url).await;
+
+    client_a
+        .batch_execute("SET application_name = 'client-a'")
+        .await
+        .expect("set client a");
+    client_b
+        .batch_execute("SET application_name = 'client-b'")
+        .await
+        .expect("set client b");
+    assert_application_name(&client_a, "client-a").await;
+    assert_application_name(&client_b, "client-b").await;
+
+    client_a.batch_execute("BEGIN").await.expect("begin client a transaction");
+    client_a
+        .query_one("SELECT set_config('application_name', 'client-a-local', true)", &[])
+        .await
+        .expect("set client a local value");
+    assert_application_name(&client_a, "client-a-local").await;
+    assert_application_name(&client_b, "client-b").await;
+    client_a.batch_execute("ROLLBACK").await.expect("rollback client a");
+    assert_application_name(&client_a, "client-a").await;
+    assert_application_name(&client_b, "client-b").await;
+
+    drop(client_a);
+    drop(client_b);
+    listener.shutdown().await.expect("stop wire listener");
+}
+
+#[tokio::test]
+#[ntest::timeout(20000)]
+async fn wire_settings_unknown_names_report_undefined_object() {
+    let (url, listener, _app_ctx, _test_db) = spawn_wire_test_server().await;
+    let client = connect_settings_client(&url).await;
+
+    for sql in [
+        "SET kalam_missing_setting = 'value'",
+        "SHOW kalam_missing_setting",
+        "SELECT current_setting('kalam_missing_setting')",
+        "SELECT set_config('kalam_missing_setting', 'value', false)",
+    ] {
+        let error = client.simple_query(sql).await.expect_err("unknown setting must fail");
+        assert_eq!(
+            error.code().map(|code| code.code()),
+            Some("42704"),
+            "SQLSTATE for {sql}: {error}"
+        );
+    }
+    let row = client
+        .query_one("SELECT current_setting('kalam_missing_setting', true)", &[])
+        .await
+        .expect("missing_ok suppresses unknown-setting error");
+    assert_eq!(row.get::<_, Option<String>>(0), None);
+
+    drop(client);
+    listener.shutdown().await.expect("stop wire listener");
+}
 
 #[derive(Default)]
 struct InMemoryUserRepo {
@@ -68,10 +245,7 @@ impl UserRepository for InMemoryUserRepo {
     }
 
     async fn create_user(&self, user: User) -> AuthResult<()> {
-        self.users
-            .lock()
-            .expect("users lock")
-            .insert(user.user_id.clone(), user);
+        self.users.lock().expect("users lock").insert(user.user_id.clone(), user);
         Ok(())
     }
 
@@ -158,24 +332,24 @@ async fn spawn_wire_test_server() -> (String, PostgresWireListener, Arc<AppConte
     let password_hash = hash_password("secret", Some(4)).await.expect("hash password");
     user_repo
         .create_user(User {
-            user_id: UserId::new("admin"),
-            password_hash: password_hash.clone(),
-            role: Role::Dba,
-            name: None,
-            email: None,
-            auth_type: AuthType::Password,
-            auth_data: None,
-            storage_mode: kalamdb_system::providers::storages::models::StorageMode::Table,
-            storage_id: None,
+            user_id:               UserId::new("admin"),
+            password_hash:         password_hash.clone(),
+            role:                  Role::Dba,
+            name:                  None,
+            email:                 None,
+            auth_type:             AuthType::Password,
+            auth_data:             None,
+            storage_mode:          kalamdb_system::providers::storages::models::StorageMode::Table,
+            storage_id:            None,
             failed_login_attempts: 0,
-            locked_until: None,
-            last_login_at: None,
-            created_at: 0,
-            updated_at: 0,
-            last_seen: None,
-            deleted_at: None,
-            invite_expires_at: None,
-            invited_by: None,
+            locked_until:          None,
+            last_login_at:         None,
+            created_at:            0,
+            updated_at:            0,
+            last_seen:             None,
+            deleted_at:            None,
+            invite_expires_at:     None,
+            invited_by:            None,
         })
         .await
         .expect("create admin user");
@@ -292,7 +466,10 @@ fn prepared_statement_and_sql_byte_budgets_reject_oversized_entries() {
             sql:  "SELECT 67890".to_string(),
         })
         .expect_err("second statement exceeds total byte budget");
-    assert!(matches!(err, WireConnectionStateError::PreparedStatementBytesExceeded { limit: 24, .. }));
+    assert!(matches!(
+        err,
+        WireConnectionStateError::PreparedStatementBytesExceeded { limit: 24, .. }
+    ));
 }
 
 #[tokio::test]
@@ -314,15 +491,23 @@ async fn wire_extended_query_lifecycle_transactions_and_session_isolation() {
         .batch_execute(
             "CREATE SCHEMA wire_s1;
              CREATE SCHEMA wire_s2;
-             CREATE TABLE wire_s1.items (id BIGINT PRIMARY KEY, label TEXT, flag BOOLEAN) WITH (TYPE = 'SHARED');
-             CREATE TABLE wire_s2.items (id BIGINT PRIMARY KEY, label TEXT, flag BOOLEAN) WITH (TYPE = 'SHARED');",
+             CREATE TABLE wire_s1.items (id BIGINT PRIMARY KEY, label TEXT, flag BOOLEAN) WITH \
+             (TYPE = 'SHARED');
+             CREATE TABLE wire_s2.items (id BIGINT PRIMARY KEY, label TEXT, flag BOOLEAN) WITH \
+             (TYPE = 'SHARED');",
         )
         .await
         .expect("create schemas and tables");
 
     // 1. Session isolation for SET search_path across concurrent connections
-    client_a.batch_execute("SET search_path TO wire_s1").await.expect("set search_path s1");
-    client_b.batch_execute("SET search_path TO wire_s2").await.expect("set search_path s2");
+    client_a
+        .batch_execute("SET search_path TO wire_s1")
+        .await
+        .expect("set search_path s1");
+    client_b
+        .batch_execute("SET search_path TO wire_s2")
+        .await
+        .expect("set search_path s2");
 
     // 2. Extended query Parse / Describe / Bind / Execute / repeated Bind & NULL parameters
     let insert_stmt = client_a
@@ -366,7 +551,8 @@ async fn wire_extended_query_lifecycle_transactions_and_session_isolation() {
         .expect("query items in client_b");
     assert!(rows_b.is_empty(), "client_b search_path must remain wire_s2");
 
-    // 3. Explicit transaction error -> 25P02 failed transaction state -> SAVEPOINT recovery / ROLLBACK
+    // 3. Explicit transaction error -> 25P02 failed transaction state -> SAVEPOINT recovery /
+    //    ROLLBACK
     client_a.batch_execute("BEGIN").await.expect("BEGIN on client_a");
     client_a
         .execute(&insert_stmt, &[&3_i64, &Some("in_tx"), &Some(false)])

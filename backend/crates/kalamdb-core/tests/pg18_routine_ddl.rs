@@ -34,11 +34,7 @@ async fn setup_app() -> (Arc<AppContext>, SqlExecutor, TestDb) {
 }
 
 fn root_ctx(app: &Arc<AppContext>) -> ExecutionContext {
-    ExecutionContext::new(
-        UserId::new("u_pg18_routine_ddl"),
-        Role::Dba,
-        app.base_session_context(),
-    )
+    ExecutionContext::new(UserId::new("u_pg18_routine_ddl"), Role::Dba, app.base_session_context())
 }
 
 async fn exec(app: &Arc<AppContext>, executor: &SqlExecutor, sql: &str) -> ExecutionResult {
@@ -148,17 +144,14 @@ async fn routine_ddl_lifecycle_alter_drop_comment_grant_and_type_dependency() {
 
     exec(&app, &executor, "CREATE SCHEMA r_ddl").await;
     exec(&app, &executor, "CREATE SCHEMA r_ddl_target").await;
-    exec(
-        &app,
-        &executor,
-        "CREATE TYPE r_ddl.status_t AS ENUM ('open', 'closed')",
-    )
-    .await;
+    exec(&app, &executor, "CREATE TYPE r_ddl.status_t AS ENUM ('open', 'closed')").await;
 
     exec(
         &app,
         &executor,
-        "CREATE FUNCTION r_ddl.compute_fee(base INT, status r_ddl.status_t DEFAULT 'open') RETURNS INT LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE COST 25 SET search_path TO r_ddl AS $$ SELECT base + 10 $$",
+        "CREATE FUNCTION r_ddl.compute_fee(base INT, status r_ddl.status_t DEFAULT 'open') \
+         RETURNS INT LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE COST 25 SET search_path TO r_ddl \
+         AS $$ SELECT base + 10 $$",
     )
     .await;
 
@@ -185,10 +178,7 @@ async fn routine_ddl_lifecycle_alter_drop_comment_grant_and_type_dependency() {
 
     // DROP TYPE is blocked while referenced by routine parameter
     let drop_type_err = exec_err(&app, &executor, "DROP TYPE r_ddl.status_t").await;
-    assert!(
-        drop_type_err.to_ascii_lowercase().contains("referenced by"),
-        "{drop_type_err}"
-    );
+    assert!(drop_type_err.to_ascii_lowercase().contains("referenced by"), "{drop_type_err}");
 
     // COMMENT ON FUNCTION and GRANT/REVOKE EXECUTE ON FUNCTION
     exec(
@@ -214,7 +204,8 @@ async fn routine_ddl_lifecycle_alter_drop_comment_grant_and_type_dependency() {
     exec(
         &app,
         &executor,
-        "ALTER FUNCTION r_ddl.compute_fee(INT, r_ddl.status_t) STABLE CALLED ON NULL INPUT COST 50 RESET search_path",
+        "ALTER FUNCTION r_ddl.compute_fee(INT, r_ddl.status_t) STABLE CALLED ON NULL INPUT COST \
+         50 RESET search_path",
     )
     .await;
     exec(

@@ -7,7 +7,7 @@ use pgwire::{
     api::{
         portal::Portal,
         query::{ExtendedQueryHandler, SimpleQueryHandler},
-        results::{Response, Tag},
+        results::Response,
         stmt::StoredStatement,
         store::{Entry, PortalStore},
         ClientInfo, ClientPortalStore, DEFAULT_NAME,
@@ -28,9 +28,6 @@ use crate::{
     params::portal_parameters_to_scalar_values,
     sql_exec::{backend_session_error_to_response, pg_error, WireSqlExecutor},
     statement::{KalamQueryParser, WireCachedStatement},
-    tx_control::{
-        classify_transaction_control, execute_transaction_control, WireTransactionOutcome,
-    },
 };
 
 #[derive(Clone)]
@@ -75,12 +72,12 @@ impl KalamQueryHandler {
         let mut implicit_tx_active = false;
         let was_in_explicit_block = matches!(
             self.sql_executor.session_manager().block_state(state.session_id()),
-            Ok(BackendSessionState::InTransaction { .. } | BackendSessionState::InFailedTransaction)
+            Ok(BackendSessionState::InTransaction { .. }
+                | BackendSessionState::InFailedTransaction)
         );
         let can_use_implicit_tx = !was_in_explicit_block
             && statements.iter().all(|stmt| {
-                classify_transaction_control(stmt).is_none()
-                    && self.sql_executor.statement_supports_implicit_batch_transaction(stmt, state)
+                self.sql_executor.statement_supports_implicit_batch_transaction(stmt, state)
             });
 
         if can_use_implicit_tx {
@@ -92,6 +89,7 @@ impl KalamQueryHandler {
                 .is_ok()
             {
                 implicit_tx_active = true;
+                state.session_config().begin();
             }
         }
 
@@ -108,26 +106,24 @@ impl KalamQueryHandler {
 
         if implicit_tx_active {
             if batch_failed {
-                let _ = self
-                    .sql_executor
-                    .session_manager()
-                    .rollback_block(state.session_id())
-                    .await;
-            } else if let Err(error) = self
-                .sql_executor
-                .session_manager()
-                .commit_block(state.session_id())
-                .await
+                let _ =
+                    self.sql_executor.session_manager().rollback_block(state.session_id()).await;
+            } else if let Err(error) =
+                self.sql_executor.session_manager().commit_block(state.session_id()).await
             {
-                let _ = self
-                    .sql_executor
-                    .session_manager()
-                    .rollback_block(state.session_id())
-                    .await;
+                let _ =
+                    self.sql_executor.session_manager().rollback_block(state.session_id()).await;
                 all_responses.push(backend_session_error_to_response(error));
             }
         }
 
+        if implicit_tx_active {
+            if batch_failed || all_responses.iter().any(|r| matches!(r, Response::Error(_))) {
+                state.session_config().rollback();
+            } else {
+                state.session_config().commit();
+            }
+        }
         Ok(all_responses)
     }
 
@@ -136,27 +132,6 @@ impl KalamQueryHandler {
         state: &WireConnectionState,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
-        if let Some(control) = classify_transaction_control(sql) {
-            let outcome = execute_transaction_control(
-                self.sql_executor.session_manager(),
-                state.session_id(),
-                control,
-            )
-            .await;
-            return Ok(vec![match outcome {
-                Ok(WireTransactionOutcome::Began { .. }) => {
-                    Response::TransactionStart(Tag::new("BEGIN"))
-                },
-                Ok(WireTransactionOutcome::Committed) => {
-                    Response::TransactionEnd(Tag::new("COMMIT"))
-                },
-                Ok(WireTransactionOutcome::RolledBack) => {
-                    Response::TransactionEnd(Tag::new("ROLLBACK"))
-                },
-                Err(error) => backend_session_error_to_response(error),
-            }]);
-        }
-
         self.sql_executor.execute(state, sql).await
     }
 
@@ -185,27 +160,6 @@ impl KalamQueryHandler {
         params: Vec<kalamdb_core::sql::ScalarValue>,
         column_format: &pgwire::api::portal::Format,
     ) -> PgWireResult<Vec<Response>> {
-        if let Some(control) = classify_transaction_control(cached.metadata.sql.as_str()) {
-            let outcome = execute_transaction_control(
-                self.sql_executor.session_manager(),
-                state.session_id(),
-                control,
-            )
-            .await;
-            return Ok(vec![match outcome {
-                Ok(WireTransactionOutcome::Began { .. }) => {
-                    Response::TransactionStart(Tag::new("BEGIN"))
-                },
-                Ok(WireTransactionOutcome::Committed) => {
-                    Response::TransactionEnd(Tag::new("COMMIT"))
-                },
-                Ok(WireTransactionOutcome::RolledBack) => {
-                    Response::TransactionEnd(Tag::new("ROLLBACK"))
-                },
-                Err(error) => backend_session_error_to_response(error),
-            }]);
-        }
-
         self.sql_executor
             .execute_metadata(state, &cached.metadata, params, Some(column_format))
             .await

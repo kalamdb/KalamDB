@@ -3,7 +3,7 @@
 use kalamdb_commons::{
     models::{is_builtin_default_name, normalize_builtin_name, CallArgument, RoutineCall},
     schemas::ColumnDefault,
-    KalamDataType, SchemaId, RoutineId,
+    KalamDataType, RoutineId, SchemaId,
 };
 use serde_json::{Number, Value as JsonValue};
 use sqlparser::ast::{
@@ -76,7 +76,9 @@ pub fn expr_to_call_argument(expr: &Expr) -> DdlResult<CallArgument> {
                                 tuple_args.push(expr_to_call_argument(inner)?);
                             },
                             _ => {
-                                return Err("ROW(...) elements must be unnamed expressions".to_string());
+                                return Err(
+                                    "ROW(...) elements must be unnamed expressions".to_string()
+                                );
                             },
                         }
                     }
@@ -133,11 +135,7 @@ pub fn function_to_routine_call_with_placeholders(
 ) -> DdlResult<RoutineCall> {
     let (arguments, named_arguments) = function_args_to_call_arguments(&func.args)?;
     let routine_id = routine_id_from_function_name(&func.name, default_namespace)?;
-    Ok(RoutineCall::with_named_arguments(
-        routine_id,
-        arguments,
-        named_arguments,
-    ))
+    Ok(RoutineCall::with_named_arguments(routine_id, arguments, named_arguments))
 }
 
 fn function_to_routine_call(
@@ -265,7 +263,9 @@ fn function_args_to_call_arguments(
                         named_arguments.push(Some(param_name));
                     },
                     _ => {
-                        return Err("DEFAULT function arguments must be literal expressions".to_string());
+                        return Err(
+                            "DEFAULT function arguments must be literal expressions".to_string()
+                        );
                     },
                 }
             }

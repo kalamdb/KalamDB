@@ -11,6 +11,25 @@ fn is_topic_trigger(words: &[&str]) -> bool {
     words.windows(2).any(|window| window == ["ON", "TOPIC"])
 }
 
+#[inline]
+fn leading_ascii_keyword(sql: &str) -> Option<&str> {
+    let trimmed = crate::ddl::parsing::skip_ws_and_comments(sql);
+    let bytes = trimmed.as_bytes();
+    let mut end = 0;
+    while end < bytes.len()
+        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'$')
+    {
+        end += 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        return None;
+    }
+    Some(&trimmed[..end])
+}
+
 impl SqlStatement {
     /// Wrap a parsed statement into SqlStatement with sql_text
     fn wrap<F, E>(sql: &str, parser: F) -> Result<Self, StatementClassificationError>
@@ -49,6 +68,33 @@ impl SqlStatement {
         default_namespace: &SchemaId,
         role: Role,
     ) -> Result<Self, StatementClassificationError> {
+        // Hot path: Check SELECT/WITH/INSERT/UPDATE/DELETE first (99% of queries)
+        // before tokenizing the entire SQL string or allocating word vectors.
+        if let Some(first_word) = leading_ascii_keyword(sql) {
+            if first_word.eq_ignore_ascii_case("SELECT") || first_word.eq_ignore_ascii_case("WITH")
+            {
+                return Ok(Self::new(sql.to_string(), SqlStatementKind::Select));
+            }
+            if first_word.eq_ignore_ascii_case("INSERT") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Insert(crate::ddl::InsertStatement),
+                ));
+            }
+            if first_word.eq_ignore_ascii_case("DELETE") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Delete(crate::ddl::DeleteStatement),
+                ));
+            }
+            if first_word.eq_ignore_ascii_case("UPDATE") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Update(crate::ddl::UpdateStatement),
+                ));
+            }
+        }
+
         let tokens = KalamParser::tokenize(sql).unwrap_or_default();
 
         // Build words list from tokens for pattern matching
@@ -762,7 +808,9 @@ impl SqlStatement {
                 })
             },
             ["RESET", "SEARCH_PATH", ..] => Self::wrap(sql, || {
-                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
+                crate::PostgresSetting::parse(sql)
+                    .and_then(|c| c.ok_or_else(|| "expected setting".into()))
+                    .map(SqlStatementKind::PostgresSetting)
             }),
 
             // Backup and restore operations - require admin
@@ -834,24 +882,27 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
-            ["SET", "SEARCH_PATH", ..]
-            | ["SET", "SESSION", "SEARCH_PATH", ..]
-            | ["SET", "LOCAL", "SEARCH_PATH", ..] => Self::wrap(sql, || {
-                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
-            }),
             ["SET", "TRANSACTION", ..]
             | ["SET", "SESSION", "CHARACTERISTICS", "AS", "TRANSACTION", ..] => {
                 Self::validate_isolation_level_clause(sql)?;
                 Ok(Self::new(sql.to_string(), SqlStatementKind::SetTransaction))
             },
-            ["SET", ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for SET commands"
-                            .to_string(),
-                    ));
+            ["SET", ..] | ["RESET", ..] => {
+                let command = crate::PostgresSetting::parse(sql).map_err(|message| {
+                    StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message,
+                    }
+                })?;
+                if let Some(command) = command {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::PostgresSetting(command)))
+                } else if is_admin {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+                } else {
+                    Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges required for engine settings".into(),
+                    ))
                 }
-                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
             ["SHOW", "COLUMNS", ..] => {
                 if !is_admin {
@@ -872,7 +923,20 @@ impl SqlStatement {
             },
             // PostgreSQL SHOW <guc> / SHOW TRANSACTION ISOLATION LEVEL (JDBC, HikariCP).
             // Specific SHOW TABLES/NAMESPACES/ALL/COLUMNS arms above take precedence.
-            ["SHOW", ..] => Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand)),
+            ["SHOW", ..] => {
+                let command = crate::PostgresSetting::parse(sql).map_err(|message| {
+                    StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message,
+                    }
+                })?;
+                Ok(Self::new(
+                    sql.to_string(),
+                    command
+                        .map(SqlStatementKind::PostgresSetting)
+                        .unwrap_or(SqlStatementKind::DataFusionMetaCommand),
+                ))
+            },
             // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
             // Note: DESCRIBE TABLE is handled above as KalamDB custom command.
             // execute_meta_command rewrites these to information_schema with Kalam types.
@@ -913,7 +977,10 @@ impl SqlStatement {
         }
     }
 
-    fn parse_savepoint_name(sql: &str, keyword: &str) -> Result<String, StatementClassificationError> {
+    fn parse_savepoint_name(
+        sql: &str,
+        keyword: &str,
+    ) -> Result<String, StatementClassificationError> {
         let trimmed = sql.trim().trim_end_matches(';').trim();
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
         let name = match keyword {
@@ -1026,6 +1093,7 @@ impl SqlStatement {
                     | SqlStatementKind::Delete(_)
                     | SqlStatementKind::Call(_)
                     | SqlStatementKind::SetSearchPath(_)
+                    | SqlStatementKind::PostgresSetting(_)
             )
         {
             return Err(format!(
@@ -1078,7 +1146,8 @@ impl SqlStatement {
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_)
             | SqlStatementKind::UseSchema(_)
-            | SqlStatementKind::SetSearchPath(_) => Ok(()),
+            | SqlStatementKind::SetSearchPath(_)
+            | SqlStatementKind::PostgresSetting(_) => Ok(()),
 
             SqlStatementKind::CreateTable(_)
             | SqlStatementKind::CreateView(_)
@@ -1140,7 +1209,7 @@ impl SqlStatement {
             | SqlStatementKind::KillLiveQuery(_)
             | SqlStatementKind::ExportUserData(_)
             | SqlStatementKind::ShowExport(_)
-            |             SqlStatementKind::BeginTransaction
+            | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
             | SqlStatementKind::Savepoint(_)
@@ -1303,16 +1372,31 @@ mod tests {
 
         let search = SqlStatement::classify_and_parse("SET search_path TO chat", &ns, Role::Dba)
             .expect("SET search_path should classify");
-        assert!(matches!(search.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            search.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set { name, .. })
+                if name == "search_path"
+        ));
 
         let session =
             SqlStatement::classify_and_parse("SET SESSION search_path TO chat", &ns, Role::User)
                 .expect("SET SESSION search_path should classify for any role");
-        assert!(matches!(session.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            session.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set { name, .. })
+                if name == "search_path"
+        ));
 
         let reset = SqlStatement::classify_and_parse("RESET search_path", &ns, Role::Dba)
             .expect("RESET search_path should classify");
-        assert!(matches!(reset.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            reset.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set {
+                name,
+                value: None,
+                ..
+            }) if name == "search_path"
+        ));
 
         let schema = SqlStatement::classify_and_parse("CREATE SCHEMA chat", &ns, Role::Dba)
             .expect("CREATE SCHEMA should classify");

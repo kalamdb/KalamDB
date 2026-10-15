@@ -812,8 +812,7 @@ fn classify_message_sqlstate(msg: &str, default_code: &'static str) -> &'static 
     {
         return "42P01";
     }
-    if lower.contains("column")
-        && (lower.contains("not found") || lower.contains("does not exist"))
+    if lower.contains("column") && (lower.contains("not found") || lower.contains("does not exist"))
         || lower.contains("no field named")
     {
         return "42703";
@@ -822,6 +821,9 @@ fn classify_message_sqlstate(msg: &str, default_code: &'static str) -> &'static 
         && (lower.contains("not found") || lower.contains("does not exist"))
     {
         return "42883";
+    }
+    if lower.contains("unrecognized configuration parameter") {
+        return "42704";
     }
     default_code
 }
@@ -906,6 +908,14 @@ mod tests {
     fn test_config_error_parse() {
         let err = ConfigError::parse("invalid TOML");
         assert!(matches!(err, ConfigError::ParseError(_)));
+    }
+
+    #[test]
+    fn unrecognized_configuration_parameter_is_undefined_object() {
+        let err = KalamDbError::InvalidOperation(
+            "unrecognized configuration parameter \"kalam_missing_setting\"".into(),
+        );
+        assert_eq!(err.sqlstate(), "42704");
     }
 
     #[test]

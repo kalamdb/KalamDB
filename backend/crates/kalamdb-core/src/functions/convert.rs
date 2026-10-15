@@ -334,13 +334,9 @@ fn scalar_struct_from_row(
     let columns: Vec<_> = (0..batch.num_columns())
         .map(|index| batch.column(index).slice(row, 1))
         .collect();
-    let struct_array = arrow::array::StructArray::try_new_with_length(
-        schema.fields().clone(),
-        columns,
-        None,
-        1,
-    )
-    .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    let struct_array =
+        arrow::array::StructArray::try_new_with_length(schema.fields().clone(), columns, None, 1)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
     Ok(ScalarValue::Struct(std::sync::Arc::new(struct_array)))
 }
 

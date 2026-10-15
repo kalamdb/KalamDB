@@ -1,6 +1,6 @@
 //! CREATE / DROP / ALTER TRIGGER parsers for durable topic delivery.
 
-use kalamdb_commons::models::{SchemaId, RoutineId, TopicId, TriggerId};
+use kalamdb_commons::models::{RoutineId, SchemaId, TopicId, TriggerId};
 
 use crate::ddl::{create_type::split_qualified_ident, DdlResult};
 

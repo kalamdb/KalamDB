@@ -122,8 +122,9 @@ pub fn pg_type_for_logical_type(type_ref: &LogicalTypeRef) -> PgWireResult<Type>
 /// Construct a PostgreSQL wire [`Type`] whose OID is the stable user-defined OID of `type_id`.
 pub fn pg_type_for_type_id(type_id: &kalamdb_commons::models::TypeId) -> Type {
     let oid = type_id.pg_oid();
-    Type::from_oid(oid)
-        .unwrap_or_else(|| Type::new(type_id.as_str().to_string(), oid, Type::TEXT.kind().clone(), String::new()))
+    Type::from_oid(oid).unwrap_or_else(|| {
+        Type::new(type_id.as_str().to_string(), oid, Type::TEXT.kind().clone(), String::new())
+    })
 }
 
 fn pg_array_type_for_logical_type(element: &LogicalTypeRef) -> PgWireResult<Type> {
@@ -148,10 +149,7 @@ fn pg_array_type_for_logical_type(element: &LogicalTypeRef) -> PgWireResult<Type
         LogicalTypeRef::Jsonb => Type::JSONB_ARRAY,
         LogicalTypeRef::Named { .. } => Type::TEXT_ARRAY,
         other => {
-            return Err(unsupported_logical_type_error(&LogicalTypeRef::list(
-                other.clone(),
-                true,
-            )))
+            return Err(unsupported_logical_type_error(&LogicalTypeRef::list(other.clone(), true)))
         },
     })
 }

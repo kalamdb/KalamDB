@@ -132,39 +132,33 @@ impl CreateTypeStatement {
     pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let mut rest = sql.trim().trim_end_matches(';');
         if take_keyword_ci(&mut rest, "CREATE OR REPLACE TYPE") {
-            return Err(
-                "CREATE OR REPLACE TYPE is not supported in PostgreSQL 18; use DROP TYPE or \
-                 ALTER TYPE instead"
-                    .to_string(),
-            );
+            return Err("CREATE OR REPLACE TYPE is not supported in PostgreSQL 18; use DROP TYPE \
+                        or ALTER TYPE instead"
+                .to_string());
         }
         if !take_keyword_ci(&mut rest, "CREATE TYPE") {
             return Err("Expected CREATE TYPE statement".to_string());
         }
         if take_keyword_ci(&mut rest, "IF NOT EXISTS") {
-            return Err(
-                "CREATE TYPE IF NOT EXISTS is not supported in PostgreSQL 18; check pg_type or \
-                 use a DO block instead"
-                    .to_string(),
-            );
+            return Err("CREATE TYPE IF NOT EXISTS is not supported in PostgreSQL 18; check \
+                        pg_type or use a DO block instead"
+                .to_string());
         }
 
         let (qual, after_name) = split_qualified_ident(rest)?;
         let (namespace_id, name) = (qual.namespace_or(default_namespace), qual.name);
         if after_name.trim().is_empty() {
-            return Err(
-                "Shell type 'CREATE TYPE name' without AS (...) or AS ENUM (...) is not \
-                 supported"
-                    .to_string(),
-            );
+            return Err("Shell type 'CREATE TYPE name' without AS (...) or AS ENUM (...) is not \
+                        supported"
+                .to_string());
         }
         let (body, after_body) = parse_type_body(after_name.trim_start())?;
 
         let (comment, leftover) = parse_optional_comment(after_body)?;
         if comment.is_some() {
             return Err(format!(
-                "Inline COMMENT on CREATE TYPE is not supported in PostgreSQL 18; use COMMENT \
-                 ON TYPE {namespace_id}.{name} IS '...' instead"
+                "Inline COMMENT on CREATE TYPE is not supported in PostgreSQL 18; use COMMENT ON \
+                 TYPE {namespace_id}.{name} IS '...' instead"
             ));
         }
         if !leftover.trim().is_empty() {
@@ -255,11 +249,9 @@ fn parse_type_body(mut rest: &str) -> DdlResult<(CreateTypeBody, &str)> {
         return Ok((CreateTypeBody::Enum { labels }, leftover));
     }
     if take_keyword_ci(&mut rest, "FROM TABLE") {
-        return Err(
-            "CREATE TYPE ... FROM TABLE is not supported in PostgreSQL 18; reference the \
-             table's implicit composite row type directly"
-                .to_string(),
-        );
+        return Err("CREATE TYPE ... FROM TABLE is not supported in PostgreSQL 18; reference the \
+                    table's implicit composite row type directly"
+            .to_string());
     }
     if take_keyword_ci(&mut rest, "AS") {
         if !rest.starts_with('(') {
@@ -830,11 +822,9 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("FROM TABLE"), "{err}");
 
-        let err2 = CreateTypeStatement::parse(
-            "CREATE TYPE IF NOT EXISTS chat.user AS (id TEXT)",
-            &ns(),
-        )
-        .unwrap_err();
+        let err2 =
+            CreateTypeStatement::parse("CREATE TYPE IF NOT EXISTS chat.user AS (id TEXT)", &ns())
+                .unwrap_err();
         assert!(err2.contains("IF NOT EXISTS"), "{err2}");
     }
 
@@ -853,12 +843,12 @@ mod tests {
 
     #[test]
     fn reject_not_null_and_nonempty_on_composite_attributes() {
-        let err = CreateTypeStatement::parse("CREATE TYPE t AS (note TEXT NOT NULL)", &ns())
-            .unwrap_err();
+        let err =
+            CreateTypeStatement::parse("CREATE TYPE t AS (note TEXT NOT NULL)", &ns()).unwrap_err();
         assert!(err.contains("CREATE DOMAIN"), "{err}");
 
-        let err2 = CreateTypeStatement::parse("CREATE TYPE t AS (note TEXT NONEMPTY)", &ns())
-            .unwrap_err();
+        let err2 =
+            CreateTypeStatement::parse("CREATE TYPE t AS (note TEXT NONEMPTY)", &ns()).unwrap_err();
         assert!(err2.contains("CREATE DOMAIN"), "{err2}");
     }
 

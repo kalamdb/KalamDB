@@ -1,7 +1,7 @@
 //! KalamDB schedule extension, tokenized with PostgreSQL quoting and comments.
 use std::collections::HashSet;
 
-use kalamdb_commons::models::{SchemaId, RoutineId, ScheduleId};
+use kalamdb_commons::models::{RoutineId, ScheduleId, SchemaId};
 use sqlparser::tokenizer::Token;
 
 use crate::{ddl::DdlResult, parser::KalamParser};

@@ -92,7 +92,9 @@ pub(super) fn bind_sql_routine_call(
         .collect();
 
     if raw_args.len() > input_params.len()
-        && !input_params.last().is_some_and(|param| param.mode == RoutineParameterMode::Variadic)
+        && !input_params
+            .last()
+            .is_some_and(|param| param.mode == RoutineParameterMode::Variadic)
     {
         return Err(invalid_args(format!(
             "procedure {} expected {} argument(s), got {}",
@@ -106,9 +108,8 @@ pub(super) fn bind_sql_routine_call(
     for (idx, arg) in raw_args.into_iter().enumerate() {
         let maybe_name = call.named_arguments.get(idx).and_then(|name| name.as_deref());
         if let Some(arg_name) = maybe_name {
-            let Some(param_idx) = input_params
-                .iter()
-                .position(|param| param.name.eq_ignore_ascii_case(arg_name))
+            let Some(param_idx) =
+                input_params.iter().position(|param| param.name.eq_ignore_ascii_case(arg_name))
             else {
                 return Err(invalid_args(format!(
                     "routine {} has no input parameter named '{}'",
@@ -208,11 +209,7 @@ pub(super) fn resolve_input_arguments(
         })
         .collect();
     let positional = positional_args(type_registry, stores, routine_id, &input_params, args)?;
-    Ok(input_params
-        .into_iter()
-        .cloned()
-        .zip(positional)
-        .collect())
+    Ok(input_params.into_iter().cloned().zip(positional).collect())
 }
 
 pub(super) fn validate_call_return(
@@ -442,7 +439,10 @@ fn extract_named(
         } else if let Some(default_expr) = parameter.default_expr.as_deref() {
             values.push(evaluate_parameter_default(parameter, default_expr)?);
         } else {
-            values.push(json_to_routine_value(&JsonValue::Null, parameter.builtin_data_type().as_ref())?);
+            values.push(json_to_routine_value(
+                &JsonValue::Null,
+                parameter.builtin_data_type().as_ref(),
+            )?);
         }
     }
     Ok(values)

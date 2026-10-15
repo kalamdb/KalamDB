@@ -200,16 +200,12 @@ impl PgCatalogView for PgTypeView {
                     .ok()
                     .and_then(|fields| {
                         fields.into_iter().find_map(|field| {
-                            field
-                                .data_type
-                                .as_ref()
-                                .map(pg_type_oid)
-                                .or_else(|| {
-                                    field.field_type_id.as_ref().and_then(|source_id| {
-                                        let (ns, name) = source_id.as_str().split_once('.')?;
-                                        Some(stable_oid(&["type", ns, name]))
-                                    })
+                            field.data_type.as_ref().map(pg_type_oid).or_else(|| {
+                                field.field_type_id.as_ref().and_then(|source_id| {
+                                    let (ns, name) = source_id.as_str().split_once('.')?;
+                                    Some(stable_oid(&["type", ns, name]))
                                 })
+                            })
                         })
                     })
                     .unwrap_or(0)

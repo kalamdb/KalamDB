@@ -3,7 +3,7 @@ use std::sync::Arc;
 use datafusion::prelude::SessionContext;
 use kalamdb_commons::{models::ReadContext, Role, SchemaId, TransactionId, UserId};
 use kalamdb_session::AuthSession;
-use kalamdb_session_datafusion::{install_extension, SessionUserContext};
+use kalamdb_session_datafusion::{install_extension, SessionConfigValues, SessionUserContext};
 use once_cell::sync::OnceCell;
 
 /// Unified execution context for SQL queries
@@ -24,6 +24,8 @@ pub struct ExecutionContext {
     /// Base SessionContext from AppContext (tables already registered)
     /// We extract SessionState from this and inject user_id to create per-request SessionContext
     base_session_context:    Arc<SessionContext>,
+    /// Connection-scoped GUC values shared by `set_config` and `current_setting`.
+    session_config:          Option<SessionConfigValues>,
     /// Cached per-request SessionState with user context injected
     ///
     /// This avoids repeated allocations when a single request needs multiple
@@ -80,6 +82,7 @@ impl ExecutionContext {
             transaction_id: None,
             allow_stream_autocommit: false,
             base_session_context,
+            session_config: Some(SessionConfigValues::new()),
             session_context_cache: Arc::new(OnceCell::new()),
         }
     }
@@ -148,6 +151,19 @@ impl ExecutionContext {
         self
     }
 
+    pub fn session_config(&self) -> &SessionConfigValues {
+        self.session_config
+            .as_ref()
+            .expect("execution contexts always install settings")
+    }
+
+    /// Share connection-scoped GUC storage with this request's DataFusion session.
+    pub fn with_session_config(mut self, session_config: SessionConfigValues) -> Self {
+        self.session_config = Some(session_config);
+        self.session_context_cache = Arc::new(OnceCell::new());
+        self
+    }
+
     pub fn with_stream_autocommit(mut self) -> Self {
         self.allow_stream_autocommit = true;
         self
@@ -180,6 +196,7 @@ impl ExecutionContext {
         );
         ctx.transaction_id = self.transaction_id.clone();
         ctx.allow_stream_autocommit = self.allow_stream_autocommit;
+        ctx.session_config.clone_from(&self.session_config);
         ctx
     }
 
@@ -191,6 +208,19 @@ impl ExecutionContext {
         self.auth_session = self.auth_session.with_read_context_mode(read_context);
         self.session_context_cache = Arc::new(OnceCell::new());
         self
+    }
+
+    fn configured_namespace(&self) -> Option<SchemaId> {
+        let catalog = self.base_session_context.catalog("kalam")?;
+        let schema = self
+            .session_config()
+            .resolved_schema(self.auth_session.user_id().as_str(), |name| {
+                catalog.schema(name).is_some()
+            })?;
+        if schema.is_empty() {
+            return None;
+        }
+        Some(SchemaId::new(schema))
     }
 
     pub(crate) fn build_user_session_state(&self) -> datafusion::execution::context::SessionState {
@@ -212,9 +242,12 @@ impl ExecutionContext {
         );
 
         install_extension(&mut session_state, session_user_context);
+        if let Some(session_config) = &self.session_config {
+            install_extension(&mut session_state, session_config.clone());
+        }
 
         // Override default_schema if namespace_id is set on this context
-        if let Some(ref ns) = self.namespace_id {
+        if let Some(ref ns) = self.configured_namespace().or_else(|| self.namespace_id.clone()) {
             session_state.config_mut().options_mut().catalog.default_schema =
                 ns.as_str().to_string();
         }
@@ -232,6 +265,14 @@ impl ExecutionContext {
         let session = self
             .session_context_cache
             .get_or_init(|| SessionContext::new_with_state(self.build_user_session_state()));
+        if let Some(namespace) = self.configured_namespace() {
+            let state_ref = session.state_ref();
+            let mut state = state_ref.write();
+            if state.config().options().catalog.default_schema != namespace.as_str() {
+                state.config_mut().options_mut().catalog.default_schema =
+                    namespace.as_str().to_string();
+            }
+        }
         session.clone()
     }
 
@@ -247,6 +288,9 @@ impl ExecutionContext {
     /// # Returns
     /// The current default namespace as a SchemaId (defaults to "default")
     pub fn default_namespace(&self) -> SchemaId {
+        if let Some(namespace) = self.configured_namespace() {
+            return namespace;
+        }
         if let Some(session) = self.session_context_cache.get() {
             let default_schema =
                 session.state_ref().read().config().options().catalog.default_schema.clone();

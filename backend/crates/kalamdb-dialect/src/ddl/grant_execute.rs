@@ -153,7 +153,8 @@ fn parse_execute_acl(
         RoutineKind::Function
     } else {
         return Err(format!(
-            "Expected FUNCTION, PROCEDURE, ALL FUNCTIONS IN SCHEMA, or ALL PROCEDURES IN SCHEMA after {verb}"
+            "Expected FUNCTION, PROCEDURE, ALL FUNCTIONS IN SCHEMA, or ALL PROCEDURES IN SCHEMA \
+             after {verb}"
         ));
     };
 
@@ -214,7 +215,7 @@ mod tests {
         assert_eq!(
             all_fns.target,
             ExecuteTarget::AllInSchema {
-                namespace_id: SchemaId::new("api"),
+                namespace_id:  SchemaId::new("api"),
                 expected_kind: RoutineKind::Function,
             }
         );

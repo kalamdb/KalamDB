@@ -150,11 +150,8 @@ impl TypeRegistry {
                 }
             }
             let child_arrow = arrow_type_for_ref(&type_ref, nested.as_ref())?;
-            let mut child_field = Field::new(
-                catalog_field.name.clone(),
-                child_arrow,
-                !catalog_field.not_null,
-            );
+            let mut child_field =
+                Field::new(catalog_field.name.clone(), child_arrow, !catalog_field.not_null);
             if let Some(builtin) = type_ref.builtin() {
                 child_field = with_kalam_data_type_metadata(child_field, &builtin);
             }
@@ -292,25 +289,25 @@ impl TypeRegistry {
             };
             let slot = catalog_field.physical_slot();
             fields.push(ResolvedTypeField {
-                name:              catalog_field.name,
+                name: catalog_field.name,
                 slot,
-                ordinal:           catalog_field.ordinal,
+                ordinal: catalog_field.ordinal,
                 type_ref,
-                not_null:          catalog_field.not_null,
-                dropped:           false,
-                nested:            if is_base { nested.clone() } else { None },
+                not_null: catalog_field.not_null,
+                dropped: false,
+                nested: if is_base { nested.clone() } else { None },
                 arrow_child_index: live_index,
                 constraint_expr,
             });
         }
         let resolved = Arc::new(ResolvedType {
-            type_id:      catalog_type.type_id,
-            revision:     TypeRevision::from_u32(catalog_type.type_revision.max(1))
+            type_id: catalog_type.type_id,
+            revision: TypeRevision::from_u32(catalog_type.type_revision.max(1))
                 .unwrap_or(TypeRevision::INITIAL),
             namespace_id: catalog_type.namespace_id,
-            name:         catalog_type.name,
-            kind:         CatalogTypeKind::Domain,
-            fields:       fields.into(),
+            name: catalog_type.name,
+            kind: CatalogTypeKind::Domain,
+            fields: fields.into(),
             arrow_fields,
             arrow_type,
         });

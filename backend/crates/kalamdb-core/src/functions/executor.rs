@@ -108,7 +108,8 @@ impl FunctionService {
         })? {
             if routine.kind == RoutineKind::Procedure {
                 return Err(KalamDbError::InvalidSql(format!(
-                    "{} is a procedure, not a function; procedures cannot be used in scalar or DEFAULT expressions",
+                    "{} is a procedure, not a function; procedures cannot be used in scalar or \
+                     DEFAULT expressions",
                     call.routine_id
                 )));
             }
@@ -387,8 +388,8 @@ async fn invoke_root(
                     *began_owned_tx = true;
                     owned_tx_guard.arm(transaction_id);
                 }
-                let value = Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args))
-                    .await?;
+                let value =
+                    Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args)).await?;
                 let stores = host.app.system_tables().catalog_stores();
                 bind::validate_call_return(
                     host.app.schema_registry().type_registry(),
@@ -497,8 +498,8 @@ async fn invoke_on_host(
             input_args,
             child,
         } => {
-            let value = Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args))
-                .await?;
+            let value =
+                Box::pin(invoke_sql_routine_body(&child, &routine, &body, &input_args)).await?;
             bind::validate_call_return(
                 host.app.schema_registry().type_registry(),
                 &stores,
@@ -664,13 +665,8 @@ async fn invoke_sql_routine_body(
             serde_json::from_str::<std::collections::BTreeMap<String, String>>(config_json)
         {
             if let Some(sp) = config.get("search_path").or_else(|| config.get("schema")) {
-                let ns = sp
-                    .split(',')
-                    .next()
-                    .unwrap_or(sp)
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'');
+                let ns =
+                    sp.split(',').next().unwrap_or(sp).trim().trim_matches('"').trim_matches('\'');
                 if !ns.is_empty() {
                     ctx = ctx.with_namespace_id(kalamdb_commons::SchemaId::new(ns));
                 }
@@ -691,7 +687,9 @@ async fn invoke_sql_routine_body(
         })?;
     let out_params: Vec<_> = all_params
         .iter()
-        .filter(|param| matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut))
+        .filter(|param| {
+            matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+        })
         .cloned()
         .collect();
     let has_out_params = !out_params.is_empty();
@@ -727,29 +725,23 @@ async fn invoke_sql_routine_body(
                 ord,
             )
             .map_err(KalamDbError::InvalidSql)?,
-            routine_id: routine.routine_id.clone(),
-            name: var_name,
-            ordinal: ord,
-            type_id: None,
-            type_name: "TEXT".to_string(),
-            is_array: false,
-            not_null: false,
-            nonempty: false,
-            data_type: Some(kalamdb_commons::KalamDataType::Text),
-            mode: RoutineParameterMode::In,
+            routine_id:   routine.routine_id.clone(),
+            name:         var_name,
+            ordinal:      ord,
+            type_id:      None,
+            type_name:    "TEXT".to_string(),
+            is_array:     false,
+            not_null:     false,
+            nonempty:     false,
+            data_type:    Some(kalamdb_commons::KalamDataType::Text),
+            mode:         RoutineParameterMode::In,
             default_expr: None,
         };
         env_args.push((pseudo_param, init_val));
     }
 
-    let (returned, last_result) = execute_plpgsql_block(
-        &executor,
-        &ctx,
-        routine,
-        working_body,
-        &mut env_args,
-    )
-    .await?;
+    let (returned, last_result) =
+        execute_plpgsql_block(&executor, &ctx, routine, working_body, &mut env_args).await?;
     if let Some(ret_val) = returned {
         return Ok(ret_val);
     }
@@ -761,9 +753,8 @@ async fn invoke_sql_routine_body(
         })
     {
         if out_params.len() == 1 {
-            if let Some((_, val)) = env_args
-                .iter()
-                .find(|(p, _)| p.name.eq_ignore_ascii_case(&out_params[0].name))
+            if let Some((_, val)) =
+                env_args.iter().find(|(p, _)| p.name.eq_ignore_ascii_case(&out_params[0].name))
             {
                 if !is_null_routine_value(val) {
                     return Ok(val.clone());
@@ -786,8 +777,10 @@ async fn invoke_sql_routine_body(
     match last_result {
         Some(result) => {
             if routine.kind == RoutineKind::Procedure && !has_out_params {
-                if matches!(result, ExecutionResult::Rows { .. } | ExecutionResult::ScalarRows { .. })
-                {
+                if matches!(
+                    result,
+                    ExecutionResult::Rows { .. } | ExecutionResult::ScalarRows { .. }
+                ) {
                     super::convert::execution_result_to_routine(result)
                 } else {
                     Ok(RoutineValue::new(ScalarValue::Null))
@@ -815,22 +808,12 @@ fn extract_plpgsql_declare_and_body(body: &str) -> (Vec<(String, Option<String>)
                 continue;
             }
             if let Some((lhs, rhs)) = decl.split_once(":=").or_else(|| decl.split_once('=')) {
-                let var_name = lhs
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                let var_name = lhs.split_whitespace().next().unwrap_or("").trim().to_string();
                 if !var_name.is_empty() {
                     decls.push((var_name, Some(rhs.trim().to_string())));
                 }
             } else {
-                let var_name = decl
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                let var_name = decl.split_whitespace().next().unwrap_or("").trim().to_string();
                 if !var_name.is_empty() {
                     decls.push((var_name, None));
                 }
@@ -1051,9 +1034,8 @@ fn execute_plpgsql_block<'a>(
             }
             if let Some((lhs, rhs)) = split_plpgsql_assignment(trimmed_stmt) {
                 let assigned_val = eval_plpgsql_expr(executor, ctx, rhs, env_args).await?;
-                if let Some((_, slot)) = env_args
-                    .iter_mut()
-                    .find(|(p, _)| p.name.eq_ignore_ascii_case(lhs))
+                if let Some((_, slot)) =
+                    env_args.iter_mut().find(|(p, _)| p.name.eq_ignore_ascii_case(lhs))
                 {
                     *slot = assigned_val;
                 }
@@ -1223,9 +1205,8 @@ fn substitute_sql_routine_parameters(
             let preceded_by_dot = start > 0 && bytes[start - 1] == b'.';
             let followed_by_paren = sql[i..].trim_start().starts_with('(');
             if !preceded_by_dot && !followed_by_paren {
-                if let Some((_, pos)) = named
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case(ident))
+                if let Some((_, pos)) =
+                    named.iter().find(|(name, _)| name.eq_ignore_ascii_case(ident))
                 {
                     out.push('$');
                     out.push_str(&pos.to_string());
@@ -1598,26 +1579,27 @@ fn procedure_out_value_to_execution_result(
 ) -> Result<ExecutionResult, KalamDbError> {
     let json = routine_value_as_json(value).unwrap_or(serde_json::Value::Null);
     let parsed_json = match &json {
-        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).unwrap_or(json),
+        serde_json::Value::String(s) => {
+            serde_json::from_str::<serde_json::Value>(s).unwrap_or(json)
+        },
         _ => json,
     };
     let mut fields = Vec::with_capacity(out_params.len());
     let mut arrays = Vec::with_capacity(out_params.len());
     for param in out_params {
         let cell_json = match &parsed_json {
-            serde_json::Value::Object(map) => {
-                map.get(&param.name).cloned().unwrap_or_else(|| {
-                    if out_params.len() == 1 {
-                        parsed_json.clone()
-                    } else {
-                        serde_json::Value::Null
-                    }
-                })
-            },
+            serde_json::Value::Object(map) => map.get(&param.name).cloned().unwrap_or_else(|| {
+                if out_params.len() == 1 {
+                    parsed_json.clone()
+                } else {
+                    serde_json::Value::Null
+                }
+            }),
             other if out_params.len() == 1 => other.clone(),
             _ => serde_json::Value::Null,
         };
-        let rv = super::convert::json_to_routine_value(&cell_json, param.builtin_data_type().as_ref())?;
+        let rv =
+            super::convert::json_to_routine_value(&cell_json, param.builtin_data_type().as_ref())?;
         let array = rv
             .value
             .to_array()

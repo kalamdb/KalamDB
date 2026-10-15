@@ -47,8 +47,9 @@ pub use kalam::KalamParser;
 pub use query_parser::*;
 pub use system::*;
 pub use utils::{
-    extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
-    insert_column_names_from_statement, insert_columns_match,
-    normalize_context_keyword_calls_for_sqlparser, object_name_to_string, parse_single_statement,
-    parse_sql_expression, rewrite_context_functions_for_datafusion,
+    apply_datafusion_ast_rewrites, extract_dml_table_id, extract_dml_table_id_fast,
+    extract_dml_table_id_from_statement, insert_column_names_from_statement, insert_columns_match,
+    needs_ast_operator_rewrite, object_name_to_string, parse_single_statement,
+    parse_sql_expression, parse_statement_for_datafusion, rewrite_context_functions_for_datafusion,
+    rewrite_wire_catalog_compat_for_datafusion, sql_needs_wire_catalog_text_rewrite,
 };

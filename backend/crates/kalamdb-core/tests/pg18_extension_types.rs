@@ -92,20 +92,12 @@ async fn builtin_extension_catalog_persists_and_blocks_ddl_mutation() {
         .unwrap()
         .expect("pg_catalog.file_put should exist");
 
-    // Re-running ensure_builtin_extension_catalog (as happens on server restart) preserves exact records
+    // Re-running ensure_builtin_extension_catalog (as happens on server restart) preserves exact
+    // records
     catalog.ensure_builtin_extension_catalog().unwrap();
-    let file_after = catalog
-        .get_type(&TypeId::new("pg_catalog.file"))
-        .unwrap()
-        .unwrap();
-    let emb_after = catalog
-        .get_type(&TypeId::new("pg_catalog.embedding"))
-        .unwrap()
-        .unwrap();
-    let put_after = catalog
-        .get_routine(&RoutineId::new("pg_catalog.file_put"))
-        .unwrap()
-        .unwrap();
+    let file_after = catalog.get_type(&TypeId::new("pg_catalog.file")).unwrap().unwrap();
+    let emb_after = catalog.get_type(&TypeId::new("pg_catalog.embedding")).unwrap().unwrap();
+    let put_after = catalog.get_routine(&RoutineId::new("pg_catalog.file_put")).unwrap().unwrap();
 
     assert_eq!(file_before, file_after);
     assert_eq!(emb_before, emb_after);
@@ -115,7 +107,8 @@ async fn builtin_extension_catalog_persists_and_blocks_ddl_mutation() {
     let pg_types = query_strings(
         &app,
         &executor,
-        "SELECT typname FROM pg_catalog.pg_type WHERE typname IN ('file', 'embedding') ORDER BY typname",
+        "SELECT typname FROM pg_catalog.pg_type WHERE typname IN ('file', 'embedding') ORDER BY \
+         typname",
     )
     .await;
     assert_eq!(pg_types, vec!["embedding".to_string(), "file".to_string()]);
@@ -123,7 +116,8 @@ async fn builtin_extension_catalog_persists_and_blocks_ddl_mutation() {
     let pg_procs = query_strings(
         &app,
         &executor,
-        "SELECT proname FROM pg_catalog.pg_proc WHERE proname IN ('file_put', 'file_read', 'file_delete') ORDER BY proname",
+        "SELECT proname FROM pg_catalog.pg_proc WHERE proname IN ('file_put', 'file_read', \
+         'file_delete') ORDER BY proname",
     )
     .await;
     assert_eq!(
@@ -143,12 +137,8 @@ async fn builtin_extension_catalog_persists_and_blocks_ddl_mutation() {
             || drop_file.to_ascii_lowercase().contains("reserved"),
         "unexpected error: {drop_file}"
     );
-    let alter_file = exec_err(
-        &app,
-        &executor,
-        "ALTER TYPE pg_catalog.file ADD ATTRIBUTE extra text",
-    )
-    .await;
+    let alter_file =
+        exec_err(&app, &executor, "ALTER TYPE pg_catalog.file ADD ATTRIBUTE extra text").await;
     assert!(
         alter_file.to_ascii_lowercase().contains("cannot alter")
             || alter_file.to_ascii_lowercase().contains("built-in")
@@ -175,7 +165,8 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
     exec(
         &app,
         &executor,
-        "CREATE TABLE ext_files.docs (id INT PRIMARY KEY, doc FILE NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE ext_files.docs (id INT PRIMARY KEY, doc FILE NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
@@ -183,7 +174,8 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
     let forged_tuple = exec_err(
         &app,
         &executor,
-        "INSERT INTO ext_files.docs (id, doc) VALUES (1, ('999', 'f0001', 'forged.txt', 5, 'text/plain', 'deadbeef', NULL))",
+        "INSERT INTO ext_files.docs (id, doc) VALUES (1, ('999', 'f0001', 'forged.txt', 5, \
+         'text/plain', 'deadbeef', NULL))",
     )
     .await;
     assert!(
@@ -225,11 +217,7 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
     // Read back via file_read
     let ctx = root_ctx(&app);
     match executor
-        .execute(
-            "SELECT file_read(doc) FROM ext_files.docs WHERE id = 1",
-            &ctx,
-            vec![],
-        )
+        .execute("SELECT file_read(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
         .await
         .expect("file_read should succeed")
     {
@@ -247,11 +235,7 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
     // Delete via file_delete (returns void / null) and verify subsequent read fails
     let ctx = root_ctx(&app);
     match executor
-        .execute(
-            "SELECT file_delete(doc) FROM ext_files.docs WHERE id = 1",
-            &ctx,
-            vec![],
-        )
+        .execute("SELECT file_delete(doc) FROM ext_files.docs WHERE id = 1", &ctx, vec![])
         .await
         .expect("file_delete should succeed")
     {
@@ -261,12 +245,8 @@ async fn file_functions_mint_read_delete_and_reject_forged_references() {
         },
         other => panic!("expected rows, got {other:?}"),
     }
-    let read_after_delete = exec_err(
-        &app,
-        &executor,
-        "SELECT file_read(doc) FROM ext_files.docs WHERE id = 1",
-    )
-    .await;
+    let read_after_delete =
+        exec_err(&app, &executor, "SELECT file_read(doc) FROM ext_files.docs WHERE id = 1").await;
     assert!(
         read_after_delete.to_ascii_lowercase().contains("not found")
             || read_after_delete.to_ascii_lowercase().contains("file"),
@@ -283,7 +263,8 @@ async fn embedding_enforces_dimension_bounds() {
     exec(
         &app,
         &executor,
-        "CREATE TABLE ext_vec.items (id INT PRIMARY KEY, vec EMBEDDING(3) NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE ext_vec.items (id INT PRIMARY KEY, vec EMBEDDING(3) NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
@@ -302,7 +283,8 @@ async fn embedding_enforces_dimension_bounds() {
     let huge_dim = exec_err(
         &app,
         &executor,
-        "CREATE TABLE ext_vec.bad_big (id INT PRIMARY KEY, vec EMBEDDING(8193)) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE ext_vec.bad_big (id INT PRIMARY KEY, vec EMBEDDING(8193)) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
     assert!(

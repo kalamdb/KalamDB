@@ -443,10 +443,9 @@ impl DmlExecutor {
         } else if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<StreamTableProvider>()
         {
-            let row_ids =
-                provider.insert_batch(user_id, rows, versions).await.map_err(|e| {
-                    ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
-                })?;
+            let row_ids = provider.insert_batch(user_id, rows, versions).await.map_err(|e| {
+                ApplierError::Execution(format!("Failed to insert stream batch: {}", e))
+            })?;
             self.defer_observe(table_id, TableType::Stream, Some(user_id), log_index);
             log::debug!("DmlExecutor: Inserted {} stream rows into {}", row_ids.len(), table_id);
             Ok(row_ids.len())
@@ -1635,7 +1634,8 @@ pub(crate) fn validate_and_commit_file_columns_for_rows(
                 | datafusion::scalar::ScalarValue::Utf8View(Some(text)) => text.as_str(),
                 other => {
                     return Err(format!(
-                        "column '{col_name}' is of type pg_catalog.file and cannot be constructed from {:?}; use file_put()",
+                        "column '{col_name}' is of type pg_catalog.file and cannot be constructed \
+                         from {:?}; use file_put()",
                         other.data_type()
                     ));
                 },
@@ -1646,16 +1646,11 @@ pub(crate) fn validate_and_commit_file_columns_for_rows(
                 )
             })?;
             file_service
-                .validate_and_commit_file_ref(
-                    &file_ref,
-                    &storage_id,
-                    table_type,
-                    table_id,
-                    user_id,
-                )
+                .validate_and_commit_file_ref(&file_ref, &storage_id, table_type, table_id, user_id)
                 .map_err(|error| {
                     format!(
-                        "forged or invalid pg_catalog.file reference in column '{col_name}': {error}"
+                        "forged or invalid pg_catalog.file reference in column '{col_name}': \
+                         {error}"
                     )
                 })?;
         }

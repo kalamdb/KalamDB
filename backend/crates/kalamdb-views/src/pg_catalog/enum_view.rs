@@ -67,20 +67,14 @@ impl PgCatalogView for PgEnumView {
                 continue;
             }
             let enumtypid = stable_oid(&["type", namespace, &catalog_type.name]);
-            let mut fields = catalog_stores
-                .list_type_fields(&catalog_type.type_id)
-                .map_err(|error| {
+            let mut fields =
+                catalog_stores.list_type_fields(&catalog_type.type_id).map_err(|error| {
                     RegistryError::Other(format!("failed to list enum fields: {error}"))
                 })?;
             fields.sort_by_key(|field| field.ordinal);
             for field in fields {
                 let slot_str = field.slot.to_string();
-                oids.append_value(stable_oid(&[
-                    "enum",
-                    namespace,
-                    &catalog_type.name,
-                    &slot_str,
-                ]));
+                oids.append_value(stable_oid(&["enum", namespace, &catalog_type.name, &slot_str]));
                 enumtypids.append_value(enumtypid);
                 enumsortorders.append_value(field.ordinal as f64);
                 enumlabels.append_value(&field.name);

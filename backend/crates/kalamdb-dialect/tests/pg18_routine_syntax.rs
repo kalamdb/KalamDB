@@ -42,14 +42,16 @@ fn unicode_and_byte_limit_enforcement_follows_pg_namedatalen_bytes() {
     let valid_63_bytes = "é".repeat(31) + "a"; // 31 * 2 + 1 = 63 bytes
     assert_eq!(valid_63_bytes.len(), 63);
     let sql_ok = format!(
-        "CREATE FUNCTION public.\"{valid_63_bytes}\"(x integer) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$"
+        "CREATE FUNCTION public.\"{valid_63_bytes}\"(x integer) RETURNS integer LANGUAGE sql AS \
+         $$ SELECT 1 $$"
     );
     assert!(classify(&sql_ok).is_ok(), "63-byte UTF-8 identifier must succeed");
 
     let invalid_64_bytes = "é".repeat(32); // 64 bytes (32 chars)
     assert_eq!(invalid_64_bytes.len(), 64);
     let sql_err = format!(
-        "CREATE FUNCTION public.\"{invalid_64_bytes}\"(x integer) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$"
+        "CREATE FUNCTION public.\"{invalid_64_bytes}\"(x integer) RETURNS integer LANGUAGE sql AS \
+         $$ SELECT 1 $$"
     );
     let err = classify(&sql_err).expect_err("64-byte UTF-8 identifier must fail byte limit");
     assert!(err.contains("63 bytes"), "unexpected error: {err}");
@@ -155,10 +157,8 @@ fn nested_block_comments_and_line_comments_around_clauses_and_trailing_tokens() 
 
 #[test]
 fn call_supports_named_arrows_tuple_literals_and_quoted_targets() {
-    let stmt = classify(
-        r#"CALL "api"."Run.Job"(target => ROW('alpha', 42), "count" := 3)"#,
-    )
-    .expect("CALL with named and ROW args");
+    let stmt = classify(r#"CALL "api"."Run.Job"(target => ROW('alpha', 42), "count" := 3)"#)
+        .expect("CALL with named and ROW args");
     let SqlStatementKind::Call(call) = stmt.kind() else {
         panic!("expected Call");
     };

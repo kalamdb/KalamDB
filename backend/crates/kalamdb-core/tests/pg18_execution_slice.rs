@@ -22,7 +22,8 @@ async fn returning_clauses_for_insert_update_delete_and_ctes() {
     execute_ok(
         &executor,
         &exec_ctx,
-        "CREATE TABLE exec_slice.tasks (id BIGINT PRIMARY KEY, title TEXT NOT NULL, points INT NOT NULL DEFAULT 10) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE exec_slice.tasks (id BIGINT PRIMARY KEY, title TEXT NOT NULL, points INT \
+         NOT NULL DEFAULT 10) WITH (TYPE = 'SHARED')",
     )
     .await;
 
@@ -30,7 +31,8 @@ async fn returning_clauses_for_insert_update_delete_and_ctes() {
     let ins_res = execute_ok(
         &executor,
         &exec_ctx,
-        "INSERT INTO exec_slice.tasks (id, title, points) VALUES (1, 'alpha', 5), (2, 'beta', 15) RETURNING id, title, points",
+        "INSERT INTO exec_slice.tasks (id, title, points) VALUES (1, 'alpha', 5), (2, 'beta', 15) \
+         RETURNING id, title, points",
     )
     .await;
     match ins_res {
@@ -49,7 +51,8 @@ async fn returning_clauses_for_insert_update_delete_and_ctes() {
     let upd_res = execute_ok(
         &executor,
         &exec_ctx,
-        "UPDATE exec_slice.tasks SET title = 'alpha-v2', points = points + 100 WHERE id = 1 RETURNING id, title, points",
+        "UPDATE exec_slice.tasks SET title = 'alpha-v2', points = points + 100 WHERE id = 1 \
+         RETURNING id, title, points",
     )
     .await;
     match upd_res {
@@ -130,7 +133,8 @@ async fn set_search_path_and_prepared_dml_cache_eviction_on_error() {
     execute_ok(
         &executor,
         &exec_ctx,
-        "CREATE TABLE custom_sp.items (id BIGINT PRIMARY KEY, label TEXT NOT NULL) WITH (TYPE = 'SHARED')",
+        "CREATE TABLE custom_sp.items (id BIGINT PRIMARY KEY, label TEXT NOT NULL) WITH (TYPE = \
+         'SHARED')",
     )
     .await;
 
@@ -147,7 +151,9 @@ async fn set_search_path_and_prepared_dml_cache_eviction_on_error() {
             let labels = batches[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
             assert_eq!(labels.value(0), "from_sp");
         },
-        other => panic!("expected 1 row from unqualified SELECT after SET search_path, got {other:?}"),
+        other => {
+            panic!("expected 1 row from unqualified SELECT after SET search_path, got {other:?}")
+        },
     }
 
     // Parameterized DML cache eviction check:

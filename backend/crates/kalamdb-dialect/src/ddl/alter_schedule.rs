@@ -1,4 +1,4 @@
-use kalamdb_commons::models::{SchemaId, ScheduleId};
+use kalamdb_commons::models::{ScheduleId, SchemaId};
 
 use crate::ddl::{create_schedule::ScheduleParser, DdlResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
