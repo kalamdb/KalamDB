@@ -263,10 +263,14 @@ async fn spawn_wire_test_server() -> (String, PostgresWireListener, Arc<AppConte
     let wire_port = probe.local_addr().expect("local addr").port();
     drop(probe);
 
-    let pid_component = ((std::process::id() % 1000) as u16) * 20;
-    let offset = WIRE_TEST_PORT_OFFSET.fetch_add(2, Ordering::Relaxed);
-    let rpc_port = 24_000 + pid_component + offset;
-    let api_port = 34_000 + pid_component + offset;
+    // Stay under Linux ip_local_port_range (32768-60999).
+    const RPC_BASE: u16 = 10_000;
+    const API_BASE: u16 = 20_000;
+    const SLOTS: u16 = 9_000;
+    let ticket = WIRE_TEST_PORT_OFFSET.fetch_add(1, Ordering::Relaxed);
+    let slot = (std::process::id() as u16).wrapping_mul(251).wrapping_add(ticket) % SLOTS;
+    let rpc_port = RPC_BASE + slot;
+    let api_port = API_BASE + slot;
 
     let mut config = ServerConfig::default();
     config.postgres_wire.enabled = true;

@@ -40,9 +40,14 @@ static TEST_PORT_OFFSET: AtomicU16 = AtomicU16::new(0);
 
 #[cfg(any(test, feature = "test-helpers"))]
 fn next_test_ports() -> (u16, u16) {
-    let pid_component = ((std::process::id() % 1000) as u16) * 20;
-    let offset = TEST_PORT_OFFSET.fetch_add(2, Ordering::Relaxed);
-    (20_000 + pid_component + offset, 30_000 + pid_component + offset)
+    // Linux assigns outbound sockets from 32768 upward. Listener ports in that
+    // range fail with EADDRINUSE while other tests are connecting.
+    const RPC_BASE: u16 = 10_000;
+    const API_BASE: u16 = 20_000;
+    const SLOTS: u16 = 9_000;
+    let ticket = TEST_PORT_OFFSET.fetch_add(1, Ordering::Relaxed);
+    let slot = (std::process::id() as u16).wrapping_mul(251).wrapping_add(ticket) % SLOTS;
+    (RPC_BASE + slot, API_BASE + slot)
 }
 
 #[cfg(any(test, feature = "test-helpers"))]

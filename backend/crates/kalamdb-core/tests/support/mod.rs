@@ -43,9 +43,19 @@ use uuid::Uuid;
 static TEST_PORT_OFFSET: AtomicU16 = AtomicU16::new(0);
 
 fn next_test_ports() -> (u16, u16) {
-    let pid_component = ((std::process::id() % 1000) as u16) * 20;
-    let offset = TEST_PORT_OFFSET.fetch_add(2, Ordering::Relaxed);
-    (20_000 + pid_component + offset, 30_000 + pid_component + offset)
+    // Linux assigns outbound sockets from 32768 upward. Listener ports in that
+    // range fail with EADDRINUSE while other tests are connecting.
+    const RPC_BASE: u16 = 10_000;
+    const API_BASE: u16 = 20_000;
+    const SLOTS: u16 = 9_000;
+    let ticket = TEST_PORT_OFFSET.fetch_add(1, Ordering::Relaxed);
+    let slot = (std::process::id() as u16).wrapping_mul(251).wrapping_add(ticket) % SLOTS;
+    (RPC_BASE + slot, API_BASE + slot)
+}
+
+fn raft_bind_in_use(error: &impl std::fmt::Display) -> bool {
+    let message = error.to_string();
+    message.contains("Address already in use") || message.contains("AddrInUse")
 }
 
 pub fn create_executor(app_ctx: Arc<AppContext>) -> SqlExecutor {
@@ -68,38 +78,55 @@ pub async fn create_cluster_app_context_with_shared_shards(
     config: ServerConfig,
     shared_shards: u32,
 ) -> (Arc<AppContext>, TestDb) {
+    let caller_supplied_cluster = config.cluster.is_some();
     let mut config = config;
-    if config.cluster.is_none() {
-        let (rpc_port, api_port) = next_test_ports();
-        config.cluster = Some(kalamdb_configs::ClusterConfig {
-            cluster_id: "test-cluster".to_string(),
-            node_id: 1,
-            rpc_addr: format!("127.0.0.1:{}", rpc_port),
-            api_addr: format!("http://127.0.0.1:{}", api_port),
-            peers: Vec::new(),
-            user_shards: 32,
-            shared_shards,
-            heartbeat_interval_ms: 50,
-            election_timeout_ms: (150, 300),
-            snapshot_policy: "LogsSinceLast(1000)".to_string(),
-            max_snapshots_to_keep: 3,
-            replication_timeout_ms: 5_000,
-            reconnect_interval_ms: 3_000,
-            peer_wait_max_retries: None,
-            peer_wait_initial_delay_ms: None,
-            peer_wait_max_delay_ms: None,
-        });
-    }
+    let mut last_bind_error = String::new();
+    let mut started = None;
+    for _attempt in 0..8 {
+        if !caller_supplied_cluster {
+            let (rpc_port, api_port) = next_test_ports();
+            config.cluster = Some(kalamdb_configs::ClusterConfig {
+                cluster_id: "test-cluster".to_string(),
+                node_id: 1,
+                rpc_addr: format!("127.0.0.1:{}", rpc_port),
+                api_addr: format!("http://127.0.0.1:{}", api_port),
+                peers: Vec::new(),
+                user_shards: 32,
+                shared_shards,
+                heartbeat_interval_ms: 50,
+                election_timeout_ms: (150, 300),
+                snapshot_policy: "LogsSinceLast(1000)".to_string(),
+                max_snapshots_to_keep: 3,
+                replication_timeout_ms: 5_000,
+                reconnect_interval_ms: 3_000,
+                peer_wait_max_retries: None,
+                peer_wait_initial_delay_ms: None,
+                peer_wait_max_delay_ms: None,
+            });
+        }
 
-    let test_db = TestDb::with_system_tables().expect("create test db");
-    let storage_base_path = test_db.storage_dir().expect("storage dir");
-    let app_ctx = AppContext::create_isolated(
-        test_db.backend(),
-        NodeId::new(1),
-        storage_base_path.to_string_lossy().into_owned(),
-        config,
-    );
-    app_ctx.executor().start().await.expect("start raft");
+        let test_db = TestDb::with_system_tables().expect("create test db");
+        let storage_base_path = test_db.storage_dir().expect("storage dir");
+        let storage_path = storage_base_path.to_string_lossy().into_owned();
+        let app_ctx = AppContext::create_isolated(
+            test_db.backend(),
+            NodeId::new(1),
+            storage_path.clone(),
+            config.clone(),
+        );
+        match app_ctx.executor().start().await {
+            Ok(()) => {
+                started = Some((app_ctx, test_db, storage_path));
+                break;
+            },
+            Err(error) if !caller_supplied_cluster && raft_bind_in_use(&error) => {
+                last_bind_error = error.to_string();
+            },
+            Err(error) => panic!("start raft: {error}"),
+        }
+    }
+    let (app_ctx, test_db, storage_base_path) =
+        started.unwrap_or_else(|| panic!("start raft: {last_bind_error}"));
     app_ctx.executor().initialize_cluster().await.expect("initialize raft cluster");
     app_ctx.wire_raft_appliers();
     kalamdb_jobs::init_job_manager(&app_ctx);
@@ -117,7 +144,7 @@ pub async fn create_cluster_app_context_with_shared_shards(
                 storage_name: "Local Storage".to_string(),
                 description: Some("Default local storage for tests".to_string()),
                 storage_type: StorageType::Filesystem,
-                base_directory: storage_base_path.to_string_lossy().to_string(),
+                base_directory: storage_base_path.clone(),
                 credentials: None,
                 config_json: None,
                 shared_tables_template: "shared/{namespace}/{table}".to_string(),
