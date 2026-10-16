@@ -16,11 +16,10 @@ env:
   WASM_PACK_VERSION: "0.15.0"
   CARGO_ENCODED_RUSTFLAGS: ""
   CARGO_INCREMENTAL: "0"
-  # Keep CI artifacts small enough for the runner disk. The dev profile uses
-  # unpacked split debuginfo and 256 codegen units, which grew `target/` to
-  # ~107G and left no room for /tmp RocksDB fixtures (ENOSPC).
-  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
-  CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
+  # The runner disk is 145G. Unpacked split debuginfo grew `target/` past 100G
+  # and the linker then SIGBUS'd. CI keeps no debuginfo and does not split it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
   CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: "off"
   CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
   RUSTC_WRAPPER: ""
