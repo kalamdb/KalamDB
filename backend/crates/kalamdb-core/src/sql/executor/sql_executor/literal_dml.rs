@@ -86,10 +86,6 @@ impl SqlExecutor {
             }
         }
 
-        if has_active_tx {
-            return Ok(None);
-        }
-
         let Some(insert_rows) = kalamdb_observability::kdb_await_in_info_span!(
             crate::sql::executor::transaction_batch_insert::try_build_literal_insert_rows(
                 parsed_statement,
@@ -104,6 +100,79 @@ impl SqlExecutor {
         else {
             return Ok(None);
         };
+
+        if has_active_tx {
+            let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
+                return Ok(None);
+            };
+            if insert_rows.returning.is_some()
+                || !matches!(insert_rows.table_type, TableType::User | TableType::Shared)
+            {
+                return Ok(None);
+            }
+            let Some(pk_column) = insert_rows.primary_key_column.as_deref() else {
+                return Ok(None);
+            };
+            if insert_rows.table_type == TableType::Shared {
+                let provider =
+                    self.app_context.schema_registry().get_provider(table_id).ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Table provider not found for RLS check: {}",
+                            table_id
+                        ))
+                    })?;
+                let provider = (provider.as_ref() as &dyn std::any::Any)
+                    .downcast_ref::<SharedTableProvider>()
+                    .ok_or_else(|| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Shared table provider type mismatch for RLS check: {}",
+                            table_id
+                        ))
+                    })?;
+                let snapshot_commit_seq = self
+                    .app_context
+                    .transaction_coordinator()
+                    .get_handle(&transaction_id)
+                    .and_then(|handle| handle.snapshot_commit_seq())
+                    .and_then(|log_index| {
+                        kalamdb_commons::ids::RaftVersionId::try_new(
+                            log_index,
+                            kalamdb_commons::ids::MAX_ORDINAL,
+                        )
+                        .ok()
+                        .map(|packed| packed.version())
+                    });
+                kalamdb_observability::kdb_await_in_info_span!(
+                    provider.check_rows_authorized(
+                        exec_ctx.user_id(),
+                        exec_ctx.user_role(),
+                        kalamdb_commons::PolicyCommand::Insert,
+                        true,
+                        &insert_rows.rows,
+                        snapshot_commit_seq,
+                    ),
+                    "table.rls_insert"
+                )?;
+            }
+            let rows_affected = insert_rows.rows.len();
+            let user_id = crate::sql::executor::transaction_batch_insert::staged_mutation_user_id(
+                insert_rows.table_type,
+                exec_ctx,
+            );
+            let mutations = kalamdb_transactions::staged_mutation::build_insert_staged_mutations(
+                &transaction_id,
+                table_id,
+                insert_rows.table_type,
+                user_id,
+                pk_column,
+                insert_rows.rows,
+            )
+            .map_err(|error| KalamDbError::InvalidOperation(error.to_string()))?;
+            self.app_context
+                .transaction_coordinator()
+                .stage_batch(&transaction_id, mutations)?;
+            return Ok(Some(ExecutionResult::Inserted { rows_affected }));
+        }
 
         if let Some(returning) = insert_rows.returning.as_ref() {
             let returning_rows = insert_rows.rows.clone();

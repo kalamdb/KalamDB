@@ -5113,6 +5113,7 @@ dependencies = [
  "kalamdb-configs",
  "kalamdb-filestore",
  "kalamdb-functions-host",
+ "kalamdb-observability",
  "kalamdb-serialization",
  "kalamdb-store",
  "kalamdb-system",
@@ -5129,6 +5130,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "tracing",
  "v8",
 ]
 

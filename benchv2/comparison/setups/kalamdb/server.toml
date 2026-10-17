@@ -68,14 +68,10 @@ max_partitions = 1
 batch_size = 128
 
 [flush]
-default_row_limit = 100000000
-default_time_interval = 8640000
 flush_batch_size = 10000
 check_interval_seconds = 0
 
 [stream]
-default_ttl_seconds = 10
-default_max_buffer = 10000
 eviction_interval_seconds = 60
 
 [manifest_cache]
@@ -84,7 +80,6 @@ max_entries = 2000
 eviction_ttl_days = 7
 
 [limits]
-max_message_size = 1048576
 max_query_limit = 1000
 default_query_limit = 50
 
@@ -103,14 +98,12 @@ service_name = "kalamdb-server"
 timeout_ms = 3000
 
 [performance]
-request_timeout = 30
 keepalive_timeout = 75
 max_connections = 20000000
 backlog = 4096
 worker_max_blocking_threads = 4000
 client_request_timeout = 10
 client_disconnect_timeout = 5
-max_header_size = 16384
 
 [rate_limit]
 max_queries_per_sec = 100000
@@ -126,7 +119,6 @@ cache_max_entries = 10000
 cache_ttl_seconds = 600
 
 [security]
-max_request_body_size = 10485760
 max_ws_message_size = 1048576
 strict_ws_origin_check = false
 
@@ -137,7 +129,6 @@ allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Reque
 expose_headers = []
 allow_credentials = true
 max_age = 3600
-allow_private_network = false
 
 [websocket]
 client_timeout_secs = 120
@@ -164,16 +155,11 @@ timeout = 300
 
 [jobs]
 max_concurrent = 10
-max_retries = 3
-retry_backoff_ms = 100
 wal_cleanup_interval_seconds = 300
 history_cleanup_interval_seconds = 3600
 history_retention_days = 7
 
 [execution]
-handler_timeout_seconds = 30
-max_parameters = 50
-max_parameter_size_bytes = 524288
 sql_plan_cache_max_entries = 4000
 sql_plan_cache_ttl_seconds = 7200
 

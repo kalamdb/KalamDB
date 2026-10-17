@@ -257,7 +257,7 @@ async fn complete_schedule(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{JobId, SchemaId, RoutineId, ScheduleId, UserId};
+    use kalamdb_commons::{JobId, RoutineId, ScheduleId, SchemaId, UserId};
     use kalamdb_core::test_helpers::test_app_context_simple;
     use kalamdb_raft::{MetaCommand, MetaResponse, RaftExecutor};
     use kalamdb_system::JobType;

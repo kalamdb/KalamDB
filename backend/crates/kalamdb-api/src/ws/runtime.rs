@@ -4,7 +4,7 @@ use kalamdb_commons::{websocket::SerializationType, WebSocketMessage};
 use kalamdb_jobs::health_monitor::{
     decrement_websocket_sessions, increment_websocket_sessions, record_activity_now,
 };
-use kalamdb_live::{ConnectionEvent, ConnectionRegistration, NOTIFICATION_CHANNEL_CAPACITY};
+use kalamdb_live::{ConnectionEvent, ConnectionRegistration};
 use log::{debug, error, warn};
 
 use super::{
@@ -68,7 +68,27 @@ pub(super) async fn run_websocket(
             debug!("WebSocket authenticated from upgrade header: {}", connection_id);
         }
 
+        let mut pending_gaps: Vec<std::sync::Arc<str>> = Vec::new();
         loop {
+            // A full notification buffer is what caused the gap. Deliver those
+            // rows before asking the client to resume, so the resume starts
+            // from an empty buffer and the replay log can fill it.
+            if notification_rx.is_empty() {
+                for subscription_id in pending_gaps.drain(..) {
+                    warn!(
+                        "Live subscription {} lapsed on connection {}",
+                        subscription_id, connection_id
+                    );
+                    let _ = send_error(
+                        &mut session,
+                        &subscription_id,
+                        WsErrorCode::DeliveryGap,
+                        "live delivery gap; resubscribe from the last cursor",
+                        handler_context.compression_enabled,
+                    )
+                    .await;
+                }
+            }
             tokio::select! {
                 biased;
 
@@ -103,18 +123,7 @@ pub(super) async fn run_websocket(
                             break;
                         }
                         Some(ConnectionEvent::SubscriptionLapsed { subscription_id }) => {
-                            warn!(
-                                "Live subscription {} lapsed on connection {}",
-                                subscription_id, connection_id
-                            );
-                            let _ = send_error(
-                                &mut session,
-                                &subscription_id,
-                                WsErrorCode::CursorExpired,
-                                "stale resume cursor expired; resubscribe without a resume token",
-                                handler_context.compression_enabled,
-                            )
-                            .await;
+                            pending_gaps.push(subscription_id);
                         }
                         None => break,
                     }
@@ -264,7 +273,9 @@ pub(super) async fn run_websocket(
                     // Write them before returning to select so a pending ping
                     // does not sit between every notification.
                     let mut disconnected = false;
-                    for _ in 1..NOTIFICATION_CHANNEL_CAPACITY {
+                    // Drain a short burst, then return to select so heartbeats
+                    // still run when the buffer is large.
+                    for _ in 1..128 {
                         match notification_rx.try_recv() {
                             Ok(next) => {
                                 if send_wire_notification(&mut session, next.as_ref(), ser, handler_context.compression_enabled).await.is_err() {

@@ -10,7 +10,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        SchemaId, ReadContext, Role, StorageId, TableId, TableName,
+        ReadContext, Role, SchemaId, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,

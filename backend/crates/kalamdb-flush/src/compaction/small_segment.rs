@@ -112,8 +112,8 @@ struct CompactedWriteResult {
     filename:     String,
     row_count:    u64,
     size_bytes:   u64,
-    min_version:      kalamdb_commons::ids::VersionId,
-    max_version:      kalamdb_commons::ids::VersionId,
+    min_version:  kalamdb_commons::ids::VersionId,
+    max_version:  kalamdb_commons::ids::VersionId,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
@@ -802,7 +802,9 @@ fn optional_column_index(batch: &RecordBatch, column_name: &str) -> Option<usize
 fn seq_at(batch: &RecordBatch, seq_idx: usize, row_idx: usize) -> Result<i64> {
     let seq_col = batch.column(seq_idx);
     if seq_col.is_null(row_idx) {
-        return Err(FlushError::InvalidOperation("Compaction input row has NULL _version".to_string()));
+        return Err(FlushError::InvalidOperation(
+            "Compaction input row has NULL _version".to_string(),
+        ));
     }
 
     if let Some(array) = seq_col.as_any().downcast_ref::<Int64Array>() {
@@ -860,15 +862,16 @@ fn primary_key_at(
 #[derive(Default)]
 struct CompactionWriteAccumulator {
     row_count:    u64,
-    min_version:      Option<kalamdb_commons::ids::VersionId>,
-    max_version:      Option<kalamdb_commons::ids::VersionId>,
+    min_version:  Option<kalamdb_commons::ids::VersionId>,
+    max_version:  Option<kalamdb_commons::ids::VersionId>,
     column_stats: HashMap<u64, ColumnStats>,
 }
 
 impl CompactionWriteAccumulator {
     fn observe(&mut self, batch: &RecordBatch, indexed_columns: &[(u64, String)]) {
         self.row_count = self.row_count.saturating_add(batch.num_rows() as u64);
-        let (batch_min_version, batch_max_version) = FlushManifestHelper::extract_version_range(batch);
+        let (batch_min_version, batch_max_version) =
+            FlushManifestHelper::extract_version_range(batch);
         self.min_version = Some(
             self.min_version
                 .map_or(batch_min_version, |current| std::cmp::min(current, batch_min_version)),
@@ -882,7 +885,9 @@ impl CompactionWriteAccumulator {
         merge_column_stats(&mut self.column_stats, batch_stats);
     }
 
-    fn version_range(&self) -> Result<(kalamdb_commons::ids::VersionId, kalamdb_commons::ids::VersionId)> {
+    fn version_range(
+        &self,
+    ) -> Result<(kalamdb_commons::ids::VersionId, kalamdb_commons::ids::VersionId)> {
         match (self.min_version, self.max_version) {
             (Some(min_version), Some(max_version)) => Ok((min_version, max_version)),
             _ => Err(FlushError::InvalidOperation(

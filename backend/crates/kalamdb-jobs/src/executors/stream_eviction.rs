@@ -27,9 +27,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use kalamdb_commons::{schemas::TableType, TableId};
 #[cfg(test)]
 use kalamdb_commons::ids::VersionId;
+use kalamdb_commons::{schemas::TableType, TableId};
 #[cfg(test)]
 use kalamdb_core::schema_registry::TablesSchemaRegistryAdapter;
 use kalamdb_core::{
@@ -268,7 +268,7 @@ mod tests {
             schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
             StreamTableRow, TableId, TableName, UserId,
         },
-        ChangeNotification, JobId, SchemaId, NodeId,
+        ChangeNotification, JobId, NodeId, SchemaId,
     };
     use kalamdb_core::{
         app_context::AppContext,

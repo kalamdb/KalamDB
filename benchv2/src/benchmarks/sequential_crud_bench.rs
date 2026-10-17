@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Rapid-fire CRUD cycle: INSERT → UPDATE → SELECT → DELETE per iteration.
 /// Tests the full DML lifecycle as a sequential pipeline.

@@ -23,8 +23,6 @@ pub struct ServerConfig {
     #[serde(default)]
     pub manifest_cache: ManifestCacheSettings,
     #[serde(default)]
-    pub retention: RetentionSettings,
-    #[serde(default)]
     pub stream: StreamSettings,
     #[serde(default)]
     pub topics: TopicSettings,
@@ -42,8 +40,6 @@ pub struct ServerConfig {
     pub rate_limit: RateLimitSettings,
     #[serde(default, alias = "authentication")]
     pub auth: AuthSettings,
-    #[serde(default)]
-    pub user_management: UserManagementSettings,
     #[serde(default)]
     pub shutdown: ShutdownSettings,
     #[serde(default)]
@@ -87,17 +83,14 @@ pub struct CorsSettings {
     #[serde(default)]
     pub expose_headers: Vec<String>,
 
-    /// Allow credentials (cookies, authorization headers). Default: true
-    #[serde(default = "default_true")]
+    /// Allow credentials (cookies, authorization headers). Default: false.
+    /// Enable this only with an explicit origin allowlist.
+    #[serde(default)]
     pub allow_credentials: bool,
 
     /// Preflight cache max age in seconds. Default: 3600 (1 hour)
     #[serde(default = "default_cors_max_age")]
     pub max_age: u64,
-
-    /// Allow requests without Origin header. Default: false
-    #[serde(default)]
-    pub allow_private_network: bool,
 }
 
 fn default_cors_methods() -> Vec<String> {
@@ -132,16 +125,13 @@ impl Default for CorsSettings {
             // specific browser-origin behavior through config or env overrides.
             // The runtime treats an empty list as wildcard CORS, but startup
             // validation rejects that for non-localhost HTTP exposure.
-            allowed_origins:       Vec::new(),
-            allowed_methods:       default_cors_methods(),
-            allowed_headers:       default_cors_headers(),
-            expose_headers:        Vec::new(),
-            // SECURITY: Default to false to prevent unsafe wildcard+credentials.
-            // Users must explicitly enable credentials and configure
-            // allowed_origins for credentialed cross-origin traffic.
-            allow_credentials:     false,
-            max_age:               default_cors_max_age(),
-            allow_private_network: false,
+            allowed_origins:   Vec::new(),
+            allowed_methods:   default_cors_methods(),
+            allowed_headers:   default_cors_headers(),
+            expose_headers:    Vec::new(),
+            // Credentialed CORS requires an explicit origin allowlist.
+            allow_credentials: false,
+            max_age:           default_cors_max_age(),
         }
     }
 }
@@ -165,10 +155,6 @@ pub struct SecuritySettings {
     /// Enable strict origin checking for WebSocket (reject requests with no Origin header)
     #[serde(default)]
     pub strict_ws_origin_check: bool,
-
-    /// Maximum request body size in bytes (default: 10MB)
-    #[serde(default = "default_max_request_body_size")]
-    pub max_request_body_size: usize,
 }
 
 impl Default for SecuritySettings {
@@ -178,7 +164,6 @@ impl Default for SecuritySettings {
             trusted_proxy_ranges:   Vec::new(),
             max_ws_message_size:    default_max_ws_message_size(),
             strict_ws_origin_check: false,
-            max_request_body_size:  default_max_request_body_size(),
         }
     }
 }
@@ -231,9 +216,6 @@ pub struct ServerSettings {
     pub public_origin: Option<String>,
     #[serde(default = "default_workers")]
     pub workers:       usize,
-    /// API version prefix for endpoints (default: "v1")
-    #[serde(default = "default_api_version")]
-    pub api_version:   String,
     /// Enable HTTP/2 protocol support (default: true)
     /// When true, server uses bind_auto_h2c() for automatic HTTP/1.1 and HTTP/2 cleartext
     /// negotiation When false, server only supports HTTP/1.1
@@ -517,9 +499,8 @@ pub struct RocksDbSettings {
     #[serde(default)]
     pub disable_wal: bool,
 
-    /// Compact all column families on startup (default: true)
-    /// This reduces the number of SST files and prevents "Too many open files" errors.
-    /// May increase startup time for large databases.
+    /// Compact all column families on startup (default: false).
+    /// Enabling this reduces SST file count at the cost of a longer startup.
     #[serde(default = "default_rocksdb_compact_on_startup")]
     pub compact_on_startup: bool,
 }
@@ -806,8 +787,6 @@ impl Default for RemoteStorageTimeouts {
 /// Limits settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsSettings {
-    #[serde(default = "default_max_message_size")]
-    pub max_message_size:    usize,
     #[serde(default = "default_max_query_limit")]
     pub max_query_limit:     usize,
     #[serde(default = "default_query_limit")]
@@ -817,7 +796,6 @@ pub struct LimitsSettings {
 impl Default for LimitsSettings {
     fn default() -> Self {
         Self {
-            max_message_size:    default_max_message_size(),
             max_query_limit:     default_max_query_limit(),
             default_query_limit: default_query_limit(),
         }
@@ -845,8 +823,8 @@ pub struct LoggingSettings {
     /// parquet = "warn"
     #[serde(default)]
     pub targets:                 HashMap<String, String>,
-    /// Slow query logging threshold in milliseconds (default: 1000ms = 1 second)
-    /// Queries taking longer than this threshold will be logged to slow.jsonl
+    /// Slow query logging threshold in milliseconds (default: 1200).
+    /// Queries taking longer than this threshold are logged to slow.jsonl.
     #[serde(default = "default_slow_query_threshold_ms")]
     pub slow_query_threshold_ms: u64,
     /// OpenTelemetry OTLP export settings (Jaeger/Tempo/Collector)
@@ -891,14 +869,11 @@ impl Default for OtlpSettings {
 /// Performance settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceSettings {
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout:             u64,
     #[serde(default = "default_keepalive_timeout")]
     pub keepalive_timeout:           u64,
     #[serde(default = "default_max_connections")]
     pub max_connections:             usize,
-    /// Backlog size for pending connections (default: 2048)
-    /// Increase for high-traffic servers
+    /// Backlog size for pending connections (default: 4096).
     #[serde(default = "default_backlog")]
     pub backlog:                     u32,
     /// Number of tokio runtime worker threads (default: 0 = auto, uses num_cpus capped at 4)
@@ -919,43 +894,60 @@ pub struct PerformanceSettings {
     /// Time allowed for graceful connection shutdown
     #[serde(default = "default_client_disconnect_timeout")]
     pub client_disconnect_timeout:   u64,
-    /// Maximum HTTP header size in bytes (default: 16384 = 16KB)
-    /// Increase if you have large JWT tokens or custom headers
-    #[serde(default = "default_max_header_size")]
-    pub max_header_size:             usize,
+}
+
+impl Default for PerformanceSettings {
+    fn default() -> Self {
+        Self {
+            keepalive_timeout:           default_keepalive_timeout(),
+            max_connections:             default_max_connections(),
+            backlog:                     default_backlog(),
+            tokio_worker_threads:        0,
+            worker_max_blocking_threads: default_worker_max_blocking_threads(),
+            client_request_timeout:      default_client_request_timeout(),
+            client_disconnect_timeout:   default_client_disconnect_timeout(),
+        }
+    }
+}
+
+impl Default for LoggingSettings {
+    fn default() -> Self {
+        Self {
+            level:                   default_log_level(),
+            logs_path:               default_logs_path(),
+            log_to_console:          default_true(),
+            format:                  default_log_format(),
+            targets:                 HashMap::new(),
+            slow_query_threshold_ms: default_slow_query_threshold_ms(),
+            otlp:                    OtlpSettings::default(),
+        }
+    }
 }
 
 /// DataFusion settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFusionSettings {
-    /// Memory limit for query execution in bytes (default: 256MB)
+    /// Memory limit for query execution in bytes (default: 32MB).
     #[serde(default = "default_datafusion_memory_limit")]
     pub memory_limit: usize,
 
-    /// Number of parallel threads for query execution (default: number of CPU cores)
+    /// Parallel threads for query execution. `0` uses the host CPU count.
+    /// Default: 2.
     #[serde(default = "default_datafusion_parallelism")]
     pub query_parallelism: usize,
 
-    /// Maximum number of partitions per query (default: 8)
+    /// Maximum number of partitions per query (default: 4).
     #[serde(default = "default_datafusion_max_partitions")]
     pub max_partitions: usize,
 
-    /// Batch size for record processing (default: 2048)
+    /// Batch size for record processing (default: 1024).
     #[serde(default = "default_datafusion_batch_size")]
     pub batch_size: usize,
 }
 
-/// Flush policy defaults
+/// Background flush scheduler settings. Per-table flush policy is set on the table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushSettings {
-    /// Default row limit for flush (default: 10000 rows)
-    #[serde(default = "default_flush_row_limit")]
-    pub default_row_limit: usize,
-
-    /// Default time interval for flush in seconds (default: 300s = 5 minutes)
-    #[serde(default = "default_flush_time_interval")]
-    pub default_time_interval: u64,
-
     /// Batch size for flush operations (default: 10000 rows)
     /// Controls how many rows are loaded into memory at once during flush
     /// Lower values reduce memory usage but may increase flush duration
@@ -966,6 +958,13 @@ pub struct FlushSettings {
     /// pending writes and creates flush jobs (default: 60s). Set to 0 to disable.
     #[serde(default = "default_flush_check_interval")]
     pub check_interval_seconds: u64,
+
+    /// When true, a due flush drops superseded hot versions and leaves the
+    /// current row in RocksDB. Cold segments stay the archive of rows that
+    /// were flushed while this was false. Current-row queries then stay on
+    /// the hot key.
+    #[serde(default)]
+    pub retain_latest_hot: bool,
 
     /// Optional post-flush compaction of trailing Parquet segments.
     #[serde(default)]
@@ -1047,23 +1046,13 @@ impl Default for ManifestCacheSettings {
     }
 }
 
-/// Retention policy defaults
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetentionSettings {}
-
-/// Stream table defaults
+/// Stream table defaults.
+///
+/// Per-table TTL is set on `CREATE TABLE`, not here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamSettings {
-    /// Default TTL for stream table rows in seconds (default: 10 seconds)
-    #[serde(default = "default_stream_ttl")]
-    pub default_ttl_seconds: u64,
-
-    /// Default maximum buffer size for stream tables (default: 10000 rows)
-    #[serde(default = "default_stream_max_buffer")]
-    pub default_max_buffer: usize,
-
-    /// Stream eviction interval in seconds (default: 60 seconds = 1 minute)
-    /// How often to check and evict expired events from stream tables
+    /// How often to check and evict expired events from stream tables.
+    /// Default: 60 seconds. Set to 0 to disable the scheduler.
     #[serde(default = "default_stream_eviction_interval")]
     pub eviction_interval_seconds: u64,
 }
@@ -1298,32 +1287,12 @@ impl Default for FunctionsRuntimeSettings {
     }
 }
 
-/// User management cleanup settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserManagementSettings {
-    /// Grace period (in days) before soft-deleted users are purged
-    #[serde(default = "default_user_deletion_grace_period")]
-    pub deletion_grace_period_days: i64,
-
-    /// Cron expression for scheduling the cleanup job
-    #[serde(default = "default_cleanup_job_schedule")]
-    pub cleanup_job_schedule: String,
-}
-
-/// Job management settings (Phase 9, T163)
+/// Job management settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobsSettings {
     /// Maximum number of concurrent jobs (default: 10)
     #[serde(default = "default_jobs_max_concurrent")]
     pub max_concurrent: u32,
-
-    /// Maximum number of retry attempts (default: 3)
-    #[serde(default = "default_jobs_max_retries")]
-    pub max_retries: u32,
-
-    /// Initial retry backoff delay in milliseconds (default: 100ms)
-    #[serde(default = "default_jobs_retry_backoff_ms")]
-    pub retry_backoff_ms: u64,
 
     /// How often the jobs runner flushes all RocksDB memtables so stale WAL
     /// files can be reclaimed (default: 300s = 5 minutes). Set to 0 to disable.
@@ -1348,22 +1317,10 @@ pub struct JobsSettings {
     pub max_runtime_seconds: u64,
 }
 
-/// SQL execution settings (Phase 11, T026)
+/// SQL execution settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionSettings {
-    /// Handler execution timeout in seconds (default: 30)
-    #[serde(default = "default_handler_timeout_seconds")]
-    pub handler_timeout_seconds: u64,
-
-    /// Maximum number of query parameters (default: 50)
-    #[serde(default = "default_max_parameters")]
-    pub max_parameters: usize,
-
-    /// Maximum size of a single parameter in bytes (default: 524288 = 512KB)
-    #[serde(default = "default_max_parameter_size_bytes")]
-    pub max_parameter_size_bytes: usize,
-
-    /// Maximum number of cached SQL logical plans (default: 1000)
+    /// Maximum number of cached SQL logical plans (default: 200).
     #[serde(default = "default_sql_plan_cache_max_entries")]
     pub sql_plan_cache_max_entries: u64,
 
@@ -1429,7 +1386,7 @@ pub struct RateLimitSettings {
     #[serde(default = "default_enable_connection_protection")]
     pub enable_connection_protection: bool,
 
-    /// Maximum cached entries for rate limiting state (default: 100,000)
+    /// Maximum cached entries for rate limiting state (default: 1,000).
     #[serde(default = "default_rate_limit_cache_max_entries")]
     pub cache_max_entries: u64,
 
@@ -1631,26 +1588,17 @@ impl Default for DataFusionSettings {
 impl Default for FlushSettings {
     fn default() -> Self {
         Self {
-            default_row_limit:      default_flush_row_limit(),
-            default_time_interval:  default_flush_time_interval(),
             flush_batch_size:       default_flush_batch_size(),
             check_interval_seconds: default_flush_check_interval(),
+            retain_latest_hot:      false,
             compaction:             FlushCompactionSettings::default(),
         }
-    }
-}
-
-impl Default for RetentionSettings {
-    fn default() -> Self {
-        Self {}
     }
 }
 
 impl Default for StreamSettings {
     fn default() -> Self {
         Self {
-            default_ttl_seconds:       default_stream_ttl(),
-            default_max_buffer:        default_stream_max_buffer(),
             eviction_interval_seconds: default_stream_eviction_interval(),
         }
     }
@@ -1674,25 +1622,14 @@ impl Default for RateLimitSettings {
     }
 }
 
-impl Default for UserManagementSettings {
-    fn default() -> Self {
-        Self {
-            deletion_grace_period_days: default_user_deletion_grace_period(),
-            cleanup_job_schedule:       default_cleanup_job_schedule(),
-        }
-    }
-}
-
 impl Default for JobsSettings {
     fn default() -> Self {
         Self {
-            max_concurrent: default_jobs_max_concurrent(),
-            max_retries: default_jobs_max_retries(),
-            retry_backoff_ms: default_jobs_retry_backoff_ms(),
-            wal_cleanup_interval_seconds: default_jobs_wal_cleanup_interval(),
+            max_concurrent:                   default_jobs_max_concurrent(),
+            wal_cleanup_interval_seconds:     default_jobs_wal_cleanup_interval(),
             history_cleanup_interval_seconds: default_jobs_history_cleanup_interval(),
-            history_retention_days: default_jobs_history_retention_days(),
-            max_runtime_seconds: default_jobs_max_runtime_seconds(),
+            history_retention_days:           default_jobs_history_retention_days(),
+            max_runtime_seconds:              default_jobs_max_runtime_seconds(),
         }
     }
 }
@@ -1700,9 +1637,6 @@ impl Default for JobsSettings {
 impl Default for ExecutionSettings {
     fn default() -> Self {
         Self {
-            handler_timeout_seconds:    default_handler_timeout_seconds(),
-            max_parameters:             default_max_parameters(),
-            max_parameter_size_bytes:   default_max_parameter_size_bytes(),
             sql_plan_cache_max_entries: default_sql_plan_cache_max_entries(),
             sql_plan_cache_ttl_seconds: default_sql_plan_cache_ttl_seconds(),
         }
@@ -1728,7 +1662,6 @@ impl Default for ServerConfig {
                 port:          2900,
                 public_origin: None,
                 workers:       0,
-                api_version:   default_api_version(),
                 enable_http2:  default_enable_http2(),
                 ui_path:       default_ui_path(),
             },
@@ -1740,37 +1673,14 @@ impl Default for ServerConfig {
                 remote_timeouts:        RemoteStorageTimeouts::default(),
                 parquet:                ParquetWriteSettings::default(),
             },
-            limits: LimitsSettings {
-                max_message_size:    1048576,
-                max_query_limit:     1000,
-                default_query_limit: 50,
-            },
-            logging: LoggingSettings {
-                level:                   "info".to_string(),
-                logs_path:               default_logs_path(),
-                log_to_console:          true,
-                format:                  "compact".to_string(),
-                targets:                 HashMap::new(),
-                slow_query_threshold_ms: default_slow_query_threshold_ms(),
-                otlp:                    OtlpSettings::default(),
-            },
-            performance: PerformanceSettings {
-                request_timeout:             30,
-                keepalive_timeout:           75,
-                max_connections:             25000,
-                backlog:                     default_backlog(),
-                tokio_worker_threads:        0,
-                worker_max_blocking_threads: default_worker_max_blocking_threads(),
-                client_request_timeout:      default_client_request_timeout(),
-                client_disconnect_timeout:   default_client_disconnect_timeout(),
-                max_header_size:             default_max_header_size(),
-            },
+            limits: LimitsSettings::default(),
+            logging: LoggingSettings::default(),
+            performance: PerformanceSettings::default(),
             transaction_timeout_secs: default_transaction_timeout_secs(),
             max_transaction_buffer_bytes: default_max_transaction_buffer_bytes(),
             datafusion: DataFusionSettings::default(),
             flush: FlushSettings::default(),
             manifest_cache: ManifestCacheSettings::default(),
-            retention: RetentionSettings::default(),
             stream: StreamSettings::default(),
             topics: TopicSettings::default(),
             websocket: WebSocketSettings::default(),
@@ -1779,7 +1689,6 @@ impl Default for ServerConfig {
             functions: FunctionsSettings::default(),
             rate_limit: RateLimitSettings::default(),
             auth: AuthSettings::default(),
-            user_management: UserManagementSettings::default(),
             shutdown: ShutdownSettings::default(),
             jobs: JobsSettings::default(),
             execution: ExecutionSettings::default(),

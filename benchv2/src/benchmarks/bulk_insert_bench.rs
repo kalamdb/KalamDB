@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Benchmark: Bulk INSERT (50 rows per statement via multi-value INSERT).
 pub struct BulkInsertBench;
@@ -33,7 +30,8 @@ impl Benchmark for BulkInsertBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.bulk_insert_bench (id INT PRIMARY KEY, name TEXT, value DOUBLE)",
+                    "CREATE TABLE {}.bulk_insert_bench (id INT PRIMARY KEY, name TEXT, value \
+                     DOUBLE)",
                     config.namespace
                 ))
                 .await?;

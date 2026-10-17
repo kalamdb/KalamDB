@@ -51,7 +51,7 @@ fn get_url(base: &str) -> String {
 
 fn insert_procedure_sql() -> String {
     format!(
-        r#"CREATE OR REPLACE PROCEDURE {ns}.insert_message(
+        r#"CREATE OR REPLACE FUNCTION {ns}.insert_message(
   id INT,
   owner TEXT,
   room TEXT,
@@ -71,7 +71,7 @@ $$"#,
 
 fn get_procedure_sql() -> String {
     format!(
-        r#"CREATE OR REPLACE PROCEDURE {ns}.get_message(
+        r#"CREATE OR REPLACE FUNCTION {ns}.get_message(
   id INT
 )
 RETURNS JSON
@@ -294,7 +294,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
+        &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
         None,
     )
     .await;
@@ -302,7 +302,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
+        &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
         None,
     )
     .await;

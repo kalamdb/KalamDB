@@ -54,6 +54,7 @@ impl SharedTableProvider {
         row_data: Row,
         validate_unique_pk: bool,
         version: VersionId,
+        hot_predecessor: Option<(SharedTableRowId, SharedTableRow)>,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
         let span = tracing::debug_span!(
             "table.insert",
@@ -71,9 +72,15 @@ impl SharedTableProvider {
                 std::slice::from_ref(&row_data),
             )?;
 
-            if validate_unique_pk {
-                base::ensure_unique_pk_value(self, None, &row_data).await?;
-            }
+            // A row written earlier in this commit is still buffered, so the
+            // storage lookup cannot see it. The caller passes that row.
+            let predecessor = if hot_predecessor.is_some() {
+                hot_predecessor
+            } else if validate_unique_pk {
+                self.insert_predecessor(&row_data).await?
+            } else {
+                None
+            };
 
             let seq_id = version;
 
@@ -84,10 +91,6 @@ impl SharedTableProvider {
             };
             let row_key = seq_id;
 
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to insert shared table row: {}", e))
-            })?;
-
             if let Err(e) = self.stage_vector_upsert(seq_id, &entity.fields).await {
                 log::warn!(
                     "Failed to stage vector upsert for table={}, seq={}: {}",
@@ -97,6 +100,22 @@ impl SharedTableProvider {
                 );
             }
 
+            let notification_service = self.core.services.notification_service.clone();
+            let table_id = self.core.table_id().clone();
+            let watched = self.core.has_topic_routes(&table_id)
+                || notification_service.has_subscribers(None, &table_id);
+            let notification = watched.then(|| {
+                ChangeNotification::insert(table_id, Self::build_notification_row(&entity))
+            });
+
+            self.write_replaced_row(
+                predecessor,
+                row_key,
+                entity,
+                "Failed to insert shared table row",
+            )
+            .await?;
+
             let manifest_service = self.core.services.manifest_service.clone();
             if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
                 log::warn!(
@@ -105,16 +124,6 @@ impl SharedTableProvider {
                     e
                 );
             }
-
-            let notification_service = self.core.services.notification_service.clone();
-            let table_id = self.core.table_id().clone();
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(None, &table_id);
-            let notification = crate::versioned::insert_notification_when_watched(
-                has_topics || has_live_subs,
-                table_id,
-                Self::build_notification_row(&entity),
-            );
 
             Ok((row_key, notification))
         }
@@ -127,7 +136,7 @@ impl SharedTableProvider {
         row_data: Row,
         version: VersionId,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, true, version).await
+        self.insert_deferred_internal(row_data, true, version, None).await
     }
 
     pub async fn insert_deferred_prevalidated(
@@ -135,7 +144,17 @@ impl SharedTableProvider {
         row_data: Row,
         version: VersionId,
     ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
-        self.insert_deferred_internal(row_data, false, version).await
+        self.insert_deferred_internal(row_data, false, version, None).await
+    }
+
+    /// Insert over a hot row already staged in this commit.
+    pub async fn insert_over_hot_deferred(
+        &self,
+        row_data: Row,
+        version: VersionId,
+        previous: (SharedTableRowId, SharedTableRow),
+    ) -> Result<(SharedTableRowId, Option<ChangeNotification>), KalamDbError> {
+        self.insert_deferred_internal(row_data, false, version, Some(previous)).await
     }
 
     async fn persist_insert_batch_rows(
@@ -162,9 +181,11 @@ impl SharedTableProvider {
         )?;
 
         let row_count = coerced_rows.len();
+        let mut replaced_tombstones: HashMap<String, (SharedTableRowId, SharedTableRow)> =
+            HashMap::new();
 
         if validate_unique_pk {
-            kalamdb_observability::kdb_await_in_info_span!(
+            replaced_tombstones = kalamdb_observability::kdb_await_in_info_span!(
                 async {
                     let pk_name = self.primary_key_field_name();
                     let mut pk_values_to_check: Vec<(String, ScalarValue)> =
@@ -199,11 +220,14 @@ impl SharedTableProvider {
                         }
 
                         let store = self.store.clone();
-                        let (hot_duplicate, tombstoned_pks) = if pk_prefixes.len() <= 1 {
+                        let hot_scan = if pk_prefixes.len() <= 1 {
                             scan_hot_pk_insert(&store, &pk_prefixes)?
                         } else {
                             tokio::task::spawn_blocking(
-                        move || -> Result<(Option<String>, HashSet<String>), KalamDbError> {
+                        move || -> Result<
+                            crate::versioned::HotInsertScan<SharedTableRowId, SharedTableRow>,
+                            KalamDbError,
+                        > {
                             scan_hot_pk_insert(&store, &pk_prefixes)
                         },
                     )
@@ -213,7 +237,7 @@ impl SharedTableProvider {
                     })??
                         };
 
-                        if let Some(dup_pk) = hot_duplicate {
+                        if let Some(dup_pk) = hot_scan.duplicate {
                             return Err(KalamDbError::AlreadyExists(format!(
                                 "Primary key violation: value '{}' already exists in column '{}'",
                                 dup_pk, pk_name
@@ -224,7 +248,7 @@ impl SharedTableProvider {
                         let mut pk_values_for_cold_check: Vec<String> =
                             Vec::with_capacity(pk_values_to_check.len());
                         for (pk_str, _pk_value) in &pk_values_to_check {
-                            if !tombstoned_pks.contains(pk_str) {
+                            if !hot_scan.tombstones.contains_key(pk_str) {
                                 pk_values_for_cold_check.push(pk_str.clone());
                             }
                         }
@@ -248,8 +272,9 @@ impl SharedTableProvider {
                                 )));
                             }
                         }
+                        return Ok(hot_scan.tombstones);
                     }
-                    Ok(())
+                    Ok(HashMap::new())
                 },
                 "table.pk_unique"
             )?;
@@ -277,9 +302,28 @@ impl SharedTableProvider {
         }
 
         let store = self.store.clone();
-        store.insert_batch(&entries).map_err(|e| {
-            KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {}", e))
-        })?;
+        if replaced_tombstones.is_empty() {
+            store.insert_batch(&entries).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {}", e))
+            })?;
+        } else {
+            let pk_name = self.primary_key_field_name();
+            let items = entries
+                .iter()
+                .map(|(key, entity)| {
+                    let previous = crate::utils::unified_dml::extract_user_pk_value(
+                        &entity.fields,
+                        pk_name,
+                    )
+                    .ok()
+                    .and_then(|pk| replaced_tombstones.remove(&pk));
+                    (previous, *key, entity.clone())
+                })
+                .collect::<Vec<_>>();
+            store.replace_batch(&items).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Failed to batch insert table rows: {}", e))
+            })?;
+        }
 
         if let Err(e) = self.stage_vector_upsert_batch(&entries).await {
             log::warn!(
@@ -416,6 +460,20 @@ impl SharedTableProvider {
         updates: Row,
         version: VersionId,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
+        Ok(self
+            .update_by_pk_value_deferred_with_hot(pk_value, updates, version, None)
+            .await?
+            .map(|(row_key, _row, notification)| (row_key, notification)))
+    }
+
+    /// Update `pk_value`, using `known_hot` when this commit already wrote that key.
+    pub async fn update_by_pk_value_deferred_with_hot(
+        &self,
+        pk_value: &str,
+        updates: Row,
+        version: VersionId,
+        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.update",
             table_id = %self.core.table_id(),
@@ -431,33 +489,34 @@ impl SharedTableProvider {
             })?;
 
             let pk_name = self.primary_key_field_name().to_string();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-            let pk_value_scalar =
-                kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
-                    .map_err(KalamDbError::InvalidOperation)?;
-
-            let (_latest_key, latest_row) =
-                if let Some(result) = self.find_by_pk(&pk_value_scalar).await? {
-                    result
-                } else if self.pk_tombstoned_in_hot(&pk_value_scalar).await? {
+            let (previous, latest_row) = if let Some((key, row)) = known_hot {
+                if row._deleted {
                     return Err(KalamDbError::NotFound(format!(
                         "Row with {}={} was deleted",
                         pk_name, pk_value
                     )));
-                } else {
-                    base::find_row_by_pk(self, None, pk_value).await?.ok_or_else(|| {
-                        KalamDbError::NotFound(format!(
+                }
+                (Some((key, row.clone())), row)
+            } else {
+                match self.load_mutation_target(pk_value).await? {
+                    crate::versioned::MutationTarget::Hot(key, row) => {
+                        (Some((key, row.clone())), row)
+                    },
+                    crate::versioned::MutationTarget::Cold(row) => (None, row),
+                    crate::versioned::MutationTarget::Tombstoned => {
+                        return Err(KalamDbError::NotFound(format!(
+                            "Row with {}={} was deleted",
+                            pk_name, pk_value
+                        )));
+                    },
+                    crate::versioned::MutationTarget::Missing => {
+                        return Err(KalamDbError::NotFound(format!(
                             "Row with {}={} not found (checked both hot and cold storage)",
                             pk_name, pk_value
-                        ))
-                    })?
-                };
+                        )));
+                    },
+                }
+            };
 
             let mut merged = latest_row.fields.values.clone();
             for (key, value) in updates.values {
@@ -467,7 +526,7 @@ impl SharedTableProvider {
 
             crate::utils::datafusion_dml::validate_not_null_with_set(
                 self.core.non_null_columns(),
-                &[new_fields.clone()],
+                std::slice::from_ref(&new_fields),
             )?;
 
             if new_fields == latest_row.fields {
@@ -487,9 +546,6 @@ impl SharedTableProvider {
                 fields:   new_fields,
             };
             let row_key = seq_id;
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
-            })?;
 
             if let Err(e) = self.stage_vector_upsert(seq_id, &entity.fields).await {
                 log::warn!(
@@ -500,20 +556,11 @@ impl SharedTableProvider {
                 );
             }
 
-            let manifest_service = self.core.services.manifest_service.clone();
-            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
-                log::warn!(
-                    "Failed to mark manifest as pending_write for {}: {}",
-                    self.core.table_id(),
-                    e
-                );
-            }
-
             let notification_service = self.core.services.notification_service.clone();
             let table_id = self.core.table_id().clone();
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(None, &table_id);
-            let notification = if has_topics || has_live_subs {
+            let watched = self.core.has_topic_routes(&table_id)
+                || notification_service.has_subscribers(None, &table_id);
+            let notification = if watched {
                 let old_row = Self::build_notification_row(&latest_row);
                 let new_row = Self::build_notification_row(&entity);
                 Some(ChangeNotification::update(
@@ -526,7 +573,24 @@ impl SharedTableProvider {
                 None
             };
 
-            Ok(Some((row_key, notification)))
+            self.write_replaced_row(
+                previous,
+                row_key,
+                entity.clone(),
+                "Failed to update shared table row",
+            )
+            .await?;
+
+            let manifest_service = self.core.services.manifest_service.clone();
+            if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
+                log::warn!(
+                    "Failed to mark manifest as pending_write for {}: {}",
+                    self.core.table_id(),
+                    e
+                );
+            }
+
+            Ok(Some((row_key, entity, notification)))
         }
         .instrument(span)
         .await
@@ -537,6 +601,19 @@ impl SharedTableProvider {
         pk_value: &str,
         version: VersionId,
     ) -> Result<Option<(SharedTableRowId, Option<ChangeNotification>)>, KalamDbError> {
+        Ok(self
+            .delete_by_pk_value_deferred_with_hot(pk_value, version, None)
+            .await?
+            .map(|(row_key, _row, notification)| (row_key, notification)))
+    }
+
+    /// Delete `pk_value`, using `known_hot` when this commit already wrote that key.
+    pub async fn delete_by_pk_value_deferred_with_hot(
+        &self,
+        pk_value: &str,
+        version: VersionId,
+        known_hot: Option<(SharedTableRowId, SharedTableRow)>,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow, Option<ChangeNotification>)>, KalamDbError> {
         let span = tracing::debug_span!(
             "table.delete",
             table_id = %self.core.table_id(),
@@ -546,27 +623,19 @@ impl SharedTableProvider {
         );
         async move {
             let _authorization_mutation = self.begin_authorization_mutation();
-            let pk_name = self.primary_key_field_name().to_string();
-            let schema = self.schema();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-            let pk_value_scalar =
-                kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
-                    .map_err(KalamDbError::InvalidOperation)?;
-
-            let latest_row = if let Some((_key, row)) = self.find_by_pk(&pk_value_scalar).await? {
-                row
-            } else if self.pk_tombstoned_in_hot(&pk_value_scalar).await? {
-                return Ok(None);
+            let (previous, latest_row) = if let Some((key, row)) = known_hot {
+                if row._deleted {
+                    return Ok(None);
+                }
+                (Some((key, row.clone())), row)
             } else {
-                match base::find_row_by_pk(self, None, pk_value).await? {
-                    Some((_key, row)) => row,
-                    None => return Ok(None),
+                match self.load_mutation_target(pk_value).await? {
+                    crate::versioned::MutationTarget::Hot(key, row) => {
+                        (Some((key, row.clone())), row)
+                    },
+                    crate::versioned::MutationTarget::Cold(row) => (None, row),
+                    crate::versioned::MutationTarget::Tombstoned
+                    | crate::versioned::MutationTarget::Missing => return Ok(None),
                 }
             };
 
@@ -575,12 +644,9 @@ impl SharedTableProvider {
             let entity = SharedTableRow {
                 _version: seq_id,
                 _deleted: true,
-                fields:   Row::new(latest_row.fields.values.clone()),
+                fields:   latest_row.fields,
             };
             let row_key = seq_id;
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
-            })?;
 
             if let Err(e) = self.stage_vector_delete(seq_id, pk_value).await {
                 log::warn!(
@@ -592,6 +658,24 @@ impl SharedTableProvider {
                 );
             }
 
+            let notification_service = self.core.services.notification_service.clone();
+            let table_id = self.core.table_id().clone();
+            let watched = self.core.has_topic_routes(&table_id)
+                || notification_service.has_subscribers(None, &table_id);
+            let notification = if watched {
+                Some(self.build_delete_notification(table_id, Self::build_notification_row(&entity)))
+            } else {
+                None
+            };
+
+            self.write_replaced_row(
+                previous,
+                row_key,
+                entity.clone(),
+                "Failed to delete shared table row",
+            )
+            .await?;
+
             let manifest_service = self.core.services.manifest_service.clone();
             if let Err(e) = manifest_service.mark_pending_write(self.core.table_id(), None) {
                 log::warn!(
@@ -601,21 +685,186 @@ impl SharedTableProvider {
                 );
             }
 
-            let notification_service = self.core.services.notification_service.clone();
-            let table_id = self.core.table_id().clone();
-            let has_topics = self.core.has_topic_routes(&table_id);
-            let has_live_subs = notification_service.has_subscribers(None, &table_id);
-            let notification = if has_topics || has_live_subs {
-                Some(
-                    self.build_delete_notification(table_id, Self::build_notification_row(&entity)),
-                )
-            } else {
-                None
-            };
-
-            Ok(Some((row_key, notification)))
+            Ok(Some((row_key, entity, notification)))
         }
         .instrument(span)
         .await
+    }
+
+    /// Delete many primary keys in one RocksDB batch and one pending-write mark.
+    pub async fn delete_batch_by_pk_values_deferred(
+        &self,
+        pk_values: &[String],
+        versions: &[VersionId],
+    ) -> Result<Vec<crate::versioned::DeferredMutation<SharedTableRowId>>, KalamDbError> {
+        if pk_values.is_empty() {
+            return Ok(Vec::new());
+        }
+        let notification_service = self.core.services.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+        let watched = self.core.has_topic_routes(&table_id)
+            || notification_service.has_subscribers(None, &table_id);
+
+        let mut items = Vec::with_capacity(pk_values.len());
+        let mut applied = Vec::with_capacity(pk_values.len());
+        for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
+            let (previous, latest_row) = match self.load_mutation_target(pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned
+                | crate::versioned::MutationTarget::Missing => continue,
+            };
+            let prior = latest_row.fields.clone();
+            let entity = SharedTableRow {
+                _version: version,
+                _deleted: true,
+                fields:   latest_row.fields,
+            };
+            let notification = watched.then(|| {
+                self.build_delete_notification(
+                    table_id.clone(),
+                    Self::build_notification_row(&entity),
+                )
+            });
+            if let Err(e) = self.stage_vector_delete(version, pk_value).await {
+                log::warn!(
+                    "Failed to stage vector delete for table={}, seq={}, pk={}: {}",
+                    self.core.table_id(),
+                    version.as_i64(),
+                    pk_value,
+                    e
+                );
+            }
+            items.push((previous, version, entity));
+            applied.push(crate::versioned::DeferredMutation {
+                key: version,
+                notification,
+                prior,
+                payload: None,
+            });
+        }
+
+        if items.is_empty() {
+            return Ok(applied);
+        }
+        self.store.replace_batch_async(items).await.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to delete shared table rows: {}", e))
+        })?;
+        if let Err(e) = self
+            .core
+            .services
+            .manifest_service
+            .mark_pending_write(self.core.table_id(), None)
+        {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+        Ok(applied)
+    }
+
+    /// Update many primary keys in one RocksDB batch and one pending-write mark.
+    pub async fn update_batch_by_pk_values_deferred(
+        &self,
+        updates: &[(String, Row, VersionId)],
+    ) -> Result<Vec<crate::versioned::DeferredMutation<SharedTableRowId>>, KalamDbError> {
+        if updates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let schema = self.schema();
+        let notification_service = self.core.services.notification_service.clone();
+        let table_id = self.core.table_id().clone();
+        let watched = self.core.has_topic_routes(&table_id)
+            || notification_service.has_subscribers(None, &table_id);
+        let pk_column = self.primary_key_field_name().to_string();
+
+        let mut items = Vec::with_capacity(updates.len());
+        let mut applied = Vec::with_capacity(updates.len());
+        for (pk_value, update_row, version) in updates {
+            let updates = coerce_updates(update_row.clone(), &schema).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e))
+            })?;
+            let (previous, latest_row) = match self.load_mutation_target(pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned => {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Row with {}={} was deleted",
+                        pk_column, pk_value
+                    )));
+                },
+                crate::versioned::MutationTarget::Missing => {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Row with {}={} not found (checked both hot and cold storage)",
+                        pk_column, pk_value
+                    )));
+                },
+            };
+            let mut merged = latest_row.fields.values.clone();
+            for (key, value) in updates.values {
+                merged.insert(key, value);
+            }
+            let new_fields = Row::new(merged);
+            crate::utils::datafusion_dml::validate_not_null_with_set(
+                self.core.non_null_columns(),
+                std::slice::from_ref(&new_fields),
+            )?;
+            if new_fields == latest_row.fields {
+                continue;
+            }
+            let prior = latest_row.fields.clone();
+            let entity = SharedTableRow {
+                _version: *version,
+                _deleted: false,
+                fields:   new_fields,
+            };
+            let notification = if watched {
+                Some(ChangeNotification::update(
+                    table_id.clone(),
+                    Self::build_notification_row(&latest_row),
+                    Self::build_notification_row(&entity),
+                    vec![pk_column.clone()],
+                ))
+            } else {
+                None
+            };
+            if let Err(e) = self.stage_vector_upsert(*version, &entity.fields).await {
+                log::warn!(
+                    "Failed to stage vector upsert for table={}, seq={}: {}",
+                    self.core.table_id(),
+                    version.as_i64(),
+                    e
+                );
+            }
+            items.push((previous, *version, entity));
+            applied.push(crate::versioned::DeferredMutation {
+                key: *version,
+                notification,
+                prior,
+                payload: Some(update_row.clone()),
+            });
+        }
+
+        if items.is_empty() {
+            return Ok(applied);
+        }
+        self.store.replace_batch_async(items).await.map_err(|e| {
+            KalamDbError::InvalidOperation(format!("Failed to update shared table rows: {}", e))
+        })?;
+        if let Err(e) = self
+            .core
+            .services
+            .manifest_service
+            .mark_pending_write(self.core.table_id(), None)
+        {
+            log::warn!(
+                "Failed to mark manifest as pending_write for {}: {}",
+                self.core.table_id(),
+                e
+            );
+        }
+        Ok(applied)
     }
 }

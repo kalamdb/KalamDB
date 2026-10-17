@@ -39,7 +39,18 @@ function formatRateValue(value: number | string): string {
 
 function formatMetricTooltip(value: number | string, name: string | number | undefined): string {
   const formatted = formatRateValue(value);
-  return String(name).includes("/s") ? `${formatted}/s` : formatted;
+  const label = String(name);
+  if (label === "Bytes/s" || label === "MB/s") return `${formatted} ${label}`;
+  return label.includes("/s") ? `${formatted}/s` : formatted;
+}
+
+const SUBSCRIPTION_BYTES_PER_SECOND = "subscription_bytes_delivered_per_second";
+const BYTES_PER_MEBIBYTE = 1024 * 1024;
+
+export function subscriptionDeliveryScale(values: number[]): { divisor: number; name: "Bytes/s" | "MB/s" } {
+  const max = values.reduce((highest, value) => (Number.isFinite(value) && value > highest ? value : highest), 0);
+  if (max >= BYTES_PER_MEBIBYTE) return { divisor: BYTES_PER_MEBIBYTE, name: "MB/s" };
+  return { divisor: 1, name: "Bytes/s" };
 }
 
 const tooltipStyle = {
@@ -81,6 +92,21 @@ export function buildMetricChartData(data: DashboardMetricSample[]): TimeSeriesD
 
 export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartProps) {
   const chartData = useMemo(() => buildMetricChartData(data), [data]);
+  const subscriptionDelivery = useMemo(() => {
+    const values = chartData.map((point) => Number(point[SUBSCRIPTION_BYTES_PER_SECOND]));
+    return subscriptionDeliveryScale(values);
+  }, [chartData]);
+  const connectionData = useMemo(
+    () =>
+      chartData.map((point) => {
+        const raw = Number(point[SUBSCRIPTION_BYTES_PER_SECOND]);
+        return {
+          ...point,
+          subscription_delivery_display: Number.isFinite(raw) ? raw / subscriptionDelivery.divisor : raw,
+        };
+      }),
+    [chartData, subscriptionDelivery],
+  );
   const gridClassName = "mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2";
 
   if (isLoading) {
@@ -100,6 +126,9 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
         </Card>
         <Card className="h-96 flex items-center justify-center text-muted-foreground">
           Loading storage metrics...
+        </Card>
+        <Card className="h-96 flex items-center justify-center text-muted-foreground">
+          Loading function metrics...
         </Card>
         {trailingPanel}
       </div>
@@ -137,7 +166,7 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
 
       <ChartCard title="Connections & Subscriptions">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+          <LineChart data={connectionData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
             <XAxis dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} tickFormatter={formatTimeLabel} tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
             <YAxis yAxisId="count" tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -147,7 +176,7 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
             <Line yAxisId="count" type="monotone" dataKey="active_connections" name="Connections" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
             <Line yAxisId="count" type="monotone" dataKey="active_subscriptions" name="Subscriptions" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
             <Line yAxisId="rate" type="step" dataKey="subscription_changes_delivered_per_second" name="Changes/s" stroke="#0891b2" strokeWidth={2} dot={false} connectNulls />
-            <Line yAxisId="rate" type="step" dataKey="subscription_bytes_delivered_per_second" name="Bytes/s" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="rate" type="step" dataKey="subscription_delivery_display" name={subscriptionDelivery.name} stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </ChartCard>
@@ -178,11 +207,31 @@ export function MetricsChart({ data, isLoading, trailingPanel }: MetricsChartPro
             <YAxis yAxisId="files" orientation="right" hide />
             <Tooltip labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
             <Legend wrapperStyle={{ paddingTop: "20px" }} />
-            <Area yAxisId="memory" type="monotone" dataKey="memory_usage_mb" name="Memory (MB)" stroke="#7c3aed" fill="#7c3aed" fillOpacity={0.16} connectNulls />
+            <Area yAxisId="memory" type="monotone" dataKey="memory_usage_mb" name="Usage (MB)" stroke="#7c3aed" fill="#7c3aed" fillOpacity={0.16} connectNulls />
+            <Area yAxisId="memory" type="monotone" dataKey="memory_rss_mb" name="RSS (MB)" stroke="#0284c7" fill="#0284c7" fillOpacity={0.12} connectNulls />
             <Area yAxisId="cpu" type="monotone" dataKey="cpu_usage_percent" name="CPU (%)" stroke="#f97316" fill="#f97316" fillOpacity={0.16} connectNulls />
             <Line yAxisId="files" type="monotone" dataKey="open_files_total" name="Files Total" stroke="#0891b2" strokeWidth={2} dot={false} connectNulls />
             <Line yAxisId="files" type="monotone" dataKey="open_files_directories" name="File Directories" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls />
           </AreaChart>
+        </ResponsiveContainer>
+      </ChartCard>
+
+      <ChartCard title="Functions">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+            <XAxis dataKey="timestamp" type="number" domain={["dataMin", "dataMax"]} tickFormatter={formatTimeLabel} tick={{ fontSize: 12 }} tickMargin={10} minTickGap={30} />
+            <YAxis yAxisId="count" tick={{ fontSize: 12 }} allowDecimals={false} />
+            <YAxis yAxisId="rate" orientation="right" tick={{ fontSize: 12 }} tickFormatter={formatRateValue} />
+            <Tooltip formatter={(value, name) => formatMetricTooltip(value as number, name)} labelFormatter={(value) => formatTimeLabel(Number(value))} contentStyle={tooltipStyle} />
+            <Legend wrapperStyle={{ paddingTop: "20px" }} />
+            <Line yAxisId="rate" type="step" dataKey="function_invocations_per_second" name="Invocations/s" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="functions_deployed" name="Deployed" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="function_active_runs" name="Running" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="function_instances_active" name="Active" stroke="#db2777" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="function_instances_idle" name="Idle" stroke="#64748b" strokeWidth={2} dot={false} connectNulls />
+            <Line yAxisId="count" type="monotone" dataKey="function_instances_total" name="Total" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls />
+          </LineChart>
         </ResponsiveContainer>
       </ChartCard>
 

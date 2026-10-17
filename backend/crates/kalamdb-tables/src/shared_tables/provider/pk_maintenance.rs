@@ -1,13 +1,16 @@
 fn scan_hot_pk_insert(
     store: &SharedTableIndexedStore,
     pk_prefixes: &[(String, Vec<u8>)],
-) -> Result<(Option<String>, HashSet<String>), KalamDbError> {
-    crate::versioned::first_live_pk(pk_prefixes, |prefix| {
-        Ok(store
-            .get_latest_by_index_prefix(0, prefix)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e)))?
-            .map(|(_, row)| row._deleted))
-    })
+) -> Result<crate::versioned::HotInsertScan<SharedTableRowId, SharedTableRow>, KalamDbError> {
+    crate::versioned::scan_hot_inserts(
+        pk_prefixes,
+        |prefix| {
+            store.get_latest_by_index_prefix(0, prefix).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e))
+            })
+        },
+        |row| row._deleted,
+    )
 }
 
 fn collect_live_string_primary_keys_before_from_store(

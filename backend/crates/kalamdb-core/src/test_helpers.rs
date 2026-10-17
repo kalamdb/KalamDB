@@ -97,8 +97,6 @@ pub fn init_test_app_context() -> Arc<TestDb> {
 
         let mut test_config = kalamdb_configs::ServerConfig::default();
         test_config.storage.data_path = "data".to_string();
-        test_config.execution.max_parameters = 50;
-        test_config.execution.max_parameter_size_bytes = 512 * 1024;
         test_config.cluster = Some(default_test_cluster_config(1));
 
         let app_ctx = AppContext::init(
@@ -223,8 +221,6 @@ pub fn test_app_context_simple() -> Arc<AppContext> {
 
     let mut test_config = kalamdb_configs::ServerConfig::default();
     test_config.storage.data_path = data_path.to_string_lossy().to_string();
-    test_config.execution.max_parameters = 50;
-    test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
     let app_ctx = AppContext::init_test(
         storage_backend,

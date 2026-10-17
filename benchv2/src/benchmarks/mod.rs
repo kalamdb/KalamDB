@@ -34,15 +34,13 @@ pub mod subscribe_initial_load_bench;
 pub mod transaction_multi_insert_bench;
 pub mod wide_column_insert_bench;
 
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::client::KalamClient;
-use crate::config::Config;
-use crate::metrics::BenchmarkDetail;
+use crate::{client::KalamClient, config::Config, metrics::BenchmarkDetail};
 
 /// Trait that every benchmark must implement.
-/// To add a new benchmark: create a file, implement this trait, and register it in `all_benchmarks()`.
+/// To add a new benchmark: create a file, implement this trait, and register it in
+/// `all_benchmarks()`.
 pub trait Benchmark: Send + Sync {
     /// Unique name for this benchmark.
     fn name(&self) -> &str;
@@ -146,7 +144,7 @@ pub fn standard_benchmarks() -> Vec<Box<dyn Benchmark>> {
             counter: std::sync::atomic::AtomicU64::new(0),
         }),
         Box::new(load_create_user_bench::DropUserBench {
-            counter: std::sync::atomic::AtomicU64::new(0),
+            counter:       std::sync::atomic::AtomicU64::new(0),
             created_names: tokio::sync::Mutex::new(Vec::new()),
         }),
         Box::new(load_connection_storm_bench::ConnectionStormBench),

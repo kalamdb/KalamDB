@@ -77,7 +77,7 @@ impl InitialDataOptions {
             since_commit_seq: None,
             until_commit_seq: None,
             limit:            100,
-            include_deleted:  false,
+            include_deleted:  true,
             fetch_last:       false,
         }
     }
@@ -108,7 +108,7 @@ impl InitialDataOptions {
             since_commit_seq: None,
             until_commit_seq: None,
             limit: batch_size,
-            include_deleted: false,
+            include_deleted: since_seq.is_some(),
             fetch_last: false,
         }
     }
@@ -701,7 +701,7 @@ mod tests {
         let options = InitialDataOptions::since(seq);
         assert_eq!(options.since_seq, Some(seq));
         assert_eq!(options.limit, 100);
-        assert!(!options.include_deleted);
+        assert!(options.include_deleted);
         assert!(!options.fetch_last);
     }
 

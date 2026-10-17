@@ -24,12 +24,9 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::{
-        arrow_json_conversion::{coerce_rows, coerce_updates},
-        parse_string_as_scalar,
-    },
+    conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::{SeqId, SharedTableRowId, VersionId},
-    models::{rows::Row, OperationKind, UserId},
+    models::{rows::Row, OperationKind, Role, UserId},
     websocket::ChangeNotification,
     NotLeaderError, PolicyCommand, TableId, TableType,
 };

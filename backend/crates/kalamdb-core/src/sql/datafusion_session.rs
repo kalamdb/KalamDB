@@ -7,9 +7,10 @@
 //! ## Parallelism Configuration
 //!
 //! DataFusion settings are loaded from `server.toml` [datafusion] section:
-//! - `query_parallelism`: Number of parallel threads (0 = auto-detect CPU cores)
-//! - `max_partitions`: Maximum partitions per query (enables parallel execution)
-//! - `batch_size`: Arrow batch size for record processing (default: 8192)
+//! - `query_parallelism`: Parallel threads (`0` uses the host CPU count; default 2)
+//! - `max_partitions`: Maximum partitions per query (default 4)
+//! - `batch_size`: Arrow batch size for record processing (default 1024)
+//! - `memory_limit`: Operator memory pool in bytes (default 32MB)
 
 use std::sync::Arc;
 
@@ -79,10 +80,10 @@ impl DataFusionSessionFactory {
     /// # Example
     /// ```ignore
     /// let settings = DataFusionSettings {
-    ///     query_parallelism: 0,  // Auto-detect CPU cores
-    ///     max_partitions: 16,
-    ///     batch_size: 8192,
-    ///     memory_limit: 1073741824,
+    ///     query_parallelism: 2,
+    ///     max_partitions: 4,
+    ///     batch_size: 1024,
+    ///     memory_limit: 32 * 1024 * 1024,
     /// };
     /// let factory = DataFusionSessionFactory::with_config(&settings)?;
     /// ```

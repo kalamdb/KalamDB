@@ -50,6 +50,10 @@ fn extract_select_from_table_id(sql: &str, default_namespace: &SchemaId) -> Opti
 }
 
 fn extract_sql_target_table_id(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
+    let trimmed = sql.trim_start();
+    if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("select") {
+        return extract_select_from_table_id(trimmed, default_namespace);
+    }
     kalamdb_sql::extract_dml_table_id_fast(sql, default_namespace)
         .or_else(|| kalamdb_sql::extract_dml_table_id(sql, default_namespace))
         .or_else(|| extract_select_from_table_id(sql, default_namespace))
@@ -210,6 +214,7 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<Arc<SessionState>, KalamDbError> {
         if let Some(transaction) = self.transaction_query_context_for_request(exec_ctx)? {
+            let _span = kalamdb_observability::kdb_info_span_entered!("point_get.tx_session_state");
             return Ok(Arc::new(Self::user_session_state(exec_ctx, Some(transaction))));
         }
 
@@ -223,6 +228,7 @@ impl SqlExecutor {
             return Ok(state);
         }
 
+        let _span = kalamdb_observability::kdb_info_span_entered!("point_get.cold_session_state");
         let state = Arc::new(Self::user_session_state(exec_ctx, None));
         self.point_read_session_cache.insert(key, Arc::clone(&state));
         Ok(state)
@@ -537,6 +543,9 @@ impl SqlExecutor {
         else {
             return Ok(false);
         };
+        if let Some(cached) = self.app_context.schema_registry().get(&table_id) {
+            return Ok(cached.table_entry().table_type == TableType::Stream);
+        }
         Ok(self
             .app_context
             .schema_registry()

@@ -173,7 +173,7 @@ pub fn now_ms() -> i64 {
 
 fn engine_config_from_settings(settings: &FunctionsRuntimeSettings) -> EngineConfig {
     let workers = if settings.workers == 0 {
-        std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
     } else {
         settings.workers
     };

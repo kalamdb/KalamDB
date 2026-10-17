@@ -401,6 +401,97 @@ impl SharedTableProvider {
         }
     }
 
+    async fn hot_pk_lookup(
+        &self,
+        pk_value: &ScalarValue,
+    ) -> Result<crate::versioned::HotPkLookup<SharedTableRowId, SharedTableRow>, KalamDbError>
+    {
+        Ok(crate::versioned::classify_hot_pk(
+            self.latest_hot_pk_entry(pk_value).await?,
+            |row| row._deleted,
+        ))
+    }
+
+    /// One hot lookup, then cold only when hot storage has no row for this key.
+    pub(crate) async fn load_mutation_target(
+        &self,
+        pk_value: &str,
+    ) -> Result<crate::versioned::MutationTarget<SharedTableRowId, SharedTableRow>, KalamDbError>
+    {
+        let pk_name = self.primary_key_field_name();
+        let schema = self.schema_ref();
+        let pk_field = schema.field_with_name(pk_name).map_err(|e| {
+            KalamDbError::InvalidOperation(format!(
+                "PK column '{}' not found in schema: {}",
+                pk_name, e
+            ))
+        })?;
+        let pk_scalar =
+            kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
+                .map_err(KalamDbError::InvalidOperation)?;
+
+        match self.hot_pk_lookup(&pk_scalar).await? {
+            crate::versioned::HotPkLookup::Live(key, row) => {
+                Ok(crate::versioned::MutationTarget::Hot(key, row))
+            },
+            crate::versioned::HotPkLookup::Tombstoned(_, _) => {
+                Ok(crate::versioned::MutationTarget::Tombstoned)
+            },
+            crate::versioned::HotPkLookup::Missing => {
+                match base::find_row_by_pk(self, None, pk_value).await? {
+                    Some((_, row)) => Ok(crate::versioned::MutationTarget::Cold(row)),
+                    None => Ok(crate::versioned::MutationTarget::Missing),
+                }
+            },
+        }
+    }
+
+    /// Hot tombstone to delete when re-inserting a primary key, if one exists.
+    ///
+    /// A live hot or cold row is a uniqueness error. A miss returns `None`.
+    async fn insert_predecessor(
+        &self,
+        row_data: &Row,
+    ) -> Result<Option<(SharedTableRowId, SharedTableRow)>, KalamDbError> {
+        if self.core.is_auto_increment_pk() {
+            return Ok(None);
+        }
+        let pk_name = self.primary_key_field_name();
+        let Some(pk_value) = row_data.get(pk_name) else {
+            return Ok(None);
+        };
+        if matches!(pk_value, ScalarValue::Null) {
+            return Ok(None);
+        }
+        let pk_str = crate::utils::unified_dml::extract_user_pk_value(row_data, pk_name)?;
+        match self.hot_pk_lookup(pk_value).await? {
+            crate::versioned::HotPkLookup::Live(_, _) => Err(KalamDbError::AlreadyExists(format!(
+                "Primary key violation: value '{}' already exists in column '{}' (hot storage)",
+                pk_str, pk_name
+            ))),
+            crate::versioned::HotPkLookup::Tombstoned(key, row) => Ok(Some((key, row))),
+            crate::versioned::HotPkLookup::Missing => {
+                base::ensure_pk_absent_in_cold(self, None, &pk_str).await?;
+                Ok(None)
+            },
+        }
+    }
+
+    async fn write_replaced_row(
+        &self,
+        previous: Option<(SharedTableRowId, SharedTableRow)>,
+        row_key: SharedTableRowId,
+        entity: SharedTableRow,
+        error_context: &str,
+    ) -> Result<(), KalamDbError> {
+        let written = if previous.is_some() {
+            self.store.replace_async(previous, row_key, entity).await
+        } else {
+            self.store.insert_async(row_key, entity).await
+        };
+        written.map_err(|e| KalamDbError::InvalidOperation(format!("{}: {}", error_context, e)))
+    }
+
     pub async fn find_by_pk(
         &self,
         pk_value: &ScalarValue,
@@ -426,11 +517,10 @@ impl SharedTableProvider {
             kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_field.data_type())
                 .map_err(KalamDbError::InvalidOperation)?;
 
-        if let Some((_, row)) = self.find_by_pk(&pk_scalar).await? {
-            return Ok(Some(row.fields));
-        }
-        if self.pk_tombstoned_in_hot(&pk_scalar).await? {
-            return Ok(None);
+        match self.hot_pk_lookup(&pk_scalar).await? {
+            crate::versioned::HotPkLookup::Live(_, row) => return Ok(Some(row.fields)),
+            crate::versioned::HotPkLookup::Tombstoned(_, _) => return Ok(None),
+            crate::versioned::HotPkLookup::Missing => {},
         }
         Ok(base::find_row_by_pk(self, None, pk_value).await?.map(|(_, row)| row.fields))
     }
@@ -477,17 +567,4 @@ impl SharedTableProvider {
         Ok(true)
     }
 
-    /// Returns true if the latest hot-storage version of this PK is a tombstone
-    /// (`_deleted = true`).  Returns false if the PK is absent from hot storage
-    /// or if the latest version is active.
-    ///
-    /// Used in the PK fast-path of `scan_rows` to prevent cold storage (Parquet)
-    /// from surfacing a row that has already been deleted in hot storage.
-    async fn pk_tombstoned_in_hot(&self, pk_value: &ScalarValue) -> Result<bool, KalamDbError> {
-        Ok(self
-            .latest_hot_pk_entry(pk_value)
-            .await?
-            .map(|(_, row)| row._deleted)
-            .unwrap_or(false))
-    }
 }

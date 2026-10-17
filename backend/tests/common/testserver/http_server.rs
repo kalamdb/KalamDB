@@ -13,7 +13,7 @@ use kalam_client::{
     query::models::query_param::params_from_json_values,
     AuthProvider, KalamLinkClient, KalamLinkTimeouts,
 };
-use kalamdb_commons::{SchemaId, Role, UserId};
+use kalamdb_commons::{Role, SchemaId, UserId};
 use kalamdb_core::app_context::AppContext;
 use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;

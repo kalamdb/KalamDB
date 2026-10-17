@@ -236,29 +236,32 @@ impl FunctionService {
                 )),
             ),
         };
-        app.procedure_log_logger()
-            .record(crate::procedure_log_logger::ProcedureLogRecord {
-                execution_id: request_id.clone(),
-                request_id: request_id.clone(),
-                procedure_id: routine_id.to_string(),
-                module_id,
-                revision_id,
-                actor: actor.to_string().into(),
-                origin: origin_kind.into(),
-                outcome: outcome.into(),
-                channel: "invocation".into(),
-                level: if outcome == "error" {
-                    "error".into()
-                } else {
-                    "info".into()
-                },
-                error_code,
-                message,
-                duration_ms,
-                timestamp: now_ms(),
-                node_id: app.node_id().as_ref().to_string(),
-                schedule_id,
-            });
+        {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.proc_log");
+            app.procedure_log_logger()
+                .record(crate::procedure_log_logger::ProcedureLogRecord {
+                    execution_id: request_id.clone(),
+                    request_id: request_id.clone(),
+                    procedure_id: routine_id.to_string(),
+                    module_id,
+                    revision_id,
+                    actor: actor.to_string().into(),
+                    origin: origin_kind.into(),
+                    outcome: outcome.into(),
+                    channel: "invocation".into(),
+                    level: if outcome == "error" {
+                        "error".into()
+                    } else {
+                        "info".into()
+                    },
+                    error_code,
+                    message,
+                    duration_ms,
+                    timestamp: now_ms(),
+                    node_id: app.node_id().as_ref().to_string(),
+                    schedule_id,
+                });
+        }
         kalamdb_observability::finish_function_run(started.elapsed(), invoke_result.is_err());
         log::debug!(
             target: "kalamdb::functions",
@@ -273,10 +276,11 @@ impl FunctionService {
                     // Disarm before commit so a drop during commit cannot roll
                     // back a transaction that is already committing.
                     owned_tx_guard.disarm();
-                    request_state
-                        .commit(&coordinator)
-                        .await
-                        .map_err(map_request_transaction_error)?;
+                    kalamdb_observability::kdb_await_in_info_span!(
+                        request_state.commit(&coordinator),
+                        "func.tx_commit"
+                    )
+                    .map_err(map_request_transaction_error)?;
                 }
                 Ok(result)
             },
@@ -405,24 +409,34 @@ async fn invoke_root(
                 child,
             } => {
                 let engine = host.app.function_runtime().engine().map_err(map_functions)?;
-                let admission = engine.admit(&invocation).await.map_err(map_functions)?;
+                let admission = kalamdb_observability::kdb_await_in_info_span!(
+                    engine.admit(&invocation),
+                    "func.admit"
+                )
+                .map_err(map_functions)?;
                 if owned_tx {
+                    let _span = kalamdb_observability::kdb_info_span_entered!("func.tx_begin");
                     let transaction_id =
                         request_state.begin(coordinator).map_err(map_request_transaction_error)?;
                     *began_owned_tx = true;
                     owned_tx_guard.arm(transaction_id);
                 }
-                let value = engine
-                    .invoke_admitted(invocation, child, admission)
-                    .await
-                    .map_err(map_functions)?;
-                let stores = host.app.system_tables().catalog_stores();
-                bind::validate_call_return(
-                    host.app.schema_registry().type_registry(),
-                    &stores,
-                    &routine,
-                    &value,
-                )?;
+                let value = kalamdb_observability::kdb_await_in_info_span!(
+                    engine.invoke_admitted(invocation, child, admission),
+                    "func.v8_invoke"
+                )
+                .map_err(map_functions)?;
+                {
+                    let _span =
+                        kalamdb_observability::kdb_info_span_entered!("func.validate_return");
+                    let stores = host.app.system_tables().catalog_stores();
+                    bind::validate_call_return(
+                        host.app.schema_registry().type_registry(),
+                        &stores,
+                        &routine,
+                        &value,
+                    )?;
+                }
                 value
             },
         }
@@ -544,10 +558,14 @@ fn prepare_call_target(
     routine_id: RoutineId,
     args: &[RoutineValue],
 ) -> Result<PreparedCall, KalamDbError> {
+    let _prepare_span = kalamdb_observability::kdb_info_span_entered!("func.prepare_call");
     let stores = host.app.system_tables().catalog_stores();
-    let routine = stores.get_routine(&routine_id).map_err(|error| {
-        KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
-    })?;
+    let routine = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.get_routine");
+        stores.get_routine(&routine_id).map_err(|error| {
+            KalamDbError::ExecutionError(format!("failed to load procedure {routine_id}: {error}"))
+        })?
+    };
     let Some(routine) = routine else {
         return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
     };
@@ -559,9 +577,17 @@ fn prepare_call_target(
             None => (session.exec_ctx.user_id().clone(), session.exec_ctx.user_role()),
         }
     };
-    acl::require_execute(&stores, &routine, &caller_user, caller_role)?;
+    {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.acl");
+        acl::require_execute(&stores, &routine, &caller_user, caller_role)?;
+    }
 
-    let owner_role = owner_role(&host.app, &routine.owner)?;
+    let owner_role = if routine.security == kalamdb_commons::models::RoutineSecurityMode::Definer {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.owner_role");
+        owner_role(&host.app, &routine.owner)?
+    } else {
+        caller_role
+    };
     let (principal_user, principal_role) = frame_principal(
         routine.security,
         caller_user,
@@ -570,18 +596,24 @@ fn prepare_call_target(
         owner_role,
     );
 
-    bind::validate_call_arguments(
-        host.app.schema_registry().type_registry(),
-        &stores,
-        &routine.routine_id,
-        args,
-    )?;
-    let input_args = bind::resolve_input_arguments(
-        host.app.schema_registry().type_registry(),
-        &stores,
-        &routine.routine_id,
-        args,
-    )?;
+    {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.validate_args");
+        bind::validate_call_arguments(
+            host.app.schema_registry().type_registry(),
+            &stores,
+            &routine.routine_id,
+            args,
+        )?;
+    }
+    let input_args = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.resolve_args");
+        bind::resolve_input_arguments(
+            host.app.schema_registry().type_registry(),
+            &stores,
+            &routine.routine_id,
+            args,
+        )?
+    };
     if routine.null_safety == RoutineNullSafety::ReturnsNullOnNullInput
         && input_args.iter().any(|(_, val)| is_null_routine_value(val))
     {
@@ -615,8 +647,12 @@ fn prepare_call_target(
         });
     }
 
-    let revision = revision_for_routine(host, &routine)?;
-    let args = pack_named_call_input_from_resolved(&input_args);
+    let (revision, args) = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.prepare.revision");
+        let revision = revision_for_routine(host, &routine)?;
+        let args = pack_named_call_input_from_resolved(&input_args);
+        (revision, args)
+    };
     let frame = ProcedureFrame {
         routine_id: routine.routine_id.clone(),
         revision_id: revision.revision_id.clone(),

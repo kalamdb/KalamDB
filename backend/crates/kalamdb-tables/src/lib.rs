@@ -55,6 +55,7 @@ pub(crate) mod versioned;
 
 // Re-export commonly used types
 pub use error::{KalamDbError, Result, TableError};
+pub use versioned::DeferredMutation;
 // Re-export table stores
 pub use kalamdb_commons::models::StreamTableRow;
 pub use kalamdb_commons::models::UserTableRow;

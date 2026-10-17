@@ -60,6 +60,7 @@ pub struct CatalogStoresInner {
     pub triggers:           TriggersStore,
     pub trigger_attempts:   TriggerAttemptsStore,
     routines_cache:         DashMap<RoutineId, CatalogRoutine>,
+    parameters_cache:       DashMap<RoutineId, Vec<CatalogRoutineParameter>>,
     user_routine_count:     AtomicUsize,
 }
 
@@ -172,6 +173,7 @@ impl CatalogStores {
                 Vec::new(),
             ),
             routines_cache,
+            parameters_cache: DashMap::new(),
             user_routine_count: AtomicUsize::new(initial_user_routines),
         }))
     }
@@ -180,6 +182,12 @@ impl CatalogStores {
     #[inline]
     pub fn has_user_routines(&self) -> bool {
         self.user_routine_count.load(Ordering::Acquire) > 0
+    }
+
+    /// User-defined functions and procedures currently in the catalog.
+    #[inline]
+    pub fn user_routine_count(&self) -> usize {
+        self.user_routine_count.load(Ordering::Acquire)
     }
 
     pub fn upsert_type(&self, catalog_type: CatalogType) -> Result<(), SystemError> {
@@ -339,7 +347,10 @@ impl CatalogStores {
     }
 
     pub fn upsert_parameter(&self, parameter: CatalogRoutineParameter) -> Result<(), SystemError> {
-        put_model(&self.routine_parameters, &parameter.parameter_id, &parameter)
+        let routine_id = parameter.routine_id.clone();
+        put_model(&self.routine_parameters, &parameter.parameter_id, &parameter)?;
+        self.parameters_cache.remove(&routine_id);
+        Ok(())
     }
 
     pub fn replace_parameters(
@@ -358,6 +369,7 @@ impl CatalogStores {
         for parameter in parameters {
             self.upsert_parameter(parameter)?;
         }
+        self.parameters_cache.remove(routine_id);
         Ok(())
     }
 
@@ -365,6 +377,9 @@ impl CatalogStores {
         &self,
         routine_id: &RoutineId,
     ) -> Result<Vec<CatalogRoutineParameter>, SystemError> {
+        if let Some(cached) = self.parameters_cache.get(routine_id) {
+            return Ok(cached.value().clone());
+        }
         let prefix = RoutineParameterId::scan_prefix(routine_id);
         let mut parameters: Vec<CatalogRoutineParameter> = self
             .routine_parameters
@@ -374,6 +389,7 @@ impl CatalogStores {
             .filter(|parameter| &parameter.routine_id == routine_id)
             .collect();
         parameters.sort_by_key(|parameter| parameter.ordinal);
+        self.parameters_cache.insert(routine_id.clone(), parameters.clone());
         Ok(parameters)
     }
 
@@ -661,6 +677,7 @@ impl CatalogStores {
         }
 
         self.routines.delete(routine_id)?;
+        self.parameters_cache.remove(routine_id);
         if let Some((_, removed)) = self.routines_cache.remove(routine_id) {
             if is_user_routine(&removed) {
                 self.user_routine_count.fetch_sub(1, Ordering::Release);

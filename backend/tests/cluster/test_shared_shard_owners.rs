@@ -35,8 +35,7 @@ async fn shared_owners_agree_across_replicas() -> Result<()> {
     let mut owners = Vec::new();
     for index in 0..8 {
         let namespace = format!("shared_owners_{}_{index}", std::process::id());
-        let create_ns =
-            cluster.nodes[0].execute_sql(&format!("CREATE SCHEMA {namespace}")).await?;
+        let create_ns = cluster.nodes[0].execute_sql(&format!("CREATE SCHEMA {namespace}")).await?;
         assert_eq!(create_ns.status, ResponseStatus::Success, "{create_ns:?}");
         let sql = format!("CREATE SHARED TABLE {namespace}.t (id BIGINT PRIMARY KEY, name TEXT)");
         let created = cluster.nodes[0].execute_sql(&sql).await?;

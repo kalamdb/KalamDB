@@ -1098,6 +1098,33 @@ impl AppContext {
         self.schema_registry.clone()
     }
 
+    /// Whether SELECT RLS on this shared table exposes a current row whose FILE
+    /// column stores `subfolder`/`stored_name`.
+    ///
+    /// DBA and System bypass. Missing policies, missing FILE columns, and rows
+    /// the caller cannot see all return `false`.
+    pub async fn shared_select_authorizes_file(
+        &self,
+        table_id: &TableId,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        subfolder: &str,
+        stored_name: &str,
+    ) -> Result<bool, KalamDbError> {
+        let Some(provider) = self.schema_registry().get_provider(table_id) else {
+            return Ok(false);
+        };
+        let Some(shared) = (provider.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<kalamdb_tables::SharedTableProvider>()
+        else {
+            return Ok(false);
+        };
+        shared
+            .select_authorizes_file_path(user_id, role, subfolder, stored_name)
+            .await
+            .map_err(KalamDbError::from)
+    }
+
     pub fn user_table_store(&self) -> Arc<UserTableStore> {
         self.user_table_store.clone()
     }

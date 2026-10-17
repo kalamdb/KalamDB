@@ -38,10 +38,6 @@ workers = 0
 # - Server push support (for future features)
 enable_http2 = true
 
-# API version (default: "v1")
-# Controls the versioned endpoint prefix (e.g., /v1/api/sql)
-api_version = "v1"
-
 # Optional path to the Admin UI static build output.
 # Uncomment to serve the UI bundle directly from the server.
 # ui_path = "./ui/dist"
@@ -114,7 +110,6 @@ user_tables_template = "{namespace}/{tableName}/{userId}"
 request_timeout_secs = 60
 # Connect timeout in seconds for establishing connections (default: 10s)
 connect_timeout_secs = 10
-
 
 [storage.rocksdb]
 # compact (default): tiny cache and memtables for a few tables and low traffic.
@@ -192,13 +187,6 @@ max_partitions = 4
 batch_size = 1024
 
 [flush]
-# Default row limit for flush policies (default: 10000 rows)
-# Tables without explicit flush policy will use this value
-default_row_limit = 10000
-
-# Default time interval for flush in seconds (default: 300s = 5 minutes)
-# Tables will flush to Parquet after this duration
-default_time_interval = 300
 
 # How often the background scheduler checks for tables with pending writes
 # and creates flush jobs (default: 60 seconds). Set to 0 to disable.
@@ -222,13 +210,6 @@ user_max_segment_rows = 10000
 shared_max_segment_rows = 25000
 
 [stream]
-# Default TTL for stream table rows in seconds (default: 10 seconds)
-# Stream tables are ephemeral - rows expire after this duration
-default_ttl_seconds = 10
-
-# Default maximum buffer size for stream tables (default: 10000 rows)
-# Oldest rows are evicted when buffer exceeds this limit
-default_max_buffer = 10000
 
 # Stream eviction interval in seconds (default: 60 seconds = 1 minute)
 # How often the background task checks and evicts expired events
@@ -250,8 +231,6 @@ max_entries = 500
 eviction_ttl_days = 7
 
 [limits]
-# Maximum message size for REST API requests in bytes (default: 1MB)
-max_message_size = 1048576
 
 # Maximum rows that can be returned in a single query (default: 1000)
 max_query_limit = 1000
@@ -304,9 +283,6 @@ timeout_ms = 3000
 # parquet = "warn"
 
 [performance]
-# Request timeout in seconds (default: 30s)
-# Requests exceeding this duration will be terminated
-request_timeout = 30
 
 # Keep-alive timeout in seconds (default: 75s)
 # HTTP keep-alive allows connection reuse, reducing TCP handshake overhead
@@ -346,10 +322,6 @@ client_request_timeout = 5
 # Client disconnect timeout in seconds (default: 2)
 # Time allowed for graceful connection shutdown
 client_disconnect_timeout = 2
-
-# Maximum HTTP header size in bytes (default: 16384 = 16KB)
-# Increase if you have large JWT tokens or custom headers  
-max_header_size = 16384
 
 [rate_limit]
 # Maximum SQL queries per second per user (default: 100)
@@ -407,9 +379,6 @@ cache_ttl_seconds = 600
 # CORS, WebSocket, and request limit configuration
 
 [security]
-# Maximum request body size in bytes (default: 10MB)
-# Prevents memory exhaustion from large payloads
-max_request_body_size = 10485760
 
 # Maximum WebSocket message size in bytes (default: 1MB)
 # Prevents memory exhaustion from large WebSocket messages
@@ -458,16 +427,12 @@ allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Reque
 # Example: ["X-Custom-Header", "X-Request-Id"]
 expose_headers = []
 
-# Allow credentials (cookies, authorization headers) (default: true)
+# Allow credentials (cookies, authorization headers) (default: false)
 # Note: If true, allowed_origins cannot be ["*"] in browsers
 allow_credentials = true
 
 # Preflight request cache max age in seconds (default: 3600 = 1 hour)
 max_age = 3600
-
-# Allow private network requests (default: false)
-# Enables Access-Control-Request-Private-Network header support
-allow_private_network = false
 
 [websocket]
 # Client heartbeat timeout in seconds (default: 10)
@@ -533,34 +498,6 @@ max_password_length = 72
 # Enforce uppercase/lowercase/digit/special password complexity (default: false)
 enforce_password_complexity = false
 
-# Single external OpenID Connect provider.
-# Use this for Dex, Keycloak, Okta, Auth0, Entra ID, Google, Firebase, or any
-# provider with standards-compliant OIDC discovery.
-#
-# Configure browser redirect URIs at the provider, for example:
-#   http://YOUR_ADMIN_UI_ORIGIN/ui/oauth/callback
-#
-# [auth.oidc]
-# enabled = true
-# display_name = "Dex"
-# issuer = "http://127.0.0.1:5556"
-# client_id = "client"
-# Local Dex development normally uses a public PKCE client, so leave client_secret unset.
-# client_secret = "optional-confidential-client-secret"
-# scopes = ["openid", "email", "profile"]
-# auto_provision = true
-# default_role = "user"
-# broker_device_flow_enabled = false
-# Enable only when your provider advertises or supports device auth.
-# device_authorization_endpoint = "http://127.0.0.1:5556/device/code"
-
-[user_management]
-# Days to keep a soft-deleted user before permanent purge (default: 30)
-deletion_grace_period_days = 30
-
-# Cron schedule for the background cleanup job (default: daily at 02:00)
-cleanup_job_schedule = "0 2 * * *"
-
 [files]
 # Maximum size for a single uploaded FILE value (default: 25MB)
 max_size_bytes = 26214400
@@ -577,9 +514,6 @@ staging_path = "./data/tmp"
 # Allowed MIME types for FILE uploads. Empty list allows any MIME type.
 allowed_mime_types = []
 
-[shutdown]
-# Timeout settings for graceful shutdown
-
 [shutdown.flush]
 # Timeout in seconds to wait for flush jobs to complete during graceful shutdown (default: 300)
 timeout = 300
@@ -588,14 +522,6 @@ timeout = 300
 # Maximum number of concurrent jobs (default: 10)
 # Controls how many jobs can execute simultaneously
 max_concurrent = 10
-
-# Maximum number of retry attempts per job (default: 3)
-# Jobs will be retried this many times before being marked as permanently failed
-max_retries = 3
-
-# Initial retry backoff delay in milliseconds (default: 100ms)
-# Delay increases exponentially with each retry (100ms, 200ms, 400ms, etc.)
-retry_backoff_ms = 100
 
 # How often the jobs runner flushes all RocksDB memtables so stale WAL files
 # can be reclaimed (default: 300 seconds). Set to 0 to disable.
@@ -614,20 +540,7 @@ history_retention_days = 7
 # blocking work may still finish while holding the transfer lock.
 max_runtime_seconds = 1800
 
-# Phase 11, T026: SQL Handler Execution Configuration
 [execution]
-# Handler execution timeout in seconds (default: 30)
-# Maximum time allowed for a single SQL statement to execute
-# Prevents hung requests from blocking resources
-handler_timeout_seconds = 30
-
-# Maximum number of parameters per statement (default: 50)
-# Prevents memory exhaustion from excessive parameter arrays
-max_parameters = 50
-
-# Maximum size per parameter in bytes (default: 524288 = 512KB)
-# Prevents memory exhaustion from individual large parameters
-max_parameter_size_bytes = 524288
 
 # Maximum number of cached SQL logical plans (default: 200)
 # Bound memory used by SQL plan cache

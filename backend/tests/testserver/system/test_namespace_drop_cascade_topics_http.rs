@@ -212,10 +212,7 @@ async fn test_drop_namespace_cascade_removes_topics_over_http() -> Result<()> {
     );
 
     let cleanup_other = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", other_ns)).await?;
-    anyhow::ensure!(
-        cleanup_other.status == ResponseStatus::Success,
-        "cleanup DROP SCHEMA failed"
-    );
+    anyhow::ensure!(cleanup_other.status == ResponseStatus::Success, "cleanup DROP SCHEMA failed");
 
     Ok(())
 }

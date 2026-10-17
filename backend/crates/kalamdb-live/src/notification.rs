@@ -321,7 +321,7 @@ fn signal_lapse(handle: &SubscriptionHandle) {
         subscription_id: Arc::clone(&handle.subscription_id),
     });
     log::warn!(
-        "Subscription {} missed a live change; client must resubscribe without a resume cursor",
+        "Subscription {} missed a live change; client resumes from its last cursor",
         handle.subscription_id
     );
 }
@@ -356,24 +356,16 @@ fn try_deliver(
             handle.runtime_metadata.record_delivery_at(delivery_timestamp_ms);
             true
         },
-        Err(e) => {
-            use tokio::sync::mpsc::error::TrySendError;
-            match e {
-                TrySendError::Full(_) => {
-                    log::warn!(
-                        "Notification channel full for subscription_id={}; requesting resubscribe",
-                        handle.subscription_id
-                    );
-                    signal_lapse(handle);
-                },
-                TrySendError::Closed(_) => {
-                    log::debug!(
-                        "Notification channel closed for subscription_id={}, connection likely \
-                         disconnected",
-                        handle.subscription_id
-                    );
-                },
-            }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            log::debug!(
+                "Notification channel closed for subscription_id={}, connection likely \
+                 disconnected",
+                handle.subscription_id
+            );
+            false
+        },
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            signal_lapse(handle);
             false
         },
     }

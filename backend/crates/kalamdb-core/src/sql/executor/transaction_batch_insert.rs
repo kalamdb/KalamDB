@@ -114,7 +114,10 @@ fn build_insert_metadata(
     })
 }
 
-fn staged_mutation_user_id(table_type: TableType, exec_ctx: &ExecutionContext) -> Option<UserId> {
+pub(crate) fn staged_mutation_user_id(
+    table_type: TableType,
+    exec_ctx: &ExecutionContext,
+) -> Option<UserId> {
     match table_type {
         TableType::User | TableType::Stream => Some(exec_ctx.user_id().clone()),
         TableType::Shared | TableType::System => None,

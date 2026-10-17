@@ -4,4 +4,8 @@
 
 mod hot_pk;
 
-pub(crate) use hot_pk::{first_live_pk, insert_notification_when_watched};
+pub use hot_pk::DeferredMutation;
+pub(crate) use hot_pk::{
+    classify_hot_pk, insert_notification_when_watched, scan_hot_inserts, HotInsertScan,
+    HotPkLookup, MutationTarget,
+};

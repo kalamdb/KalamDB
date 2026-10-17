@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::HashMap, fs, path::Path};
 
 use crate::metrics::{BenchmarkReport, BenchmarkResult};
 
@@ -8,17 +6,17 @@ use crate::metrics::{BenchmarkReport, BenchmarkResult};
 #[derive(Debug)]
 pub struct PreviousRun {
     pub timestamp: String,
-    pub results: HashMap<String, PreviousBenchmark>,
+    pub results:   HashMap<String, PreviousBenchmark>,
 }
 
 /// A single benchmark's previous metrics.
 #[derive(Debug, Clone)]
 pub struct PreviousBenchmark {
     pub description: String,
-    pub mean_us: f64,
-    pub median_us: f64,
-    pub p95_us: f64,
-    pub p99_us: f64,
+    pub mean_us:     f64,
+    pub median_us:   f64,
+    pub p95_us:      f64,
+    pub p99_us:      f64,
     pub ops_per_sec: f64,
 }
 
@@ -26,9 +24,9 @@ pub struct PreviousBenchmark {
 #[derive(Debug)]
 pub struct Comparison {
     /// Percentage change in mean latency (negative = faster = better)
-    pub mean_pct: f64,
+    pub mean_pct:     f64,
     /// Percentage change in ops/sec (positive = better)
-    pub ops_pct: f64,
+    pub ops_pct:      f64,
     /// Previous mean for display
     pub prev_mean_us: f64,
 }
@@ -61,19 +59,19 @@ impl Comparison {
         match self.trend() {
             ComparisonTrend::Same => {
                 format!("\x1b[90m~ {:.0}µs prior\x1b[0m", self.prev_mean_us)
-            }
+            },
             ComparisonTrend::Faster => {
                 format!(
                     "\x1b[32m↑{:.0}% faster\x1b[0m \x1b[90m(was {:.0}µs)\x1b[0m",
                     abs_pct, self.prev_mean_us
                 )
-            }
+            },
             ComparisonTrend::Slower => {
                 format!(
                     "\x1b[31m↓{:.0}% slower\x1b[0m \x1b[90m(was {:.0}µs)\x1b[0m",
                     abs_pct, self.prev_mean_us
                 )
-            }
+            },
         }
     }
 
@@ -136,10 +134,10 @@ pub fn load_previous_run(output_dir: &str) -> Option<PreviousRun> {
             r.name.clone(),
             PreviousBenchmark {
                 description: r.description.clone(),
-                mean_us: r.mean_us,
-                median_us: r.median_us,
-                p95_us: r.p95_us,
-                p99_us: r.p99_us,
+                mean_us:     r.mean_us,
+                median_us:   r.median_us,
+                p95_us:      r.p95_us,
+                p99_us:      r.p99_us,
                 ops_per_sec: r.ops_per_sec,
             },
         );
@@ -181,14 +179,14 @@ mod tests {
     fn previous(description: &str) -> PreviousRun {
         PreviousRun {
             timestamp: "2026-08-24T00:00:00Z".to_string(),
-            results: HashMap::from([(
+            results:   HashMap::from([(
                 "reconnect_subscribe".to_string(),
                 PreviousBenchmark {
                     description: description.to_string(),
-                    mean_us: 10_000.0,
-                    median_us: 10_000.0,
-                    p95_us: 10_000.0,
-                    p99_us: 10_000.0,
+                    mean_us:     10_000.0,
+                    median_us:   10_000.0,
+                    p95_us:      10_000.0,
+                    p99_us:      10_000.0,
                     ops_per_sec: 100.0,
                 },
             )]),

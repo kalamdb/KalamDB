@@ -240,7 +240,7 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             )?;
 
             // IGNORE user_id parameter - no RLS for shared tables
-            base::ensure_unique_pk_value(self, None, &row_data).await?;
+            let predecessor = self.insert_predecessor(&row_data).await?;
 
             // Generate new SeqId via SystemColumnsService
             let seq_id = version;
@@ -255,10 +255,13 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
             // Key is just the SeqId (SharedTableRowId is type alias for SeqId)
             let row_key = seq_id;
 
-            // Store the entity in RocksDB (hot storage) using insert() to update PK index
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to insert shared table row: {}", e))
-            })?;
+            self.write_replaced_row(
+                predecessor,
+                row_key,
+                entity.clone(),
+                "Failed to insert shared table row",
+            )
+            .await?;
 
             log::debug!("Inserted shared table row with _seq {}", seq_id);
 
@@ -477,6 +480,94 @@ impl BaseTableProvider<SharedTableRowId, SharedTableRow> for SharedTableProvider
 }
 
 impl SharedTableProvider {
+    /// SELECT visibility for one shared FILE path.
+    ///
+    /// DBA and System bypass. An empty policy set denies. Otherwise a current
+    /// row must contain this `{subfolder}/{stored_name}` in a FILE column and
+    /// survive `authorize_resolved_rows`.
+    pub async fn select_authorizes_file_path(
+        &self,
+        user_id: &UserId,
+        role: kalamdb_commons::Role,
+        subfolder: &str,
+        stored_name: &str,
+    ) -> Result<bool, KalamDbError> {
+        let policies = self.bind_policies(user_id, role, PolicyCommand::Select, false)?;
+        if policies.bypasses_rls() {
+            return Ok(true);
+        }
+        if policies.is_default_deny() {
+            return Ok(false);
+        }
+
+        let file_columns = file_column_names(self.core.table_def());
+        if file_columns.is_empty() {
+            return Ok(false);
+        }
+
+        let scan_context = SharedScanContext {
+            snapshot_commit_seq: None,
+            policies,
+        };
+        if !self.authorization.pre_authorize_scan(self, &scan_context, None).await? {
+            return Ok(false);
+        }
+
+        let rows = DeferredMvccScanProvider::scan_kvs_with_context(
+            self,
+            &scan_context,
+            None,
+            None,
+            None,
+            false,
+            Some(file_columns.as_slice()),
+        )
+        .await?;
+
+        for (row_id, row) in rows {
+            if !row_contains_file_path(&row.fields, &file_columns, subfolder, stored_name) {
+                continue;
+            }
+            let authorized =
+                self.authorize_resolved_rows(&scan_context, vec![(row_id, row)]).await?;
+            if !authorized.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+fn file_column_names(table_def: &kalamdb_commons::models::schemas::TableDefinition) -> Vec<String> {
+    table_def
+        .columns
+        .iter()
+        .filter(|column| column.data_type() == kalamdb_commons::KalamDataType::File)
+        .map(|column| column.column_name.clone())
+        .collect()
+}
+
+fn row_contains_file_path(
+    row: &Row,
+    file_columns: &[String],
+    subfolder: &str,
+    stored_name: &str,
+) -> bool {
+    file_columns.iter().any(|column| {
+        let Some(value) = row.values.get(column) else {
+            return false;
+        };
+        let json = match value {
+            ScalarValue::Utf8(Some(json)) | ScalarValue::LargeUtf8(Some(json)) => json.as_str(),
+            _ => return false,
+        };
+        kalamdb_commons::FileRef::try_from_json(json).is_ok_and(|file_ref| {
+            file_ref.sub == subfolder && file_ref.stored_name() == stored_name
+        })
+    })
+}
+
+impl SharedTableProvider {
     async fn scan_with_version_resolution_to_kvs_result_async(
         &self,
         filter: Option<&Expr>,
@@ -488,8 +579,6 @@ impl SharedTableProvider {
         include_diagnostics: bool,
     ) -> Result<base::MvccScanResult<SharedTableRowId, SharedTableRow>, KalamDbError> {
         use kalamdb_store::EntityStoreAsync;
-
-        base::warn_if_unfiltered_scan(self.core.table_id(), filter, limit, self.core.table_type());
 
         let start_key =
             since_seq.and_then(|seq| VersionId::try_from_i64(seq.as_i64().saturating_add(1)).ok());

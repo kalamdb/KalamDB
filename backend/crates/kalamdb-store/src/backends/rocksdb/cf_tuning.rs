@@ -19,6 +19,14 @@ pub(crate) fn apply_db_settings(db_opts: &mut Options, settings: &RocksDbSetting
         settings.memory_mode.rocksdb_io_parallelism();
     db_opts.set_max_subcompactions(max_subcompactions);
     db_opts.set_max_file_opening_threads(max_file_opening_threads);
+    // Per-table hot CFs share the original aggregate memtable budget instead
+    // of multiplying the memory allowance by the number of tables.
+    let profiles = &settings.cf_profiles;
+    let budget = [&profiles.system_meta, &profiles.system_index, &profiles.hot_data,
+        &profiles.hot_index, &profiles.raft].into_iter().fold(0usize, |sum, profile| {
+            sum.saturating_add(profile.write_buffer_size.saturating_mul(profile.max_write_buffers.max(1) as usize))
+        });
+    db_opts.set_db_write_buffer_size(budget);
     db_opts.set_enable_pipelined_write(true);
     db_opts.set_avoid_unnecessary_blocking_io(true);
     db_opts.set_bytes_per_sync(BYTES_PER_SYNC);

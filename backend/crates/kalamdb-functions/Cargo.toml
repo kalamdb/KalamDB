@@ -13,10 +13,13 @@ categories = ["database"]
 [features]
 default = ["catalog"]
 catalog = ["dep:kalamdb-filestore", "dep:kalamdb-system", "dep:kalamdb-store", "dep:kalamdb-views"]
+traceability = ["dep:tracing", "kalamdb-observability/traceability"]
 
 [dependencies]
 kalamdb-commons = { path = "../kalamdb-commons", features = ["full"] }
 kalamdb-configs = { path = "../kalamdb-configs" }
+kalamdb-observability = { path = "../kalamdb-observability" }
+tracing = { workspace = true, optional = true }
 kalamdb-filestore = { path = "../kalamdb-filestore", optional = true }
 kalamdb-functions-host = { path = "../kalamdb-functions-host" }
 kalamdb-serialization = { path = "../kalamdb-serialization" }

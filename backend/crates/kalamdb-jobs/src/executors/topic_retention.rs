@@ -308,7 +308,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, SchemaId, PayloadMode, TableId, TableName, TopicOp},
+        models::{rows::Row, PayloadMode, SchemaId, TableId, TableName, TopicOp},
         JobId, NodeId,
     };
     use kalamdb_core::test_helpers::test_app_context_simple;

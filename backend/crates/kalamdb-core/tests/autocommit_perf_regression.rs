@@ -170,8 +170,6 @@ fn create_simple_app_context() -> (Arc<AppContext>, TestDb) {
 
     let mut test_config = ServerConfig::default();
     test_config.storage.data_path = data_path.to_string_lossy().to_string();
-    test_config.execution.max_parameters = 50;
-    test_config.execution.max_parameter_size_bytes = 512 * 1024;
 
     let app_ctx = AppContext::init(
         storage_backend,

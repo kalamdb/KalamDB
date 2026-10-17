@@ -91,9 +91,7 @@ async fn invalid_namespace_name_rejected() {
 async fn table_without_primary_key_rejected() {
     let server = TestServer::new_shared().await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_nopk", "root")
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_nopk", "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Try to create table without PRIMARY KEY
@@ -123,9 +121,7 @@ async fn table_without_primary_key_rejected() {
 async fn null_constraint_violation_detected() {
     let server = TestServer::new_shared().await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_null", "root")
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_null", "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -424,9 +420,7 @@ async fn permission_denied_error_is_clear() {
     let user_id = server.create_user("regularuser", "Pass123!", Role::User).await;
 
     // Try to create namespace as regular user (requires DBA or System role)
-    let resp = server
-        .execute_sql_as_user("CREATE SCHEMA restricted", user_id.as_str())
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA restricted", user_id.as_str()).await;
 
     // Should fail with permission error
     assert_eq!(resp.status, ResponseStatus::Error);

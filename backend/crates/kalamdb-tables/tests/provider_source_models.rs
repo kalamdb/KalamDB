@@ -20,7 +20,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition, TableOptions},
-        ColumnId, SchemaId, ReadContext, Role, StorageId, TableId, TableName,
+        ColumnId, ReadContext, Role, SchemaId, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,
@@ -762,8 +762,7 @@ async fn user_provider_dba_session_reads_only_subject_rows() {
 #[tokio::test]
 async fn user_provider_delete_only_tombstones_subject_row() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id =
-        TableId::new(SchemaId::new("app"), TableName::new("users_exec_delete_scoped"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("users_exec_delete_scoped"));
     let table_def = build_user_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_indexed_user_table_store(
@@ -1221,30 +1220,22 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
             .expect("seed indexed shared row");
     }
 
-    // Repeated scalar hits for one PK must expand its history only once.
-    // Include a tombstone so winner selection must also suppress a deleted PK.
-    for (seq, id, deleted) in [(21_i64, 1_i64, false), (22, 1, false), (23, 2, true)] {
-        let row_id = kalamdb_commons::ids::VersionId::from(seq);
-        store
-            .insert(
-                &row_id,
-                &SharedTableRow {
-                    _version: row_id,
-                    _deleted: deleted,
-                    fields:   row(vec![
-                        ("id", ScalarValue::Int64(Some(id))),
-                        ("conversation_id", ScalarValue::Int64(Some(1))),
-                        ("created_at_ms", ScalarValue::Int64(Some(1_000 + seq))),
-                    ]),
-                },
-            )
-            .expect("append repeated version or tombstone");
-    }
-
-    // MVCC UPDATE appends a new seq. The old conversation_id index key remains.
+    // An update replaces the hot key and its scalar index entry in one write.
+    // The old conversation_id=1 entry must not come back from the seek.
+    let previous_id1 = kalamdb_commons::ids::VersionId::from(1);
+    let previous_id1_row = SharedTableRow {
+        _version: previous_id1,
+        _deleted: false,
+        fields:   row(vec![
+            ("id", ScalarValue::Int64(Some(1))),
+            ("conversation_id", ScalarValue::Int64(Some(1))),
+            ("created_at_ms", ScalarValue::Int64(Some(1_001))),
+        ]),
+    };
     let updated_seq = kalamdb_commons::ids::VersionId::from(24);
     store
-        .insert(
+        .replace(
+            Some((&previous_id1, &previous_id1_row)),
             &updated_seq,
             &SharedTableRow {
                 _version: updated_seq,
@@ -1256,7 +1247,34 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
                 ]),
             },
         )
-        .expect("append updated version");
+        .expect("replace id 1 onto conversation 2");
+
+    let previous_id2 = kalamdb_commons::ids::VersionId::from(2);
+    let previous_id2_row = SharedTableRow {
+        _version: previous_id2,
+        _deleted: false,
+        fields:   row(vec![
+            ("id", ScalarValue::Int64(Some(2))),
+            ("conversation_id", ScalarValue::Int64(Some(1))),
+            ("created_at_ms", ScalarValue::Int64(Some(1_002))),
+        ]),
+    };
+    let tombstone_seq = kalamdb_commons::ids::VersionId::from(23);
+    store
+        .replace(
+            Some((&previous_id2, &previous_id2_row)),
+            &tombstone_seq,
+            &SharedTableRow {
+                _version: tombstone_seq,
+                _deleted: true,
+                fields:   row(vec![
+                    ("id", ScalarValue::Int64(Some(2))),
+                    ("conversation_id", ScalarValue::Int64(Some(1))),
+                    ("created_at_ms", ScalarValue::Int64(Some(1_023))),
+                ]),
+            },
+        )
+        .expect("replace id 2 with a tombstone");
 
     let user_id = UserId::new("shared-reader");
     let ctx = session_with_scan_diagnostics(&user_id);
@@ -1276,7 +1294,7 @@ async fn shared_provider_scalar_index_seek_does_not_resurrect_superseded_version
         "scalar index seek must hide superseded versions and tombstones"
     );
     let metrics = plan.metrics().expect("indexed shared scan metrics").to_string();
-    assert_metric(&metrics, "hot_rows_scanned=24");
+    assert_metric(&metrics, "hot_rows_scanned=19");
 }
 
 #[tokio::test]

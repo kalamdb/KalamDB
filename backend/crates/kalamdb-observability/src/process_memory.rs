@@ -96,7 +96,19 @@ fn trim_libc_heap() {
     }
 }
 
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+#[cfg(target_os = "macos")]
+fn trim_libc_heap() {
+    unsafe extern "C" {
+        fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
+    }
+    // SAFETY: a null zone asks libmalloc to relieve every zone it owns. A goal
+    // of 0 releases as many unused pages as it can. No caller pointer is passed.
+    unsafe {
+        malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+    }
+}
+
+#[cfg(not(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos")))]
 fn trim_libc_heap() {}
 
 #[cfg_attr(

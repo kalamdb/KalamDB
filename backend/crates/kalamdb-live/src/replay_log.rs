@@ -20,7 +20,7 @@ use kalamdb_commons::{
 use parking_lot::Mutex;
 
 /// Changes retained for one table scope. Shared by all of its subscribers.
-const MAX_EVENTS_PER_SCOPE: usize = 1_024;
+const MAX_EVENTS_PER_SCOPE: usize = 16_384;
 
 /// Table scopes that keep a resume log. Idle scopes are evicted first.
 const MAX_SCOPES: usize = 64;

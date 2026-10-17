@@ -61,7 +61,7 @@ Reuse TCP connections to reduce handshake overhead:
 let server = HttpServer::new(move || {
     // ... app configuration
 })
-.backlog(config.performance.backlog)      // Listen queue: 2048 pending connections
+.backlog(config.performance.backlog)      // Listen queue: 4096 pending connections
 .workers(config.server.workers)           // Auto-detect CPU cores
 .max_connections(config.performance.max_connections)  // 25,000 per worker
 .worker_max_blocking_threads(config.performance.worker_max_blocking_threads)  // 512
@@ -79,7 +79,7 @@ Add these settings to the `[performance]` section:
 # Maximum concurrent connections per worker (default: 25000)
 max_connections = 25000
 
-# TCP listen backlog - pending connections queue size (default: 2048)
+# TCP listen backlog - pending connections queue size (default: 4096)
 # Increase for burst traffic or high-concurrency scenarios
 # Recommended values:
 #   - Development: 512-1024

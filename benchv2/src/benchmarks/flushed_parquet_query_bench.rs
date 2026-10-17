@@ -1,10 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::{
+    future::Future,
+    pin::Pin,
+    time::{Duration, Instant},
+};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Queries a shared table backed by 20 flushed Parquet files (~200K rows).
 /// Setup: insert 10K rows + flush, repeated 20 times, then measure query latency.
@@ -46,7 +46,8 @@ impl Benchmark for FlushedParquetQueryBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE SHARED TABLE {}.parquet_bench (id INT PRIMARY KEY, category TEXT, amount INT, description TEXT)",
+                    "CREATE SHARED TABLE {}.parquet_bench (id INT PRIMARY KEY, category TEXT, \
+                     amount INT, description TEXT)",
                     config.namespace
                 ))
                 .await?;
@@ -71,7 +72,8 @@ impl Benchmark for FlushedParquetQueryBench {
                     }
                     client
                         .sql_ok(&format!(
-                            "INSERT INTO {}.parquet_bench (id, category, amount, description) VALUES {}",
+                            "INSERT INTO {}.parquet_bench (id, category, amount, description) \
+                             VALUES {}",
                             config.namespace,
                             values.join(", ")
                         ))
@@ -138,7 +140,8 @@ impl Benchmark for FlushedParquetQueryBench {
                     // Aggregation with GROUP BY
                     client
                         .sql_ok(&format!(
-                            "SELECT category, SUM(amount) as total FROM {}.parquet_bench GROUP BY category ORDER BY total DESC LIMIT 10",
+                            "SELECT category, SUM(amount) as total FROM {}.parquet_bench GROUP BY \
+                             category ORDER BY total DESC LIMIT 10",
                             config.namespace
                         ))
                         .await?;
@@ -156,7 +159,8 @@ impl Benchmark for FlushedParquetQueryBench {
                     // Range scan with ORDER BY + LIMIT
                     client
                         .sql_ok(&format!(
-                            "SELECT * FROM {}.parquet_bench WHERE amount > 5000 ORDER BY amount DESC LIMIT 100",
+                            "SELECT * FROM {}.parquet_bench WHERE amount > 5000 ORDER BY amount \
+                             DESC LIMIT 100",
                             config.namespace
                         ))
                         .await?;
@@ -195,7 +199,8 @@ async fn wait_for_visible_row_count(
 
         if Instant::now() >= deadline {
             return Err(format!(
-                "Timed out waiting for flushed rows to become visible in {}.parquet_bench (expected at least {}, got {})",
+                "Timed out waiting for flushed rows to become visible in {}.parquet_bench \
+                 (expected at least {}, got {})",
                 namespace, expected_count, visible_count
             ));
         }
@@ -206,10 +211,7 @@ async fn wait_for_visible_row_count(
 
 async fn query_visible_row_count(client: &KalamClient, namespace: &str) -> Result<i64, String> {
     let resp = client
-        .sql_ok(&format!(
-            "SELECT COUNT(*) as cnt FROM {}.parquet_bench",
-            namespace
-        ))
+        .sql_ok(&format!("SELECT COUNT(*) as cnt FROM {}.parquet_bench", namespace))
         .await?;
 
     Ok(resp

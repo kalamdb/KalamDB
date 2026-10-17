@@ -1,6 +1,4 @@
-use std::fs;
-use std::path::Path;
-use std::time::Instant;
+use std::{fs, path::Path, time::Instant};
 
 use clap::Parser;
 
@@ -18,8 +16,7 @@ mod verdict;
 
 use client::KalamClient;
 use config::{BenchmarkSuite, Config};
-use reporter::html_reporter;
-use reporter::json_reporter;
+use reporter::{html_reporter, json_reporter};
 use system_info::collect_system_info;
 
 #[tokio::main]
@@ -149,7 +146,8 @@ async fn main() {
     );
     println!("  Passed: {}  Failed: {}", passed, failed);
     println!(
-        "  Verdicts: \x1b[32m🟢 {} excellent\x1b[0m  \x1b[33m🟡 {} acceptable\x1b[0m  \x1b[31m🔴 {} slow\x1b[0m",
+        "  Verdicts: \x1b[32m🟢 {} excellent\x1b[0m  \x1b[33m🟡 {} acceptable\x1b[0m  \x1b[31m🔴 \
+         {} slow\x1b[0m",
         excellent, acceptable, slow
     );
     println!("════════════════════════════════════════════════\n");
@@ -184,9 +182,8 @@ async fn main() {
     }
 
     // Clean up the benchmark namespace
-    let _ =
-        run_sql_ok_on_all_urls(&client, &format!("DROP SCHEMA IF EXISTS {}", config.namespace))
-            .await;
+    let _ = run_sql_ok_on_all_urls(&client, &format!("DROP SCHEMA IF EXISTS {}", config.namespace))
+        .await;
 
     println!();
     if failed > 0 {

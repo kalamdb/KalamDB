@@ -164,5 +164,9 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
         "function_instances_total".to_string(),
         (census.idle_instances + census.active_instances).to_string(),
     ));
+    metrics.push((
+        "functions_deployed".to_string(),
+        ctx.system_tables().catalog_stores().user_routine_count().to_string(),
+    ));
     metrics
 }

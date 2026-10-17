@@ -447,6 +447,24 @@ impl ManifestService {
         })
     }
 
+    /// Restart the flush interval after a retain pass that wrote no Parquet.
+    ///
+    /// Pending writes do not bump `last_refreshed`, and a retain pass does not
+    /// call `persist_flushed_segment`. Without this, a due interval stays due
+    /// and the scheduler full-scans the table on every check.
+    pub fn note_retained_hot_window(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        self.with_flush_scope_lock(table_id, user_id, || {
+            let now = chrono::Utc::now().timestamp_millis();
+            self.update_cached_entry(table_id, user_id, |entry| {
+                entry.last_refreshed = now;
+            })
+        })
+    }
+
     fn mark_pending_write_in_locked_scope(
         &self,
         table_id: &TableId,

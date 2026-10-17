@@ -10,10 +10,13 @@
 //! - Unified: Same code path for standalone and cluster modes
 //! - Provider-agnostic: Handles User, Stream, and Shared table types
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use kalamdb_commons::{
-    ids::{StreamTableRowId, VersionId},
+    ids::{SharedTableRowId, StreamTableRowId, UserTableRowId, VersionId},
     models::{rows::Row, OperationKind, TopicOp, TransactionId, UserId},
     schemas::TableType,
     websocket::{ChangeNotification, ChangeType},
@@ -22,7 +25,7 @@ use kalamdb_commons::{
 use kalamdb_raft::{assign_entry_versions, TransactionApplyResult};
 use kalamdb_sharding::{GroupId, ShardRouter};
 use kalamdb_system::{FileRef, NotificationService as NotificationServiceTrait, TopicPublisher};
-use kalamdb_tables::{utils::base as table_base, StreamTableRow};
+use kalamdb_tables::{utils::base as table_base, SharedTableRow, StreamTableRow, UserTableRow};
 use kalamdb_transactions::StagedMutation;
 
 use crate::{
@@ -494,26 +497,24 @@ impl DmlExecutor {
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
-            let replaced_refs = self
-                .collect_user_file_refs_for_mutation(
-                    provider,
-                    table_id,
+            let applied = provider
+                .update_batch_by_pk_values_deferred(
                     user_id,
-                    pk_value,
-                    OperationKind::Update,
-                    Some(update_row),
+                    &[(pk_value.to_string(), update_row.clone(), version)],
                 )
-                .await;
-
-            let updated = provider
-                .update_by_pk_value_deferred(user_id, pk_value, update_row.clone(), version)
                 .await
                 .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
 
-            if let Some((_row_key, notification)) = updated {
-                if let Some(notification) = notification {
+            if let Some(mutation) = applied.into_iter().next() {
+                if let Some(notification) = mutation.notification {
                     self.emit_autocommit_notification(Some(user_id), notification);
                 }
+                let replaced_refs = self.collect_file_refs_for_prior_row(
+                    table_id,
+                    &mutation.prior,
+                    OperationKind::Update,
+                    mutation.payload.as_ref(),
+                );
                 delete_file_refs_best_effort(
                     self.app_context.as_ref(),
                     table_id,
@@ -574,37 +575,29 @@ impl DmlExecutor {
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<UserTableProvider>()
         {
-            let mut deleted_count = 0;
-            for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
-                let file_refs = self
-                    .collect_user_file_refs_for_mutation(
-                        provider,
-                        table_id,
-                        user_id,
-                        pk_value,
-                        OperationKind::Delete,
-                        None,
-                    )
-                    .await;
-
-                if let Some((_row_key, notification)) = provider
-                    .delete_by_pk_value_deferred(user_id, pk_value, version)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
-                {
-                    if let Some(notification) = notification {
-                        self.emit_autocommit_notification(Some(user_id), notification);
-                    }
-                    deleted_count += 1;
-                    delete_file_refs_best_effort(
-                        self.app_context.as_ref(),
-                        table_id,
-                        TableType::User,
-                        Some(user_id),
-                        &file_refs,
-                    )
-                    .await;
+            let applied = provider
+                .delete_batch_by_pk_values_deferred(user_id, pk_values, versions)
+                .await
+                .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
+            let deleted_count = applied.len();
+            for mutation in applied {
+                if let Some(notification) = mutation.notification {
+                    self.emit_autocommit_notification(Some(user_id), notification);
                 }
+                let file_refs = self.collect_file_refs_for_prior_row(
+                    table_id,
+                    &mutation.prior,
+                    OperationKind::Delete,
+                    None,
+                );
+                delete_file_refs_best_effort(
+                    self.app_context.as_ref(),
+                    table_id,
+                    TableType::User,
+                    Some(user_id),
+                    &file_refs,
+                )
+                .await;
             }
             log::debug!("DmlExecutor: Deleted {} rows from {}", deleted_count, table_id);
             if deleted_count > 0 {
@@ -724,37 +717,29 @@ impl DmlExecutor {
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
         {
-            let mut affected_rows = 0;
-            for (pk_value, update_row, version) in targets {
-                let replaced_refs = self
-                    .collect_shared_file_refs_for_mutation(
-                        provider,
-                        table_id,
-                        &pk_value,
-                        OperationKind::Update,
-                        Some(&update_row),
-                    )
-                    .await;
-
-                let updated = provider
-                    .update_by_pk_value_deferred(&pk_value, update_row, version)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
-
-                if let Some((_row_key, notification)) = updated {
-                    affected_rows += 1;
-                    if let Some(notification) = notification {
-                        self.emit_shared_autocommit_notification(actor_user_id, notification);
-                    }
-                    delete_file_refs_best_effort(
-                        self.app_context.as_ref(),
-                        table_id,
-                        TableType::Shared,
-                        None,
-                        &replaced_refs,
-                    )
-                    .await;
+            let applied = provider
+                .update_batch_by_pk_values_deferred(&targets)
+                .await
+                .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?;
+            let affected_rows = applied.len();
+            for mutation in applied {
+                if let Some(notification) = mutation.notification {
+                    self.emit_shared_autocommit_notification(actor_user_id, notification);
                 }
+                let replaced_refs = self.collect_file_refs_for_prior_row(
+                    table_id,
+                    &mutation.prior,
+                    OperationKind::Update,
+                    mutation.payload.as_ref(),
+                );
+                delete_file_refs_best_effort(
+                    self.app_context.as_ref(),
+                    table_id,
+                    TableType::Shared,
+                    None,
+                    &replaced_refs,
+                )
+                .await;
             }
 
             log::debug!("DmlExecutor: Updated {} shared row(s) in {}", affected_rows, table_id);
@@ -811,37 +796,29 @@ impl DmlExecutor {
         if let Some(provider) =
             (provider_arc.as_ref() as &dyn std::any::Any).downcast_ref::<SharedTableProvider>()
         {
-            let mut deleted_count = 0;
-
-            for (pk_value, version) in pk_values.iter().zip(versions.iter().copied()) {
-                let file_refs = self
-                    .collect_shared_file_refs_for_mutation(
-                        provider,
-                        table_id,
-                        pk_value,
-                        OperationKind::Delete,
-                        None,
-                    )
-                    .await;
-
-                if let Some((_row_key, notification)) = provider
-                    .delete_by_pk_value_deferred(pk_value, version)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?
-                {
-                    if let Some(notification) = notification {
-                        self.emit_shared_autocommit_notification(actor_user_id, notification);
-                    }
-                    deleted_count += 1;
-                    delete_file_refs_best_effort(
-                        self.app_context.as_ref(),
-                        table_id,
-                        TableType::Shared,
-                        None,
-                        &file_refs,
-                    )
-                    .await;
+            let applied = provider
+                .delete_batch_by_pk_values_deferred(pk_values, versions)
+                .await
+                .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?;
+            let deleted_count = applied.len();
+            for mutation in applied {
+                if let Some(notification) = mutation.notification {
+                    self.emit_shared_autocommit_notification(actor_user_id, notification);
                 }
+                let file_refs = self.collect_file_refs_for_prior_row(
+                    table_id,
+                    &mutation.prior,
+                    OperationKind::Delete,
+                    None,
+                );
+                delete_file_refs_best_effort(
+                    self.app_context.as_ref(),
+                    table_id,
+                    TableType::Shared,
+                    None,
+                    &file_refs,
+                )
+                .await;
             }
 
             log::debug!("DmlExecutor: Deleted {} shared rows from {}", deleted_count, table_id);
@@ -1116,6 +1093,10 @@ impl DmlExecutor {
             TableId,
             Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
         )> = None;
+        // Writes in this commit are buffered until the Raft entry finishes, so a
+        // later statement cannot read them back from RocksDB.
+        let mut written: HashMap<(TableId, UserId, String), (UserTableRowId, UserTableRow)> =
+            HashMap::with_capacity(mutations.len());
 
         for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
             if &mutation.transaction_id != transaction_id {
@@ -1151,8 +1132,24 @@ impl DmlExecutor {
                     ))
                 })?;
 
-            let file_refs_to_delete = self
-                .collect_user_file_refs_for_mutation(
+            let written_key =
+                (mutation.table_id.clone(), user_id.clone(), mutation.primary_key.clone());
+            let known = written.get(&written_key).cloned();
+            let file_refs_to_delete = if let Some((_, row)) = known.as_ref().filter(|_| {
+                matches!(mutation.operation_kind, OperationKind::Update | OperationKind::Delete)
+            }) {
+                if self.table_has_file_columns(&mutation.table_id) {
+                    self.collect_file_refs_for_prior_row(
+                        &mutation.table_id,
+                        &row.fields,
+                        mutation.operation_kind,
+                        Some(&mutation.payload),
+                    )
+                } else {
+                    Vec::new()
+                }
+            } else {
+                self.collect_user_file_refs_for_mutation(
                     provider,
                     &mutation.table_id,
                     &user_id,
@@ -1160,29 +1157,88 @@ impl DmlExecutor {
                     mutation.operation_kind,
                     Some(&mutation.payload),
                 )
-                .await;
+                .await
+            };
 
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
-                    let (row_key, notification) = provider
-                        .insert_deferred_prevalidated(&user_id, mutation.payload.clone(), version)
-                        .await
-                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
+                    if known.as_ref().is_some_and(|(_, row)| !row._deleted) {
+                        return Err(ApplierError::Execution(format!(
+                            "Failed to insert batch row: Already exists: Primary key violation: \
+                             value '{}' appears multiple times in the transaction batch for \
+                             column '{}'",
+                            mutation.primary_key,
+                            provider.primary_key_field_name()
+                        )));
+                    }
+                    let (row_key, notification) = if let Some(previous) = known {
+                        provider
+                            .insert_over_hot_deferred(
+                                &user_id,
+                                mutation.payload.clone(),
+                                version,
+                                previous,
+                            )
+                            .await
+                    } else {
+                        provider
+                            .insert_deferred_prevalidated(
+                                &user_id,
+                                mutation.payload.clone(),
+                                version,
+                            )
+                            .await
+                    }
+                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
+                    written.insert(
+                        written_key,
+                        (
+                            row_key.clone(),
+                            UserTableRow {
+                                user_id:  user_id.clone(),
+                                _version: version,
+                                _deleted: false,
+                                fields:   mutation.payload.clone(),
+                            },
+                        ),
+                    );
                     Some((row_key, notification))
                 },
-                OperationKind::Update => provider
-                    .update_by_pk_value_deferred(
-                        &user_id,
-                        mutation.primary_key.as_str(),
-                        mutation.payload.clone(),
-                        version,
-                    )
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?,
-                OperationKind::Delete => provider
-                    .delete_by_pk_value_deferred(&user_id, mutation.primary_key.as_str(), version)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?,
+                OperationKind::Update => {
+                    let updated = provider
+                        .update_by_pk_value_deferred_with_hot(
+                            &user_id,
+                            mutation.primary_key.as_str(),
+                            mutation.payload.clone(),
+                            version,
+                            known,
+                        )
+                        .await
+                        .map_err(|e| {
+                            ApplierError::Execution(format!("Failed to update row: {}", e))
+                        })?;
+                    updated.map(|(row_key, row, notification)| {
+                        written.insert(written_key, (row_key.clone(), row));
+                        (row_key, notification)
+                    })
+                },
+                OperationKind::Delete => {
+                    let deleted = provider
+                        .delete_by_pk_value_deferred_with_hot(
+                            &user_id,
+                            mutation.primary_key.as_str(),
+                            version,
+                            known,
+                        )
+                        .await
+                        .map_err(|e| {
+                            ApplierError::Execution(format!("Failed to delete row: {}", e))
+                        })?;
+                    deleted.map(|(row_key, row, notification)| {
+                        written.insert(written_key, (row_key.clone(), row));
+                        (row_key, notification)
+                    })
+                },
             };
 
             let Some((_row_key, notification)) = applied else {
@@ -1319,6 +1375,10 @@ impl DmlExecutor {
             TableId,
             Arc<dyn datafusion::datasource::TableProvider + Send + Sync>,
         )> = None;
+        // Writes in this commit are buffered until the Raft entry finishes, so a
+        // later statement cannot read them back from RocksDB.
+        let mut written: HashMap<(TableId, String), (SharedTableRowId, SharedTableRow)> =
+            HashMap::with_capacity(mutations.len());
 
         for (mutation, version) in mutations.iter().zip(versions.iter().copied()) {
             if &mutation.transaction_id != transaction_id {
@@ -1349,36 +1409,99 @@ impl DmlExecutor {
                     ))
                 })?;
 
-            let file_refs_to_delete = self
-                .collect_shared_file_refs_for_mutation(
+            let written_key = (mutation.table_id.clone(), mutation.primary_key.clone());
+            let known = written.get(&written_key).cloned();
+            let file_refs_to_delete = if let Some((_, row)) = known.as_ref().filter(|_| {
+                matches!(mutation.operation_kind, OperationKind::Update | OperationKind::Delete)
+            }) {
+                if self.table_has_file_columns(&mutation.table_id) {
+                    self.collect_file_refs_for_prior_row(
+                        &mutation.table_id,
+                        &row.fields,
+                        mutation.operation_kind,
+                        Some(&mutation.payload),
+                    )
+                } else {
+                    Vec::new()
+                }
+            } else {
+                self.collect_shared_file_refs_for_mutation(
                     provider,
                     &mutation.table_id,
                     &mutation.primary_key,
                     mutation.operation_kind,
                     Some(&mutation.payload),
                 )
-                .await;
+                .await
+            };
 
             let applied = match mutation.operation_kind {
                 OperationKind::Insert => {
-                    let (row_key, notification) = provider
-                        .insert_deferred_prevalidated(mutation.payload.clone(), version)
-                        .await
-                        .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
+                    if known.as_ref().is_some_and(|(_, row)| !row._deleted) {
+                        return Err(ApplierError::Execution(format!(
+                            "Failed to insert batch row: Already exists: Primary key violation: \
+                             value '{}' appears multiple times in the transaction batch for \
+                             column '{}'",
+                            mutation.primary_key,
+                            provider.primary_key_field_name()
+                        )));
+                    }
+                    let (row_key, notification) = if let Some(previous) = known {
+                        provider
+                            .insert_over_hot_deferred(mutation.payload.clone(), version, previous)
+                            .await
+                    } else {
+                        provider
+                            .insert_deferred_prevalidated(mutation.payload.clone(), version)
+                            .await
+                    }
+                    .map_err(|e| ApplierError::from_table(e, "Failed to insert batch row"))?;
+                    written.insert(
+                        written_key,
+                        (
+                            row_key,
+                            SharedTableRow {
+                                _version: version,
+                                _deleted: false,
+                                fields:   mutation.payload.clone(),
+                            },
+                        ),
+                    );
                     Some((row_key, notification))
                 },
-                OperationKind::Update => provider
-                    .update_by_pk_value_deferred(
-                        mutation.primary_key.as_str(),
-                        mutation.payload.clone(),
-                        version,
-                    )
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to update row: {}", e)))?,
-                OperationKind::Delete => provider
-                    .delete_by_pk_value_deferred(mutation.primary_key.as_str(), version)
-                    .await
-                    .map_err(|e| ApplierError::Execution(format!("Failed to delete row: {}", e)))?,
+                OperationKind::Update => {
+                    let updated = provider
+                        .update_by_pk_value_deferred_with_hot(
+                            mutation.primary_key.as_str(),
+                            mutation.payload.clone(),
+                            version,
+                            known,
+                        )
+                        .await
+                        .map_err(|e| {
+                            ApplierError::Execution(format!("Failed to update row: {}", e))
+                        })?;
+                    updated.map(|(row_key, row, notification)| {
+                        written.insert(written_key, (row_key, row));
+                        (row_key, notification)
+                    })
+                },
+                OperationKind::Delete => {
+                    let deleted = provider
+                        .delete_by_pk_value_deferred_with_hot(
+                            mutation.primary_key.as_str(),
+                            version,
+                            known,
+                        )
+                        .await
+                        .map_err(|e| {
+                            ApplierError::Execution(format!("Failed to delete row: {}", e))
+                        })?;
+                    deleted.map(|(row_key, row, notification)| {
+                        written.insert(written_key, (row_key, row));
+                        (row_key, notification)
+                    })
+                },
             };
 
             let Some((_row_key, notification)) = applied else {

@@ -30,18 +30,20 @@ pub(crate) fn epoch_millis() -> u64 {
 /// Maximum live-query subscriptions allowed on a single WebSocket connection.
 pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 100;
 
-/// Maximum pending notifications per connection before dropping new ones.
-/// This must cover one full table fanout for a saturated shared WebSocket.
-/// The benchmark and backend contract allow 100 subscriptions per connection;
-/// 128 keeps a small cushion while staying tight for idle-connection memory.
-pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 128;
+/// Maximum pending notifications per connection before a subscriber must resume.
+///
+/// One connection may fan out to 100 subscriptions, and a single live query can
+/// also burst. The replay log holds a larger window than this buffer, so a full
+/// channel resumes from the last cursor instead of scanning the table again.
+/// Idle connections do not allocate the slots.
+pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 8_192;
 
 /// Maximum pending control events per connection.
 ///
-/// Auth timeout, heartbeat timeout, shutdown, and a subscription lapse each
-/// need a slot. A full data channel must still be able to report that the
-/// client has to resubscribe.
-pub const EVENT_CHANNEL_CAPACITY: usize = 8;
+/// Auth timeout, heartbeat timeout, shutdown, and per-subscription lapse events
+/// each need a slot so a full data channel can notify every subscription on the
+/// connection to resubscribe without dropping control events.
+pub const EVENT_CHANNEL_CAPACITY: usize = MAX_SUBSCRIPTIONS_PER_CONNECTION + 8;
 
 /// Maximum buffered notifications per subscription while initial snapshot loading is in progress.
 ///

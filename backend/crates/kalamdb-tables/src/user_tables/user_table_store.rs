@@ -400,4 +400,39 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.user_id, user_id);
     }
+
+    #[test]
+    fn replace_leaves_one_user_row_key() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let table_id = TableId::new(SchemaId::new("ns"), TableName::new("notes"));
+        let schema = crate::row_codec::storage_schema_from_named_fields([(
+            "id",
+            kalamdb_serialization::StorageDataType::Int64,
+        )]);
+        let store = new_indexed_user_table_store(backend, &table_id, "id", schema, &[], &[]);
+        let user_id = UserId::new("user-1");
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(7)));
+        let old_version = VersionId::try_from_i64(1).unwrap();
+        let old_key = UserTableRowId::new(user_id.clone(), old_version);
+        let old_row = UserTableRow {
+            user_id: user_id.clone(),
+            _version: old_version,
+            _deleted: false,
+            fields: Row::new(values.clone()),
+        };
+        store.insert(&old_key, &old_row).unwrap();
+
+        let new_version = VersionId::try_from_i64(2).unwrap();
+        let new_key = UserTableRowId::new(user_id.clone(), new_version);
+        let new_row = UserTableRow {
+            user_id,
+            _version: new_version,
+            _deleted: false,
+            fields: Row::new(values),
+        };
+        store.replace(Some((&old_key, &old_row)), &new_key, &new_row).unwrap();
+        assert!(store.get(&old_key).unwrap().is_none());
+        assert_eq!(store.get(&new_key).unwrap().unwrap()._version, new_version);
+    }
 }

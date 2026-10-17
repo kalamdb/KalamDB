@@ -248,11 +248,7 @@ async fn test_chat_app_endurance_with_100_parallel_users() -> Result<()> {
     let conversation_count = env_usize("KALAMDB_ENDURANCE_ROOM_COUNT", DEFAULT_ROOM_COUNT);
 
     let create_namespace = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await?;
-    assert!(
-        create_namespace.success(),
-        "CREATE SCHEMA failed: {:?}",
-        create_namespace.error
-    );
+    assert!(create_namespace.success(), "CREATE SCHEMA failed: {:?}", create_namespace.error);
 
     let create_conversations = server
         .execute_sql(&format!(

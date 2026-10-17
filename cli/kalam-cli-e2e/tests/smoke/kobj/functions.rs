@@ -1,6 +1,13 @@
 //! CALL + nested SQL/topic + EXECUTE ACL, plus schema-first type/procedure e2e.
 
-use std::{collections::HashMap, fs, path::Path, process::Command};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -527,6 +534,59 @@ fn kobj_functions_active_runs_and_structured_errors() {
     );
 }
 
+/// Production keeps a hot append handle. An idle isolate is dropped after 30s,
+/// and that drop closes the handle. The bound covers that TTL plus the log sweep.
+const PROCEDURE_LOG_FD_CLOSE_BOUND: Duration = Duration::from_secs(45);
+
+#[ntest::timeout(180_000)]
+#[test]
+fn kobj_procedure_log_handle_closes_when_idle() {
+    if skip_if_no_server() {
+        return;
+    }
+    if !server_target_is_local() {
+        eprintln!("⚠️  Procedure log fd check needs a local server. Skipping.");
+        return;
+    }
+    let pid = local_server_pid();
+    let ns = setup_namespace("fnlogfd");
+    create_js_procedure(&ns, "probe", "", "ctx.log.info('log-fd-hot'); return 1;");
+    let _ = query_rows(&format!("CALL {ns}.probe()"));
+
+    let marker = format!("functions/runtime/{ns}.probe/logs/procedures.jsonl");
+    assert!(
+        wait_for_log_fd(pid, &marker, true, Duration::from_secs(5)),
+        "hot CALL should keep {marker} open in pid {pid}"
+    );
+    let log_path = process_open_paths(pid)
+        .into_iter()
+        .find(|path| path.contains(&marker))
+        .expect("open procedure log path");
+
+    assert!(
+        wait_for_log_fd(pid, &marker, false, PROCEDURE_LOG_FD_CLOSE_BOUND),
+        "idle procedure log should be closed within {:?}: {log_path}",
+        PROCEDURE_LOG_FD_CLOSE_BOUND
+    );
+    assert!(
+        Path::new(&log_path).is_file(),
+        "closing the descriptor must leave the log on disk: {log_path}"
+    );
+    let before = fs::metadata(&log_path)
+        .unwrap_or_else(|error| panic!("stat {log_path}: {error}"))
+        .len();
+
+    let reopened = query_rows(&format!("CALL {ns}.probe()"));
+    assert!(!reopened.is_empty(), "CALL after the log fd closed should still succeed");
+    let after = fs::metadata(&log_path)
+        .unwrap_or_else(|error| panic!("stat {log_path}: {error}"))
+        .len();
+    assert!(
+        after > before,
+        "reopened procedure log should append to {log_path} ({before} -> {after})"
+    );
+}
+
 #[ntest::timeout(180000)]
 #[test]
 fn kobj_functions_create_type_and_inline_procedure() {
@@ -711,6 +771,61 @@ return input.x;
     let logged_value = cell_i64(&logged[0], "result")
         .unwrap_or_else(|| cell(&logged[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(logged_value, 7, "ctx.log must not break CALL: {logged:?}");
+}
+
+fn local_server_pid() -> u32 {
+    let rows = query_rows("SELECT metric_value FROM system.stats WHERE metric_name = 'pid'");
+    rows.first()
+        .and_then(|row| cell_str(row, "metric_value"))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("system.stats pid missing: {rows:?}"))
+}
+
+fn process_open_paths(pid: u32) -> Vec<String> {
+    let proc_fd = std::path::PathBuf::from(format!("/proc/{pid}/fd"));
+    if proc_fd.is_dir() {
+        let mut paths = Vec::new();
+        let entries =
+            fs::read_dir(proc_fd).unwrap_or_else(|error| panic!("read /proc/{pid}/fd: {error}"));
+        for entry in entries.flatten() {
+            if let Ok(target) = fs::read_link(entry.path()) {
+                paths.push(target.to_string_lossy().into_owned());
+            }
+        }
+        return paths;
+    }
+
+    let output = Command::new("lsof")
+        .args(["-nP", "-F", "n", "-p", &pid.to_string()])
+        .output()
+        .unwrap_or_else(|error| panic!("lsof pid {pid}: {error}"));
+    if output.stdout.is_empty() {
+        panic!(
+            "lsof pid {pid} status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn wait_for_log_fd(pid: u32, marker: &str, open: bool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let is_open = process_open_paths(pid).iter().any(|path| path.contains(marker));
+        if is_open == open {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
 }
 
 fn procedure_logs_like(procedure_id: &str) -> Vec<HashMap<String, Value>> {

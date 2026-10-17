@@ -1,11 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 use kalam_client::{ChangeEvent, SubscriptionConfig};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures how quickly a subscriber receives the full initial data batch
 /// when subscribing to a user table that already contains 1000 rows.

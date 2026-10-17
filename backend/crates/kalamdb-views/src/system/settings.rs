@@ -186,12 +186,6 @@ impl VirtualView for SettingsView {
                         "Public origin used by the Admin UI for API and WebSocket traffic",
                         "server"
                     ),
-                    (
-                        "server.api_version",
-                        config.server.api_version,
-                        "API version prefix (e.g., v1)",
-                        "server"
-                    ),
                 ]
             );
 
@@ -352,12 +346,6 @@ impl VirtualView for SettingsView {
                 categories,
                 [
                     (
-                        "limits.max_message_size",
-                        config.limits.max_message_size,
-                        "Maximum message size for REST API requests",
-                        "limits"
-                    ),
-                    (
                         "limits.max_query_limit",
                         config.limits.max_query_limit,
                         "Maximum rows returned in a single query",
@@ -398,15 +386,15 @@ impl VirtualView for SettingsView {
                 categories,
                 [
                     (
-                        "flush.default_row_limit",
-                        config.flush.default_row_limit,
-                        "Default row limit for flush policies",
+                        "flush.flush_batch_size",
+                        config.flush.flush_batch_size,
+                        "Rows loaded per flush batch",
                         "flush"
                     ),
                     (
-                        "flush.default_time_interval",
-                        config.flush.default_time_interval,
-                        "Default time interval for flush (seconds)",
+                        "flush.retain_latest_hot",
+                        config.flush.retain_latest_hot,
+                        "Keep the current row in hot storage after flush",
                         "flush"
                     ),
                     (
@@ -447,26 +435,12 @@ impl VirtualView for SettingsView {
                 values,
                 descriptions,
                 categories,
-                [
-                    (
-                        "stream.default_ttl_seconds",
-                        config.stream.default_ttl_seconds,
-                        "Default TTL for stream rows (seconds)",
-                        "stream"
-                    ),
-                    (
-                        "stream.default_max_buffer",
-                        config.stream.default_max_buffer,
-                        "Default maximum buffer size",
-                        "stream"
-                    ),
-                    (
-                        "stream.eviction_interval_seconds",
-                        config.stream.eviction_interval_seconds,
-                        "Stream eviction check interval (seconds)",
-                        "stream"
-                    ),
-                ]
+                [(
+                    "stream.eviction_interval_seconds",
+                    config.stream.eviction_interval_seconds,
+                    "Stream eviction check interval (seconds)",
+                    "stream"
+                ),]
             );
 
             // Topic Settings
@@ -645,12 +619,6 @@ impl VirtualView for SettingsView {
                         "jobs"
                     ),
                     (
-                        "jobs.max_retries",
-                        config.jobs.max_retries,
-                        "Maximum retry attempts per job",
-                        "jobs"
-                    ),
-                    (
                         "jobs.wal_cleanup_interval_seconds",
                         config.jobs.wal_cleanup_interval_seconds,
                         "Interval for periodic RocksDB WAL cleanup flushes",
@@ -685,15 +653,15 @@ impl VirtualView for SettingsView {
                 categories,
                 [
                     (
-                        "execution.handler_timeout_seconds",
-                        config.execution.handler_timeout_seconds,
-                        "Handler execution timeout in seconds",
+                        "execution.sql_plan_cache_max_entries",
+                        config.execution.sql_plan_cache_max_entries,
+                        "Maximum cached SQL logical plans",
                         "execution"
                     ),
                     (
-                        "execution.max_parameters",
-                        config.execution.max_parameters,
-                        "Maximum number of parameters per statement",
+                        "execution.sql_plan_cache_ttl_seconds",
+                        config.execution.sql_plan_cache_ttl_seconds,
+                        "Idle TTL for cached SQL plans (seconds)",
                         "execution"
                     ),
                 ]
@@ -705,20 +673,12 @@ impl VirtualView for SettingsView {
                 values,
                 descriptions,
                 categories,
-                [
-                    (
-                        "security.max_request_body_size",
-                        config.security.max_request_body_size,
-                        "Maximum request body size in bytes",
-                        "security"
-                    ),
-                    (
-                        "security.max_ws_message_size",
-                        config.security.max_ws_message_size,
-                        "Maximum WebSocket message size in bytes",
-                        "security"
-                    ),
-                ]
+                [(
+                    "security.max_ws_message_size",
+                    config.security.max_ws_message_size,
+                    "Maximum WebSocket message size in bytes",
+                    "security"
+                ),]
             );
 
             // Shutdown Settings

@@ -216,14 +216,13 @@ impl V8Session {
 
     async fn run_async(&mut self, invocation: &Invocation) -> Result<RoutineValue> {
         invocation.scope.check()?;
-        if invocation.scope.depth == 0 && !self.context_fresh {
+        if !self.context_fresh {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.reset_context");
             self.reset_context()?;
-        } else if invocation.scope.depth == 0 {
+        } else {
             self.bind_root_host_frame();
         }
-        if invocation.scope.depth == 0 {
-            self.context_fresh = false;
-        }
+        self.context_fresh = false;
         // `invoke_async` clears isolate slots before entering. Skipping
         // `reset_context` on a freshly loaded or recycled realm still needs a
         // live `Operations` slot so `kalamAsyncOp` can queue host work.
@@ -257,7 +256,10 @@ impl V8Session {
     }
 
     async fn drive(&mut self, invocation: &Invocation) -> Result<RoutineValue> {
-        let returned = self.start(invocation)?;
+        let returned = {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.start");
+            self.start(invocation)?
+        };
         let mut pending = FuturesUnordered::<Pending>::new();
         loop {
             invocation.scope.check()?;
@@ -268,11 +270,14 @@ impl V8Session {
                 nested = std::mem::take(&mut operations.nested);
             }
             if pending.is_empty() && nested.is_empty() {
-                let value = self.poll_return(&returned, invocation)?.ok_or_else(|| {
-                    FunctionsError::Javascript(
-                        "procedure Promise cannot settle: no pending host operations".into(),
-                    )
-                })?;
+                let value = {
+                    let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.poll_return");
+                    self.poll_return(&returned, invocation)?.ok_or_else(|| {
+                        FunctionsError::Javascript(
+                            "procedure Promise cannot settle: no pending host operations".into(),
+                        )
+                    })?
+                };
                 // Getters can enqueue work during conversion. Never carry that work into a
                 // reused isolate or acknowledge success with unsettled database operations.
                 self.isolate.perform_microtask_checkpoint();
@@ -297,16 +302,24 @@ impl V8Session {
                 continue;
             }
             self.detach();
-            let completion = tokio::select! {
-                biased;
-                _ = invocation.scope.cancel.cancelled() => Err(FunctionsError::Cancelled),
-                _ = tokio::time::sleep_until(invocation.scope.deadline.into()) => Err(FunctionsError::Timeout),
-                next = pending.next() => next.ok_or_else(|| FunctionsError::Invalid("host completion missing".into())),
-            };
+            let completion = kalamdb_observability::kdb_await_in_info_span!(
+                async {
+                    tokio::select! {
+                        biased;
+                        _ = invocation.scope.cancel.cancelled() => Err(FunctionsError::Cancelled),
+                        _ = tokio::time::sleep_until(invocation.scope.deadline.into()) => Err(FunctionsError::Timeout),
+                        next = pending.next() => next.ok_or_else(|| FunctionsError::Invalid("host completion missing".into())),
+                    }
+                },
+                "func.v8.await_host"
+            );
             self.attach();
             let (resolver, result) = completion?;
             // Remaining host futures drop here before the caller can roll back.
-            self.complete(resolver, result)?;
+            {
+                let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.complete_host");
+                self.complete(resolver, result)?;
+            }
         }
     }
 

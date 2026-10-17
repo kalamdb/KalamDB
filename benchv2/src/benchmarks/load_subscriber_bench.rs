@@ -1,13 +1,15 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+};
 
 use kalam_client::{ChangeEvent, SubscriptionConfig};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures how the server handles N concurrent WebSocket live-query subscribers
 /// while writes stream into the watched table.

@@ -44,9 +44,7 @@ async fn test_observability_system_tables_and_jobs_over_http() -> anyhow::Result
 
     // system.jobs tracks flush operations
     let ns_jobs = unique_namespace("app_jobs");
-    let resp = server
-        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns_jobs))
-        .await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns_jobs)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server

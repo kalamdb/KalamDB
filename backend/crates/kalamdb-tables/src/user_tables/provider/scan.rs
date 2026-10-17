@@ -32,6 +32,10 @@ impl DeferredMvccScanProvider<UserTableRowId, UserTableRow> for UserTableProvide
         !scan_context.allow_all_users && scan_context.snapshot_commit_seq.is_none()
     }
 
+    fn can_try_pk_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
+        !scan_context.allow_all_users
+    }
+
     fn allow_count_only_fast_path(&self, scan_context: &Self::ScanContext) -> bool {
         !scan_context.allow_all_users
     }
@@ -253,8 +257,7 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
                 std::slice::from_ref(&row_data),
             )?;
 
-            // Validate PRIMARY KEY uniqueness if user provided PK value
-            base::ensure_unique_pk_value(self, Some(user_id), &row_data).await?;
+            let predecessor = self.insert_predecessor(user_id, &row_data).await?;
 
             // Generate new SeqId via SystemColumnsService
             let seq_id = version;
@@ -275,8 +278,13 @@ impl BaseTableProvider<UserTableRowId, UserTableRow> for UserTableProvider {
 
             // Use the same preencoded append path as batch inserts so single-row
             // MVCC writes and batch writes stay consistent.
-            self.append_hot_row(&row_key, &entity, "Failed to insert user table row")
-                .await?;
+            self.write_replaced_row(
+                predecessor,
+                row_key.clone(),
+                entity.clone(),
+                "Failed to insert user table row",
+            )
+            .await?;
 
             if log::log_enabled!(log::Level::Debug) {
                 log::debug!(

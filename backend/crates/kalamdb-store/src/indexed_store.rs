@@ -817,6 +817,107 @@ where
         self.backend.batch(operations)
     }
 
+    /// Replace one hot key with another in a single `WriteBatch`.
+    ///
+    /// `previous` is the row already loaded by the caller. Index deletes are
+    /// built from that value, so this does not read RocksDB again. When
+    /// `previous` is `None`, this is an insert. When the keys match, stale
+    /// index entries are dropped and the entity is overwritten.
+    pub fn replace(
+        &self,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+    ) -> Result<()> {
+        let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
+        self.push_replace(&mut operations, previous, new_key, new_entity)?;
+        self.backend.batch(operations)
+    }
+
+    /// Replace many hot keys in one `WriteBatch`.
+    ///
+    /// Each item is `(previous row, new key, new entity)`. `previous` is
+    /// `None` when the primary key has no hot row to delete.
+    pub fn replace_batch(&self, items: &[(Option<(K, V)>, K, V)]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        if items.len() == 1 {
+            let (previous, new_key, new_entity) = &items[0];
+            return self.replace(
+                previous.as_ref().map(|(key, entity)| (key, entity)),
+                new_key,
+                new_entity,
+            );
+        }
+
+        let ops_per_item = 2 + self.indexes.len() * 2;
+        let mut operations = Vec::with_capacity(items.len() * ops_per_item);
+        for (previous, new_key, new_entity) in items {
+            self.push_replace(
+                &mut operations,
+                previous.as_ref().map(|(key, entity)| (key, entity)),
+                new_key,
+                new_entity,
+            )?;
+        }
+        self.backend.batch(operations)
+    }
+
+    fn push_replace(
+        &self,
+        operations: &mut Vec<Operation>,
+        previous: Option<(&K, &V)>,
+        new_key: &K,
+        new_entity: &V,
+    ) -> Result<()> {
+        let new_storage = new_key.storage_key();
+        if let Some((old_key, old_entity)) = previous {
+            let old_storage = old_key.storage_key();
+            let same_key = old_storage == new_storage;
+            if !same_key {
+                operations.push(Operation::Delete {
+                    partition: self.main_partition.clone(),
+                    key:       old_storage,
+                });
+            }
+            for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+                let old_index_key = index.extract_key(old_key, old_entity);
+                let drop_old = if same_key {
+                    old_index_key != index.extract_key(new_key, new_entity)
+                } else {
+                    true
+                };
+                if drop_old {
+                    if let Some(index_key) = old_index_key {
+                        operations.push(Operation::Delete {
+                            partition: index_partition.clone(),
+                            key:       index_key,
+                        });
+                    }
+                }
+            }
+        }
+
+        let value = self.codec.encode(new_key, new_entity)?;
+        operations.push(Operation::Put {
+            partition: self.main_partition.clone(),
+            key:       new_storage,
+            value,
+        });
+        for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
+            if let Some(index_key) = index.extract_key(new_key, new_entity) {
+                let index_value = index.index_value(new_key, new_entity);
+                operations.push(Operation::Put {
+                    partition: index_partition.clone(),
+                    key:       index_key,
+                    value:     index_value,
+                });
+            }
+        }
+        Ok(())
+    }
+
     // ========================================================================
     // Sync Read/Scan Operations
     // ========================================================================
@@ -1202,10 +1303,38 @@ where
 {
     /// Async version of `insert()`.
     ///
-    /// Uses `spawn_blocking` to avoid blocking the async runtime.
+    /// Runs inline. One memtable write is cheaper than cloning this store
+    /// onto the blocking pool.
+    #[allow(clippy::unused_async)]
     pub async fn insert_async(&self, key: K, entity: V) -> Result<()> {
+        self.insert(&key, &entity)
+    }
+
+    /// Async version of [`Self::replace`]. Runs inline for the same reason as
+    /// [`Self::insert_async`].
+    #[allow(clippy::unused_async)]
+    pub async fn replace_async(
+        &self,
+        previous: Option<(K, V)>,
+        new_key: K,
+        new_entity: V,
+    ) -> Result<()> {
+        self.replace(
+            previous.as_ref().map(|(key, entity)| (key, entity)),
+            &new_key,
+            &new_entity,
+        )
+    }
+
+    /// Async version of [`Self::replace_batch`].
+    ///
+    /// One replacement runs inline. Larger batches go to the blocking pool.
+    pub async fn replace_batch_async(&self, items: Vec<(Option<(K, V)>, K, V)>) -> Result<()> {
+        if items.len() <= 1 {
+            return self.replace_batch(&items);
+        }
         let store = self.clone();
-        run_blocking_result(move || store.insert(&key, &entity)).await
+        run_blocking_result(move || store.replace_batch(&items)).await
     }
 
     /// Async version of `insert_batch()`.
@@ -1488,6 +1617,29 @@ mod tests {
         let completed_jobs = store.scan_by_index(0, Some(&[4]), None).unwrap();
         assert_eq!(completed_jobs.len(), 1);
         assert_eq!(completed_jobs[0].0, job.job_id);
+    }
+
+    #[test]
+    fn test_replace_deletes_previous_key_and_index_without_reread() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+        let store =
+            IndexedEntityStore::new(backend.clone(), "test_jobs", vec![Arc::new(TestStatusIndex)]);
+
+        let old_job = create_test_job("job1", JobStatus::Running);
+        store.insert(&old_job.job_id, &old_job).unwrap();
+
+        let mut new_job = create_test_job("job2", JobStatus::Completed);
+        new_job.finished_at = Some(new_job.created_at + 1000);
+        store
+            .replace(Some((&old_job.job_id, &old_job)), &new_job.job_id, &new_job)
+            .unwrap();
+
+        assert!(store.get(&old_job.job_id).unwrap().is_none());
+        assert_eq!(store.get(&new_job.job_id).unwrap().unwrap().job_id, new_job.job_id);
+        assert!(store.scan_by_index(0, Some(&[2]), None).unwrap().is_empty());
+        let completed = store.scan_by_index(0, Some(&[4]), None).unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].0, new_job.job_id);
     }
 
     #[test]

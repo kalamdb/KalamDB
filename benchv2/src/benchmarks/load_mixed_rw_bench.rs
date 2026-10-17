@@ -1,11 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
-use crate::metrics::BenchmarkDetail;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config, metrics::BenchmarkDetail};
 
 /// Runs concurrent reads and writes against the same table simultaneously.
 /// Tests how write contention affects read latency and vice versa.
@@ -31,10 +26,7 @@ impl Benchmark for MixedReadWriteBench {
                 "Mix",
                 format!("{} reads / {} writes", config.concurrency / 2, config.concurrency / 2),
             ),
-            BenchmarkDetail::new(
-                "Read Shapes",
-                "range filter, count-star, order-by desc limit",
-            ),
+            BenchmarkDetail::new("Read Shapes", "range filter, count-star, order-by desc limit"),
         ]
     }
 

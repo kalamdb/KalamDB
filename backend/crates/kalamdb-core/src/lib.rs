@@ -1,5 +1,5 @@
 //! KalamDB Core Library
-//!
+#![recursion_limit = "256"]
 //! This crate provides the core storage functionality for KalamDB, a high-performance
 //! distributed database with:
 //!

@@ -19,8 +19,11 @@ use crate::http::sql::models::{ErrorCode, SqlResponse};
 /// GET /v1/files/{namespace}/{table_name}/{subfolder}/{stored_name} - Download a file
 ///
 /// Requires Bearer token (JWT) authorization and table access permissions.
-/// For user tables, downloads default to the authenticated user's table scope.
-/// DBA/system roles may supply `user_id` when the impersonation role matrix allows it.
+/// User-table downloads stay in the caller's user id. DBA and System may supply
+/// `user_id` when the impersonation role matrix allows it.
+/// Shared-table downloads follow SELECT visibility: DBA and System read the blob
+/// directly, and User or Service read it only when a current row they can select
+/// stores this FileRef. A hidden or missing file uses the same not-found body.
 #[get("/files/{namespace}/{table_name}/{subfolder}/{stored_name}")]
 pub async fn download_file(
     extractor: AuthSessionExtractor,
@@ -80,13 +83,6 @@ pub async fn download_file(
             Some(effective_user_id)
         },
         TableType::Shared => {
-            if !can_download_shared_file(session.role()) {
-                return HttpResponse::Forbidden().json(SqlResponse::error(
-                    ErrorCode::PermissionDenied,
-                    "Raw shared-table file downloads require DBA or System role",
-                    0.0,
-                ));
-            }
             if query.user_id.is_some() {
                 return HttpResponse::BadRequest().json(SqlResponse::error(
                     ErrorCode::InvalidInput,
@@ -106,26 +102,48 @@ pub async fn download_file(
         },
     };
 
-    // Validate path components for security
-    let subfolder_is_valid = FileRef::is_valid_subfolder(&subfolder);
-
-    if !subfolder_is_valid
-        || subfolder.contains("..")
-        || subfolder.contains('/')
-        || subfolder.contains('\\')
-        || subfolder.contains('\0')
-        || stored_name.contains("..")
-        || stored_name.contains('/')
-        || stored_name.contains('\\')
-        || stored_name.contains('\0')
-    {
+    // Traversal stays a bad request. A subfolder that is not a minted FileRef
+    // folder is indistinguishable from a missing file.
+    if path_has_traversal(&subfolder) || path_has_traversal(&stored_name) {
         return HttpResponse::BadRequest().json(SqlResponse::error(
             ErrorCode::InvalidInput,
             "Invalid file path",
             0.0,
         ));
     }
+    if !FileRef::is_valid_subfolder(&subfolder) {
+        return file_not_found();
+    }
     let relative_path = format!("{}/{}", subfolder, stored_name);
+
+    if table_type == TableType::Shared && !shared_file_download_bypasses_rls(session.role()) {
+        match app_context
+            .shared_select_authorizes_file(
+                &table_id,
+                session.user_id(),
+                session.role(),
+                &subfolder,
+                &stored_name,
+            )
+            .await
+        {
+            Ok(true) => {},
+            Ok(false) => return file_not_found(),
+            Err(error) => {
+                log::warn!(
+                    "Shared file visibility check failed: table={}, file={}: {}",
+                    table_id,
+                    stored_name,
+                    error
+                );
+                return HttpResponse::InternalServerError().json(SqlResponse::error(
+                    ErrorCode::InternalError,
+                    "Failed to authorize file download",
+                    0.0,
+                ));
+            },
+        }
+    }
 
     // Fetch file from storage
     let file_service = app_context.file_storage_service();
@@ -154,15 +172,26 @@ pub async fn download_file(
         },
         Err(e) => {
             log::warn!("File download failed: table={}, file={}: {}", table_id, stored_name, e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": "File not found",
-                "code": "FILE_NOT_FOUND",
-            }))
+            file_not_found()
         },
     }
 }
 
-fn can_download_shared_file(role: Role) -> bool {
+fn path_has_traversal(component: &str) -> bool {
+    component.contains("..")
+        || component.contains('/')
+        || component.contains('\\')
+        || component.contains('\0')
+}
+
+fn file_not_found() -> HttpResponse {
+    HttpResponse::NotFound().json(serde_json::json!({
+        "error": "File not found",
+        "code": "FILE_NOT_FOUND",
+    }))
+}
+
+fn shared_file_download_bypasses_rls(role: Role) -> bool {
     matches!(role, Role::Dba | Role::System)
 }
 
@@ -209,10 +238,10 @@ mod tests {
     }
 
     #[test]
-    fn shared_file_downloads_are_admin_only_even_for_services() {
-        assert!(!can_download_shared_file(Role::User));
-        assert!(!can_download_shared_file(Role::Service));
-        assert!(can_download_shared_file(Role::Dba));
-        assert!(can_download_shared_file(Role::System));
+    fn shared_file_download_bypass_is_dba_or_system() {
+        assert!(!shared_file_download_bypasses_rls(Role::User));
+        assert!(!shared_file_download_bypasses_rls(Role::Service));
+        assert!(shared_file_download_bypasses_rls(Role::Dba));
+        assert!(shared_file_download_bypasses_rls(Role::System));
     }
 }

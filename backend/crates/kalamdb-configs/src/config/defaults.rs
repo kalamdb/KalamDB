@@ -3,10 +3,6 @@ pub fn default_workers() -> usize {
     0
 }
 
-pub fn default_api_version() -> String {
-    "v1".to_string()
-}
-
 pub fn default_enable_http2() -> bool {
     true // HTTP/2 enabled by default for better performance
 }
@@ -33,10 +29,6 @@ pub fn default_shared_tables_template() -> String {
 
 pub fn default_user_tables_template() -> String {
     "{namespace}/{tableName}/{userId}".to_string()
-}
-
-pub fn default_max_message_size() -> usize {
-    1048576 // 1MB
 }
 
 pub fn default_max_query_limit() -> usize {
@@ -83,10 +75,6 @@ pub fn default_logs_path() -> String {
     "./logs".to_string()
 }
 
-pub fn default_request_timeout() -> u64 {
-    30
-}
-
 pub fn default_keepalive_timeout() -> u64 {
     75
 }
@@ -96,7 +84,7 @@ pub fn default_max_connections() -> usize {
 }
 
 pub fn default_backlog() -> u32 {
-    4096 // Pending connection queue size (increased from 2048 for better burst handling)
+    4096
 }
 
 pub fn default_worker_max_blocking_threads() -> usize {
@@ -127,10 +115,6 @@ pub fn default_postgres_wire_portal_limit() -> usize {
     1024
 }
 
-pub fn default_max_header_size() -> usize {
-    16384 // 16KB - increased from default 8KB to support large JWT tokens
-}
-
 pub fn default_transaction_timeout_secs() -> u64 {
     300 // 5 minutes
 }
@@ -157,14 +141,6 @@ pub fn default_datafusion_batch_size() -> usize {
 }
 
 // Flush defaults
-pub fn default_flush_row_limit() -> usize {
-    10000
-}
-
-pub fn default_flush_time_interval() -> u64 {
-    300 // 5 minutes
-}
-
 pub fn default_flush_batch_size() -> usize {
     10000 // 10k rows per batch to avoid loading all into memory
 }
@@ -210,14 +186,6 @@ pub fn default_manifest_cache_eviction_ttl_days() -> u64 {
 }
 
 // Stream defaults
-pub fn default_stream_ttl() -> u64 {
-    10 // 10 seconds
-}
-
-pub fn default_stream_max_buffer() -> usize {
-    10000
-}
-
 pub fn default_stream_eviction_interval() -> u64 {
     60 // 60 seconds = 1 minute
 }
@@ -242,25 +210,9 @@ pub fn default_topic_retention_batch_size() -> usize {
     10000
 }
 
-pub fn default_user_deletion_grace_period() -> i64 {
-    30 // 30 days
-}
-
-pub fn default_cleanup_job_schedule() -> String {
-    "0 2 * * *".to_string()
-}
-
-// Jobs defaults (Phase 9, T163)
+// Jobs defaults
 pub fn default_jobs_max_concurrent() -> u32 {
     10 // 10 concurrent jobs
-}
-
-pub fn default_jobs_max_retries() -> u32 {
-    3 // 3 retry attempts
-}
-
-pub fn default_jobs_retry_backoff_ms() -> u64 {
-    100 // 100ms initial backoff
 }
 
 pub fn default_jobs_wal_cleanup_interval() -> u64 {
@@ -280,19 +232,7 @@ pub fn default_jobs_max_runtime_seconds() -> u64 {
     1800
 }
 
-// Execution defaults (Phase 11, T026)
-pub fn default_handler_timeout_seconds() -> u64 {
-    30 // 30 seconds
-}
-
-pub fn default_max_parameters() -> usize {
-    50 // Maximum 50 query parameters
-}
-
-pub fn default_max_parameter_size_bytes() -> usize {
-    524288 // 512KB maximum parameter size
-}
-
+// Execution defaults
 pub fn default_sql_plan_cache_max_entries() -> u64 {
     200 // bounded SQL logical plan cache entries (reduced from 1000)
 }
@@ -546,16 +486,12 @@ pub fn default_rocksdb_max_open_files() -> i32 {
 }
 
 pub fn default_rocksdb_compact_on_startup() -> bool {
-    false // Compact all column families on startup to reduce file count
+    false
 }
 
 // Security defaults
 pub fn default_max_ws_message_size() -> usize {
     1024 * 1024 // 1MB
-}
-
-pub fn default_max_request_body_size() -> usize {
-    10 * 1024 * 1024 // 10MB
 }
 
 // File upload defaults

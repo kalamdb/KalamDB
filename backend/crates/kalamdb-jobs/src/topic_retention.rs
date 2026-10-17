@@ -101,7 +101,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{
-        rows::Row, SchemaId, PayloadMode, TableId, TableName, TopicId, TopicOp,
+        rows::Row, PayloadMode, SchemaId, TableId, TableName, TopicId, TopicOp,
     };
     use kalamdb_core::test_helpers::test_app_context;
     use kalamdb_system::{

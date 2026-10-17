@@ -48,9 +48,7 @@ async fn test_timestamp_column_defaults_return_microseconds() -> anyhow::Result<
     let user = unique_table("user_ts_units");
     let auth = create_user_auth_header_default(server, &user).await?;
 
-    let response = server
-        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}"))
-        .await?;
+    let response = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {namespace}")).await?;
     anyhow::ensure!(response.status == ResponseStatus::Success);
 
     let response = server

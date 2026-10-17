@@ -156,7 +156,6 @@ fn validate_logging(config: &ServerConfig) -> anyhow::Result<()> {
 }
 
 fn validate_limits(config: &ServerConfig) -> anyhow::Result<()> {
-    ensure_non_zero_usize(config.limits.max_message_size, "max_message_size")?;
     ensure_non_zero_usize(config.limits.max_query_limit, "max_query_limit")?;
 
     if config.limits.default_query_limit > config.limits.max_query_limit {
@@ -165,18 +164,6 @@ fn validate_limits(config: &ServerConfig) -> anyhow::Result<()> {
             config.limits.default_query_limit,
             config.limits.max_query_limit
         ));
-    }
-
-    Ok(())
-}
-
-fn validate_user_management(config: &ServerConfig) -> anyhow::Result<()> {
-    if config.user_management.deletion_grace_period_days < 0 {
-        return Err(anyhow::anyhow!("deletion_grace_period_days cannot be negative"));
-    }
-
-    if config.user_management.cleanup_job_schedule.trim().is_empty() {
-        return Err(anyhow::anyhow!("cleanup_job_schedule cannot be empty"));
     }
 
     Ok(())
@@ -392,7 +379,6 @@ impl ServerConfig {
         validate_public_origin(self)?;
         validate_logging(self)?;
         validate_limits(self)?;
-        validate_user_management(self)?;
         validate_topics(self)?;
         validate_jobs(self)?;
         validate_auth(self)?;
@@ -537,7 +523,6 @@ mod tests {
         for required_snippet in [
             "transaction_timeout_secs",
             "max_transaction_buffer_bytes",
-            "[user_management]",
             "[files]",
             "[topics]",
             "visibility_timeout_secs",
@@ -557,12 +542,47 @@ mod tests {
             "auto_create_users_from_provider",
             "min_replication_nodes",
             "snapshot_threshold",
+            "[user_management]",
+            "[retention]",
+            "api_version",
+            "allow_private_network",
+            "max_request_body_size",
+            "handler_timeout_seconds",
         ] {
             assert!(
                 !example.contains(stale_snippet),
                 "server.example.toml should not mention stale key {stale_snippet}"
             );
         }
+    }
+
+    #[test]
+    fn removed_config_keys_are_ignored() {
+        let mut value = toml::Value::try_from(ServerConfig::default()).unwrap();
+        let root = value.as_table_mut().unwrap();
+        root["server"]
+            .as_table_mut()
+            .unwrap()
+            .insert("api_version".to_string(), toml::Value::String("v9".to_string()));
+        root.insert(
+            "retention".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "enable_dba_stats".to_string(),
+                toml::Value::Boolean(true),
+            )])),
+        );
+        root.insert(
+            "user_management".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "deletion_grace_period_days".to_string(),
+                toml::Value::Integer(1),
+            )])),
+        );
+
+        let mut config: ServerConfig =
+            toml::from_str(&toml::to_string(&value).unwrap()).expect("legacy keys should parse");
+        config.finalize().expect("legacy keys should still validate");
+        assert_eq!(config.server.port, 2900);
     }
 
     #[test]
