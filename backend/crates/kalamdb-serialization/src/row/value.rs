@@ -20,22 +20,27 @@ use super::{
 };
 use crate::error::{Result, SerializationError};
 
+#[inline]
 pub(crate) fn write_u8(buf: &mut Vec<u8>, value: u8) {
     buf.push(value);
 }
 
+#[inline]
 pub(crate) fn write_u16(buf: &mut Vec<u8>, value: u16) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_u32(buf: &mut Vec<u8>, value: u32) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_i64(buf: &mut Vec<u8>, value: i64) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     let len = u32::try_from(bytes.len())
         .map_err(|_| SerializationError::Encode("bytes length exceeds u32".to_string()))?;
@@ -44,6 +49,7 @@ pub(crate) fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[inline]
 pub(crate) fn write_str(buf: &mut Vec<u8>, value: &str) -> Result<()> {
     write_bytes(buf, value.as_bytes())
 }
@@ -54,6 +60,7 @@ pub(crate) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[inline]
     pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self {
             origin: bytes,
@@ -61,10 +68,17 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.rest.is_empty()
     }
 
+    #[inline]
+    pub(crate) fn remaining(&self) -> usize {
+        self.rest.len()
+    }
+
+    #[inline]
     pub(crate) fn seek(&mut self, offset: usize) -> Result<()> {
         if offset > self.origin.len() {
             return Err(SerializationError::Truncated);
@@ -73,6 +87,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    #[inline]
     pub(crate) fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.rest.len() < n {
             return Err(SerializationError::Truncated);
@@ -82,25 +97,30 @@ impl<'a> Reader<'a> {
         Ok(head)
     }
 
+    #[inline]
     pub(crate) fn u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
+    #[inline]
     pub(crate) fn u16(&mut self) -> Result<u16> {
         let bytes = self.take(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
+    #[inline]
     pub(crate) fn u32(&mut self) -> Result<u32> {
         let bytes = self.take(4)?;
         Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn i32(&mut self) -> Result<i32> {
         let bytes = self.take(4)?;
         Ok(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn i64(&mut self) -> Result<i64> {
         let bytes = self.take(8)?;
         Ok(i64::from_le_bytes([
@@ -108,11 +128,13 @@ impl<'a> Reader<'a> {
         ]))
     }
 
+    #[inline]
     pub(crate) fn f32(&mut self) -> Result<f32> {
         let bytes = self.take(4)?;
         Ok(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    #[inline]
     pub(crate) fn f64(&mut self) -> Result<f64> {
         let bytes = self.take(8)?;
         Ok(f64::from_le_bytes([
@@ -120,14 +142,17 @@ impl<'a> Reader<'a> {
         ]))
     }
 
+    #[inline]
     pub(crate) fn bytes(&mut self) -> Result<&'a [u8]> {
         let len = self.u32()? as usize;
         self.take(len)
     }
 
+    #[inline]
     pub(crate) fn string(&mut self) -> Result<String> {
         let bytes = self.bytes()?;
-        String::from_utf8(bytes.to_vec())
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
             .map_err(|err| SerializationError::Decode(format!("invalid utf8: {err}")))
     }
 }
@@ -320,16 +345,30 @@ pub(crate) fn decode_value(
         (TAG_TS_MS, StorageDataType::TimestampMillisecond) => {
             Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()?), None))
         },
+        (TAG_TS_MS, StorageDataType::TimestampMicrosecond) => Ok(
+            ScalarValue::TimestampMicrosecond(Some(reader.i64()?.saturating_mul(1_000)), None),
+        ),
+        (TAG_TS_MS, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
+            Some(reader.i64()?.saturating_mul(1_000_000)),
+            None,
+        )),
+        (TAG_TS_US, StorageDataType::TimestampMillisecond) => {
+            Ok(ScalarValue::TimestampMillisecond(Some(reader.i64()? / 1_000), None))
+        },
         (TAG_TS_US, StorageDataType::TimestampMicrosecond) => {
             Ok(ScalarValue::TimestampMicrosecond(Some(reader.i64()?), None))
         },
+        (TAG_TS_US, StorageDataType::TimestampNanosecond) => Ok(ScalarValue::TimestampNanosecond(
+            Some(reader.i64()?.saturating_mul(1_000)),
+            None,
+        )),
         (TAG_TS_NS, StorageDataType::TimestampNanosecond) => {
             Ok(ScalarValue::TimestampNanosecond(Some(reader.i64()?), None))
         },
         (TAG_DECIMAL128, StorageDataType::Decimal { precision, scale }) => {
             let got_p = reader.u8()?;
             let got_s = reader.u8()? as i8;
-            if got_p != *precision || got_s != *scale {
+            if got_p > *precision || got_s != *scale {
                 return Err(SerializationError::Decode(format!(
                     "decimal metadata mismatch: stored ({got_p},{got_s}) schema \
                      ({precision},{scale})"
@@ -386,7 +425,8 @@ fn decode_struct(
 ) -> Result<ScalarValue> {
     let count = reader.u16()? as usize;
     let live_count = count.min(fields.len());
-    let mut columns: Vec<(Arc<Field>, ArrayRef)> = Vec::with_capacity(fields.len());
+    let mut fields_vec: Vec<Arc<Field>> = Vec::with_capacity(fields.len());
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(fields.len());
     for (index, field) in fields.iter().enumerate() {
         let value = if index < live_count {
             decode_value(reader, &field.data_type)?
@@ -397,12 +437,15 @@ fn decode_struct(
         let array = value.to_array().map_err(|err| {
             SerializationError::Decode(format!("struct field '{}': {err}", field.name))
         })?;
-        columns.push((Arc::new(Field::new(&field.name, array.data_type().clone(), true)), array));
+        fields_vec.push(Arc::new(Field::new(&field.name, array.data_type().clone(), true)));
+        columns.push(array);
     }
     for _ in live_count..count {
         skip_value(reader)?;
     }
-    let struct_array = StructArray::from(columns);
+    let struct_array =
+        StructArray::try_new_with_length(Fields::from(fields_vec), columns, None, 1)
+            .map_err(|err| SerializationError::Decode(format!("struct array: {err}")))?;
     Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 
@@ -423,7 +466,7 @@ fn decode_list(reader: &mut Reader<'_>, inner: &StorageDataType) -> Result<Scala
     Ok(ScalarValue::List(ScalarValue::new_list(&items, &items[0].data_type(), true)))
 }
 
-fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
+pub(crate) fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
     match data_type {
         StorageDataType::Boolean => ScalarValue::Boolean(None),
         StorageDataType::Int8 => ScalarValue::Int8(None),
@@ -468,7 +511,13 @@ fn null_for_type(data_type: &StorageDataType) -> ScalarValue {
                 .iter()
                 .map(|field| new_null_array(&arrow_type(&field.data_type), 1))
                 .collect();
-            let array = StructArray::new(arrow_fields, columns, Some(NullBuffer::new_null(1)));
+            let array = StructArray::try_new_with_length(
+                arrow_fields,
+                columns,
+                Some(NullBuffer::new_null(1)),
+                1,
+            )
+            .expect("valid null struct array");
             ScalarValue::Struct(Arc::new(array))
         },
         StorageDataType::List(inner) => {

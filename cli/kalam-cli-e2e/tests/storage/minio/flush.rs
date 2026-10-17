@@ -21,7 +21,7 @@ fn test_minio_user_flush_manifest_and_query() {
     let table = generate_unique_table("minio_flush_user_table");
 
     setup_minio_storage(&storage_id, "MinIO User Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='USER', \
@@ -67,7 +67,7 @@ fn test_minio_shared_flush_manifest_and_query() {
     let table = generate_unique_table("minio_flush_shared_table");
 
     setup_minio_storage(&storage_id, "MinIO Shared Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='SHARED', \
@@ -111,7 +111,7 @@ fn test_minio_user_multiple_flushes_and_segments() {
     let table = generate_unique_table("minio_multi_user_table");
 
     setup_minio_storage(&storage_id, "MinIO Multi Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='USER', \
@@ -146,7 +146,7 @@ fn test_minio_shared_multiple_flushes_and_segments() {
     let table = generate_unique_table("minio_multi_shared_table");
 
     setup_minio_storage(&storage_id, "MinIO Shared Multi Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {}.{} (id BIGINT PRIMARY KEY, name TEXT NOT NULL) WITH (TYPE='SHARED', \
@@ -182,7 +182,7 @@ fn test_minio_parallel_flushes_across_tables() {
     let table_b = generate_unique_table("minio_parallel_b");
 
     setup_minio_storage(&storage_id, "MinIO Parallel Flush Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     for table in [&table_a, &table_b] {
         execute_sql_as_root_via_cli(&format!(

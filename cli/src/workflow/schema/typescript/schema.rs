@@ -132,6 +132,15 @@ fn schema_decls(
             ContractTypeKind::Composite { fields } => {
                 decls.push(object_decl(names.type_ident(id), fields, names, ty.comment.as_deref()));
             },
+            ContractTypeKind::Domain { base_type, .. } => {
+                decls.push(SchemaDecl {
+                    jsdoc: jsdoc(ty.comment.as_deref(), ""),
+                    ident: names.type_ident(id).to_string(),
+                    is_alias: true,
+                    alias_of: render_field_type(base_type, names, TargetLang::TypeScript),
+                    ..SchemaDecl::default()
+                });
+            },
             ContractTypeKind::TopicPayload { .. }
             | ContractTypeKind::ImplicitTableRow { .. }
             | ContractTypeKind::RowAlias { .. } => {},
@@ -314,7 +323,12 @@ fn snapshot_has_default_column(snapshot: &ContractSnapshot) -> bool {
 }
 
 fn is_file_column(field: &ContractField) -> bool {
-    field.type_id.is_none() && field.type_name.eq_ignore_ascii_case("FILE")
+    field.type_name.eq_ignore_ascii_case("FILE")
+        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
+        || field
+            .type_id
+            .as_ref()
+            .is_some_and(|id| id.as_str().eq_ignore_ascii_case("pg_catalog.file"))
 }
 
 fn drizzle_imports(snapshot: &ContractSnapshot) -> String {

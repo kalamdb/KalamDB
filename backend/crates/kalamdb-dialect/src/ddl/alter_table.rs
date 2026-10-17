@@ -6,24 +6,21 @@
 //! - ALTER TABLE messages MODIFY COLUMN age BIGINT
 
 use kalamdb_commons::{
-    models::{datatypes::KalamDataType, NamespaceId, StorageId, TableId, TableName},
+    models::{datatypes::KalamDataType, SchemaId, StorageId, TableId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression},
 };
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use sqlparser::{
-    ast::{
-        AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
-        DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
-    },
-    dialect::GenericDialect,
+use sqlparser::ast::{
+    AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
+    DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
 };
 
 use crate::{
     compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::{column_default::expr_to_column_default, parsing::parse_table_reference, DdlResult},
-    parser::utils::parse_sql_statements,
+    parser::KalamParser,
 };
 
 /// Column alteration operation
@@ -44,7 +41,9 @@ pub enum ColumnOperation {
     Modify {
         column_name:   String,
         new_data_type: KalamDataType,
+        type_ref:      Option<crate::ddl::TypeReference>,
         nullable:      Option<bool>,
+        using_expr:    Option<String>,
     },
     /// Set or drop nullable state on an existing column.
     SetNullable {
@@ -128,7 +127,7 @@ pub struct AlterTableStatement {
     pub table_name: TableName,
 
     /// Namespace ID (defaults to current namespace)
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
 
     /// Column operation to perform
     pub operation: ColumnOperation,
@@ -136,7 +135,7 @@ pub struct AlterTableStatement {
 
 impl AlterTableStatement {
     /// Parse an ALTER TABLE statement from SQL (sqlparser-backed)
-    pub fn parse(sql: &str, current_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, current_namespace: &SchemaId) -> DdlResult<Self> {
         crate::ddl::reject_access_level_sql(sql)?;
         if let Some(stmt) =
             crate::ddl::create_index::parse_alter_table_scalar_index(sql, current_namespace)?
@@ -146,11 +145,12 @@ impl AlterTableStatement {
         if let Some(stmt) = parse_vector_index_operation(sql, current_namespace)? {
             return Ok(stmt);
         }
+        if alter_add_index(sql) {
+            return Err("ALTER TABLE ... ADD INDEX is not supported; use CREATE INDEX".to_string());
+        }
 
         let normalized_sql = normalize_alter_sql(sql);
-        let dialect = GenericDialect {};
-        let mut statements =
-            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
+        let mut statements = KalamParser::parse(&normalized_sql).map_err(|e| e.to_string())?;
 
         if statements.len() != 1 {
             return Err("Expected exactly one ALTER TABLE statement".to_string());
@@ -179,9 +179,19 @@ impl AlterTableStatement {
     }
 }
 
+fn alter_add_index(sql: &str) -> bool {
+    let mut parts = sql.split_whitespace();
+    let alter = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("alter"));
+    let table = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("table"));
+    let _table_name = parts.next();
+    let add = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("add"));
+    let index = parts.next().is_some_and(|word| word.eq_ignore_ascii_case("index"));
+    alter && table && add && index
+}
+
 fn parse_vector_index_operation(
     sql: &str,
-    current_namespace: &NamespaceId,
+    current_namespace: &SchemaId,
 ) -> DdlResult<Option<AlterTableStatement>> {
     if let Some(caps) = ALTER_CREATE_VECTOR_INDEX_RE.captures(sql) {
         let table_ref = caps
@@ -238,8 +248,8 @@ fn parse_vector_index_operation(
 
 pub(crate) fn resolve_table_reference_from_str(
     table_ref: &str,
-    current_namespace: &NamespaceId,
-) -> DdlResult<(NamespaceId, TableName)> {
+    current_namespace: &SchemaId,
+) -> DdlResult<(SchemaId, TableName)> {
     let (namespace, table_name) = parse_table_reference(table_ref)?;
     let table_id = TableId::try_from_strings(
         namespace.as_deref().unwrap_or(current_namespace.as_str()),
@@ -254,8 +264,8 @@ fn normalize_alter_sql(sql: &str) -> String {
 
 fn resolve_table_reference(
     name: ObjectName,
-    current_namespace: &NamespaceId,
-) -> DdlResult<(NamespaceId, TableName)> {
+    current_namespace: &SchemaId,
+) -> DdlResult<(SchemaId, TableName)> {
     let parts = name.0;
     match parts.len() {
         1 => {
@@ -272,7 +282,7 @@ fn resolve_table_reference(
                 .as_ident()
                 .ok_or_else(|| "Function-based table references are not supported".to_string())?;
             Ok((
-                NamespaceId::from(namespace_ident.value.as_str()),
+                SchemaId::from(namespace_ident.value.as_str()),
                 TableName::from(table_ident.value.as_str()),
             ))
         },
@@ -282,7 +292,7 @@ fn resolve_table_reference(
 
 fn convert_operation(
     operation: &AlterTableOperation,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<ColumnOperation> {
     match operation {
         AlterTableOperation::AddColumn {
@@ -332,7 +342,7 @@ fn convert_operation(
 fn build_add_column_operation(
     column_def: &ColumnDef,
     if_not_exists: bool,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<ColumnOperation> {
     let default_nullable = true;
     let column_name = column_def.name.value.clone();
@@ -379,8 +389,11 @@ fn build_modify_column_operation(
     data_type: &sqlparser::ast::DataType,
     options: &[ColumnOption],
 ) -> DdlResult<ColumnOperation> {
-    // Validate the requested type using the shared CREATE TABLE conversion logic.
-    let new_data_type = map_sql_type_to_kalam(data_type)?;
+    let type_ref = sql_type_to_type_reference(data_type)?;
+    let new_data_type = type_ref
+        .builtin_data_type()
+        .or_else(|| map_sql_type_to_kalam(data_type).ok())
+        .unwrap_or(KalamDataType::Text);
     let mut nullable: Option<bool> = None;
     for option in options {
         match option {
@@ -393,14 +406,16 @@ fn build_modify_column_operation(
     Ok(ColumnOperation::Modify {
         column_name: column_name.value.clone(),
         new_data_type,
+        type_ref: Some(type_ref),
         nullable,
+        using_expr: None,
     })
 }
 
 fn build_alter_column_operation(
     column_name: &Ident,
     operation: &AlterColumnOperation,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<ColumnOperation> {
     match operation {
         AlterColumnOperation::SetNotNull => Ok(ColumnOperation::SetNullable {
@@ -418,7 +433,23 @@ fn build_alter_column_operation(
         AlterColumnOperation::DropDefault => Ok(ColumnOperation::DropDefault {
             column_name: column_name.value.clone(),
         }),
-        AlterColumnOperation::SetDataType { .. } | AlterColumnOperation::AddGenerated { .. } => {
+        AlterColumnOperation::SetDataType {
+            data_type, using, ..
+        } => {
+            let type_ref = sql_type_to_type_reference(data_type)?;
+            let new_data_type = type_ref
+                .builtin_data_type()
+                .or_else(|| map_sql_type_to_kalam(data_type).ok())
+                .unwrap_or(KalamDataType::Text);
+            Ok(ColumnOperation::Modify {
+                column_name: column_name.value.clone(),
+                new_data_type,
+                type_ref: Some(type_ref),
+                nullable: None,
+                using_expr: using.as_ref().map(|expr| expr.to_string()),
+            })
+        },
+        AlterColumnOperation::AddGenerated { .. } => {
             Err("Unsupported ALTER COLUMN operation".to_string())
         },
     }
@@ -489,7 +520,7 @@ fn extract_table_property_updates(
 fn extract_column_options(
     options: &[ColumnOptionDef],
     default_nullable: bool,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<(bool, Option<ColumnDefault>)> {
     let mut nullable = default_nullable;
     let mut default_value = None;
@@ -622,8 +653,8 @@ mod tests {
 
     use super::*;
 
-    fn test_namespace() -> NamespaceId {
-        NamespaceId::new("test_app")
+    fn test_namespace() -> SchemaId {
+        SchemaId::new("test_app")
     }
 
     #[test]
@@ -853,6 +884,7 @@ mod tests {
                 column_name,
                 new_data_type,
                 nullable,
+                ..
             } => {
                 assert_eq!(column_name, "age");
                 assert_eq!(new_data_type, KalamDataType::BigInt);
@@ -1027,7 +1059,7 @@ mod tests {
             &test_namespace(),
         )
         .unwrap();
-        assert_eq!(stmt.namespace_id, NamespaceId::new("app"));
+        assert_eq!(stmt.namespace_id, SchemaId::new("app"));
         assert_eq!(stmt.table_name, TableName::new("docs"));
         match stmt.operation {
             ColumnOperation::CreateVectorIndex {

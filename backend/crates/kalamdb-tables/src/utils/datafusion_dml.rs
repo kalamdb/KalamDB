@@ -14,7 +14,7 @@ use datafusion::{
     common::DFSchema,
     datasource::{source::DataSourceExec, TableProvider},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{utils::expr_to_columns, Expr},
+    logical_expr::{utils::expr_to_columns, Expr, Operator},
     physical_plan::{collect, filter::FilterExec, projection::ProjectionExec, ExecutionPlan},
     scalar::ScalarValue,
 };
@@ -354,6 +354,91 @@ pub fn validate_update_assignments(
     Ok(())
 }
 
+/// Primary-key values from a filter that is only `pk = lit`, `pk IN (lits)`, or `pk = a OR pk = b`.
+///
+/// Anything else, including an extra predicate, returns `None` so DELETE still scans.
+pub fn pk_membership_literals(filters: &[Expr], pk_name: &str) -> Option<Vec<String>> {
+    if filters.len() != 1 {
+        return None;
+    }
+    let mut values = Vec::new();
+    if !collect_pk_membership(&filters[0], pk_name, &mut values) || values.is_empty() {
+        return None;
+    }
+    Some(values)
+}
+
+fn collect_pk_membership(expr: &Expr, pk_name: &str, values: &mut Vec<String>) -> bool {
+    match unwrap_cast(expr) {
+        Expr::InList(in_list) if !in_list.negated => {
+            if !is_pk_column(unwrap_cast(&in_list.expr), pk_name) {
+                return false;
+            }
+            let start = values.len();
+            for item in &in_list.list {
+                let Some(text) = literal_pk(unwrap_cast(item)) else {
+                    values.truncate(start);
+                    return false;
+                };
+                values.push(text);
+            }
+            values.len() > start
+        },
+        Expr::BinaryExpr(binary) if binary.op == Operator::Or => {
+            let start = values.len();
+            if collect_pk_membership(&binary.left, pk_name, values)
+                && collect_pk_membership(&binary.right, pk_name, values)
+            {
+                true
+            } else {
+                values.truncate(start);
+                false
+            }
+        },
+        Expr::BinaryExpr(binary) if binary.op == Operator::Eq => {
+            literal_pk_eq(binary, pk_name).map(|text| values.push(text)).is_some()
+        },
+        _ => false,
+    }
+}
+
+fn unwrap_cast(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Cast(cast) => unwrap_cast(&cast.expr),
+        _ => expr,
+    }
+}
+
+fn is_pk_column(expr: &Expr, pk_name: &str) -> bool {
+    match expr {
+        Expr::Column(column) => column.name.eq_ignore_ascii_case(pk_name),
+        _ => false,
+    }
+}
+
+fn literal_pk(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Literal(value, _) => scalar_to_pk_string(value).ok(),
+        _ => None,
+    }
+}
+
+fn literal_pk_eq(binary: &datafusion::logical_expr::BinaryExpr, pk_name: &str) -> Option<String> {
+    match (unwrap_cast(&binary.left), unwrap_cast(&binary.right)) {
+        (Expr::Column(column), Expr::Literal(value, _))
+            if column.name.eq_ignore_ascii_case(pk_name) =>
+        {
+            scalar_to_pk_string(value).ok()
+        },
+        (Expr::Literal(value, _), Expr::Column(column))
+            if column.name.eq_ignore_ascii_case(pk_name) =>
+        {
+            scalar_to_pk_string(value).ok()
+        },
+        _ => None,
+    }
+}
+
 pub fn extract_pk_value(row: &Row, pk_column: &str) -> DataFusionResult<String> {
     let scalar = row.values.get(pk_column).ok_or_else(|| {
         DataFusionError::Execution(format!(
@@ -575,7 +660,10 @@ mod tests {
     };
     use kalamdb_commons::models::rows::Row;
 
-    use super::{dml_scan_projection, evaluate_assignment_values, row_matches_filters};
+    use super::{
+        dml_scan_projection, evaluate_assignment_values, pk_membership_literals,
+        row_matches_filters,
+    };
 
     fn test_schema() -> SchemaRef {
         Arc::new(Schema::new(vec![
@@ -710,6 +798,27 @@ mod tests {
         let matches = row_matches_filters(&ctx.state(), &schema, &row, &filters).unwrap();
 
         assert!(matches);
+    }
+
+    #[test]
+    fn pk_membership_literals_reads_in_list_and_or_chain() {
+        let filters = vec![col("id").in_list(vec![lit(1_i64), lit(2_i64)], false)];
+        assert_eq!(
+            pk_membership_literals(&filters, "id").as_deref(),
+            Some(["1".to_string(), "2".to_string()].as_slice())
+        );
+
+        let or_filters = vec![col("id").eq(lit(3_i64)).or(col("id").eq(lit(4_i64)))];
+        assert_eq!(
+            pk_membership_literals(&or_filters, "id").unwrap(),
+            vec!["3".to_string(), "4".to_string()]
+        );
+
+        let mixed = vec![col("id").eq(lit(1_i64)).or(col("name").eq(lit("a")))];
+        assert!(pk_membership_literals(&mixed, "id").is_none());
+
+        let extra = vec![col("id").eq(lit(1_i64)), col("name").eq(lit("a"))];
+        assert!(pk_membership_literals(&extra, "id").is_none());
     }
 
     #[test]

@@ -76,15 +76,9 @@ fn equal_version_is_one_row() {
 }
 
 #[test]
-fn snapshot_hides_newer_tier_so_older_visible_wins() {
-    // Snapshot excludes log-index 501; visible 490 must beat the hidden newer row.
+fn snapshot_hides_newer_hot_so_older_cold_wins() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new(
-            "a".to_string(),
-            raft(501, 0),
-            false,
-            "hot-hidden",
-        )],
+        vec![VersionCandidate::new("a".to_string(), raft(501, 0), false, "hot")],
         vec![VersionCandidate::new(
             "a".to_string(),
             raft(490, 0),
@@ -98,7 +92,42 @@ fn snapshot_hides_newer_tier_so_older_visible_wins() {
     assert_eq!(winners.len(), 1);
     match &winners[0] {
         SelectedVersion::Cold(payload) => assert_eq!(*payload, "cold-visible"),
-        SelectedVersion::Hot(payload) => panic!("snapshot must hide 501, got {payload}"),
+        SelectedVersion::Hot(payload) => panic!("snapshot must hide the newer hot row, got {payload}"),
+    }
+}
+
+#[test]
+fn hot_row_within_snapshot_beats_older_cold() {
+    let winners = select_latest_versions(
+        vec![VersionCandidate::new("a".to_string(), raft(500, 0), false, "hot")],
+        vec![VersionCandidate::new("a".to_string(), raft(490, 0), false, "cold")],
+        Some(snapshot_through_log(500)),
+        false,
+    );
+
+    assert_eq!(winners.len(), 1);
+    match &winners[0] {
+        SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot"),
+        SelectedVersion::Cold(payload) => panic!("visible hot row should win, got {payload}"),
+    }
+}
+
+#[test]
+fn snapshot_hides_newer_cold_so_older_cold_wins() {
+    let winners = select_latest_versions(
+        Vec::<VersionCandidate<&str>>::new(),
+        vec![
+            VersionCandidate::new("a".to_string(), raft(501, 0), false, "cold-hidden"),
+            VersionCandidate::new("a".to_string(), raft(490, 0), false, "cold-visible"),
+        ],
+        Some(snapshot_through_log(500)),
+        false,
+    );
+
+    assert_eq!(winners.len(), 1);
+    match &winners[0] {
+        SelectedVersion::Cold(payload) => assert_eq!(*payload, "cold-visible"),
+        SelectedVersion::Hot(payload) => panic!("cold-only snapshot, got {payload}"),
     }
 }
 

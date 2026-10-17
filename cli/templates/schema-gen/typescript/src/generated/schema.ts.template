@@ -3,8 +3,7 @@
 
 {{#if needs_orm}}
 {{#if needs_file}}
-import type { FileRef } from '@kalamdb/client';
-import { kTable, file, type KalamFileUpload } from '@kalamdb/orm';
+import { kTable, file } from '@kalamdb/orm';
 {{else}}
 import { kTable } from '@kalamdb/orm';
 {{/if}}
@@ -17,9 +16,6 @@ import { {{{drizzle_imports}}} } from 'drizzle-orm/pg-core';
 {{/if}}
 {{/if}}
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-{{#if needs_file}}
-export type KalamFileColumn = FileRef | File | KalamFileUpload | Blob | null;
-{{/if}}
 
 export type NestedStructBytes = Uint8Array;
 export interface NestedCodec<T> {

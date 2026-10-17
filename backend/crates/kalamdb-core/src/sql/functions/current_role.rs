@@ -1,60 +1,28 @@
 //! CURRENT_ROLE() function implementation
 //!
-//! This module provides a user-defined function for DataFusion that returns the current user's role
-//! from the session context.
+//! Returns the current user's role from the session context.
 
-use std::sync::Arc;
-
-use datafusion::{
-    arrow::array::{ArrayRef, StringArray},
-    error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
-};
-use kalamdb_commons::{
-    arrow_utils::{arrow_utf8, ArrowDataType},
-    Role,
-};
+use datafusion::error::DataFusionError;
+use kalamdb_commons::Role;
 use kalamdb_session_datafusion::SessionUserContext;
 
-/// CURRENT_ROLE() scalar function implementation
-///
-/// Returns the role of the current session user.
-/// This function takes no arguments and returns a String (Utf8).
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
-pub struct CurrentRoleFunction;
+use super::scalar::{arity, scalar_udf, utf8_scalar, zero_arg_stable};
 
-impl CurrentRoleFunction {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl ScalarUDFImpl for CurrentRoleFunction {
-    fn name(&self) -> &str {
-        "kdb_current_role"
-    }
-
-    fn signature(&self) -> &Signature {
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Stable))
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("CURRENT_ROLE() takes no arguments".to_string()));
-        }
-
+scalar_udf! {
+    /// Returns the role of the current session user.
+    pub struct CurrentRoleFunction;
+    name = "kdb_current_role";
+    aliases = ["current_role", "pg_catalog.current_role"];
+    signature = zero_arg_stable();
+    returns utf8;
+    invoke(args) {
+        arity(&args, |len| len == 0, "CURRENT_ROLE() takes no arguments")?;
         let session_ctx =
             args.config_options.extensions.get::<SessionUserContext>().ok_or_else(|| {
                 DataFusionError::Execution(
                     "CURRENT_ROLE() failed: session user context not found".to_string(),
                 )
             })?;
-
         let role_str = match session_ctx.role {
             Role::User => "user",
             Role::Service => "service",
@@ -62,15 +30,14 @@ impl ScalarUDFImpl for CurrentRoleFunction {
             Role::System => "system",
             Role::Anonymous => "anonymous",
         };
-
-        let array = StringArray::from(vec![role_str]);
-        Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
+        Ok(utf8_scalar(role_str))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use datafusion::logical_expr::ScalarUDF;
+    use datafusion::logical_expr::{ScalarUDF, ScalarUDFImpl};
+    use kalamdb_commons::arrow_utils::ArrowDataType;
 
     use super::*;
 

@@ -23,8 +23,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::UserDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand, RaftError,
@@ -521,7 +521,7 @@ impl KalamStateMachine for UserDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -532,7 +532,7 @@ impl KalamStateMachine for UserDataStateMachine {
     }
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
-        let data: UserDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: UserDataSnapshot = decode(&snapshot.data)?;
 
         if data.shard != self.shard {
             return Err(RaftError::InvalidState(format!(
@@ -572,7 +572,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind},
+        models::{rows::Row, SchemaId, OperationKind},
         TableId, UserId,
     };
 
@@ -635,7 +635,7 @@ mod tests {
         let sm = UserDataStateMachine::new(0);
 
         let cmd = UserDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "users".into()),
+            table_id:            TableId::new(SchemaId::default(), "users".into()),
             user_id:             UserId::new("user123"),
             rows:                vec![],
             encoded_fields:      Vec::new(),
@@ -654,7 +654,7 @@ mod tests {
     async fn test_user_data_state_machine_transaction_commit() {
         let sm = UserDataStateMachine::with_applier(0, Arc::new(TransactionBatchUserApplier));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::default(), "users".into());
+        let table_id = TableId::new(SchemaId::default(), "users".into());
 
         let cmd = RaftCommand::TransactionCommit {
             required_meta_index: 0,

@@ -29,7 +29,7 @@ void main() {
       final setup = await connectJwtClient();
       final namespace = uniqueName('sync_e2e');
       final table = '$namespace.messages';
-      await setup.query('CREATE NAMESPACE IF NOT EXISTS $namespace');
+      await setup.query('CREATE SCHEMA IF NOT EXISTS $namespace');
       final created = await setup.query(
         'CREATE TABLE IF NOT EXISTS $table ('
         'id TEXT PRIMARY KEY, text TEXT NOT NULL)',

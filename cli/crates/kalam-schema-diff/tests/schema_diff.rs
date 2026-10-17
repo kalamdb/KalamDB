@@ -12,6 +12,7 @@ fn destructive_diff(before: &str, after: &str) -> MigrationStatements {
         after,
         &DiffOptions {
             allow_destructive: true,
+            ..DiffOptions::default()
         },
     )
     .expect("diff schemas")
@@ -122,7 +123,7 @@ fn chat_with_ai_example_schema_emits_shared_stream_policy_and_topic() {
         "ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT",
     );
     assert_contains(&diff.up, "CREATE TYPE chat_demo.message_target AS ENUM");
-    assert_contains(&diff.up, "CREATE OR REPLACE PROCEDURE chat_demo.send_message");
+    assert_contains(&diff.up, "CREATE OR REPLACE FUNCTION chat_demo.send_message");
     assert_contains(&diff.up, "CREATE TRIGGER chat_demo.process_user_message");
 }
 
@@ -794,7 +795,6 @@ fn detect_create_type_procedure_and_grant() {
             CREATE SCHEMA chat;
             CREATE TYPE chat.address AS (city TEXT, country TEXT);
             CREATE PROCEDURE chat.get_address(id TEXT)
-            RETURNS chat.address
             LANGUAGE SQL
             SECURITY INVOKER
             AS $$ SELECT 1; $$;

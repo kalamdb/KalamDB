@@ -5,7 +5,7 @@
 //! - 100k insert wall time
 //! - 10k insert latency + 1M point-read latency
 //!
-//! Setup still uses SQL HTTP (`CREATE NAMESPACE` / `CREATE TABLE` /
+//! Setup still uses SQL HTTP (`CREATE SCHEMA` / `CREATE TABLE` /
 //! `CREATE PROCEDURE`). Timed insert/read go through
 //! `POST /v1/functions/{namespace}/{procedure}` only.
 //!
@@ -51,7 +51,7 @@ fn get_url(base: &str) -> String {
 
 fn insert_procedure_sql() -> String {
     format!(
-        r#"CREATE OR REPLACE PROCEDURE {ns}.insert_message(
+        r#"CREATE OR REPLACE FUNCTION {ns}.insert_message(
   id INT,
   owner TEXT,
   room TEXT,
@@ -71,7 +71,7 @@ $$"#,
 
 fn get_procedure_sql() -> String {
     format!(
-        r#"CREATE OR REPLACE PROCEDURE {ns}.get_message(
+        r#"CREATE OR REPLACE FUNCTION {ns}.get_message(
   id INT
 )
 RETURNS JSON
@@ -278,7 +278,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("CREATE NAMESPACE IF NOT EXISTS {KALAMDB_NAMESPACE}"),
+        &format!("CREATE SCHEMA IF NOT EXISTS {KALAMDB_NAMESPACE}"),
         None,
     )
     .await?;
@@ -294,7 +294,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
+        &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.insert_message"),
         None,
     )
     .await;
@@ -302,7 +302,7 @@ async fn create_schema(http: &Client, base: &str, token: &str) -> anyhow::Result
         http,
         base,
         token,
-        &format!("DROP PROCEDURE IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
+        &format!("DROP FUNCTION IF EXISTS {KALAMDB_NAMESPACE}.get_message"),
         None,
     )
     .await;

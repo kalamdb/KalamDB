@@ -51,10 +51,10 @@ async fn test_stress_smoke_over_http() {
         let server = super::test_support::http_server::get_global_server().await;
         let ns = unique_namespace("stress");
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
         anyhow::ensure!(
             resp.status == ResponseStatus::Success,
-            "CREATE NAMESPACE failed: {:?}",
+            "CREATE SCHEMA failed: {:?}",
             resp.error
         );
 

@@ -2,3 +2,14 @@
 syntax = "proto3";
 package kalam;
 
+message File {
+  string id = 1;
+  string sub = 2;
+  string name = 3;
+  string size = 4;
+  string mime = 5;
+  string sha256 = 6;
+  string shard = 7;
+  reserved 1000 to 1999;
+}
+

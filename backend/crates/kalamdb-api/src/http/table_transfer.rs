@@ -9,7 +9,7 @@ use actix_web::{get, post, web, HttpResponse, Responder};
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::{JobId, NamespaceId, TableId, TableName};
+use kalamdb_commons::{JobId, SchemaId, TableId, TableName};
 use kalamdb_core::app_context::AppContext;
 use kalamdb_jobs::{
     executors::table_transfer::{TableExportParams, TableImportParams},
@@ -318,7 +318,7 @@ fn parse_transfer_request(
     request: &TableExportRequest,
     app_context: &AppContext,
 ) -> Result<(TableId, kalamdb_commons::schemas::TableType, Option<String>), String> {
-    let namespace_id = NamespaceId::try_parse_reference(request.namespace_id.trim())
+    let namespace_id = SchemaId::try_parse_reference(request.namespace_id.trim())
         .map_err(|error| format!("Invalid namespace_id: {}", error))?;
     let table_name = TableName::try_new(request.table_name.trim())
         .map_err(|error| format!("Invalid table_name: {}", error))?;

@@ -93,12 +93,12 @@ describe('DDL', { timeout: 30_000 }, () => {
   });
 
   // -----------------------------------------------------------------------
-  // CREATE NAMESPACE
+  // CREATE SCHEMA
   // -----------------------------------------------------------------------
-  test('CREATE NAMESPACE IF NOT EXISTS is idempotent', async () => {
+  test('CREATE SCHEMA IF NOT EXISTS is idempotent', async () => {
     const name = uniqueName('ns_idem');
-    await client.query(`CREATE NAMESPACE IF NOT EXISTS ${name}`);
-    const res = await client.query(`CREATE NAMESPACE IF NOT EXISTS ${name}`);
+    await client.query(`CREATE SCHEMA IF NOT EXISTS ${name}`);
+    const res = await client.query(`CREATE SCHEMA IF NOT EXISTS ${name}`);
     assert.ok(res);
   });
 });

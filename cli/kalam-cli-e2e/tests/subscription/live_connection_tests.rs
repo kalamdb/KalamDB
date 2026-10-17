@@ -54,7 +54,7 @@ fn test_live_subscription_default_options() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     // Create user table
@@ -105,7 +105,7 @@ fn test_live_subscription_default_options() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe with batch_size option and verify it's respected
@@ -127,7 +127,7 @@ fn test_live_subscription_with_batch_size() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -180,7 +180,7 @@ fn test_live_subscription_with_batch_size() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe with last_rows option to get only recent data
@@ -202,7 +202,7 @@ fn test_live_subscription_with_last_rows() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -262,7 +262,7 @@ fn test_live_subscription_with_last_rows() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe and track seq_id for potential resumption
@@ -284,7 +284,7 @@ fn test_live_subscription_seq_id_tracking() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -349,7 +349,7 @@ fn test_live_subscription_seq_id_tracking() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Multiple concurrent subscriptions to the same table
@@ -371,7 +371,7 @@ fn test_live_multiple_subscriptions() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -436,7 +436,7 @@ fn test_live_multiple_subscriptions() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Connection timeout with unreachable server (client-side option validation)
@@ -480,7 +480,7 @@ fn test_live_subscription_change_event_order() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -554,7 +554,7 @@ fn test_live_subscription_change_event_order() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Execute query using HTTP/2 protocol

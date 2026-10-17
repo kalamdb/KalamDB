@@ -4,9 +4,11 @@ import type { IDisposable, Position, editor, languages } from "monaco-editor";
 import type { StudioNamespace } from "../shared/types";
 import {
   buildSqlCompletionData,
+  collectSqlCompletions,
+  loadStaticSqlCompletions,
   resolveSqlContextualCompletions,
-  type SqlCompletionEntry,
   type SqlCompletionData,
+  type SqlSuggestionKind,
 } from "./sqlCompletionCatalog";
 import type { ProcedureMetadata } from "@/features/functions/types";
 import {
@@ -108,7 +110,7 @@ export function StudioEditorPanel({
     languageProviderRefs.current = [
       monaco.languages.registerCompletionItemProvider("sql", {
       triggerCharacters: [".", " ", ",", "("],
-      provideCompletionItems: (model: editor.ITextModel, position: Position) => {
+      provideCompletionItems: async (model: editor.ITextModel, position: Position) => {
         const data = completionDataRef.current;
         const wordUntil = model.getWordUntilPosition(position);
         const range = {
@@ -171,32 +173,15 @@ export function StudioEditorPanel({
           });
         };
 
-        const pushEntry = (
-          entry: SqlCompletionEntry,
-          matchText = prefix,
-          suggestionRange = range,
-        ) => {
-          const snippetRule = entry.isSnippet
-            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-            : undefined;
-          const kindByCategory: Record<SqlCompletionEntry["category"], languages.CompletionItemKind> = {
-            function: monaco.languages.CompletionItemKind.Function,
-            keyword: monaco.languages.CompletionItemKind.Keyword,
-            operator: monaco.languages.CompletionItemKind.Operator,
-            snippet: monaco.languages.CompletionItemKind.Snippet,
-            type: monaco.languages.CompletionItemKind.TypeParameter,
-          };
-
-          pushSuggestion(
-            entry.label,
-            kindByCategory[entry.category],
-            entry.detail,
-            entry.insertText ?? entry.label,
-            entry.sortText,
-            snippetRule,
-            matchText,
-            suggestionRange,
-          );
+        const kindBySuggestion: Record<SqlSuggestionKind, languages.CompletionItemKind> = {
+          function: monaco.languages.CompletionItemKind.Function,
+          keyword: monaco.languages.CompletionItemKind.Keyword,
+          operator: monaco.languages.CompletionItemKind.Operator,
+          snippet: monaco.languages.CompletionItemKind.Snippet,
+          type: monaco.languages.CompletionItemKind.TypeParameter,
+          schema: monaco.languages.CompletionItemKind.Module,
+          table: monaco.languages.CompletionItemKind.Class,
+          column: monaco.languages.CompletionItemKind.Field,
         };
 
         if (callContext) {
@@ -209,7 +194,18 @@ export function StudioEditorPanel({
               }
             : range;
           completionsForCallContext(callContext, data.procedures).forEach((entry) =>
-            pushEntry(entry, callContext.kind === "name" ? callContext.partial : "", callRange),
+            pushSuggestion(
+              entry.label,
+              monaco.languages.CompletionItemKind.Function,
+              entry.detail,
+              entry.insertText ?? entry.label,
+              entry.sortText,
+              entry.isSnippet
+                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                : undefined,
+              callContext.kind === "name" ? callContext.partial : "",
+              callRange,
+            ),
           );
           if (callContext.kind === "arguments" || callContext.partial.length > 0) {
             return { suggestions };
@@ -221,34 +217,39 @@ export function StudioEditorPanel({
           const kind = contextualCompletion.kind === "column"
             ? monaco.languages.CompletionItemKind.Field
             : monaco.languages.CompletionItemKind.Class;
-
           contextualCompletion.labels.forEach((label) =>
-            pushSuggestion(label, kind, contextualCompletion.detail, label, undefined, undefined, contextualCompletion.partial),
+            pushSuggestion(
+              label,
+              kind,
+              contextualCompletion.detail,
+              label,
+              undefined,
+              undefined,
+              contextualCompletion.partial,
+            ),
           );
           return { suggestions };
         }
 
-        data.keywords.forEach((keyword) =>
-          pushSuggestion(keyword, monaco.languages.CompletionItemKind.Keyword, "SQL keyword", keyword, `2_${keyword}`),
-        );
-        data.snippets.forEach((entry) => pushEntry(entry));
-        data.functions.forEach((entry) => pushEntry(entry));
-        data.procedureEntries.forEach((entry) => pushEntry(entry));
-        data.types.forEach((entry) => pushEntry(entry));
-        data.operators.forEach((entry) => pushEntry(entry));
-        data.namespaces.forEach((namespaceName) =>
-          pushSuggestion(namespaceName, monaco.languages.CompletionItemKind.Module, "Namespace"),
-        );
-        Object.entries(data.tablesByNamespace).forEach(([namespaceName, tables]) => {
-          tables.forEach((table) => {
-            pushSuggestion(`${namespaceName}.${table}`, monaco.languages.CompletionItemKind.Class, "Qualified table name");
-            pushSuggestion(table, monaco.languages.CompletionItemKind.Class, `Table in ${namespaceName}`);
-          });
-        });
-        Object.entries(data.columnsByTable).forEach(([qualifiedTable, columns]) => {
-          columns.forEach((column) => {
-            pushSuggestion(column, monaco.languages.CompletionItemKind.Field, `Column (${qualifiedTable})`);
-          });
+        const catalog = await loadStaticSqlCompletions();
+        collectSqlCompletions({
+          data,
+          catalog,
+          textUntilPosition,
+          prefix,
+          aliasToTable,
+        }).forEach((suggestion) => {
+          pushSuggestion(
+            suggestion.label,
+            kindBySuggestion[suggestion.kind],
+            suggestion.detail,
+            suggestion.insertText,
+            suggestion.sortText,
+            suggestion.isSnippet
+              ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+              : undefined,
+            "",
+          );
         });
 
         return { suggestions };

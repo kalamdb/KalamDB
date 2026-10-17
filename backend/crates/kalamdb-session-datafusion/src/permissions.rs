@@ -4,7 +4,7 @@ use datafusion::{
     execution::context::SessionState,
 };
 use kalamdb_commons::{
-    models::{NamespaceId, ReadContext, Role, TableId, TableName, UserId},
+    models::{ReadContext, Role, SchemaId, TableId, TableName, UserId},
     schemas::TableDefinition,
 };
 use kalamdb_session::{
@@ -53,7 +53,7 @@ pub fn extract_full_user_context(
 }
 
 fn access_denied(
-    namespace_id: NamespaceId,
+    namespace_id: SchemaId,
     table_name: TableName,
     role: Role,
     reason: &'static str,
@@ -144,7 +144,7 @@ pub fn check_shared_table_write_access(
 
 pub fn check_system_table_access_by_name(
     session: &dyn Session,
-    namespace_id: &NamespaceId,
+    namespace_id: &SchemaId,
     table_name: &TableName,
 ) -> Result<(), SessionError> {
     let table_id = TableId::new(namespace_id.clone(), table_name.clone());

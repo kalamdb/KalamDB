@@ -11,13 +11,18 @@ use serde_json::Value;
 
 use super::map_de;
 
-/// Deserialize a schema-aligned row into a typed model. Timestamps must already
-/// be millisecond `i64`s when this is called.
+/// Deserialize a schema-aligned row into a typed model.
 pub(super) fn deserialize_model<T: DeserializeOwned>(
     row: &Row,
     table_def: &TableDefinition,
+    scale_timestamp_ms: bool,
 ) -> crate::error::Result<T> {
-    T::deserialize(RowDeserializer { row, table_def }).map_err(|error| map_de(error.0))
+    T::deserialize(RowDeserializer {
+        row,
+        table_def,
+        scale_timestamp_ms,
+    })
+    .map_err(|error| map_de(error.0))
 }
 
 fn stores_document(data_type: &KalamDataType) -> bool {
@@ -71,8 +76,9 @@ impl serde::de::Error for DeError {
 }
 
 struct RowDeserializer<'a> {
-    row:       &'a Row,
-    table_def: &'a TableDefinition,
+    row:                &'a Row,
+    table_def:          &'a TableDefinition,
+    scale_timestamp_ms: bool,
 }
 
 impl<'de> Deserializer<'de> for RowDeserializer<'_> {
@@ -126,9 +132,10 @@ impl<'de> Deserializer<'de> for RowDeserializer<'_> {
         V: Visitor<'de>,
     {
         visitor.visit_map(RowMapAccess {
-            row:     self.row,
-            columns: &self.table_def.columns,
-            index:   0,
+            row:                self.row,
+            columns:            &self.table_def.columns,
+            scale_timestamp_ms: self.scale_timestamp_ms,
+            index:              0,
         })
     }
 
@@ -158,9 +165,10 @@ impl<'de> Deserializer<'de> for RowDeserializer<'_> {
 }
 
 struct RowMapAccess<'a> {
-    row:     &'a Row,
-    columns: &'a [ColumnDefinition],
-    index:   usize,
+    row:                &'a Row,
+    columns:            &'a [ColumnDefinition],
+    scale_timestamp_ms: bool,
+    index:              usize,
 }
 
 impl<'de> MapAccess<'de> for RowMapAccess<'_> {
@@ -184,16 +192,19 @@ impl<'de> MapAccess<'de> for RowMapAccess<'_> {
         let column = &self.columns[self.index];
         self.index += 1;
         let scalar = self.row.values.get(&column.column_name).unwrap_or(&ScalarValue::Null);
+        let data_type = column.data_type();
         seed.deserialize(FieldDeserializer {
             scalar,
-            data_type: &column.data_type,
+            data_type:          &data_type,
+            scale_timestamp_ms: self.scale_timestamp_ms,
         })
     }
 }
 
 struct FieldDeserializer<'a> {
-    scalar:    &'a ScalarValue,
-    data_type: &'a KalamDataType,
+    scalar:             &'a ScalarValue,
+    data_type:          &'a KalamDataType,
+    scale_timestamp_ms: bool,
 }
 
 impl FieldDeserializer<'_> {
@@ -220,6 +231,9 @@ impl<'de> Deserializer<'de> for FieldDeserializer<'_> {
             KalamDataType::Boolean => {
                 visitor.visit_bool(matches!(self.scalar, ScalarValue::Boolean(Some(true))))
             },
+            KalamDataType::Timestamp | KalamDataType::DateTime if self.scale_timestamp_ms => {
+                visitor.visit_i64(model_timestamp_ms(self.scalar)?)
+            },
             KalamDataType::SmallInt
             | KalamDataType::Int
             | KalamDataType::BigInt
@@ -239,7 +253,7 @@ impl<'de> Deserializer<'de> for FieldDeserializer<'_> {
             KalamDataType::Decimal { .. } => visit_json(self.document_value()?, visitor),
             KalamDataType::Text | KalamDataType::Uuid | KalamDataType::Embedding(_) => {
                 match utf8_scalar(self.scalar) {
-                    Some(text) => visitor.visit_string(text),
+                    Some(text) => visitor.visit_str(text),
                     None => visitor.visit_unit(),
                 }
             },
@@ -383,9 +397,23 @@ fn model_i64(scalar: &ScalarValue) -> i64 {
     }
 }
 
-fn utf8_scalar(scalar: &ScalarValue) -> Option<String> {
+fn model_timestamp_ms(scalar: &ScalarValue) -> Result<i64, DeError> {
     match scalar {
-        ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => Some(value.clone()),
+        ScalarValue::TimestampSecond(Some(seconds), _) => seconds.checked_mul(1_000).ok_or_else(|| {
+            DeError(format!(
+                "timestamp value {seconds} overflows when converted to milliseconds"
+            ))
+        }),
+        ScalarValue::TimestampMillisecond(Some(ms), _) | ScalarValue::Int64(Some(ms)) => Ok(*ms),
+        ScalarValue::TimestampMicrosecond(Some(micros), _) => Ok(*micros / 1_000),
+        ScalarValue::TimestampNanosecond(Some(nanos), _) => Ok(*nanos / 1_000_000),
+        other => Ok(model_i64(other)),
+    }
+}
+
+fn utf8_scalar(scalar: &ScalarValue) -> Option<&str> {
+    match scalar {
+        ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => Some(value.as_str()),
         _ => None,
     }
 }

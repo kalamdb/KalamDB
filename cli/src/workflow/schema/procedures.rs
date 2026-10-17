@@ -87,11 +87,20 @@ impl<'a> ProcedureCatalog<'a> {
 
 impl<'a> ProcedureSpec<'a> {
     fn from_routine(routine: &'a ContractRoutine, names: &'a AssignedNames) -> Self {
+        let is_function = routine.kind == kalamdb_commons::models::RoutineKind::Function
+            || routine
+                .language
+                .as_deref()
+                .is_some_and(|lang| lang.eq_ignore_ascii_case("INTERNAL"));
         Self {
             routine,
             type_ident: names.routine_ident(routine.routine_id.as_str()),
             method_ident: method_ident(&routine.name),
-            call_sql: call_sql(&routine.schema, &routine.name, routine.parameters.len()),
+            call_sql: if is_function {
+                select_function_sql(&routine.schema, &routine.name, routine.parameters.len())
+            } else {
+                call_sql(&routine.schema, &routine.name, routine.parameters.len())
+            },
         }
     }
 
@@ -136,6 +145,14 @@ fn call_sql(schema: &str, name: &str, param_count: usize) -> String {
     format!("CALL {schema}.{name}({})", placeholders.join(", "))
 }
 
+fn select_function_sql(schema: &str, name: &str, param_count: usize) -> String {
+    if param_count == 0 {
+        return format!("SELECT {schema}.{name}() AS result");
+    }
+    let placeholders = (1..=param_count).map(|index| format!("${index}")).collect::<Vec<_>>();
+    format!("SELECT {schema}.{name}({}) AS result", placeholders.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use kalamdb_sql::compile_contract_sql;
@@ -156,9 +173,9 @@ mod tests {
             r#"
 CREATE SCHEMA chat;
 CREATE SCHEMA app;
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS TEXT;
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS TEXT;
 CREATE PROCEDURE chat.ping();
-CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
+CREATE FUNCTION app.send_message(body JSON NOT NULL) RETURNS JSON;
 "#,
             "public",
         )
@@ -189,7 +206,8 @@ CREATE PROCEDURE app.send_message(body JSON NOT NULL) RETURNS JSON;
         assert_eq!(create.request_ident(), "ChatCreateMessageRequest");
         assert_eq!(create.result_ident(), "ChatCreateMessageResult");
         assert_eq!(create.rust_input_ident(), "ChatCreateMessageInput");
-        assert_eq!(create.call_sql, "CALL chat.create_message($1, $2)");
+        assert_eq!(create.call_sql, "SELECT chat.create_message($1, $2) AS result");
+        assert_eq!(catalog.procedures()[2].call_sql, "CALL chat.ping()");
         assert_eq!(catalog.procedures().len(), 3);
         assert_eq!(
             catalog.schema_type_imports(false),

@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// DELETE many rows at once with a range filter.
 /// Tests bulk deletion performance (vs the existing single-row delete benchmark).

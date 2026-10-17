@@ -321,7 +321,7 @@ fn signal_lapse(handle: &SubscriptionHandle) {
         subscription_id: Arc::clone(&handle.subscription_id),
     });
     log::warn!(
-        "Subscription {} missed a live change; client must resubscribe without a resume cursor",
+        "Subscription {} missed a live change; client resumes from its last cursor",
         handle.subscription_id
     );
 }
@@ -356,24 +356,16 @@ fn try_deliver(
             handle.runtime_metadata.record_delivery_at(delivery_timestamp_ms);
             true
         },
-        Err(e) => {
-            use tokio::sync::mpsc::error::TrySendError;
-            match e {
-                TrySendError::Full(_) => {
-                    log::warn!(
-                        "Notification channel full for subscription_id={}; requesting resubscribe",
-                        handle.subscription_id
-                    );
-                    signal_lapse(handle);
-                },
-                TrySendError::Closed(_) => {
-                    log::debug!(
-                        "Notification channel closed for subscription_id={}, connection likely \
-                         disconnected",
-                        handle.subscription_id
-                    );
-                },
-            }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            log::debug!(
+                "Notification channel closed for subscription_id={}, connection likely \
+                 disconnected",
+                handle.subscription_id
+            );
+            false
+        },
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            signal_lapse(handle);
             false
         },
     }
@@ -874,7 +866,7 @@ mod tests {
 
     use datafusion_common::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, ConnectionId, LiveQueryId, NamespaceId, TableName},
+        models::{rows::Row, ConnectionId, LiveQueryId, SchemaId, TableName},
         NodeId,
     };
     use kalamdb_row_filter::parse_where_clause;
@@ -898,7 +890,7 @@ mod tests {
     }
 
     fn make_table_id(ns: &str, table: &str) -> TableId {
-        TableId::new(NamespaceId::from(ns), TableName::from(table))
+        TableId::new(SchemaId::from(ns), TableName::from(table))
     }
 
     fn make_row(id: i64, body: &str, seq: i64) -> Row {

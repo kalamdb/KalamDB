@@ -80,17 +80,17 @@ impl SystemColumnsService {
             column_id:        version_column_id,
             column_name:      SystemColumnNames::VERSION.to_string(),
             ordinal_position: next_ordinal,
-            data_type:        kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+            logical_type:     kalamdb_commons::LogicalTypeRef::from_builtin(
+                kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+            ),
             is_nullable:      false,
             is_primary_key:   false,
             is_partition_key: false,
             default_value:    ColumnDefault::None,
+            missing_default:  None,
             column_comment:   Some(
                 "Canonical row version assigned from the committed Raft entry".to_string(),
             ),
-            named_type_id:    None,
-            is_array:         false,
-            element_nullable: true,
         });
         table_def.next_column_id += 1;
         next_ordinal += 1;
@@ -101,17 +101,17 @@ impl SystemColumnsService {
                 column_id:        timestamp_column_id,
                 column_name:      SystemColumnNames::TIMESTAMP.to_string(),
                 ordinal_position: next_ordinal,
-                data_type:        kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+                logical_type:     kalamdb_commons::LogicalTypeRef::from_builtin(
+                    kalamdb_commons::models::datatypes::KalamDataType::BigInt,
+                ),
                 is_nullable:      false,
                 is_primary_key:   false,
                 is_partition_key: false,
                 default_value:    ColumnDefault::None,
+                missing_default:  None,
                 column_comment:   Some(
                     "Server ingestion time in UTC epoch milliseconds".to_string(),
                 ),
-                named_type_id:    None,
-                is_array:         false,
-                element_nullable: true,
             });
             table_def.next_column_id += 1;
             next_ordinal += 1;
@@ -123,15 +123,15 @@ impl SystemColumnsService {
             column_id:        deleted_column_id,
             column_name:      SystemColumnNames::DELETED.to_string(),
             ordinal_position: next_ordinal,
-            data_type:        kalamdb_commons::models::datatypes::KalamDataType::Boolean,
+            logical_type:     kalamdb_commons::LogicalTypeRef::from_builtin(
+                kalamdb_commons::models::datatypes::KalamDataType::Boolean,
+            ),
             is_nullable:      false,
             is_primary_key:   false,
             is_partition_key: false,
             default_value:    ColumnDefault::Literal(serde_json::json!(false)),
+            missing_default:  None,
             column_comment:   Some("Soft delete flag".to_string()),
-            named_type_id:    None,
-            is_array:         false,
-            element_nullable: true,
         });
         table_def.next_column_id += 1;
 
@@ -169,12 +169,12 @@ mod tests {
     fn test_add_system_columns() {
         use kalamdb_commons::{
             models::schemas::{TableOptions, TableType},
-            NamespaceId, TableName,
+            SchemaId, TableName,
         };
 
         let svc = SystemColumnsService::new(1);
         let mut table_def = TableDefinition::new(
-            NamespaceId::new("test"),
+            SchemaId::new("test"),
             TableName::new("table"),
             TableType::User,
             vec![],

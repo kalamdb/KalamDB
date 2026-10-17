@@ -124,30 +124,34 @@ fn stored_log_id(term: u64, index: u64) -> LogId<u64> {
     LogId::new(openraft::CommittedLeaderId::new(term, 0), index)
 }
 
-const PAYLOAD_BLANK: u8 = 0;
-const PAYLOAD_NORMAL: u8 = 1;
-const PAYLOAD_MEMBERSHIP: u8 = 2;
+const PAYLOAD_BLANK: u8 = kalamdb_serialization::RAFT_LOG_PAYLOAD_BLANK;
+const PAYLOAD_NORMAL: u8 = kalamdb_serialization::RAFT_LOG_PAYLOAD_NORMAL;
+const PAYLOAD_MEMBERSHIP: u8 = kalamdb_serialization::RAFT_LOG_PAYLOAD_MEMBERSHIP;
 
 fn encode_stored_entry(entry: Entry<KalamTypeConfig>) -> Result<Vec<u8>, RaftError> {
     let index = entry.log_id.index;
     let term = entry.log_id.leader_id.term;
     match entry.payload {
-        EntryPayload::Blank => Ok(RaftLogEntry::encode_record_parts(index, term, &[PAYLOAD_BLANK])),
-        EntryPayload::Normal(data) => {
-            let mut buf = Vec::with_capacity(RaftLogEntry::RECORD_HEADER_LEN + 1 + data.len());
-            buf.push(RaftLogEntry::RECORD_VERSION);
-            buf.extend_from_slice(&index.to_le_bytes());
-            buf.extend_from_slice(&term.to_le_bytes());
-            buf.push(PAYLOAD_NORMAL);
-            buf.extend(data);
-            Ok(buf)
-        },
+        EntryPayload::Blank => Ok(kalamdb_serialization::encode_raft_log_record_with_tag(
+            index,
+            term,
+            PAYLOAD_BLANK,
+            &[],
+        )),
+        EntryPayload::Normal(data) => Ok(kalamdb_serialization::encode_raft_log_record_with_tag(
+            index,
+            term,
+            PAYLOAD_NORMAL,
+            &data,
+        )),
         EntryPayload::Membership(membership) => {
             let encoded = encode(&membership)?;
-            let mut tagged = Vec::with_capacity(1 + encoded.len());
-            tagged.push(PAYLOAD_MEMBERSHIP);
-            tagged.extend(encoded);
-            Ok(RaftLogEntry::encode_record_parts(index, term, &tagged))
+            Ok(kalamdb_serialization::encode_raft_log_record_with_tag(
+                index,
+                term,
+                PAYLOAD_MEMBERSHIP,
+                &encoded,
+            ))
         },
     }
 }
@@ -173,10 +177,6 @@ fn encode_log_payload(payload: &EntryPayload<KalamTypeConfig>) -> Result<Vec<u8>
 }
 
 fn decode_log_payload(bytes: &[u8]) -> Result<EntryPayload<KalamTypeConfig>, RaftError> {
-    if kalamdb_serialization::has_object_magic(bytes) {
-        return decode(bytes);
-    }
-
     let (tag, rest) = bytes
         .split_first()
         .ok_or_else(|| RaftError::Serialization("empty raft log payload".to_string()))?;
@@ -1559,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_log_payload_roundtrips_and_reads_legacy_kobj() {
+    fn packed_log_payload_roundtrips_and_rejects_legacy_kobj() {
         let blank = encode_log_payload(&EntryPayload::Blank).unwrap();
         assert_eq!(blank.as_slice(), &[PAYLOAD_BLANK]);
         assert!(matches!(decode_log_payload(&blank).unwrap(), EntryPayload::Blank));
@@ -1581,10 +1581,7 @@ mod tests {
 
         let legacy = encode(&EntryPayload::<KalamTypeConfig>::Normal(cmd.clone())).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
-        match decode_log_payload(&legacy).unwrap() {
-            EntryPayload::Normal(data) => assert_eq!(data, cmd),
-            other => panic!("expected legacy Normal, got {other:?}"),
-        }
+        assert!(decode_log_payload(&legacy).is_err());
 
         let stored = encode_stored_entry(Entry {
             log_id:  LogId::new(openraft::CommittedLeaderId::new(3, 0), 7),

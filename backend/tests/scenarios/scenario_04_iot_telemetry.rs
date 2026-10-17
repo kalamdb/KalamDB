@@ -30,8 +30,8 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace and wide-column table
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Use SHARED table for fleet-wide telemetry
     let resp = server
@@ -61,12 +61,12 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     create_enum_type(server, &format!("{ns}.severity"), &["info", "warn", "critical"]).await?;
     let resp = server
         .execute_sql(&format!(
-            "CREATE OR REPLACE PROCEDURE {ns}.classify_reading(temp DOUBLE NOT NULL) RETURNS \
+            "CREATE OR REPLACE FUNCTION {ns}.classify_reading(temp DOUBLE NOT NULL) RETURNS \
              {ns}.severity LANGUAGE JAVASCRIPT AS $$\nvar t = Number(input.temp);\nreturn t >= 40 \
              ? 'critical' : (t >= 30 ? 'warn' : 'info');\n$$"
         ))
         .await?;
-    assert_success(&resp, "CREATE PROCEDURE classify_reading");
+    assert_success(&resp, "CREATE FUNCTION classify_reading");
 
     // =========================================================
     // Step 2: Insert 5000 rows (batch insert for performance)
@@ -132,7 +132,12 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
 
     for temp in [22.0, 33.0, 41.0] {
         let resp = client
-            .execute_query(&format!("CALL {ns}.classify_reading({temp})"), None, None, None)
+            .execute_query(
+                &format!("SELECT {ns}.classify_reading({temp}) AS result"),
+                None,
+                None,
+                None,
+            )
             .await?;
         assert!(resp.success(), "classify_reading({temp}) failed: {:?}", resp.error);
     }
@@ -267,7 +272,7 @@ async fn test_scenario_04_iot_telemetry_5k_rows() -> anyhow::Result<()> {
     assert_eq!(post_flush_device, device_count, "Device count should be same after flush");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -281,8 +286,8 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
     let ns = unique_ns("iot_anomaly");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -368,7 +373,7 @@ async fn test_scenario_04_anomaly_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -379,8 +384,8 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     let ns = unique_ns("iot_scan");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -458,6 +463,6 @@ async fn test_scenario_04_wide_column_scan() -> anyhow::Result<()> {
     println!("Projection scan of 100 rows took {:?}", projection_time);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

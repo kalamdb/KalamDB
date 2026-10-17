@@ -8,9 +8,10 @@
 //! Writes are synchronous so `system.procedure_logs` can be queried immediately
 //! after CALL.
 //!
-//! Cost per record is kept to one JSON serialization into a single buffer and one
-//! `open`/`write` pair; directories are only created on the first miss and rotation
-//! uses the already-open handle's `fstat`.
+//! A hot procedure keeps one append handle so consecutive records skip `open`.
+//! The handle is closed after 30 seconds with no write, and immediately after
+//! an isolate `dropped` lifecycle record. Directories are created only on the
+//! first miss. Rotation stats the open handle, then closes it before renaming.
 //!
 //! On-disk layout is always local:
 //! `{data_path}/functions/runtime/<procedure_id>/logs/procedures.jsonl`.
@@ -20,14 +21,29 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
+    time::{Duration, Instant},
 };
 
+use dashmap::DashMap;
 use serde::{Serialize, Serializer};
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PROCEDURE_DIR_LEN: usize = 200;
 const LINE_CAPACITY: usize = 512;
+/// Close an append handle that has not been written for this long.
+const IDLE_AFTER: Duration = Duration::from_secs(30);
+const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+const SWEEP_INTERVAL_MS: u64 = 5_000;
+
+struct OpenLog {
+    file:      File,
+    len:       u64,
+    last_used: Instant,
+}
 
 /// One procedure log line: a root CALL outcome, a V8 console/ctx.log record, or a lifecycle event.
 ///
@@ -54,30 +70,172 @@ pub struct ProcedureLogRecord {
 }
 
 /// JSONL writer for per-procedure `procedures.jsonl` files under the runtime root.
+///
+/// Active procedures reuse one append handle. A handle with no write for 30
+/// seconds is closed.
 pub struct ProcedureLogLogger {
-    runtime_root: Option<PathBuf>,
+    runtime_root:  Option<PathBuf>,
+    handles:       DashMap<String, Arc<Mutex<Option<OpenLog>>>>,
+    started:       Instant,
+    last_sweep_ms: AtomicU64,
 }
 
 impl ProcedureLogLogger {
     pub fn new(runtime_root: impl Into<PathBuf>) -> Arc<Self> {
         let runtime_root = runtime_root.into();
         let _ = fs::create_dir_all(&runtime_root);
-        Arc::new(Self {
-            runtime_root: Some(runtime_root),
-        })
+        let logger = Arc::new(Self::build(Some(runtime_root)));
+        logger.spawn_idle_sweep();
+        logger
     }
 
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn new_test() -> Self {
-        Self { runtime_root: None }
+        Self::build(None)
+    }
+
+    fn build(runtime_root: Option<PathBuf>) -> Self {
+        Self {
+            runtime_root,
+            handles: DashMap::new(),
+            started: Instant::now(),
+            last_sweep_ms: AtomicU64::new(0),
+        }
     }
 
     pub fn record(&self, entry: ProcedureLogRecord) {
         let Some(root) = self.runtime_root.as_deref() else {
             return;
         };
-        write_record(&procedure_log_path(root, &entry.procedure_id), &entry);
+        let mut line = Vec::with_capacity(LINE_CAPACITY);
+        if serde_json::to_writer(&mut line, &LogLine::from(&entry)).is_err() {
+            return;
+        }
+        line.push(b'\n');
+
+        let path = procedure_log_path(root, &entry.procedure_id);
+        let slot = self.slot(&entry.procedure_id);
+        {
+            let mut guard = lock_open(&slot);
+            append_line(&mut guard, &path, &line);
+        }
+        if entry.channel.as_ref() == "lifecycle" && entry.outcome.as_ref() == "dropped" {
+            self.release_handle(&entry.procedure_id);
+        }
+        self.maybe_evict_idle();
     }
+
+    fn release_handle(&self, procedure_id: &str) {
+        let Some((_, slot)) = self.handles.remove(procedure_id) else {
+            return;
+        };
+        *lock_open(&slot) = None;
+    }
+
+    fn slot(&self, procedure_id: &str) -> Arc<Mutex<Option<OpenLog>>> {
+        if let Some(existing) = self.handles.get(procedure_id) {
+            return Arc::clone(existing.value());
+        }
+        Arc::clone(
+            self.handles
+                .entry(procedure_id.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(None)))
+                .value(),
+        )
+    }
+
+    /// Close handles that are not mid-write and have been idle since `now`.
+    fn evict_idle(&self, now: Instant) {
+        if self.handles.is_empty() {
+            return;
+        }
+        let stale: Vec<String> = self
+            .handles
+            .iter()
+            .filter_map(|entry| {
+                let Ok(guard) = entry.value().try_lock() else {
+                    return None;
+                };
+                let idle = match guard.as_ref() {
+                    Some(open) => now.saturating_duration_since(open.last_used) >= IDLE_AFTER,
+                    None => true,
+                };
+                idle.then(|| entry.key().clone())
+            })
+            .collect();
+        for key in stale {
+            let Some((_, slot)) = self.handles.remove(&key) else {
+                continue;
+            };
+            let Ok(mut guard) = slot.try_lock() else {
+                let _ = self.handles.entry(key).or_insert(slot);
+                continue;
+            };
+            let still_idle = match guard.as_ref() {
+                Some(open) => now.saturating_duration_since(open.last_used) >= IDLE_AFTER,
+                None => true,
+            };
+            if still_idle {
+                *guard = None;
+            } else {
+                drop(guard);
+                let _ = self.handles.entry(key).or_insert(slot);
+            }
+        }
+    }
+
+    fn maybe_evict_idle(&self) {
+        let elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let last = self.last_sweep_ms.load(Ordering::Relaxed);
+        if elapsed_ms.saturating_sub(last) < SWEEP_INTERVAL_MS {
+            return;
+        }
+        if self
+            .last_sweep_ms
+            .compare_exchange(last, elapsed_ms, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+        self.evict_idle(Instant::now());
+    }
+
+    fn spawn_idle_sweep(self: &Arc<Self>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let weak = Arc::downgrade(self);
+        let _join = handle.spawn(async move {
+            let mut tick = tokio::time::interval(SWEEP_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let Some(logger) = weak.upgrade() else {
+                    break;
+                };
+                logger.maybe_evict_idle();
+            }
+        });
+    }
+
+    #[cfg(test)]
+    fn open_handle_count(&self) -> usize {
+        self.handles.iter().filter(|entry| lock_open(entry.value()).is_some()).count()
+    }
+
+    #[cfg(test)]
+    fn age_handle(&self, procedure_id: &str, idle_for: Duration) {
+        let slot = self.handles.get(procedure_id).expect("procedure log handle");
+        let mut guard = lock_open(slot.value());
+        let open = guard.as_mut().expect("open procedure log");
+        open.last_used = Instant::now()
+            .checked_sub(idle_for)
+            .expect("idle age fits in the monotonic clock");
+    }
+}
+
+fn lock_open(slot: &Mutex<Option<OpenLog>>) -> MutexGuard<'_, Option<OpenLog>> {
+    slot.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 /// Strip obvious credential prefixes from procedure log text. Returns the input untouched
@@ -178,29 +336,56 @@ fn serialize_rfc3339_millis<S: Serializer>(millis: &i64, serializer: S) -> Resul
     }
 }
 
+#[cfg(test)]
 fn write_record(path: &Path, entry: &ProcedureLogRecord) {
     let mut line = Vec::with_capacity(LINE_CAPACITY);
     if serde_json::to_writer(&mut line, &LogLine::from(entry)).is_err() {
         return;
     }
     line.push(b'\n');
+    let mut slot = None;
+    append_line(&mut slot, path, &line);
+}
 
-    let Some(mut file) = open_append(path) else {
-        return;
-    };
-    let over_limit = file
-        .metadata()
-        .map(|meta| meta.len().saturating_add(line.len() as u64) > MAX_LOG_BYTES)
-        .unwrap_or(false);
-    if over_limit {
-        drop(file);
-        rotate(path);
-        let Some(reopened) = open_append(path) else {
+fn append_line(slot: &mut Option<OpenLog>, path: &Path, line: &[u8]) {
+    if slot.is_none() {
+        let Some(file) = open_append(path) else {
             return;
         };
-        file = reopened;
+        let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+        *slot = Some(OpenLog {
+            file,
+            len,
+            last_used: Instant::now(),
+        });
     }
-    let _ = file.write_all(&line);
+    let over_limit = slot
+        .as_ref()
+        .is_some_and(|open| open.len.saturating_add(line.len() as u64) > MAX_LOG_BYTES);
+    if over_limit {
+        *slot = None;
+        rotate(path);
+        let Some(mut file) = open_append(path) else {
+            return;
+        };
+        if file.write_all(line).is_ok() {
+            *slot = Some(OpenLog {
+                file,
+                len: line.len() as u64,
+                last_used: Instant::now(),
+            });
+        }
+        return;
+    }
+    let Some(open) = slot.as_mut() else {
+        return;
+    };
+    if open.file.write_all(line).is_ok() {
+        open.len = open.len.saturating_add(line.len() as u64);
+        open.last_used = Instant::now();
+    } else {
+        *slot = None;
+    }
 }
 
 /// Open for append; create the procedure directory only when the first open reports it missing.
@@ -224,6 +409,8 @@ fn rotate(path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     fn sample_record(procedure_id: &str, message: &str) -> ProcedureLogRecord {
@@ -329,6 +516,52 @@ mod tests {
         assert!(!chat.contains("from-billing"));
         assert!(billing.contains("from-billing"));
         assert!(!billing.contains("from-chat"));
+    }
+
+    #[test]
+    fn hot_handle_stays_open_and_idle_handle_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let logger = ProcedureLogLogger::new(dir.path());
+        logger.record(sample_record("chat.send_message", "hot"));
+        logger.record(sample_record("billing.charge", "cold"));
+        logger.record(sample_record("chat.send_message", "still-hot"));
+        assert_eq!(logger.open_handle_count(), 2);
+
+        logger.evict_idle(Instant::now());
+        assert_eq!(logger.open_handle_count(), 2);
+
+        logger.age_handle("billing.charge", IDLE_AFTER + Duration::from_secs(1));
+        logger.evict_idle(Instant::now());
+        assert_eq!(logger.open_handle_count(), 1);
+        assert!(logger.handles.contains_key("chat.send_message"));
+        assert!(!logger.handles.contains_key("billing.charge"));
+
+        let billing = fs::read_to_string(procedure_log_path(dir.path(), "billing.charge")).unwrap();
+        assert!(billing.contains("cold"));
+        logger.record(sample_record("billing.charge", "reopened"));
+        assert_eq!(logger.open_handle_count(), 2);
+        let billing = fs::read_to_string(procedure_log_path(dir.path(), "billing.charge")).unwrap();
+        assert!(billing.contains("cold"));
+        assert!(billing.contains("reopened"));
+    }
+
+    #[test]
+    fn dropped_lifecycle_closes_the_append_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let logger = ProcedureLogLogger::new(dir.path());
+        logger.record(sample_record("chat.send_message", "hot"));
+        assert_eq!(logger.open_handle_count(), 1);
+
+        let mut dropped = sample_record("chat.send_message", "isolate dropped");
+        dropped.channel = "lifecycle".into();
+        dropped.outcome = "dropped".into();
+        logger.record(dropped);
+
+        assert_eq!(logger.open_handle_count(), 0);
+        let contents =
+            fs::read_to_string(procedure_log_path(dir.path(), "chat.send_message")).unwrap();
+        assert!(contents.contains("hot"));
+        assert!(contents.contains("isolate dropped"));
     }
 
     #[test]

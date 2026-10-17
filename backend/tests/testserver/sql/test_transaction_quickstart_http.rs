@@ -12,7 +12,7 @@ async fn create_messages_table(
     namespace: &str,
 ) -> anyhow::Result<()> {
     let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
@@ -37,7 +37,7 @@ async fn create_typing_events_table(
     namespace: &str,
 ) -> anyhow::Result<()> {
     let resp = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 

@@ -74,7 +74,7 @@
 
 //! Parsers for STORAGE FLUSH TABLE and STORAGE FLUSH ALL commands (US4).
 
-use kalamdb_commons::{NamespaceId, TableName};
+use kalamdb_commons::{SchemaId, TableName};
 
 use crate::{ddl::parsing, parser::utils::normalize_sql};
 
@@ -86,7 +86,7 @@ const ERR_EXPECTED_NAMESPACE: &str = "Expected STORAGE FLUSH ALL IN namespace";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushTableStatement {
     /// Namespace containing the table
-    pub namespace:  NamespaceId,
+    pub namespace:  SchemaId,
     /// Table name to flush
     pub table_name: TableName,
 }
@@ -131,7 +131,7 @@ impl FlushTableStatement {
         parsing::validate_no_extra_tokens(&normalized, 4, "STORAGE FLUSH TABLE")?;
 
         Ok(Self {
-            namespace:  NamespaceId::from(namespace),
+            namespace:  SchemaId::from(namespace),
             table_name: TableName::from(table_name),
         })
     }
@@ -144,7 +144,7 @@ impl FlushTableStatement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushAllTablesStatement {
     /// Namespace to flush all tables from
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
 }
 
 impl FlushAllTablesStatement {
@@ -190,12 +190,12 @@ impl FlushAllTablesStatement {
         parsing::validate_no_extra_tokens(&normalized, expected_tokens, command_for_error)?;
 
         Ok(Self {
-            namespace: NamespaceId::from(namespace),
+            namespace: SchemaId::from(namespace),
         })
     }
 
     /// Parse and fall back to the default namespace when no `IN` clause is provided.
-    pub fn parse_with_default(sql: &str, default_namespace: &NamespaceId) -> Result<Self, String> {
+    pub fn parse_with_default(sql: &str, default_namespace: &SchemaId) -> Result<Self, String> {
         match Self::parse(sql) {
             Ok(stmt) => Ok(stmt),
             Err(err) if err == ERR_EXPECTED_NAMESPACE => {
@@ -219,14 +219,14 @@ mod tests {
     #[test]
     fn test_parse_flush_table_basic() {
         let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
     #[test]
     fn test_parse_flush_table_with_semicolon() {
         let stmt = FlushTableStatement::parse("STORAGE FLUSH TABLE prod.events;").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
         assert_eq!(stmt.table_name, TableName::from("events"));
     }
 
@@ -234,7 +234,7 @@ mod tests {
     fn test_parse_flush_table_strips_quoted_identifiers() {
         let stmt =
             FlushTableStatement::parse(r#"STORAGE FLUSH TABLE "test_kalam_60"."users""#).unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("test_kalam_60"));
+        assert_eq!(stmt.namespace, SchemaId::from("test_kalam_60"));
         assert_eq!(stmt.table_name, TableName::from("users"));
     }
 
@@ -255,19 +255,19 @@ mod tests {
     #[test]
     fn test_parse_flush_all_tables_basic() {
         let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_with_semicolon() {
         let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN prod;").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
     fn test_parse_flush_all_tables_in_namespace_keyword() {
         let stmt = FlushAllTablesStatement::parse("STORAGE FLUSH ALL IN NAMESPACE prod").unwrap();
-        assert_eq!(stmt.namespace, NamespaceId::from("prod"));
+        assert_eq!(stmt.namespace, SchemaId::from("prod"));
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_default_namespace_when_missing_in_clause() {
-        let default_ns = NamespaceId::from("fallback_ns");
+        let default_ns = SchemaId::from("fallback_ns");
         let stmt = FlushAllTablesStatement::parse_with_default("STORAGE FLUSH ALL", &default_ns)
             .expect("default namespace should be applied");
         assert_eq!(stmt.namespace, default_ns);

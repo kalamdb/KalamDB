@@ -1,7 +1,7 @@
 -- One topic fed by multiple tables and operations.
 
-DROP NAMESPACE IF EXISTS sql_file_case_05 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_05;
+DROP SCHEMA IF EXISTS sql_file_case_05 CASCADE;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_05;
 USE sql_file_case_05;
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -31,4 +31,4 @@ UPDATE orders SET status = 'cancelled' WHERE id = 5101;
 CONSUME FROM order_activity LIMIT 20;
 
 DROP TOPIC order_activity;
-DROP NAMESPACE IF EXISTS sql_file_case_05 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_05 CASCADE;

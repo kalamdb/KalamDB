@@ -109,6 +109,7 @@ mimalloc = ["kalamdb-observability/mimalloc", "kalamdb-raft/mimalloc"]
 traceability = [
     "kalamdb-commons/traceability",
     "kalamdb-filestore/traceability",
+    "kalamdb-functions/traceability",
     "kalamdb-observability/traceability",
     "kalamdb-raft/traceability",
     "kalamdb-store/traceability",

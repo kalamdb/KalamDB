@@ -115,43 +115,7 @@ pub fn storage_data_type_from_arrow(data_type: &DataType) -> Result<StorageDataT
 /// Physical slots are `column_id` 1..=max among non-identity columns. Missing ids are
 /// dropped holes so a later column keeps its slot after an earlier DROP.
 pub fn storage_schema_from_table(table: &TableDefinition) -> Result<StorageSchema> {
-    let version = u16::try_from(table.schema_version).map_err(|_| {
-        SerializationError::Encode(format!(
-            "schema version {} does not fit in u16",
-            table.schema_version
-        ))
-    })?;
-
-    let mut live = Vec::new();
-    for column in &table.columns {
-        if is_key_or_envelope_column(table, &column.column_name) {
-            continue;
-        }
-        if column.column_id == 0 {
-            return Err(SerializationError::Encode("column_id 0 is reserved".to_string()));
-        }
-        live.push(column);
-    }
-    live.sort_by_key(|column| column.column_id);
-
-    let max_id = live.last().map(|column| column.column_id).unwrap_or(0);
-    let mut by_id = std::collections::BTreeMap::new();
-    for column in live {
-        by_id.insert(column.column_id, column);
-    }
-
-    let mut fields = Vec::new();
-    for id in 1..=max_id {
-        match by_id.get(&id) {
-            Some(column) => {
-                let storage_type = storage_type_for_column(column, None)?;
-                fields.push(StorageField::new(column.column_name.clone(), storage_type));
-            },
-            None => fields.push(StorageField::dropped_slot()),
-        }
-    }
-
-    Ok(StorageSchema::new(version, fields))
+    build_storage_schema(table, None)
 }
 
 /// Build storage schema using a resolved Arrow overlay so named TypeId columns
@@ -160,6 +124,13 @@ pub fn storage_schema_from_table_with_arrow(
     table: &TableDefinition,
     arrow: &arrow::datatypes::Schema,
 ) -> Result<StorageSchema> {
+    build_storage_schema(table, Some(arrow))
+}
+
+fn build_storage_schema(
+    table: &TableDefinition,
+    arrow: Option<&arrow::datatypes::Schema>,
+) -> Result<StorageSchema> {
     let version = u16::try_from(table.schema_version).map_err(|_| {
         SerializationError::Encode(format!(
             "schema version {} does not fit in u16",
@@ -167,7 +138,7 @@ pub fn storage_schema_from_table_with_arrow(
         ))
     })?;
 
-    let mut live = Vec::new();
+    let mut max_id = 0usize;
     for column in &table.columns {
         if is_key_or_envelope_column(table, &column.column_name) {
             continue;
@@ -175,35 +146,56 @@ pub fn storage_schema_from_table_with_arrow(
         if column.column_id == 0 {
             return Err(SerializationError::Encode("column_id 0 is reserved".to_string()));
         }
-        live.push(column);
-    }
-    live.sort_by_key(|column| column.column_id);
-
-    let max_id = live.last().map(|column| column.column_id).unwrap_or(0);
-    let mut by_id = std::collections::BTreeMap::new();
-    for column in live {
-        by_id.insert(column.column_id, column);
-    }
-
-    let mut fields = Vec::new();
-    for id in 1..=max_id {
-        match by_id.get(&id) {
-            Some(column) => {
-                let storage_type = storage_type_for_column(column, Some(arrow))?;
-                fields.push(StorageField::new(column.column_name.clone(), storage_type));
-            },
-            None => fields.push(StorageField::dropped_slot()),
+        let col_id = usize::try_from(column.column_id).map_err(|_| {
+            SerializationError::Encode(format!("column_id {} exceeds usize", column.column_id))
+        })?;
+        if col_id > max_id {
+            max_id = col_id;
         }
     }
 
+    let mut fields = vec![StorageField::dropped_slot(); max_id];
+    for column in &table.columns {
+        if is_key_or_envelope_column(table, &column.column_name) {
+            continue;
+        }
+        let storage_type = storage_type_for_column(column, arrow)?;
+        let missing_default = resolve_missing_default(column, arrow);
+        let slot = (column.column_id as usize) - 1;
+        fields[slot] = StorageField::new(column.column_name.clone(), storage_type)
+            .with_missing_default(missing_default);
+    }
+
     Ok(StorageSchema::new(version, fields))
+}
+
+fn resolve_missing_default(
+    column: &kalamdb_commons::schemas::ColumnDefinition,
+    arrow: Option<&arrow::datatypes::Schema>,
+) -> Option<datafusion_common::ScalarValue> {
+    let kalamdb_commons::schemas::ColumnDefault::Literal(ref default_json) =
+        column.missing_default.as_ref()?
+    else {
+        return None;
+    };
+    if let Some(schema) = arrow {
+        if let Ok(field) = schema.field_with_name(&column.column_name) {
+            let scalar = kalamdb_commons::conversions::json_value_to_scalar(default_json);
+            if let Ok(coerced) = kalamdb_commons::conversions::coerce_scalar_to_field(scalar, field)
+            {
+                return Some(coerced);
+            }
+        }
+    }
+    kalamdb_commons::conversions::json_value_to_scalar_for_column(default_json, &column.data_type())
+        .ok()
 }
 
 fn storage_type_for_column(
     column: &kalamdb_commons::schemas::ColumnDefinition,
     arrow: Option<&arrow::datatypes::Schema>,
 ) -> Result<StorageDataType> {
-    if column.named_type_id.is_some() || column.is_array {
+    if column.named_type_id().is_some() || column.is_array() {
         if let Some(schema) = arrow {
             if let Ok(field) = schema.field_with_name(&column.column_name) {
                 return storage_data_type_from_arrow(field.data_type());
@@ -214,7 +206,7 @@ fn storage_type_for_column(
             column.column_name
         )));
     }
-    storage_data_type_from_kalam(&column.data_type)
+    storage_data_type_from_kalam(&column.data_type())
 }
 
 #[cfg(test)]
@@ -223,7 +215,7 @@ mod tests {
     use kalamdb_commons::{
         models::datatypes::KalamDataType,
         schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::*;
@@ -245,7 +237,7 @@ mod tests {
     #[test]
     fn slots_follow_column_id_with_drop_holes() {
         let table = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("orders"),
             TableType::User,
             vec![
@@ -268,7 +260,7 @@ mod tests {
     #[test]
     fn rename_keeps_physical_slot() {
         let original = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("t"),
             TableType::User,
             vec![column(2, "old_name", 1, KalamDataType::Text)],
@@ -277,7 +269,7 @@ mod tests {
         )
         .unwrap();
         let renamed = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("t"),
             TableType::User,
             vec![column(2, "new_name", 1, KalamDataType::Text)],
@@ -298,7 +290,7 @@ mod tests {
     #[test]
     fn shared_table_keeps_user_id_payload_column() {
         let table = TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new("members"),
             TableType::Shared,
             vec![
@@ -318,7 +310,7 @@ mod tests {
     #[test]
     fn user_table_keeps_declared_user_id_payload_column() {
         let table = TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("profiles"),
             TableType::User,
             vec![

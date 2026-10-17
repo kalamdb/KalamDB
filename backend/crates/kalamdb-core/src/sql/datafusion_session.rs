@@ -7,9 +7,10 @@
 //! ## Parallelism Configuration
 //!
 //! DataFusion settings are loaded from `server.toml` [datafusion] section:
-//! - `query_parallelism`: Number of parallel threads (0 = auto-detect CPU cores)
-//! - `max_partitions`: Maximum partitions per query (enables parallel execution)
-//! - `batch_size`: Arrow batch size for record processing (default: 8192)
+//! - `query_parallelism`: Parallel threads (`0` uses the host CPU count; default 2)
+//! - `max_partitions`: Maximum partitions per query (default 4)
+//! - `batch_size`: Arrow batch size for record processing (default 1024)
+//! - `memory_limit`: Operator memory pool in bytes (default 32MB)
 
 use std::sync::Arc;
 
@@ -24,22 +25,37 @@ use datafusion::{
     prelude::SessionConfig,
 };
 use kalamdb_configs::DataFusionSettings;
+use kalamdb_filestore::FileStorageService;
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::sql::{
     functions::{
         AlwaysTruePrivilegeFunction, ColDescriptionFunction, CosineDistanceFunction,
         CurrentDatabaseFunction, CurrentRoleFunction, CurrentSchemaFunction,
-        CurrentSettingFunction, CurrentUserFunction, FormatTypeFunction, ObjDescriptionFunction,
-        PgBackendPidFunction, PgGetExprFunction, PgGetFunctionResultFunction,
-        PgGetFunctionTextFunction, PgGetIndexdefFunction, SnowflakeIdFunction, UlidFunction,
-        UuidV7Function, VersionFunction,
+        CurrentSettingFunction, CurrentUserFunction, FileStorageFunction, FormatTypeFunction,
+        ObjDescriptionFunction, PgBackendPidFunction, PgGetExprFunction,
+        PgGetFunctionResultFunction, PgGetFunctionTextFunction, PgGetIndexdefFunction,
+        SetConfigFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
 
 /// Public SQL parser dialect. PostgreSQL is the only dialect on this session.
 pub const SQL_PARSER_DIALECT: &str = "postgresql";
+
+/// Accept only the PostgreSQL parser dialect.
+///
+/// `None` and `postgresql` (any ASCII case) select the installed dialect.
+/// Any other name is rejected.
+pub fn require_sql_parser_dialect(requested: Option<&str>) -> Result<&'static str, String> {
+    match requested {
+        None => Ok(SQL_PARSER_DIALECT),
+        Some(dialect) if dialect.eq_ignore_ascii_case(SQL_PARSER_DIALECT) => Ok(SQL_PARSER_DIALECT),
+        Some(dialect) => Err(format!(
+            "SQL dialect '{dialect}' is not supported; postgresql is the only dialect"
+        )),
+    }
+}
 
 /// DataFusion session factory with parallelism configuration
 ///
@@ -64,10 +80,10 @@ impl DataFusionSessionFactory {
     /// # Example
     /// ```ignore
     /// let settings = DataFusionSettings {
-    ///     query_parallelism: 0,  // Auto-detect CPU cores
-    ///     max_partitions: 16,
-    ///     batch_size: 8192,
-    ///     memory_limit: 1073741824,
+    ///     query_parallelism: 2,
+    ///     max_partitions: 4,
+    ///     batch_size: 1024,
+    ///     memory_limit: 32 * 1024 * 1024,
     /// };
     /// let factory = DataFusionSessionFactory::with_config(&settings)?;
     /// ```
@@ -90,8 +106,10 @@ impl DataFusionSessionFactory {
 
         // Higher-order UDFs such as array_transform stay registered. Public
         // `x ->` lambda syntax is rejected because this session parses PostgreSQL.
+        let dialect = require_sql_parser_dialect(Some(SQL_PARSER_DIALECT))
+            .map_err(|error| datafusion::error::DataFusionError::Configuration(error))?;
         let config = SessionConfig::new()
-            .set_str("datafusion.sql_parser.dialect", SQL_PARSER_DIALECT)
+            .set_str("datafusion.sql_parser.dialect", dialect)
             .with_information_schema(false)
             .with_parquet_bloom_filter_pruning(true)
             .with_parquet_page_index_pruning(true)
@@ -189,14 +207,17 @@ impl DataFusionSessionFactory {
         // Register CURRENT_ROLE() — resolves role from SessionUserContext at execution time
         ctx.register_udf(ScalarUDF::from(CurrentRoleFunction::new()));
 
-        // Register CURRENT_SCHEMA() / CURRENT_DATABASE() for PostgreSQL wire clients
+        // Session identity. DataFusion 55 has no current_user / current_schema /
+        // current_database; these UDFs read the Kalam session on every SQL transport.
         ctx.register_udf(ScalarUDF::from(CurrentSchemaFunction::new()));
         ctx.register_udf(ScalarUDF::from(CurrentDatabaseFunction::new()));
 
-        // PostgreSQL wire client introspection stubs
+        // PostgreSQL catalog helpers. `version` replaces DataFusion's builtin,
+        // which reports "Apache DataFusion …" instead of a PostgreSQL version string.
         ctx.register_udf(ScalarUDF::from(PgBackendPidFunction::new()));
         ctx.register_udf(ScalarUDF::from(VersionFunction::new()));
         ctx.register_udf(ScalarUDF::from(CurrentSettingFunction::new()));
+        ctx.register_udf(ScalarUDF::from(SetConfigFunction::new()));
         ctx.register_udf(ScalarUDF::from(ColDescriptionFunction::new()));
         ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));
@@ -214,6 +235,11 @@ impl DataFusionSessionFactory {
 
         // Register vector search table function (TABLE(vector_search(...))).
         ctx.register_udtf("vector_search", Arc::new(VectorSearchTableFunction::unavailable()));
+
+        // Register built-in file extension stubs (overwritten once AppContext is created).
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_put(None)));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_read(None)));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_delete(None)));
     }
 
     /// Register catalog-backed `pg_get_functiondef` / argument helpers on a live session.
@@ -234,6 +260,23 @@ impl DataFusionSessionFactory {
             &system_tables,
         ))));
         ctx.register_udf(ScalarUDF::from(PgGetFunctionTextFunction::result(system_tables)));
+    }
+
+    /// Register built-in `file_put`, `file_read`, and `file_delete` functions backed by
+    /// `FileStorageService`.
+    pub fn register_file_storage_functions(
+        ctx: &SessionContext,
+        file_storage_service: Arc<FileStorageService>,
+    ) {
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_put(Some(Arc::clone(
+            &file_storage_service,
+        )))));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_read(Some(Arc::clone(
+            &file_storage_service,
+        )))));
+        ctx.register_udf(ScalarUDF::from(FileStorageFunction::file_delete(Some(
+            file_storage_service,
+        ))));
     }
 
     /// Register all existing namespaces as DataFusion schemas
@@ -389,5 +432,14 @@ mod tests {
             result.is_err(),
             "public x -> lambda syntax must be rejected under the PostgreSQL dialect"
         );
+    }
+
+    #[test]
+    fn postgresql_is_the_only_sql_parser_dialect() {
+        assert_eq!(require_sql_parser_dialect(None).unwrap(), "postgresql");
+        assert_eq!(require_sql_parser_dialect(Some("postgresql")).unwrap(), "postgresql");
+        assert_eq!(require_sql_parser_dialect(Some("PostgreSQL")).unwrap(), "postgresql");
+        assert!(require_sql_parser_dialect(Some("generic")).is_err());
+        assert!(require_sql_parser_dialect(Some("duckdb")).is_err());
     }
 }

@@ -1,4 +1,5 @@
 //! PostgreSQL extension bridge.
+#![recursion_limit = "256"]
 //!
 //! This crate is the only server-side host for the extension gRPC service.
 //! The native PostgreSQL wire listener does not use it. When

@@ -165,11 +165,8 @@ impl CatalogTypeField {
     ) -> Result<Self, String> {
         let name = name.into();
         let slot = if ordinal > 0 { ordinal } else { 1 };
-        let type_field_id = if field_type_id.is_some() || data_type.is_some() {
-            TypeFieldId::from_slot(&type_id, slot).or_else(|_| TypeFieldId::new(&type_id, &name))?
-        } else {
-            TypeFieldId::new(&type_id, &name)?
-        };
+        let type_field_id =
+            TypeFieldId::from_slot(&type_id, slot).or_else(|_| TypeFieldId::new(&type_id, &name))?;
         Ok(Self {
             type_field_id,
             type_id,
@@ -187,6 +184,35 @@ impl CatalogTypeField {
         })
     }
 
+    /// Construct an enum member with a stable physical slot (`type_field_id = {type_id}:{slot}`)
+    /// decoupled from its mutable display label (`name`) and sort position (`ordinal`).
+    pub fn enum_value_with_slot(
+        type_id: TypeId,
+        name: impl Into<String>,
+        slot: i32,
+        ordinal: i32,
+    ) -> Result<Self, String> {
+        let name = name.into();
+        let slot = if slot > 0 { slot } else { 1 };
+        let type_field_id =
+            TypeFieldId::from_slot(&type_id, slot).or_else(|_| TypeFieldId::new(&type_id, &name))?;
+        Ok(Self {
+            type_field_id,
+            type_id,
+            name: name.clone(),
+            ordinal,
+            field_type_id: None,
+            type_name: name,
+            is_array: false,
+            not_null: true,
+            nonempty: false,
+            data_type: None,
+            slot,
+            dropped: false,
+            element_nullable: false,
+        })
+    }
+
     pub fn physical_slot(&self) -> i32 {
         if self.slot > 0 {
             self.slot
@@ -200,6 +226,28 @@ impl CatalogTypeField {
     pub fn type_ref(&self) -> Result<kalamdb_commons::LogicalTypeRef, String> {
         if self.dropped {
             return Err(format!("type field '{}' is dropped", self.name));
+        }
+        if self.field_type_id.is_none() {
+            let bare_name = self.type_name.trim_end_matches("[]").trim();
+            if bare_name.eq_ignore_ascii_case("jsonb") {
+                let inner = kalamdb_commons::LogicalTypeRef::jsonb();
+                return Ok(if self.is_array {
+                    kalamdb_commons::LogicalTypeRef::array(inner, self.element_nullable)
+                } else {
+                    inner
+                });
+            }
+            if bare_name.eq_ignore_ascii_case("timestamptz")
+                || bare_name.eq_ignore_ascii_case("timestamp with time zone")
+                || self.builtin_data_type() == Some(KalamDataType::DateTime)
+            {
+                let inner = kalamdb_commons::LogicalTypeRef::timestamptz();
+                return Ok(if self.is_array {
+                    kalamdb_commons::LogicalTypeRef::array(inner, self.element_nullable)
+                } else {
+                    inner
+                });
+            }
         }
         kalamdb_commons::LogicalTypeRef::stored(
             &format!("type field '{}'", self.name),
@@ -219,18 +267,18 @@ impl CatalogTypeField {
             type_id.clone(),
             column.column_name.clone(),
             ordinal,
-            column.named_type_id.clone(),
-            if column.named_type_id.is_some() {
+            column.named_type_id().cloned(),
+            if column.named_type_id().is_some() {
                 None
             } else {
-                Some(column.data_type)
+                Some(column.data_type())
             },
-            column.data_type.sql_name(),
-            column.is_array,
+            column.logical_type.peel_list().sql_name(),
+            column.is_array(),
             !column.is_nullable,
             false,
         )?;
-        field.element_nullable = column.element_nullable;
+        field.element_nullable = column.element_nullable();
         Ok(field)
     }
 

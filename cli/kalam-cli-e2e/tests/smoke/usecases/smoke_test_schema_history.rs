@@ -33,9 +33,9 @@ fn smoke_test_schema_history_in_system_tables() {
 
     // Cleanup and setup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // =========================================================================
@@ -226,7 +226,7 @@ fn smoke_test_schema_history_in_system_tables() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -326,9 +326,9 @@ fn smoke_test_drop_table_removes_schema_history() {
 
     // Cleanup and setup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create table and alter it twice
@@ -401,5 +401,5 @@ fn smoke_test_drop_table_removes_schema_history() {
 
     // Cleanup
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

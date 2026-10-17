@@ -10,7 +10,7 @@ use kalamdb_commons::{
         datatypes::KalamDataType,
         rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions},
-        NamespaceId, ReadContext, Role, StorageId, TableId, TableName,
+        ReadContext, Role, SchemaId, StorageId, TableId, TableName,
     },
     schemas::ColumnDefault,
     websocket::ChangeNotification,
@@ -351,7 +351,7 @@ fn build_stream_table_definition(table_id: &TableId) -> Arc<TableDefinition> {
 #[ntest::timeout(10000)]
 async fn stream_provider_planning_stays_lightweight_until_execution() {
     let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-    let table_id = TableId::new(NamespaceId::new("app"), TableName::new("events_planning"));
+    let table_id = TableId::new(SchemaId::new("app"), TableName::new("events_planning"));
     let table_def = build_stream_table_definition(&table_id);
     let services = build_services(Arc::clone(&table_def), Arc::clone(&backend));
     let store = Arc::new(new_stream_table_store(

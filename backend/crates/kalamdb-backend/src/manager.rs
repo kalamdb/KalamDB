@@ -260,6 +260,24 @@ impl BackendSessionManager {
         Ok(())
     }
 
+    pub fn recover_failed_transaction(&self, session_id: &str) -> BackendSessionResult<()> {
+        let mut session = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        session.recover_failed_transaction();
+        session.touch("ROLLBACK TO SAVEPOINT", None, current_timestamp_ms());
+        Ok(())
+    }
+
+    pub fn block_state(&self, session_id: &str) -> BackendSessionResult<BackendSessionState> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        Ok(session.block_state())
+    }
+
     pub fn ensure_block_allows_work(&self, session_id: &str) -> BackendSessionResult<()> {
         let session = self
             .sessions

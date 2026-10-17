@@ -317,7 +317,7 @@ impl TransactionCoordinator {
 
         let write_set = self.write_sets.remove(transaction_id).map(|(_, write_set)| write_set);
 
-        let Some(write_set) = write_set else {
+        let Some(write_set) = write_set.filter(|ws| !ws.ordered_mutations.is_empty()) else {
             self.active_by_owner.remove(&owner_key);
 
             let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
@@ -593,11 +593,102 @@ impl TransactionCoordinator {
         Duration::from_secs((timeout_secs / 2).clamp(1, 5))
     }
 
-    fn mark_transaction_aborted(&self, transaction_id: &TransactionId) {
-        self.write_sets.remove(transaction_id);
+    pub fn mark_transaction_aborted(&self, transaction_id: &TransactionId) {
         if let Some(mut handle) = self.active_by_id.get_mut(transaction_id) {
             handle.mark_state(TransactionState::Aborted);
         }
+    }
+
+    pub fn savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !handle.state.is_open() {
+            return Err(Self::state_error(transaction_id, handle.state, "savepoint"));
+        }
+
+        handle.touch();
+        drop(handle);
+
+        let mut write_set = self
+            .write_sets
+            .entry(transaction_id.clone())
+            .or_insert_with(|| TransactionWriteSet::new(transaction_id.clone()));
+        write_set.push_savepoint(name);
+        Ok(())
+    }
+
+    pub fn release_savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !handle.state.is_open() {
+            return Err(Self::state_error(transaction_id, handle.state, "release savepoint"));
+        }
+
+        handle.touch();
+        drop(handle);
+
+        let released = self
+            .write_sets
+            .get_mut(transaction_id)
+            .map(|mut write_set| write_set.release_savepoint(name))
+            .unwrap_or(false);
+        if !released {
+            return Err(KalamDbError::NotFound(format!(
+                "savepoint \"{}\" does not exist",
+                name.trim()
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn rollback_to_savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !matches!(
+            handle.state,
+            TransactionState::OpenRead | TransactionState::OpenWrite | TransactionState::Aborted
+        ) {
+            return Err(Self::state_error(transaction_id, handle.state, "rollback to savepoint"));
+        }
+
+        let Some((write_count, write_bytes)) = self
+            .write_sets
+            .get_mut(transaction_id)
+            .and_then(|mut write_set| write_set.rollback_to_savepoint(name))
+        else {
+            return Err(KalamDbError::NotFound(format!(
+                "savepoint \"{}\" does not exist",
+                name.trim()
+            )));
+        };
+
+        handle.write_count = write_count;
+        handle.write_bytes = write_bytes;
+        handle.has_write_set = write_count > 0;
+        handle.mark_state(if write_count > 0 {
+            TransactionState::OpenWrite
+        } else {
+            TransactionState::OpenRead
+        });
+        Ok(())
     }
 
     async fn run_timeout_sweeper(coordinator: Weak<Self>, sweep_interval: Duration) {

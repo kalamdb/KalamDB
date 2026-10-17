@@ -11,7 +11,7 @@ use std::{
 
 pub use apply::apply_pending_migrations;
 pub use create::{create_migration, seal_draft_migration, CreateMigrationOptions};
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub use status::migration_status;
@@ -44,7 +44,7 @@ impl std::fmt::Display for MigrationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationRecord {
     pub migration_id:  String,
-    pub namespace:     NamespaceId,
+    pub namespace:     SchemaId,
     /// Server-side primary key (`namespace:migration_id`) when loaded from `system.migrations`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration_key: Option<String>,
@@ -110,7 +110,7 @@ impl MigrationState {
     pub fn upsert_applying(
         &mut self,
         migration_id: &str,
-        namespace: &NamespaceId,
+        namespace: &SchemaId,
         sql: &str,
         source: &str,
     ) {
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn migration_state_hashes_sql_and_tracks_status_transitions() {
-        let namespace = NamespaceId::new("dev");
+        let namespace = SchemaId::new("dev");
         let sql = "CREATE TABLE users (id BIGINT PRIMARY KEY);";
         let mut state = MigrationState::default();
 
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn mark_applied_updates_all_records_for_migration_id() {
-        let namespace = NamespaceId::new("okf_sync");
+        let namespace = SchemaId::new("okf_sync");
         let mut state = MigrationState {
             records: vec![
                 MigrationRecord {

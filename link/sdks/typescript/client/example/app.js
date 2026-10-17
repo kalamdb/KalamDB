@@ -375,7 +375,7 @@ window.testCreateNamespace = async function() {
   }
 
   try {
-    const sql = 'CREATE NAMESPACE IF NOT EXISTS test_browser';
+    const sql = 'CREATE SCHEMA IF NOT EXISTS test_browser';
     log(`→ SQL: ${sql}`, 'info');
     const result = await client.query(sql);
     logJson('← Result', result, 'success');

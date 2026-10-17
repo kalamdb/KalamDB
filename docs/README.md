@@ -33,6 +33,7 @@ Client SDK documentation.
 GitHub Releases body copy. One file per version; paste into the GitHub release when cutting a tag.
 
 - **[README.md](releases/README.md)** – Index (newest first)
+- **[0.8.0.md](releases/0.8.0.md)** – PostgreSQL session settings and one SQL path for HTTP and pgwire
 - **[0.7.1.md](releases/0.7.1.md)** – Raft-derived row versions and one persisted owner per shared table
 - **[0.7.0-beta.0.md](releases/0.7.0-beta.0.md)** – Typed nested data, scalar indexes, server functions, everyday CLI
 
@@ -56,6 +57,12 @@ Contributor guides for building and developing KalamDB.
 - **[testing-strategy.md](development/testing-strategy.md)** – Testing approach
 - **[how-to-add-sql-statement.md](development/how-to-add-sql-statement.md)** – Adding new SQL statements
 - **[docker-idle-resource-baseline.md](development/docker-idle-resource-baseline.md)** – Why idle Docker CPU/memory is non-zero and how to tune it
+
+### [pages/](pages/)
+Shared roadmap and planning pages maintained in Git.
+
+- **[README.md](pages/README.md)** – Page index and editing workflow
+- **[kalamdb-0.8-epics.md](pages/kalamdb-0.8-epics.md)** – PostgreSQL 18 compatibility priorities, epics, and release gates
 
 ### [plans/](plans/)
 Decision-complete implementation plans for major initiatives.
@@ -116,4 +123,4 @@ KalamDB stores each user's messages in isolated storage partitions instead of a 
 ---
 
 **Last Updated**: October 2026  
-**KalamDB Version**: 0.7.1
+**KalamDB Version**: 0.8.0

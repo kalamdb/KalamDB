@@ -10,10 +10,9 @@
 use kalamdb_commons::{AuthType, Role, StorageId};
 use kalamdb_system::providers::storages::models::StorageMode;
 use serde::{Deserialize, Serialize};
-use sqlparser::{
-    dialect::GenericDialect,
-    tokenizer::{Token, Tokenizer},
-};
+use sqlparser::tokenizer::Token;
+
+use crate::parser::KalamParser;
 
 /// Common error type for user command parsing
 #[derive(Debug, Clone, PartialEq)]
@@ -78,11 +77,10 @@ fn is_keyword(token: &Token, keyword: &str) -> bool {
     matches!(token, Token::Word(w) if w.value.to_uppercase() == keyword)
 }
 
-/// Tokenize SQL using sqlparser
+/// Tokenize SQL with the shared Kalam parser.
 fn tokenize(sql: &str) -> Result<Vec<Token>, UserCommandError> {
-    let dialect = GenericDialect {};
-    Tokenizer::new(&dialect, sql).tokenize().map_err(|e| UserCommandError {
-        message: format!("Tokenization error: {}", e),
+    KalamParser::tokenize(sql).map_err(|error| UserCommandError {
+        message: format!("Tokenization error: {}", error),
         hint:    None,
     })
 }

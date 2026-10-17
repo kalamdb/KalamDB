@@ -1,10 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// ALTER TABLE ADD COLUMN / DROP COLUMN DDL latency.
 /// Tests schema evolution performance.

@@ -69,7 +69,7 @@ fn disable_and_drop_namespace(ns: &str, schedules: &[&str]) {
         let _ = execute_sql_as_root_via_client(&format!("ALTER SCHEDULE {ns}.{name} DISABLE"));
         let _ = execute_sql_as_root_via_client(&format!("DROP SCHEDULE IF EXISTS {ns}.{name}"));
     }
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn smoke_schedule_01_rejects_missing_procedure() {
         "missing procedure must fail CREATE SCHEDULE: {err}"
     );
     assert!(schedule_rows(&format!("{ns}.clock")).is_empty());
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn smoke_schedule_02_rejects_parameterized_procedure() {
         err.to_ascii_lowercase().contains("no parameters"),
         "parameterized procedure must be rejected: {err}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn smoke_schedule_03_rejects_missing_namespace() {
         err.to_ascii_lowercase().contains("namespace") && err.contains(&ghost),
         "missing schedule namespace must fail: {err}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn smoke_schedule_04_rejects_invalid_cron_interval_timezone_and_principal() {
             "expected '{needle}' in configuration error for {sql}: {err}"
         );
     }
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 #[test]
@@ -401,5 +401,5 @@ fn smoke_schedule_10_disable_skips_overlap_and_blocks_drop_procedure() {
     exec(&format!("DROP SCHEDULE IF EXISTS {ns}.clock"));
     assert!(schedule_rows(&format!("{ns}.clock")).is_empty());
     exec(&format!("DROP PROCEDURE {ns}.tick"));
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }

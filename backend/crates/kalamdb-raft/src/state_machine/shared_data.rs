@@ -26,8 +26,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, get_coordinator, ApplyResult,
-    KalamStateMachine, PendingBuffer, PendingCommand, StateMachineSnapshot,
+    decode, encode, get_coordinator, ApplyResult, KalamStateMachine, PendingBuffer, PendingCommand,
+    StateMachineSnapshot,
 };
 use crate::{
     applier::SharedDataApplier, assign_entry_versions, DataResponse, GroupId, RaftCommand,
@@ -599,7 +599,7 @@ impl KalamStateMachine for SharedDataStateMachine {
             pending_commands,
         };
 
-        let data = bincode_encode(&snapshot)?;
+        let data = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             self.group_id(),
@@ -615,7 +615,7 @@ impl KalamStateMachine for SharedDataStateMachine {
                 "Cannot restore another shared shard's history".into(),
             ));
         }
-        let data: SharedDataSnapshot = bincode_decode(&snapshot.data)?;
+        let data: SharedDataSnapshot = decode(&snapshot.data)?;
 
         {
             let mut ops = self.recent_operations.write();
@@ -653,7 +653,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind, UserId},
+        models::{rows::Row, SchemaId, OperationKind, UserId},
         TableId,
     };
     use parking_lot::Mutex;
@@ -816,7 +816,7 @@ mod tests {
         let sm = SharedDataStateMachine::default();
 
         let cmd = SharedDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "config".into()),
+            table_id:            TableId::new(SchemaId::default(), "config".into()),
             rows:                vec![],
             encoded_fields:      Vec::new(),
             required_meta_index: 0,
@@ -837,7 +837,7 @@ mod tests {
 
         // Insert
         let insert = SharedDataCommand::Insert {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            table_id:            TableId::new(SchemaId::default(), "settings".into()),
             rows:                vec![],
             encoded_fields:      Vec::new(),
             required_meta_index: 0,
@@ -850,7 +850,7 @@ mod tests {
 
         // Update
         let update = SharedDataCommand::Update {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            table_id:            TableId::new(SchemaId::default(), "settings".into()),
             updates:             vec![],
             pk_values:           None,
             filter:              None,
@@ -864,7 +864,7 @@ mod tests {
 
         // Delete
         let delete = SharedDataCommand::Delete {
-            table_id:            TableId::new(NamespaceId::default(), "settings".into()),
+            table_id:            TableId::new(SchemaId::default(), "settings".into()),
             pk_values:           None,
             required_meta_index: 0,
             transaction_id:      None,
@@ -884,7 +884,7 @@ mod tests {
             assert_eq!(ops[0].operation, OperationKind::Insert);
             assert_eq!(ops[1].operation, OperationKind::Update);
             assert_eq!(ops[2].operation, OperationKind::Delete);
-            assert_eq!(ops[0].table_id, TableId::new(NamespaceId::default(), "settings".into()));
+            assert_eq!(ops[0].table_id, TableId::new(SchemaId::default(), "settings".into()));
         }
     }
 
@@ -895,7 +895,7 @@ mod tests {
             0,
             Arc::new(RecordingSharedDataApplier::new(actor_records.clone())),
         );
-        let table_id = TableId::new(NamespaceId::default(), "settings".into());
+        let table_id = TableId::new(SchemaId::default(), "settings".into());
         let insert_actor = UserId::from("insert_actor");
         let update_actor = UserId::from("update_actor");
         let delete_actor = UserId::from("delete_actor");
@@ -951,7 +951,7 @@ mod tests {
     async fn test_shared_data_state_machine_transaction_commit() {
         let sm = SharedDataStateMachine::with_applier(0, Arc::new(TransactionBatchSharedApplier));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::default(), "config".into());
+        let table_id = TableId::new(SchemaId::default(), "config".into());
 
         let cmd = RaftCommand::TransactionCommit {
             required_meta_index: 0,

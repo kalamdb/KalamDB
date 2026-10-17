@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Benchmark: Single row INSERT.
 pub struct SingleInsertBench;
@@ -33,7 +30,8 @@ impl Benchmark for SingleInsertBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.insert_bench (id INT PRIMARY KEY, name TEXT, score DOUBLE, active BOOLEAN)",
+                    "CREATE TABLE {}.insert_bench (id INT PRIMARY KEY, name TEXT, score DOUBLE, \
+                     active BOOLEAN)",
                     config.namespace
                 ))
                 .await?;
@@ -50,7 +48,8 @@ impl Benchmark for SingleInsertBench {
         Box::pin(async move {
             client
                 .sql_ok(&format!(
-                    "INSERT INTO {}.insert_bench (id, name, score, active) VALUES ({}, 'user_{}', {:.2}, {})",
+                    "INSERT INTO {}.insert_bench (id, name, score, active) VALUES ({}, 'user_{}', \
+                     {:.2}, {})",
                     config.namespace,
                     iteration,
                     iteration,

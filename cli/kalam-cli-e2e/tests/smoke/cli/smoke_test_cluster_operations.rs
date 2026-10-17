@@ -120,7 +120,7 @@ fn smoke_test_cluster_system_table_counts_consistent() {
 
 /// Test 1: CommandExecutor pattern - namespace operations
 ///
-/// Verifies CREATE/DROP NAMESPACE commands are correctly executed
+/// Verifies namespace create and drop commands are correctly executed
 /// via the CommandExecutor abstraction (works in both standalone and cluster modes)
 #[ntest::timeout(60_000)]
 #[test]
@@ -144,7 +144,7 @@ fn smoke_test_cluster_namespace_consistency() {
     // Create all namespaces
     println!("Creating {} namespaces...", namespaces.len());
     for ns in &namespaces {
-        let sql = format!("CREATE NAMESPACE {}", ns);
+        let sql = format!("CREATE SCHEMA {}", ns);
         execute_sql_as_root_via_client(&sql)
             .unwrap_or_else(|e| panic!("Failed to create namespace {}: {}", ns, e));
     }
@@ -171,7 +171,7 @@ fn smoke_test_cluster_namespace_consistency() {
 
     // Cleanup
     for ns in namespaces.iter().rev() {
-        let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+        let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     }
 
     println!("  ✅ Cleanup complete\n");
@@ -194,10 +194,10 @@ fn smoke_test_cluster_table_type_consistency() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table
@@ -252,7 +252,7 @@ fn smoke_test_cluster_table_type_consistency() {
     println!("\n  ✅ All table types created and registered correctly\n");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 3: CommandExecutor pattern - user operations
@@ -313,10 +313,10 @@ fn smoke_test_cluster_user_data_partitioning() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and user table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -393,7 +393,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user1));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user2));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 5: Shared table consistency
@@ -413,10 +413,10 @@ fn smoke_test_cluster_shared_table_consistency() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -463,7 +463,7 @@ fn smoke_test_cluster_shared_table_consistency() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 6: Concurrent operations consistency
@@ -483,10 +483,10 @@ fn smoke_test_cluster_concurrent_operations() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared counter table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -539,7 +539,7 @@ fn smoke_test_cluster_concurrent_operations() {
     println!("\n  ✅ Concurrent operations consistency verified\n");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 7: Batch operations consistency
@@ -558,10 +558,10 @@ fn smoke_test_cluster_batch_insert_consistency() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -620,7 +620,7 @@ fn smoke_test_cluster_batch_insert_consistency() {
     println!("\n  ✅ Batch insert consistency verified\n");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 8: Job creation and tracking consistency
@@ -639,10 +639,10 @@ fn smoke_test_cluster_job_tracking() {
 
     // Cleanup if exists
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -694,7 +694,7 @@ fn smoke_test_cluster_job_tracking() {
     println!("\n  ✅ Job tracking verified\n");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 9: Storage operations consistency
@@ -729,9 +729,9 @@ fn smoke_test_cluster_storage_operations() {
     let namespace = generate_unique_namespace("cluster_storage");
 
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -763,7 +763,7 @@ fn smoke_test_cluster_storage_operations() {
     println!("\n  ✅ Storage operations consistency verified\n");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 /// Test 10: Live query registration (meta operations)

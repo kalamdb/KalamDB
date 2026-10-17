@@ -14,7 +14,7 @@ use std::{
 };
 
 use kalam_client::models::ResponseStatus;
-use kalamdb_commons::models::{NamespaceId, StorageId, TableId, TableName};
+use kalamdb_commons::models::{SchemaId, StorageId, TableId, TableName};
 use kalamdb_core::manifest::{
     FlushJobResult, FlushTableMetadata, NoopFlushScopeHook, SharedTableFlushJob, TableFlush,
     UserTableFlushJob,
@@ -44,7 +44,7 @@ pub async fn execute_flush_synchronously(
     table_name: &str,
 ) -> Result<FlushJobResult, String> {
     // Get table definition from schema registry via AppContext
-    let namespace_id = NamespaceId::new(namespace);
+    let namespace_id = SchemaId::new(namespace);
     let table_name_id = TableName::new(table_name);
     let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 
@@ -123,7 +123,7 @@ pub async fn execute_shared_flush_synchronously(
     namespace: &str,
     table_name: &str,
 ) -> Result<FlushJobResult, String> {
-    let namespace_id = NamespaceId::new(namespace);
+    let namespace_id = SchemaId::new(namespace);
     let table_name_id = TableName::new(table_name);
     let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 

@@ -143,7 +143,7 @@ fn test_update_all_types_user_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     // Note: Skipping EMBEDDING and BYTES for simplicity in SQL literals for now,
@@ -406,7 +406,7 @@ fn test_update_all_types_user_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test updating all data types in a SHARED table
@@ -428,7 +428,7 @@ fn test_update_all_types_shared_table() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup namespace
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create table with all supported types
     let create_sql = format!(
@@ -588,5 +588,5 @@ fn test_update_all_types_shared_table() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

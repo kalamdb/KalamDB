@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, TableId};
+use kalamdb_commons::models::{SchemaId, TableId};
 use kalamdb_system::Namespace;
 
 use crate::{
@@ -28,10 +28,7 @@ impl NamespaceExecutor {
     }
 
     /// Execute CREATE NAMESPACE
-    pub async fn create_namespace(
-        &self,
-        namespace_id: &NamespaceId,
-    ) -> Result<String, ApplierError> {
+    pub async fn create_namespace(&self, namespace_id: &SchemaId) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Creating namespace {}", namespace_id);
         let app_context = self.app_context.clone();
         let namespace_id = namespace_id.clone();
@@ -49,8 +46,8 @@ impl NamespaceExecutor {
         .await
     }
 
-    /// Execute DROP NAMESPACE
-    pub async fn drop_namespace(&self, namespace_id: &NamespaceId) -> Result<String, ApplierError> {
+    /// Execute DROP SCHEMA
+    pub async fn drop_namespace(&self, namespace_id: &SchemaId) -> Result<String, ApplierError> {
         log::debug!("CommandExecutorImpl: Dropping namespace {}", namespace_id);
         let app_context = self.app_context.clone();
         let namespace_id = namespace_id.clone();
@@ -121,18 +118,15 @@ mod tests {
         test_helpers::test_app_context_simple,
     };
 
-    fn unique_namespace() -> NamespaceId {
+    fn unique_namespace() -> SchemaId {
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before unix epoch")
             .as_millis();
-        NamespaceId::new(format!("drop_ns_{}_{}", std::process::id(), millis))
+        SchemaId::new(format!("drop_ns_{}_{}", std::process::id(), millis))
     }
 
-    fn stream_table_definition(
-        namespace_id: &NamespaceId,
-        table_name: &TableName,
-    ) -> TableDefinition {
+    fn stream_table_definition(namespace_id: &SchemaId, table_name: &TableName) -> TableDefinition {
         let id_column = ColumnDefinition::new(
             1,
             "id".to_string(),

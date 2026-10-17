@@ -1038,7 +1038,7 @@ async fn execute_sql_closes_ephemeral_idle_session() {
     service
         .execute_sql(plain_request(ExecuteSqlRpcRequest {
             session_id: "pg-ephemeral-sql".to_string(),
-            sql:        "CREATE NAMESPACE IF NOT EXISTS test_ns".to_string(),
+            sql:        "CREATE SCHEMA IF NOT EXISTS test_ns".to_string(),
         }))
         .await
         .unwrap();

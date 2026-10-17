@@ -390,7 +390,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
     };
     use kalamdb_commons::{
-        models::{NamespaceId, OperationKind, TableName, TransactionId},
+        models::{SchemaId, OperationKind, TableName, TransactionId},
         TableType,
     };
 
@@ -421,7 +421,7 @@ mod tests {
         .expect("base batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
@@ -504,7 +504,7 @@ mod tests {
         .expect("base batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
@@ -578,7 +578,7 @@ mod tests {
         .expect("empty batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let first_user = UserId::new("user-a");
         let second_user = UserId::new("user-b");
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
@@ -748,7 +748,7 @@ mod tests {
             Field::new("name", DataType::Utf8, true),
         ]));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id,

@@ -102,7 +102,7 @@ fn find_impersonation_audit_entry<'a>(
 
 async fn create_user_table(server: &TestServer, namespace: &str, table: &str) {
     let ns_resp = server
-        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), "root")
+        .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), "root")
         .await;
     assert_success(&ns_resp, "create namespace");
 
@@ -117,7 +117,7 @@ async fn create_user_table(server: &TestServer, namespace: &str, table: &str) {
 
 async fn create_stream_table(server: &TestServer, namespace: &str, table: &str) {
     let ns_resp = server
-        .execute_sql_as_user(&format!("CREATE NAMESPACE {}", namespace), "root")
+        .execute_sql_as_user(&format!("CREATE SCHEMA {}", namespace), "root")
         .await;
     assert_success(&ns_resp, "create namespace");
 
@@ -502,7 +502,7 @@ async fn test_execute_as_shared_table_is_denied_after_role_authorization() {
     let actor = insert_user(&server, &unique_name("shared_actor"), Role::Dba).await;
     let target = insert_user(&server, &unique_name("shared_target"), Role::User).await;
 
-    let ns_resp = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), "root").await;
+    let ns_resp = server.execute_sql_as_user(&format!("CREATE SCHEMA {}", ns), "root").await;
     assert_success(&ns_resp, "create shared namespace");
 
     let create_resp = server

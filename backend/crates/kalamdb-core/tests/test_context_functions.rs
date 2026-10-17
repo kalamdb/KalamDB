@@ -357,8 +357,6 @@ async fn test_functions_with_no_arguments() {
 
 #[tokio::test]
 async fn test_current_schema_returns_default_namespace() {
-    use kalamdb_sql::rewrite_context_functions_for_datafusion;
-
     let auth_session = AuthSession::with_auth_details(
         UserId::new("u_wire"),
         Role::System,
@@ -369,8 +367,7 @@ async fn test_current_schema_returns_default_namespace() {
     let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
     let session = exec_ctx.create_session_with_user();
 
-    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
-    let result = session.sql(sql.as_ref()).await;
+    let result = session.sql("SELECT CURRENT_SCHEMA() AS schema").await;
     assert!(result.is_ok(), "Query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();
@@ -384,21 +381,19 @@ async fn test_current_schema_returns_default_namespace() {
 
 #[tokio::test]
 async fn test_current_schema_respects_execution_namespace() {
-    use kalamdb_commons::NamespaceId;
-    use kalamdb_sql::rewrite_context_functions_for_datafusion;
+    use kalamdb_commons::SchemaId;
 
     let exec_ctx = ExecutionContext::with_namespace(
         UserId::new("u_wire"),
         Role::System,
-        NamespaceId::new("tenant_app"),
+        SchemaId::new("tenant_app"),
         create_test_session(),
     )
     .with_request_id("wire:test");
 
     let session = exec_ctx.create_session_with_user();
 
-    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_SCHEMA() AS schema");
-    let result = session.sql(sql.as_ref()).await;
+    let result = session.sql("SELECT CURRENT_SCHEMA() AS schema").await;
     assert!(result.is_ok(), "Query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();
@@ -412,8 +407,6 @@ async fn test_current_schema_respects_execution_namespace() {
 
 #[tokio::test]
 async fn test_current_database_returns_catalog_name() {
-    use kalamdb_sql::rewrite_context_functions_for_datafusion;
-
     let auth_session = AuthSession::with_auth_details(
         UserId::new("u_wire"),
         Role::System,
@@ -424,8 +417,7 @@ async fn test_current_database_returns_catalog_name() {
     let exec_ctx = ExecutionContext::from_session(auth_session, create_test_session());
     let session = exec_ctx.create_session_with_user();
 
-    let sql = rewrite_context_functions_for_datafusion("SELECT CURRENT_DATABASE() AS database");
-    let result = session.sql(sql.as_ref()).await;
+    let result = session.sql("SELECT CURRENT_DATABASE() AS database").await;
     assert!(result.is_ok(), "Query failed: {:?}", result.err());
 
     let batches = result.unwrap().collect().await.unwrap();
@@ -435,4 +427,59 @@ async fn test_current_database_returns_catalog_name() {
         .downcast_ref::<datafusion::arrow::array::StringArray>()
         .unwrap();
     assert_eq!(database_col.value(0), "kalam");
+}
+
+#[tokio::test]
+async fn test_context_functions_resolve_via_native_datafusion_udf_aliases_without_text_rewrite() {
+    use kalamdb_commons::SchemaId;
+    use kalamdb_sql::parse_statement_for_datafusion;
+
+    let exec_ctx = ExecutionContext::with_namespace(
+        UserId::new("u_native_alias"),
+        Role::Dba,
+        SchemaId::new("app_ns"),
+        create_test_session(),
+    );
+    let session = exec_ctx.create_session_with_user();
+
+    let statement = parse_statement_for_datafusion(
+        "SELECT CURRENT_USER AS cu, CURRENT_USER_ID() AS cuid, CURRENT_ROLE AS cr, CURRENT_ROLE() \
+         AS cr_fn, CURRENT_SCHEMA AS cs, CURRENT_SCHEMA() AS cs_fn, CURRENT_DATABASE AS cd, \
+         CURRENT_DATABASE() AS cd_fn",
+    )
+    .expect("parse statement for datafusion");
+
+    let plan = session
+        .state()
+        .statement_to_plan(datafusion::sql::parser::Statement::Statement(Box::new(statement)))
+        .await
+        .expect("statement_to_plan should resolve native UDF aliases");
+    let batches = session
+        .execute_logical_plan(plan)
+        .await
+        .expect("execute plan")
+        .collect()
+        .await
+        .expect("collect batches");
+
+    assert_eq!(batches.len(), 1);
+    let batch = &batches[0];
+    let str_val = |col_idx: usize| -> String {
+        batch
+            .column(col_idx)
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .unwrap()
+            .value(0)
+            .to_string()
+    };
+
+    assert_eq!(str_val(0), "u_native_alias");
+    assert_eq!(str_val(1), "u_native_alias");
+    assert_eq!(str_val(2), "dba");
+    assert_eq!(str_val(3), "dba");
+    assert_eq!(str_val(4), "app_ns");
+    assert_eq!(str_val(5), "app_ns");
+    assert_eq!(str_val(6), "kalam");
+    assert_eq!(str_val(7), "kalam");
 }

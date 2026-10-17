@@ -35,7 +35,7 @@ async fn test_stream_tables_over_http() -> anyhow::Result<()> {
     let server = super::test_support::http_server::get_global_server().await;
     let ns = unique_namespace("test_st");
 
-    let response = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let response = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_eq!(response.status, ResponseStatus::Success);
 
     create_stream_table(server, &ns, "events").await?;

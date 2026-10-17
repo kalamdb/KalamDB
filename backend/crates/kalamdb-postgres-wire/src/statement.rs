@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use arrow::datatypes::{DataType, Field};
 use async_trait::async_trait;
 use kalamdb_core::{
     app_context::AppContext,
@@ -23,7 +22,9 @@ use pgwire::{
 };
 
 use crate::{
-    connection::WireConnectionState, pg_types::pg_type_for_named_field, sql_exec::pg_error,
+    connection::WireConnectionState,
+    pg_types::{pg_type_for_arrow, pg_type_for_field},
+    sql_exec::pg_error,
 };
 
 /// Prepared statement cached at PostgreSQL wire Parse time.
@@ -81,17 +82,15 @@ impl QueryParser for KalamQueryParser {
             state.current_schema(),
             self.app_context.base_session_context(),
         )
-        .with_request_id(format!("wire:{}", state.session_id()));
+        .with_request_id(format!("wire:{}", state.session_id()))
+        .with_session_config(state.session_config());
 
         let metadata = self
             .sql_executor
             .prepare_statement_metadata(sql, &exec_ctx)
             .map_err(classification_error_to_pg)?;
-        let parameter_types = self.infer_parameter_types(sql).await.unwrap_or_else(|| {
-            let count = max_placeholder_index(sql);
-            vec![Type::TEXT; count]
-        });
-        let result_columns = self.infer_result_columns(sql).await.unwrap_or_default();
+        let (parameter_types, result_columns) =
+            self.prepared_metadata(&metadata, &exec_ctx, _types).await;
 
         Ok(Some(WireCachedStatement {
             metadata,
@@ -123,86 +122,84 @@ impl QueryParser for KalamQueryParser {
 }
 
 impl KalamQueryParser {
-    async fn infer_parameter_types(&self, sql: &str) -> Option<Vec<Type>> {
+    /// Parameter types and result columns from one executor plan.
+    async fn prepared_metadata(
+        &self,
+        metadata: &PreparedExecutionStatement,
+        exec_ctx: &ExecutionContext,
+        hinted_types: &[Option<Type>],
+    ) -> (Vec<Type>, Vec<WireResultColumn>) {
+        let sql = metadata.sql.as_str();
+        let shown = classify_postgres_show(sql);
         let count = max_placeholder_index(sql);
         if count == 0 {
-            return Some(Vec::new());
+            if let Some(name) = shown.clone() {
+                return (
+                    Vec::new(),
+                    vec![WireResultColumn {
+                        name,
+                        datatype: Type::TEXT,
+                    }],
+                );
+            }
         }
 
-        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
-        let plan = self
-            .app_context
-            .base_session_context()
-            .state()
-            .create_logical_plan(&execution_sql)
-            .await
-            .ok()?;
-        let parameter_types = plan.get_parameter_types().ok()?;
-        let mut types = Vec::with_capacity(count);
-        for index in 1..=count {
-            let parameter_id = format!("${index}");
-            types.push(
-                parameter_types
-                    .get(&parameter_id)
-                    .and_then(|data_type| data_type.as_ref())
-                    .map(pg_type_for_data_type)
-                    .transpose()
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Type::TEXT),
-            );
-        }
-        Some(types)
-    }
+        let Ok(plan) = self.sql_executor.logical_plan_for_metadata(metadata, exec_ctx).await else {
+            let columns = shown
+                .map(|name| WireResultColumn {
+                    name,
+                    datatype: Type::TEXT,
+                })
+                .into_iter()
+                .collect();
+            let parameter_types = (0..count)
+                .map(|index| {
+                    hinted_types.get(index).and_then(|ty| ty.clone()).unwrap_or(Type::TEXT)
+                })
+                .collect();
+            return (parameter_types, columns);
+        };
 
-    async fn infer_result_columns(&self, sql: &str) -> Option<Vec<WireResultColumn>> {
-        if let Some(shown) = classify_postgres_show(sql) {
-            return Some(vec![WireResultColumn {
-                name:     shown.name,
+        let parameter_types = if count == 0 {
+            Vec::new()
+        } else {
+            let mapped = plan.get_parameter_types().ok();
+            let mut types = Vec::with_capacity(count);
+            for index in 1..=count {
+                let hinted = hinted_types.get(index - 1).and_then(|ty| ty.clone());
+                let parameter_id = format!("${index}");
+                types.push(hinted.unwrap_or_else(|| {
+                    mapped
+                        .as_ref()
+                        .and_then(|parameter_types| parameter_types.get(&parameter_id))
+                        .and_then(|data_type| data_type.as_ref())
+                        .map(pg_type_for_arrow)
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or(Type::TEXT)
+                }));
+            }
+            types
+        };
+
+        let columns = if let Some(name) = shown {
+            vec![WireResultColumn {
+                name,
                 datatype: Type::TEXT,
-            }]);
-        }
-
-        let execution_sql = kalamdb_sql::rewrite_context_functions_for_datafusion(sql);
-        let plan = self
-            .app_context
-            .base_session_context()
-            .state()
-            .create_logical_plan(&execution_sql)
-            .await
-            .ok()?;
-        let schema = plan.schema();
-        let mut columns = Vec::with_capacity(schema.fields().len());
-        for field in schema.fields() {
-            columns.push(WireResultColumn {
-                name:     field.name().to_string(),
-                datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
-            });
-        }
-        Some(columns)
+            }]
+        } else {
+            plan.schema()
+                .fields()
+                .iter()
+                .map(|field| WireResultColumn {
+                    name:     field.name().to_string(),
+                    datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
+                })
+                .collect()
+        };
+        (parameter_types, columns)
     }
-}
-
-fn pg_type_for_field(field: &Field) -> PgWireResult<Type> {
-    if let Some(pg_type) = pg_type_for_named_field(field) {
-        return Ok(pg_type);
-    }
-    pg_type_for_data_type(field.data_type())
-}
-
-fn pg_type_for_data_type(data_type: &DataType) -> PgWireResult<Type> {
-    Ok(match data_type {
-        DataType::Boolean => Type::BOOL,
-        DataType::Int8 | DataType::Int16 => Type::INT2,
-        DataType::Int32 | DataType::UInt8 | DataType::UInt16 => Type::INT4,
-        DataType::Int64 | DataType::UInt32 => Type::INT8,
-        DataType::Float32 => Type::FLOAT4,
-        DataType::Float64 => Type::FLOAT8,
-        DataType::Date32 | DataType::Date64 => Type::DATE,
-        DataType::Timestamp(_, _) => Type::TIMESTAMP,
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View | DataType::Null => Type::TEXT,
-        _ => Type::TEXT,
-    })
 }
 
 fn classification_error_to_pg(

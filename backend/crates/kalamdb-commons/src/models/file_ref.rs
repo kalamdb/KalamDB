@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// File reference stored as JSON in FILE columns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileRef {
     /// Unique file identifier.
     pub id:     String,
@@ -135,6 +136,15 @@ impl FileRef {
         subfolder.len() == SUBFOLDER_PREFIX.len() + SUBFOLDER_DIGITS
             && subfolder.starts_with(SUBFOLDER_PREFIX)
             && subfolder[SUBFOLDER_PREFIX.len()..].chars().all(|c| c.is_ascii_digit())
+    }
+
+    /// Returns true if all required fields (`id`, `sub`, `name`, `mime`, `sha256`) are valid.
+    pub fn is_well_formed(&self) -> bool {
+        !self.id.trim().is_empty()
+            && Self::is_valid_subfolder(&self.sub)
+            && !self.name.trim().is_empty()
+            && !self.mime.trim().is_empty()
+            && !self.sha256.trim().is_empty()
     }
 
     /// Relative path within the table folder.

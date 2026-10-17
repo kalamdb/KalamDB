@@ -1,7 +1,7 @@
 -- Exercise clear topic and reseed data in the active namespace.
 
-DROP NAMESPACE IF EXISTS sql_file_case_08 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_08;
+DROP SCHEMA IF EXISTS sql_file_case_08 CASCADE;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_08;
 USE sql_file_case_08;
 
 CREATE TABLE IF NOT EXISTS sensor_events (
@@ -28,4 +28,4 @@ VALUES (8103, 'sensor-b', 44), (8104, 'sensor-c', 72);
 CONSUME FROM sensor_topic LIMIT 10;
 
 DROP TOPIC sensor_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_08 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_08 CASCADE;

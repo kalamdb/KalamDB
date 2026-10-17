@@ -31,7 +31,7 @@ pub async fn replicate_stored_type(
 
 pub async fn replicate_named_type(
     app: &Arc<AppContext>,
-    namespace_id: &kalamdb_commons::models::NamespaceId,
+    namespace_id: &kalamdb_commons::models::SchemaId,
     name: &str,
 ) -> Result<(), KalamDbError> {
     let app_for_read = Arc::clone(app);

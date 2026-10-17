@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Concurrent queries across different namespaces.
 /// Tests namespace isolation and whether cross-namespace traffic causes contention.
@@ -105,7 +102,7 @@ impl Benchmark for NamespaceIsolationBench {
             for i in 0..5 {
                 let ns = format!("{}_iso_{}", config.namespace, i);
                 let _ = client.sql(&format!("DROP TABLE IF EXISTS {}.iso_data", ns)).await;
-                let _ = client.sql(&format!("DROP NAMESPACE IF EXISTS {}", ns)).await;
+                let _ = client.sql(&format!("DROP SCHEMA IF EXISTS {}", ns)).await;
             }
             Ok(())
         })

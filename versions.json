@@ -2,7 +2,7 @@
   "schema_version": 1,
   "channels": {
     "latest": {
-      "core": "0.7.1",
+      "core": "0.8.0",
       "protocol": "v1",
       "stability": "stable"
     },
@@ -229,106 +229,112 @@
       "protocol": "v1",
       "released_at": "2026-10-02",
       "stability": "beta"
+    },
+    {
+      "core": "0.7.1",
+      "protocol": "v1",
+      "released_at": "2026-10-15",
+      "stability": "stable"
     }
   ],
   "packages": {
     "core_components": {
       "server": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.1",
+        "compatible_core": "0.8.0",
         "protocol": "v1"
       },
       "cli": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.1",
+        "compatible_core": "0.8.0",
         "protocol": "v1"
       },
       "pg_extension": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.1",
+        "compatible_core": "0.8.0",
         "protocol": "v1"
       }
     },
     "typescript": {
       "@kalamdb/client": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1"
       },
       "@kalamdb/orm": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1",
         "depends_on": {
-          "@kalamdb/client": ">=0.7.1 <0.8.0"
+          "@kalamdb/client": ">=0.8.0 <0.9.0"
         }
       },
       "@kalamdb/consumer": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1",
         "depends_on": {
-          "@kalamdb/client": ">=0.7.1 <0.8.0"
+          "@kalamdb/client": ">=0.8.0 <0.9.0"
         }
       },
       "@kalamdb/react": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1",
         "depends_on": {
-          "@kalamdb/client": ">=0.7.1 <0.8.0",
-          "@kalamdb/orm": ">=0.7.1 <0.8.0"
+          "@kalamdb/client": ">=0.8.0 <0.9.0",
+          "@kalamdb/orm": ">=0.8.0 <0.9.0"
         }
       }
     },
     "python": {
       "kalamdb": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1"
       }
     },
     "npm": {
       "@kalamdb/cli": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.1",
+        "compatible_core": "0.8.0",
         "protocol": "v1"
       }
     },
     "rust": {
       "kalam-client": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.1",
+        "compatible_core": "0.8.0",
         "protocol": "v1"
       }
     },
     "dart": {
       "kalam_link": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1"
       },
       "kalam_sync": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1"
       },
       "kalam_sync_generator": {
-        "version": "0.7.1",
+        "version": "0.8.0",
         "published": "0.7.0-beta.0",
-        "compatible_core": "0.7.x",
+        "compatible_core": "0.8.x",
         "protocol": "v1"
       }
     }

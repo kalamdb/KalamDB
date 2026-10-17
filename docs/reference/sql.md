@@ -12,47 +12,46 @@ SELECT 1;
 SELECT 2;
 ```
 
-## Namespace Commands
+## Schema Commands
 
-### CREATE NAMESPACE
+### CREATE SCHEMA
 
 ```sql
-CREATE NAMESPACE <namespace_name>;
-CREATE NAMESPACE IF NOT EXISTS <namespace_name>;
+CREATE SCHEMA <schema_name>;
+CREATE SCHEMA IF NOT EXISTS <schema_name>;
 ```
 
-### DROP NAMESPACE
+### DROP SCHEMA
 
 ```sql
-DROP NAMESPACE <namespace_name>;
-DROP NAMESPACE IF EXISTS <namespace_name>;
-DROP NAMESPACE <namespace_name> CASCADE;
-DROP NAMESPACE IF EXISTS <namespace_name> CASCADE;
+DROP SCHEMA <namespace_name>;
+DROP SCHEMA IF EXISTS <namespace_name>;
+DROP SCHEMA <namespace_name> CASCADE;
+DROP SCHEMA IF EXISTS <namespace_name> CASCADE;
 ```
 
-### ALTER NAMESPACE
+### ALTER SCHEMA
 
 ```sql
-ALTER NAMESPACE <namespace_name>
+ALTER SCHEMA <namespace_name>
   SET DESCRIPTION '<description>';
 ```
 
-### USE / SET NAMESPACE
+### USE / SET SCHEMA
 
 Changes the default namespace for the current request or multi-statement batch.
 In the interactive CLI, a successful `USE` also updates the CLI's local
 namespace so later requests automatically send `namespace_id`.
 
 ```sql
-USE <namespace_name>;
-USE NAMESPACE <namespace_name>;
-SET NAMESPACE <namespace_name>;
+USE <schema_name>;
+SET SCHEMA <schema_name>;
 ```
 
-### SHOW NAMESPACES
+### SHOW SCHEMAS
 
 ```sql
-SHOW NAMESPACES;
+SHOW SCHEMAS;
 ```
 
 ## Table DDL
@@ -512,8 +511,8 @@ Rules:
 
 1. One procedure per `namespace.name`. Overloads are rejected.
 2. Unqualified names use the current default namespace (`USE` / session namespace).
-3. The namespace must already exist (`CREATE NAMESPACE`). Creating a procedure in
-   a missing namespace fails.
+3. The schema must already exist (`CREATE SCHEMA`). Creating a procedure in
+   a missing schema fails.
 4. Parameters are `IN` only. They are nullable unless `NOT NULL` is present.
    Named parameter and `RETURNS` types must already exist.
 5. `SECURITY INVOKER` is the default. The procedure runs as the caller; RLS and

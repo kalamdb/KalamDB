@@ -3,7 +3,7 @@
 use kalamdb_commons::{
     models::{is_builtin_default_name, normalize_builtin_name, CallArgument, RoutineCall},
     schemas::ColumnDefault,
-    KalamDataType, NamespaceId, RoutineId,
+    KalamDataType, RoutineId, SchemaId,
 };
 use serde_json::{Number, Value as JsonValue};
 use sqlparser::ast::{
@@ -11,11 +11,11 @@ use sqlparser::ast::{
     TypedString, UnaryOperator, Value,
 };
 
-use crate::{compatibility::map_sql_type_to_kalam, ddl::DdlResult, dialect::KalamDbDialect};
+use crate::{compatibility::map_sql_type_to_kalam, ddl::DdlResult, parser::KalamParser};
 
 pub fn expr_to_column_default(
     expr: &Expr,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<ColumnDefault> {
     match expr {
         Expr::Function(func) => {
@@ -47,20 +47,69 @@ pub fn expr_to_column_default(
     }
 }
 
-pub(crate) fn expr_to_call_argument(expr: &Expr) -> DdlResult<CallArgument> {
+pub fn expr_to_call_argument(expr: &Expr) -> DdlResult<CallArgument> {
     match expr {
         Expr::Nested(inner) => expr_to_call_argument(inner),
         Expr::Value(value) => value_to_call_argument(&value.value),
+        Expr::Tuple(items) => {
+            let mut tuple_args = Vec::with_capacity(items.len());
+            for item in items {
+                tuple_args.push(expr_to_call_argument(item)?);
+            }
+            Ok(CallArgument::Tuple(tuple_args))
+        },
+        Expr::Function(func)
+            if func.name.0.len() == 1
+                && matches!(
+                    &func.name.0[0],
+                    ObjectNamePart::Identifier(ident)
+                        if ident.quote_style.is_none() && ident.value.eq_ignore_ascii_case("row")
+                ) =>
+        {
+            match &func.args {
+                FunctionArguments::None => Ok(CallArgument::Tuple(Vec::new())),
+                FunctionArguments::List(list) => {
+                    let mut tuple_args = Vec::with_capacity(list.args.len());
+                    for arg in &list.args {
+                        match arg {
+                            FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) => {
+                                tuple_args.push(expr_to_call_argument(inner)?);
+                            },
+                            _ => {
+                                return Err(
+                                    "ROW(...) elements must be unnamed expressions".to_string()
+                                );
+                            },
+                        }
+                    }
+                    Ok(CallArgument::Tuple(tuple_args))
+                },
+                FunctionArguments::Subquery(_) => {
+                    Err("ROW(...) cannot contain a subquery".to_string())
+                },
+            }
+        },
         Expr::Cast {
             expr, data_type, ..
         } => {
-            let kalam_type = map_sql_type_to_kalam(data_type)?;
-            if matches!(expr.as_ref(), Expr::Value(value) if matches!(value.value, Value::Null)) {
-                return Ok(CallArgument::typed(kalam_type, JsonValue::Null));
+            if let Ok(arg @ CallArgument::Tuple(_)) = expr_to_call_argument(expr) {
+                return Ok(arg);
             }
-            let value = expr_to_json_literal(expr)?;
-            let value = coerce_json_for_type(&kalam_type, value)?;
-            Ok(CallArgument::typed(kalam_type, value))
+            match map_sql_type_to_kalam(data_type) {
+                Ok(kalam_type) => {
+                    if matches!(expr.as_ref(), Expr::Value(value) if matches!(value.value, Value::Null))
+                    {
+                        return Ok(CallArgument::typed(kalam_type, JsonValue::Null));
+                    }
+                    let value = expr_to_json_literal(expr)?;
+                    let value = coerce_json_for_type(&kalam_type, value)?;
+                    Ok(CallArgument::typed(kalam_type, value))
+                },
+                Err(_) if matches!(data_type, sqlparser::ast::DataType::Custom(_, _)) => {
+                    expr_to_call_argument(expr)
+                },
+                Err(err) => Err(err),
+            }
         },
         Expr::TypedString(typed) => typed_string_to_call_argument(typed),
         Expr::UnaryOp {
@@ -80,54 +129,147 @@ pub(crate) fn expr_to_call_argument(expr: &Expr) -> DdlResult<CallArgument> {
     }
 }
 
+pub fn function_to_routine_call_with_placeholders(
+    func: &Function,
+    default_namespace: &SchemaId,
+) -> DdlResult<RoutineCall> {
+    let (arguments, named_arguments) = function_args_to_call_arguments(&func.args)?;
+    let routine_id = routine_id_from_function_name(&func.name, default_namespace)?;
+    Ok(RoutineCall::with_named_arguments(routine_id, arguments, named_arguments))
+}
+
 fn function_to_routine_call(
     func: &Function,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<RoutineCall> {
-    let arguments = function_args_to_call_arguments(&func.args)?;
-    if arguments.iter().any(CallArgument::is_placeholder) {
+    let call = function_to_routine_call_with_placeholders(func, default_namespace)?;
+    if call.arguments.iter().any(CallArgument::is_placeholder) {
         return Err("DEFAULT procedure arguments cannot use placeholders".to_string());
     }
-    let routine_id = routine_id_from_function_name(&func.name, default_namespace)?;
-    Ok(RoutineCall::new(routine_id, arguments))
+    Ok(call)
 }
 
 fn routine_id_from_function_name(
     name: &ObjectName,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
 ) -> DdlResult<RoutineId> {
-    let parts: Vec<String> = name
+    let parts: Vec<(String, bool)> = name
         .0
         .iter()
         .map(|part| match part {
-            ObjectNamePart::Identifier(ident) => ident.value.to_ascii_lowercase(),
-            other => other.to_string().trim_matches('"').to_ascii_lowercase(),
+            ObjectNamePart::Identifier(ident) => {
+                let is_quoted = ident.quote_style.is_some();
+                let val = if is_quoted {
+                    ident.value.clone()
+                } else {
+                    ident.value.to_ascii_lowercase()
+                };
+                (val, is_quoted)
+            },
+            other => (other.to_string().trim_matches('"').to_ascii_lowercase(), false),
         })
         .collect();
     match parts.as_slice() {
-        [unqualified] if is_builtin_default_name(unqualified) => {
+        [(unqualified, false)] if is_builtin_default_name(unqualified) => {
             Ok(RoutineId::new(normalize_builtin_name(unqualified)))
         },
-        [unqualified] => Ok(RoutineId::from_parts(Some(default_namespace), unqualified)),
-        [schema, unqualified] => {
-            Ok(RoutineId::from_parts(Some(&NamespaceId::new(schema)), unqualified))
+        [(unqualified, _)] => Ok(RoutineId::from_parts(Some(default_namespace), unqualified)),
+        [(schema, _), (unqualified, _)] => {
+            Ok(RoutineId::from_parts(Some(&SchemaId::new(schema)), unqualified))
         },
         _ => Err(format!("invalid DEFAULT function name '{name}'")),
     }
 }
 
-fn function_args_to_call_arguments(args: &FunctionArguments) -> DdlResult<Vec<CallArgument>> {
+fn function_args_to_call_arguments(
+    args: &FunctionArguments,
+) -> DdlResult<(Vec<CallArgument>, Vec<Option<String>>)> {
     match args {
-        FunctionArguments::None => Ok(Vec::new()),
+        FunctionArguments::None => Ok((Vec::new(), Vec::new())),
         FunctionArguments::List(list) => {
             let mut arguments = Vec::with_capacity(list.args.len());
+            let mut named_arguments = Vec::with_capacity(list.args.len());
+            let mut saw_named = false;
+            let mut seen_names = std::collections::HashSet::new();
             for arg in &list.args {
-                let FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) = arg else {
-                    return Err("DEFAULT function arguments must be unnamed literals".to_string());
-                };
-                arguments.push(expr_to_call_argument(expr)?);
+                match arg {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::BinaryOp {
+                        left,
+                        op: sqlparser::ast::BinaryOperator::Assignment,
+                        right,
+                    })) if matches!(left.as_ref(), Expr::Identifier(_)) => {
+                        let Expr::Identifier(name) = left.as_ref() else {
+                            unreachable!();
+                        };
+                        saw_named = true;
+                        let param_name = if name.quote_style.is_some() {
+                            name.value.clone()
+                        } else {
+                            name.value.to_ascii_lowercase()
+                        };
+                        if !seen_names.insert(param_name.clone()) {
+                            return Err(format!(
+                                "argument name \"{param_name}\" used more than once"
+                            ));
+                        }
+                        arguments.push(expr_to_call_argument(right)?);
+                        named_arguments.push(Some(param_name));
+                    },
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+                        if saw_named {
+                            return Err(
+                                "positional argument cannot follow named argument".to_string()
+                            );
+                        }
+                        arguments.push(expr_to_call_argument(expr)?);
+                        named_arguments.push(None);
+                    },
+                    FunctionArg::Named {
+                        name,
+                        arg: FunctionArgExpr::Expr(expr),
+                        ..
+                    } => {
+                        saw_named = true;
+                        let param_name = if name.quote_style.is_some() {
+                            name.value.clone()
+                        } else {
+                            name.value.to_ascii_lowercase()
+                        };
+                        if !seen_names.insert(param_name.clone()) {
+                            return Err(format!(
+                                "argument name \"{param_name}\" used more than once"
+                            ));
+                        }
+                        arguments.push(expr_to_call_argument(expr)?);
+                        named_arguments.push(Some(param_name));
+                    },
+                    FunctionArg::ExprNamed {
+                        name: Expr::Identifier(name),
+                        arg: FunctionArgExpr::Expr(expr),
+                        ..
+                    } => {
+                        saw_named = true;
+                        let param_name = if name.quote_style.is_some() {
+                            name.value.clone()
+                        } else {
+                            name.value.to_ascii_lowercase()
+                        };
+                        if !seen_names.insert(param_name.clone()) {
+                            return Err(format!(
+                                "argument name \"{param_name}\" used more than once"
+                            ));
+                        }
+                        arguments.push(expr_to_call_argument(expr)?);
+                        named_arguments.push(Some(param_name));
+                    },
+                    _ => {
+                        return Err(
+                            "DEFAULT function arguments must be literal expressions".to_string()
+                        );
+                    },
+                }
             }
-            Ok(arguments)
+            Ok((arguments, named_arguments))
         },
         FunctionArguments::Subquery(_) => {
             Err("DEFAULT function arguments cannot be subqueries".to_string())
@@ -219,6 +361,17 @@ fn expr_to_json_literal(expr: &Expr) -> DdlResult<JsonValue> {
     match expr_to_call_argument(expr)? {
         CallArgument::Null => Ok(JsonValue::Null),
         CallArgument::Typed { value, .. } => Ok(value),
+        CallArgument::Tuple(items) => {
+            let mut arr = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    CallArgument::Null => arr.push(JsonValue::Null),
+                    CallArgument::Typed { value, .. } => arr.push(value),
+                    _ => return Err("unsupported nested tuple element".to_string()),
+                }
+            }
+            Ok(JsonValue::Array(arr))
+        },
         CallArgument::Placeholder(_) => {
             Err("placeholders cannot be nested inside CAST".to_string())
         },
@@ -229,6 +382,7 @@ fn value_to_json(value: &Value) -> DdlResult<JsonValue> {
     match value_to_call_argument(value)? {
         CallArgument::Null => Ok(JsonValue::Null),
         CallArgument::Typed { value, .. } => Ok(value),
+        CallArgument::Tuple(_) => Err("tuples cannot be nested inside a typed literal".to_string()),
         CallArgument::Placeholder(_) => {
             Err("placeholders cannot be nested inside a typed literal".to_string())
         },
@@ -292,9 +446,7 @@ fn value_to_literal_default(value: &Value) -> ColumnDefault {
     }
 }
 
-pub(crate) fn parse_call_argument_sql(input: &str) -> DdlResult<CallArgument> {
-    let dialect = KalamDbDialect::default();
-    let expr = crate::parser::utils::parse_sql_expression(input, &dialect)
-        .map_err(|error| error.to_string())?;
+pub fn parse_call_argument_sql(input: &str) -> DdlResult<CallArgument> {
+    let expr = KalamParser::parse_expr(input).map_err(|error| error.to_string())?;
     expr_to_call_argument(&expr)
 }

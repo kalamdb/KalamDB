@@ -26,7 +26,7 @@ export default function Login() {
     <AuthSplitLayout
       description="Sign in with an account that has DBA or system privileges."
       panelTitle="Realtime Data for AI Agents"
-      panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user namespaces."
+      panelDescription="Store agent memory, chat history, and tool calls. Stream live updates. Isolate per-tenant data with USER tables. Run SQL in SQL Studio and explore per-user schemas."
       panelFootnote="Enterprise Admin UI"
     >
       <LoginForm onSuccess={handleLoginSuccess} returnTo={from} />

@@ -1,8 +1,5 @@
-use sqlparser::{
-    ast::{Expr, SelectItem, SetExpr, Statement},
-    dialect::GenericDialect,
-    parser::Parser,
-};
+use kalamdb_sql::parser::KalamParser;
+use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement};
 
 use crate::{RowFilter, RowFilterError, RowFilterResult};
 
@@ -11,10 +8,11 @@ pub fn parse_where_clause(where_clause: &str) -> RowFilterResult<RowFilter> {
 }
 
 pub fn parse_where_expr(where_clause: &str) -> RowFilterResult<Expr> {
-    let dialect = GenericDialect {};
+    // The WHERE text is an expression source. The SELECT wrapper only gives
+    // sqlparser a statement boundary so the selection can be taken back out.
     let sql = format!("SELECT 1 WHERE {}", where_clause);
-    let statements = Parser::parse_sql(&dialect, &sql)
-        .map_err(|error| RowFilterError::Parse(error.to_string()))?;
+    let statements =
+        KalamParser::parse(&sql).map_err(|error| RowFilterError::Parse(error.to_string()))?;
 
     let [statement] = statements.as_slice() else {
         return Err(RowFilterError::InvalidSyntax);

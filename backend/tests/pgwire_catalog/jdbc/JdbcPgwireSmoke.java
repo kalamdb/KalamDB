@@ -116,7 +116,7 @@ public final class JdbcPgwireSmoke {
 
             String qualified = namespace + "." + table;
             try (Statement st = conn.createStatement()) {
-                st.execute("CREATE NAMESPACE IF NOT EXISTS " + namespace);
+                st.execute("CREATE SCHEMA IF NOT EXISTS " + namespace);
                 st.execute(
                         "CREATE TABLE IF NOT EXISTS "
                                 + qualified
@@ -125,7 +125,7 @@ public final class JdbcPgwireSmoke {
                 st.execute(
                         "CREATE OR REPLACE PROCEDURE "
                                 + namespace
-                                + ".ping() RETURNS TEXT");
+                                + ".ping()");
             }
             try (PreparedStatement ps =
                     conn.prepareStatement("SELECT name FROM " + qualified + " WHERE id = ?")) {

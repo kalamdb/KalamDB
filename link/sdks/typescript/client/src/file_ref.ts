@@ -1,36 +1,6 @@
 /**
- * FileRef — Type-safe representation of the FILE datatype in KalamDB.
- *
- * ## Architecture
- *
- * The canonical `FileRef` lives in Rust (`link/link-common/src/models/file_ref.rs`).
- * When the WASM bindings are rebuilt, tsify generates a matching `FileRef`
- * TypeScript interface in `wasm/kalam_client.d.ts`.
- *
- * This module provides:
- *
- * - **`FileRefData`** — mirrors the Rust struct (once WASM is rebuilt,
- *   re-export the auto-generated interface from `wasm/` instead).
- * - **`FileRef`** — thin TS class wrapping `FileRefData`, with URL/path
- *   helpers delegated to the Rust `link-common` implementation.
- * - **`BoundFileRef`** — TS-only: binds server/table context for no-arg URLs.
- * - **`KalamRow<T>`** — TS-only: generic typed row wrapper with `.file()`.
- *
- * The URL, stored filename, and storage path helpers call the shared Rust
- * implementation so the HTTP route shape only lives in one place.
- *
- * `KalamRow<T>` is inherently SDK-level because it uses TypeScript generics
- * that Rust FFI cannot express.
- *
- * @example
- * ```typescript
- * const fileRef = FileRef.from(row.avatar);
- * const url = fileRef.getDownloadUrl('http://localhost:2900', 'default', 'users');
- * ```
+ * FileRef — Type-safe wrapper around the catalog `pg_catalog.file` composite type.
  */
-
-// Import KalamCellValue for unwrapping typed cell values in KalamRow.file()
-// Note: lazy import pattern avoids circular dependency (cell_value.ts → file_ref.ts → cell_value.ts)
 
 import { KalamCellValue, wrapRowMap } from './cell_value.js';
 import {
@@ -91,67 +61,49 @@ function extractExtension(name: string): string {
   return ext.length <= 10 && /^[a-z0-9]+$/.test(ext) ? ext : 'bin';
 }
 
-function storedNameFallback(data: FileRefData): string {
+function storedNameFallback(data: PgCatalogFile): string {
   const sanitized = sanitizeFilename(data.name);
   const ext = extractExtension(data.name);
   return sanitized.length === 0 ? `${data.id}.${ext}` : `${data.id}-${sanitized}.${ext}`;
 }
 
 /**
- * Data shape for a file reference stored in FILE columns.
- *
- * **Source of truth**: `link/link-common/src/models/file_ref.rs` → `struct FileRef`.
- * Once WASM bindings are rebuilt, tsify generates an identical interface in
- * `wasm/kalam_client.d.ts` which should be re-exported here.
- *
- * Each SDK (TypeScript, Dart, etc.) must match this shape exactly.
+ * Generated shape of the built-in `pg_catalog.file` composite type.
  */
-export interface FileRefData {
-  /** Unique file identifier (Snowflake ID) */
+export interface PgCatalogFile {
   id: string;
-
-  /** Subfolder name (e.g., "f0001", "f0002") */
   sub: string;
-
-  /** Original filename (preserved for display/download) */
   name: string;
-
-  /** File size in bytes */
-  size: number;
-
-  /** MIME type (e.g., "image/png", "application/pdf") */
+  size: number | bigint;
   mime: string;
-
-  /** SHA-256 hash of file content (hex-encoded) */
   sha256: string;
-
-  /** Optional shard ID for shared tables */
-  shard?: number;
+  shard?: number | null;
 }
 
-function isFileRefData(value: unknown): value is FileRefData {
+export type FileRefData = PgCatalogFile;
+
+function isPgCatalogFile(value: unknown): value is PgCatalogFile {
   if (!value || typeof value !== 'object') {
     return false;
   }
 
   const candidate = value as Record<string, unknown>;
+  const validSize =
+    (typeof candidate.size === 'number' && Number.isFinite(candidate.size))
+    || typeof candidate.size === 'bigint';
   return typeof candidate.id === 'string'
     && typeof candidate.sub === 'string'
     && typeof candidate.name === 'string'
-    && typeof candidate.size === 'number'
-    && Number.isFinite(candidate.size)
+    && validSize
     && typeof candidate.mime === 'string'
     && typeof candidate.sha256 === 'string'
-    && (candidate.shard === undefined || typeof candidate.shard === 'number');
+    && (candidate.shard === undefined || candidate.shard === null || typeof candidate.shard === 'number');
 }
 
 /**
- * Type-safe FileRef class for working with FILE columns.
- *
- * URL/path methods delegate to the Rust `impl FileRef` in
- * `link/link-common/src/models/file_ref.rs`.
+ * Type-safe FileRef class wrapping the `pg_catalog.file` composite fields.
  */
-export class FileRef implements FileRefData {
+export class FileRef implements PgCatalogFile {
   id: string;
   sub: string;
   name: string;
@@ -160,35 +112,25 @@ export class FileRef implements FileRefData {
   sha256: string;
   shard?: number;
 
-  constructor(data: FileRefData) {
+  constructor(data: PgCatalogFile) {
     this.id = data.id;
     this.sub = data.sub;
     this.name = data.name;
-    this.size = data.size;
+    this.size = typeof data.size === 'bigint' ? Number(data.size) : data.size;
     this.mime = data.mime;
     this.sha256 = data.sha256;
-    this.shard = data.shard;
+    this.shard = data.shard ?? undefined;
   }
 
   /**
    * Parse FileRef from JSON string (as stored in FILE columns)
-   *
-   * @param json - JSON string from FILE column
-   * @returns FileRef instance
-   * @throws Error if JSON is invalid
-   *
-   * @example
-   * ```typescript
-   * const fileRef = FileRef.fromJson(row.document);
-   * console.log(fileRef.name, fileRef.size);
-   * ```
    */
   static fromJson(json: string | null | undefined): FileRef | null {
     if (!json) return null;
 
     try {
       const data = typeof json === 'string' ? JSON.parse(json) : json;
-      return isFileRefData(data) ? new FileRef(data) : null;
+      return isPgCatalogFile(data) ? new FileRef(data) : null;
     } catch {
       return null;
     }
@@ -196,17 +138,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Parse FileRef from unknown value (handles JSON string or object)
-   *
-   * @param value - Value from FILE column (string or object)
-   * @returns FileRef instance or null
-   *
-   * @example
-   * ```typescript
-   * const fileRef = FileRef.from(row.avatar);
-   * if (fileRef) {
-   *   console.log('Avatar:', fileRef.name);
-   * }
-   * ```
    */
   static from(value: unknown): FileRef | null {
     if (!value) return null;
@@ -215,8 +146,8 @@ export class FileRef implements FileRefData {
       return FileRef.fromJson(value);
     }
 
-    if (isFileRefData(value)) {
-      return new FileRef(value as FileRefData);
+    if (isPgCatalogFile(value)) {
+      return new FileRef(value);
     }
 
     return null;
@@ -224,17 +155,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Generate download URL for this file
-   *
-   * @param baseUrl - KalamDB server URL (e.g., 'http://localhost:2900')
-   * @param namespace - Table namespace
-   * @param table - Table name
-   * @returns Full download URL
-   *
-   * @example
-   * ```typescript
-   * const url = fileRef.getDownloadUrl('http://localhost:2900', 'default', 'users');
-   * // Returns: http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg
-   * ```
    */
   getDownloadUrl(baseUrl: string, namespace: string, table: string): string {
     return withFileRefFallback(
@@ -245,10 +165,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Get the stored filename (with ID prefix)
-   *
-   * Format: `{id}-{sanitized_name}.{ext}` or `{id}.{ext}` if name is non-ASCII
-   *
-   * @returns Stored filename
    */
   storedName(): string {
     return withFileRefFallback(
@@ -259,11 +175,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Get the relative path within the table folder
-   *
-   * For user tables: `{subfolder}/{stored_name}`
-   * For shared tables with shard: `shard-{n}/{subfolder}/{stored_name}`
-   *
-   * @returns Relative path
    */
   relativePath(): string {
     return withFileRefFallback(
@@ -276,14 +187,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Format file size in human-readable format
-   *
-   * @returns Formatted size (e.g., "1.5 MB", "256 KB")
-   *
-   * @example
-   * ```typescript
-   * const fileRef = FileRef.fromJson(row.document);
-   * console.log(fileRef.formatSize()); // "2.3 MB"
-   * ```
    */
   formatSize(): string {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -300,8 +203,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Check if this is an image file (based on MIME type)
-   *
-   * @returns true if image MIME type
    */
   isImage(): boolean {
     return this.mime.startsWith('image/');
@@ -309,8 +210,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Check if this is a video file (based on MIME type)
-   *
-   * @returns true if video MIME type
    */
   isVideo(): boolean {
     return this.mime.startsWith('video/');
@@ -318,8 +217,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Check if this is an audio file (based on MIME type)
-   *
-   * @returns true if audio MIME type
    */
   isAudio(): boolean {
     return this.mime.startsWith('audio/');
@@ -327,8 +224,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Check if this is a PDF file
-   *
-   * @returns true if PDF MIME type
    */
   isPdf(): boolean {
     return this.mime === 'application/pdf';
@@ -336,8 +231,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Get a user-friendly file type description
-   *
-   * @returns File type description (e.g., "Image", "PDF Document", "Video")
    */
   getTypeDescription(): string {
     if (this.isImage()) return 'Image';
@@ -345,7 +238,6 @@ export class FileRef implements FileRefData {
     if (this.isAudio()) return 'Audio';
     if (this.isPdf()) return 'PDF Document';
 
-    // Extract from MIME type
     const parts = this.mime.split('/');
     if (parts.length === 2) {
       return parts[1].toUpperCase() + ' File';
@@ -356,8 +248,6 @@ export class FileRef implements FileRefData {
 
   /**
    * Serialize to JSON string
-   *
-   * @returns JSON string representation
    */
   toJson(): string {
     return JSON.stringify({
@@ -373,10 +263,8 @@ export class FileRef implements FileRefData {
 
   /**
    * Convert to plain object
-   *
-   * @returns Plain object representation
    */
-  toObject(): FileRefData {
+  toObject(): PgCatalogFile {
     return {
       id: this.id,
       sub: this.sub,
@@ -387,7 +275,6 @@ export class FileRef implements FileRefData {
       ...(this.shard !== undefined && { shard: this.shard }),
     };
   }
-
 }
 
 /**
@@ -461,35 +348,23 @@ export interface FileRefContext {
 export class BoundFileRef extends FileRef {
   private readonly _ctx: FileRefContext;
 
-  constructor(data: FileRefData, ctx: FileRefContext) {
+  constructor(data: PgCatalogFile, ctx: FileRefContext) {
     super(data);
     this._ctx = ctx;
   }
 
   /**
    * Full download URL — no args needed, context is already bound.
-   *
-   * @example
-   * ```typescript
-   * const url = row.file('avatar')?.downloadUrl();
-   * // → 'http://localhost:2900/v1/files/default/users/f0001/12345-photo.jpg'
-   * ```
    */
   downloadUrl(): string {
-    return this.getDownloadUrl(this._ctx.baseUrl, this._ctx.namespace, this._ctx.table);
+    return withFileRefFallback(
+      () => fileRefDownloadUrl(this.toJson(), this._ctx.baseUrl, this._ctx.namespace, this._ctx.table),
+      () => `${this._ctx.baseUrl.replace(/\/+$/g, '')}/v1/files/${this._ctx.namespace}/${this._ctx.table}/${this.sub}/${storedNameFallback(this)}`,
+    );
   }
 
   /**
    * Relative HTTP path — no args needed.
-   *
-   * Useful when the base URL is already known from your app config (e.g.,
-   * to construct `<img src={row.file('avatar')?.relativeUrl()} />`).
-   *
-   * @example
-   * ```typescript
-   * const path = row.file('avatar')?.relativeUrl();
-   * // → '/v1/files/default/users/f0001/12345-photo.jpg'
-   * ```
    */
   relativeUrl(): string {
     return withFileRefFallback(

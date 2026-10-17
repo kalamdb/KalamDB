@@ -28,6 +28,7 @@ mod routine_id;
 mod routine_parameter_id;
 mod row_id;
 mod schedule_id;
+mod schema_identity;
 mod shard_id;
 mod storage_id;
 mod table_id;
@@ -55,13 +56,17 @@ pub use job_node_id::JobNodeId;
 pub use live_query_id::LiveQueryId;
 pub use manifest_id::ManifestId;
 pub use migration_id::MigrationId;
-pub use namespace_id::{NamespaceId, NamespaceIdValidationError};
+pub use namespace_id::{NamespaceIdValidationError, SchemaId};
 pub use node_id::NodeId;
 pub use routine_grant_id::RoutineGrantId;
 pub use routine_id::RoutineId;
 pub use routine_parameter_id::RoutineParameterId;
 pub use row_id::RowId;
 pub use schedule_id::ScheduleId;
+pub use schema_identity::{
+    IdentError, IdentitySource, SchemaIdentity, SchemaRecord, SqlIdent, TableIdentity, TableKind,
+    TableRecord,
+};
 pub use shard_id::ShardId;
 pub use storage_id::StorageId;
 pub use table_id::TableId;

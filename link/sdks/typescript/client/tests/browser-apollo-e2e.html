@@ -267,7 +267,7 @@
         }
         addCheck('Refreshed browser session token successfully');
 
-        await reader.query(`CREATE NAMESPACE IF NOT EXISTS ${namespace}`);
+        await reader.query(`CREATE SCHEMA IF NOT EXISTS ${namespace}`);
         await reader.query(
           `CREATE TABLE IF NOT EXISTS ${table} (
             id INT PRIMARY KEY,

@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Aggregation queries (GROUP BY, SUM, AVG, COUNT) on a 10K-row table.
 /// Measures analytical query performance at moderate scale.
@@ -36,7 +33,8 @@ impl Benchmark for AggregateQueryBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.agg_bench (id INT PRIMARY KEY, region TEXT, product TEXT, quantity INT, price INT)",
+                    "CREATE TABLE {}.agg_bench (id INT PRIMARY KEY, region TEXT, product TEXT, \
+                     quantity INT, price INT)",
                     config.namespace
                 ))
                 .await?;
@@ -80,8 +78,9 @@ impl Benchmark for AggregateQueryBench {
                     // GROUP BY region with multiple aggregates
                     client
                         .sql_ok(&format!(
-                            "SELECT region, COUNT(*) as cnt, SUM(quantity) as total_qty, AVG(price) as avg_price \
-                             FROM {}.agg_bench GROUP BY region ORDER BY total_qty DESC",
+                            "SELECT region, COUNT(*) as cnt, SUM(quantity) as total_qty, \
+                             AVG(price) as avg_price FROM {}.agg_bench GROUP BY region ORDER BY \
+                             total_qty DESC",
                             config.namespace
                         ))
                         .await?;
@@ -90,8 +89,8 @@ impl Benchmark for AggregateQueryBench {
                     // GROUP BY product, region (multi-level grouping)
                     client
                         .sql_ok(&format!(
-                            "SELECT product, region, SUM(quantity * price) as revenue \
-                             FROM {}.agg_bench GROUP BY product, region ORDER BY revenue DESC LIMIT 10",
+                            "SELECT product, region, SUM(quantity * price) as revenue FROM \
+                             {}.agg_bench GROUP BY product, region ORDER BY revenue DESC LIMIT 10",
                             config.namespace
                         ))
                         .await?;
@@ -100,8 +99,9 @@ impl Benchmark for AggregateQueryBench {
                     // Filtered aggregation
                     client
                         .sql_ok(&format!(
-                            "SELECT product, SUM(quantity) as total_qty, MIN(price) as min_price, MAX(price) as max_price \
-                             FROM {}.agg_bench WHERE region = 'us-east' GROUP BY product",
+                            "SELECT product, SUM(quantity) as total_qty, MIN(price) as min_price, \
+                             MAX(price) as max_price FROM {}.agg_bench WHERE region = 'us-east' \
+                             GROUP BY product",
                             config.namespace
                         ))
                         .await?;
@@ -110,8 +110,8 @@ impl Benchmark for AggregateQueryBench {
                     // COUNT with HAVING equivalent (filtered after group)
                     client
                         .sql_ok(&format!(
-                            "SELECT region, COUNT(*) as cnt \
-                             FROM {}.agg_bench GROUP BY region HAVING COUNT(*) > 1000 ORDER BY cnt DESC",
+                            "SELECT region, COUNT(*) as cnt FROM {}.agg_bench GROUP BY region \
+                             HAVING COUNT(*) > 1000 ORDER BY cnt DESC",
                             config.namespace
                         ))
                         .await?;

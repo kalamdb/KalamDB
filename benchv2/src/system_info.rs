@@ -63,7 +63,13 @@ fn detect_machine_model() -> String {
 
     #[cfg(target_os = "linux")]
     {
-        if let Some(model) = run_cmd("sh", &["-c", "cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null"]) {
+        if let Some(model) = run_cmd(
+            "sh",
+            &[
+                "-c",
+                "cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null",
+            ],
+        ) {
             return model;
         }
         if let Some(model) = run_cmd("hostnamectl", &["--json=short"]) {
@@ -75,7 +81,9 @@ fn detect_machine_model() -> String {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(model) = run_cmd("cmd", &["/C", "wmic computersystem get model | findstr /V Model"]) {
+        if let Some(model) =
+            run_cmd("cmd", &["/C", "wmic computersystem get model | findstr /V Model"])
+        {
             return model;
         }
     }

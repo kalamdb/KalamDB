@@ -20,7 +20,8 @@ use kalamdb_commons::{
     },
 };
 use kalamdb_serialization::{
-    decode_object, decode_user_row, encode_object, encode_user_row, StorageDataType, StorageField,
+    decode_object, decode_payloads_to_arrow_batch, decode_user_row, decode_user_row_selected,
+    encode_object, encode_user_row, encode_user_row_v2, StorageDataType, StorageField,
     StorageSchema,
 };
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,54 @@ fn scalar_schema() -> StorageSchema {
             StorageField::new("body", StorageDataType::Utf8),
         ],
     )
+}
+
+fn text_heavy_schema() -> StorageSchema {
+    StorageSchema::new(
+        1,
+        vec![
+            StorageField::new("id", StorageDataType::Int64),
+            StorageField::new("title", StorageDataType::Utf8),
+            StorageField::new("summary", StorageDataType::Utf8),
+            StorageField::new("content", StorageDataType::Utf8),
+            StorageField::new("author", StorageDataType::Utf8),
+            StorageField::new("metadata", StorageDataType::Utf8),
+        ],
+    )
+}
+
+fn text_heavy_row() -> UserTableRow {
+    let mut values = BTreeMap::new();
+    values.insert("id".to_string(), ScalarValue::Int64(Some(99)));
+    values.insert(
+        "title".to_string(),
+        ScalarValue::Utf8(Some("PostgreSQL 18 Compatibility & Row Storage v2".to_string())),
+    );
+    values.insert(
+        "summary".to_string(),
+        ScalarValue::Utf8(Some(
+            "Zero-copy fixed region + packed variable offsets for fast selective projections"
+                .to_string(),
+        )),
+    );
+    values.insert(
+        "content".to_string(),
+        ScalarValue::Utf8(Some("x".repeat(512))),
+    );
+    values.insert(
+        "author".to_string(),
+        ScalarValue::Utf8(Some("kalamdb-team".to_string())),
+    );
+    values.insert(
+        "metadata".to_string(),
+        ScalarValue::Utf8(Some("{\"env\":\"prod\",\"region\":\"us-east-1\"}".to_string())),
+    );
+    UserTableRow {
+        user_id:  UserId::new("user-1"),
+        _version: VersionId::try_from_i64(100).unwrap(),
+        _deleted: false,
+        fields:   Row { values },
+    }
 }
 
 fn struct_scalar(id: i64, name: &str) -> ScalarValue {
@@ -164,7 +213,9 @@ fn bench_codec(c: &mut Criterion) {
     let nested_schema = nested_schema();
     let scalar_schema = scalar_schema();
     let nested_bytes = encode_user_row(&nested, &nested_schema).unwrap().into_bytes();
+    let nested_v2_bytes = encode_user_row_v2(&nested, &nested_schema).unwrap().into_bytes();
     let scalar_bytes = encode_user_row(&scalar, &scalar_schema).unwrap().into_bytes();
+    let scalar_v2_bytes = encode_user_row_v2(&scalar, &scalar_schema).unwrap().into_bytes();
     let nested_legacy = encode_name_keyed(&nested);
     let scalar_legacy = encode_name_keyed(&scalar);
     let catalog = catalog_object();
@@ -185,6 +236,45 @@ fn bench_codec(c: &mut Criterion) {
                 black_box(&nested_schema),
                 UserId::new("user-1"),
                 VersionId::try_from_i64(100).unwrap(),
+            )
+            .unwrap()
+        })
+    });
+    group.throughput(Throughput::Bytes(nested_v2_bytes.len() as u64));
+    group.bench_function("nested_row_encode_v2", |b| {
+        b.iter(|| encode_user_row_v2(black_box(&nested), black_box(&nested_schema)).unwrap())
+    });
+    group.bench_function("nested_row_decode_v2", |b| {
+        b.iter(|| {
+            decode_user_row(
+                black_box(&nested_v2_bytes),
+                black_box(&nested_schema),
+                UserId::new("user-1"),
+                VersionId::try_from_i64(100).unwrap(),
+            )
+            .unwrap()
+        })
+    });
+    group.bench_function("nested_row_decode_selected_v2", |b| {
+        b.iter(|| {
+            decode_user_row_selected(
+                black_box(&nested_v2_bytes),
+                black_box(&nested_schema),
+                UserId::new("user-1"),
+                VersionId::try_from_i64(100).unwrap(),
+                black_box(&[0]),
+            )
+            .unwrap()
+        })
+    });
+    group.bench_function("scalar_row_decode_selected_v2", |b| {
+        b.iter(|| {
+            decode_user_row_selected(
+                black_box(&scalar_v2_bytes),
+                black_box(&scalar_schema),
+                UserId::new("user-1"),
+                VersionId::try_from_i64(100).unwrap(),
+                black_box(&[0, 1]),
             )
             .unwrap()
         })
@@ -259,6 +349,74 @@ fn bench_codec(c: &mut Criterion) {
     group.bench_function("object_decode", |b| {
         b.iter(|| {
             let _: CatalogObject = decode_object(black_box(&catalog_bytes)).unwrap();
+        })
+    });
+
+    let text_heavy = text_heavy_row();
+    let text_schema = text_heavy_schema();
+    let text_v1_bytes = encode_user_row(&text_heavy, &text_schema).unwrap().into_bytes();
+    let text_v2_bytes = encode_user_row_v2(&text_heavy, &text_schema).unwrap().into_bytes();
+    let text_arrow_schema = Arc::new(arrow::datatypes::Schema::new(vec![
+        Field::new("id", DataType::Int64, true),
+        Field::new("title", DataType::Utf8, true),
+        Field::new("summary", DataType::Utf8, true),
+        Field::new("content", DataType::Utf8, true),
+        Field::new("author", DataType::Utf8, true),
+        Field::new("metadata", DataType::Utf8, true),
+    ]));
+    let text_batch_v1_slices: Vec<&[u8]> = vec![text_v1_bytes.as_slice(); BATCH_SIZE];
+    let text_batch_v2_slices: Vec<&[u8]> = vec![text_v2_bytes.as_slice(); BATCH_SIZE];
+
+    group.throughput(Throughput::Bytes(text_v1_bytes.len() as u64));
+    group.bench_function("text_heavy_encode_v1", |b| {
+        b.iter(|| encode_user_row(black_box(&text_heavy), black_box(&text_schema)).unwrap())
+    });
+    group.bench_function("text_heavy_decode_v1", |b| {
+        b.iter(|| {
+            decode_user_row(
+                black_box(&text_v1_bytes),
+                black_box(&text_schema),
+                UserId::new("user-1"),
+                VersionId::try_from_i64(100).unwrap(),
+            )
+            .unwrap()
+        })
+    });
+    group.throughput(Throughput::Bytes(text_v2_bytes.len() as u64));
+    group.bench_function("text_heavy_encode_v2", |b| {
+        b.iter(|| encode_user_row_v2(black_box(&text_heavy), black_box(&text_schema)).unwrap())
+    });
+    group.bench_function("text_heavy_decode_v2", |b| {
+        b.iter(|| {
+            decode_user_row(
+                black_box(&text_v2_bytes),
+                black_box(&text_schema),
+                UserId::new("user-1"),
+                VersionId::try_from_i64(100).unwrap(),
+            )
+            .unwrap()
+        })
+    });
+    group.throughput(Throughput::Bytes((text_v1_bytes.len() * BATCH_SIZE) as u64));
+    group.bench_function("payloads_to_record_batch_v1", |b| {
+        b.iter(|| {
+            decode_payloads_to_arrow_batch(
+                black_box(&text_schema),
+                black_box(Arc::clone(&text_arrow_schema)),
+                black_box(&text_batch_v1_slices),
+            )
+            .unwrap()
+        })
+    });
+    group.throughput(Throughput::Bytes((text_v2_bytes.len() * BATCH_SIZE) as u64));
+    group.bench_function("payloads_to_record_batch_v2", |b| {
+        b.iter(|| {
+            decode_payloads_to_arrow_batch(
+                black_box(&text_schema),
+                black_box(Arc::clone(&text_arrow_schema)),
+                black_box(&text_batch_v2_slices),
+            )
+            .unwrap()
         })
     });
 

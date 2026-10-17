@@ -20,8 +20,10 @@ const BUILTIN_DEFAULT_NAMES: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RoutineCall {
-    pub routine_id: RoutineId,
-    pub arguments:  Vec<CallArgument>,
+    pub routine_id:      RoutineId,
+    pub arguments:       Vec<CallArgument>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub named_arguments: Vec<Option<String>>,
 }
 
 impl RoutineCall {
@@ -29,6 +31,24 @@ impl RoutineCall {
         Self {
             routine_id,
             arguments,
+            named_arguments: Vec::new(),
+        }
+    }
+
+    pub fn with_named_arguments(
+        routine_id: RoutineId,
+        arguments: Vec<CallArgument>,
+        named_arguments: Vec<Option<String>>,
+    ) -> Self {
+        let has_any_named = named_arguments.iter().any(Option::is_some);
+        Self {
+            routine_id,
+            arguments,
+            named_arguments: if has_any_named {
+                named_arguments
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -39,7 +59,7 @@ impl RoutineCall {
     pub fn unqualified_name(&self) -> &str {
         self.routine_id
             .as_str()
-            .rsplit_once('.')
+            .split_once('.')
             .map(|(_, name)| name)
             .unwrap_or(self.routine_id.as_str())
     }
@@ -119,7 +139,7 @@ mod tests {
     #[test]
     fn qualified_procedure_is_not_builtin() {
         let call = RoutineCall::new(
-            RoutineId::from_parts(Some(&crate::models::NamespaceId::new("chat")), "next_id"),
+            RoutineId::from_parts(Some(&crate::models::SchemaId::new("chat")), "next_id"),
             Vec::new(),
         );
         assert!(!call.is_builtin_default());
@@ -129,7 +149,7 @@ mod tests {
     #[test]
     fn qualified_snowflake_id_is_user_procedure() {
         let call = RoutineCall::new(
-            RoutineId::from_parts(Some(&crate::models::NamespaceId::new("app")), "snowflake_id"),
+            RoutineId::from_parts(Some(&crate::models::SchemaId::new("app")), "snowflake_id"),
             Vec::new(),
         );
         assert!(!call.is_builtin_default());

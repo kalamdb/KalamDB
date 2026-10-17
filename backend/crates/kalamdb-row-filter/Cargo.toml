@@ -12,6 +12,7 @@ categories = ["database"]
 
 [dependencies]
 kalamdb-commons = { workspace = true, features = ["full"] }
+kalamdb-sql = { package = "kalamdb-dialect", path = "../kalamdb-dialect" }
 datafusion-common = { workspace = true }
 sqlparser = { workspace = true }
 regex = { workspace = true }

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use serde_json::Value as JsonValue;
 
 use super::ErrorCode;
@@ -16,7 +16,7 @@ pub struct ParsedMultipartRequest {
     /// Optional JSON params
     pub params_json:  Option<String>,
     /// Optional namespace_id
-    pub namespace_id: Option<NamespaceId>,
+    pub namespace_id: Option<SchemaId>,
     /// Files: key -> (original_name, data, mime_type)
     pub files:        HashMap<String, (String, Bytes, Option<String>)>,
 }
@@ -29,7 +29,7 @@ pub struct ParsedSqlPayload {
     /// Optional params JSON array
     pub params:       Option<Vec<JsonValue>>,
     /// Optional namespace_id
-    pub namespace_id: Option<NamespaceId>,
+    pub namespace_id: Option<SchemaId>,
     /// Optional files map (present for multipart)
     pub files:        Option<HashMap<String, (String, Bytes, Option<String>)>>,
     /// Whether payload was multipart

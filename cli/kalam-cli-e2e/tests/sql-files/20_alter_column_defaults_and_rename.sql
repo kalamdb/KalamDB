@@ -1,8 +1,8 @@
 -- Add/drop/modify column operations with PK delete/reinsert checks.
 
-DROP NAMESPACE IF EXISTS sql_file_case_20 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_20 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_20;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_20;
 USE sql_file_case_20;
 
 DROP TABLE IF EXISTS case20_orders;
@@ -39,4 +39,4 @@ ALTER TABLE case20_orders DROP COLUMN discount;
 INSERT INTO case20_orders (id, code, quantity, status)
 VALUES (2003, 'A-003', 1, 'manual');
 
-DROP NAMESPACE IF EXISTS sql_file_case_20 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_20 CASCADE;

@@ -7,7 +7,7 @@ use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::{
     models::{
         schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition},
-        ColumnId, NamespaceId, TableId, UserId,
+        ColumnId, SchemaId, TableId, UserId,
     },
     schemas::{ColumnDefault, TableOptions, TableType},
 };
@@ -20,12 +20,13 @@ use kalamdb_core::{
     },
 };
 use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
-use kalamdb_store::Partition;
+use kalamdb_store::{EntityStore, Partition};
 use kalamdb_system::{VectorEngine, VectorIndexState, VectorMetric};
 use kalamdb_vector::{
-    normalize_vector_column_name, shared_vector_ops_partition_name,
-    shared_vector_pk_index_partition_name, user_vector_ops_partition_name,
-    user_vector_pk_index_partition_name,
+    invalidate_hot_query_cache_for_table, new_indexed_shared_vector_hot_store,
+    new_indexed_user_vector_hot_store, normalize_vector_column_name,
+    shared_vector_ops_partition_name, shared_vector_pk_index_partition_name,
+    user_vector_ops_partition_name, user_vector_pk_index_partition_name,
 };
 
 use crate::helpers::guards::block_system_namespace_modification;
@@ -53,7 +54,7 @@ impl AlterTableHandler {
                 KalamDbError::InvalidOperation(format!("Column '{}' does not exist", column_name))
             })?;
 
-        let dimensions = match column.data_type {
+        let dimensions = match column.data_type() {
             kalamdb_commons::models::datatypes::KalamDataType::Embedding(dim) if dim > 0 => dim,
             _ => {
                 return Err(KalamDbError::InvalidOperation(format!(
@@ -181,7 +182,20 @@ impl AlterTableHandler {
             .ok_or_else(|| {
                 KalamDbError::InvalidOperation(format!("table {} has no primary key", table_id))
             })?;
-        let storage_schema = kalamdb_tables::storage_schema_for_table(table_def).map_err(|e| {
+        let stores = self.app_context.system_tables().catalog_stores();
+        let storage_schema = match self
+            .app_context
+            .schema_registry()
+            .type_registry()
+            .arrow_schema_for_table(&stores, table_def)
+        {
+            Ok(arrow_schema) => {
+                kalamdb_tables::storage_schema_for_table_with_arrow(table_def, &arrow_schema)
+                    .or_else(|_| kalamdb_tables::storage_schema_for_table(table_def))
+            },
+            Err(_) => kalamdb_tables::storage_schema_for_table(table_def),
+        }
+        .map_err(|e| {
             KalamDbError::ExecutionError(format!(
                 "failed to build storage schema for {}: {}",
                 table_id, e
@@ -256,6 +270,7 @@ impl AlterTableHandler {
         table_type: TableType,
         manifest_user: Option<&UserId>,
         column_name: &str,
+        extra_snapshot_path: Option<&str>,
     ) -> Result<(), KalamDbError> {
         let registry = self.app_context.schema_registry();
         let cached_table = registry.get(table_id).ok_or_else(|| {
@@ -282,8 +297,9 @@ impl AlterTableHandler {
                 listed_path
             };
 
-            let is_current_snapshot = relative_path.starts_with(&vector_snapshot_prefix)
-                && relative_path.ends_with(".vix");
+            let is_current_snapshot = (relative_path.starts_with(&vector_snapshot_prefix)
+                && relative_path.ends_with(".vix"))
+                || extra_snapshot_path.is_some_and(|extra| extra == relative_path);
             if !is_current_snapshot {
                 continue;
             }
@@ -298,6 +314,158 @@ impl AlterTableHandler {
                 })?;
         }
 
+        Ok(())
+    }
+
+    fn rename_vector_index_if_present(
+        &self,
+        table_id: &TableId,
+        table_def: &TableDefinition,
+        old_column_name: &str,
+        new_column_name: &str,
+        actor_user: &UserId,
+    ) -> Result<(), KalamDbError> {
+        if !matches!(table_def.table_type, TableType::User | TableType::Shared) {
+            return Ok(());
+        }
+
+        let is_embedding_column = table_def.columns.iter().any(|col| {
+            col.column_name.eq_ignore_ascii_case(new_column_name)
+                && matches!(
+                    col.data_type(),
+                    kalamdb_commons::models::datatypes::KalamDataType::Embedding(_)
+                )
+        });
+        if !is_embedding_column {
+            return Ok(());
+        }
+
+        let manifest_service = self.app_context.manifest_service();
+        let scopes =
+            self.manifest_scopes_for_vector_op(table_id, table_def.table_type, actor_user)?;
+        let mut renamed_any_manifest = false;
+
+        for scope in &scopes {
+            let mut manifest = manifest_service
+                .ensure_manifest_initialized(table_id, scope.as_ref())
+                .map_err(|e| {
+                    KalamDbError::ExecutionError(format!(
+                        "Failed to initialize manifest for {}: {}",
+                        table_id, e
+                    ))
+                })?;
+
+            let old_key = manifest
+                .vector_indexes
+                .keys()
+                .find(|key| key.eq_ignore_ascii_case(old_column_name))
+                .cloned();
+            if let Some(old_key) = old_key {
+                if let Some(mut entry) = manifest.vector_indexes.remove(&old_key) {
+                    entry.column_name = new_column_name.to_string();
+                    entry.updated_at = chrono::Utc::now().timestamp_millis();
+                    manifest
+                        .vector_indexes
+                        .insert(new_column_name.to_string(), entry);
+                    manifest_service
+                        .persist_manifest(table_id, scope.as_ref(), &manifest)
+                        .map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to persist manifest for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    renamed_any_manifest = true;
+                }
+            }
+        }
+
+        let backend = self.app_context.storage_backend();
+        match table_def.table_type {
+            TableType::User => {
+                let old_store = new_indexed_user_vector_hot_store(
+                    Arc::clone(&backend),
+                    table_id,
+                    old_column_name,
+                );
+                let existing = old_store.scan_all_typed(None, None, None).unwrap_or_default();
+                if renamed_any_manifest || !existing.is_empty() {
+                    self.ensure_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        new_column_name,
+                    )?;
+                    if !existing.is_empty() {
+                        let new_store = new_indexed_user_vector_hot_store(
+                            Arc::clone(&backend),
+                            table_id,
+                            new_column_name,
+                        );
+                        let migrated: Vec<_> = existing
+                            .into_iter()
+                            .map(|(id, mut op)| {
+                                op.column_name = new_column_name.to_string();
+                                (id, op)
+                            })
+                            .collect();
+                        new_store.insert_batch(&migrated).map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to migrate user hot vector ops for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    }
+                    self.drop_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        old_column_name,
+                    );
+                }
+            },
+            TableType::Shared => {
+                let old_store = new_indexed_shared_vector_hot_store(
+                    Arc::clone(&backend),
+                    table_id,
+                    old_column_name,
+                );
+                let existing = old_store.scan_all_typed(None, None, None).unwrap_or_default();
+                if renamed_any_manifest || !existing.is_empty() {
+                    self.ensure_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        new_column_name,
+                    )?;
+                    if !existing.is_empty() {
+                        let new_store = new_indexed_shared_vector_hot_store(
+                            Arc::clone(&backend),
+                            table_id,
+                            new_column_name,
+                        );
+                        let migrated: Vec<_> = existing
+                            .into_iter()
+                            .map(|(id, mut op)| {
+                                op.column_name = new_column_name.to_string();
+                                (id, op)
+                            })
+                            .collect();
+                        new_store.insert_batch(&migrated).map_err(|e| {
+                            KalamDbError::ExecutionError(format!(
+                                "Failed to migrate shared hot vector ops for {}: {}",
+                                table_id, e
+                            ))
+                        })?;
+                    }
+                    self.drop_vector_hot_partitions(
+                        table_id,
+                        table_def.table_type,
+                        old_column_name,
+                    );
+                }
+            },
+            TableType::System | TableType::Stream => {},
+        }
+
+        invalidate_hot_query_cache_for_table(table_id);
         Ok(())
     }
 
@@ -383,13 +551,6 @@ impl AlterTableHandler {
                 let (resolved_column_name, dimensions) =
                     self.resolve_vector_column(table_def.as_ref(), column_name)?;
                 for scope in &scopes {
-                    self.delete_vector_cold_artifacts(
-                        &table_id,
-                        table_type,
-                        scope.as_ref(),
-                        &resolved_column_name,
-                    )?;
-
                     let mut manifest = manifest_service
                         .ensure_manifest_initialized(&table_id, scope.as_ref())
                         .map_err(|e| {
@@ -398,6 +559,17 @@ impl AlterTableHandler {
                                 table_id, e
                             ))
                         })?;
+                    let extra_snapshot_path = manifest
+                        .vector_indexes
+                        .get(&resolved_column_name)
+                        .and_then(|meta| meta.snapshot_path.clone());
+                    self.delete_vector_cold_artifacts(
+                        &table_id,
+                        table_type,
+                        scope.as_ref(),
+                        &resolved_column_name,
+                        extra_snapshot_path.as_deref(),
+                    )?;
                     let existing_metric = manifest
                         .vector_indexes
                         .get(&resolved_column_name)
@@ -459,7 +631,7 @@ impl AlterTableHandler {
         statement: &AlterTableStatement,
         context: &ExecutionContext,
     ) -> Result<(TableDefinition, String, bool), KalamDbError> {
-        let namespace_id: NamespaceId = statement.namespace_id.clone();
+        let namespace_id: SchemaId = statement.namespace_id.clone();
         let table_id = TableId::from_ref(&namespace_id, &statement.table_name);
 
         log::info!(
@@ -526,6 +698,13 @@ impl AlterTableHandler {
 
         // Only increment version if actual changes were made
         if changed {
+            if table_def.schema_version >= u32::from(u16::MAX) {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "table '{}' has reached maximum schema version ({})",
+                    table_id.full_name(),
+                    u16::MAX
+                )));
+            }
             table_def.increment_version();
             log::debug!(
                 "✓ Built altered TableDefinition: version={}, columns={}",
@@ -577,15 +756,32 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
 
         use crate::helpers::audit;
 
-        let namespace_id: NamespaceId = statement.namespace_id.clone();
+        let namespace_id: SchemaId = statement.namespace_id.clone();
         let table_id = TableId::from_ref(&namespace_id, &statement.table_name);
 
         // Build the altered table definition (validate + apply mutation)
-        let (table_def, change_desc, changed) =
+        let prev_table_def = self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists(&table_id)?
+            .map(|arc| (*arc).clone());
+        let (mut table_def, change_desc, changed) =
             self.build_altered_table_definition(&statement, context)?;
 
         // Only apply changes if something actually changed
         if changed {
+            if let Some(ref prev_def) = prev_table_def {
+                apply_alter_data_migrations(
+                    &self.app_context,
+                    context,
+                    &table_id,
+                    prev_def,
+                    &mut table_def,
+                    &statement.operation,
+                )
+                .await?;
+            }
+
             let dropped_index_name =
                 if let ColumnOperation::DropIndex { name, .. } = &statement.operation {
                     Some(name.clone())
@@ -601,11 +797,64 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 .await
                 .map_err(|e| KalamDbError::ExecutionError(format!("ALTER TABLE failed: {}", e)))?;
 
+            let stores = self.app_context.system_tables().catalog_stores();
+            if let Ok(Some(implicit_type_id)) = crate::catalog_type::sync_implicit_row_type(
+                &stores,
+                &table_id,
+                &table_def,
+            ) {
+                let bumped = crate::catalog_type::bump_enclosing_type_revisions(
+                    &stores,
+                    &implicit_type_id,
+                )
+                .unwrap_or_default();
+                let mut related = vec![implicit_type_id.clone()];
+                for id in bumped {
+                    if !related.contains(&id) {
+                        related.push(id);
+                    }
+                }
+                for id in self
+                    .app_context
+                    .schema_registry()
+                    .type_registry()
+                    .dependent_type_ids(&implicit_type_id)
+                {
+                    if !related.contains(&id) {
+                        related.push(id);
+                    }
+                }
+                for id in &related {
+                    self.app_context.schema_registry().type_registry().invalidate(id);
+                }
+                self.app_context
+                    .schema_registry()
+                    .invalidate_tables_using_named_types(&related);
+                let _ = crate::catalog_type::replicate_stored_type(
+                    &self.app_context,
+                    &implicit_type_id,
+                )
+                .await;
+            }
+
             if created_scalar {
                 self.backfill_scalar_index(&table_id, &table_def)?;
             }
             if let Some(name) = dropped_index_name {
                 self.drop_scalar_index_partition(&table_id, table_def.table_type, &name);
+            }
+            if let ColumnOperation::Rename {
+                old_column_name,
+                new_column_name,
+            } = &statement.operation
+            {
+                self.rename_vector_index_if_present(
+                    &table_id,
+                    &table_def,
+                    old_column_name,
+                    new_column_name,
+                    context.user_id(),
+                )?;
             }
 
             // Log DDL operation
@@ -749,6 +998,13 @@ fn apply_alter_operation(
             let kalam_type = data_type.clone();
             let default = default_value.clone().unwrap_or(ColumnDefault::None);
             crate::helpers::table_creation::validate_column_default(app_context, &default)?;
+            if table_def.next_column_id > u64::from(u16::MAX) {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "table '{}' has exhausted physical column slots ({})",
+                    table_id.full_name(),
+                    u16::MAX
+                )));
+            }
             let ordinal = (table_def.columns.len() + 1) as u32;
             let column_id = table_def.next_column_id;
             let mut column = ColumnDefinition::new(
@@ -769,6 +1025,9 @@ fn apply_alter_operation(
                     &mut column,
                     type_ref,
                 )?;
+            }
+            if let ColumnDefault::Literal(ref json_val) = column.default_value {
+                column.missing_default = Some(ColumnDefault::Literal(json_val.clone()));
             }
             table_def.columns.push(column);
             table_def.next_column_id += 1;
@@ -825,7 +1084,9 @@ fn apply_alter_operation(
         ColumnOperation::Modify {
             column_name,
             new_data_type,
+            type_ref,
             nullable,
+            using_expr,
         } => {
             // Block modifying system columns
             if is_system_column(column_name) {
@@ -835,6 +1096,7 @@ fn apply_alter_operation(
                     column_name
                 )));
             }
+            let table_namespace = table_def.namespace_id.clone();
             let col = table_def
                 .columns
                 .iter_mut()
@@ -851,15 +1113,21 @@ fn apply_alter_operation(
                     ))
                 })?;
 
-            // Track if anything actually changes
+            let prev_logical_type = col.logical_type.clone();
             let new_type = new_data_type.clone();
-            let type_changed = col.data_type != new_type;
+            col.set_data_type(new_type);
+            if let Some(type_ref) = type_ref {
+                crate::helpers::table_creation::apply_column_type_ref(
+                    app_context,
+                    &table_namespace,
+                    col,
+                    type_ref,
+                )?;
+            }
+            let type_changed = col.logical_type != prev_logical_type || using_expr.is_some();
             let nullable_changed = nullable.is_some_and(|n| col.is_nullable != n);
             let changed = type_changed || nullable_changed;
 
-            if type_changed {
-                col.data_type = new_type;
-            }
             if let Some(n) = nullable {
                 col.is_nullable = *n;
             }
@@ -1269,6 +1537,1077 @@ fn format_table_property_change(changes: Vec<String>) -> String {
     }
 }
 
+fn is_metadata_only_widening(
+    old_col: &ColumnDefinition,
+    new_col: &ColumnDefinition,
+    new_arrow_field: &datafusion::arrow::datatypes::Field,
+    using_expr: &Option<String>,
+) -> bool {
+    if using_expr.is_some() {
+        return false;
+    }
+    if old_col.named_type_id().is_some()
+        || new_col.named_type_id().is_some()
+        || old_col.is_array()
+        || new_col.is_array()
+    {
+        return false;
+    }
+    if kalamdb_commons::conversions::read_kalam_domain_constraints(new_arrow_field).is_some() {
+        return false;
+    }
+    use kalamdb_commons::models::datatypes::KalamDataType;
+    match (old_col.data_type(), new_col.data_type()) {
+        (KalamDataType::SmallInt, KalamDataType::Int | KalamDataType::BigInt) => true,
+        (KalamDataType::Int, KalamDataType::BigInt) => true,
+        (KalamDataType::Float, KalamDataType::Double) => true,
+        (
+            KalamDataType::Decimal {
+                precision: p1,
+                scale: s1,
+            },
+            KalamDataType::Decimal {
+                precision: p2,
+                scale: s2,
+            },
+        ) if s1 == s2 && p2 >= p1 => true,
+        (a, b) if a == b && old_col.logical_type == new_col.logical_type => true,
+        _ => false,
+    }
+}
+
+async fn apply_alter_data_migrations(
+    app_context: &Arc<AppContext>,
+    context: &ExecutionContext,
+    table_id: &TableId,
+    prev_def: &TableDefinition,
+    new_def: &mut TableDefinition,
+    operation: &ColumnOperation,
+) -> Result<(), KalamDbError> {
+    let stores = app_context.system_tables().catalog_stores();
+    let new_arrow_schema = app_context
+        .schema_registry()
+        .type_registry()
+        .arrow_schema_for_table(&stores, new_def)?;
+
+    match operation {
+        ColumnOperation::Add { column_name, .. } => {
+            let Some(col_idx) = new_def
+                .columns
+                .iter()
+                .position(|c| c.column_name.eq_ignore_ascii_case(column_name))
+            else {
+                return Ok(());
+            };
+            let new_field = new_arrow_schema
+                .field_with_name(&new_def.columns[col_idx].column_name)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+
+            let default_val = new_def.columns[col_idx].default_value.clone();
+            match &default_val {
+                ColumnDefault::None => {
+                    if !new_field.is_nullable() {
+                        if let Some(domain_default) =
+                            kalamdb_commons::conversions::materialize_domain_default_for_field(
+                                new_field,
+                            )
+                            .map_err(KalamDbError::InvalidOperation)?
+                        {
+                            let json_val =
+                                kalamdb_commons::conversions::scalar_to_json_for_column(
+                                    &domain_default,
+                                    &new_def.columns[col_idx].data_type(),
+                                )
+                                .unwrap_or(serde_json::Value::Null);
+                            new_def.columns[col_idx].missing_default =
+                                Some(ColumnDefault::Literal(json_val));
+                        } else if table_has_live_rows(app_context, table_id, prev_def)? {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "column \"{}\" of relation \"{}\" contains null values",
+                                column_name,
+                                table_id.full_name()
+                            )));
+                        }
+                    }
+                },
+                ColumnDefault::Literal(json_val) => {
+                    let scalar = kalamdb_commons::conversions::json_value_to_scalar(json_val);
+                    let _coerced =
+                        kalamdb_commons::conversions::coerce_scalar_to_field(scalar, new_field)
+                            .map_err(KalamDbError::InvalidOperation)?;
+                    new_def.columns[col_idx].missing_default =
+                        Some(ColumnDefault::Literal(json_val.clone()));
+                },
+                ColumnDefault::FunctionCall(call) => {
+                    let is_volatile = is_default_call_volatile(app_context, call)?;
+                    if !is_volatile {
+                        let scalar =
+                            evaluate_default_function_call(app_context, context, call).await?;
+                        let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
+                            scalar, new_field,
+                        )
+                        .map_err(KalamDbError::InvalidOperation)?;
+                        let json_val = kalamdb_commons::conversions::scalar_to_json_for_column(
+                            &coerced,
+                            &new_def.columns[col_idx].data_type(),
+                        )
+                        .map_err(KalamDbError::InvalidOperation)?;
+                        new_def.columns[col_idx].missing_default =
+                            Some(ColumnDefault::Literal(json_val));
+                    } else {
+                        let col_name = new_def.columns[col_idx].column_name.clone();
+                        backfill_volatile_added_column(
+                            app_context,
+                            context,
+                            table_id,
+                            prev_def,
+                            new_def,
+                            &new_arrow_schema,
+                            &col_name,
+                            new_field,
+                            call,
+                        )
+                        .await?;
+                    }
+                },
+            }
+        },
+        ColumnOperation::Modify {
+            column_name,
+            using_expr,
+            ..
+        } => {
+            let Some(old_col) = prev_def
+                .columns
+                .iter()
+                .find(|c| c.column_name.eq_ignore_ascii_case(column_name))
+            else {
+                return Ok(());
+            };
+            let Some(new_col_idx) = new_def
+                .columns
+                .iter()
+                .position(|c| c.column_name.eq_ignore_ascii_case(column_name))
+            else {
+                return Ok(());
+            };
+            let new_field = new_arrow_schema
+                .field_with_name(&new_def.columns[new_col_idx].column_name)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+
+            if let Some(ColumnDefault::Literal(ref def_json)) = new_def.columns[new_col_idx].missing_default {
+                let scalar = kalamdb_commons::conversions::json_value_to_scalar(def_json);
+                if let Ok(coerced) =
+                    kalamdb_commons::conversions::coerce_scalar_to_field(scalar, new_field)
+                {
+                    if let Ok(updated_json) =
+                        kalamdb_commons::conversions::scalar_to_json_for_column(
+                            &coerced,
+                            &new_def.columns[new_col_idx].data_type(),
+                        )
+                    {
+                        new_def.columns[new_col_idx].missing_default =
+                            Some(ColumnDefault::Literal(updated_json));
+                    }
+                }
+            }
+
+            if is_metadata_only_widening(
+                old_col,
+                &new_def.columns[new_col_idx],
+                new_field,
+                using_expr,
+            ) && (!old_col.is_nullable || new_field.is_nullable())
+            {
+                return Ok(());
+            }
+
+            rewrite_table_column_for_type_change(
+                app_context,
+                table_id,
+                prev_def,
+                new_def,
+                &new_arrow_schema,
+                &new_def.columns[new_col_idx].column_name,
+                new_field,
+                using_expr.as_deref(),
+            )?;
+        },
+        ColumnOperation::SetNullable {
+            column_name,
+            nullable: false,
+        } => {
+            let new_field = new_arrow_schema
+                .field_with_name(column_name)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            validate_existing_rows_not_null(app_context, table_id, prev_def, column_name, new_field)?;
+        },
+        _ => {},
+    }
+
+    Ok(())
+}
+
+fn is_default_call_volatile(
+    app_context: &Arc<AppContext>,
+    call: &kalamdb_commons::models::RoutineCall,
+) -> Result<bool, KalamDbError> {
+    if call.scalar_udf_name().is_some() {
+        return Ok(matches!(
+            call.unqualified_name(),
+            "snowflake_id" | "auto_increment" | "uuid_v7" | "ulid"
+        ));
+    }
+    let stores = app_context.system_tables().catalog_stores();
+    if let Some(routine) = stores
+        .get_routine(&call.routine_id)
+        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?
+    {
+        return Ok(matches!(
+            routine.volatility,
+            kalamdb_commons::models::RoutineVolatility::Volatile
+        ));
+    }
+    Ok(true)
+}
+
+async fn evaluate_default_function_call(
+    app_context: &Arc<AppContext>,
+    context: &ExecutionContext,
+    call: &kalamdb_commons::models::RoutineCall,
+) -> Result<ScalarValue, KalamDbError> {
+    if call.scalar_udf_name().is_some() {
+        return match call.unqualified_name() {
+            "now" | "current_timestamp" => Ok(ScalarValue::TimestampMicrosecond(
+                Some(chrono::Utc::now().timestamp_micros()),
+                None,
+            )),
+            "current_user" => Ok(ScalarValue::Utf8(Some(
+                context.user_id().as_str().to_string(),
+            ))),
+            "uuid_v7" => Ok(ScalarValue::Utf8(Some(uuid::Uuid::now_v7().to_string()))),
+            "ulid" => {
+                let func = kalamdb_core::sql::functions::UlidFunction::new();
+                let args = datafusion::logical_expr::ScalarFunctionArgs {
+                    args: Vec::new(),
+                    arg_fields: Vec::new(),
+                    number_rows: 1,
+                    return_field: std::sync::Arc::new(datafusion::arrow::datatypes::Field::new(
+                        "ulid",
+                        datafusion::arrow::datatypes::DataType::Utf8,
+                        false,
+                    )),
+                    config_options: std::sync::Arc::new(datafusion::config::ConfigOptions::default()),
+                };
+                use datafusion::logical_expr::ScalarUDFImpl;
+                let col = func
+                    .invoke_with_args(args)
+                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+                col.into_array(1)
+                    .and_then(|arr| ScalarValue::try_from_array(&arr, 0))
+                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))
+            },
+            "snowflake_id" | "auto_increment" => {
+                Ok(ScalarValue::Int64(Some(chrono::Utc::now().timestamp_micros())))
+            },
+            other => Err(KalamDbError::InvalidOperation(format!(
+                "Unsupported default function '{other}'"
+            ))),
+        };
+    }
+    kalamdb_core::functions::FunctionService::execute_routine_call(
+        Arc::clone(app_context),
+        context,
+        call,
+    )
+    .await
+}
+
+fn table_has_live_rows(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    table_def: &TableDefinition,
+) -> Result<bool, KalamDbError> {
+    let Some(pk_col) = table_def
+        .columns
+        .iter()
+        .find(|c| c.is_primary_key)
+        .map(|c| c.column_name.as_str())
+    else {
+        return Ok(false);
+    };
+    let stores = app_context.system_tables().catalog_stores();
+    let arrow_schema = app_context
+        .schema_registry()
+        .type_registry()
+        .arrow_schema_for_table(&stores, table_def)?;
+    let storage_schema =
+        kalamdb_tables::storage_schema_for_table_with_arrow(table_def, &arrow_schema)
+            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+    let backend = app_context.storage_backend();
+    match table_def.table_type {
+        TableType::Shared => {
+            let store = kalamdb_tables::new_indexed_shared_table_store(
+                backend,
+                table_id,
+                pk_col,
+                storage_schema,
+                &table_def.scalar_indexes,
+                &table_def.columns,
+            );
+            let entries = store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut latest: std::collections::BTreeMap<String, (i64, bool)> =
+                std::collections::BTreeMap::new();
+            for (_key, row) in entries {
+                let pk_key = format!(
+                    "{:?}",
+                    row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null)
+                );
+                let ver = row._version.as_i64();
+                if latest.get(&pk_key).is_none_or(|(prev_v, _)| ver >= *prev_v) {
+                    latest.insert(pk_key, (ver, row._deleted));
+                }
+            }
+            Ok(latest.values().any(|(_, deleted)| !*deleted))
+        },
+        TableType::User => {
+            let store = kalamdb_tables::new_indexed_user_table_store(
+                backend,
+                table_id,
+                pk_col,
+                storage_schema,
+                &table_def.scalar_indexes,
+                &table_def.columns,
+            );
+            let entries = store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut latest: std::collections::BTreeMap<(String, String), (i64, bool)> =
+                std::collections::BTreeMap::new();
+            for (_key, row) in entries {
+                let pk_key = format!(
+                    "{:?}",
+                    row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null)
+                );
+                let map_key = (row.user_id.as_str().to_string(), pk_key);
+                let ver = row._version.as_i64();
+                if latest.get(&map_key).is_none_or(|(prev_v, _)| ver >= *prev_v) {
+                    latest.insert(map_key, (ver, row._deleted));
+                }
+            }
+            Ok(latest.values().any(|(_, deleted)| !*deleted))
+        },
+        TableType::Stream | TableType::System => Ok(false),
+    }
+}
+
+async fn backfill_volatile_added_column(
+    app_context: &Arc<AppContext>,
+    context: &ExecutionContext,
+    table_id: &TableId,
+    prev_def: &TableDefinition,
+    new_def: &TableDefinition,
+    new_arrow_schema: &datafusion::arrow::datatypes::SchemaRef,
+    col_name: &str,
+    new_field: &datafusion::arrow::datatypes::Field,
+    call: &kalamdb_commons::models::RoutineCall,
+) -> Result<(), KalamDbError> {
+    let Some(pk_col) = prev_def
+        .columns
+        .iter()
+        .find(|c| c.is_primary_key)
+        .map(|c| c.column_name.as_str())
+    else {
+        return Ok(());
+    };
+    let stores = app_context.system_tables().catalog_stores();
+    let old_arrow_schema = app_context
+        .schema_registry()
+        .type_registry()
+        .arrow_schema_for_table(&stores, prev_def)?;
+    let old_storage_schema =
+        kalamdb_tables::storage_schema_for_table_with_arrow(prev_def, &old_arrow_schema)
+            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+    let new_storage_schema =
+        kalamdb_tables::storage_schema_for_table_with_arrow(new_def, new_arrow_schema)
+            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+    let backend = app_context.storage_backend();
+
+    match prev_def.table_type {
+        TableType::Shared => {
+            let old_store = kalamdb_tables::new_indexed_shared_table_store(
+                backend.clone(),
+                table_id,
+                pk_col,
+                old_storage_schema,
+                &prev_def.scalar_indexes,
+                &prev_def.columns,
+            );
+            let new_store = kalamdb_tables::new_indexed_shared_table_store(
+                backend,
+                table_id,
+                pk_col,
+                new_storage_schema,
+                &new_def.scalar_indexes,
+                &new_def.columns,
+            );
+            let entries = old_store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut staged = Vec::with_capacity(entries.len());
+            for (key, mut row) in entries {
+                if !row._deleted {
+                    let raw_val = evaluate_default_function_call(app_context, context, call).await?;
+                    let coerced =
+                        kalamdb_commons::conversions::coerce_scalar_to_field(raw_val, new_field)
+                            .map_err(KalamDbError::InvalidOperation)?;
+                    row.fields.values.insert(col_name.to_string(), coerced);
+                }
+                staged.push((key, row));
+            }
+            for (key, row) in staged {
+                new_store
+                    .insert(&key, &row)
+                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            }
+        },
+        TableType::User => {
+            let old_store = kalamdb_tables::new_indexed_user_table_store(
+                backend.clone(),
+                table_id,
+                pk_col,
+                old_storage_schema,
+                &prev_def.scalar_indexes,
+                &prev_def.columns,
+            );
+            let new_store = kalamdb_tables::new_indexed_user_table_store(
+                backend,
+                table_id,
+                pk_col,
+                new_storage_schema,
+                &new_def.scalar_indexes,
+                &new_def.columns,
+            );
+            let entries = old_store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut staged = Vec::with_capacity(entries.len());
+            for (key, mut row) in entries {
+                if !row._deleted {
+                    let raw_val = evaluate_default_function_call(app_context, context, call).await?;
+                    let coerced =
+                        kalamdb_commons::conversions::coerce_scalar_to_field(raw_val, new_field)
+                            .map_err(KalamDbError::InvalidOperation)?;
+                    row.fields.values.insert(col_name.to_string(), coerced);
+                }
+                staged.push((key, row));
+            }
+            for (key, row) in staged {
+                new_store
+                    .insert(&key, &row)
+                    .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            }
+        },
+        TableType::Stream | TableType::System => {},
+    }
+    Ok(())
+}
+
+fn validate_existing_rows_not_null(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    prev_def: &TableDefinition,
+    col_name: &str,
+    new_field: &datafusion::arrow::datatypes::Field,
+) -> Result<(), KalamDbError> {
+    rewrite_table_column_for_type_change(
+        app_context,
+        table_id,
+        prev_def,
+        prev_def,
+        &app_context
+            .schema_registry()
+            .type_registry()
+            .arrow_schema_for_table(&app_context.system_tables().catalog_stores(), prev_def)?,
+        col_name,
+        new_field,
+        None,
+    )
+}
+
+fn rewrite_table_column_for_type_change(
+    app_context: &Arc<AppContext>,
+    table_id: &TableId,
+    prev_def: &TableDefinition,
+    new_def: &TableDefinition,
+    new_arrow_schema: &datafusion::arrow::datatypes::SchemaRef,
+    col_name: &str,
+    new_field: &datafusion::arrow::datatypes::Field,
+    using_expr: Option<&str>,
+) -> Result<(), KalamDbError> {
+    let Some(pk_col) = prev_def
+        .columns
+        .iter()
+        .find(|c| c.is_primary_key)
+        .map(|c| c.column_name.as_str())
+    else {
+        return Ok(());
+    };
+    let stores = app_context.system_tables().catalog_stores();
+    let old_arrow_schema = app_context
+        .schema_registry()
+        .type_registry()
+        .arrow_schema_for_table(&stores, prev_def)?;
+    let old_storage_schema =
+        kalamdb_tables::storage_schema_for_table_with_arrow(prev_def, &old_arrow_schema)
+            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+    let new_storage_schema =
+        kalamdb_tables::storage_schema_for_table_with_arrow(new_def, new_arrow_schema)
+            .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+    let backend = app_context.storage_backend();
+
+    match prev_def.table_type {
+        TableType::Shared => {
+            let old_store = kalamdb_tables::new_indexed_shared_table_store(
+                backend.clone(),
+                table_id,
+                pk_col,
+                old_storage_schema,
+                &prev_def.scalar_indexes,
+                &prev_def.columns,
+            );
+            let new_store = kalamdb_tables::new_indexed_shared_table_store(
+                backend,
+                table_id,
+                pk_col,
+                new_storage_schema,
+                &new_def.scalar_indexes,
+                &new_def.columns,
+            );
+            let entries = old_store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut staged = Vec::with_capacity(entries.len());
+            for (key, mut row) in entries {
+                if !row._deleted {
+                    let old_val = row
+                        .fields
+                        .values
+                        .get(col_name)
+                        .cloned()
+                        .unwrap_or(ScalarValue::Null);
+                    let converted = convert_column_value_for_alter(
+                        &old_val,
+                        &row.fields,
+                        col_name,
+                        new_field,
+                        using_expr,
+                    )?;
+                    row.fields.values.insert(col_name.to_string(), converted);
+                } else {
+                    row.fields.values.insert(col_name.to_string(), ScalarValue::Null);
+                }
+                staged.push((key, row));
+            }
+            if prev_def.schema_version != new_def.schema_version {
+                for (key, row) in staged {
+                    new_store
+                        .insert(&key, &row)
+                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+                }
+            }
+        },
+        TableType::User => {
+            let old_store = kalamdb_tables::new_indexed_user_table_store(
+                backend.clone(),
+                table_id,
+                pk_col,
+                old_storage_schema,
+                &prev_def.scalar_indexes,
+                &prev_def.columns,
+            );
+            let new_store = kalamdb_tables::new_indexed_user_table_store(
+                backend,
+                table_id,
+                pk_col,
+                new_storage_schema,
+                &new_def.scalar_indexes,
+                &new_def.columns,
+            );
+            let entries = old_store
+                .scan_all_typed(None, None, None)
+                .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+            let mut staged = Vec::with_capacity(entries.len());
+            for (key, mut row) in entries {
+                if !row._deleted {
+                    let old_val = row
+                        .fields
+                        .values
+                        .get(col_name)
+                        .cloned()
+                        .unwrap_or(ScalarValue::Null);
+                    let converted = convert_column_value_for_alter(
+                        &old_val,
+                        &row.fields,
+                        col_name,
+                        new_field,
+                        using_expr,
+                    )?;
+                    row.fields.values.insert(col_name.to_string(), converted);
+                } else {
+                    row.fields.values.insert(col_name.to_string(), ScalarValue::Null);
+                }
+                staged.push((key, row));
+            }
+            if prev_def.schema_version != new_def.schema_version {
+                for (key, row) in staged {
+                    new_store
+                        .insert(&key, &row)
+                        .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
+                }
+            }
+        },
+        TableType::Stream | TableType::System => {},
+    }
+
+    Ok(())
+}
+
+fn convert_column_value_for_alter(
+    old_val: &ScalarValue,
+    row_fields: &kalamdb_commons::models::rows::Row,
+    col_name: &str,
+    new_field: &datafusion::arrow::datatypes::Field,
+    using_expr: Option<&str>,
+) -> Result<ScalarValue, KalamDbError> {
+    let evaluated = if let Some(expr) = using_expr {
+        eval_using_expression(expr, col_name, old_val, row_fields)?
+    } else {
+        old_val.clone()
+    };
+    if evaluated.is_null() && !new_field.is_nullable() {
+        return Err(KalamDbError::InvalidOperation(format!(
+            "column \"{col_name}\" contains null values"
+        )));
+    }
+    kalamdb_commons::conversions::coerce_scalar_to_field(evaluated, new_field)
+        .map_err(KalamDbError::InvalidOperation)
+}
+
+fn eval_using_expression(
+    expr: &str,
+    col_name: &str,
+    col_val: &ScalarValue,
+    row_fields: &kalamdb_commons::models::rows::Row,
+) -> Result<ScalarValue, KalamDbError> {
+    let trimmed = strip_outer_parens(expr.trim());
+    for op in ["+", "-", "*", "/", "%"] {
+        if let Some((lhs_str, rhs_str)) = split_top_level_binop(trimmed, op) {
+            if !lhs_str.trim().is_empty() {
+                let lhs = eval_using_expression(lhs_str, col_name, col_val, row_fields)?;
+                let rhs = eval_using_expression(rhs_str, col_name, col_val, row_fields)?;
+                return eval_using_arith(&lhs, op, &rhs);
+            }
+        }
+    }
+    if let Some((inner, _cast_type)) = split_top_level_type_cast(trimmed) {
+        return eval_using_expression(inner, col_name, col_val, row_fields);
+    }
+    if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("CAST(") && trimmed.ends_with(')') {
+        let inside = &trimmed[5..trimmed.len() - 1];
+        if let Some((inner, _target_type)) = split_top_level_as(inside) {
+            return eval_using_expression(inner, col_name, col_val, row_fields);
+        }
+    }
+    if trimmed.eq_ignore_ascii_case(col_name) || trimmed.eq_ignore_ascii_case("VALUE") {
+        return Ok(col_val.clone());
+    }
+    if let Some(other_val) = row_fields.values.get(trimmed) {
+        return Ok(other_val.clone());
+    }
+    if trimmed.eq_ignore_ascii_case("NULL") {
+        return Ok(ScalarValue::Null);
+    }
+    if trimmed.eq_ignore_ascii_case("TRUE") {
+        return Ok(ScalarValue::Boolean(Some(true)));
+    }
+    if trimmed.eq_ignore_ascii_case("FALSE") {
+        return Ok(ScalarValue::Boolean(Some(false)));
+    }
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        return Ok(ScalarValue::Utf8(Some(inner.replace("''", "'"))));
+    }
+    if let Some((fn_name, args_str)) = split_top_level_fn_call(trimmed) {
+        let args = split_top_level_args(args_str);
+        match fn_name.to_ascii_lowercase().as_str() {
+            "coalesce" => {
+                for arg in args {
+                    let v = eval_using_expression(arg, col_name, col_val, row_fields)?;
+                    if !v.is_null() {
+                        return Ok(v);
+                    }
+                }
+                return Ok(ScalarValue::Null);
+            },
+            "lower" if args.len() == 1 => {
+                let v = eval_using_expression(args[0], col_name, col_val, row_fields)?;
+                if v.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                return Ok(ScalarValue::Utf8(Some(scalar_to_text(&v)?.to_lowercase())));
+            },
+            "upper" if args.len() == 1 => {
+                let v = eval_using_expression(args[0], col_name, col_val, row_fields)?;
+                if v.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                return Ok(ScalarValue::Utf8(Some(scalar_to_text(&v)?.to_uppercase())));
+            },
+            "trim" | "btrim" if args.len() == 1 => {
+                let v = eval_using_expression(args[0], col_name, col_val, row_fields)?;
+                if v.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                return Ok(ScalarValue::Utf8(Some(scalar_to_text(&v)?.trim().to_string())));
+            },
+            "length" | "char_length" | "character_length" if args.len() == 1 => {
+                let v = eval_using_expression(args[0], col_name, col_val, row_fields)?;
+                if v.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                return Ok(ScalarValue::Int64(Some(scalar_to_text(&v)?.chars().count() as i64)));
+            },
+            "abs" if args.len() == 1 => {
+                let v = eval_using_expression(args[0], col_name, col_val, row_fields)?;
+                if v.is_null() {
+                    return Ok(ScalarValue::Null);
+                }
+                if let ScalarValue::Int64(Some(n)) = v {
+                    return Ok(ScalarValue::Int64(Some(n.abs())));
+                }
+                if let ScalarValue::Int32(Some(n)) = v {
+                    return Ok(ScalarValue::Int32(Some(n.abs())));
+                }
+                let f = scalar_to_f64_val(&v)?;
+                return Ok(ScalarValue::Float64(Some(f.abs())));
+            },
+            _ => {},
+        }
+    }
+    if let Ok(i) = trimmed.parse::<i64>() {
+        return Ok(ScalarValue::Int64(Some(i)));
+    }
+    if let Ok(f) = trimmed.parse::<f64>() {
+        return Ok(ScalarValue::Float64(Some(f)));
+    }
+    Err(KalamDbError::InvalidOperation(format!(
+        "unsupported USING expression '{expr}' for column '{col_name}'"
+    )))
+}
+
+fn scalar_to_text(v: &ScalarValue) -> Result<String, KalamDbError> {
+    match v {
+        ScalarValue::Utf8(Some(s))
+        | ScalarValue::LargeUtf8(Some(s))
+        | ScalarValue::Utf8View(Some(s)) => Ok(s.clone()),
+        ScalarValue::Int64(Some(n)) => Ok(n.to_string()),
+        ScalarValue::Int32(Some(n)) => Ok(n.to_string()),
+        ScalarValue::Int16(Some(n)) => Ok(n.to_string()),
+        ScalarValue::Float64(Some(f)) => Ok(f.to_string()),
+        ScalarValue::Float32(Some(f)) => Ok(f.to_string()),
+        ScalarValue::Boolean(Some(b)) => Ok(b.to_string()),
+        ScalarValue::Decimal128(Some(d), _, s) => Ok(
+            kalamdb_commons::conversions::format_decimal_value(*d, (*s).max(0) as u8),
+        ),
+        other => Err(KalamDbError::InvalidOperation(format!(
+            "cannot convert {:?} to text in USING expression",
+            other.data_type()
+        ))),
+    }
+}
+
+fn scalar_to_f64_val(v: &ScalarValue) -> Result<f64, KalamDbError> {
+    match v {
+        ScalarValue::Int64(Some(n)) => Ok(*n as f64),
+        ScalarValue::Int32(Some(n)) => Ok(f64::from(*n)),
+        ScalarValue::Int16(Some(n)) => Ok(f64::from(*n)),
+        ScalarValue::Float64(Some(f)) => Ok(*f),
+        ScalarValue::Float32(Some(f)) => Ok(f64::from(*f)),
+        ScalarValue::Decimal128(Some(d), _, s) => {
+            let scale = (*s).max(0) as i32;
+            Ok((*d as f64) / 10_f64.powi(scale))
+        },
+        ScalarValue::Utf8(Some(s)) => s.trim().parse::<f64>().map_err(|_| {
+            KalamDbError::InvalidOperation(format!("invalid numeric value '{s}' in USING expression"))
+        }),
+        other => Err(KalamDbError::InvalidOperation(format!(
+            "cannot convert {:?} to numeric in USING expression",
+            other.data_type()
+        ))),
+    }
+}
+
+fn eval_using_arith(
+    lhs: &ScalarValue,
+    op: &str,
+    rhs: &ScalarValue,
+) -> Result<ScalarValue, KalamDbError> {
+    if lhs.is_null() || rhs.is_null() {
+        return Ok(ScalarValue::Null);
+    }
+    let l_int = match lhs {
+        ScalarValue::Int64(Some(n)) => Some(*n),
+        ScalarValue::Int32(Some(n)) => Some(i64::from(*n)),
+        ScalarValue::Int16(Some(n)) => Some(i64::from(*n)),
+        ScalarValue::Utf8(Some(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    let r_int = match rhs {
+        ScalarValue::Int64(Some(n)) => Some(*n),
+        ScalarValue::Int32(Some(n)) => Some(i64::from(*n)),
+        ScalarValue::Int16(Some(n)) => Some(i64::from(*n)),
+        ScalarValue::Utf8(Some(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    if let (Some(l), Some(r)) = (l_int, r_int) {
+        return match op {
+            "+" => Ok(ScalarValue::Int64(Some(l.saturating_add(r)))),
+            "-" => Ok(ScalarValue::Int64(Some(l.saturating_sub(r)))),
+            "*" => Ok(ScalarValue::Int64(Some(l.saturating_mul(r)))),
+            "/" => {
+                if r == 0 {
+                    Err(KalamDbError::InvalidOperation(
+                        "division by zero in USING expression".to_string(),
+                    ))
+                } else {
+                    Ok(ScalarValue::Int64(Some(l / r)))
+                }
+            },
+            "%" => {
+                if r == 0 {
+                    Err(KalamDbError::InvalidOperation(
+                        "division by zero in USING expression".to_string(),
+                    ))
+                } else {
+                    Ok(ScalarValue::Int64(Some(l % r)))
+                }
+            },
+            _ => Err(KalamDbError::InvalidOperation(format!(
+                "unsupported operator '{op}' in USING expression"
+            ))),
+        };
+    }
+    let l = scalar_to_f64_val(lhs)?;
+    let r = scalar_to_f64_val(rhs)?;
+    match op {
+        "+" => Ok(ScalarValue::Float64(Some(l + r))),
+        "-" => Ok(ScalarValue::Float64(Some(l - r))),
+        "*" => Ok(ScalarValue::Float64(Some(l * r))),
+        "/" => {
+            if r == 0.0 {
+                Err(KalamDbError::InvalidOperation(
+                    "division by zero in USING expression".to_string(),
+                ))
+            } else {
+                Ok(ScalarValue::Float64(Some(l / r)))
+            }
+        },
+        "%" => {
+            if r == 0.0 {
+                Err(KalamDbError::InvalidOperation(
+                    "division by zero in USING expression".to_string(),
+                ))
+            } else {
+                Ok(ScalarValue::Float64(Some(l % r)))
+            }
+        },
+        _ => Err(KalamDbError::InvalidOperation(format!(
+            "unsupported operator '{op}' in USING expression"
+        ))),
+    }
+}
+
+fn strip_outer_parens(mut s: &str) -> &str {
+    loop {
+        let trimmed = s.trim();
+        if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let mut depth = 0i32;
+            let mut in_quote = false;
+            let mut balanced = true;
+            for ch in inner.chars() {
+                if ch == '\'' {
+                    in_quote = !in_quote;
+                } else if !in_quote {
+                    if ch == '(' {
+                        depth += 1;
+                    } else if ch == ')' {
+                        depth -= 1;
+                        if depth < 0 {
+                            balanced = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if balanced && depth == 0 {
+                s = inner;
+                continue;
+            }
+        }
+        return trimmed;
+    }
+}
+
+fn split_top_level_type_cast(s: &str) -> Option<(&str, &str)> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    let mut i = 0;
+    let mut last_cast = None;
+    while i + 1 < bytes.len() {
+        let ch = bytes[i] as char;
+        if ch == '\'' {
+            in_quote = !in_quote;
+        } else if !in_quote {
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+            } else if depth == 0 && bytes[i] == b':' && bytes[i + 1] == b':' {
+                last_cast = Some(i);
+                i += 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    let idx = last_cast?;
+    Some((s[..idx].trim(), s[idx + 2..].trim()))
+}
+
+fn split_top_level_as(s: &str) -> Option<(&str, &str)> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    let mut i = 0;
+    let mut last_as = None;
+    while i + 4 <= bytes.len() {
+        let ch = bytes[i] as char;
+        if ch == '\'' {
+            in_quote = !in_quote;
+        } else if !in_quote {
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+            } else if depth == 0
+                && bytes[i].is_ascii_whitespace()
+                && s[i + 1..].len() >= 3
+                && s[i + 1..i + 3].eq_ignore_ascii_case("AS")
+                && s.as_bytes()[i + 3].is_ascii_whitespace()
+            {
+                last_as = Some((i, i + 4));
+            }
+        }
+        i += 1;
+    }
+    let (start, end) = last_as?;
+    Some((s[..start].trim(), s[end..].trim()))
+}
+
+fn split_top_level_binop<'a>(s: &'a str, op: &str) -> Option<(&'a str, &'a str)> {
+    let bytes = s.as_bytes();
+    let op_bytes = op.as_bytes();
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    let mut last_pos = None;
+    let mut i = 0;
+    while i + op_bytes.len() <= bytes.len() {
+        let ch = bytes[i] as char;
+        if ch == '\'' {
+            in_quote = !in_quote;
+        } else if !in_quote {
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+            } else if depth == 0 && &bytes[i..i + op_bytes.len()] == op_bytes {
+                last_pos = Some(i);
+            }
+        }
+        i += 1;
+    }
+    let pos = last_pos?;
+    Some((s[..pos].trim(), s[pos + op_bytes.len()..].trim()))
+}
+
+fn split_top_level_fn_call(s: &str) -> Option<(&str, &str)> {
+    let open = s.find('(')?;
+    if !s.ends_with(')') {
+        return None;
+    }
+    let fn_name = s[..open].trim();
+    if fn_name.is_empty()
+        || !fn_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return None;
+    }
+    let inner = &s[open + 1..s.len() - 1];
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    for ch in inner.chars() {
+        if ch == '\'' {
+            in_quote = !in_quote;
+        } else if !in_quote {
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+        }
+    }
+    if depth == 0 {
+        Some((fn_name, inner))
+    } else {
+        None
+    }
+}
+
+fn split_top_level_args(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut in_quote = false;
+    let mut start = 0usize;
+    for (idx, ch) in s.char_indices() {
+        if ch == '\'' {
+            in_quote = !in_quote;
+        } else if !in_quote {
+            if ch == '(' {
+                depth += 1;
+            } else if ch == ')' {
+                depth -= 1;
+            } else if ch == ',' && depth == 0 {
+                parts.push(s[start..idx].trim());
+                start = idx + 1;
+            }
+        }
+    }
+    let tail = s[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
 /// Get a summary string for the operation for logging
 fn get_operation_summary(op: &ColumnOperation) -> String {
     match op {
@@ -1325,7 +2664,7 @@ mod tests {
         models::{
             datatypes::KalamDataType,
             schemas::{ColumnDefinition, TableDefinition, TableOptions},
-            NamespaceId, TableName,
+            SchemaId, TableName,
         },
         schemas::TableType,
     };
@@ -1336,7 +2675,7 @@ mod tests {
 
     fn user_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("public"),
+            SchemaId::new("public"),
             TableName::new("messages"),
             TableType::User,
             vec![
@@ -1407,7 +2746,7 @@ mod tests {
                 column_name: "conversation_id".to_string(),
             },
             &kalamdb_commons::models::TableId::new(
-                NamespaceId::new("public"),
+                SchemaId::new("public"),
                 TableName::new("messages"),
             ),
         )
@@ -1426,7 +2765,7 @@ mod tests {
 
         let app_ctx = test_app_context_simple();
         let namespaces = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces.get_namespace(&namespace_id).unwrap().is_none() {
             namespaces
                 .create_namespace(kalamdb_system::Namespace {

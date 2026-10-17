@@ -164,7 +164,7 @@ impl Default for CleanupExecutor {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{NamespaceId, StorageId, TableName};
+    use kalamdb_commons::{SchemaId, StorageId, TableName};
 
     use super::*;
 
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn test_params_validation() {
         let params = CleanupParams {
-            table_id:   TableId::new(NamespaceId::default(), TableName::new("users")),
+            table_id:   TableId::new(SchemaId::default(), TableName::new("users")),
             table_type: TableType::User,
             operation:  CleanupOperation::DropTable,
             storage:    StorageCleanupDetails {

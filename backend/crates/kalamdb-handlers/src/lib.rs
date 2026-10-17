@@ -1,6 +1,6 @@
 //! SQL statement handler implementations for KalamDB
 //!
-//! This crate contains all SQL handler implementations (CREATE TABLE, DROP NAMESPACE, etc.)
+//! This crate contains all SQL handler implementations (CREATE TABLE, DROP SCHEMA, etc.)
 //! and shared helpers used by those handlers. Extracting these from `kalamdb-core` enables
 //! parallel compilation, significantly reducing build times.
 //!
@@ -18,7 +18,7 @@ use kalamdb_core::{app_context::AppContext, sql::executor::handler_registry::Han
 use kalamdb_handlers_admin::register_admin_handlers;
 pub use kalamdb_handlers_admin::{backup, cluster, compact, export, flush, jobs, system};
 use kalamdb_handlers_ddl::register_ddl_handlers;
-pub use kalamdb_handlers_ddl::{namespace, storage, table, view};
+pub use kalamdb_handlers_ddl::{schema, storage, table, view};
 use kalamdb_handlers_stream::register_stream_handlers;
 pub use kalamdb_handlers_stream::topics;
 use kalamdb_handlers_support::register_typed_handler;
@@ -36,7 +36,7 @@ pub fn register_all_handlers(
     app_context: Arc<AppContext>,
     enforce_password_complexity: bool,
 ) {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
     use kalamdb_sql::classifier::SqlStatementKind;
 
     register_admin_handlers(registry, app_context.clone());
@@ -53,7 +53,7 @@ pub fn register_all_handlers(
         registry,
         SqlStatementKind::Subscribe(SubscribeStatement {
             select_query: "SELECT * FROM _placeholder._placeholder".to_string(),
-            namespace:    NamespaceId::new("_placeholder"),
+            namespace:    SchemaId::new("_placeholder"),
             table_name:   TableName::new("_placeholder"),
             options:      SubscriptionOptions::default(),
         }),

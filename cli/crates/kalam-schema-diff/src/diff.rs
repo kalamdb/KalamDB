@@ -4,7 +4,7 @@ use std::{fs, path::Path};
 
 use thiserror::Error;
 
-use crate::{emitter::diff_schema, parser::parse_schema};
+use crate::{emitter::diff_schema_parts, parser::parse_schema};
 
 /// UP and DOWN SQL statements for a migration step.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +33,8 @@ pub struct DiffOptions {
     /// When `false` (the default for manual `migration create`) those changes are
     /// replaced with advisory comments so the developer reviews them explicitly.
     pub allow_destructive: bool,
+    /// Default connection schema for unqualified contract objects (defaults to `"public"`).
+    pub default_schema:    Option<String>,
 }
 
 /// Compare two schema files and produce semantic UP SQL plus a conservative DOWN note.
@@ -70,26 +72,105 @@ pub fn diff_schema_sql_with_options(
 ) -> Result<MigrationStatements, SchemaDiffError> {
     let current = parse_schema("before schema", before_sql)?;
     let target = parse_schema("after schema", after_sql)?;
-    let mut up_lines = diff_schema(&current, &target, options.allow_destructive);
+    let (namespaces, table_and_topic_body, table_and_topic_drops) =
+        diff_schema_parts(&current, &target, options.allow_destructive);
 
+    let default_schema = options.default_schema.as_deref().unwrap_or("public");
     let current_contract =
-        kalamdb_sql::compile_contract_sql(before_sql, "public").map_err(|err| {
+        kalamdb_sql::compile_contract_sql(before_sql, default_schema).map_err(|err| {
             SchemaDiffError::Parse {
                 message: err.message,
             }
         })?;
     let target_contract =
-        kalamdb_sql::compile_contract_sql(after_sql, "public").map_err(|err| {
+        kalamdb_sql::compile_contract_sql(after_sql, default_schema).map_err(|err| {
             SchemaDiffError::Parse {
                 message: err.message,
             }
         })?;
     let contract_diff = kalamdb_sql::diff_contracts(&current_contract, &target_contract);
-    if !contract_diff.statements.is_empty() {
+
+    let mut pre_table_contract = Vec::new();
+    let mut post_table_contract = Vec::new();
+    let mut drop_routines = Vec::new();
+    let mut drop_types = Vec::new();
+
+    for stmt in contract_diff.statements {
+        let upper = stmt.trim().to_ascii_uppercase();
+        if upper.starts_with("DROP TYPE ") || upper.starts_with("DROP DOMAIN ") {
+            if options.allow_destructive {
+                drop_types.push(stmt);
+            } else {
+                drop_types.push(format!(
+                    "-- destructive change skipped: {}",
+                    stmt.trim_end_matches(';')
+                ));
+            }
+        } else if upper.starts_with("DROP FUNCTION ") || upper.starts_with("DROP PROCEDURE ") {
+            if options.allow_destructive {
+                drop_routines.push(stmt);
+            } else {
+                drop_routines.push(format!(
+                    "-- destructive change skipped: {}",
+                    stmt.trim_end_matches(';')
+                ));
+            }
+        } else if upper.starts_with("ALTER TYPE ") && upper.contains(" DROP ATTRIBUTE ") {
+            if options.allow_destructive {
+                pre_table_contract.push(stmt);
+            } else {
+                pre_table_contract.push(format!(
+                    "-- destructive change skipped: {}",
+                    stmt.trim_end_matches(';')
+                ));
+            }
+        } else if upper.starts_with("CREATE TYPE ")
+            || upper.starts_with("CREATE DOMAIN ")
+            || upper.starts_with("ALTER TYPE ")
+            || upper.starts_with("ALTER DOMAIN ")
+            || upper.starts_with("COMMENT ON TYPE ")
+            || upper.starts_with("COMMENT ON DOMAIN ")
+        {
+            pre_table_contract.push(stmt);
+        } else {
+            post_table_contract.push(stmt);
+        }
+    }
+
+    let mut up_lines = vec![
+        "-- Generated KalamDB schema evolution".to_string(),
+        "-- Review before applying in production.".to_string(),
+        String::new(),
+    ];
+
+    if !namespaces.is_empty() {
+        up_lines.extend(namespaces);
+        up_lines.push(String::new());
+    }
+    if !pre_table_contract.is_empty() {
+        up_lines.extend(pre_table_contract);
+        up_lines.push(String::new());
+    }
+    if !table_and_topic_body.is_empty() {
+        up_lines.extend(table_and_topic_body);
+    }
+    if !post_table_contract.is_empty() {
         if up_lines.last().map(String::as_str) != Some("") {
             up_lines.push(String::new());
         }
-        up_lines.extend(contract_diff.statements);
+        up_lines.extend(post_table_contract);
+    }
+    if !drop_routines.is_empty() || !table_and_topic_drops.is_empty() || !drop_types.is_empty() {
+        if up_lines.last().map(String::as_str) != Some("") {
+            up_lines.push(String::new());
+        }
+        up_lines.extend(drop_routines);
+        up_lines.extend(table_and_topic_drops);
+        up_lines.extend(drop_types);
+    }
+
+    if up_lines.iter().all(|line| line.starts_with("--") || line.trim().is_empty()) {
+        up_lines.push("-- No schema changes.".to_string());
     }
 
     let up = up_lines.join("\n");
@@ -279,6 +360,7 @@ mod tests {
             "",
             &DiffOptions {
                 allow_destructive: true,
+                ..DiffOptions::default()
             },
         )
         .expect("diff schemas");

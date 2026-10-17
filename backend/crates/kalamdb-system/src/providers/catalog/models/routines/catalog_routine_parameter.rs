@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{RoutineId, RoutineParameterId, TypeId},
+    models::{RoutineId, RoutineParameterId, RoutineParameterMode, TypeId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -111,6 +111,28 @@ pub struct CatalogRoutineParameter {
     )]
     #[serde(default)]
     pub data_type:    Option<KalamDataType>,
+    #[column(
+        id = 11,
+        ordinal = 11,
+        data_type(KalamDataType::Text),
+        nullable = false,
+        primary_key = false,
+        default = "None",
+        comment = "Parameter mode: IN, OUT, INOUT, or VARIADIC"
+    )]
+    #[serde(default)]
+    pub mode:         RoutineParameterMode,
+    #[column(
+        id = 12,
+        ordinal = 12,
+        data_type(KalamDataType::Text),
+        nullable = true,
+        primary_key = false,
+        default = "None",
+        comment = "Optional SQL default expression"
+    )]
+    #[serde(default)]
+    pub default_expr: Option<String>,
 }
 
 impl kalamdb_commons::KSerializable for CatalogRoutineParameter {}

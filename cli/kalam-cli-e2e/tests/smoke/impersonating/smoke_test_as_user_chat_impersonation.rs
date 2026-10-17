@@ -25,7 +25,7 @@ impl ChatFixture {
             self.messages_table
         ));
         let _ =
-            execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", self.namespace));
+            execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", self.namespace));
     }
 }
 
@@ -66,7 +66,7 @@ fn setup_chat_fixture(suffix: &str) -> ChatFixture {
     let other_user = generate_unique_namespace("chat_other");
     let password = "test_pass_123".to_string();
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("Failed to create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, conversation_id BIGINT, sender TEXT, role TEXT, \

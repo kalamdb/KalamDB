@@ -315,7 +315,7 @@ async fn test_dbeaver_column_metadata_query_with_bind_parameters() {
     let exec_ctx = ExecutionContext::with_namespace(
         kalamdb_commons::models::UserId::new("admin"),
         kalamdb_commons::Role::Dba,
-        kalamdb_commons::NamespaceId::new("public"),
+        kalamdb_commons::SchemaId::new("public"),
         session,
     );
 

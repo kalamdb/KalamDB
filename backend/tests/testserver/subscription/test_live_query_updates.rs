@@ -13,7 +13,7 @@ async fn test_live_query_detects_updates() -> anyhow::Result<()> {
     let table = "tasks";
 
     // Setup namespace and table as root
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server
@@ -133,7 +133,7 @@ async fn test_live_query_detects_updates_with_like_filter() -> anyhow::Result<()
     let ns = unique_namespace("test_updates_like");
     let table = "metrics";
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server

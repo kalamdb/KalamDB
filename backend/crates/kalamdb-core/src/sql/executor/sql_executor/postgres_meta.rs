@@ -1,4 +1,4 @@
-//! PostgreSQL wire/JDBC shims for DataFusion meta commands (`SET`, `SHOW`, `EXPLAIN`, `DESCRIBE`).
+//! PostgreSQL `SET`, `SHOW`, and `EXPLAIN` execution on the shared SQL session.
 
 use std::sync::Arc;
 
@@ -14,6 +14,47 @@ use crate::{
 };
 
 impl SqlExecutor {
+    pub(super) fn execute_postgres_setting(
+        command: &kalamdb_sql::PostgresSetting,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        let settings = exec_ctx.session_config();
+        match command {
+            kalamdb_sql::PostgresSetting::Set { name, value, local } => {
+                settings
+                    .set_config(name, value.as_deref(), *local)
+                    .map_err(KalamDbError::InvalidOperation)?;
+                Ok(ExecutionResult::Success {
+                    message: "SET".into(),
+                })
+            },
+            kalamdb_sql::PostgresSetting::ResetAll => {
+                settings.reset_all();
+                Ok(ExecutionResult::Success {
+                    message: "RESET".into(),
+                })
+            },
+            kalamdb_sql::PostgresSetting::Show { name } => {
+                let value = settings.get(name).ok_or_else(|| {
+                    KalamDbError::InvalidOperation(format!(
+                        "unrecognized configuration parameter \"{name}\""
+                    ))
+                })?;
+                let schema = Arc::new(Schema::new(vec![Field::new(name, DataType::Utf8, false)]));
+                let batch = RecordBatch::try_new(
+                    Arc::clone(&schema),
+                    vec![Arc::new(StringArray::from(vec![value]))],
+                )
+                .map_err(|e| KalamDbError::InvalidSql(e.to_string()))?;
+                Ok(ExecutionResult::Rows {
+                    batches:   vec![batch],
+                    row_count: 1,
+                    schema:    Some(schema),
+                })
+            },
+        }
+    }
+
     /// Rewrite `DESCRIBE namespace.table` / `DESC table` to query `information_schema.columns`
     /// with Kalam SQL type names instead of Arrow physical types.
     pub(super) fn rewrite_describe_shorthand(
@@ -76,32 +117,6 @@ impl SqlExecutor {
         )
         .map_err(|error| KalamDbError::InvalidSql(error.to_string()))?;
         Ok((vec![batch], schema))
-    }
-
-    pub(super) fn is_postgres_client_set(sql: &str) -> bool {
-        let trimmed = sql.trim().trim_end_matches(';').trim();
-        if trimmed.len() < 4 || !trimmed[..3].eq_ignore_ascii_case("SET") {
-            return false;
-        }
-        let rest = trimmed[3..].trim_start();
-        !rest.to_ascii_lowercase().starts_with("datafusion.")
-    }
-
-    /// PostgreSQL `SHOW` GUC result for JDBC (`SHOW TRANSACTION ISOLATION LEVEL`).
-    pub(super) fn postgres_show_result(sql: &str) -> Option<ExecutionResult> {
-        let shown = crate::sql::functions::classify_postgres_show(sql)?;
-        let schema =
-            Arc::new(Schema::new(vec![Field::new(shown.name.as_str(), DataType::Utf8, false)]));
-        let batch = RecordBatch::try_new(
-            Arc::clone(&schema),
-            vec![Arc::new(StringArray::from(vec![shown.value]))],
-        )
-        .ok()?;
-        Some(ExecutionResult::Rows {
-            batches:   vec![batch],
-            row_count: 1,
-            schema:    Some(schema),
-        })
     }
 }
 
@@ -177,34 +192,6 @@ fn explain_plan_rows(batches: &[RecordBatch]) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn postgres_show_transaction_isolation_returns_read_committed() {
-        let result = SqlExecutor::postgres_show_result("SHOW TRANSACTION ISOLATION LEVEL")
-            .expect("JDBC SHOW TRANSACTION ISOLATION LEVEL");
-        let ExecutionResult::Rows {
-            batches,
-            row_count,
-            schema,
-        } = result
-        else {
-            panic!("expected Rows, got {result:?}");
-        };
-        assert_eq!(row_count, 1);
-        assert_eq!(schema.unwrap().field(0).name(), "transaction_isolation");
-        let values = batches[0].column(0).as_any().downcast_ref::<StringArray>().unwrap();
-        assert_eq!(values.value(0), "read committed");
-    }
-
-    #[test]
-    fn postgres_gui_set_search_path_is_accepted_as_client_set() {
-        assert!(SqlExecutor::is_postgres_client_set("SET search_path TO public"));
-        assert!(SqlExecutor::is_postgres_client_set(r#"SET search_path TO "system""#));
-        assert!(SqlExecutor::is_postgres_client_set("SET SESSION search_path TO app"));
-        assert!(!SqlExecutor::is_postgres_client_set(
-            "SET datafusion.catalog.default_schema = 'system'"
-        ));
-    }
 
     #[test]
     fn parenthesized_analyze_is_detected() {

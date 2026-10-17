@@ -6,7 +6,7 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::scalar_value_to_json,
-    models::{NamespaceId, RoutineId},
+    models::{SchemaId, RoutineId},
     KalamDataType,
 };
 use kalamdb_core::{
@@ -33,7 +33,7 @@ pub async fn invoke_function_v1(
 ) -> impl Responder {
     let session: AuthSession = extractor.into();
     let (namespace, procedure) = path.into_inner();
-    let namespace_id = NamespaceId::new(namespace);
+    let namespace_id = SchemaId::new(namespace);
     let routine_id = RoutineId::from_parts(Some(&namespace_id), &procedure);
 
     if let Some(key) = rejected_context_key(&body) {
@@ -45,71 +45,84 @@ pub async fn invoke_function_v1(
     }
 
     let stores = app_context.system_tables().catalog_stores();
-    let parameters = match stores.list_parameters(&routine_id) {
-        Ok(parameters) => parameters,
-        Err(error) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "code": "INTERNAL_RUNTIME_ERROR",
-                "message": error.to_string(),
-            }));
-        },
+    let parameters = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.http.list_params");
+        match stores.list_parameters(&routine_id) {
+            Ok(parameters) => parameters,
+            Err(error) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "status": "error",
+                    "code": "INTERNAL_RUNTIME_ERROR",
+                    "message": error.to_string(),
+                }));
+            },
+        }
     };
-    let args = match bind_json_args(&body, &parameters) {
-        Ok(args) => args,
-        Err(message) => {
-            return HttpResponse::BadRequest().json(json!({
-                "status": "error",
-                "code": "INVALID_ARGUMENTS",
-                "message": message,
-            }));
-        },
+    let args = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.http.bind_args");
+        match bind_json_args(&body, &parameters) {
+            Ok(args) => args,
+            Err(message) => {
+                return HttpResponse::BadRequest().json(json!({
+                    "status": "error",
+                    "code": "INVALID_ARGUMENTS",
+                    "message": message,
+                }));
+            },
+        }
     };
 
-    let mut headers = Vec::new();
-    for (name, value) in http_req.headers() {
-        if is_sensitive_request_header(name.as_str()) {
-            continue;
-        }
-        if let Ok(value) = value.to_str() {
-            headers.push((name.as_str().to_string(), value.to_string()));
-        }
-    }
-    let query: Vec<(String, String)> = http_req
-        .query_string()
-        .split('&')
-        .filter_map(|pair| {
-            if pair.is_empty() {
-                return None;
+    let (origin, exec_ctx) = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.http.context");
+        let mut headers = Vec::new();
+        for (name, value) in http_req.headers() {
+            if is_sensitive_request_header(name.as_str()) {
+                continue;
             }
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            Some((key.to_string(), value.to_string()))
-        })
-        .collect();
-    let response = Arc::new(Mutex::new(HttpResponseOverrides::default()));
-    let origin = FunctionCallOrigin::Http {
-        method:   http_req.method().as_str().to_string(),
-        path:     http_req.path().to_string(),
-        headers:  Arc::new(headers),
-        query:    Arc::new(query),
-        response: Arc::clone(&response),
+            if let Ok(value) = value.to_str() {
+                headers.push((name.as_str().to_string(), value.to_string()));
+            }
+        }
+        let query: Vec<(String, String)> = http_req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| {
+                if pair.is_empty() {
+                    return None;
+                }
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect();
+        let response = Arc::new(Mutex::new(HttpResponseOverrides::default()));
+        let origin = FunctionCallOrigin::Http {
+            method:   http_req.method().as_str().to_string(),
+            path:     http_req.path().to_string(),
+            headers:  Arc::new(headers),
+            query:    Arc::new(query),
+            response: Arc::clone(&response),
+        };
+
+        let exec_ctx =
+            ExecutionContext::from_session(session, Arc::clone(&app_context.base_session_context()))
+                .with_namespace_id(namespace_id)
+                .with_request_id(Uuid::now_v7().to_string());
+        (origin, exec_ctx)
     };
 
-    let exec_ctx =
-        ExecutionContext::from_session(session, Arc::clone(&app_context.base_session_context()))
-            .with_namespace_id(namespace_id)
-            .with_request_id(Uuid::now_v7().to_string());
-
-    match FunctionService::invoke(
-        Arc::clone(app_context.get_ref()),
-        &exec_ctx,
-        origin,
-        routine_id,
-        args,
+    match kalamdb_observability::kdb_await_in_info_span!(
+        FunctionService::invoke(
+            Arc::clone(app_context.get_ref()),
+            &exec_ctx,
+            origin,
+            routine_id,
+            args,
+        ),
+        "func.invoke"
     )
-    .await
     {
         Ok(result) => {
+            let _span = kalamdb_observability::kdb_info_span_entered!("func.http.encode_response");
             let payload = match function_http_payload(&result.value) {
                 Ok(value) => value,
                 Err(error) => {
@@ -290,7 +303,7 @@ mod tests {
     use std::collections::HashMap;
 
     use kalamdb_commons::{
-        models::{NamespaceId, RoutineId, RoutineParameterId},
+        models::{SchemaId, RoutineId, RoutineParameterId},
         KalamDataType,
     };
     use kalamdb_core::{error::KalamDbError, functions::routine_value_as_json};
@@ -303,7 +316,7 @@ mod tests {
     };
 
     fn json_parameter(name: &str) -> CatalogRoutineParameter {
-        let namespace = NamespaceId::new("app");
+        let namespace = SchemaId::new("app");
         let routine_id = RoutineId::from_parts(Some(&namespace), "send");
         CatalogRoutineParameter {
             parameter_id: RoutineParameterId::new(&routine_id, 0).expect("parameter id"),
@@ -316,6 +329,8 @@ mod tests {
             not_null: true,
             nonempty: false,
             data_type: Some(KalamDataType::Json),
+            mode: kalamdb_commons::models::RoutineParameterMode::default(),
+            default_expr: None,
         }
     }
 

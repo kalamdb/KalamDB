@@ -10,9 +10,9 @@ Evidence: [Dialect::parse_statement](https://docs.rs/sqlparser/0.62.0/sqlparser/
 
 ## R-002: Preserve PostgreSQL behavior when wrapping
 
-Delegation includes `Dialect::dialect()` identity plus lexical/capability methods and expression parsing/precedence. A struct containing PostgreSqlDialect does not inherit its implementations. Add an upstream-versus-wrapper corpus for casts, arrays, dollar strings, nested comments, JSON operators and identifiers. Disable independent permissive options unless registered as intentional extensions.
+Delegation includes `Dialect::dialect()` identity plus lexical/capability methods and expression parsing/precedence. A struct containing PostgreSqlDialect does not inherit its implementations. `KalamDbDialect` is defined with `derive_dialect!(KalamDbDialect, PostgreSqlDialect, preserve_type_id = true)` so `dialect.is::<PostgreSqlDialect>()` remains true and `Dialect::parse_statement` is inherited. Add an upstream-versus-wrapper corpus for casts, arrays, dollar strings, nested comments, JSON operators and identifiers. Disable independent permissive options unless registered as intentional extensions.
 
-Evidence: [Dialect::dialect](https://docs.rs/sqlparser/0.62.0/sqlparser/dialect/trait.Dialect.html#method.dialect); installed sqlparser 0.62 `src/dialect/mod.rs` includes `parse_with_wrapped_dialect` forwarding identity.
+Evidence: [Dialect::dialect](https://docs.rs/sqlparser/0.62.0/sqlparser/dialect/trait.Dialect.html#method.dialect); installed sqlparser 0.62 `src/dialect/mod.rs` includes `parse_with_wrapped_dialect` forwarding identity, and `sqlparser_derive::derive_dialect!` generates the full forwarding implementation with `preserve_type_id = true`.
 
 ## R-003: AST planning is available now
 

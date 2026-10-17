@@ -1,11 +1,21 @@
 //! Shared EntityStores for contract catalog tables.
 
-use std::sync::Arc;
+use std::{
+    ops::Deref,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
+use dashmap::DashMap;
 use kalamdb_commons::{
+    datatypes::KalamDataType,
     models::{
-        ArtifactId, FunctionModuleId, FunctionRevisionId, NamespaceId, RoutineGrantId, RoutineId,
-        RoutineParameterId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
+        ArtifactId, FunctionModuleId, FunctionRevisionId, RoutineGrantId, RoutineId, RoutineKind,
+        RoutineNullSafety, RoutineParallelSafety, RoutineParameterId, RoutineParameterMode,
+        RoutineSecurityMode, RoutineVolatility, SchemaId, TopicId, TriggerAttemptId, TriggerId,
+        TypeFieldId, TypeId, UserId,
     },
     CatalogTypeKind, KSerializable, ScheduleId, StorageKey, SystemTable,
 };
@@ -31,8 +41,13 @@ type TriggerAttemptsStore = IndexedEntityStore<TriggerAttemptId, CatalogTriggerA
 
 /// Shared RocksDB-backed stores for types, fields, routines, parameters, grants,
 /// and function module revisions.
+///
+/// Wrapped in an [`Arc`] so cloning `CatalogStores` across handlers and providers
+/// is a single atomic reference-count increment.
 #[derive(Clone)]
-pub struct CatalogStores {
+pub struct CatalogStores(Arc<CatalogStoresInner>);
+
+pub struct CatalogStoresInner {
     pub types:              TypesStore,
     pub type_fields:        TypeFieldsStore,
     pub routines:           RoutinesStore,
@@ -44,6 +59,18 @@ pub struct CatalogStores {
     pub schedules:          IndexedEntityStore<ScheduleId, CatalogSchedule>,
     pub triggers:           TriggersStore,
     pub trigger_attempts:   TriggerAttemptsStore,
+    routines_cache:         DashMap<RoutineId, CatalogRoutine>,
+    parameters_cache:       DashMap<RoutineId, Vec<CatalogRoutineParameter>>,
+    user_routine_count:     AtomicUsize,
+}
+
+impl Deref for CatalogStores {
+    type Target = CatalogStoresInner;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl std::fmt::Debug for CatalogStores {
@@ -59,24 +86,40 @@ pub enum ActivateFunctionOutcome {
     NoOp,
 }
 
+fn is_user_routine(routine: &CatalogRoutine) -> bool {
+    routine.language.as_deref() != Some("INTERNAL")
+}
+
 impl CatalogStores {
     pub fn new(backend: Arc<dyn StorageBackend>) -> Self {
-        Self {
-            types:              IndexedEntityStore::new(
+        let routines: RoutinesStore = IndexedEntityStore::new(
+            backend.clone(),
+            SystemTable::Routines.column_family_name().expect("Routines is a table"),
+            Vec::new(),
+        );
+        let routines_cache = DashMap::new();
+        let mut initial_user_routines = 0usize;
+        if let Ok(existing) = list_models(&routines) {
+            for routine in existing {
+                if is_user_routine(&routine) {
+                    initial_user_routines += 1;
+                }
+                routines_cache.insert(routine.routine_id.clone(), routine);
+            }
+        }
+
+        Self(Arc::new(CatalogStoresInner {
+            types: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::Types.column_family_name().expect("Types is a table"),
                 Vec::new(),
             ),
-            type_fields:        IndexedEntityStore::new(
+            type_fields: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::TypeFields.column_family_name().expect("TypeFields is a table"),
                 Vec::new(),
             ),
-            routines:           IndexedEntityStore::new(
-                backend.clone(),
-                SystemTable::Routines.column_family_name().expect("Routines is a table"),
-                Vec::new(),
-            ),
+            routines,
             routine_parameters: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::RoutineParameters
@@ -84,14 +127,14 @@ impl CatalogStores {
                     .expect("RoutineParameters is a table"),
                 Vec::new(),
             ),
-            routine_grants:     IndexedEntityStore::new(
+            routine_grants: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::RoutineGrants
                     .column_family_name()
                     .expect("RoutineGrants is a table"),
                 Vec::new(),
             ),
-            function_modules:   IndexedEntityStore::new(
+            function_modules: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::FunctionModules
                     .column_family_name()
@@ -112,24 +155,39 @@ impl CatalogStores {
                     .expect("FunctionArtifacts is a table"),
                 Vec::new(),
             ),
-            schedules:          IndexedEntityStore::new(
+            schedules: IndexedEntityStore::new(
                 backend.clone(),
                 "system_schedules",
                 Vec::new(),
             ),
-            triggers:           IndexedEntityStore::new(
+            triggers: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::Triggers.column_family_name().expect("Triggers is a table"),
                 Vec::new(),
             ),
-            trigger_attempts:   IndexedEntityStore::new(
+            trigger_attempts: IndexedEntityStore::new(
                 backend,
                 SystemTable::TriggerAttempts
                     .column_family_name()
                     .expect("TriggerAttempts is a table"),
                 Vec::new(),
             ),
-        }
+            routines_cache,
+            parameters_cache: DashMap::new(),
+            user_routine_count: AtomicUsize::new(initial_user_routines),
+        }))
+    }
+
+    /// Fast O(1) check for whether any non-`INTERNAL` user-defined routines exist.
+    #[inline]
+    pub fn has_user_routines(&self) -> bool {
+        self.user_routine_count.load(Ordering::Acquire) > 0
+    }
+
+    /// User-defined functions and procedures currently in the catalog.
+    #[inline]
+    pub fn user_routine_count(&self) -> usize {
+        self.user_routine_count.load(Ordering::Acquire)
     }
 
     pub fn upsert_type(&self, catalog_type: CatalogType) -> Result<(), SystemError> {
@@ -143,14 +201,22 @@ impl CatalogStores {
     /// Name lookup only. Runtime caches and FKs use [`TypeId`].
     pub fn find_type(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         name: &str,
     ) -> Result<Option<CatalogType>, SystemError> {
-        for catalog_type in self.list_types()? {
+        let types = self.list_types()?;
+        for catalog_type in &types {
             if catalog_type.namespace_id.as_str() == namespace_id.as_str()
                 && catalog_type.name == name
             {
-                return Ok(Some(catalog_type));
+                return Ok(Some(catalog_type.clone()));
+            }
+        }
+        if namespace_id.as_str() != "pg_catalog" {
+            for catalog_type in types {
+                if catalog_type.namespace_id.as_str() == "pg_catalog" && catalog_type.name == name {
+                    return Ok(Some(catalog_type));
+                }
             }
         }
         Ok(None)
@@ -180,7 +246,7 @@ impl CatalogStores {
         }
         self.upsert_type(CatalogType::named(
             type_id.clone(),
-            NamespaceId::new(namespace),
+            SchemaId::new(namespace),
             name,
             CatalogTypeKind::TopicPayload,
         ))?;
@@ -216,10 +282,6 @@ impl CatalogStores {
             .map(|(_, field)| field)
             .filter(|field| &field.type_id == type_id)
             .collect();
-        if fields.is_empty() {
-            let all: Vec<CatalogTypeField> = list_models(&self.type_fields)?;
-            fields = all.into_iter().filter(|field| &field.type_id == type_id).collect();
-        }
         fields.sort_by_key(|field| field.ordinal);
         Ok(fields)
     }
@@ -252,14 +314,32 @@ impl CatalogStores {
     }
 
     pub fn upsert_routine(&self, routine: CatalogRoutine) -> Result<(), SystemError> {
-        put_model(&self.routines, &routine.routine_id, &routine)
+        put_model(&self.routines, &routine.routine_id, &routine)?;
+        let is_user = is_user_routine(&routine);
+        let prev_was_user = self
+            .routines_cache
+            .insert(routine.routine_id.clone(), routine)
+            .is_some_and(|prev| is_user_routine(&prev));
+        match (prev_was_user, is_user) {
+            (false, true) => {
+                self.user_routine_count.fetch_add(1, Ordering::Release);
+            },
+            (true, false) => {
+                self.user_routine_count.fetch_sub(1, Ordering::Release);
+            },
+            _ => {},
+        }
+        Ok(())
     }
 
     pub fn get_routine(
         &self,
         routine_id: &RoutineId,
     ) -> Result<Option<CatalogRoutine>, SystemError> {
-        get_model(&self.routines, routine_id)
+        if let Some(routine) = self.routines_cache.get(routine_id) {
+            return Ok(Some(routine.value().clone()));
+        }
+        Ok(None)
     }
 
     pub fn list_routines(&self) -> Result<Vec<CatalogRoutine>, SystemError> {
@@ -267,7 +347,10 @@ impl CatalogStores {
     }
 
     pub fn upsert_parameter(&self, parameter: CatalogRoutineParameter) -> Result<(), SystemError> {
-        put_model(&self.routine_parameters, &parameter.parameter_id, &parameter)
+        let routine_id = parameter.routine_id.clone();
+        put_model(&self.routine_parameters, &parameter.parameter_id, &parameter)?;
+        self.parameters_cache.remove(&routine_id);
+        Ok(())
     }
 
     pub fn replace_parameters(
@@ -286,6 +369,7 @@ impl CatalogStores {
         for parameter in parameters {
             self.upsert_parameter(parameter)?;
         }
+        self.parameters_cache.remove(routine_id);
         Ok(())
     }
 
@@ -293,12 +377,19 @@ impl CatalogStores {
         &self,
         routine_id: &RoutineId,
     ) -> Result<Vec<CatalogRoutineParameter>, SystemError> {
-        let all: Vec<CatalogRoutineParameter> = list_models(&self.routine_parameters)?;
-        let mut parameters: Vec<CatalogRoutineParameter> = all
+        if let Some(cached) = self.parameters_cache.get(routine_id) {
+            return Ok(cached.value().clone());
+        }
+        let prefix = RoutineParameterId::scan_prefix(routine_id);
+        let mut parameters: Vec<CatalogRoutineParameter> = self
+            .routine_parameters
+            .scan_prefix_typed(&prefix, None)?
             .into_iter()
+            .map(|(_, parameter)| parameter)
             .filter(|parameter| &parameter.routine_id == routine_id)
             .collect();
         parameters.sort_by_key(|parameter| parameter.ordinal);
+        self.parameters_cache.insert(routine_id.clone(), parameters.clone());
         Ok(parameters)
     }
 
@@ -310,9 +401,14 @@ impl CatalogStores {
         &self,
         routine_id: &RoutineId,
     ) -> Result<Vec<CatalogRoutineGrant>, SystemError> {
-        let all: Vec<CatalogRoutineGrant> = list_models(&self.routine_grants)?;
-        let mut grants: Vec<CatalogRoutineGrant> =
-            all.into_iter().filter(|grant| &grant.routine_id == routine_id).collect();
+        let prefix = RoutineGrantId::scan_prefix(routine_id);
+        let mut grants: Vec<CatalogRoutineGrant> = self
+            .routine_grants
+            .scan_prefix_typed(&prefix, None)?
+            .into_iter()
+            .map(|(_, grant)| grant)
+            .filter(|grant| &grant.routine_id == routine_id)
+            .collect();
         grants.sort_by(|left, right| left.grant_id.as_str().cmp(right.grant_id.as_str()));
         Ok(grants)
     }
@@ -427,6 +523,18 @@ impl CatalogStores {
                 continue;
             }
             if field.field_type_id.as_ref() == Some(type_id) && &field.type_id != type_id {
+                if let Some(owner_type) = self.get_type(&field.type_id)? {
+                    if owner_type.kind == CatalogTypeKind::Domain && field.name == "__base" {
+                        return Ok(Some(format!(
+                            "domain {}.{}",
+                            owner_type.namespace_id, owner_type.name
+                        )));
+                    }
+                    return Ok(Some(format!(
+                        "{}.{}.{}",
+                        owner_type.namespace_id, owner_type.name, field.name
+                    )));
+                }
                 return Ok(Some(format!("{}.{}", field.type_id, field.name)));
             }
         }
@@ -483,9 +591,9 @@ impl CatalogStores {
 
     /// Drop procedures, types, triggers, and schedules owned by `namespace_id`.
     ///
-    /// `DROP NAMESPACE` uses this so catalog objects cannot outlive the schema.
+    /// `DROP SCHEMA` uses this so catalog objects cannot outlive the schema.
     /// Referential checks are skipped because the whole namespace is going away.
-    pub fn drop_namespace_catalog(&self, namespace_id: &NamespaceId) -> Result<(), SystemError> {
+    pub fn drop_namespace_catalog(&self, namespace_id: &SchemaId) -> Result<(), SystemError> {
         let schedule_ids: Vec<ScheduleId> = self
             .list_schedules()?
             .into_iter()
@@ -569,6 +677,12 @@ impl CatalogStores {
         }
 
         self.routines.delete(routine_id)?;
+        self.parameters_cache.remove(routine_id);
+        if let Some((_, removed)) = self.routines_cache.remove(routine_id) {
+            if is_user_routine(&removed) {
+                self.user_routine_count.fetch_sub(1, Ordering::Release);
+            }
+        }
         Ok(())
     }
 
@@ -675,6 +789,207 @@ impl CatalogStores {
             .into_iter()
             .map(|(_, model)| model)
             .collect())
+    }
+
+    ///Ensure the built-in KalamDB extension types (`pg_catalog.file`, `pg_catalog.embedding`)
+    /// and internal file functions (`file_put`, `file_read`, `file_delete`) are persisted once
+    /// in the catalog so they survive restart with the same `TypeId`, `RoutineId`, and OID.
+    pub fn ensure_builtin_extension_catalog(&self) -> Result<(), SystemError> {
+        let pg_catalog_ns = SchemaId::new("pg_catalog");
+        let file_type_id = TypeId::new("pg_catalog.file");
+        if self.get_type(&file_type_id)?.is_none() {
+            let mut file_type = CatalogType::named(
+                file_type_id.clone(),
+                pg_catalog_ns.clone(),
+                "file",
+                CatalogTypeKind::Composite,
+            );
+            file_type.type_revision = 1;
+            file_type.next_slot = 8;
+            file_type.comment = Some("Built-in KalamDB filestore reference type".to_string());
+            self.upsert_type(file_type)?;
+
+            let file_fields = [
+                (1, "id", "text", KalamDataType::Text, true),
+                (2, "sub", "text", KalamDataType::Text, true),
+                (3, "name", "text", KalamDataType::Text, true),
+                (4, "size", "bigint", KalamDataType::BigInt, true),
+                (5, "mime", "text", KalamDataType::Text, true),
+                (6, "sha256", "text", KalamDataType::Text, true),
+                (7, "shard", "int", KalamDataType::Int, false),
+            ];
+            for (slot, name, type_name, data_type, not_null) in file_fields {
+                let field = CatalogTypeField::new(
+                    file_type_id.clone(),
+                    name,
+                    slot,
+                    None,
+                    Some(data_type),
+                    type_name,
+                    false,
+                    not_null,
+                    false,
+                )
+                .map_err(SystemError::InvalidOperation)?;
+                self.upsert_type_field(field)?;
+            }
+        }
+
+        let embedding_type_id = TypeId::new("pg_catalog.embedding");
+        if self.get_type(&embedding_type_id)?.is_none() {
+            let mut embedding_type = CatalogType::named(
+                embedding_type_id,
+                pg_catalog_ns.clone(),
+                "embedding",
+                CatalogTypeKind::Composite,
+            );
+            embedding_type.type_revision = 1;
+            embedding_type.next_slot = 1;
+            embedding_type.comment =
+                Some("Built-in KalamDB fixed-length float4 vector type".to_string());
+            self.upsert_type(embedding_type)?;
+        }
+
+        let system_owner = UserId::from("system");
+
+        let file_put_id = RoutineId::new("pg_catalog.file_put");
+        if self.get_routine(&file_put_id)?.is_none() {
+            self.upsert_routine(CatalogRoutine {
+                routine_id:         file_put_id.clone(),
+                namespace_id:       pg_catalog_ns.clone(),
+                name:               "file_put".to_string(),
+                owner:              system_owner.clone(),
+                security:           RoutineSecurityMode::Invoker,
+                language:           Some("INTERNAL".to_string()),
+                body:               None,
+                return_type_id:     Some(file_type_id.clone()),
+                return_type_name:   Some("pg_catalog.file".to_string()),
+                return_is_array:    false,
+                return_not_null:    true,
+                comment:            Some(
+                    "Stage a multipart file upload and return a minted pg_catalog.file reference"
+                        .to_string(),
+                ),
+                return_data_type:   Some(KalamDataType::File),
+                inline_source_hash: None,
+                inline_artifact_id: None,
+                kind:               RoutineKind::Function,
+                volatility:         RoutineVolatility::Volatile,
+                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety:    RoutineParallelSafety::Unsafe,
+                cost:               None,
+                rows:               None,
+                config_params:      None,
+            })?;
+            self.upsert_parameter(CatalogRoutineParameter {
+                parameter_id: RoutineParameterId::new(&file_put_id, 1)
+                    .map_err(SystemError::InvalidOperation)?,
+                routine_id:   file_put_id,
+                name:         "placeholder".to_string(),
+                ordinal:      1,
+                type_id:      None,
+                type_name:    "text".to_string(),
+                is_array:     false,
+                not_null:     true,
+                nonempty:     false,
+                data_type:    Some(KalamDataType::Text),
+                mode:         RoutineParameterMode::In,
+                default_expr: None,
+            })?;
+        }
+
+        let file_read_id = RoutineId::new("pg_catalog.file_read");
+        if self.get_routine(&file_read_id)?.is_none() {
+            self.upsert_routine(CatalogRoutine {
+                routine_id:         file_read_id.clone(),
+                namespace_id:       pg_catalog_ns.clone(),
+                name:               "file_read".to_string(),
+                owner:              system_owner.clone(),
+                security:           RoutineSecurityMode::Invoker,
+                language:           Some("INTERNAL".to_string()),
+                body:               None,
+                return_type_id:     None,
+                return_type_name:   Some("bytea".to_string()),
+                return_is_array:    false,
+                return_not_null:    true,
+                comment:            Some(
+                    "Read raw bytes from the filestore for a pg_catalog.file reference".to_string(),
+                ),
+                return_data_type:   Some(KalamDataType::Bytes),
+                inline_source_hash: None,
+                inline_artifact_id: None,
+                kind:               RoutineKind::Function,
+                volatility:         RoutineVolatility::Stable,
+                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety:    RoutineParallelSafety::Restricted,
+                cost:               None,
+                rows:               None,
+                config_params:      None,
+            })?;
+            self.upsert_parameter(CatalogRoutineParameter {
+                parameter_id: RoutineParameterId::new(&file_read_id, 1)
+                    .map_err(SystemError::InvalidOperation)?,
+                routine_id:   file_read_id,
+                name:         "file".to_string(),
+                ordinal:      1,
+                type_id:      Some(file_type_id.clone()),
+                type_name:    "pg_catalog.file".to_string(),
+                is_array:     false,
+                not_null:     true,
+                nonempty:     false,
+                data_type:    Some(KalamDataType::File),
+                mode:         RoutineParameterMode::In,
+                default_expr: None,
+            })?;
+        }
+
+        let file_delete_id = RoutineId::new("pg_catalog.file_delete");
+        if self.get_routine(&file_delete_id)?.is_none() {
+            self.upsert_routine(CatalogRoutine {
+                routine_id:         file_delete_id.clone(),
+                namespace_id:       pg_catalog_ns,
+                name:               "file_delete".to_string(),
+                owner:              system_owner,
+                security:           RoutineSecurityMode::Invoker,
+                language:           Some("INTERNAL".to_string()),
+                body:               None,
+                return_type_id:     None,
+                return_type_name:   None,
+                return_is_array:    false,
+                return_not_null:    false,
+                comment:            Some(
+                    "Delete a staged or stored filestore blob for a pg_catalog.file reference"
+                        .to_string(),
+                ),
+                return_data_type:   None,
+                inline_source_hash: None,
+                inline_artifact_id: None,
+                kind:               RoutineKind::Function,
+                volatility:         RoutineVolatility::Volatile,
+                null_safety:        RoutineNullSafety::ReturnsNullOnNullInput,
+                parallel_safety:    RoutineParallelSafety::Unsafe,
+                cost:               None,
+                rows:               None,
+                config_params:      None,
+            })?;
+            self.upsert_parameter(CatalogRoutineParameter {
+                parameter_id: RoutineParameterId::new(&file_delete_id, 1)
+                    .map_err(SystemError::InvalidOperation)?,
+                routine_id:   file_delete_id,
+                name:         "file".to_string(),
+                ordinal:      1,
+                type_id:      Some(file_type_id),
+                type_name:    "pg_catalog.file".to_string(),
+                is_array:     false,
+                not_null:     true,
+                nonempty:     false,
+                data_type:    Some(KalamDataType::File),
+                mode:         RoutineParameterMode::In,
+                default_expr: None,
+            })?;
+        }
+
+        Ok(())
     }
 }
 

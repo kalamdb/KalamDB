@@ -34,8 +34,8 @@ pub mod manifest {
     };
 }
 
-pub mod namespaces {
-    pub use crate::providers::namespaces::models::Namespace;
+pub mod schemas {
+    pub use crate::providers::schemas::models::Namespace;
 }
 
 pub mod storages {

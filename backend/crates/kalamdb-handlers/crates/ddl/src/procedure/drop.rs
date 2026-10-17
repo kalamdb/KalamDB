@@ -37,26 +37,51 @@ impl TypedStatementHandler<DropProcedureStatement> for DropProcedureHandler {
             let stores = app.system_tables().catalog_stores();
             let existing = stores
                 .get_routine(&statement.routine_id)
-                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            if existing.is_none() {
+                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+                .or_else(|| {
+                    let (_, name) = statement.routine_id.as_str().split_once('.')?;
+                    stores.get_routine(&kalamdb_commons::RoutineId::new(format!("pg_catalog.{name}"))).ok().flatten()
+                });
+            let Some(existing) = existing else {
                 if statement.if_exists {
                     return Ok(ExecutionResult::Success {
                         message: format!(
-                            "Procedure {} does not exist, skipping",
+                            "{} {} does not exist, skipping",
+                            statement.expected_kind.as_str(),
                             statement.routine_id
                         ),
                     });
                 }
                 return Err(KalamDbError::NotFound(format!(
-                    "procedure {} not found",
+                    "{} {} not found",
+                    statement.expected_kind.as_str().to_ascii_lowercase(),
                     statement.routine_id
+                )));
+            };
+            if existing.namespace_id.is_system_namespace()
+                || existing.language.as_deref() == Some("INTERNAL")
+            {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "cannot drop built-in system routine {}",
+                    existing.routine_id
+                )));
+            }
+            if existing.kind != statement.expected_kind {
+                return Err(KalamDbError::InvalidSql(format!(
+                    "{} is not a {}",
+                    statement.routine_id,
+                    statement.expected_kind.as_str().to_ascii_lowercase()
                 )));
             }
             stores
                 .drop_routine(&statement.routine_id)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
             Ok(ExecutionResult::Success {
-                message: format!("Procedure {} dropped", statement.routine_id),
+                message: format!(
+                    "{} {} dropped",
+                    statement.expected_kind.as_str(),
+                    statement.routine_id
+                ),
             })
         })
         .await

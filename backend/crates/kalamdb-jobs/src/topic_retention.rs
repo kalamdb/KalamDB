@@ -101,7 +101,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::models::{
-        rows::Row, NamespaceId, PayloadMode, TableId, TableName, TopicId, TopicOp,
+        rows::Row, PayloadMode, SchemaId, TableId, TableName, TopicId, TopicOp,
     };
     use kalamdb_core::test_helpers::test_app_context;
     use kalamdb_system::{
@@ -127,7 +127,7 @@ mod tests {
         retention_max_bytes: Option<i64>,
     ) -> TableId {
         let table_id =
-            TableId::new(NamespaceId::new("topic_retention_jobs"), TableName::new(table_name));
+            TableId::new(SchemaId::new("topic_retention_jobs"), TableName::new(table_name));
         let mut topic = Topic::new(topic_id.clone(), topic_id.as_str().to_string());
         topic.partitions = 1;
         topic.retention_seconds = retention_seconds;

@@ -6,7 +6,7 @@ use std::{
 use arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_commons::{
     conversions::with_kalam_data_type_metadata,
-    models::{datatypes::ToArrowType, NamespaceId, StorageId, TableName},
+    models::{datatypes::ToArrowType, SchemaId, StorageId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 use once_cell::sync::Lazy;
@@ -17,13 +17,17 @@ use super::types::CreateTableStatement;
 use crate::{
     compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::column_default::expr_to_column_default,
-    parser::utils::{format_span, parse_sql_statements},
+    parser::{utils::format_span, KalamParser},
     validation::validate_column_name,
 };
 
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
+static RE_CURRENT_USER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap());
+static CREATE_USER_TABLE_PREFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+USER\s+TABLE\b").unwrap());
 static CREATE_TYPED_PREFIX_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(USER|SHARED|STREAM)\s+TABLE").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+(SHARED|STREAM)\s+TABLE").unwrap());
 /// Matches `USING <identifier>` clause after the closing paren of column definitions.
 /// PostgreSQL uses this for table access methods, e.g. `CREATE TABLE t (...) USING kalamdb`.
 static USING_ACCESS_METHOD_RE: Lazy<Regex> =
@@ -31,8 +35,13 @@ static USING_ACCESS_METHOD_RE: Lazy<Regex> =
 
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> Result<Self, String> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> Result<Self, String> {
         crate::ddl::reject_access_level_sql(sql)?;
+        if CREATE_USER_TABLE_PREFIX_RE.is_match(sql) {
+            return Err("CREATE USER TABLE syntax is no longer supported; use CREATE TABLE ... \
+                        WITH (TYPE = 'USER')"
+                .to_string());
+        }
         let (mut normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
 
         // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
@@ -44,11 +53,7 @@ impl CreateTableStatement {
         normalized_sql = normalized_sql.replace("AUTO INCREMENT", "DEFAULT SNOWFLAKE_ID()");
         normalized_sql = normalized_sql.replace("auto increment", "DEFAULT SNOWFLAKE_ID()");
 
-        // Use PostgreSqlDialect because GenericDialect has issues with TEXT/STRING PRIMARY KEY
-        // in sqlparser 0.59.0. PostgreSqlDialect properly handles TEXT as a data type.
-        let dialect = sqlparser::dialect::PostgreSqlDialect {};
-        let mut statements =
-            parse_sql_statements(&normalized_sql, &dialect).map_err(|e| e.to_string())?;
+        let mut statements = KalamParser::parse(&normalized_sql).map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
         }
@@ -68,7 +73,7 @@ impl CreateTableStatement {
                     (default_namespace.clone(), TableName::from(name.0[0].to_string().as_str()))
                 } else if name.0.len() == 2 {
                     (
-                        NamespaceId::from(name.0[0].to_string().as_str()),
+                        SchemaId::from(name.0[0].to_string().as_str()),
                         TableName::from(name.0[1].to_string().as_str()),
                     )
                 } else {
@@ -78,7 +83,7 @@ impl CreateTableStatement {
                 };
 
                 // Validate names using shared commons rules.
-                if let Err(error) = NamespaceId::try_parse_reference(namespace_id.as_str()) {
+                if let Err(error) = SchemaId::try_parse_reference(namespace_id.as_str()) {
                     let span = name.0.first().and_then(|part| match part {
                         ObjectNamePart::Identifier(ident) => Some(ident.span),
                         _ => None,
@@ -354,7 +359,11 @@ impl CreateTableStatement {
                             "item", data_type, true,
                         )));
                     }
-                    if type_ref.builtin_data_type().is_none() || type_ref.is_array {
+                    if type_ref.builtin_data_type().is_none()
+                        || type_ref.is_array
+                        || type_ref.name.eq_ignore_ascii_case("jsonb")
+                        || type_ref.name.eq_ignore_ascii_case("timestamptz")
+                    {
                         column_type_refs.insert(col_name.clone(), type_ref);
                     }
                     let is_nullable = true;
@@ -502,8 +511,7 @@ fn parse_eviction_strategy_option(value: &str) -> Result<String, String> {
 fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
     // Replace CURRENT_USER() with CURRENT_USER to satisfy sqlparser GenericDialect
     // which doesn't support function calls for this keyword in DEFAULT clause
-    let re_current_user = Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap();
-    let mut normalized = re_current_user.replace_all(sql, "CURRENT_USER").into_owned();
+    let mut normalized = RE_CURRENT_USER.replace_all(sql, "CURRENT_USER").into_owned();
 
     // Strip `USING <access_method>` clause (PostgreSQL table access method syntax).
     // e.g. `CREATE TABLE t (...) USING kalamdb WITH (...)` → `CREATE TABLE t (...) WITH (...)`
@@ -546,8 +554,8 @@ mod tests {
 
     const DEFAULT_NS: &str = "sales";
 
-    fn default_ns() -> NamespaceId {
-        NamespaceId::new(DEFAULT_NS)
+    fn default_ns() -> SchemaId {
+        SchemaId::new(DEFAULT_NS)
     }
 
     #[test]
@@ -868,7 +876,7 @@ CREATE TABLE sales.orders (
             stmt.column_defaults.get("id"),
             Some(&ColumnDefault::procedure(
                 RoutineId::from_parts(
-                    Some(&kalamdb_commons::models::NamespaceId::new("sales")),
+                    Some(&kalamdb_commons::models::SchemaId::new("sales")),
                     "next_id"
                 ),
                 vec![CallArgument::text("v1")],
@@ -879,7 +887,7 @@ CREATE TABLE sales.orders (
             Some(&ColumnDefault::function("NOW", vec![]))
         );
 
-        let ns = kalamdb_commons::models::NamespaceId::new(DEFAULT_NS);
+        let ns = kalamdb_commons::models::SchemaId::new(DEFAULT_NS);
         let call = crate::ddl::CallStatement::parse("CALL next_id('v1')", &ns).unwrap();
         assert_eq!(stmt.column_defaults.get("id").unwrap().as_routine_call(), Some(&call.call));
     }

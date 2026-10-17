@@ -3,7 +3,7 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
     models::{
-        ids::{LiveQueryId, NamespaceId, UserId},
+        ids::{LiveQueryId, SchemaId, UserId},
         NodeId, TableName,
     },
 };
@@ -42,7 +42,7 @@ use super::LiveQueryStatus;
 /// ## Example
 ///
 /// ```rust
-/// use kalamdb_commons::models::ids::{ConnectionId, LiveQueryId, NamespaceId, UserId};
+/// use kalamdb_commons::models::ids::{ConnectionId, LiveQueryId, SchemaId, UserId};
 /// use kalamdb_system::LiveQuery;
 /// use kalamdb_system::LiveQueryStatus;
 /// use kalamdb_commons::{NodeId, TableName};
@@ -54,7 +54,7 @@ use super::LiveQueryStatus;
 ///     live_id: LiveQueryId::new(user_id.clone(), connection_id.clone(), "sub_1"),
 ///     connection_id: connection_id.as_str().to_string(),
 ///     subscription_id: "sub_1".to_string(),
-///     namespace_id: NamespaceId::default(),
+///     namespace_id: SchemaId::default(),
 ///     table_name: TableName::new("events"),
 ///     user_id,
 ///     query: "SELECT * FROM events WHERE type = 'click'".to_string(),
@@ -152,7 +152,7 @@ pub struct LiveQuery {
         default = "None",
         comment = "Namespace containing the table"
     )]
-    pub namespace_id:    NamespaceId,
+    pub namespace_id:    SchemaId,
     #[column(
         id = 5,
         ordinal = 5,
@@ -227,7 +227,7 @@ mod tests {
             live_id:         "u_123-conn_456-events-sub_1".into(),
             connection_id:   "conn_456".to_string(),
             subscription_id: "sub_1".to_string(),
-            namespace_id:    NamespaceId::default(),
+            namespace_id:    SchemaId::default(),
             table_name:      TableName::new("events"),
             user_id:         UserId::new("u_123"),
             query:           "SELECT * FROM events".to_string(),

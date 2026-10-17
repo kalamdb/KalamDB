@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arrow::datatypes::DataType;
 use kalamdb_commons::{
-    models::{RoutineId, RoutineSecurityMode, TypeId},
+    models::{RoutineId, RoutineKind, RoutineSecurityMode, TypeId},
     KalamDataType,
 };
 
-use crate::ddl::ExecuteGrantee;
+use crate::ddl::{DomainCheckClause, ExecuteGrantee};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractField {
@@ -41,6 +41,13 @@ pub enum ContractTypeKind {
     },
     Enum {
         labels: Vec<String>,
+    },
+    Domain {
+        base_type:    ContractField,
+        collation:    Option<String>,
+        default_expr: Option<String>,
+        not_null:     bool,
+        checks:       Vec<DomainCheckClause>,
     },
     /// Implicit payload type for a topic: a tagged union of its `ADD SOURCE` tables.
     TopicPayload {
@@ -96,6 +103,7 @@ pub struct ContractRoutine {
     pub routine_id:  RoutineId,
     pub schema:      String,
     pub name:        String,
+    pub kind:        RoutineKind,
     pub parameters:  Vec<ContractField>,
     pub return_type: Option<ContractField>,
     pub language:    Option<String>,

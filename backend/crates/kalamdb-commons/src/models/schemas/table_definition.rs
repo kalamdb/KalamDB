@@ -23,7 +23,7 @@ use crate::{
         datatypes::{ArrowConversionError, ToArrowType},
         schemas::{ColumnDefinition, ScalarIndexDefinition, SchemaField, TableOptions, TableType},
     },
-    NamespaceId, TableId, TableName,
+    SchemaId, TableId, TableName,
 };
 
 /// Complete definition of a table including schema, history, and options
@@ -33,7 +33,7 @@ use crate::{
 /// Now unified to eliminate duplication and simplify architecture.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TableDefinition {
-    pub namespace_id: NamespaceId,
+    pub namespace_id: SchemaId,
 
     /// Table name (case-sensitive)
     pub table_name: TableName,
@@ -73,9 +73,42 @@ pub struct TableDefinition {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
+struct TableDefinitionSerializeRepr<'a> {
+    namespace_id:   &'a SchemaId,
+    table_name:     &'a TableName,
+    table_type:     TableType,
+    columns:        &'a [ColumnDefinition],
+    schema_version: u32,
+    next_column_id: u64,
+    table_options:  &'a TableOptions,
+    table_comment:  &'a Option<String>,
+    scalar_indexes: &'a [ScalarIndexDefinition],
+    created_at:     DateTime<Utc>,
+    updated_at:     DateTime<Utc>,
+}
+
+impl<'a> From<&'a TableDefinition> for TableDefinitionSerializeRepr<'a> {
+    fn from(table: &'a TableDefinition) -> Self {
+        Self {
+            namespace_id:   &table.namespace_id,
+            table_name:     &table.table_name,
+            table_type:     table.table_type,
+            columns:        &table.columns,
+            schema_version: table.schema_version,
+            next_column_id: table.next_column_id,
+            table_options:  &table.table_options,
+            table_comment:  &table.table_comment,
+            scalar_indexes: &table.scalar_indexes,
+            created_at:     table.created_at,
+            updated_at:     table.updated_at,
+        }
+    }
+}
+
+#[derive(Deserialize)]
 struct TableDefinitionRepr {
-    namespace_id:   NamespaceId,
+    namespace_id:   SchemaId,
     table_name:     TableName,
     table_type:     TableType,
     columns:        Vec<ColumnDefinition>,
@@ -89,27 +122,9 @@ struct TableDefinitionRepr {
     updated_at:     DateTime<Utc>,
 }
 
-impl From<&TableDefinition> for TableDefinitionRepr {
-    fn from(table: &TableDefinition) -> Self {
-        Self {
-            namespace_id:   table.namespace_id.clone(),
-            table_name:     table.table_name.clone(),
-            table_type:     table.table_type,
-            columns:        table.columns.clone(),
-            schema_version: table.schema_version,
-            next_column_id: table.next_column_id,
-            table_options:  table.table_options.clone(),
-            table_comment:  table.table_comment.clone(),
-            scalar_indexes: table.scalar_indexes.clone(),
-            created_at:     table.created_at,
-            updated_at:     table.updated_at,
-        }
-    }
-}
-
 #[derive(PartialEq, Serialize)]
 struct SemanticSchema<'a> {
-    namespace_id:   &'a NamespaceId,
+    namespace_id:   &'a SchemaId,
     table_name:     &'a TableName,
     table_type:     TableType,
     columns:        &'a [ColumnDefinition],
@@ -188,7 +203,7 @@ impl Serialize for TableDefinition {
         S: Serializer,
     {
         if serializer.is_human_readable() {
-            TableDefinitionRepr::from(self).serialize(serializer)
+            TableDefinitionSerializeRepr::from(self).serialize(serializer)
         } else {
             (
                 &self.namespace_id,
@@ -230,7 +245,7 @@ impl TableDefinition {
     /// ```rust,ignore
     /// use kalamdb_commons::models::schemas::{TableDefinition, ColumnDefinition, TableType, TableOptions};
     /// use kalamdb_commons::models::datatypes::KalamDataType;
-    /// use kalamdb_commons::{NamespaceId, TableName, TableId, StorageId};
+    /// use kalamdb_commons::{SchemaId, TableName, TableId, StorageId};
     ///
     /// let columns = vec![
     ///     ColumnDefinition::primary_key("id", 1, KalamDataType::Uuid),
@@ -238,20 +253,20 @@ impl TableDefinition {
     ///     ColumnDefinition::simple("age", 3, KalamDataType::Int),
     /// ];
     ///
-    /// let namespace_id = NamespaceId::new("my_namespace");
+    /// let namespace_id = SchemaId::new("my_namespace");
     /// let table_name = TableName::new("users");
     /// let table_id = TableId::new(namespace_id.clone(), table_name.clone());
     ///
     /// let table = TableDefinition::new(namespace_id, table_name, TableType::User, columns, TableOptions::user(), Some("User accounts table".into())).unwrap();
     ///
-    /// assert_eq!(table.namespace_id, NamespaceId::new("my_namespace"));
+    /// assert_eq!(table.namespace_id, SchemaId::new("my_namespace"));
     /// assert_eq!(table.table_name, TableName::new("users"));
     /// assert_eq!(table.columns.len(), 3);
     /// assert_eq!(table.schema_version, 1);
     /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
@@ -286,7 +301,7 @@ impl TableDefinition {
     /// - use_user_storage: false
     /// - deleted_retention_hours: 24 (24 hours)
     pub fn new_with_defaults(
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         table_name: TableName,
         table_type: TableType,
         columns: Vec<ColumnDefinition>,
@@ -364,16 +379,39 @@ impl TableDefinition {
             .columns
             .iter()
             .map(|col| {
-                let arrow_type = col.data_type.to_arrow_type()?;
+                let arrow_type = if col.logical_type.is_timestamptz() && !col.logical_type.is_array()
+                {
+                    crate::models::datatypes::KalamDataType::DateTime.to_arrow_type()?
+                } else {
+                    col.data_type().to_arrow_type()?
+                };
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
 
                 // Store KalamDataType in metadata for lossless round-trip conversion
-                field = with_kalam_data_type_metadata(field, &col.data_type);
+                field = with_kalam_data_type_metadata(field, &col.data_type());
+                field = crate::conversions::schema_metadata::with_logical_type_modifier(
+                    field,
+                    &col.logical_type,
+                );
+                if let Some(type_id) = col.named_type_id() {
+                    field = crate::conversions::schema_metadata::with_kalam_type_id_metadata(
+                        field, type_id,
+                    );
+                }
 
                 if let Some(flags) =
                     SchemaField::flags_for_column(col.is_primary_key, col.is_nullable)
                 {
                     field = with_kalam_column_flags_metadata(field, &flags);
+                }
+
+                if let Some(crate::models::schemas::ColumnDefault::Literal(ref default_json)) =
+                    col.missing_default
+                {
+                    field = crate::conversions::schema_metadata::with_kalam_missing_default(
+                        field,
+                        default_json,
+                    );
                 }
 
                 field =
@@ -514,7 +552,7 @@ impl TableDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{models::datatypes::KalamDataType, NamespaceId, TableName};
+    use crate::{models::datatypes::KalamDataType, SchemaId, TableName};
 
     fn sample_columns() -> Vec<ColumnDefinition> {
         vec![
@@ -527,7 +565,7 @@ mod tests {
     #[test]
     fn test_new_table_definition() {
         let table = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -535,7 +573,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(table.namespace_id, NamespaceId::default());
+        assert_eq!(table.namespace_id, SchemaId::default());
         assert_eq!(table.table_name, TableName::new("users"));
         assert_eq!(table.table_type, TableType::User);
         assert_eq!(table.columns.len(), 3);
@@ -546,7 +584,7 @@ mod tests {
     #[test]
     fn test_new_with_defaults() {
         let table = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -573,7 +611,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             columns,
@@ -596,7 +634,7 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("test"),
             TableType::User,
             columns,
@@ -616,7 +654,7 @@ mod tests {
         ];
 
         let result = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("test"),
             TableType::User,
             columns,
@@ -631,7 +669,7 @@ mod tests {
     #[test]
     fn test_to_arrow_schema() {
         let table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -651,7 +689,7 @@ mod tests {
     #[test]
     fn test_increment_version() {
         let mut table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -670,7 +708,7 @@ mod tests {
     #[test]
     fn test_add_column() {
         let mut table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -689,7 +727,7 @@ mod tests {
     #[test]
     fn test_drop_column() {
         let mut table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -711,7 +749,7 @@ mod tests {
     fn test_table_options_type_safety() {
         // Test USER table options
         let user_table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -724,7 +762,7 @@ mod tests {
 
         // Test STREAM table options
         let stream_table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -741,7 +779,7 @@ mod tests {
 
         // Test SHARED table options
         let _shared_table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("categories"),
             TableType::Shared,
             sample_columns(),
@@ -754,7 +792,7 @@ mod tests {
     #[test]
     fn test_set_options() {
         let mut table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("events"),
             TableType::Stream,
             sample_columns(),
@@ -789,7 +827,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             columns,
@@ -812,7 +850,7 @@ mod tests {
         ];
 
         let table = TableDefinition::new(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("no_pk"),
             TableType::Shared,
             columns,
@@ -860,7 +898,7 @@ mod tests {
     #[test]
     fn scalar_indexes_roundtrip_json_and_default_to_empty() {
         let mut table = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("messages"),
             TableType::Shared,
             sample_columns(),
@@ -897,7 +935,7 @@ mod tests {
     #[test]
     fn scalar_indexes_resolve_renamed_column_by_id() {
         let mut table = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("messages"),
             TableType::Shared,
             sample_columns(),
@@ -919,7 +957,7 @@ mod tests {
     #[test]
     fn semantically_equal_ignores_timestamps_and_schema_version() {
         let mut current = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -938,7 +976,7 @@ mod tests {
     #[test]
     fn semantically_equal_detects_column_changes() {
         let current = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),
@@ -954,7 +992,7 @@ mod tests {
     #[test]
     fn semantic_reconcile_bytes_are_stable_across_timestamps() {
         let mut first = TableDefinition::new_with_defaults(
-            NamespaceId::default(),
+            SchemaId::default(),
             TableName::new("users"),
             TableType::User,
             sample_columns(),

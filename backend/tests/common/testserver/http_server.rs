@@ -13,7 +13,7 @@ use kalam_client::{
     query::models::query_param::params_from_json_values,
     AuthProvider, KalamLinkClient, KalamLinkTimeouts,
 };
-use kalamdb_commons::{NamespaceId, Role, UserId};
+use kalamdb_commons::{Role, SchemaId, UserId};
 use kalamdb_core::app_context::AppContext;
 use once_cell::sync::{Lazy, OnceCell as SyncOnceCell};
 use serde_json::Value as JsonValue;
@@ -117,7 +117,7 @@ async fn start_http_test_server_on_global_runtime() -> Result<HttpTestServer> {
 /// async fn test_cluster() {
 ///     let cluster = get_cluster_server().await;
 ///     let node1 = cluster.get_node(0).await;
-///     let response = node1.execute_sql("CREATE NAMESPACE test").await.unwrap();
+///     let response = node1.execute_sql("CREATE SCHEMA test").await.unwrap();
 ///     assert!(response.success());
 /// }
 /// ```
@@ -623,7 +623,7 @@ impl HttpTestServer {
 
         Ok(resp)
     }
-    fn try_parse_create_table_target(sql: &str) -> Option<(NamespaceId, String)> {
+    fn try_parse_create_table_target(sql: &str) -> Option<(SchemaId, String)> {
         // Best-effort parse for statements like:
         //   CREATE TABLE ns.table ( ... ) WITH (...)
         // We keep this intentionally simple for tests; if parsing fails we just skip the wait.
@@ -644,13 +644,13 @@ impl HttpTestServer {
             return None;
         }
 
-        Some((NamespaceId::new(namespace_id_str), table_name))
+        Some((SchemaId::new(namespace_id_str), table_name))
     }
 
     #[allow(unused_assignments)]
     async fn wait_for_table_queryable(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
         table_name: &str,
         auth_header: &str,
     ) -> Result<()> {

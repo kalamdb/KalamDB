@@ -209,7 +209,7 @@ pub fn migration_recovery_abort_error(migration_id: &str) -> CLIError {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
 
     use super::*;
     use crate::workflow::migration::{MigrationRecord, MigrationStatus};
@@ -217,7 +217,7 @@ mod tests {
     fn sample_failed_record() -> MigrationRecord {
         MigrationRecord {
             migration_id:  "0001_auto.sql".into(),
-            namespace:     NamespaceId::new("dev"),
+            namespace:     SchemaId::new("dev"),
             migration_key: Some("dev:0001_auto.sql".into()),
             name:          "auto".into(),
             checksum:      "abc".into(),

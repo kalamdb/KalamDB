@@ -1,7 +1,11 @@
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use kalam_client::{
     AuthProvider, ConnectionOptions, HttpVersion, KalamLinkClient, KalamLinkTimeouts,
@@ -17,37 +21,37 @@ const BENCH_HTTP_MAX_RETRIES: u32 = 5;
 /// for the benchmark suite while delegating all HTTP / WebSocket work to kalam-link.
 #[derive(Clone)]
 pub struct KalamClient {
-    endpoints: Arc<Vec<EndpointClient>>,
-    next_endpoint: Arc<AtomicUsize>,
+    endpoints:               Arc<Vec<EndpointClient>>,
+    next_endpoint:           Arc<AtomicUsize>,
     ws_local_bind_addresses: Arc<Vec<String>>,
 }
 
 #[derive(Clone)]
 struct EndpointClient {
     base_url: String,
-    link: KalamLinkClient,
+    link:     KalamLinkClient,
 }
 
 // Keep these simple response types so existing benchmarks compile unchanged.
 #[derive(Debug, Deserialize)]
 pub struct SqlResponse {
-    pub status: String,
+    pub status:  String,
     #[serde(default)]
     pub results: Vec<SqlResult>,
-    pub took: Option<f64>,
-    pub error: Option<SqlError>,
+    pub took:    Option<f64>,
+    pub error:   Option<SqlError>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SqlResult {
     pub row_count: Option<u64>,
-    pub message: Option<String>,
-    pub rows: Option<Vec<Vec<Value>>>,
+    pub message:   Option<String>,
+    pub rows:      Option<Vec<Vec<Value>>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SqlError {
-    pub code: Option<String>,
+    pub code:    Option<String>,
     pub message: String,
 }
 
@@ -115,18 +119,14 @@ impl KalamClient {
         }
 
         Ok(Self {
-            endpoints: Arc::new(endpoints),
-            next_endpoint: Arc::new(AtomicUsize::new(0)),
+            endpoints:               Arc::new(endpoints),
+            next_endpoint:           Arc::new(AtomicUsize::new(0)),
             ws_local_bind_addresses: Arc::new(ws_local_bind_addresses),
         })
     }
 
     /// Convenience helper for a single endpoint.
-    pub async fn login_single(
-        base_url: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<Self, String> {
+    pub async fn login_single(base_url: &str, user: &str, password: &str) -> Result<Self, String> {
         let urls = vec![base_url.to_string()];
         Self::login_with_options(&urls, user, password, true).await
     }
@@ -435,9 +435,9 @@ fn configured_ws_local_bind_addresses() -> Result<Option<Vec<String>>, String> {
             continue;
         }
 
-        let ip = candidate
-            .parse::<IpAddr>()
-            .map_err(|e| format!("Invalid KALAMDB_BENCH_WS_LOCAL_BIND_ADDRESSES entry '{}': {}", candidate, e))?;
+        let ip = candidate.parse::<IpAddr>().map_err(|e| {
+            format!("Invalid KALAMDB_BENCH_WS_LOCAL_BIND_ADDRESSES entry '{}': {}", candidate, e)
+        })?;
         let normalized = ip.to_string();
         if !bind_addrs.contains(&normalized) {
             bind_addrs.push(normalized);
@@ -445,10 +445,9 @@ fn configured_ws_local_bind_addresses() -> Result<Option<Vec<String>>, String> {
     }
 
     if bind_addrs.is_empty() {
-        return Err(
-            "KALAMDB_BENCH_WS_LOCAL_BIND_ADDRESSES was set but no valid IP addresses were provided"
-                .to_string(),
-        );
+        return Err("KALAMDB_BENCH_WS_LOCAL_BIND_ADDRESSES was set but no valid IP addresses \
+                    were provided"
+            .to_string());
     }
 
     Ok(Some(bind_addrs))
@@ -467,8 +466,8 @@ fn default_timeouts() -> KalamLinkTimeouts {
 }
 
 fn benchmark_connection_options(ws_local_bind_addresses: &[String]) -> ConnectionOptions {
-    let mut options = ConnectionOptions::new()
-        .with_ws_local_bind_addresses(ws_local_bind_addresses.to_vec());
+    let mut options =
+        ConnectionOptions::new().with_ws_local_bind_addresses(ws_local_bind_addresses.to_vec());
 
     if std::env::var("KALAMDB_BENCH_HTTP2").ok().as_deref() == Some("1") {
         options = options.with_http_version(HttpVersion::Http2);
@@ -590,7 +589,7 @@ fn query_response_to_sql_response(resp: QueryResponse) -> SqlResponse {
     };
 
     let error = resp.error.as_ref().map(|e| SqlError {
-        code: Some(e.code.clone()),
+        code:    Some(e.code.clone()),
         message: e.message.clone(),
     });
 
@@ -599,11 +598,9 @@ fn query_response_to_sql_response(resp: QueryResponse) -> SqlResponse {
         .iter()
         .map(|r| SqlResult {
             row_count: Some(r.row_count as u64),
-            message: r.message.clone(),
-            rows: r.rows.clone().map(|rows| {
-                rows.into_iter()
-                    .map(|row| row.into_iter().map(Value::from).collect())
-                    .collect()
+            message:   r.message.clone(),
+            rows:      r.rows.clone().map(|rows| {
+                rows.into_iter().map(|row| row.into_iter().map(Value::from).collect()).collect()
             }),
         })
         .collect();

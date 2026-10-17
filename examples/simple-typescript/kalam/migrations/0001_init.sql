@@ -2,18 +2,18 @@
 -- Created: 2026-06-27T00:00:00Z
 
 -- UP
-CREATE NAMESPACE IF NOT EXISTS demo;
+CREATE SCHEMA IF NOT EXISTS demo;
 
 DROP TABLE IF EXISTS demo.activity_feed;
 
-CREATE USER TABLE IF NOT EXISTS demo.activity_feed (
+CREATE TABLE IF NOT EXISTS demo.activity_feed (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     service TEXT NOT NULL,
     level TEXT NOT NULL,
     actor TEXT NOT NULL,
     message TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 INSERT INTO demo.activity_feed (service, level, actor, message)
 VALUES ('api', 'ok', 'system', 'Subscriptions are live for this browser session');

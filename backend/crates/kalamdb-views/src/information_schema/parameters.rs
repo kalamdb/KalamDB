@@ -174,6 +174,9 @@ fn kalam_parameter_batch(
     for routine in system_tables.catalog_stores().list_routines().map_err(|error| {
         DataFusionError::Execution(format!("failed to list system.routines: {error}"))
     })? {
+        if routine.language.as_deref() == Some("INTERNAL") {
+            continue;
+        }
         routines.insert(routine.routine_id.as_str().to_string(), routine);
     }
 
@@ -206,11 +209,13 @@ fn kalam_parameter_batch(
         specific_schema.append_value(routine.namespace_id.as_str());
         specific_name.append_value(routine.routine_id.as_str());
         ordinal_position.append_value((parameter.ordinal.max(0) as u64) + 1);
-        parameter_mode.append_value("IN");
+        parameter_mode.append_value(parameter.mode.as_str());
         parameter_name.append_value(&parameter.name);
         data_type.append_value(parameter_data_type(&parameter));
-        parameter_default.append_null();
-        is_variadic.append_value(false);
+        parameter_default.append_option(parameter.default_expr.as_deref());
+        is_variadic.append_value(
+            parameter.mode == kalamdb_commons::models::RoutineParameterMode::Variadic,
+        );
         rid.append_value(0);
     }
 

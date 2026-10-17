@@ -1,11 +1,11 @@
-use std::fs;
-use std::path::Path;
-use std::time::Duration;
+use std::{fs, path::Path, time::Duration};
 
-use crate::comparison::{self, ComparisonTrend, PreviousRun};
-use crate::config::Config;
-use crate::metrics::{BenchmarkDetail, BenchmarkResult, SystemInfo};
-use crate::verdict::{self, Verdict};
+use crate::{
+    comparison::{self, ComparisonTrend, PreviousRun},
+    config::Config,
+    metrics::{BenchmarkDetail, BenchmarkResult, SystemInfo},
+    verdict::{self, Verdict},
+};
 
 /// Write a self-contained HTML report (with embedded Chart.js) and return the file path.
 pub fn write_html_report(
@@ -86,48 +86,54 @@ fn exact_duration_title_u64(us: u64) -> String {
 }
 
 fn exact_duration_title_u128(us: u128) -> String {
-  format!("{}µs exact", us)
+    format!("{}µs exact", us)
 }
 
 struct SummaryBreakdownItem<'a> {
-  label: &'a str,
-  value: String,
-  tone_class: &'a str,
+    label:      &'a str,
+    value:      String,
+    tone_class: &'a str,
 }
 
 fn render_breakdown_card(title: &str, note: &str, items: &[SummaryBreakdownItem<'_>]) -> String {
-  let items_html = items
-    .iter()
-    .map(|item| {
-      format!(
-        "<div class=\"summary-breakdown-item {}\"><span class=\"summary-breakdown-value\">{}</span><span class=\"summary-breakdown-label\">{}</span></div>",
-        item.tone_class,
-        html_escape(&item.value),
-        html_escape(item.label),
-      )
-    })
-    .collect::<Vec<_>>()
-    .join("");
+    let items_html = items
+        .iter()
+        .map(|item| {
+            format!(
+                "<div class=\"summary-breakdown-item {}\"><span \
+                 class=\"summary-breakdown-value\">{}</span><span \
+                 class=\"summary-breakdown-label\">{}</span></div>",
+                item.tone_class,
+                html_escape(&item.value),
+                html_escape(item.label),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
 
-  format!(
-    "<div class=\"card breakdown-card\"><div class=\"card-heading\">{}</div><div class=\"summary-breakdown\">{}</div><div class=\"card-note\">{}</div></div>",
-    html_escape(title),
-    items_html,
-    html_escape(note),
-  )
+    format!(
+        "<div class=\"card breakdown-card\"><div class=\"card-heading\">{}</div><div \
+         class=\"summary-breakdown\">{}</div><div class=\"card-note\">{}</div></div>",
+        html_escape(title),
+        items_html,
+        html_escape(note),
+    )
 }
 
 fn render_suite_total_row(measured_total_us: u64, wall_clock_duration: Duration) -> String {
-  let measured_total = format_summary_seconds(measured_total_us as f64 / 1_000_000.0);
-  let wall_clock_total = format_summary_seconds(wall_clock_duration.as_secs_f64());
+    let measured_total = format_summary_seconds(measured_total_us as f64 / 1_000_000.0);
+    let wall_clock_total = format_summary_seconds(wall_clock_duration.as_secs_f64());
 
-  format!(
-    "<tfoot><tr class=\"suite-total-row\"><td colspan=\"12\" class=\"suite-total-label\">Whole Bench Totals</td><td class=\"num suite-total-value\" title=\"{}\">{}</td><td colspan=\"2\" class=\"suite-total-meta\" title=\"{}\">Wall clock {}</td></tr></tfoot>",
-    html_escape(&exact_duration_title_u64(measured_total_us)),
-    measured_total,
-    html_escape(&exact_duration_title_u128(wall_clock_duration.as_micros())),
-    wall_clock_total,
-  )
+    format!(
+        "<tfoot><tr class=\"suite-total-row\"><td colspan=\"12\" \
+         class=\"suite-total-label\">Whole Bench Totals</td><td class=\"num suite-total-value\" \
+         title=\"{}\">{}</td><td colspan=\"2\" class=\"suite-total-meta\" title=\"{}\">Wall clock \
+         {}</td></tr></tfoot>",
+        html_escape(&exact_duration_title_u64(measured_total_us)),
+        measured_total,
+        html_escape(&exact_duration_title_u128(wall_clock_duration.as_micros())),
+        wall_clock_total,
+    )
 }
 
 fn render_description_cell(result: &BenchmarkResult) -> String {
@@ -136,12 +142,13 @@ fn render_description_cell(result: &BenchmarkResult) -> String {
     } else {
         result.full_description.as_str()
     };
-  let escaped_full_description = html_escape(full_description);
+    let escaped_full_description = html_escape(full_description);
 
     format!(
-    "<div class=\"desc-wrap\"><div class=\"desc-summary\" title=\"{}\" data-full-description=\"{}\" tabindex=\"0\">{}</div>{}</div>",
-    escaped_full_description,
-    escaped_full_description,
+        "<div class=\"desc-wrap\"><div class=\"desc-summary\" title=\"{}\" \
+         data-full-description=\"{}\" tabindex=\"0\">{}</div>{}</div>",
+        escaped_full_description,
+        escaped_full_description,
         html_escape(&result.description),
         render_details(&result.details)
     )
@@ -153,17 +160,18 @@ fn render_details(details: &[BenchmarkDetail]) -> String {
     }
 
     let items = details
-    .iter()
-    .map(|detail| {
-      let label = html_escape(&detail.label);
-      let value = html_escape(&detail.value);
-      format!(
-        "<span class=\"detail-pill\" title=\"{}: {}\"><span class=\"detail-label\">{}</span><span class=\"detail-value\">{}</span></span>",
-        label, value, label, value
-      )
-    })
-    .collect::<Vec<_>>()
-    .join("");
+        .iter()
+        .map(|detail| {
+            let label = html_escape(&detail.label);
+            let value = html_escape(&detail.value);
+            format!(
+                "<span class=\"detail-pill\" title=\"{}: {}\"><span \
+                 class=\"detail-label\">{}</span><span class=\"detail-value\">{}</span></span>",
+                label, value, label, value
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
 
     format!("<div class=\"detail-list\">{}</div>", items)
 }
@@ -179,112 +187,109 @@ fn build_html(
 ) -> String {
     let passed = results.iter().filter(|r| r.success).count();
     let failed = results.iter().filter(|r| !r.success).count();
-  let measured_total_us: u64 = results.iter().map(|r| r.total_us).sum();
+    let measured_total_us: u64 = results.iter().map(|r| r.total_us).sum();
 
-  let mut excellent_count = 0usize;
-  let mut acceptable_count = 0usize;
-  let mut slow_count = 0usize;
-  let mut faster_count = 0usize;
-  let mut same_count = 0usize;
-  let mut slower_count = 0usize;
-  let mut unavailable_count = 0usize;
+    let mut excellent_count = 0usize;
+    let mut acceptable_count = 0usize;
+    let mut slow_count = 0usize;
+    let mut faster_count = 0usize;
+    let mut same_count = 0usize;
+    let mut slower_count = 0usize;
+    let mut unavailable_count = 0usize;
 
-  for result in results {
-    match verdict::evaluate(result) {
-      Verdict::Excellent => excellent_count += 1,
-      Verdict::Acceptable => acceptable_count += 1,
-      Verdict::Slow => slow_count += 1,
-      Verdict::Failed => {}
+    for result in results {
+        match verdict::evaluate(result) {
+            Verdict::Excellent => excellent_count += 1,
+            Verdict::Acceptable => acceptable_count += 1,
+            Verdict::Slow => slow_count += 1,
+            Verdict::Failed => {},
+        }
+
+        match previous.and_then(|prev| comparison::compare(result, prev)) {
+            Some(comparison) => match comparison.trend() {
+                ComparisonTrend::Faster => faster_count += 1,
+                ComparisonTrend::Same => same_count += 1,
+                ComparisonTrend::Slower => slower_count += 1,
+            },
+            None => unavailable_count += 1,
+        }
     }
 
-    match previous.and_then(|prev| comparison::compare(result, prev)) {
-      Some(comparison) => match comparison.trend() {
-        ComparisonTrend::Faster => faster_count += 1,
-        ComparisonTrend::Same => same_count += 1,
-        ComparisonTrend::Slower => slower_count += 1,
-      },
-      None => unavailable_count += 1,
-    }
-  }
+    let verdict_summary_card = render_breakdown_card(
+        "Verdict Mix",
+        "successful benchmarks only",
+        &[
+            SummaryBreakdownItem {
+                label:      "Excellent",
+                value:      excellent_count.to_string(),
+                tone_class: "tone-good",
+            },
+            SummaryBreakdownItem {
+                label:      "Acceptable",
+                value:      acceptable_count.to_string(),
+                tone_class: "tone-warn",
+            },
+            SummaryBreakdownItem {
+                label:      "Slow",
+                value:      slow_count.to_string(),
+                tone_class: "tone-bad",
+            },
+        ],
+    );
 
-  let verdict_summary_card = render_breakdown_card(
-    "Verdict Mix",
-    "successful benchmarks only",
-    &[
-      SummaryBreakdownItem {
-        label: "Excellent",
-        value: excellent_count.to_string(),
-        tone_class: "tone-good",
-      },
-      SummaryBreakdownItem {
-        label: "Acceptable",
-        value: acceptable_count.to_string(),
-        tone_class: "tone-warn",
-      },
-      SummaryBreakdownItem {
-        label: "Slow",
-        value: slow_count.to_string(),
-        tone_class: "tone-bad",
-      },
-    ],
-  );
+    let comparison_summary_card = if let Some(previous_run) = previous {
+        let note = if unavailable_count > 0 {
+            format!("against {} • {} unavailable/new", previous_run.timestamp, unavailable_count)
+        } else {
+            format!("against {}", previous_run.timestamp)
+        };
 
-  let comparison_summary_card = if let Some(previous_run) = previous {
-    let note = if unavailable_count > 0 {
-      format!(
-        "against {} • {} unavailable/new",
-        previous_run.timestamp, unavailable_count
-      )
+        render_breakdown_card(
+            "Compared To Previous",
+            &note,
+            &[
+                SummaryBreakdownItem {
+                    label:      "Faster",
+                    value:      faster_count.to_string(),
+                    tone_class: "tone-good",
+                },
+                SummaryBreakdownItem {
+                    label:      "Same",
+                    value:      same_count.to_string(),
+                    tone_class: "tone-muted",
+                },
+                SummaryBreakdownItem {
+                    label:      "Slower",
+                    value:      slower_count.to_string(),
+                    tone_class: "tone-bad",
+                },
+            ],
+        )
     } else {
-      format!("against {}", previous_run.timestamp)
+        render_breakdown_card(
+            "Compared To Previous",
+            "no previous report available",
+            &[
+                SummaryBreakdownItem {
+                    label:      "Faster",
+                    value:      "—".to_string(),
+                    tone_class: "tone-muted",
+                },
+                SummaryBreakdownItem {
+                    label:      "Same",
+                    value:      "—".to_string(),
+                    tone_class: "tone-muted",
+                },
+                SummaryBreakdownItem {
+                    label:      "Slower",
+                    value:      "—".to_string(),
+                    tone_class: "tone-muted",
+                },
+            ],
+        )
     };
 
-    render_breakdown_card(
-      "Compared To Previous",
-      &note,
-      &[
-        SummaryBreakdownItem {
-          label: "Faster",
-          value: faster_count.to_string(),
-          tone_class: "tone-good",
-        },
-        SummaryBreakdownItem {
-          label: "Same",
-          value: same_count.to_string(),
-          tone_class: "tone-muted",
-        },
-        SummaryBreakdownItem {
-          label: "Slower",
-          value: slower_count.to_string(),
-          tone_class: "tone-bad",
-        },
-      ],
-    )
-  } else {
-    render_breakdown_card(
-      "Compared To Previous",
-      "no previous report available",
-      &[
-        SummaryBreakdownItem {
-          label: "Faster",
-          value: "—".to_string(),
-          tone_class: "tone-muted",
-        },
-        SummaryBreakdownItem {
-          label: "Same",
-          value: "—".to_string(),
-          tone_class: "tone-muted",
-        },
-        SummaryBreakdownItem {
-          label: "Slower",
-          value: "—".to_string(),
-          tone_class: "tone-muted",
-        },
-      ],
-    )
-  };
-
-  let suite_total_row = render_suite_total_row(measured_total_us, wall_clock_duration);
+    let suite_total_row = render_suite_total_row(measured_total_us, wall_clock_duration);
 
     // Group results by category
     let mut categories: Vec<String> = Vec::new();
@@ -314,23 +319,16 @@ fn build_html(
             .unwrap_or_else(|| "<span class=\"delta delta-none\">—</span>".to_string());
         let description_cell = render_description_cell(r);
         table_rows.push_str(&format!(
-            "<tr>\
-                <td>{status}</td>\
-                <td><strong>{name}</strong>{error_info}</td>\
-                <td><span class=\"cat-badge\">{category}</span></td>\
-            <td class=\"desc-col\">{description}</td>\
-                <td class=\"num\">{iterations}</td>\
-            <td class=\"num\" title=\"{mean_title}\">{mean}</td>\
-            <td class=\"num\" title=\"{median_title}\">{median}</td>\
-            <td class=\"num\" title=\"{p95_title}\">{p95}</td>\
-            <td class=\"num\" title=\"{p99_title}\">{p99}</td>\
-            <td class=\"num\" title=\"{min_title}\">{min}</td>\
-            <td class=\"num\" title=\"{max_title}\">{max}</td>\
-                <td class=\"num ops\">{ops}</td>\
-            <td class=\"num\" title=\"{total_title}\">{total}</td>\
-                <td>{verdict}</td>\
-                <td>{delta}</td>\
-            </tr>",
+            "<tr><td>{status}</td><td><strong>{name}</strong>{error_info}</td><td><span \
+             class=\"cat-badge\">{category}</span></td><td \
+             class=\"desc-col\">{description}</td><td class=\"num\">{iterations}</td><td \
+             class=\"num\" title=\"{mean_title}\">{mean}</td><td class=\"num\" \
+             title=\"{median_title}\">{median}</td><td class=\"num\" \
+             title=\"{p95_title}\">{p95}</td><td class=\"num\" \
+             title=\"{p99_title}\">{p99}</td><td class=\"num\" \
+             title=\"{min_title}\">{min}</td><td class=\"num\" \
+             title=\"{max_title}\">{max}</td><td class=\"num ops\">{ops}</td><td class=\"num\" \
+             title=\"{total_title}\">{total}</td><td>{verdict}</td><td>{delta}</td></tr>",
             status = status,
             name = html_escape(&r.name),
             error_info = error_info,
@@ -1122,27 +1120,29 @@ fn html_escape(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-  use std::collections::HashMap;
+    use std::collections::HashMap;
 
-  use crate::comparison::{PreviousBenchmark, PreviousRun};
-  use crate::config::BenchmarkSuite;
+    use super::*;
+    use crate::{
+        comparison::{PreviousBenchmark, PreviousRun},
+        config::BenchmarkSuite,
+    };
 
     #[test]
     fn build_html_renders_full_description_details_and_exact_time_tooltips() {
         let config = Config {
-            urls: vec!["http://127.0.0.1:2900".to_string()],
-            user: "admin".to_string(),
-            password: "kalamdb123".to_string(),
-            iterations: 1,
-            warmup: 0,
-            concurrency: 1,
-            output_dir: "results".to_string(),
-            suite: BenchmarkSuite::Standard,
-            filter: Some("subscriber_scale".to_string()),
-            bench: vec!["subscriber_scale".to_string()],
-            list_benches: false,
-            namespace: "bench_test".to_string(),
+            urls:            vec!["http://127.0.0.1:2900".to_string()],
+            user:            "admin".to_string(),
+            password:        "kalamdb123".to_string(),
+            iterations:      1,
+            warmup:          0,
+            concurrency:     1,
+            output_dir:      "results".to_string(),
+            suite:           BenchmarkSuite::Standard,
+            filter:          Some("subscriber_scale".to_string()),
+            bench:           vec!["subscriber_scale".to_string()],
+            list_benches:    false,
+            namespace:       "bench_test".to_string(),
             max_subscribers: 100_000,
         };
         let result = BenchmarkResult::from_durations(
@@ -1171,7 +1171,8 @@ mod tests {
 
         assert!(html.contains("Full subscriber-scale verification description"));
         assert!(html.contains("Batch/Wave"));
-        assert!(html.contains("data-full-description=\"Full subscriber-scale verification description\""));
+        assert!(html
+            .contains("data-full-description=\"Full subscriber-scale verification description\""));
         assert!(html.contains("37.004s"));
         assert!(html.contains("38.000s"));
         assert!(html.contains("37004345µs exact"));
@@ -1182,100 +1183,118 @@ mod tests {
         assert!(html.contains("Compared To Previous"));
     }
 
-      #[test]
-      fn build_html_renders_verdict_and_previous_run_summary_cards() {
+    #[test]
+    fn build_html_renders_verdict_and_previous_run_summary_cards() {
         let config = Config {
-          urls: vec!["http://127.0.0.1:2900".to_string()],
-          user: "admin".to_string(),
-          password: "kalamdb123".to_string(),
-          iterations: 1,
-          warmup: 0,
-          concurrency: 1,
-          output_dir: "results".to_string(),
-          suite: BenchmarkSuite::Standard,
-          filter: None,
-          bench: vec![],
-          list_benches: false,
-          namespace: "bench_test".to_string(),
-          max_subscribers: 100_000,
+            urls:            vec!["http://127.0.0.1:2900".to_string()],
+            user:            "admin".to_string(),
+            password:        "kalamdb123".to_string(),
+            iterations:      1,
+            warmup:          0,
+            concurrency:     1,
+            output_dir:      "results".to_string(),
+            suite:           BenchmarkSuite::Standard,
+            filter:          None,
+            bench:           vec![],
+            list_benches:    false,
+            namespace:       "bench_test".to_string(),
+            max_subscribers: 100_000,
         };
 
         let excellent = BenchmarkResult::from_durations(
-          "subscriber_scale",
-          "Scale",
-          "subscriber scale",
-          vec![Duration::from_micros(37_004_345)],
+            "subscriber_scale",
+            "Scale",
+            "subscriber scale",
+            vec![Duration::from_micros(37_004_345)],
         );
         let acceptable = BenchmarkResult::from_durations(
-          "single_insert",
-          "Insert",
-          "single insert",
-          vec![Duration::from_micros(3_000)],
+            "single_insert",
+            "Insert",
+            "single insert",
+            vec![Duration::from_micros(3_000)],
         );
         let slow = BenchmarkResult::from_durations(
-          "concurrent_select",
-          "Concurrent",
-          "concurrent select",
-          vec![Duration::from_micros(80_000)],
+            "concurrent_select",
+            "Concurrent",
+            "concurrent select",
+            vec![Duration::from_micros(80_000)],
         );
 
         let previous = PreviousRun {
-          timestamp: "2026-04-18T12:00:00Z".to_string(),
-          results: HashMap::from([
-            (
-              "subscriber_scale".to_string(),
-              PreviousBenchmark {
-                description: "subscriber scale".to_string(),
-                mean_us: 40_000_000.0,
-                median_us: 40_000_000.0,
-                p95_us: 40_000_000.0,
-                p99_us: 40_000_000.0,
-                ops_per_sec: 1.0,
-              },
-            ),
-            (
-              "single_insert".to_string(),
-              PreviousBenchmark {
-                description: "single insert".to_string(),
-                mean_us: 3_050.0,
-                median_us: 3_050.0,
-                p95_us: 3_050.0,
-                p99_us: 3_050.0,
-                ops_per_sec: 1.0,
-              },
-            ),
-            (
-              "concurrent_select".to_string(),
-              PreviousBenchmark {
-                description: "concurrent select".to_string(),
-                mean_us: 60_000.0,
-                median_us: 60_000.0,
-                p95_us: 60_000.0,
-                p99_us: 60_000.0,
-                ops_per_sec: 1.0,
-              },
-            ),
-          ]),
+            timestamp: "2026-04-18T12:00:00Z".to_string(),
+            results:   HashMap::from([
+                (
+                    "subscriber_scale".to_string(),
+                    PreviousBenchmark {
+                        description: "subscriber scale".to_string(),
+                        mean_us:     40_000_000.0,
+                        median_us:   40_000_000.0,
+                        p95_us:      40_000_000.0,
+                        p99_us:      40_000_000.0,
+                        ops_per_sec: 1.0,
+                    },
+                ),
+                (
+                    "single_insert".to_string(),
+                    PreviousBenchmark {
+                        description: "single insert".to_string(),
+                        mean_us:     3_050.0,
+                        median_us:   3_050.0,
+                        p95_us:      3_050.0,
+                        p99_us:      3_050.0,
+                        ops_per_sec: 1.0,
+                    },
+                ),
+                (
+                    "concurrent_select".to_string(),
+                    PreviousBenchmark {
+                        description: "concurrent select".to_string(),
+                        mean_us:     60_000.0,
+                        median_us:   60_000.0,
+                        p95_us:      60_000.0,
+                        p99_us:      60_000.0,
+                        ops_per_sec: 1.0,
+                    },
+                ),
+            ]),
         };
 
         let html = build_html(
-          &[excellent, acceptable, slow],
-          &config,
-          "2026-04-19T00:00:00Z",
-          "0.4.2-rc.3",
-          Some(&previous),
-          &SystemInfo::default(),
-          Duration::from_secs(50),
+            &[excellent, acceptable, slow],
+            &config,
+            "2026-04-19T00:00:00Z",
+            "0.4.2-rc.3",
+            Some(&previous),
+            &SystemInfo::default(),
+            Duration::from_secs(50),
         );
 
         assert!(html.contains("Verdict Mix"));
         assert!(html.contains("Compared To Previous"));
         assert!(html.contains("against 2026-04-18T12:00:00Z"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Excellent</span>"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Acceptable</span>"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Slow</span>"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Faster</span>"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Same</span>"));
-        assert!(html.contains("<span class=\"summary-breakdown-value\">1</span><span class=\"summary-breakdown-label\">Slower</span>"));
-      }
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Excellent</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Acceptable</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Slow</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Faster</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Same</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"summary-breakdown-value\">1</span><span \
+             class=\"summary-breakdown-label\">Slower</span>"
+        ));
+    }
 }

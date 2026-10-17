@@ -108,10 +108,10 @@ async fn create_user_table(
     table: &str,
     flush_policy: &str,
 ) -> anyhow::Result<()> {
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(
         resp.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         resp.error
     );
 

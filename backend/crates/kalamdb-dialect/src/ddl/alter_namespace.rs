@@ -6,22 +6,35 @@
 
 use std::collections::HashMap;
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use serde_json::Value as JsonValue;
 
 use crate::ddl::DdlResult;
 
 /// ALTER NAMESPACE statement
 #[derive(Debug, Clone, PartialEq)]
-pub struct AlterNamespaceStatement {
+pub struct AlterSchemaStatement {
     /// Namespace name to alter
-    pub name: NamespaceId,
+    pub name: SchemaId,
 
     /// Options to set
     pub options: HashMap<String, JsonValue>,
 }
 
-impl AlterNamespaceStatement {
+fn strip_alter_schema_prefix(sql: &str) -> Result<&str, String> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    let prefix_len = if upper.starts_with("ALTER SCHEMA") {
+        "ALTER SCHEMA".len()
+    } else if upper.starts_with("ALTER NAMESPACE") {
+        "ALTER NAMESPACE".len()
+    } else {
+        return Err("Invalid ALTER SCHEMA syntax".to_string());
+    };
+    Ok(trimmed[prefix_len..].trim_start())
+}
+
+impl AlterSchemaStatement {
     /// Parse an ALTER NAMESPACE statement from SQL
     ///
     /// Supports syntax:
@@ -31,8 +44,8 @@ impl AlterNamespaceStatement {
         let sql_trim = sql.trim();
         let sql_upper = sql_trim.to_uppercase();
 
-        if !sql_upper.starts_with("ALTER NAMESPACE") {
-            return Err("Expected ALTER NAMESPACE statement".to_string());
+        if !sql_upper.starts_with("ALTER SCHEMA") && !sql_upper.starts_with("ALTER NAMESPACE") {
+            return Err("Expected ALTER SCHEMA statement".to_string());
         }
 
         if sql_upper.contains("SET OPTIONS") {
@@ -48,12 +61,7 @@ impl AlterNamespaceStatement {
 
     fn parse_set_options(sql: &str) -> DdlResult<Self> {
         // Extract namespace name (between ALTER NAMESPACE and SET OPTIONS)
-        let name_part = sql
-            .trim()
-            .strip_prefix("ALTER NAMESPACE")
-            .or_else(|| sql.trim().strip_prefix("alter namespace"))
-            .ok_or_else(|| "Invalid ALTER NAMESPACE syntax".to_string())?
-            .trim();
+        let name_part = strip_alter_schema_prefix(sql)?;
 
         let set_options_pos = name_part
             .to_uppercase()
@@ -76,19 +84,14 @@ impl AlterNamespaceStatement {
         let options = Self::parse_options(options_part)?;
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             options,
         })
     }
 
     fn parse_set_description(sql: &str) -> DdlResult<Self> {
         // Extract namespace name and description value.
-        let name_part = sql
-            .trim()
-            .strip_prefix("ALTER NAMESPACE")
-            .or_else(|| sql.trim().strip_prefix("alter namespace"))
-            .ok_or_else(|| "Invalid ALTER NAMESPACE syntax".to_string())?
-            .trim();
+        let name_part = strip_alter_schema_prefix(sql)?;
 
         let set_desc_pos = name_part
             .to_uppercase()
@@ -117,7 +120,7 @@ impl AlterNamespaceStatement {
         );
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             options,
         })
     }
@@ -185,7 +188,7 @@ mod tests {
 
     #[test]
     fn test_parse_alter_namespace() {
-        let stmt = AlterNamespaceStatement::parse(
+        let stmt = AlterSchemaStatement::parse(
             "ALTER NAMESPACE app SET OPTIONS (max_tables = 100, region = 'us-west')",
         )
         .unwrap();
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_parse_alter_namespace_empty_options() {
-        let stmt = AlterNamespaceStatement::parse("ALTER NAMESPACE app SET OPTIONS ()").unwrap();
+        let stmt = AlterSchemaStatement::parse("ALTER NAMESPACE app SET OPTIONS ()").unwrap();
 
         assert_eq!(stmt.name.as_str(), "app");
         assert!(stmt.options.is_empty());
@@ -206,23 +209,22 @@ mod tests {
 
     #[test]
     fn test_parse_alter_namespace_boolean() {
-        let stmt =
-            AlterNamespaceStatement::parse("ALTER NAMESPACE app SET OPTIONS (enabled = true)")
-                .unwrap();
+        let stmt = AlterSchemaStatement::parse("ALTER NAMESPACE app SET OPTIONS (enabled = true)")
+            .unwrap();
 
         assert_eq!(stmt.options.get("enabled"), Some(&JsonValue::Bool(true)));
     }
 
     #[test]
     fn test_parse_alter_namespace_missing_name() {
-        let result = AlterNamespaceStatement::parse("ALTER NAMESPACE SET OPTIONS ()");
+        let result = AlterSchemaStatement::parse("ALTER NAMESPACE SET OPTIONS ()");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_alter_namespace_set_description() {
         let stmt =
-            AlterNamespaceStatement::parse("ALTER NAMESPACE app SET DESCRIPTION 'Chat namespace'")
+            AlterSchemaStatement::parse("ALTER NAMESPACE app SET DESCRIPTION 'Chat namespace'")
                 .unwrap();
 
         assert_eq!(stmt.name.as_str(), "app");

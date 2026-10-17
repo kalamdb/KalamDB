@@ -34,7 +34,7 @@
 //! The DmlExecutor is stateless, allowing parallel execution across shards.
 
 mod ddl;
-mod dml;
+pub(crate) mod dml;
 mod namespace;
 mod storage;
 mod user;

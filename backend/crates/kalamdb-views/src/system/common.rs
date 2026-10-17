@@ -6,7 +6,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, TableName,
+    SchemaId, TableName,
 };
 use kalamdb_system::{SystemTable, SystemTablesRegistry};
 
@@ -32,7 +32,7 @@ pub fn system_view_definition(
     comment: impl Into<String>,
 ) -> TableDefinition {
     TableDefinition::new(
-        NamespaceId::system(),
+        SchemaId::system(),
         TableName::new(system_table.table_name()),
         TableType::System,
         columns,

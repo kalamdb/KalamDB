@@ -1,8 +1,8 @@
 -- Two full lifecycle passes in one script with CASCADE drops between passes.
 
-DROP NAMESPACE IF EXISTS sql_file_case_15 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_15 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_15;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_15;
 USE sql_file_case_15;
 
 CREATE TABLE IF NOT EXISTS parents (
@@ -27,9 +27,9 @@ UPDATE children SET state = 'archived' WHERE id = 1511;
 DELETE FROM children WHERE id = 1511;
 INSERT INTO children (id, parent_id, body, state) VALUES (1511, 1501, 'c1-reinsert', 'active');
 
-DROP NAMESPACE IF EXISTS sql_file_case_15 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_15 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_15;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_15;
 USE sql_file_case_15;
 
 CREATE TABLE IF NOT EXISTS parents (
@@ -44,4 +44,4 @@ INSERT INTO parents (id, name, state) VALUES (1599, 'p2', 'final-pass');
 UPDATE parents SET state = 'done' WHERE id = 1599;
 DELETE FROM parents WHERE id = 1599;
 
-DROP NAMESPACE IF EXISTS sql_file_case_15 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_15 CASCADE;

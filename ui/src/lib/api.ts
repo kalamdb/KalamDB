@@ -198,7 +198,7 @@ export function sqlResponseFromQuery(response: QueryResponse): SqlResponse {
 
 export async function executeSql(sql: string, namespace?: string): Promise<SqlResponse> {
   if (namespace && namespace.trim().length > 0) {
-    console.warn("[api] executeSql namespace parameter is ignored; SQL execution now routes through @kalamdb/client");
+    console.warn("[api] executeSql schema parameter is ignored; SQL execution now routes through @kalamdb/client");
   }
 
   return sqlResponseFromQuery(await executeQuery(sql));

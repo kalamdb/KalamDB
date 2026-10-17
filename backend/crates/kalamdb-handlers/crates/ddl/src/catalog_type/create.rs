@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{CatalogTypeKind, NamespaceId, TableId, TopicId, TypeId},
+    models::{CatalogTypeKind, SchemaId, TableId, TopicId, TypeId},
     schemas::{TableDefinition, TableName},
 };
 use kalamdb_core::{
@@ -68,6 +68,16 @@ fn persist_create_type(
                 ),
             });
         }
+        return Err(KalamDbError::AlreadyExists(format!(
+            "type {}.{} already exists",
+            statement.namespace_id, statement.name
+        )));
+    }
+    let table_id = TableId::new(
+        statement.namespace_id.clone(),
+        TableName::new(statement.name.as_str()),
+    );
+    if app.schema_registry().get(&table_id).is_some() {
         return Err(KalamDbError::AlreadyExists(format!(
             "type {}.{} already exists",
             statement.namespace_id, statement.name
@@ -156,18 +166,10 @@ fn persist_create_type(
                 .publish_type_fields(catalog_fields)
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
         },
-        CreateTypeBody::FromTable {
-            table_namespace_id,
-            table_name,
-        } => {
-            persist_from_table(
-                app,
-                &stores,
-                &statement,
-                &type_id,
-                table_namespace_id.clone(),
-                table_name.clone(),
-            )?;
+        CreateTypeBody::FromTable { .. } => {
+            return Err(KalamDbError::InvalidSql(
+                "CREATE TYPE ... FROM TABLE is not supported in PostgreSQL 18".to_string(),
+            ));
         },
     }
 
@@ -193,58 +195,6 @@ fn upsert_named_type(
     catalog_type.next_slot = next_slot.max(1);
     stores
         .upsert_type(catalog_type)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
-}
-
-fn persist_from_table(
-    app: &AppContext,
-    stores: &CatalogStores,
-    statement: &CreateTypeStatement,
-    type_id: &TypeId,
-    table_namespace_id: Option<NamespaceId>,
-    table_name: String,
-) -> Result<(), KalamDbError> {
-    let table_schema = table_namespace_id.unwrap_or_else(|| statement.namespace_id.clone());
-    if table_schema != statement.namespace_id {
-        return Err(KalamDbError::InvalidSql(
-            "FROM TABLE alias and table must live in the same schema".to_string(),
-        ));
-    }
-    let table_id = TableId::new(table_schema, TableName::new(table_name));
-    let Some(cached) = app.schema_registry().get(&table_id) else {
-        return Err(KalamDbError::NotFound(format!("table {table_id} not found")));
-    };
-
-    let implicit_id = ensure_implicit_row_type(stores, &table_id, &cached.table)?;
-    if type_id == &implicit_id {
-        return Ok(());
-    }
-
-    for existing in stores
-        .list_types()
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-    {
-        if existing.kind == CatalogTypeKind::RowAlias
-            && existing.source_type_id.as_ref() == Some(&implicit_id)
-            && existing.type_id != *type_id
-        {
-            return Err(KalamDbError::AlreadyExists(format!(
-                "table {table_id} already has row alias {}",
-                existing.type_id
-            )));
-        }
-    }
-
-    let mut alias = CatalogType::named(
-        type_id.clone(),
-        statement.namespace_id.clone(),
-        statement.name.clone(),
-        CatalogTypeKind::RowAlias,
-    );
-    alias.source_type_id = Some(implicit_id);
-    alias.comment = statement.comment.clone();
-    stores
-        .upsert_type(alias)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))
 }
 
@@ -284,6 +234,9 @@ pub fn ensure_implicit_row_type(
     let fields = table_def
         .columns
         .iter()
+        .filter(|column| {
+            !kalamdb_commons::constants::SystemColumnNames::is_system_column(&column.column_name)
+        })
         .map(|column| {
             CatalogTypeField::from_column(&type_id, column).map_err(KalamDbError::InvalidSql)
         })
@@ -294,10 +247,48 @@ pub fn ensure_implicit_row_type(
     Ok(type_id)
 }
 
+pub fn sync_implicit_row_type(
+    stores: &CatalogStores,
+    table_id: &TableId,
+    table_def: &TableDefinition,
+) -> Result<Option<TypeId>, KalamDbError> {
+    let Some(mut existing) = stores
+        .find_type(table_id.namespace_id(), table_id.table_name().as_str())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    else {
+        let type_id = ensure_implicit_row_type(stores, table_id, table_def)?;
+        return Ok(Some(type_id));
+    };
+    if existing.kind != CatalogTypeKind::ImplicitTableRow {
+        return Ok(None);
+    }
+    let type_id = existing.type_id.clone();
+    existing.type_revision = existing.type_revision.saturating_add(1);
+    existing.next_slot = existing.next_slot.max((table_def.columns.len() as i32) + 1);
+    stores
+        .upsert_type(existing)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+
+    let fields = table_def
+        .columns
+        .iter()
+        .filter(|column| {
+            !kalamdb_commons::constants::SystemColumnNames::is_system_column(&column.column_name)
+        })
+        .map(|column| {
+            CatalogTypeField::from_column(&type_id, column).map_err(KalamDbError::InvalidSql)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    stores
+        .replace_type_fields(&type_id, fields)
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+    Ok(Some(type_id))
+}
+
 pub(super) fn catalog_field(
     stores: &CatalogStores,
     type_id: &TypeId,
-    current_schema: &NamespaceId,
+    current_schema: &SchemaId,
     name: String,
     type_ref: TypeReference,
     ordinal: i32,
@@ -320,9 +311,9 @@ pub(super) fn catalog_field(
 
 pub(crate) fn require_type_reference(
     stores: &CatalogStores,
-    current_schema: &NamespaceId,
+    current_schema: &SchemaId,
     type_ref: &TypeReference,
-    creating: Option<(&NamespaceId, &str)>,
+    creating: Option<(&SchemaId, &str)>,
 ) -> Result<(), KalamDbError> {
     let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
         return Ok(());
@@ -338,7 +329,7 @@ pub(crate) fn require_type_reference(
 /// Live catalog TypeId for a named type reference. Builtins return `None`.
 pub(crate) fn resolve_named_type_id(
     stores: &CatalogStores,
-    current_schema: &NamespaceId,
+    current_schema: &SchemaId,
     type_ref: &TypeReference,
 ) -> Result<Option<TypeId>, KalamDbError> {
     let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
@@ -398,7 +389,7 @@ pub(crate) fn require_procedure_types(
 mod tests {
     use std::sync::Arc;
 
-    use kalamdb_commons::{models::NamespaceId, Role};
+    use kalamdb_commons::{models::SchemaId, Role};
     use kalamdb_core::{
         sql::{context::ExecutionContext, executor::handlers::TypedStatementHandler},
         test_helpers::{create_test_session_for, test_app_context_simple},
@@ -417,7 +408,7 @@ mod tests {
 
     fn ensure_namespace(app: &AppContext, name: &str) {
         let namespaces = app.system_tables().namespaces();
-        let namespace_id = NamespaceId::new(name);
+        let namespace_id = SchemaId::new(name);
         if namespaces.get_namespace(&namespace_id).unwrap().is_none() {
             namespaces.create_namespace(kalamdb_system::Namespace::new(name)).unwrap();
         }
@@ -430,7 +421,7 @@ mod tests {
         let handler = CreateTypeHandler::new(Arc::clone(&app));
         let statement = CreateTypeStatement::parse(
             "CREATE TYPE app.envelope AS (status app.missing_status)",
-            &NamespaceId::new("app"),
+            &SchemaId::new("app"),
         )
         .expect("parse");
         let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
@@ -446,7 +437,7 @@ mod tests {
         let handler = CreateTypeHandler::new(Arc::clone(&app));
         let statement = CreateTypeStatement::parse(
             "CREATE TYPE app.node AS (child app.node)",
-            &NamespaceId::new("app"),
+            &SchemaId::new("app"),
         )
         .expect("parse");
         let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();
@@ -468,7 +459,7 @@ mod tests {
         let handler = CreateTypeHandler::new(Arc::clone(&app));
         let statement = CreateTypeStatement::parse(
             "CREATE TYPE app.inbox AS ENUM ('a')",
-            &NamespaceId::new("app"),
+            &SchemaId::new("app"),
         )
         .expect("parse");
         let error = handler.execute(statement, vec![], &dba_ctx(&app)).await.unwrap_err();

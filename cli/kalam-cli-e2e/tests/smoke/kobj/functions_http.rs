@@ -25,7 +25,7 @@ fn create_json_procedure(ns: &str, name: &str, params: &str, extras: &str, body:
         format!("{extras} ")
     };
     exec(&format!(
-        "CREATE OR REPLACE PROCEDURE {ns}.{name}({params}) RETURNS JSON {extras}LANGUAGE \
+        "CREATE OR REPLACE FUNCTION {ns}.{name}({params}) RETURNS JSON {extras}LANGUAGE \
          JAVASCRIPT AS $$\n{body}\n$$"
     ));
 }
@@ -248,7 +248,7 @@ return {
     assert_eq!(seen["http"], "present", "{seen}");
     assert_eq!(seen["actor"], seen["principal"], "HTTP invoker actor=principal: {seen}");
 
-    let sql_probe = query_rows(&format!("CALL {ns}.sql_probe()"));
+    let sql_probe = query_rows(&format!("SELECT {ns}.sql_probe() AS result"));
     let sql_seen = json_result(&sql_probe[0]);
     assert_eq!(sql_seen["http"], "null", "SQL CALL must set ctx.http to null: {sql_seen}");
     assert_eq!(sql_seen["source"], "call", "{sql_seen}");
@@ -371,7 +371,7 @@ fn kobj_functions_rest_json_errors_and_sql_cast() {
     assert_eq!(parsed["text"], "pos", "{parsed}");
 
     let sql_rows = query_rows(&format!(
-        "CALL {ns}.echo_json(CAST('{{\"conversationId\":\"c4\",\"text\":\"sql\"}}' AS JSON))"
+        "SELECT {ns}.echo_json(CAST('{{\"conversationId\":\"c4\",\"text\":\"sql\"}}' AS JSON)) AS result"
     ));
     let sql_parsed = json_result(&sql_rows[0]);
     assert_eq!(
@@ -393,7 +393,7 @@ fn kobj_functions_rest_json_errors_and_sql_cast() {
     assert_eq!(missing.status, 404, "{}", missing.body);
     assert_eq!(error_code(&missing.body), "PROCEDURE_NOT_FOUND", "{}", missing.body);
 
-    let unimplemented = exec(&format!("CREATE PROCEDURE {ns}.later() RETURNS JSON"));
+    let unimplemented = exec(&format!("CREATE FUNCTION {ns}.later() RETURNS JSON"));
     assert!(unimplemented.to_ascii_lowercase().contains("created"), "{unimplemented}");
     let not_impl = rest_root(&format!("/v1/functions/{ns}/later"), json!({}));
     assert_eq!(not_impl.status, 404, "{}", not_impl.body);
@@ -494,10 +494,10 @@ fn kobj_functions_http_definer_actor_and_db() {
         "return ctx.db.query('SELECT $1 AS n', [input.n]).then(function (rows) { return { n: \
          rows[0].n }; });",
     );
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.whoami TO user"));
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.write_invoker TO user"));
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.write_definer TO user"));
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.lookup TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.whoami TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.write_invoker TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.write_definer TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.lookup TO user"));
 
     let (username, password) = create_login_user("httpacl");
     let user = user_token(&username, &password);

@@ -1,16 +1,9 @@
-use std::collections::BTreeMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use kalam_client::KalamLinkClient;
 use tokio::sync::{RwLock, Semaphore};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
-use crate::metrics::BenchmarkDetail;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config, metrics::BenchmarkDetail};
 
 /// Fires 1000 concurrent SQL SELECT queries at once per iteration to measure
 /// RPS degradation and tail latency under extreme concurrency.
@@ -138,10 +131,7 @@ impl Benchmark for Sql1kUsersBench {
                     },
                     Err(error) => {
                         errors += 1;
-                        record_error_sample(
-                            &mut error_samples,
-                            &format!("Join error: {}", error),
-                        );
+                        record_error_sample(&mut error_samples, &format!("Join error: {}", error));
                     },
                 }
             }

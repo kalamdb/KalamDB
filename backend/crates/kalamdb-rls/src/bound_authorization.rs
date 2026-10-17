@@ -96,7 +96,7 @@ impl BoundAuthorization {
                             format!("live RLS route column {column_id} does not exist")
                         })?;
                     let data_type =
-                        column.data_type.to_arrow_type().map_err(|error| error.to_string())?;
+                        column.data_type().to_arrow_type().map_err(|error| error.to_string())?;
                     let value =
                         parse_string_as_scalar(self.policies.principal().as_str(), &data_type)?;
                     keys.insert((*column_id, value));
@@ -116,7 +116,7 @@ impl BoundAuthorization {
                             format!("live RLS route column {column_id} does not exist")
                         })?;
                     let data_type =
-                        column.data_type.to_arrow_type().map_err(|error| error.to_string())?;
+                        column.data_type().to_arrow_type().map_err(|error| error.to_string())?;
                     let value = parse_string_as_scalar(&value, &data_type)?;
                     keys.insert((*column_id, value));
                 },

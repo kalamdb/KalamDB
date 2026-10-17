@@ -10,50 +10,41 @@ shared_tables_template = "{namespace}/{tableName}"
 user_tables_template = "{namespace}/{tableName}/{userId}"
 
 [storage.rocksdb]
-block_cache_size = 2097152
-max_background_jobs = 2
-
-[storage.rocksdb.cf_profiles.system_meta]
-write_buffer_size = 32768
-max_write_buffers = 2
-
-[storage.rocksdb.cf_profiles.system_index]
-write_buffer_size = 32768
-max_write_buffers = 2
+# auto caps the shared block cache at 256MB and the hot memtable at 64MB on this
+# host, so process memory does not grow with RAM. Three memtables leave one free
+# to flush without stacking a large write buffer.
+memory_mode = "auto"
+max_background_jobs = 6
 
 [storage.rocksdb.cf_profiles.hot_data]
-write_buffer_size = 131072
-max_write_buffers = 2
+write_buffer_size = 67108864
+max_write_buffers = 3
 
 [storage.rocksdb.cf_profiles.hot_index]
-write_buffer_size = 65536
-max_write_buffers = 2
-
-[storage.rocksdb.cf_profiles.raft]
-write_buffer_size = 262144
-max_write_buffers = 2
+write_buffer_size = 33554432
+max_write_buffers = 3
 
 [datafusion]
-memory_limit = 67108864
-query_parallelism = 2
-max_partitions = 2
+memory_limit = 268435456
+query_parallelism = 4
+max_partitions = 4
 batch_size = 1024
 
 [flush]
-default_row_limit = 10000
-default_time_interval = 30
 flush_batch_size = 10000
-check_interval_seconds = 15
+check_interval_seconds = 30
+retain_latest_hot = true
+
+[flush.compaction]
+enabled = true
 
 [topics]
 default_retention_seconds = 60
-default_retention_max_bytes = 1048576
-retention_check_interval_seconds = 15
-retention_batch_size = 10000
+default_retention_max_bytes = 33554432
+retention_check_interval_seconds = 5
+retention_batch_size = 20000
 
 [stream]
-default_ttl_seconds = 10
-default_max_buffer = 10000
 eviction_interval_seconds = 60
 
 [manifest_cache]
@@ -62,7 +53,6 @@ max_entries = 500
 eviction_ttl_days = 7
 
 [limits]
-max_message_size = 1048576
 max_query_limit = 1000
 default_query_limit = 50
 
@@ -81,14 +71,12 @@ service_name = "kalamdb-server"
 timeout_ms = 3000
 
 [performance]
-request_timeout = 30
 keepalive_timeout = 75
 max_connections = 20000000
 backlog = 4096
 worker_max_blocking_threads = 4000
 client_request_timeout = 10
 client_disconnect_timeout = 5
-max_header_size = 16384
 
 [rate_limit]
 max_queries_per_sec = 100000
@@ -104,7 +92,6 @@ cache_max_entries = 1000
 cache_ttl_seconds = 600
 
 [security]
-max_request_body_size = 10485760
 max_ws_message_size = 1048576
 strict_ws_origin_check = false
 
@@ -115,7 +102,6 @@ allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Reque
 expose_headers = []
 allow_credentials = true
 max_age = 3600
-allow_private_network = false
 
 [websocket]
 client_timeout_secs = 120
@@ -142,16 +128,17 @@ timeout = 300
 
 [jobs]
 max_concurrent = 10
-max_retries = 3
-retry_backoff_ms = 100
 wal_cleanup_interval_seconds = 300
 history_cleanup_interval_seconds = 3600
 history_retention_days = 7
 
-[execution]
-handler_timeout_seconds = 30
-max_parameters = 50
-max_parameter_size_bytes = 524288
+[functions.runtime]
+workers = 8
+max_active = 16
+max_queued = 256
+max_memory_mb = 768
+heap_soft_mb = 8
+heap_hard_mb = 32
 
 [cluster]
 node_id = 1

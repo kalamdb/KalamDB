@@ -121,7 +121,7 @@ String uniqueName(String prefix) {
 
 /// Ensure a namespace exists.
 Future<void> ensureNamespace(KalamClient client, String name) async {
-  await client.query('CREATE NAMESPACE IF NOT EXISTS $name');
+  await client.query('CREATE SCHEMA IF NOT EXISTS $name');
 }
 
 /// Drop a table, ignoring errors.

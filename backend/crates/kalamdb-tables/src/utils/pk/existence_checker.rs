@@ -341,7 +341,7 @@ mod tests {
             rows::StoredScalarValue,
             schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableType},
         },
-        NamespaceId, StorageId, TableId, TableName, UserId,
+        SchemaId, StorageId, TableId, TableName, UserId,
     };
     use kalamdb_filestore::StorageRegistry;
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend, StorageError};
@@ -512,7 +512,7 @@ mod tests {
 
     fn create_test_table_def(pk_default: ColumnDefault) -> TableDefinition {
         TableDefinition {
-            namespace_id:   NamespaceId::new("test"),
+            namespace_id:   SchemaId::new("test"),
             table_name:     TableName::new("users"),
             table_type:     TableType::User,
             table_options:  kalamdb_commons::schemas::TableOptions::User(Default::default()),

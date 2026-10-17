@@ -8,6 +8,18 @@
         "path": 1,
         "updated_at": 4
       }
+    },
+    "pg_catalog.file": {
+      "type_id": "pg_catalog.file",
+      "slots": {
+        "id": 1,
+        "mime": 5,
+        "name": 3,
+        "sha256": 6,
+        "shard": 7,
+        "size": 4,
+        "sub": 2
+      }
     }
   }
 }

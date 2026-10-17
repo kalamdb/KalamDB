@@ -66,7 +66,7 @@ mod tests {
         assert!(schema.contains("export type ChatUsers = ChatUser"));
         assert!(schema.contains("export type ChatStatus = \"active\" | \"blocked\""));
         assert!(source.contains("createKalam"));
-        assert!(source.contains("CALL chat.create_message($1, $2)"));
+        assert!(source.contains("SELECT chat.create_message($1, $2) AS result"));
         assert!(!source.contains("procedure client has no local runtime"));
         assert!(source.contains("chat: {"));
         assert!(source.contains("createMessage:"));
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn schema_emits_file_columns_and_non_id_primary_keys() {
-        let snapshot = compile_contract_sql(
+        let mut snapshot = compile_contract_sql(
             r#"
 CREATE SCHEMA okf_sync;
 CREATE USER TABLE okf_sync.context_files (
@@ -122,6 +122,7 @@ CREATE USER TABLE okf_sync.notes (
             "public",
         )
         .unwrap();
+        crate::workflow::schema::load::merge_builtin_file_extension(&mut snapshot);
         let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
         let names = assign_names(
             &snapshot,
@@ -131,18 +132,18 @@ CREATE USER TABLE okf_sync.notes (
         )
         .unwrap();
         let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
-        assert!(
-            schema.contains("import { kTable, file, type KalamFileUpload } from '@kalamdb/orm';"),
-            "{schema}"
-        );
-        assert!(schema.contains("import type { FileRef } from '@kalamdb/client';"), "{schema}");
-        assert!(
-            schema.contains(
-                "export type KalamFileColumn = FileRef | File | KalamFileUpload | Blob | null;"
-            ),
-            "{schema}"
-        );
-        assert!(schema.contains("file_ref: KalamFileColumn;"), "{schema}");
+        assert!(schema.contains("import { kTable, file } from '@kalamdb/orm';"), "{schema}");
+        assert!(!schema.contains("export type KalamFileColumn"), "{schema}");
+        assert!(!schema.contains("export interface FileRefData"), "{schema}");
+        assert!(schema.contains("export type File = {"), "{schema}");
+        assert!(schema.contains("id: string;"), "{schema}");
+        assert!(schema.contains("sub: string;"), "{schema}");
+        assert!(schema.contains("name: string;"), "{schema}");
+        assert!(schema.contains("size: bigint;"), "{schema}");
+        assert!(schema.contains("mime: string;"), "{schema}");
+        assert!(schema.contains("sha256: string;"), "{schema}");
+        assert!(schema.contains("shard: number | null;"), "{schema}");
+        assert!(schema.contains("file_ref: File;"), "{schema}");
         assert!(
             schema.contains("import { text, timestamp } from 'drizzle-orm/pg-core';"),
             "{schema}"
@@ -155,6 +156,14 @@ CREATE USER TABLE okf_sync.notes (
         assert!(!schema.contains("jsonb(\"file_ref\")"), "{schema}");
         assert!(schema.contains("export const okfSyncContextFiles"), "{schema}");
         assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");
+
+        let client = generate_client_source(&snapshot, &hash, &names).unwrap();
+        assert!(client.contains("filePut: async (input: FilePutRequest): Promise<FilePutResult>"), "{client}");
+        assert!(client.contains("SELECT pg_catalog.file_put($1) AS result"), "{client}");
+        assert!(client.contains("fileRead: async (input: FileReadRequest): Promise<FileReadResult>"), "{client}");
+        assert!(client.contains("SELECT pg_catalog.file_read($1) AS result"), "{client}");
+        assert!(client.contains("fileDelete: async (input: FileDeleteRequest): Promise<FileDeleteResult>"), "{client}");
+        assert!(client.contains("SELECT pg_catalog.file_delete($1) AS result"), "{client}");
     }
 
     #[test]
@@ -196,7 +205,7 @@ CREATE TABLE chat.direct_messages (id BIGINT PRIMARY KEY, body TEXT NOT NULL);
 CREATE TOPIC chat.ai_inbox;
 ALTER TOPIC chat.ai_inbox ADD SOURCE chat.messages ON INSERT;
 ALTER TOPIC chat.ai_inbox ADD SOURCE chat.direct_messages ON INSERT;
-CREATE PROCEDURE chat.on_message(payload chat.ai_inbox NOT NULL)
+CREATE FUNCTION chat.on_message(payload chat.ai_inbox NOT NULL)
 RETURNS chat.ai_inbox;
 "#,
             "public",
@@ -229,8 +238,10 @@ RETURNS chat.ai_inbox;
         let snapshot = compile_contract_sql(
             r#"
 CREATE SCHEMA chat;
-CREATE TYPE chat.address AS (city TEXT NOT NULL) COMMENT 'Postal address';
-CREATE PROCEDURE chat.ping() RETURNS TEXT COMMENT 'Liveness probe';
+CREATE TYPE chat.address AS (city TEXT);
+COMMENT ON TYPE chat.address IS 'Postal address';
+CREATE FUNCTION chat.ping() RETURNS TEXT;
+COMMENT ON FUNCTION chat.ping IS 'Liveness probe';
 "#,
             "public",
         )
@@ -363,7 +374,7 @@ CREATE TABLE chat.users (
   nickname TEXT,
   status chat.status NOT NULL
 ) ROW TYPE chat.user;
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL)
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL)
 RETURNS chat.user;
 "#;
 }

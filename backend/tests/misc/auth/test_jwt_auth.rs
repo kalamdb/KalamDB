@@ -157,7 +157,7 @@ async fn test_jwt_auth_expired_token() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -207,7 +207,7 @@ async fn test_jwt_auth_invalid_signature() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -257,7 +257,7 @@ async fn test_jwt_auth_untrusted_issuer() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -322,7 +322,7 @@ async fn test_jwt_auth_missing_sub_claim() {
         .insert_header(("Authorization", auth_header.as_str()))
         .insert_header(("Content-Type", "application/json"))
         .set_json(serde_json::json!({
-            "sql": "CREATE NAMESPACE test_ns"
+            "sql": "CREATE SCHEMA test_ns"
         }))
         .to_request();
 
@@ -373,7 +373,7 @@ async fn test_jwt_auth_malformed_header() {
             .insert_header(("Authorization", malformed_header))
             .insert_header(("Content-Type", "application/json"))
             .set_json(serde_json::json!({
-                "sql": "CREATE NAMESPACE test_ns"
+                "sql": "CREATE SCHEMA test_ns"
             }))
             .to_request();
 

@@ -210,7 +210,7 @@ fn smoke_table_export_import_shared_via_api_and_show_export() {
     let source_fqn = format!("{}.{}", namespace, source_table);
     let target_fqn = format!("{}.{}", namespace, target_table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='SHARED', \
@@ -346,7 +346,7 @@ fn smoke_table_export_import_shared_via_api_and_show_export() {
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source_fqn));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target_fqn));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(120_000)]
@@ -360,7 +360,7 @@ fn smoke_table_export_user_requires_user_id() {
     let table = generate_unique_table("tbl_xfer_user");
     let table_fqn = format!("{}.{}", namespace, table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='USER')",
@@ -406,7 +406,7 @@ fn smoke_table_export_user_requires_user_id() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", table_fqn));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(300_000)]
@@ -431,7 +431,7 @@ fn smoke_table_export_import_user_table_flushed_and_hot_data() {
     ))
     .expect("create transfer user");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, note TEXT) WITH (TYPE='USER', \
@@ -585,6 +585,6 @@ fn smoke_table_export_import_user_table_flushed_and_hot_data() {
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source_fqn));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target_fqn));
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }

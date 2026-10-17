@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{NamespaceId, RoutineId};
+use kalamdb_commons::models::{SchemaId, RoutineId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -38,7 +38,7 @@ impl TypedStatementHandler<CommentOnStatement> for CommentOnHandler {
             CommentOnTarget::Type { namespace_id, name } => {
                 Some((namespace_id.clone(), name.clone()))
             },
-            CommentOnTarget::Procedure(_) => None,
+            CommentOnTarget::Procedure(_) | CommentOnTarget::Function(_) => None,
         };
         let app = Arc::clone(&self.app_context);
         let result =
@@ -64,9 +64,17 @@ fn persist_comment(
             statement.comment.as_deref(),
             statement.if_exists,
         ),
-        CommentOnTarget::Procedure(routine_id) => persist_procedure_comment(
+        CommentOnTarget::Procedure(routine_id) => persist_routine_comment(
             stores,
             &routine_id,
+            kalamdb_commons::models::RoutineKind::Procedure,
+            statement.comment.as_deref(),
+            statement.if_exists,
+        ),
+        CommentOnTarget::Function(routine_id) => persist_routine_comment(
+            stores,
+            &routine_id,
+            kalamdb_commons::models::RoutineKind::Function,
             statement.comment.as_deref(),
             statement.if_exists,
         ),
@@ -75,7 +83,7 @@ fn persist_comment(
 
 fn persist_type_comment(
     stores: &CatalogStores,
-    namespace_id: &NamespaceId,
+    namespace_id: &SchemaId,
     name: &str,
     comment: Option<&str>,
     if_exists: bool,
@@ -97,28 +105,42 @@ fn persist_type_comment(
     Ok(comment_message("Type", &qualified, comment))
 }
 
-fn persist_procedure_comment(
+fn persist_routine_comment(
     stores: &CatalogStores,
     routine_id: &RoutineId,
+    expected_kind: kalamdb_commons::models::RoutineKind,
     comment: Option<&str>,
     if_exists: bool,
 ) -> Result<ExecutionResult, KalamDbError> {
+    let label = match expected_kind {
+        kalamdb_commons::models::RoutineKind::Function => "Function",
+        kalamdb_commons::models::RoutineKind::Procedure => "Procedure",
+    };
     let Some(mut routine) = stores
         .get_routine(routine_id)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
     else {
         if if_exists {
             return Ok(ExecutionResult::Success {
-                message: format!("Procedure {routine_id} does not exist, skipping comment"),
+                message: format!("{label} {routine_id} does not exist, skipping comment"),
             });
         }
-        return Err(KalamDbError::NotFound(format!("procedure {routine_id} not found")));
+        return Err(KalamDbError::NotFound(format!(
+            "{} {routine_id} not found",
+            label.to_ascii_lowercase()
+        )));
     };
+    if routine.kind != expected_kind {
+        return Err(KalamDbError::InvalidSql(format!(
+            "{routine_id} is not a {}",
+            label.to_ascii_lowercase()
+        )));
+    }
     routine.comment = comment.map(str::to_string);
     stores
         .upsert_routine(routine)
         .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-    Ok(comment_message("Procedure", routine_id.as_str(), comment))
+    Ok(comment_message(label, routine_id.as_str(), comment))
 }
 
 fn upsert_type(stores: &CatalogStores, catalog_type: CatalogType) -> Result<(), KalamDbError> {

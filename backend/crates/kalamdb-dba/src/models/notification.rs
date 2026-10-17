@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{NamespaceId, TableId, TableName, UserId},
+    models::{SchemaId, TableId, TableName, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -89,7 +89,7 @@ pub struct NotificationRow {
 
 impl NotificationRow {
     pub fn table_id() -> TableId {
-        TableId::new(NamespaceId::new(DBA_NAMESPACE), TableName::new("notifications"))
+        TableId::new(SchemaId::new(DBA_NAMESPACE), TableName::new("notifications"))
     }
 }
 

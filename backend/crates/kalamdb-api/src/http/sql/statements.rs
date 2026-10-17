@@ -225,7 +225,7 @@ fn split_and_prepare_statements_with_depth(
             prepare_api_statement(raw_statement, &prepare_ctx, sql_executor, start_time, light)?;
 
         if let Some(classified) = prepared_stmt.prepared_statement.classified_statement.as_ref() {
-            if let SqlStatementKind::UseNamespace(stmt) = classified.kind() {
+            if let SqlStatementKind::UseSchema(stmt) = classified.kind() {
                 prepare_ctx = prepare_ctx.clone().with_namespace_id(stmt.namespace.clone());
             }
         }

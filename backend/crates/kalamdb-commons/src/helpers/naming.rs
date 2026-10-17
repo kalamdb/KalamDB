@@ -133,7 +133,7 @@ pub fn validate_user_namespace_name(name: &str) -> Result<(), SqlIdentifierError
     validate_sql_identifier(name)
 }
 
-/// Validate a namespace referenced in SQL (CREATE TABLE, USE NAMESPACE context, etc.).
+/// Validate a namespace referenced in SQL (CREATE TABLE, SET SCHEMA context, etc.).
 ///
 /// Unlike [`validate_user_namespace_name`], this allows built-in catalog aliases such as
 /// `default` and `main` while still rejecting system and other reserved namespaces.

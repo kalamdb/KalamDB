@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Concurrent mixed DML: simultaneous INSERT + UPDATE + DELETE on the same table.
 /// Tests multi-writer contention with different operation types.
@@ -82,22 +79,29 @@ impl Benchmark for ConcurrentMixedDmlBench {
                             // INSERT a new row
                             let id = iter * 1000 + i;
                             c.sql_ok(&format!(
-                                "INSERT INTO {}.mixed_dml (id, value, label) VALUES ({}, {}, 'inserted')",
-                                ns, id, id * 2
+                                "INSERT INTO {}.mixed_dml (id, value, label) VALUES ({}, {}, \
+                                 'inserted')",
+                                ns,
+                                id,
+                                id * 2
                             ))
                             .await
                             .map_err(|e| format!("Insert #{}: {}", i, e))
-                        }
+                        },
                         1 => {
                             // UPDATE existing rows (range update on seeded data)
                             let target = 100_000 + (iter * conc + i) % 500;
                             c.sql_ok(&format!(
-                                "UPDATE {}.mixed_dml SET value = {}, label = 'updated_{}' WHERE id = {}",
-                                ns, iter * 100 + i, iter, target
+                                "UPDATE {}.mixed_dml SET value = {}, label = 'updated_{}' WHERE \
+                                 id = {}",
+                                ns,
+                                iter * 100 + i,
+                                iter,
+                                target
                             ))
                             .await
                             .map_err(|e| format!("Update #{}: {}", i, e))
-                        }
+                        },
                         _ => {
                             // SELECT (reads under contention)
                             c.sql_ok(&format!(
@@ -106,7 +110,7 @@ impl Benchmark for ConcurrentMixedDmlBench {
                             ))
                             .await
                             .map_err(|e| format!("Select #{}: {}", i, e))
-                        }
+                        },
                     }
                 }));
             }

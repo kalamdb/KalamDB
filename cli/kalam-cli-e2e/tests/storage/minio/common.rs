@@ -650,7 +650,7 @@ pub(super) fn cleanup_minio_resources(
         dropped_tables.push(table_name);
     }
     let _ = execute_sql_as_root_via_cli(&format!("DROP STORAGE {}", storage_id));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 fn get_row_string(row: &std::collections::HashMap<String, JsonValue>, key: &str) -> String {

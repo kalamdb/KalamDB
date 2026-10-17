@@ -132,7 +132,7 @@ impl Default for SegmentCompactExecutor {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
 
     use super::*;
 
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn params_require_valid_scope() {
-        let table_id = TableId::new(NamespaceId::default(), kalamdb_commons::TableName::new("t"));
+        let table_id = TableId::new(SchemaId::default(), kalamdb_commons::TableName::new("t"));
 
         assert!(SegmentCompactParams {
             table_id:   table_id.clone(),

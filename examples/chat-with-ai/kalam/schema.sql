@@ -17,14 +17,14 @@
 --   STREAM  ephemeral progress rows (thinking / typing) with a short TTL
 --   TOPIC   fan-out of INSERTs so a procedure can react without polling
 
-CREATE NAMESPACE IF NOT EXISTS chat_demo;
+CREATE SCHEMA IF NOT EXISTS chat_demo;
 
 -- This file is the source of truth for `kalam dev`. Dropping first lets the
 -- same script recreate a clean local demo.
 DROP TRIGGER IF EXISTS chat_demo.process_user_message;
 DROP PROCEDURE IF EXISTS chat_demo.on_user_message;
-DROP PROCEDURE IF EXISTS chat_demo.send_message;
-DROP PROCEDURE IF EXISTS chat_demo.join_room;
+DROP FUNCTION IF EXISTS chat_demo.send_message;
+DROP FUNCTION IF EXISTS chat_demo.join_room;
 DROP TYPE IF EXISTS chat_demo.message_target;
 DROP TOPIC IF EXISTS chat_demo.ai_inbox;
 DROP TABLE IF EXISTS chat_demo.agent_events;
@@ -61,7 +61,7 @@ CREATE SHARED TABLE IF NOT EXISTS chat_demo.messages (
 );
 
 -- Personal copilot inbox. Each signed-in user has their own copy of this table.
-CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
+CREATE TABLE IF NOT EXISTS chat_demo.direct_messages (
     id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
     role TEXT NOT NULL,
     author TEXT NOT NULL,
@@ -69,7 +69,7 @@ CREATE USER TABLE IF NOT EXISTS chat_demo.direct_messages (
     content TEXT NOT NULL,
     reply_to BIGINT,
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
+) WITH (TYPE = 'USER');
 
 CREATE INDEX IF NOT EXISTS idx_messages_room ON chat_demo.messages (room);
 CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON chat_demo.messages (reply_to);
@@ -152,13 +152,13 @@ ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.messages ON INSERT;
 ALTER TOPIC chat_demo.ai_inbox ADD SOURCE chat_demo.direct_messages ON INSERT;
 
 -- Join (or create) a room. Browser clients call this instead of inserting membership.
-CREATE PROCEDURE chat_demo.join_room(room_id TEXT NOT NULL)
+CREATE FUNCTION chat_demo.join_room(room_id TEXT NOT NULL)
 RETURNS TEXT
 SECURITY INVOKER;
 
 -- Post a user message into a room transcript or the caller's personal inbox.
 -- Returns the inserted row tagged with its source table, same shape as PAYLOAD.
-CREATE PROCEDURE chat_demo.send_message(
+CREATE FUNCTION chat_demo.send_message(
     target chat_demo.message_target NOT NULL,
     target_id TEXT NOT NULL,
     content TEXT NOT NULL
@@ -170,8 +170,8 @@ SECURITY INVOKER;
 CREATE PROCEDURE chat_demo.on_user_message(payload chat_demo.ai_inbox NOT NULL)
 SECURITY DEFINER;
 
-GRANT EXECUTE ON PROCEDURE chat_demo.join_room TO user;
-GRANT EXECUTE ON PROCEDURE chat_demo.send_message TO user;
+GRANT EXECUTE ON FUNCTION chat_demo.join_room TO user;
+GRANT EXECUTE ON FUNCTION chat_demo.send_message TO user;
 
 -- Seed before the trigger so these INSERTs are not handled as live user mail.
 INSERT INTO chat_demo.rooms (id, title)

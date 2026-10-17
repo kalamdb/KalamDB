@@ -8,7 +8,7 @@ use datafusion::arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use kalamdb_commons::Role;
+use kalamdb_commons::{CatalogTypeKind, Role};
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
@@ -100,14 +100,26 @@ impl TypeRowBuilders {
     }
 
     fn push(&mut self, oid: i64, typname: &str, namespace_oid: i64, typlen: i64) {
+        self.push_full(oid, typname, namespace_oid, "b", 0, typlen);
+    }
+
+    fn push_full(
+        &mut self,
+        oid: i64,
+        typname: &str,
+        namespace_oid: i64,
+        typtype: &str,
+        typbasetype: i64,
+        typlen: i64,
+    ) {
         self.oids.append_value(oid);
         self.typnames.append_value(typname);
         self.typnamespaces.append_value(namespace_oid);
         self.typrelids.append_value(0);
-        self.typtypes.append_value("b");
+        self.typtypes.append_value(typtype);
         self.typnotnulls.append_value(false);
         self.typtypmods.append_value(-1);
-        self.typbasetypes.append_value(0);
+        self.typbasetypes.append_value(typbasetype);
         self.typlens.append_value(typlen);
     }
 
@@ -160,6 +172,56 @@ impl PgCatalogView for PgTypeView {
             builders.push(*oid, typname, pg_catalog_oid, *typlen);
         }
 
+        let catalog_stores = self.system_registry.catalog_stores();
+        let catalog_types = catalog_stores.list_types().map_err(|error| {
+            RegistryError::Other(format!("failed to list system.types: {error}"))
+        })?;
+        for catalog_type in catalog_types {
+            let typtype = match catalog_type.kind {
+                CatalogTypeKind::Composite
+                    if catalog_type.type_id.as_str() == "pg_catalog.embedding" =>
+                {
+                    "b"
+                },
+                CatalogTypeKind::Composite => "c",
+                CatalogTypeKind::Domain => "d",
+                CatalogTypeKind::Enum => "e",
+                CatalogTypeKind::ImplicitTableRow
+                | CatalogTypeKind::TopicPayload
+                | CatalogTypeKind::RowAlias => continue,
+            };
+            let namespace = catalog_type.namespace_id.as_str();
+            if namespace.is_empty() || catalog_type.name.is_empty() {
+                continue;
+            }
+            let typbasetype = if catalog_type.kind == CatalogTypeKind::Domain {
+                catalog_stores
+                    .list_type_fields(&catalog_type.type_id)
+                    .ok()
+                    .and_then(|fields| {
+                        fields.into_iter().find_map(|field| {
+                            field.data_type.as_ref().map(pg_type_oid).or_else(|| {
+                                field.field_type_id.as_ref().and_then(|source_id| {
+                                    let (ns, name) = source_id.as_str().split_once('.')?;
+                                    Some(stable_oid(&["type", ns, name]))
+                                })
+                            })
+                        })
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            builders.push_full(
+                stable_oid(&["type", namespace, &catalog_type.name]),
+                &catalog_type.name,
+                stable_oid(&["namespace", namespace]),
+                typtype,
+                typbasetype,
+                -1,
+            );
+        }
+
         for table in visible_table_definitions(&self.system_registry, role)? {
             let namespace = table.namespace_id.as_str();
             if namespace == "pg_catalog" {
@@ -168,7 +230,7 @@ impl PgCatalogView for PgTypeView {
             let namespace_oid = stable_oid(&["namespace", namespace]);
 
             for column in &table.columns {
-                let typname = pg_type_name(&column.data_type);
+                let typname = pg_type_name(&column.data_type());
                 let key = (namespace_oid, typname);
                 if !seen_listing.insert(key) {
                     continue;
@@ -180,7 +242,7 @@ impl PgCatalogView for PgTypeView {
                     listing_type_oid(namespace, typname),
                     typname,
                     namespace_oid,
-                    typlen_for_oid(pg_type_oid(&column.data_type)),
+                    typlen_for_oid(pg_type_oid(&column.data_type())),
                 );
             }
         }

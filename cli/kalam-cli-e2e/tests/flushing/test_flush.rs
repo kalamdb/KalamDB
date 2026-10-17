@@ -24,8 +24,8 @@ fn test_cli_explicit_flush() {
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // Setup table via CLI
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_cli(&format!(
         r#"CREATE TABLE {} (
             id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -63,5 +63,5 @@ fn test_cli_explicit_flush() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

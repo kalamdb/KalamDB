@@ -1,8 +1,8 @@
 -- SHARED table: storage/flush/compression + DML and topic routing.
 
-DROP NAMESPACE IF EXISTS sql_file_case_23 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_23 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_23;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_23;
 USE sql_file_case_23;
 
 DROP TABLE IF EXISTS case23_shared_feed;
@@ -50,4 +50,4 @@ ALTER TABLE case23_shared_feed SET TBLPROPERTIES (
 CONSUME FROM case23_shared_topic LIMIT 40;
 
 DROP TOPIC case23_shared_topic;
-DROP NAMESPACE IF EXISTS sql_file_case_23 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_23 CASCADE;

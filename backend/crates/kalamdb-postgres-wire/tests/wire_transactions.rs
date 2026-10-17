@@ -22,7 +22,7 @@ async fn wire_explicit_transaction_commits_dml() -> Result<(), Box<dyn Error>> {
         let _ = connection.await;
     });
 
-    let _ = client.batch_execute(format!("CREATE NAMESPACE {namespace}").as_str()).await;
+    let _ = client.batch_execute(format!("CREATE SCHEMA {namespace}").as_str()).await;
     client
         .batch_execute(
             format!("CREATE TABLE {qualified_table} (id INT PRIMARY KEY, name TEXT)").as_str(),

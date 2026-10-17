@@ -5,7 +5,10 @@
 
 use arrow_schema::Field;
 
-use crate::{models::datatypes::KalamDataType, schemas::FieldFlags};
+use crate::{
+    models::datatypes::{KalamDataType, LogicalTypeRef},
+    schemas::FieldFlags,
+};
 
 /// Metadata key for serialized KalamDataType.
 pub const KALAM_DATA_TYPE_METADATA_KEY: &str = "kalam_data_type";
@@ -18,6 +21,36 @@ pub const PARQUET_FIELD_ID_METADATA_KEY: &str = "PARQUET:field_id";
 pub const KALAM_TYPE_ID_METADATA_KEY: &str = "kalam_type_id";
 /// Allowed labels for a named ENUM column (JSON string array).
 pub const KALAM_ENUM_LABELS_METADATA_KEY: &str = "kalam_enum_labels";
+/// Builtin modifier that shares a payload tag: `jsonb` or `timestamptz`.
+pub const KALAM_TYPE_MODIFIER_METADATA_KEY: &str = "kalam_type_modifier";
+/// Domain constraint chain attached to an Arrow field (`kalam_domain_constraints`).
+pub const KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY: &str = "kalam_domain_constraints";
+/// Missing-column default attached to an Arrow field (`kalam_missing_default`) for `ADD COLUMN ... DEFAULT`.
+pub const KALAM_MISSING_DEFAULT_METADATA_KEY: &str = "kalam_missing_default";
+
+/// A single `CHECK (expr)` constraint on a domain.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DomainCheckSpec {
+    pub name:      String,
+    pub expr:      String,
+    #[serde(default = "default_domain_check_validated")]
+    pub validated: bool,
+}
+
+fn default_domain_check_validated() -> bool {
+    true
+}
+
+/// Resolved metadata for a domain in a domain chain (ordered from base domain to outer domain).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DomainConstraintSpec {
+    pub domain_name:  String,
+    pub not_null:     bool,
+    #[serde(default)]
+    pub default_expr: Option<String>,
+    #[serde(default)]
+    pub checks:       Vec<DomainCheckSpec>,
+}
 
 /// Read `KalamDataType` from Arrow field metadata.
 pub fn read_kalam_data_type_metadata(field: &Field) -> Option<KalamDataType> {
@@ -25,6 +58,27 @@ pub fn read_kalam_data_type_metadata(field: &Field) -> Option<KalamDataType> {
         .metadata()
         .get(KALAM_DATA_TYPE_METADATA_KEY)
         .and_then(|s| serde_json::from_str::<KalamDataType>(s).ok())
+}
+
+/// Attach a builtin modifier (`jsonb` or `timestamptz`) from a [`LogicalTypeRef`].
+pub fn with_logical_type_modifier(mut field: Field, type_ref: &LogicalTypeRef) -> Field {
+    let Some(label) = type_ref.modifier_label() else {
+        return field;
+    };
+    let mut metadata = field.metadata().clone();
+    metadata.insert(KALAM_TYPE_MODIFIER_METADATA_KEY.to_string(), label.to_string());
+    field = field.with_metadata(metadata);
+    field
+}
+
+/// Read the builtin modifier label (`"jsonb"` or `"timestamptz"`), if present.
+#[inline]
+pub fn read_logical_type_modifier(field: &Field) -> Option<&str> {
+    field
+        .metadata()
+        .get(KALAM_TYPE_MODIFIER_METADATA_KEY)
+        .map(String::as_str)
+        .filter(|label| matches!(*label, "jsonb" | "timestamptz"))
 }
 
 /// Attach `KalamDataType` metadata to an Arrow field.
@@ -125,6 +179,40 @@ pub fn validate_enum_label(field: &Field, label: &str) -> Result<(), String> {
         field.name(),
         labels.join(", ")
     ))
+}
+
+/// Attach domain constraint specs to an Arrow field.
+pub fn with_kalam_domain_constraints(mut field: Field, specs: &[DomainConstraintSpec]) -> Field {
+    if specs.is_empty() {
+        return field;
+    }
+    let encoded = serde_json::to_string(specs).unwrap_or_else(|_| "[]".to_string());
+    let mut metadata = field.metadata().clone();
+    metadata.insert(KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY.to_string(), encoded);
+    field = field.with_metadata(metadata);
+    field
+}
+
+/// Read domain constraint specs from Arrow field metadata.
+pub fn read_kalam_domain_constraints(field: &Field) -> Option<Vec<DomainConstraintSpec>> {
+    let raw = field.metadata().get(KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY)?;
+    serde_json::from_str(raw).ok()
+}
+
+/// Attach a missing-column default JSON literal to an Arrow field (`ADD COLUMN ... DEFAULT`).
+pub fn with_kalam_missing_default(mut field: Field, default_json: &serde_json::Value) -> Field {
+    if let Ok(encoded) = serde_json::to_string(default_json) {
+        let mut metadata = field.metadata().clone();
+        metadata.insert(KALAM_MISSING_DEFAULT_METADATA_KEY.to_string(), encoded);
+        field = field.with_metadata(metadata);
+    }
+    field
+}
+
+/// Read the missing-column default JSON literal from Arrow field metadata.
+pub fn read_kalam_missing_default(field: &Field) -> Option<serde_json::Value> {
+    let raw = field.metadata().get(KALAM_MISSING_DEFAULT_METADATA_KEY)?;
+    serde_json::from_str(raw).ok()
 }
 
 /// Convert an Arrow schema into KalamDB `SchemaField` descriptors.

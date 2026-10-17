@@ -344,7 +344,7 @@ unsafe fn handle_create_table_using_kalamdb(stmt: *mut pg_sys::CreateStmt, state
 
     let pg_column_defs = strip_for_foreign_table(&column_defs);
 
-    let kalam_options = match with_options
+    let mut kalam_options = match with_options
         .iter()
         .map(|(key, value)| format_kalam_option_assignment(key, value))
         .collect::<Result<Vec<_>, _>>()
@@ -354,16 +354,14 @@ unsafe fn handle_create_table_using_kalamdb(stmt: *mut pg_sys::CreateStmt, state
             pgrx::error!("pg_kalam DDL: invalid KalamDB table option: {}", error);
         },
     };
-    let kalam_with_clause = if kalam_options.is_empty() {
-        String::new()
-    } else {
-        format!(" WITH ({})", kalam_options.join(", "))
-    };
+    if !with_options.contains_key("type") {
+        kalam_options.insert(0, format!("TYPE = '{}'", table_type_keyword));
+    }
+    let kalam_with_clause = format!(" WITH ({})", kalam_options.join(", "));
     let remote_if_not_exists = if if_not_exists { "IF NOT EXISTS " } else { "" };
-    let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
+    let create_ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(&namespace));
     let create_table_sql = format!(
-        "CREATE {} TABLE {}{}.{} ({}){}",
-        table_type_keyword,
+        "CREATE TABLE {}{}.{} ({}){}",
         remote_if_not_exists,
         quote_ident(&namespace),
         quote_ident(&table_name),
@@ -484,11 +482,11 @@ unsafe fn handle_create_foreign_table(
     }
 
     // Build SQL statements
-    let create_ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", quote_ident(&namespace));
+    let create_ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(&namespace));
 
     // Collect any extra KalamDB-specific options from the FDW table options
     // (e.g. storage_id, flush_policy, compression, etc.)
-    let kalam_options = match ft_options
+    let mut kalam_options = match ft_options
         .iter()
         .filter(|(k, _)| *k != "table_type" && *k != "namespace" && *k != "table")
         .map(|(k, v)| format_kalam_option_assignment(k, v))
@@ -499,16 +497,11 @@ unsafe fn handle_create_foreign_table(
             pgrx::error!("pg_kalam DDL: invalid KalamDB table option: {}", error);
         },
     };
-
-    let with_clause = if kalam_options.is_empty() {
-        String::new()
-    } else {
-        format!(" WITH ({})", kalam_options.join(", "))
-    };
+    kalam_options.insert(0, format!("TYPE = '{}'", table_type_keyword));
+    let with_clause = format!(" WITH ({})", kalam_options.join(", "));
 
     let create_table_sql = format!(
-        "CREATE {} TABLE IF NOT EXISTS {}.{} ({}){}",
-        table_type_keyword,
+        "CREATE TABLE IF NOT EXISTS {}.{} ({}){}",
         quote_ident(&namespace),
         quote_ident(&table_name),
         column_defs.join(", "),

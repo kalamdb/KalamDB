@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Simulates a connection storm: N simultaneous login → SQL query → cycles.
 /// Tests authentication subsystem, connection pool, and JWT overhead.
@@ -68,7 +65,8 @@ impl Benchmark for ConnectionStormBench {
 
                 handles.push(tokio::spawn(async move {
                     // Each task does a fresh login → query → independently
-                    // Retry on rate limits and transient transport failures with exponential backoff.
+                    // Retry on rate limits and transient transport failures with exponential
+                    // backoff.
                     let mut delay = std::time::Duration::from_millis(200);
                     let mut attempts = 0u32;
                     let fresh = loop {

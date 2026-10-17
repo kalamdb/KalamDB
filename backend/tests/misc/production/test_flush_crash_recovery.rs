@@ -205,9 +205,9 @@ async fn crash_during_flush_restarts_and_recovers_visible_rows() -> Result<()> {
     let total_rows: usize = 12_000;
 
     let create_ns = client
-        .execute_query(&format!("CREATE NAMESPACE {}", namespace), None, None, None)
+        .execute_query(&format!("CREATE SCHEMA {}", namespace), None, None, None)
         .await?;
-    anyhow::ensure!(create_ns.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+    anyhow::ensure!(create_ns.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
     let create_table = client
         .execute_query(

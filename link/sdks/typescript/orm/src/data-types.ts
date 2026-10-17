@@ -84,6 +84,10 @@ function parsePositiveInteger(value: unknown): number | undefined {
 }
 
 function objectDescriptor(input: Record<string, unknown>): KalamDataTypeDescriptor | undefined {
+  if ('Builtin' in input) {
+    return parseKalamDataType(input.Builtin);
+  }
+
   if ('Embedding' in input) {
     const dimension = parsePositiveInteger(input.Embedding);
     if (dimension) return { kind: 'Embedding', dimension, sqlName: `EMBEDDING(${dimension})` };

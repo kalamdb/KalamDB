@@ -4,7 +4,7 @@
 //! - CREATE NAMESPACE app
 //! - CREATE NAMESPACE IF NOT EXISTS app
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::{parsing, DdlResult};
 
@@ -12,7 +12,7 @@ use crate::ddl::{parsing, DdlResult};
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateNamespaceStatement {
     /// Namespace name to create
-    pub name: NamespaceId,
+    pub name: SchemaId,
 
     /// If true, don't error if namespace already exists
     pub if_not_exists: bool,
@@ -29,7 +29,7 @@ impl CreateNamespaceStatement {
             parsing::parse_create_drop_statement(sql, "CREATE NAMESPACE", "IF NOT EXISTS")?;
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             if_not_exists,
         })
     }

@@ -369,49 +369,22 @@ impl UserTableProvider {
         );
         async move {
             let pk_name = self.primary_key_field_name().to_string();
-
-            // Get PK column data type from schema for proper type coercion
-            let schema = self.schema();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-
-            // Convert string PK value to proper ScalarValue based on column type
-            let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
-                .map_err(|e| KalamDbError::InvalidOperation(e))?;
-            // Find latest resolved row for this PK under same user
-            // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet
-            // scan)
-            let (_latest_key, latest_row) =
-                if let Some(result) = self.find_by_pk(user_id, &pk_value_scalar).await? {
-                    result
-                } else if self.pk_tombstoned_in_hot(user_id, &pk_value_scalar).await? {
+            let (previous, latest_row) = match self.load_mutation_target(user_id, pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned => {
                     return Err(KalamDbError::NotFound(format!(
                         "Row with {}={} was deleted",
                         pk_name, pk_value
                     )));
-                } else {
-                    // Not in hot storage, check cold storage
-                    if log::log_enabled!(log::Level::Debug) {
-                        log::debug!(
-                            "[UPDATE] PK {} not found in hot storage, querying cold storage for \
-                             user={}, pk={}",
-                            pk_name,
-                            user_id.as_str(),
-                            pk_value
-                        );
-                    }
-                    base::find_row_by_pk(self, Some(user_id), pk_value).await?.ok_or_else(|| {
-                        KalamDbError::NotFound(format!(
-                            "Row with {}={} not found (checked both hot and cold storage)",
-                            pk_name, pk_value
-                        ))
-                    })?
-                };
+                },
+                crate::versioned::MutationTarget::Missing => {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Row with {}={} not found (checked both hot and cold storage)",
+                        pk_name, pk_value
+                    )));
+                },
+            };
 
             // Coerce update values to match schema types (e.g., Utf8 → TimestampMicrosecond).
             // Without this, the no-op comparison would fail for any column where the
@@ -457,8 +430,13 @@ impl UserTableProvider {
                 fields:   new_fields,
             };
             let row_key = UserTableRowId::new(user_id.clone(), seq_id);
-            self.append_hot_row(&row_key, &entity, "Failed to update user table row")
-                .await?;
+            self.write_replaced_row(
+                previous,
+                row_key.clone(),
+                entity.clone(),
+                "Failed to update user table row",
+            )
+            .await?;
 
             if let Err(e) = self.stage_vector_upsert(user_id, seq_id, &entity.fields).await {
                 log::warn!(
@@ -535,40 +513,19 @@ impl UserTableProvider {
         );
         async move {
             let pk_name = self.primary_key_field_name().to_string();
-            let schema = self.schema();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-            let pk_value_scalar =
-                kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
-                    .map_err(KalamDbError::InvalidOperation)?;
-
-            // Find latest resolved row for this PK under same user
-            // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet
-            // scan)
-            let latest_row =
-                if let Some((_key, row)) = self.find_by_pk(user_id, &pk_value_scalar).await? {
-                    row
-                } else if self.pk_tombstoned_in_hot(user_id, &pk_value_scalar).await? {
+            let (previous, latest_row) = match self.load_mutation_target(user_id, pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned
+                | crate::versioned::MutationTarget::Missing => {
+                    log::trace!(
+                        "[UserProvider DELETE_BY_PK] Row with {}={} not found",
+                        pk_name,
+                        pk_value
+                    );
                     return Ok(false);
-                } else {
-                    // Not in hot storage, check cold storage
-                    match base::find_row_by_pk(self, Some(user_id), pk_value).await? {
-                        Some((_key, row)) => row,
-                        None => {
-                            log::trace!(
-                                "[UserProvider DELETE_BY_PK] Row with {}={} not found",
-                                pk_name,
-                                pk_value
-                            );
-                            return Ok(false);
-                        },
-                    }
-                };
+                },
+            };
 
             let seq_id = version;
 
@@ -592,8 +549,13 @@ impl UserTableProvider {
                     seq_id.as_i64()
                 );
             }
-            self.append_hot_row(&row_key, &entity, "Failed to delete user table row")
-                .await?;
+            self.write_replaced_row(
+                previous,
+                row_key.clone(),
+                entity.clone(),
+                "Failed to delete user table row",
+            )
+            .await?;
 
             if let Err(e) = self.stage_vector_delete(user_id, seq_id, pk_value).await {
                 log::warn!(

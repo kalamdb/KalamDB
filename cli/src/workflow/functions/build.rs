@@ -231,6 +231,7 @@ mod tests {
                 routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
                 schema:      "api".into(),
                 name:        "health".into(),
+                kind:        kalamdb_commons::models::RoutineKind::Procedure,
                 parameters:  Vec::new(),
                 return_type: None,
                 language:    None,
@@ -261,6 +262,7 @@ mod tests {
                 routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
                 schema:      "api".into(),
                 name:        "health".into(),
+                kind:        kalamdb_commons::models::RoutineKind::Procedure,
                 parameters:  Vec::new(),
                 return_type: None,
                 language:    None,
@@ -282,9 +284,9 @@ mod tests {
             root.join("schema.sql"),
             r#"
 CREATE SCHEMA api;
-CREATE PROCEDURE api.health() RETURNS TEXT;
-CREATE PROCEDURE api.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
-CREATE PROCEDURE api.plus_one(x INT) RETURNS INT;
+CREATE FUNCTION api.health() RETURNS TEXT;
+CREATE FUNCTION api.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
+CREATE FUNCTION api.plus_one(x INT) RETURNS INT;
 "#,
         )
         .unwrap();

@@ -644,7 +644,7 @@ async fn check_admin_permissions(client: &KalamClient, config: &Config) -> Check
     let test_ns = format!("{}_preflight_check", config.namespace);
     match client.sql_ok(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns)).await {
         Ok(_) => {
-            let _ = client.sql(&format!("DROP NAMESPACE IF EXISTS {}", test_ns)).await;
+            let _ = client.sql(&format!("DROP SCHEMA IF EXISTS {}", test_ns)).await;
             CheckResult::pass("Admin permissions", "Can create/drop namespaces")
         },
         Err(e) => CheckResult::fail("Admin permissions", format!("Cannot create namespace: {}", e)),
@@ -653,7 +653,7 @@ async fn check_admin_permissions(client: &KalamClient, config: &Config) -> Check
 
 /// Check for leftover benchmark namespaces.
 async fn check_clean_state(client: &KalamClient) -> CheckResult {
-    match client.sql_ok("SHOW NAMESPACES").await {
+    match client.sql_ok("SHOW SCHEMAS").await {
         Ok(resp) => {
             let mut stale = Vec::new();
             if let Some(result) = resp.results.first() {

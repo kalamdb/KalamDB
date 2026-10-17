@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use futures_util::{Sink, SinkExt};
 use kalamdb_auth::{repository::user_repo::UserRepository, WirePasswordAuthRequest};
 use kalamdb_backend::manager::BackendSessionManager;
-use kalamdb_commons::models::{NamespaceId, Role, SessionOrigin};
+use kalamdb_commons::models::{Role, SchemaId, SessionOrigin};
 use pgwire::{
     api::{
         auth::{
@@ -40,12 +40,12 @@ pub const WIRE_LOGICAL_DATABASE: &str = "kalam";
 /// KalamDB is a single logical database. Catalog aliases (`kalam`, `postgres`,
 /// empty) open the default namespace so GUI "Load Databases" / reconnect flows
 /// work. Any other non-empty name is treated as the initial schema/namespace.
-pub fn resolve_wire_startup_schema(database: Option<&str>) -> NamespaceId {
+pub fn resolve_wire_startup_schema(database: Option<&str>) -> SchemaId {
     let trimmed = database.map(str::trim).unwrap_or("");
     if is_wire_catalog_database(trimmed) {
-        NamespaceId::default_ns()
+        SchemaId::default_ns()
     } else {
-        NamespaceId::new(trimmed)
+        SchemaId::new(trimmed)
     }
 }
 

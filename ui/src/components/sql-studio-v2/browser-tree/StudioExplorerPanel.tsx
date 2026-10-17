@@ -91,7 +91,7 @@ const StudioExplorerPanelComponent = ({
           }
           emptyAction={
             <div className="flex h-8 w-full items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">
-              No namespaces.
+              No schemas.
             </div>
           }
         />

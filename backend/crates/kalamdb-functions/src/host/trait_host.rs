@@ -41,6 +41,25 @@ pub trait FunctionHost: Send + Sync {
     fn query(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         Box::pin(async move { self.sql(&sql, &params) })
     }
+    fn query_view(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
+        Box::pin(async move {
+            let res = self.query(sql, params).await?;
+            if let Some(batches) = res.row_batches {
+                return Ok(RoutineValue::from_read_view_batches(batches.to_vec()));
+            }
+            if res.read_view_batches.is_some() {
+                return Ok(res);
+            }
+            Ok(res)
+        })
+    }
+    fn query_batches(
+        &self,
+        sql: String,
+        params: Vec<RoutineValue>,
+    ) -> HostFuture<'_, RoutineValue> {
+        self.query_view(sql, params)
+    }
     fn execute(&self, sql: String, params: Vec<RoutineValue>) -> HostFuture<'_, RoutineValue> {
         self.query(sql, params)
     }

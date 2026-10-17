@@ -373,7 +373,7 @@ pub(crate) fn start_migration_tracking_server(
                     let records: Vec<FakeMig> = migs.values().cloned().collect();
                     let body = build_migrations_response(&records);
                     make_response(&body)
-                } else if sql_up.starts_with("DROP NAMESPACE") {
+                } else if sql_up.starts_with("DROP SCHEMA") {
                     migrations.lock().expect("lock migs").clear();
                     make_response(r#"{"status":"success","results":[]}"#)
                 } else if sql_up.starts_with("DELETE FROM SYSTEM.MIGRATIONS") {
@@ -1863,7 +1863,7 @@ fn test_project_workflow_dev_prompt_reset_restarts_schema_from_clean_namespace()
         );
 
         assert!(
-            wait_for_recorded_sql_contains(&requests, "DROP NAMESPACE", Duration::from_secs(8)),
+            wait_for_recorded_sql_contains(&requests, "DROP SCHEMA", Duration::from_secs(8)),
             "reset should drop the namespace before rebuilding\nrequests: {:?}",
             requests.lock().expect("lock requests").clone()
         );

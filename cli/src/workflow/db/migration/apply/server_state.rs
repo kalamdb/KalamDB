@@ -23,7 +23,7 @@ struct ServerMigrationRecord {
 
 pub(crate) async fn load_server_migration_state(
     client: &KalamLinkClient,
-    namespace: &kalamdb_commons::NamespaceId,
+    namespace: &kalamdb_commons::SchemaId,
 ) -> Result<MigrationState> {
     let sql = format!(
         "SELECT migration_key, migration_id, namespace, name, checksum, status, started_at, \
@@ -244,7 +244,7 @@ impl From<ServerMigrationRecord> for MigrationRecord {
     fn from(record: ServerMigrationRecord) -> Self {
         Self {
             migration_id:  record.migration_id,
-            namespace:     kalamdb_commons::NamespaceId::new(record.namespace),
+            namespace:     kalamdb_commons::SchemaId::new(record.namespace),
             migration_key: Some(record.migration_key),
             name:          record.name,
             checksum:      record.checksum,
@@ -273,7 +273,7 @@ mod tests {
     fn server_migration_key_prefers_loaded_primary_key() {
         let record = MigrationRecord {
             migration_id:  "0001_init.sql".into(),
-            namespace:     kalamdb_commons::NamespaceId::new("okf_sync"),
+            namespace:     kalamdb_commons::SchemaId::new("okf_sync"),
             migration_key: Some("legacy-key:0001_init.sql".into()),
             name:          "init".into(),
             checksum:      "abc".into(),

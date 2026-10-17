@@ -16,10 +16,12 @@ env:
   WASM_PACK_VERSION: "0.15.0"
   CARGO_ENCODED_RUSTFLAGS: ""
   CARGO_INCREMENTAL: "0"
-  # Keep CI test binaries small. Full debuginfo has filled the runner disk
-  # (ENOSPC creating /tmp RocksDB fixtures near the end of the suite).
-  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
-  CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
+  # The runner disk is 145G. Unpacked split debuginfo grew `target/` past 100G
+  # and the linker then SIGBUS'd. CI keeps no debuginfo and does not split it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: "off"
+  CARGO_PROFILE_TEST_SPLIT_DEBUGINFO: "off"
   RUSTC_WRAPPER: ""
   CARGO_BUILD_RUSTC_WRAPPER: ""
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"

@@ -101,7 +101,10 @@ fn schema_is_home(schema: &str, home_schema: Option<&str>) -> bool {
 
 pub fn generated_type_ident(schema: &str, name: &str, unqualified_names: bool) -> String {
     let local = pascal_case(name);
-    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
+    if unqualified_names
+        || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE)
+        || schema.eq_ignore_ascii_case("pg_catalog")
+    {
         local
     } else {
         format!("{}{local}", pascal_case(schema))

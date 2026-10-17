@@ -7,9 +7,7 @@ pub fn model_to_system_row<T: Serialize>(
     model: &T,
     table_def: &TableDefinition,
 ) -> Result<SystemTableRow, SystemError> {
-    let mut fields = kalamdb_serialization::model_to_row(model, table_def)
-        .map_err(|error| SystemError::SerializationError(error.to_string()))?;
-    kalamdb_serialization::model_ms_to_storage_micros(&mut fields, table_def)
+    let fields = kalamdb_serialization::model_ms_to_row(model, table_def)
         .map_err(|error| SystemError::SerializationError(error.to_string()))?;
     Ok(SystemTableRow { fields })
 }
@@ -18,17 +16,14 @@ pub fn system_row_to_model<T: DeserializeOwned>(
     row: &SystemTableRow,
     table_def: &TableDefinition,
 ) -> Result<T, SystemError> {
-    let mut fields = row.fields.clone();
-    kalamdb_serialization::storage_micros_to_model_ms(&mut fields, table_def)
-        .map_err(|error| SystemError::SerializationError(error.to_string()))?;
-    kalamdb_serialization::row_to_model(&fields, table_def)
+    kalamdb_serialization::row_to_model_ms(&row.fields, table_def)
         .map_err(|error| SystemError::SerializationError(error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::rows::SystemTableRow, schemas::TableDefinition, NamespaceId, TableName,
+        models::rows::SystemTableRow, schemas::TableDefinition, SchemaId, TableName,
     };
     use serde::{Deserialize, Serialize};
 
@@ -59,7 +54,7 @@ mod tests {
         };
 
         let table_def = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("test_models"),
             kalamdb_commons::schemas::TableType::System,
             vec![
@@ -112,7 +107,7 @@ mod tests {
         };
 
         let table_def = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("uuid_decimal_models"),
             kalamdb_commons::schemas::TableType::System,
             vec![

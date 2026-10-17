@@ -20,9 +20,11 @@ use std::{
 use datafusion::{
     arrow::array::{ArrayRef, Int64Array},
     error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
+    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature},
 };
 use kalamdb_commons::arrow_utils::{arrow_int64, ArrowDataType};
+
+use super::scalar::{cached_signature, zero_arg_volatile};
 
 // Snowflake ID format constants
 const TIMESTAMP_BITS: u64 = 41;
@@ -147,9 +149,7 @@ impl ScalarUDFImpl for SnowflakeIdFunction {
     }
 
     fn signature(&self) -> &Signature {
-        // Static signature with no arguments
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
+        cached_signature!(zero_arg_volatile())
     }
 
     fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {

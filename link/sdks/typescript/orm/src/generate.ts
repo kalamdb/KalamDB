@@ -92,12 +92,13 @@ function parseColumn(rawColumn: Record<string, unknown>): ColumnInfo | null {
   const name = optionalString(rawColumn.column_name ?? rawColumn.name);
   if (!name || name.startsWith('_')) return null;
 
+  const hasExplicitDefault = ('default_value' in rawColumn) || ('column_default' in rawColumn);
   const defaultValue = rawColumn.default_value ?? rawColumn.column_default;
   return {
     name,
-    dataType: rawColumn.data_type ?? rawColumn.dataType ?? rawColumn.type ?? 'Text',
+    dataType: rawColumn.logical_type ?? rawColumn.data_type ?? rawColumn.dataType ?? rawColumn.type ?? 'Text',
     nullable: parseNullable(rawColumn.is_nullable ?? rawColumn.nullable),
-    hasDefault: hasDefault(defaultValue),
+    hasDefault: hasDefault(defaultValue) ?? (hasExplicitDefault || ('logical_type' in rawColumn) ? false : undefined),
     isPrimaryKey: parseBoolean(rawColumn.is_primary_key ?? rawColumn.primary_key),
     ordinalPosition: parseInteger(rawColumn.ordinal_position),
     comment: optionalString(rawColumn.column_comment ?? rawColumn.comment),

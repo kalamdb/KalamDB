@@ -21,7 +21,7 @@ fn test_minio_vector_index_manifest_snapshot_exists() {
     let full_table = format!("{}.{}", namespace, table);
 
     setup_minio_storage(&storage_id, "MinIO Vector Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, embedding EMBEDDING(3), body TEXT NOT NULL) WITH \

@@ -157,7 +157,7 @@ describe('generateSchema unit behavior', () => {
           };
         }
 
-        if (sql === 'DESCRIBE commerce.orders') {
+        if (sql === 'DESCRIBE TABLE commerce.orders' || sql === 'DESCRIBE commerce.orders') {
           return {
             results: [{
               named_rows: [
@@ -189,7 +189,10 @@ describe('generateSchema unit behavior', () => {
     });
 
     assert.equal(queries[0], 'SHOW TABLES');
-    assert.equal(queries.filter((query) => query === 'DESCRIBE commerce.orders').length, 1);
+    assert.equal(
+      queries.filter((query) => query === 'DESCRIBE TABLE commerce.orders' || query === 'DESCRIBE commerce.orders').length,
+      1,
+    );
     assert.ok(schema.includes('export const commerce_orders = kTable.user("commerce.orders"'));
     assert.ok(schema.includes('export const commerce_events = kTable.stream("commerce.events"'));
     assert.ok(!schema.includes('archive_orders'));

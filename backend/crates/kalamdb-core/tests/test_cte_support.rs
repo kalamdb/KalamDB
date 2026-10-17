@@ -96,15 +96,15 @@ async fn setup_test_table(
 ) -> Result<(), String> {
     // Create a namespace
     executor
-        .execute("CREATE NAMESPACE test_ns", exec_ctx, vec![])
+        .execute("CREATE SCHEMA test_ns", exec_ctx, vec![])
         .await
         .map_err(|e| format!("Failed to create namespace: {}", e))?;
 
     // Create a test table
     executor
         .execute(
-            "CREATE USER TABLE test_ns.employees (id INT PRIMARY KEY, name TEXT, department TEXT, \
-             salary INT)",
+            "CREATE TABLE test_ns.employees (id INT PRIMARY KEY, name TEXT, department TEXT, \
+             salary INT) WITH (TYPE = 'USER')",
             exec_ctx,
             vec![],
         )

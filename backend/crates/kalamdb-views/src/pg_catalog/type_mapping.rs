@@ -1,5 +1,7 @@
 use kalamdb_commons::datatypes::KalamDataType;
 
+use crate::pg_catalog::stable_oid;
+
 /// PostgreSQL `pg_type.oid` for `void`.
 pub(crate) const PG_VOID_OID: i64 = 2278;
 
@@ -19,7 +21,9 @@ pub(crate) fn pg_type_oid(data_type: &KalamDataType) -> i64 {
         KalamDataType::Json => 114,
         KalamDataType::Uuid => 2950,
         KalamDataType::Bytes => 17,
-        KalamDataType::Text | KalamDataType::Embedding(_) | KalamDataType::File => 25,
+        KalamDataType::Text => 25,
+        KalamDataType::File => stable_oid(&["type", "pg_catalog", "file"]),
+        KalamDataType::Embedding(_) => stable_oid(&["type", "pg_catalog", "embedding"]),
     }
 }
 
@@ -142,6 +146,8 @@ pub fn pg_format_type(oid: i64) -> &'static str {
         1700 => "numeric",
         2278 => "void",
         2950 => "uuid",
+        _ if oid == stable_oid(&["type", "pg_catalog", "file"]) => "file",
+        _ if oid == stable_oid(&["type", "pg_catalog", "embedding"]) => "embedding",
         _ => "unknown",
     }
 }
@@ -162,7 +168,9 @@ pub(crate) fn pg_type_name(data_type: &KalamDataType) -> &'static str {
         KalamDataType::Json => "json",
         KalamDataType::Uuid => "uuid",
         KalamDataType::Bytes => "bytea",
-        KalamDataType::Text | KalamDataType::Embedding(_) | KalamDataType::File => "text",
+        KalamDataType::Text => "text",
+        KalamDataType::File => "file",
+        KalamDataType::Embedding(_) => "embedding",
     }
 }
 

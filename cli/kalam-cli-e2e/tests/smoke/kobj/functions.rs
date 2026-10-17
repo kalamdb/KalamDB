@@ -1,6 +1,13 @@
 //! CALL + nested SQL/topic + EXECUTE ACL, plus schema-first type/procedure e2e.
 
-use std::{collections::HashMap, fs, path::Path, process::Command};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -299,11 +306,11 @@ fn kobj_functions_rest_json_in_out() {
     }
     let ns = setup_namespace("kobj_json_fn");
     exec(&format!(
-        "CREATE OR REPLACE PROCEDURE {ns}.send_message(body JSON NOT NULL) RETURNS JSON LANGUAGE \
+        "CREATE OR REPLACE FUNCTION {ns}.send_message(body JSON NOT NULL) RETURNS JSON LANGUAGE \
          JAVASCRIPT AS $$\n  return {{ ok: true, conversationId: input.body.conversationId, text: \
          input.body.text }};\n$$"
     ));
-    exec(&format!("GRANT EXECUTE ON PROCEDURE {ns}.send_message TO user"));
+    exec(&format!("GRANT EXECUTE ON FUNCTION {ns}.send_message TO user"));
 
     let payload = json!({
         "conversationId": "c1",
@@ -527,6 +534,59 @@ fn kobj_functions_active_runs_and_structured_errors() {
     );
 }
 
+/// Production keeps a hot append handle. An idle isolate is dropped after 30s,
+/// and that drop closes the handle. The bound covers that TTL plus the log sweep.
+const PROCEDURE_LOG_FD_CLOSE_BOUND: Duration = Duration::from_secs(45);
+
+#[ntest::timeout(180_000)]
+#[test]
+fn kobj_procedure_log_handle_closes_when_idle() {
+    if skip_if_no_server() {
+        return;
+    }
+    if !server_target_is_local() {
+        eprintln!("⚠️  Procedure log fd check needs a local server. Skipping.");
+        return;
+    }
+    let pid = local_server_pid();
+    let ns = setup_namespace("fnlogfd");
+    create_js_procedure(&ns, "probe", "", "ctx.log.info('log-fd-hot'); return 1;");
+    let _ = query_rows(&format!("CALL {ns}.probe()"));
+
+    let marker = format!("functions/runtime/{ns}.probe/logs/procedures.jsonl");
+    assert!(
+        wait_for_log_fd(pid, &marker, true, Duration::from_secs(5)),
+        "hot CALL should keep {marker} open in pid {pid}"
+    );
+    let log_path = process_open_paths(pid)
+        .into_iter()
+        .find(|path| path.contains(&marker))
+        .expect("open procedure log path");
+
+    assert!(
+        wait_for_log_fd(pid, &marker, false, PROCEDURE_LOG_FD_CLOSE_BOUND),
+        "idle procedure log should be closed within {:?}: {log_path}",
+        PROCEDURE_LOG_FD_CLOSE_BOUND
+    );
+    assert!(
+        Path::new(&log_path).is_file(),
+        "closing the descriptor must leave the log on disk: {log_path}"
+    );
+    let before = fs::metadata(&log_path)
+        .unwrap_or_else(|error| panic!("stat {log_path}: {error}"))
+        .len();
+
+    let reopened = query_rows(&format!("CALL {ns}.probe()"));
+    assert!(!reopened.is_empty(), "CALL after the log fd closed should still succeed");
+    let after = fs::metadata(&log_path)
+        .unwrap_or_else(|error| panic!("stat {log_path}: {error}"))
+        .len();
+    assert!(
+        after > before,
+        "reopened procedure log should append to {log_path} ({before} -> {after})"
+    );
+}
+
 #[ntest::timeout(180000)]
 #[test]
 fn kobj_functions_create_type_and_inline_procedure() {
@@ -603,10 +663,14 @@ fn kobj_functions_create_type_and_inline_procedure() {
         dup.to_ascii_lowercase().contains("duplicate"),
         "duplicate enum labels must fail: {dup}"
     );
-    let empty = exec_err(&format!("CREATE TYPE {ns}.empty_status AS ENUM ('')"));
-    assert!(
-        empty.to_ascii_lowercase().contains("empty"),
-        "empty enum labels must fail: {empty}"
+    exec(&format!("CREATE TYPE {ns}.empty_status AS ENUM ()"));
+    assert_eq!(
+        count_sql(&format!(
+            "SELECT COUNT(*) AS n FROM system.types WHERE namespace_id = '{ns}' AND name = \
+             'empty_status'"
+        )),
+        1,
+        "PostgreSQL 18 empty enum should create in system.types"
     );
     let missing = exec_err(&format!("CREATE TYPE {ns}.envelope AS (status {ns}.does_not_exist)"));
     assert!(
@@ -707,6 +771,61 @@ return input.x;
     let logged_value = cell_i64(&logged[0], "result")
         .unwrap_or_else(|| cell(&logged[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(logged_value, 7, "ctx.log must not break CALL: {logged:?}");
+}
+
+fn local_server_pid() -> u32 {
+    let rows = query_rows("SELECT metric_value FROM system.stats WHERE metric_name = 'pid'");
+    rows.first()
+        .and_then(|row| cell_str(row, "metric_value"))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("system.stats pid missing: {rows:?}"))
+}
+
+fn process_open_paths(pid: u32) -> Vec<String> {
+    let proc_fd = std::path::PathBuf::from(format!("/proc/{pid}/fd"));
+    if proc_fd.is_dir() {
+        let mut paths = Vec::new();
+        let entries =
+            fs::read_dir(proc_fd).unwrap_or_else(|error| panic!("read /proc/{pid}/fd: {error}"));
+        for entry in entries.flatten() {
+            if let Ok(target) = fs::read_link(entry.path()) {
+                paths.push(target.to_string_lossy().into_owned());
+            }
+        }
+        return paths;
+    }
+
+    let output = Command::new("lsof")
+        .args(["-nP", "-F", "n", "-p", &pid.to_string()])
+        .output()
+        .unwrap_or_else(|error| panic!("lsof pid {pid}: {error}"));
+    if output.stdout.is_empty() {
+        panic!(
+            "lsof pid {pid} status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn wait_for_log_fd(pid: u32, marker: &str, open: bool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let is_open = process_open_paths(pid).iter().any(|path| path.contains(marker));
+        if is_open == open {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
 }
 
 fn procedure_logs_like(procedure_id: &str) -> Vec<HashMap<String, Value>> {
@@ -870,7 +989,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     }
     let ns = setup_namespace("kobj_fnlint");
     let log_as_fn = exec_err(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          ctx.log('ttt');\n  return 'ok';\n$$"
     ));
     assert!(
@@ -879,7 +998,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     );
 
     let created = exec(&format!(
-        "CREATE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          console.log('ok');\n  ctx.log.info('ok');\n  return 'ok';\n$$"
     ));
     assert!(
@@ -894,7 +1013,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
         !created.contains("module_revision:") || created.contains("not created by this statement"),
         "inline CREATE must not claim a new module revision: {created}"
     );
-    let health = query_rows(&format!("CALL {ns}.health()"));
+    let health = query_rows(&format!("SELECT {ns}.health() AS result"));
     let health_value = cell(&health[0], "result");
     assert!(
         health_value.as_str() == Some("ok") || health_value.to_string().contains("ok"),
@@ -902,7 +1021,7 @@ fn kobj_functions_create_validates_javascript_and_reports_replace() {
     );
 
     let replaced = exec(&format!(
-        "CREATE OR REPLACE PROCEDURE {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
+        "CREATE OR REPLACE FUNCTION {ns}.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$\n  \
          ctx.log.info('ok2');\n  return 'ok2';\n$$"
     ));
     assert!(replaced.contains("replaced"), "OR REPLACE should report replaced: {replaced}");
@@ -922,13 +1041,13 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     let ident = js_namespace_ident(&ns);
     let schema_sql = format!(
         "CREATE TYPE {ns}.address AS (city TEXT, country TEXT);\nCREATE TYPE {ns}.status AS ENUM \
-         ('active', 'blocked');\nCREATE PROCEDURE {ns}.health() RETURNS TEXT;\nCREATE PROCEDURE \
-         {ns}.inc(x INT) RETURNS INT;\nCREATE PROCEDURE {ns}.plus_one(x INT) RETURNS INT;\nCREATE \
-         PROCEDURE {ns}.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return 'inline'; $$;\n"
+         ('active', 'blocked');\nCREATE FUNCTION {ns}.health() RETURNS TEXT;\nCREATE FUNCTION \
+         {ns}.inc(x INT) RETURNS INT;\nCREATE FUNCTION {ns}.plus_one(x INT) RETURNS INT;\nCREATE \
+         FUNCTION {ns}.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return 'inline'; $$;\n"
     );
     exec(&schema_sql);
 
-    let missing = exec_err(&format!("CALL {ns}.health()"));
+    let missing = exec_err(&format!("SELECT {ns}.health() AS result"));
     let missing_lower = missing.to_ascii_lowercase();
     assert!(
         missing_lower.contains("not implemented")
@@ -1053,19 +1172,19 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     );
     assert!((200..300).contains(&status), "activate should succeed: {status} {body}");
 
-    let health = query_rows(&format!("CALL {ns}.health()"));
+    let health = query_rows(&format!("SELECT {ns}.health() AS result"));
     let health_value = cell(&health[0], "result");
     assert!(
         health_value.as_str() == Some("ok") || health_value.to_string().contains("ok"),
         "project-backed health should return ok after activate: {health:?}"
     );
 
-    let inc = query_rows(&format!("CALL {ns}.inc(41)"));
+    let inc = query_rows(&format!("SELECT {ns}.inc(41) AS result"));
     let inc_value = cell_i64(&inc[0], "result")
         .unwrap_or_else(|| cell(&inc[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(inc_value, 42, "two named handlers in one file should dispatch: {inc:?}");
 
-    let unimplemented = exec_err(&format!("CALL {ns}.plus_one(41)"));
+    let unimplemented = exec_err(&format!("SELECT {ns}.plus_one(41) AS result"));
     let unimplemented_lower = unimplemented.to_ascii_lowercase();
     assert!(
         unimplemented_lower.contains("not implemented")
@@ -1073,7 +1192,7 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
         "unimplemented bodyless routine must stay PROCEDURE_NOT_IMPLEMENTED: {unimplemented}"
     );
 
-    let greet = query_rows(&format!("CALL {ns}.greet()"));
+    let greet = query_rows(&format!("SELECT {ns}.greet() AS result"));
     let greet_value = cell(&greet[0], "result");
     assert!(
         greet_value.as_str() == Some("inline") || greet_value.to_string().contains("inline"),
@@ -1124,14 +1243,14 @@ fn kobj_functions_project_backed_create_type_and_procedure() {
     );
     assert!((200..300).contains(&status), "second activate should succeed: {status} {body}");
 
-    let nested = query_rows(&format!("CALL {ns}.plus_one(41)"));
+    let nested = query_rows(&format!("SELECT {ns}.plus_one(41) AS result"));
     let nested_value = cell_i64(&nested[0], "result")
         .unwrap_or_else(|| cell(&nested[0], "result").as_i64().unwrap_or(-1));
     assert_eq!(
         nested_value, 42,
         "project-backed typed nested CALL should return 42: {nested:?}"
     );
-    let greet = query_rows(&format!("CALL {ns}.greet()"));
+    let greet = query_rows(&format!("SELECT {ns}.greet() AS result"));
     let greet_value = cell(&greet[0], "result");
     assert!(
         greet_value.as_str() == Some("project") || greet_value.to_string().contains("project"),
@@ -1268,7 +1387,7 @@ fn kobj_functions_runtime_failure_cleanup_and_recovery() {
         "function failure/rollback/recovery runtime_seconds={:.3}",
         started.elapsed().as_secs_f64()
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Concurrent parameter binding and per-call globals through the database API.
@@ -1317,7 +1436,7 @@ fn kobj_functions_runtime_concurrent_calls_preserve_inputs() {
             latencies[98]
         );
     });
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// PocketBase hooks, Postgres functions, and Firebase callable transactions abort
@@ -1453,7 +1572,7 @@ fn kobj_functions_throw_aborts_shared_writes_nested_call_and_topic() {
         0,
         "rejected COMMIT must not leave the insert"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Firebase and this runtime both cap nested calls. A shallow chain succeeds; a
@@ -1486,7 +1605,7 @@ fn kobj_functions_nested_call_depth_limit() {
         too_deep_lower.contains("depth") || too_deep_lower.contains("resource"),
         "call depth past the runtime limit must fail: {too_deep}"
     );
-    exec(&format!("DROP NAMESPACE {ns} CASCADE"));
+    exec(&format!("DROP SCHEMA {ns} CASCADE"));
 }
 
 /// Firebase background functions and PocketBase hooks retry a failed delivery.

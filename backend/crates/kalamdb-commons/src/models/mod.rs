@@ -12,11 +12,11 @@
 //! ## Examples
 //!
 //! ```rust
-//! use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+//! use kalamdb_commons::models::{SchemaId, TableName, UserId};
 //! use kalamdb_system::{Job, LiveQuery, User};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::default();
+//! let namespace_id = SchemaId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Type safety prevents mixing
@@ -47,11 +47,17 @@ mod read_context;
 mod role;
 mod routine_call;
 mod routine_grantee;
+mod routine_kind;
+mod routine_null_safety;
+mod routine_parallel_safety;
+mod routine_parameter_mode;
 mod routine_security;
+mod routine_volatility;
 pub mod row_level_security;
 mod session_origin;
 mod topic_op;
 mod transaction;
+mod vector_metric;
 
 // Row types only available with full feature (datafusion dependency)
 #[cfg(feature = "rows")]
@@ -79,7 +85,12 @@ pub use read_context::ReadContext;
 pub use role::Role;
 pub use routine_call::{is_builtin_default_name, normalize_builtin_name, RoutineCall};
 pub use routine_grantee::RoutineGrantee;
+pub use routine_kind::RoutineKind;
+pub use routine_null_safety::RoutineNullSafety;
+pub use routine_parallel_safety::RoutineParallelSafety;
+pub use routine_parameter_mode::RoutineParameterMode;
 pub use routine_security::RoutineSecurityMode;
+pub use routine_volatility::RoutineVolatility;
 pub use row_level_security::{
     AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
     PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, ScalarPredicate,
@@ -91,6 +102,7 @@ pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use session_origin::SessionOrigin;
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
+pub use vector_metric::VectorMetric;
 
 #[cfg(test)]
 mod tests {

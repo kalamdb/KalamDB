@@ -74,17 +74,12 @@ pub struct RaftLogEntry {
 impl KSerializable for RaftLogEntry {}
 
 impl RaftLogEntry {
-    pub const RECORD_VERSION: u8 = 1;
-    pub const RECORD_HEADER_LEN: usize = 1 + 8 + 8;
+    pub const RECORD_VERSION: u8 = kalamdb_serialization::RAFT_LOG_RECORD_VERSION;
+    pub const RECORD_HEADER_LEN: usize = kalamdb_serialization::RAFT_LOG_RECORD_HEADER_LEN;
 
     /// Pack `index`, `term`, and tagged payload without a KOBJ envelope.
     pub fn encode_record_parts(index: u64, term: u64, tagged_payload: &[u8]) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(Self::RECORD_HEADER_LEN + tagged_payload.len());
-        buf.push(Self::RECORD_VERSION);
-        buf.extend_from_slice(&index.to_le_bytes());
-        buf.extend_from_slice(&term.to_le_bytes());
-        buf.extend_from_slice(tagged_payload);
-        buf
+        kalamdb_serialization::encode_raft_log_record_parts(index, term, tagged_payload)
     }
 
     /// Pack `index`, `term`, and payload without a KOBJ/FlexBuffers envelope.
@@ -92,38 +87,21 @@ impl RaftLogEntry {
         Self::encode_record_parts(self.index, self.term, &self.payload)
     }
 
-    /// Tagged `EntryPayload` bytes inside a packed record, or `record` itself if legacy.
+    /// Tagged `EntryPayload` bytes inside a packed record.
     pub fn tagged_payload(record: &[u8]) -> &[u8] {
-        if record.first() == Some(&Self::RECORD_VERSION) && record.len() >= Self::RECORD_HEADER_LEN
-        {
-            &record[Self::RECORD_HEADER_LEN..]
-        } else {
-            record
-        }
+        kalamdb_serialization::raft_log_tagged_payload(record)
     }
 
-    /// Decode a packed log record, or a legacy KOBJ `RaftLogEntry`.
+    /// Decode a packed log record (`version = 1`).
     pub fn decode_record(bytes: &[u8]) -> Result<Self> {
-        if bytes.first() == Some(&Self::RECORD_VERSION) {
-            let index = read_u64_le(bytes, 1).ok_or_else(truncated_log_record)?;
-            let term = read_u64_le(bytes, 9).ok_or_else(truncated_log_record)?;
-            return Ok(Self {
-                index,
-                term,
-                payload: bytes.get(Self::RECORD_HEADER_LEN..).unwrap_or(&[]).to_vec(),
-            });
-        }
-
-        decode_entity(bytes)
+        let (index, term, payload) = kalamdb_serialization::decode_raft_log_record(bytes)
+            .map_err(|err| StorageError::SerializationError(err.to_string()))?;
+        Ok(Self {
+            index,
+            term,
+            payload: payload.to_vec(),
+        })
     }
-}
-
-fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
-    bytes.get(offset..offset + 8)?.try_into().ok().map(u64::from_le_bytes)
-}
-
-fn truncated_log_record() -> StorageError {
-    StorageError::SerializationError("truncated raft log record".to_string())
 }
 
 fn prefixed_key(prefix: &[u8], suffix: &[u8]) -> Vec<u8> {
@@ -167,30 +145,18 @@ pub struct RaftLogId {
 impl KSerializable for RaftLogId {}
 
 impl RaftLogId {
-    const PACKED_LEN: usize = 16;
+    const PACKED_LEN: usize = kalamdb_serialization::PACKED_LOG_ID_LEN;
 
-    /// Pack term+index as 16 little-endian bytes (no KOBJ envelope).
+    /// Pack `(version = 1, term, index)` as 17 little-endian bytes (no KOBJ envelope).
     pub fn encode_packed(self) -> [u8; Self::PACKED_LEN] {
-        let mut buf = [0u8; Self::PACKED_LEN];
-        buf[..8].copy_from_slice(&self.term.to_le_bytes());
-        buf[8..].copy_from_slice(&self.index.to_le_bytes());
-        buf
+        kalamdb_serialization::encode_packed_log_id(self.term, self.index)
     }
 
-    /// Decode a packed log id, or a legacy KOBJ `RaftLogId`.
+    /// Decode a packed log id (`version = 1`).
     pub fn decode_packed(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() == Self::PACKED_LEN {
-            let mut term = [0u8; 8];
-            let mut index = [0u8; 8];
-            term.copy_from_slice(&bytes[..8]);
-            index.copy_from_slice(&bytes[8..]);
-            return Ok(Self {
-                term:  u64::from_le_bytes(term),
-                index: u64::from_le_bytes(index),
-            });
-        }
-
-        decode_entity(bytes)
+        let (term, index) = kalamdb_serialization::decode_packed_log_id(bytes)
+            .map_err(|err| StorageError::SerializationError(err.to_string()))?;
+        Ok(Self { term, index })
     }
 }
 
@@ -928,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_log_record_roundtrips_and_reads_legacy_kobj() {
+    fn packed_log_record_roundtrips_and_rejects_legacy_kobj() {
         let entry = RaftLogEntry {
             index:   7,
             term:    3,
@@ -944,25 +910,24 @@ mod tests {
 
         let legacy = encode_entity(&entry).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
-        let decoded_legacy = RaftLogEntry::decode_record(&legacy).unwrap();
-        assert_eq!(decoded_legacy.index, 7);
-        assert_eq!(decoded_legacy.payload, b"cmd");
+        assert!(RaftLogEntry::decode_record(&legacy).is_err());
     }
 
     #[test]
-    fn packed_log_id_roundtrips_and_reads_legacy_kobj() {
+    fn packed_log_id_roundtrips_and_rejects_legacy_kobj() {
         let id = RaftLogId {
             term:  4,
             index: 99,
         };
         let packed = id.encode_packed();
-        assert_eq!(packed.len(), 16);
+        assert_eq!(packed.len(), kalamdb_serialization::PACKED_LOG_ID_LEN);
+        assert_eq!(packed[0], kalamdb_serialization::RAFT_LOG_ID_VERSION);
         assert!(!kalamdb_serialization::has_object_magic(&packed));
         assert_eq!(RaftLogId::decode_packed(&packed).unwrap(), id);
 
         let legacy = encode_entity(&id).unwrap();
         assert!(kalamdb_serialization::has_object_magic(&legacy));
-        assert_eq!(RaftLogId::decode_packed(&legacy).unwrap(), id);
+        assert!(RaftLogId::decode_packed(&legacy).is_err());
     }
 
     #[test]

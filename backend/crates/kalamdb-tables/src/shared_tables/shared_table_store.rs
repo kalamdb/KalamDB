@@ -130,7 +130,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{rows::Row, NamespaceId, TableId, TableName},
+        models::{rows::Row, SchemaId, TableId, TableName},
         StorageKey,
     };
 
@@ -139,7 +139,7 @@ mod tests {
 
     fn create_test_store() -> SharedTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         new_shared_table_store(backend, &table_id)
     }
 
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn test_scan_with_raw_prefix_uses_backend_prefix() {
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let store = new_shared_table_store(backend.clone(), &table_id);
 
         let prefix_key = VersionId::try_from_i64(100).unwrap();
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn indexed_shared_store_writes_ordinal_kobj_and_rebuilds_seq() {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("name", kalamdb_serialization::StorageDataType::Utf8),
@@ -250,7 +250,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("conversation_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -332,7 +332,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("room_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -392,7 +392,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("members"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("members"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Utf8),
             ("user_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -451,5 +451,147 @@ mod tests {
         let last = backend.last_scan().expect("index scan");
         assert!(last.partition.contains("idx_members_user_id"));
         assert_eq!(last.prefix.as_deref(), Some(prefix.as_slice()));
+    }
+
+    fn status_row(seq: i64, status: &str, deleted: bool) -> (VersionId, SharedTableRow) {
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
+        values.insert("status".to_string(), ScalarValue::Utf8(Some(status.to_string())));
+        let version = VersionId::try_from_i64(seq).unwrap();
+        (
+            version,
+            SharedTableRow {
+                _version: version,
+                _deleted: deleted,
+                fields:   Row::new(values),
+            },
+        )
+    }
+
+    #[test]
+    fn replace_keeps_one_hot_key_and_replaces_secondary_index() {
+        use kalamdb_commons::models::{
+            datatypes::KalamDataType,
+            schemas::{ColumnDefinition, ScalarIndexDefinition},
+            ColumnId,
+        };
+
+        use crate::shared_tables::SharedTablePkIndex;
+
+        let backend = Arc::new(RecordingBackend::new());
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("orders"));
+        let schema = crate::row_codec::storage_schema_from_named_fields([
+            ("id", kalamdb_serialization::StorageDataType::Int64),
+            ("status", kalamdb_serialization::StorageDataType::Utf8),
+        ]);
+        let columns = [
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+            ColumnDefinition::simple(2, "status", 2, KalamDataType::Text),
+        ];
+        let indexes = [ScalarIndexDefinition::new("orders_status", vec![ColumnId::new(2)], false)];
+        let store = new_indexed_shared_table_store(
+            backend.clone(),
+            &table_id,
+            "id",
+            schema,
+            &indexes,
+            &columns,
+        );
+
+        let (first_key, first_row) = status_row(1, "open", false);
+        store.insert(&first_key, &first_row).unwrap();
+        let (second_key, second_row) = status_row(2, "closed", false);
+        let batches_before = backend.batch_calls();
+        store
+            .replace(Some((&first_key, &first_row)), &second_key, &second_row)
+            .unwrap();
+        assert_eq!(backend.batch_calls(), batches_before + 1);
+        assert!(store.get(&first_key).unwrap().is_none());
+        assert_eq!(store.get(&second_key).unwrap().unwrap()._version, second_key);
+
+        let pk_prefix = SharedTablePkIndex::new(&table_id, "id")
+            .build_prefix_for_pk(&ScalarValue::Int64(Some(1)));
+        let pk_hits = store.scan_by_index(0, Some(&pk_prefix), None).unwrap();
+        assert_eq!(pk_hits.len(), 1);
+        assert_eq!(pk_hits[0].0, second_key);
+        let latest = store.get_latest_by_index_prefix(0, &pk_prefix).unwrap().unwrap();
+        assert_eq!(latest.0, second_key);
+
+        let status_filter = datafusion::logical_expr::col("status")
+            .eq(datafusion::logical_expr::lit("open"));
+        assert!(store.find_best_index_for_filter_expr(None, &status_filter).is_some());
+        let (open_idx, open_prefix) =
+            store.find_best_index_for_filter_expr(None, &status_filter).unwrap();
+        assert!(store.scan_by_index(open_idx, Some(&open_prefix), None).unwrap().is_empty());
+        let closed_filter = datafusion::logical_expr::col("status")
+            .eq(datafusion::logical_expr::lit("closed"));
+        let (closed_idx, closed_prefix) =
+            store.find_best_index_for_filter_expr(None, &closed_filter).unwrap();
+        let closed_hits = store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap();
+        assert_eq!(closed_hits.len(), 1);
+        assert_eq!(closed_hits[0].0, second_key);
+
+        let (tombstone_key, tombstone) = status_row(3, "closed", true);
+        store
+            .replace(Some((&second_key, &second_row)), &tombstone_key, &tombstone)
+            .unwrap();
+        assert!(store.get(&second_key).unwrap().is_none());
+        assert!(store.get(&tombstone_key).unwrap().unwrap()._deleted);
+        let tombstone_hits = store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap();
+        assert_eq!(tombstone_hits.len(), 1);
+        assert_eq!(tombstone_hits[0].0, tombstone_key);
+
+        let (live_key, live_row) = status_row(4, "open", false);
+        store
+            .replace(Some((&tombstone_key, &tombstone)), &live_key, &live_row)
+            .unwrap();
+        assert!(store.get(&tombstone_key).unwrap().is_none());
+        assert!(store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap().is_empty());
+        let open_hits = store.scan_by_index(open_idx, Some(&open_prefix), None).unwrap();
+        assert_eq!(open_hits.len(), 1);
+        assert_eq!(open_hits[0].0, live_key);
+        let remaining = store.scan_by_index(0, Some(&pk_prefix), None).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].0, live_key);
+    }
+
+    #[test]
+    fn replace_batch_commits_one_write() {
+        let backend = Arc::new(RecordingBackend::new());
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("orders"));
+        let schema = crate::row_codec::storage_schema_from_named_fields([(
+            "id",
+            kalamdb_serialization::StorageDataType::Int64,
+        )]);
+        let store =
+            new_indexed_shared_table_store(backend.clone(), &table_id, "id", schema, &[], &[]);
+
+        let mut first = create_test_row(1, "a");
+        first.fields.values.insert("id".to_string(), ScalarValue::Int64(Some(10)));
+        let mut second = create_test_row(2, "b");
+        second.fields.values.insert("id".to_string(), ScalarValue::Int64(Some(20)));
+        let first_key = VersionId::try_from_i64(1).unwrap();
+        let second_key = VersionId::try_from_i64(2).unwrap();
+        store.insert(&first_key, &first).unwrap();
+        store.insert(&second_key, &second).unwrap();
+
+        let mut next_first = create_test_row(3, "a2");
+        next_first.fields.values.insert("id".to_string(), ScalarValue::Int64(Some(10)));
+        let mut next_second = create_test_row(4, "b2");
+        next_second.fields.values.insert("id".to_string(), ScalarValue::Int64(Some(20)));
+        let next_first_key = VersionId::try_from_i64(3).unwrap();
+        let next_second_key = VersionId::try_from_i64(4).unwrap();
+        let before = backend.batch_calls();
+        store
+            .replace_batch(&[
+                (Some((first_key, first)), next_first_key, next_first),
+                (Some((second_key, second)), next_second_key, next_second),
+            ])
+            .unwrap();
+        assert_eq!(backend.batch_calls(), before + 1);
+        assert!(store.get(&first_key).unwrap().is_none());
+        assert!(store.get(&second_key).unwrap().is_none());
+        assert!(store.get(&next_first_key).unwrap().is_some());
+        assert!(store.get(&next_second_key).unwrap().is_some());
     }
 }

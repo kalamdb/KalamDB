@@ -257,7 +257,7 @@ async fn complete_schedule(
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{JobId, NamespaceId, RoutineId, ScheduleId, UserId};
+    use kalamdb_commons::{JobId, RoutineId, ScheduleId, SchemaId, UserId};
     use kalamdb_core::test_helpers::test_app_context_simple;
     use kalamdb_raft::{MetaCommand, MetaResponse, RaftExecutor};
     use kalamdb_system::JobType;
@@ -407,7 +407,7 @@ mod tests {
     fn row() -> CatalogSchedule {
         CatalogSchedule {
             schedule_id:       ScheduleId::new("app.clock"),
-            namespace_id:      NamespaceId::new("app"),
+            namespace_id:      SchemaId::new("app"),
             name:              "clock".into(),
             routine_id:        RoutineId::new("app.tick"),
             principal_user_id: UserId::system(),

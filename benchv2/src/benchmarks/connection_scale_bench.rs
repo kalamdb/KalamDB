@@ -1,18 +1,20 @@
-use std::future::Future;
-use std::io::{self, IsTerminal, Write};
-use std::pin::Pin;
-use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    future::Future,
+    io::{self, IsTerminal, Write},
+    pin::Pin,
+    process::Command,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use kalam_client::{ChangeEvent, SubscriptionConfig};
 use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use tokio::sync::{watch, Semaphore};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 pub struct ConnectionScaleBench;
 
@@ -41,7 +43,8 @@ impl Benchmark for ConnectionScaleBench {
     }
 
     fn description(&self) -> &str {
-        "One WebSocket connection per subscription tier test (up to --max-subscribers, default 100K)"
+        "One WebSocket connection per subscription tier test (up to --max-subscribers, default \
+         100K)"
     }
 
     fn single_run(&self) -> bool {
@@ -67,7 +70,8 @@ impl Benchmark for ConnectionScaleBench {
             run_sql_ok_on_all_urls(
                 client,
                 &format!(
-                    "CREATE SHARED TABLE IF NOT EXISTS {}.conn_scale (id INT PRIMARY KEY, payload TEXT)",
+                    "CREATE SHARED TABLE IF NOT EXISTS {}.conn_scale (id INT PRIMARY KEY, payload \
+                     TEXT)",
                     config.namespace
                 ),
             )
@@ -95,12 +99,8 @@ impl Benchmark for ConnectionScaleBench {
             let connect_wave_pause = connect_wave_pause_duration();
             let connect_timeout = connect_timeout_duration();
             let delivery_tolerance = delivery_tolerance_ratio();
-            let ws_targets = validate_ws_targets(
-                client,
-                &config.namespace,
-                resolve_ws_targets(config),
-            )
-            .await?;
+            let ws_targets =
+                validate_ws_targets(client, &config.namespace, resolve_ws_targets(config)).await?;
             let ws_targets = Arc::new(ws_targets);
             let mut managed_server_memory = ManagedServerMemoryTracker::from_env();
             let live_row_enabled = io::stdout().is_terminal();
@@ -112,10 +112,10 @@ impl Benchmark for ConnectionScaleBench {
                 && std::env::var("KALAMDB_ALLOW_SINGLE_WS_TARGET").ok().as_deref() != Some("1")
             {
                 return Err(format!(
-                    "Single WS target ({}) would require about {} WebSocket connections, which is likely capped by local ephemeral ports on this host near {}. Use --urls with multiple endpoints or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run.",
-                    ws_targets[0],
-                    max_connections,
-                    single_target_ws_limit_label,
+                    "Single WS target ({}) would require about {} WebSocket connections, which is \
+                     likely capped by local ephemeral ports on this host near {}. Use --urls with \
+                     multiple endpoints or set KALAMDB_ALLOW_SINGLE_WS_TARGET=1 to force this run.",
+                    ws_targets[0], max_connections, single_target_ws_limit_label,
                 ));
             }
 
@@ -146,13 +146,15 @@ impl Benchmark for ConnectionScaleBench {
                 "  ┌─────────────┬───────────┬──────────┬──────────────┬───────────────┬──────────────┬──────────────┬──────────────┬──────────────┐"
             );
             println!(
-                "  │ Target Conn │ Connected │  Failed  │ Connect Time │ Chg Received  │ Deliver Time │  Loop Time   │  Start RSS   │   End RSS    │"
+                "  │ Target Conn │ Connected │  Failed  │ Connect Time │ Chg Received  │ Deliver \
+                 Time │  Loop Time   │  Start RSS   │   End RSS    │"
             );
             println!(
                 "  ├─────────────┼───────────┼──────────┼──────────────┼───────────────┼──────────────┼──────────────┼──────────────┼──────────────┤"
             );
             println!(
-                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, ws_targets={}, delivery_tolerance={:.1}%",
+                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, \
+                 ws_targets={}, delivery_tolerance={:.1}%",
                 connect_batch,
                 connect_wave_size,
                 connect_wave_pause.as_millis(),
@@ -163,7 +165,8 @@ impl Benchmark for ConnectionScaleBench {
             println!("  WebSocket target validation: {} endpoint(s) reachable", ws_targets.len());
             if !client.ws_local_bind_addresses().is_empty() {
                 println!(
-                    "  WS local bind pool: {} address(es) [{}] | effective single-target ceiling ~{}",
+                    "  WS local bind pool: {} address(es) [{}] | effective single-target ceiling \
+                     ~{}",
                     client.ws_local_bind_addresses().len(),
                     summarize_bind_pool(client.ws_local_bind_addresses()),
                     single_target_ws_limit_label,
@@ -191,8 +194,8 @@ impl Benchmark for ConnectionScaleBench {
                 let delivery_window = delivery_window_for_tier(checkpoint_target);
 
                 while launched_connections < checkpoint_target {
-                    let wave_remaining = (checkpoint_target - launched_connections)
-                        .min(connect_wave_size as u32);
+                    let wave_remaining =
+                        (checkpoint_target - launched_connections).min(connect_wave_size as u32);
                     for _ in 0..wave_remaining {
                         let connection_id = launched_connections;
                         let bench_client = client.clone();
@@ -303,11 +306,15 @@ impl Benchmark for ConnectionScaleBench {
                         launched_connections += 1;
                     }
 
-                    if connect_wave_pause > Duration::ZERO && launched_connections < checkpoint_target {
+                    if connect_wave_pause > Duration::ZERO
+                        && launched_connections < checkpoint_target
+                    {
                         tokio::time::sleep(connect_wave_pause).await;
                     }
 
-                    if live_row_enabled && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL {
+                    if live_row_enabled
+                        && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL
+                    {
                         refresh_live_rss(
                             &mut managed_server_memory,
                             &mut last_memory_refresh,
@@ -335,7 +342,8 @@ impl Benchmark for ConnectionScaleBench {
                     }
                 }
 
-                let mut last_done = connected.load(Ordering::Relaxed) + failed.load(Ordering::Relaxed);
+                let mut last_done =
+                    connected.load(Ordering::Relaxed) + failed.load(Ordering::Relaxed);
                 let mut stall_deadline =
                     tokio::time::Instant::now() + connect_timeout + Duration::from_secs(5);
                 loop {
@@ -352,7 +360,9 @@ impl Benchmark for ConnectionScaleBench {
                         break;
                     }
 
-                    if live_row_enabled && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL {
+                    if live_row_enabled
+                        && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL
+                    {
                         refresh_live_rss(
                             &mut managed_server_memory,
                             &mut last_memory_refresh,
@@ -392,7 +402,8 @@ impl Benchmark for ConnectionScaleBench {
                 let mut checkpoint_error = None;
                 if connected_count < checkpoint_target {
                     checkpoint_error = Some(format!(
-                        "checkpoint {} reached only {}/{} connections (connect_failures={}, delivery_failures={})",
+                        "checkpoint {} reached only {}/{} connections (connect_failures={}, \
+                         delivery_failures={})",
                         format_num(checkpoint_target),
                         format_num(connected_count),
                         format_num(checkpoint_target),
@@ -408,12 +419,9 @@ impl Benchmark for ConnectionScaleBench {
                     delivered.store(0, Ordering::Relaxed);
                     probe_epoch.store((checkpoint_index + 1) as u32, Ordering::Relaxed);
 
-                    let write_result = insert_checkpoint_probe_rows(
-                        client,
-                        &config.namespace,
-                        checkpoint_target,
-                    )
-                    .await;
+                    let write_result =
+                        insert_checkpoint_probe_rows(client, &config.namespace, checkpoint_target)
+                            .await;
 
                     if let Err(err) = write_result {
                         checkpoint_error = Some(format!(
@@ -422,7 +430,8 @@ impl Benchmark for ConnectionScaleBench {
                             err,
                         ));
                     } else {
-                        let delivery_threshold = ((connected_count as f64) * delivery_tolerance).floor() as u32;
+                        let delivery_threshold =
+                            ((connected_count as f64) * delivery_tolerance).floor() as u32;
                         let wait_start = Instant::now();
                         let mut last_progress_count = 0u32;
                         let mut last_progress_time = Instant::now();
@@ -448,7 +457,8 @@ impl Benchmark for ConnectionScaleBench {
                                 println!(
                                     "  │ {:^width$} │",
                                     format!(
-                                        "⚠ {}/{} delivered ({:.2}% >= {:.1}% tolerance) – {} stragglers (stalled {})",
+                                        "⚠ {}/{} delivered ({:.2}% >= {:.1}% tolerance) – {} \
+                                         stragglers (stalled {})",
                                         format_num(delivered_count),
                                         format_num(connected_count),
                                         (delivered_count as f64 / connected_count as f64) * 100.0,
@@ -474,10 +484,12 @@ impl Benchmark for ConnectionScaleBench {
                                     println!(
                                         "  │ {:^width$} │",
                                         format!(
-                                            "⚠ {}/{} delivered ({:.2}% >= {:.1}% tolerance) – {} stragglers within {}",
+                                            "⚠ {}/{} delivered ({:.2}% >= {:.1}% tolerance) – {} \
+                                             stragglers within {}",
                                             format_num(final_delivered_count),
                                             format_num(connected_count),
-                                            (final_delivered_count as f64 / connected_count as f64) * 100.0,
+                                            (final_delivered_count as f64 / connected_count as f64)
+                                                * 100.0,
                                             delivery_tolerance * 100.0,
                                             format_num(connected_count - final_delivered_count),
                                             format_duration(delivery_window),
@@ -486,7 +498,8 @@ impl Benchmark for ConnectionScaleBench {
                                     );
                                 } else {
                                     checkpoint_error = Some(format!(
-                                        "checkpoint {} delivered {}/{} insert events within {} (below {:.1}% tolerance)",
+                                        "checkpoint {} delivered {}/{} insert events within {} \
+                                         (below {:.1}% tolerance)",
                                         format_num(checkpoint_target),
                                         format_num(final_delivered_count),
                                         format_num(connected_count),
@@ -497,7 +510,9 @@ impl Benchmark for ConnectionScaleBench {
                                 break;
                             }
 
-                            if live_row_enabled && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL {
+                            if live_row_enabled
+                                && last_live_render.elapsed() >= LIVE_PROGRESS_REFRESH_INTERVAL
+                            {
                                 refresh_live_rss(
                                     &mut managed_server_memory,
                                     &mut last_memory_refresh,
@@ -556,11 +571,9 @@ impl Benchmark for ConnectionScaleBench {
                 } else {
                     println!("{}", final_row);
                 }
-                if let Some(memory_delta_info) = render_memory_delta_info(
-                    benchmark_start_memory,
-                    memory_after,
-                    connected_count,
-                ) {
+                if let Some(memory_delta_info) =
+                    render_memory_delta_info(benchmark_start_memory, memory_after, connected_count)
+                {
                     println!("  │ {:<width$} │", memory_delta_info, width = TABLE_INFO_WIDTH);
                 }
 
@@ -570,25 +583,26 @@ impl Benchmark for ConnectionScaleBench {
                     println!(
                         "  │ {:^width$} │",
                         format!(
-                            "⚠ Failure breakdown: connect_failures={}, delivery_failures={}, window={}",
+                            "⚠ Failure breakdown: connect_failures={}, delivery_failures={}, \
+                             window={}",
                             format_num(connect_fail_count),
                             format_num(delivery_fail_count),
                             format_duration(delivery_window),
                         ),
                         width = TABLE_INFO_WIDTH,
                     );
-                    println!(
-                        "  │ {:^width$} │",
-                        err,
-                        width = TABLE_INFO_WIDTH,
-                    );
+                    println!("  │ {:^width$} │", err, width = TABLE_INFO_WIDTH,);
                     println!(
                         "  └─────────────┴───────────┴──────────┴──────────────┴───────────────┴──────────────┴──────────────┴──────────────┴──────────────┘"
                     );
-                    println!("  Max sustained concurrent connections: {}", format_num(max_achieved));
+                    println!(
+                        "  Max sustained concurrent connections: {}",
+                        format_num(max_achieved)
+                    );
                     println!();
                     return Err(format!(
-                        "connection_scale stopped at checkpoint {} after last successful checkpoint {}",
+                        "connection_scale stopped at checkpoint {} after last successful \
+                         checkpoint {}",
                         format_num(checkpoint_target),
                         format_num(max_achieved),
                     ));
@@ -642,7 +656,8 @@ impl Benchmark for ConnectionScaleBench {
             let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
             loop {
                 let count_sql = format!(
-                    "SELECT COUNT(*) AS c FROM system.live WHERE namespace_id = '{}' AND table_name = 'conn_scale'",
+                    "SELECT COUNT(*) AS c FROM system.live WHERE namespace_id = '{}' AND \
+                     table_name = 'conn_scale'",
                     config.namespace
                 );
 
@@ -657,7 +672,8 @@ impl Benchmark for ConnectionScaleBench {
 
                 if tokio::time::Instant::now() >= drain_deadline {
                     println!(
-                        "  ⚠ teardown: {} live queries still active; skipping table drop to avoid late subscribe race",
+                        "  ⚠ teardown: {} live queries still active; skipping table drop to avoid \
+                         late subscribe race",
                         active
                     );
                     return Ok(());
@@ -1070,10 +1086,7 @@ fn read_sysctl_usize(name: &str) -> Option<usize> {
         return None;
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<usize>()
-        .ok()
+    String::from_utf8_lossy(&output.stdout).trim().parse::<usize>().ok()
 }
 
 fn configured_ws_local_bind_address_count() -> usize {
@@ -1105,21 +1118,24 @@ async fn validate_ws_targets(
 
         let probe = client.new_isolated_link_for_ws_url(Some(target))?;
         let result =
-            tokio::time::timeout(TARGET_VALIDATE_TIMEOUT, probe.live_events_with_config(cfg))
-                .await;
+            tokio::time::timeout(TARGET_VALIDATE_TIMEOUT, probe.live_events_with_config(cfg)).await;
         match result {
             Ok(Ok(mut subscription)) => {
                 let _ = subscription.close().await;
                 probe.disconnect().await;
-            }
+            },
             Ok(Err(err)) => {
                 probe.disconnect().await;
                 failures.push(format!("{} -> {}", target, err));
-            }
+            },
             Err(_) => {
                 probe.disconnect().await;
-                failures.push(format!("{} -> timeout after {}s", target, TARGET_VALIDATE_TIMEOUT.as_secs()));
-            }
+                failures.push(format!(
+                    "{} -> timeout after {}s",
+                    target,
+                    TARGET_VALIDATE_TIMEOUT.as_secs()
+                ));
+            },
         }
     }
 
@@ -1140,7 +1156,7 @@ async fn validate_ws_targets(
 }
 
 struct ManagedServerMemoryTracker {
-    pid: Pid,
+    pid:    Pid,
     system: System,
 }
 
@@ -1155,7 +1171,7 @@ impl ManagedServerMemoryTracker {
             .and_then(|value| value.parse::<u32>().ok())?;
 
         Some(Self {
-            pid: Pid::from_u32(pid),
+            pid:    Pid::from_u32(pid),
             system: System::new_with_specifics(
                 RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
             ),

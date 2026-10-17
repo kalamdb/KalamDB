@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use arrow::datatypes::Schema;
 use kalamdb_commons::{
-    models::{NamespaceId, StorageId, TableName},
+    models::{SchemaId, StorageId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 
@@ -14,7 +14,7 @@ pub struct CreateTableStatement {
     /// Table name (without namespace prefix)
     pub table_name:              TableName,
     /// Namespace ID
-    pub namespace_id:            NamespaceId,
+    pub namespace_id:            SchemaId,
     /// Table type (User, Shared, or Stream)
     pub table_type:              TableType,
     /// Arrow schema for the table

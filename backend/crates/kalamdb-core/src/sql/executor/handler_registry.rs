@@ -219,7 +219,7 @@ impl HandlerRegistry {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{NamespaceId, UserId},
+        models::{SchemaId, UserId},
         Role,
     };
 
@@ -230,7 +230,7 @@ mod tests {
         ExecutionContext::new(UserId::from("test_user"), Role::Dba, create_test_session_simple())
     }
 
-    #[ignore = "Requires Raft for CREATE NAMESPACE"]
+    #[ignore = "Requires Raft for CREATE SCHEMA"]
     #[tokio::test]
     async fn test_registry_create_namespace() {
         use kalamdb_sql::classifier::SqlStatementKind;
@@ -240,9 +240,9 @@ mod tests {
         let ctx = test_context();
 
         let stmt = SqlStatement::new(
-            "CREATE NAMESPACE test_registry_ns".to_string(),
-            SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          NamespaceId::new("test_registry_ns"),
+            "CREATE SCHEMA test_registry_ns".to_string(),
+            SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
+                name:          SchemaId::new("test_registry_ns"),
                 if_not_exists: false,
             }),
         );
@@ -336,9 +336,9 @@ mod tests {
         let registry = HandlerRegistry::new();
 
         // Register stub handler for CreateNamespace
-        let key = std::mem::discriminant(&SqlStatementKind::CreateNamespace(
-            kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          kalamdb_commons::models::NamespaceId::new("_"),
+        let key = std::mem::discriminant(&SqlStatementKind::CreateSchema(
+            kalamdb_sql::ddl::CreateSchemaStatement {
+                name:          kalamdb_commons::models::SchemaId::new("_"),
                 if_not_exists: false,
             },
         ));
@@ -351,9 +351,9 @@ mod tests {
         );
 
         let stmt = SqlStatement::new(
-            "CREATE NAMESPACE unauthorized_ns".to_string(),
-            SqlStatementKind::CreateNamespace(kalamdb_sql::ddl::CreateNamespaceStatement {
-                name:          NamespaceId::new("unauthorized_ns"),
+            "CREATE SCHEMA unauthorized_ns".to_string(),
+            SqlStatementKind::CreateSchema(kalamdb_sql::ddl::CreateSchemaStatement {
+                name:          SchemaId::new("unauthorized_ns"),
                 if_not_exists: false,
             }),
         );

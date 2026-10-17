@@ -9,6 +9,10 @@ description = "KalamDB benchmark tool - generates JSON + HTML performance report
 name = "kalamdb-bench"
 path = "src/main.rs"
 
+[[bin]]
+name = "kalamdb-soak"
+path = "src/bin/soak.rs"
+
 [dependencies]
 kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["native-bench"] }
 # benchv2 is excluded from the root workspace, so this must stay aligned with

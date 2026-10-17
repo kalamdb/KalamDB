@@ -1,10 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 // ---------------------------------------------------------------------------
 // CREATE USER benchmark
@@ -75,7 +75,7 @@ impl Benchmark for CreateUserBench {
 // ---------------------------------------------------------------------------
 
 pub struct DropUserBench {
-    pub counter: AtomicU64,
+    pub counter:       AtomicU64,
     pub created_names: tokio::sync::Mutex<Vec<String>>,
 }
 

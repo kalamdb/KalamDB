@@ -8,7 +8,7 @@ use kalamdb_commons::{
     ids::VersionId,
     models::{rows::Row, ConnectionId, ConnectionInfo, UserId},
     websocket::{SubscriptionOptions, SubscriptionRequest},
-    NamespaceId, Role, TableId,
+    Role, SchemaId, TableId,
 };
 use kalamdb_configs::ServerConfig;
 use kalamdb_core::{
@@ -30,7 +30,7 @@ async fn shared_table_restart_keeps_owner_and_version_frontier() {
     let (app, db) = create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE restart_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA restart_ns").await;
     execute_ok(
         &executor,
         &observer,
@@ -43,7 +43,7 @@ async fn shared_table_restart_keeps_owner_and_version_frontier() {
         "INSERT INTO restart_ns.items (id, name) VALUES (1, 'a'), (2, 'b')",
     )
     .await;
-    let table = TableId::new(NamespaceId::new("restart_ns"), "items".into());
+    let table = TableId::new(SchemaId::new("restart_ns"), "items".into());
     let owner = app.shared_group_id(&table).unwrap();
     let before = app
         .schema_registry()
@@ -150,7 +150,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         create_cluster_app_context_with_shared_shards(ServerConfig::default(), 4).await;
     let executor = sql_executor(&app);
     let observer = observer_exec_ctx(&app);
-    execute_ok(&executor, &observer, "CREATE NAMESPACE live_ns").await;
+    execute_ok(&executor, &observer, "CREATE SCHEMA live_ns").await;
     let mut owner = GroupId::DataSharedShard(0);
     let mut table_name = String::new();
     for i in 0..8 {
@@ -161,7 +161,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
             &format!("CREATE SHARED TABLE live_ns.{name} (id BIGINT PRIMARY KEY, name TEXT)"),
         )
         .await;
-        let id = TableId::new(NamespaceId::new("live_ns"), name.clone().into());
+        let id = TableId::new(SchemaId::new("live_ns"), name.clone().into());
         let group = app.shared_group_id(&id).unwrap();
         if !matches!(group, GroupId::DataSharedShard(0)) {
             owner = group;
@@ -171,7 +171,7 @@ async fn shared_live_resume_sees_every_version_on_owner_group() {
         table_name = name;
         owner = group;
     }
-    let table = TableId::new(NamespaceId::new("live_ns"), table_name.clone().into());
+    let table = TableId::new(SchemaId::new("live_ns"), table_name.clone().into());
     let domain = app
         .schema_registry()
         .get_table_if_exists(&table)

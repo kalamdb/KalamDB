@@ -67,12 +67,8 @@ fn kobj_type_nested_composite_table_round_trip() {
     let table = generate_unique_table("people");
     let full = format!("{ns}.{table}");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
-    exec(&format!(
-        "CREATE TYPE {ns}.contact AS (display TEXT NOT NULL, home {ns}.address)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
+    exec(&format!("CREATE TYPE {ns}.contact AS (display TEXT, home {ns}.address)"));
     create_shared(&full, &format!("id INT PRIMARY KEY, profile {ns}.contact"));
 
     exec(&format!(
@@ -105,9 +101,7 @@ fn kobj_type_array_columns_scalar_and_named() {
     let table = generate_unique_table("places");
     let full = format!("{ns}.{table}");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     create_shared(&full, &format!("id INT PRIMARY KEY, tags TEXT[], homes {ns}.address[]"));
 
     exec(&format!(
@@ -182,9 +176,7 @@ fn kobj_type_rename_preserves_type_id_and_stored_rows() {
     let table = generate_unique_table("homes");
     let full = format!("{ns}.{table}");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     let original_id = type_id_of(&ns, "address");
     assert!(
         !original_id.contains('.'),
@@ -232,7 +224,7 @@ fn kobj_type_set_schema_moves_alias_only() {
     let src = setup_namespace("kobj_tseta");
     let dest = setup_namespace("kobj_tsetb");
 
-    exec(&format!("CREATE TYPE {src}.address AS (city TEXT NOT NULL)"));
+    exec(&format!("CREATE TYPE {src}.address AS (city TEXT)"));
     let original_id = type_id_of(&src, "address");
 
     exec(&format!("ALTER TYPE {src}.address SET SCHEMA {dest}"));
@@ -255,7 +247,7 @@ fn kobj_type_add_attribute_nullable_evolution() {
     let table = generate_unique_table("homes");
     let full = format!("{ns}.{table}");
 
-    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT NOT NULL)"));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT)"));
     create_shared(&full, &format!("id INT PRIMARY KEY, home {ns}.address"));
     exec(&format!("INSERT INTO {full} (id, home) VALUES (1, '{{\"city\":\"Paris\"}}')"));
     let before = cell_i64(&type_row(&ns, "address"), "type_revision").unwrap_or(1);
@@ -263,8 +255,8 @@ fn kobj_type_add_attribute_nullable_evolution() {
     let not_null = exec_err(&format!("ALTER TYPE {ns}.address ADD ATTRIBUTE zip TEXT NOT NULL"));
     assert!(
         not_null.to_ascii_lowercase().contains("not null")
-            || not_null.to_ascii_lowercase().contains("dependent"),
-        "NOT NULL append must be rejected while the type is stored: {not_null}"
+            || not_null.to_ascii_lowercase().contains("composite"),
+        "NOT NULL append must be rejected on composite attributes: {not_null}"
     );
 
     exec(&format!("ALTER TYPE {ns}.address ADD ATTRIBUTE zip TEXT"));
@@ -302,9 +294,7 @@ fn kobj_type_drop_attribute_blocked_when_stored() {
     let table = generate_unique_table("homes");
     let full = format!("{ns}.{table}");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     create_shared(&full, &format!("id INT PRIMARY KEY, home {ns}.address"));
     exec(&format!(
         "INSERT INTO {full} (id, home) VALUES (1, '{{\"city\":\"Paris\",\"country\":\"FR\"}}')"
@@ -332,14 +322,12 @@ fn kobj_type_drop_create_same_name_allocates_new_type_id() {
     }
     let ns = setup_namespace("kobj_treid");
 
-    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT NOT NULL)"));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT)"));
     let first = type_id_of(&ns, "address");
     exec(&format!("DROP TYPE {ns}.address"));
     assert!(type_rows(&ns, "address").is_empty(), "DROP TYPE must remove the catalog alias");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     let second = type_id_of(&ns, "address");
     assert_ne!(first, second, "DROP + CREATE of the same name must allocate a new TypeId");
     assert_eq!(live_field_names(&second), vec!["city".to_string(), "country".to_string()]);
@@ -360,7 +348,7 @@ fn kobj_type_self_reference_and_cycle_rejected() {
         "self-referential composite must fail: {self_ref}"
     );
 
-    exec(&format!("CREATE TYPE {ns}.alpha AS (label TEXT NOT NULL)"));
+    exec(&format!("CREATE TYPE {ns}.alpha AS (label TEXT)"));
     exec(&format!("CREATE TYPE {ns}.beta AS (parent {ns}.alpha)"));
     let cycle = exec_err(&format!("ALTER TYPE {ns}.alpha ADD ATTRIBUTE child {ns}.beta"));
     assert!(
@@ -378,9 +366,7 @@ fn kobj_type_comment_and_drop_attribute_tombstone_without_dependents() {
     }
     let ns = setup_namespace("kobj_ttomb");
 
-    exec(&format!(
-        "CREATE TYPE {ns}.address AS (city TEXT NOT NULL, country TEXT NOT NULL)"
-    ));
+    exec(&format!("CREATE TYPE {ns}.address AS (city TEXT, country TEXT)"));
     exec(&format!("COMMENT ON TYPE {ns}.address IS 'Postal address'"));
     let commented = type_row(&ns, "address");
     assert_eq!(cell_str(&commented, "comment").as_deref(), Some("Postal address"));

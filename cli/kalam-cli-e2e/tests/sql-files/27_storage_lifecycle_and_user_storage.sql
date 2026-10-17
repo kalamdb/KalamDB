@@ -1,7 +1,7 @@
 -- Storage lifecycle coverage + user storage assignment + default topic payload route syntax.
 
 DROP USER IF EXISTS 'case27_user';
-DROP NAMESPACE IF EXISTS sql_file_case_27 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_27 CASCADE;
 DROP STORAGE IF EXISTS case27_storage;
 
 CREATE STORAGE case27_storage
@@ -26,7 +26,7 @@ CREATE USER 'case27_user'
 ALTER USER 'case27_user' SET STORAGE_MODE table;
 ALTER USER 'case27_user' SET STORAGE_ID 'case27_storage';
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_27;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_27;
 USE sql_file_case_27;
 
 CREATE TABLE IF NOT EXISTS case27_orders (
@@ -80,6 +80,6 @@ SET TBLPROPERTIES (
 ALTER USER 'case27_user' SET STORAGE_ID NULL;
 
 DROP TOPIC case27_order_activity;
-DROP NAMESPACE IF EXISTS sql_file_case_27 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_27 CASCADE;
 DROP USER IF EXISTS 'case27_user';
 DROP STORAGE case27_storage;

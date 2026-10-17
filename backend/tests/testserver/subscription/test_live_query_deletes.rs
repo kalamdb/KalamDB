@@ -13,7 +13,7 @@ async fn test_live_query_detects_deletes() -> anyhow::Result<()> {
     let table = "records";
 
     // Setup namespace and table as root
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let resp = server

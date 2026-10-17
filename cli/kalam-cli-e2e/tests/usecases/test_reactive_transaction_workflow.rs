@@ -145,7 +145,7 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
         Duration::from_secs(15)
     };
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace");
 
     execute_sql_as_root_via_client(&format!(
@@ -407,5 +407,5 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     conversation_listener.stop().ok();
     typing_listener.stop().ok();
     let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

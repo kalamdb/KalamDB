@@ -52,11 +52,16 @@ impl SystemStatsSource for AppContextSystemStatsSource<'_> {
             .ctx
             .system_tables()
             .namespaces()
-            .scan_all()
+            .list_namespaces()
             .map(|rows| rows.len())
             .unwrap_or(0);
-        let total_tables =
-            self.ctx.system_tables().tables().scan_all().map(|rows| rows.len()).unwrap_or(0);
+        let total_tables = self
+            .ctx
+            .system_tables()
+            .tables()
+            .list_tables()
+            .map(|rows| rows.len())
+            .unwrap_or(0);
         let total_storages = self
             .ctx
             .system_tables()
@@ -158,6 +163,10 @@ pub fn compute_metrics(ctx: &crate::app_context::AppContext) -> Vec<(String, Str
     metrics.push((
         "function_instances_total".to_string(),
         (census.idle_instances + census.active_instances).to_string(),
+    ));
+    metrics.push((
+        "functions_deployed".to_string(),
+        ctx.system_tables().catalog_stores().user_routine_count().to_string(),
     ));
     metrics
 }

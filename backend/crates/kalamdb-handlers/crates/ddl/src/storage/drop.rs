@@ -174,7 +174,7 @@ mod tests {
             created_at:             chrono::Utc::now().timestamp_millis(),
             updated_at:             chrono::Utc::now().timestamp_millis(),
         };
-        storages_provider.insert_storage(storage).unwrap();
+        storages_provider.create_storage(storage).unwrap();
 
         // Drop it
         let handler = DropStorageHandler::new(app_ctx);

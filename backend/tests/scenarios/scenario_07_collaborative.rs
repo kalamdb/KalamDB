@@ -32,8 +32,8 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace and tables
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Documents table (SHARED - all users can read/write)
     let resp = server
@@ -279,7 +279,7 @@ async fn test_scenario_07_collaborative_editing() -> anyhow::Result<()> {
     sub2.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -290,8 +290,8 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
     let ns = unique_ns("docs_presence");
 
     // Create namespace and presence table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -354,7 +354,7 @@ async fn test_scenario_07_presence_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -365,8 +365,8 @@ async fn test_scenario_07_shared_document_policies() -> anyhow::Result<()> {
     let server = crate::test_support::http_server::get_global_server().await;
     let ns = unique_ns("docs_rls");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -421,6 +421,6 @@ async fn test_scenario_07_shared_document_policies() -> anyhow::Result<()> {
     assert!(resp.success(), "editor1 must read the updated shared doc");
     assert_eq!(resp.rows().len(), 1, "both collaborators must see the same document row");
 
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

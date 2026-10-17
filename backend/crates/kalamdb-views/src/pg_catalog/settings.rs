@@ -6,6 +6,7 @@ use datafusion::arrow::{
     record_batch::RecordBatch,
 };
 use kalamdb_commons::Role;
+use kalamdb_session_datafusion::SessionConfigValues;
 
 use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 
@@ -13,24 +14,6 @@ use crate::{error::RegistryError, pg_catalog::PgCatalogView};
 ///
 /// `max_index_keys` is required: pgjdbc `getImportedKeys` / `getExportedKeys` call
 /// `getMaxIndexKeys()`, which errors if this row is missing.
-const SETTINGS: &[(&str, &str)] = &[
-    ("max_index_keys", "32"),
-    ("max_identifier_length", "63"),
-    ("server_version", "16.0"),
-    ("server_version_num", "160000"),
-    ("server_encoding", "UTF8"),
-    ("client_encoding", "UTF8"),
-    ("timezone", "UTC"),
-    ("search_path", "\"$user\", public, default"),
-    ("integer_datetimes", "on"),
-    ("standard_conforming_strings", "on"),
-    ("transaction_isolation", "read committed"),
-    ("default_transaction_isolation", "read committed"),
-    ("transaction_read_only", "off"),
-    ("datestyle", "ISO, MDY"),
-    ("extra_float_digits", "3"),
-    ("application_name", ""),
-];
 
 fn schema() -> SchemaRef {
     static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -63,7 +46,14 @@ impl PgCatalogView for PgSettingsView {
         schema()
     }
 
-    fn compute_batch(&self, _role: Role) -> Result<RecordBatch, RegistryError> {
+    fn compute_batch(&self, role: Role) -> Result<RecordBatch, RegistryError> {
+        self.compute_session_batch(role, None)
+    }
+    fn compute_session_batch(
+        &self,
+        _role: Role,
+        settings: Option<&SessionConfigValues>,
+    ) -> Result<RecordBatch, RegistryError> {
         let mut names = StringBuilder::new();
         let mut values = StringBuilder::new();
         let mut units = StringBuilder::new();
@@ -74,15 +64,16 @@ impl PgCatalogView for PgSettingsView {
         let mut sources = StringBuilder::new();
         let mut pending_restart = BooleanBuilder::new();
 
-        for (name, value) in SETTINGS {
-            names.append_value(*name);
-            values.append_value(*value);
+        let defaults = SessionConfigValues::new();
+        for entry in settings.unwrap_or(&defaults).catalog_entries() {
+            names.append_value(entry.name);
+            values.append_value(entry.value);
             units.append_null();
             categories.append_null();
             descriptions.append_null();
-            contexts.append_value("internal");
+            contexts.append_value("user");
             vartypes.append_value("string");
-            sources.append_value("default");
+            sources.append_value(entry.source);
             pending_restart.append_value(false);
         }
 
@@ -108,6 +99,7 @@ impl PgCatalogView for PgSettingsView {
 mod tests {
     use datafusion::arrow::array::{Array, StringArray};
     use kalamdb_commons::Role;
+    use kalamdb_session_datafusion::SessionConfigValues;
 
     use super::*;
 
@@ -120,5 +112,33 @@ mod tests {
         let index = (0..names.len()).find(|i| names.value(*i) == "max_index_keys");
         let index = index.expect("max_index_keys row");
         assert_eq!(values.value(index), "32");
+        let sources =
+            batch.column(7).as_any().downcast_ref::<StringArray>().expect("source column");
+        assert_eq!(sources.value(index), "default");
+    }
+
+    #[test]
+    fn session_and_custom_settings_share_the_catalog_row() {
+        let settings = SessionConfigValues::new();
+        settings.set("application_name", "tabularis").expect("set application_name");
+        settings
+            .set("app.tabularis_base_search_path", "public")
+            .expect("set custom guc");
+        let batch = PgSettingsView
+            .compute_session_batch(Role::System, Some(&settings))
+            .expect("pg_settings batch");
+        let names = batch.column(0).as_any().downcast_ref::<StringArray>().expect("name column");
+        let values =
+            batch.column(1).as_any().downcast_ref::<StringArray>().expect("setting column");
+        let sources =
+            batch.column(7).as_any().downcast_ref::<StringArray>().expect("source column");
+        let app = (0..names.len()).find(|i| names.value(*i) == "application_name").expect("app");
+        assert_eq!(values.value(app), "tabularis");
+        assert_eq!(sources.value(app), "session");
+        let custom = (0..names.len())
+            .find(|i| names.value(*i) == "app.tabularis_base_search_path")
+            .expect("custom");
+        assert_eq!(values.value(custom), "public");
+        assert_eq!(sources.value(custom), "session");
     }
 }

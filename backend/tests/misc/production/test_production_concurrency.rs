@@ -15,7 +15,7 @@ async fn concurrent_inserts_same_user_table() {
     let ns = consolidated_helpers::unique_namespace("app_concurrent_ins");
 
     // Setup
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -88,7 +88,7 @@ async fn concurrent_select_queries() {
     let ns = consolidated_helpers::unique_namespace("app_concurrent_sel");
 
     // Setup with data
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -150,7 +150,7 @@ async fn concurrent_duplicate_primary_key_handling() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_pk");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -231,7 +231,7 @@ async fn concurrent_updates_same_row() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_upd");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -305,7 +305,7 @@ async fn concurrent_deletes() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_concurrent_del");
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(

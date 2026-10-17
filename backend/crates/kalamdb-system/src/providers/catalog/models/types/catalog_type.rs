@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{CatalogTypeKind, NamespaceId, TableId, TypeId},
+    models::{CatalogTypeKind, SchemaId, TableId, TypeId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub struct CatalogType {
         default = "None",
         comment = "Owning schema"
     )]
-    pub namespace_id:   NamespaceId,
+    pub namespace_id:   SchemaId,
     #[column(
         id = 3,
         ordinal = 3,
@@ -119,7 +119,7 @@ impl kalamdb_commons::KSerializable for CatalogType {}
 impl CatalogType {
     pub fn named(
         type_id: TypeId,
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         name: impl Into<String>,
         kind: CatalogTypeKind,
     ) -> Self {

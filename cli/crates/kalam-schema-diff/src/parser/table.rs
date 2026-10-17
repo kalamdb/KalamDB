@@ -99,8 +99,17 @@ fn canonical_type_key(type_sql: &str) -> Result<String, String> {
     normalized = normalized.replace(" (", "(").replace("( ", "(").replace(" )", ")");
     normalized = normalized.replace(" ,", ",").replace(", ", ",");
 
+    let mut array_suffix = String::new();
+    while let Some(stripped) = normalized.strip_suffix("[]") {
+        array_suffix.push_str("[]");
+        normalized = stripped.trim().to_string();
+    }
+
     if normalized.starts_with("DECIMAL(") || normalized.starts_with("NUMERIC(") {
-        return Ok(normalized);
+        let rest = normalized
+            .trim_start_matches("DECIMAL")
+            .trim_start_matches("NUMERIC");
+        return Ok(format!("DECIMAL{rest}{array_suffix}"));
     }
 
     if normalized.starts_with("EMBEDDING(") {
@@ -114,25 +123,39 @@ fn canonical_type_key(type_sql: &str) -> Result<String, String> {
             return Err(format!("EMBEDDING dimension out of range 1..=8192: {dim}"));
         }
 
-        return Ok(format!("EMBEDDING({dim})"));
+        return Ok(format!("EMBEDDING({dim}){array_suffix}"));
     }
 
     let canonical = match normalized.as_str() {
         "BOOLEAN" | "BOOL" => "BOOLEAN",
         "SMALLINT" | "INT2" => "SMALLINT",
-        "INT" | "INTEGER" | "INT4" | "MEDIUMINT" => "INT",
-        "BIGINT" | "INT8" => "BIGINT",
+        "INT" | "INTEGER" | "INT4" | "MEDIUMINT" | "SERIAL" | "SERIAL4" => "INT",
+        "BIGINT" | "INT8" | "INT64" | "BIGSERIAL" | "SERIAL8" => "BIGINT",
         "FLOAT" | "REAL" | "FLOAT4" => "FLOAT",
         "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" | "FLOAT64" => "DOUBLE",
-        "TEXT" | "VARCHAR" | "CHAR" | "STRING" | "NVARCHAR" => "TEXT",
+        "DECIMAL" | "NUMERIC" => "DECIMAL(38,10)",
+        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER" | "CHARACTER VARYING" | "STRING" | "NVARCHAR" => "TEXT",
         "BYTES" | "BINARY" | "VARBINARY" | "BLOB" | "BYTEA" => "BYTES",
         "JSON" | "JSONB" => "JSON",
-        "TIMESTAMP" | "DATE" | "DATETIME" | "TIME" => normalized.as_str(),
-        "UUID" => "UUID",
-        "FILE" => "FILE",
-        other if other.starts_with("VARCHAR(") => "TEXT",
-        other if other.starts_with("CHAR(") => "TEXT",
-        other if other.starts_with("NVARCHAR(") => "TEXT",
+        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
+        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => "TIMESTAMPTZ",
+        "TIME" | "TIME WITHOUT TIME ZONE" => "TIME",
+        "TIMETZ" | "TIME WITH TIME ZONE" => "TIMETZ",
+        "DATE" | "DATETIME" | "INTERVAL" | "UUID" | "FILE" | "INET" | "CIDR" | "MACADDR" => normalized.as_str(),
+        "PG_CATALOG.FILE" => "FILE",
+        other if other.starts_with("VARCHAR(")
+            || other.starts_with("CHAR(")
+            || other.starts_with("CHARACTER(")
+            || other.starts_with("CHARACTER VARYING(")
+            || other.starts_with("NVARCHAR(") =>
+        {
+            "TEXT"
+        },
+        other if other.starts_with("PG_CATALOG.EMBEDDING(") => {
+            let inner = other.trim_start_matches("PG_CATALOG.");
+            return canonical_type_key(&format!("{inner}{array_suffix}"));
+        },
+        other if is_valid_custom_type_name(other) => other,
         _ => {
             return Err(format!(
                 "unsupported KalamDB data type: {type_sql}. Add it to canonical_type_key()."
@@ -140,7 +163,22 @@ fn canonical_type_key(type_sql: &str) -> Result<String, String> {
         },
     };
 
-    Ok(canonical.to_string())
+    Ok(format!("{canonical}{array_suffix}"))
+}
+
+fn is_valid_custom_type_name(name: &str) -> bool {
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    parts.iter().all(|part| {
+        let part = part.trim().trim_matches('"');
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && !part.chars().next().unwrap_or('0').is_ascii_digit()
+    })
 }
 
 pub(super) fn parse_create_namespace(raw_stmt: &str) -> Option<String> {

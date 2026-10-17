@@ -42,7 +42,7 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("topic1p1c"));
     let group_id = format!("bench-1p1c-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
@@ -123,7 +123,7 @@ async fn bench_single_pub_single_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }
@@ -135,7 +135,7 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("topicmpc"));
     let group_id = format!("bench-mpc-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
@@ -232,7 +232,7 @@ async fn bench_multi_pub_single_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }
@@ -244,7 +244,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("topicmm"));
     let group_id = format!("bench-mm-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
@@ -357,7 +357,7 @@ async fn bench_multi_pub_multi_consumer() -> (usize, f64, f64) {
     let publish_rate = message_count as f64 / publish_elapsed.as_secs_f64();
 
     // Cleanup
-    let _ = execute_sql(&format!("DROP NAMESPACE {} CASCADE", namespace)).await;
+    let _ = execute_sql(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 
     (total_received, msg_per_sec, publish_rate)
 }

@@ -149,11 +149,11 @@ impl StorageKey for ManifestId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NamespaceId, TableName};
+    use crate::{SchemaId, TableName};
 
     #[test]
     fn test_manifest_id_shared_table() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let id = ManifestId::for_shared_table(table_id.clone());
 
         assert_eq!(id.table_id(), &table_id);
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_manifest_id_user_table() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let user_id = UserId::from("user123");
         let id = ManifestId::for_user_table(table_id.clone(), user_id.clone());
 
@@ -188,7 +188,7 @@ mod tests {
     #[cfg(feature = "storage")]
     #[test]
     fn test_manifest_id_display() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let id = ManifestId::for_shared_table(table_id);
         assert_eq!(format!("{}", id), "test:table:shared");
     }
@@ -196,7 +196,7 @@ mod tests {
     #[cfg(feature = "storage")]
     #[test]
     fn test_manifest_id_storage_key() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let id = ManifestId::for_shared_table(table_id);
 
         let key = id.storage_key();

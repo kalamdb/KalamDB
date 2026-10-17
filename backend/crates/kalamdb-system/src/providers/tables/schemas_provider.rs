@@ -141,15 +141,10 @@ impl SchemasTableProvider {
     /// List all tables in a specific namespace (latest versions only)
     pub fn list_tables_in_namespace(
         &self,
-        namespace_id: &kalamdb_commons::models::NamespaceId,
+        namespace_id: &kalamdb_commons::models::SchemaId,
     ) -> Result<Vec<TableDefinition>, SystemError> {
         let tables = self.store.scan_namespace(namespace_id)?;
         Ok(tables.into_iter().map(|(_, def)| def).collect())
-    }
-
-    /// Alias for list_tables (backward compatibility)
-    pub fn scan_all(&self) -> Result<Vec<TableDefinition>, SystemError> {
-        self.list_tables()
     }
 
     /// Read the persisted system-schema reconcile marker, if present.
@@ -235,7 +230,7 @@ impl SchemasTableProvider {
     /// Build a RecordBatch with latest versions for a specific namespace.
     fn build_versions_batch_for_namespace(
         &self,
-        namespace_id: &kalamdb_commons::NamespaceId,
+        namespace_id: &kalamdb_commons::SchemaId,
     ) -> Result<RecordBatch, SystemError> {
         let versions = self.store.scan_namespace_with_versions(namespace_id)?;
         if versions.is_empty() {
@@ -329,7 +324,7 @@ impl SchemasTableProvider {
             // table_id format is "namespace:table_name"
             if let Some((ns, tbl)) = table_id_str.split_once(':') {
                 let table_id = TableId::new(
-                    kalamdb_commons::NamespaceId::new(ns),
+                    kalamdb_commons::SchemaId::new(ns),
                     kalamdb_commons::TableName::new(tbl),
                 );
                 // Return all versions for this specific table
@@ -342,7 +337,7 @@ impl SchemasTableProvider {
             extract_filter_value(filters, "table_name"),
         ) {
             let table_id = TableId::new(
-                kalamdb_commons::NamespaceId::new(&ns_str),
+                kalamdb_commons::SchemaId::new(&ns_str),
                 kalamdb_commons::TableName::new(&table_name),
             );
             return self.build_versions_batch_for_table(&table_id);
@@ -350,7 +345,7 @@ impl SchemasTableProvider {
 
         // Check for namespace equality filter → use namespace-scoped history scan
         if let Some(ns_str) = extract_filter_value(filters, "namespace_id") {
-            let namespace_id = kalamdb_commons::NamespaceId::new(&ns_str);
+            let namespace_id = kalamdb_commons::SchemaId::new(&ns_str);
             return self.build_versions_batch_for_namespace(&namespace_id);
         }
 
@@ -387,7 +382,7 @@ mod tests {
             ColumnDefinition, ScalarIndexDefinition, TableDefinition, TableOptions,
             TableType as KalamTableType,
         },
-        NamespaceId, TableId, TableName,
+        SchemaId, TableId, TableName,
     };
     use kalamdb_store::test_utils::InMemoryBackend;
 
@@ -399,7 +394,7 @@ mod tests {
     }
 
     fn create_test_table(namespace: &str, table_name: &str) -> (TableId, TableDefinition) {
-        let namespace_id = NamespaceId::new(namespace);
+        let namespace_id = SchemaId::new(namespace);
         let table_name_id = TableName::new(table_name);
         let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 

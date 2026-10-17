@@ -132,7 +132,7 @@ pub(crate) fn kdb_column_metadata_from_definition(
         default_value:   format_column_default(&column.default_value),
         primary_key:     column.is_primary_key,
         primary_key_pos: primary_key_position(table, column),
-        data_type:       column.data_type.clone(),
+        data_type:       column.data_type(),
     }
 }
 

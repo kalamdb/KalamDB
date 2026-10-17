@@ -18,8 +18,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    decode as bincode_decode, encode as bincode_encode, ApplyResult, KalamStateMachine,
-    StateMachineSnapshot,
+    decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot,
 };
 use crate::{
     applier::MetaApplier,
@@ -692,7 +691,7 @@ impl KalamStateMachine for MetaStateMachine {
     async fn snapshot(&self) -> Result<StateMachineSnapshot, RaftError> {
         // Minimal snapshot - actual metadata is in RocksDB via MetaApplier
         let snapshot = MetaSnapshot { version: 1 };
-        let snapshot_bytes = bincode_encode(&snapshot)?;
+        let snapshot_bytes = encode(&snapshot)?;
 
         Ok(StateMachineSnapshot::new(
             GroupId::Meta,
@@ -704,7 +703,7 @@ impl KalamStateMachine for MetaStateMachine {
 
     async fn restore(&self, snapshot: StateMachineSnapshot) -> Result<(), RaftError> {
         // Validate snapshot format (version check for future compatibility)
-        let _snapshot: MetaSnapshot = bincode_decode(&snapshot.data)?;
+        let _snapshot: MetaSnapshot = decode(&snapshot.data)?;
 
         self.last_applied_index.store(snapshot.last_applied_index, Ordering::Release);
         self.last_applied_term.store(snapshot.last_applied_term, Ordering::Release);

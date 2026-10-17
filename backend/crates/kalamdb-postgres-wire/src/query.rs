@@ -2,11 +2,12 @@ use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use futures_util::{Sink, SinkExt};
+use kalamdb_backend::session::BackendSessionState;
 use pgwire::{
     api::{
         portal::Portal,
         query::{ExtendedQueryHandler, SimpleQueryHandler},
-        results::{Response, Tag},
+        results::Response,
         stmt::StoredStatement,
         store::{Entry, PortalStore},
         ClientInfo, ClientPortalStore, DEFAULT_NAME,
@@ -17,7 +18,7 @@ use pgwire::{
             Bind, BindComplete, Close, CloseComplete, Parse, ParseComplete, Sync as PgSync,
             TARGET_TYPE_BYTE_PORTAL, TARGET_TYPE_BYTE_STATEMENT,
         },
-        response::ReadyForQuery,
+        response::{ReadyForQuery, TransactionStatus},
         PgWireBackendMessage,
     },
 };
@@ -27,9 +28,6 @@ use crate::{
     params::portal_parameters_to_scalar_values,
     sql_exec::{backend_session_error_to_response, pg_error, WireSqlExecutor},
     statement::{KalamQueryParser, WireCachedStatement},
-    tx_control::{
-        classify_transaction_control, execute_transaction_control, WireTransactionOutcome,
-    },
 };
 
 #[derive(Clone)]
@@ -55,28 +53,104 @@ impl KalamQueryHandler {
         state: &WireConnectionState,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
-        if let Some(control) = classify_transaction_control(sql) {
-            let outcome = execute_transaction_control(
-                self.sql_executor.session_manager(),
-                state.session_id(),
-                control,
-            )
-            .await;
-            return Ok(vec![match outcome {
-                Ok(WireTransactionOutcome::Began { .. }) => {
-                    Response::TransactionStart(Tag::new("BEGIN"))
-                },
-                Ok(WireTransactionOutcome::Committed) => {
-                    Response::TransactionEnd(Tag::new("COMMIT"))
-                },
-                Ok(WireTransactionOutcome::RolledBack) => {
-                    Response::TransactionEnd(Tag::new("ROLLBACK"))
-                },
-                Err(error) => backend_session_error_to_response(error),
-            }]);
+        state.ensure_statement_sql_bytes(sql).map_err(limit_error_to_pg)?;
+
+        let statements = match kalamdb_sql::split_statements(sql) {
+            Ok(statements) => statements,
+            Err(_) => vec![sql.to_string()],
+        };
+
+        if statements.is_empty() {
+            return Ok(vec![Response::EmptyQuery]);
         }
 
+        if statements.len() == 1 {
+            return self.execute_single_sql_statement(state, statements[0].as_str()).await;
+        }
+
+        let mut all_responses = Vec::with_capacity(statements.len());
+        let mut implicit_tx_active = false;
+        let was_in_explicit_block = matches!(
+            self.sql_executor.session_manager().block_state(state.session_id()),
+            Ok(BackendSessionState::InTransaction { .. }
+                | BackendSessionState::InFailedTransaction)
+        );
+        let can_use_implicit_tx = !was_in_explicit_block
+            && statements.iter().all(|stmt| {
+                self.sql_executor.statement_supports_implicit_batch_transaction(stmt, state)
+            });
+
+        if can_use_implicit_tx {
+            if self
+                .sql_executor
+                .session_manager()
+                .begin_block(state.session_id())
+                .await
+                .is_ok()
+            {
+                implicit_tx_active = true;
+                state.session_config().begin();
+            }
+        }
+
+        let mut batch_failed = false;
+        for stmt in &statements {
+            let responses = self.execute_single_sql_statement(state, stmt.as_str()).await?;
+            let has_error = responses.iter().any(|r| matches!(r, Response::Error(_)));
+            all_responses.extend(responses);
+            if has_error {
+                batch_failed = true;
+                break;
+            }
+        }
+
+        if implicit_tx_active {
+            if batch_failed {
+                let _ =
+                    self.sql_executor.session_manager().rollback_block(state.session_id()).await;
+            } else if let Err(error) =
+                self.sql_executor.session_manager().commit_block(state.session_id()).await
+            {
+                let _ =
+                    self.sql_executor.session_manager().rollback_block(state.session_id()).await;
+                all_responses.push(backend_session_error_to_response(error));
+            }
+        }
+
+        if implicit_tx_active {
+            if batch_failed || all_responses.iter().any(|r| matches!(r, Response::Error(_))) {
+                state.session_config().rollback();
+            } else {
+                state.session_config().commit();
+            }
+        }
+        Ok(all_responses)
+    }
+
+    async fn execute_single_sql_statement(
+        &self,
+        state: &WireConnectionState,
+        sql: &str,
+    ) -> PgWireResult<Vec<Response>> {
         self.sql_executor.execute(state, sql).await
+    }
+
+    fn resolve_transaction_status<C>(&self, client: &C) -> TransactionStatus
+    where
+        C: ClientInfo,
+    {
+        if let Some(state) = client.session_extensions().get::<WireConnectionState>() {
+            if let Ok(block_state) =
+                self.sql_executor.session_manager().block_state(state.session_id())
+            {
+                return match block_state {
+                    BackendSessionState::Idle => TransactionStatus::Idle,
+                    BackendSessionState::InTransaction { .. } => TransactionStatus::Transaction,
+                    BackendSessionState::InFailedTransaction => TransactionStatus::Error,
+                };
+            }
+        }
+        client.transaction_status()
     }
 
     async fn execute_cached_with_format(
@@ -86,27 +160,6 @@ impl KalamQueryHandler {
         params: Vec<kalamdb_core::sql::ScalarValue>,
         column_format: &pgwire::api::portal::Format,
     ) -> PgWireResult<Vec<Response>> {
-        if let Some(control) = classify_transaction_control(cached.metadata.sql.as_str()) {
-            let outcome = execute_transaction_control(
-                self.sql_executor.session_manager(),
-                state.session_id(),
-                control,
-            )
-            .await;
-            return Ok(vec![match outcome {
-                Ok(WireTransactionOutcome::Began { .. }) => {
-                    Response::TransactionStart(Tag::new("BEGIN"))
-                },
-                Ok(WireTransactionOutcome::Committed) => {
-                    Response::TransactionEnd(Tag::new("COMMIT"))
-                },
-                Ok(WireTransactionOutcome::RolledBack) => {
-                    Response::TransactionEnd(Tag::new("ROLLBACK"))
-                },
-                Err(error) => backend_session_error_to_response(error),
-            }]);
-        }
-
         self.sql_executor
             .execute_metadata(state, &cached.metadata, params, Some(column_format))
             .await
@@ -149,6 +202,9 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
         let statement_name = message.name.as_deref().unwrap_or(DEFAULT_NAME);
+        state
+            .ensure_statement_sql_bytes(message.query.as_str())
+            .map_err(limit_error_to_pg)?;
         state
             .ensure_prepared_statement_capacity(statement_name)
             .map_err(limit_error_to_pg)?;
@@ -232,10 +288,10 @@ impl ExtendedQueryHandler for KalamQueryHandler {
             state.remove_portal(DEFAULT_NAME);
         }
         client.portal_store().rm_portal(DEFAULT_NAME);
+        let status = self.resolve_transaction_status(client);
+        client.set_transaction_status(status);
         client
-            .send(PgWireBackendMessage::ReadyForQuery(ReadyForQuery::new(
-                client.transaction_status(),
-            )))
+            .send(PgWireBackendMessage::ReadyForQuery(ReadyForQuery::new(status)))
             .await?;
         client.flush().await?;
 

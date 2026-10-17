@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kalamdb_commons::{
     models::{
         ArtifactId, CatalogTypeKind, FunctionModuleId, FunctionRevisionId, FunctionRuntime,
-        NamespaceId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId,
+        SchemaId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId,
         RoutineSecurityMode, ScheduleId, TableId, TopicId, TriggerAttemptId, TriggerId,
         TypeFieldId, TypeId, UserId,
     },
@@ -26,8 +26,8 @@ fn stores() -> CatalogStores {
     CatalogStores::new(Arc::new(InMemoryBackend::new()))
 }
 
-fn chat_ns() -> NamespaceId {
-    NamespaceId::new("chat")
+fn chat_ns() -> SchemaId {
+    SchemaId::new("chat")
 }
 
 fn implicit_row_type() -> CatalogType {
@@ -119,6 +119,13 @@ fn create_message_routine() -> CatalogRoutine {
         return_data_type:   None,
         inline_source_hash: None,
         inline_artifact_id: None,
+        kind:               kalamdb_commons::models::RoutineKind::default(),
+        volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+        null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+        parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+        cost:               None,
+        rows:               None,
+        config_params:      None,
     }
 }
 
@@ -232,6 +239,8 @@ fn routine_owner_security_and_grants_are_queryable() {
         not_null:     true,
         nonempty:     false,
         data_type:    None,
+        mode:         kalamdb_commons::models::RoutineParameterMode::default(),
+        default_expr: None,
     };
     stores.upsert_parameter(param.clone()).unwrap();
 
@@ -322,10 +331,12 @@ fn drop_namespace_catalog_removes_routines_types_schedules_and_spares_other_sche
             not_null:     true,
             nonempty:     false,
             data_type:    None,
+            mode:         kalamdb_commons::models::RoutineParameterMode::default(),
+            default_expr: None,
         })
         .unwrap();
 
-    let other_ns = NamespaceId::new("other");
+    let other_ns = SchemaId::new("other");
     let other_type = CatalogType {
         type_id:        TypeId::from_parts(Some(&other_ns), "keep"),
         namespace_id:   other_ns.clone(),

@@ -52,7 +52,7 @@ mod tests {
 
     use kalamdb_commons::{
         models::{
-            NamespaceId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineSecurityMode, UserId,
+            RoutineGrantId, RoutineGrantee, RoutineId, RoutineSecurityMode, SchemaId, UserId,
         },
         Role,
     };
@@ -66,7 +66,7 @@ mod tests {
     }
 
     fn routine() -> CatalogRoutine {
-        let ns = NamespaceId::new("api");
+        let ns = SchemaId::new("api");
         CatalogRoutine {
             routine_id:         RoutineId::from_parts(Some(&ns), "health"),
             namespace_id:       ns,
@@ -83,6 +83,13 @@ mod tests {
             return_data_type:   None,
             inline_source_hash: None,
             inline_artifact_id: None,
+            kind:               kalamdb_commons::models::RoutineKind::default(),
+            volatility:         kalamdb_commons::models::RoutineVolatility::default(),
+            null_safety:        kalamdb_commons::models::RoutineNullSafety::default(),
+            parallel_safety:    kalamdb_commons::models::RoutineParallelSafety::default(),
+            cost:               None,
+            rows:               None,
+            config_params:      None,
         }
     }
 

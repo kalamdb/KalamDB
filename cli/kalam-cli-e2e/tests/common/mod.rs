@@ -3079,12 +3079,12 @@ pub fn is_cluster_url_reachable(url: &str) -> bool {
 
 fn should_wait_for_cluster_after_sql(sql: &str) -> bool {
     let upper = sql.trim_start().to_ascii_uppercase();
-    upper.starts_with("CREATE NAMESPACE")
+    upper.starts_with("CREATE SCHEMA")
         || upper.starts_with("CREATE TABLE")
         || upper.starts_with("CREATE SHARED TABLE")
         || upper.starts_with("CREATE USER TABLE")
         || upper.starts_with("CREATE STREAM TABLE")
-        || upper.starts_with("DROP NAMESPACE")
+        || upper.starts_with("DROP SCHEMA")
         || upper.starts_with("DROP TABLE")
         || upper.starts_with("ALTER TABLE")
 }
@@ -4980,7 +4980,7 @@ pub fn setup_test_table(test_name: &str) -> Result<String, Box<dyn std::error::E
     let _ = execute_sql_as_root_via_cli(&drop_sql);
 
     // Create namespace if it doesn't exist
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     let _ = execute_sql_as_root_via_cli(&ns_sql);
 
     // Create test table
@@ -5006,7 +5006,7 @@ pub fn cleanup_test_table(table_full_name: &str) -> Result<(), Box<dyn std::erro
     let drop_sql = format!("DROP TABLE IF EXISTS {}", table_full_name);
     let _ = execute_sql_as_root_via_cli(&drop_sql);
     if let Some((namespace, _)) = table_full_name.split_once('.') {
-        let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+        let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {}", namespace));
     }
     Ok(())
 }

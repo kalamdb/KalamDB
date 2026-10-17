@@ -32,7 +32,7 @@ CREATE TABLE chat.users (
   nickname TEXT,
   status chat.status NOT NULL
 ) ROW TYPE chat.user;
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL)
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL)
 RETURNS chat.user;
 "#;
 
@@ -123,7 +123,7 @@ fn golden_nullability_nested_struct_alias_and_codecs() {
     assert!(dart.contains("late final chat = ChatFunctions(_client);"));
     assert!(dart
         .contains("Future<ChatCreateMessageResult> createMessage(ChatCreateMessageRequest input)"));
-    assert!(dart.contains("CALL chat.create_message($1, $2)"));
+    assert!(dart.contains("SELECT chat.create_message($1, $2) AS result"));
     assert!(dart.contains("final result = _kalamCallResult(response);"));
     assert!(dart.contains("ChatUser.fromJson(_asJsonMap(result))"));
 
@@ -270,7 +270,7 @@ fn inline_routines_skip_src_scaffold_and_get_typecheck_shim() {
         root.join("schema.sql"),
         r#"
 CREATE SCHEMA api;
-CREATE PROCEDURE api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"; $$;
+CREATE FUNCTION api.health() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "ok"; $$;
 "#,
     )
     .unwrap();
@@ -390,8 +390,8 @@ fn generate_does_not_require_a_server_url() {
 
 const TYPECHECK_SQL: &str = r#"
 CREATE SCHEMA chat;
-CREATE TYPE chat.user AS (id BIGINT, email TEXT NOT NULL, nickname TEXT);
-CREATE PROCEDURE chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS chat.user;
+CREATE TYPE chat.user AS (id BIGINT, email TEXT, nickname TEXT);
+CREATE FUNCTION chat.create_message(user_id TEXT, body TEXT NOT NULL) RETURNS chat.user;
 CREATE PROCEDURE chat.ping();
 "#;
 
@@ -475,10 +475,10 @@ fn named_builders_share_a_file_and_omit_unimplemented() {
         root.join("schema.sql"),
         r#"
 CREATE SCHEMA chat;
-CREATE PROCEDURE chat.send_message(body TEXT NOT NULL) RETURNS TEXT;
-CREATE PROCEDURE chat.join_room(room TEXT NOT NULL) RETURNS TEXT;
-CREATE PROCEDURE chat.plus_one(x INT) RETURNS INT;
-CREATE PROCEDURE chat.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
+CREATE FUNCTION chat.send_message(body TEXT NOT NULL) RETURNS TEXT;
+CREATE FUNCTION chat.join_room(room TEXT NOT NULL) RETURNS TEXT;
+CREATE FUNCTION chat.plus_one(x INT) RETURNS INT;
+CREATE FUNCTION chat.greet() RETURNS TEXT LANGUAGE JAVASCRIPT AS $$ return "inline"; $$;
 "#,
     )
     .unwrap();
@@ -524,7 +524,7 @@ fn inline_procedure_types_are_checked_by_tsc() {
     }
     let temp = TempDir::new().unwrap();
     let root = temp.path();
-    let schema = "CREATE PROCEDURE chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE \
+    let schema = "CREATE FUNCTION chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE \
                   JAVASCRIPT AS $$ return input.name; $$;";
     fs::write(root.join("schema.sql"), schema).unwrap();
     generate_languages(root, &typescript_project_config(), &[LanguageTarget::TypeScript], None)

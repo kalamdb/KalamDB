@@ -1,10 +1,10 @@
 //! Tests for CREATE TABLE IF NOT EXISTS with constraints.
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_dialect::ddl::create_table::CreateTableStatement;
 
-fn default_ns() -> NamespaceId {
-    NamespaceId::new("default")
+fn default_ns() -> SchemaId {
+    SchemaId::new("default")
 }
 
 #[test]
@@ -103,10 +103,18 @@ fn test_primary_key_table_constraint() {
 
 #[test]
 fn test_table_types_with_if_not_exists() {
-    let sql = "CREATE USER TABLE IF NOT EXISTS test.user_data (id BIGINT PRIMARY KEY)";
+    let sql =
+        "CREATE TABLE IF NOT EXISTS test.user_data (id BIGINT PRIMARY KEY) WITH (TYPE = 'USER')";
     let stmt = CreateTableStatement::parse(sql, &default_ns()).unwrap();
     assert!(stmt.if_not_exists);
     assert_eq!(stmt.table_type, kalamdb_commons::schemas::TableType::User);
+
+    let err = CreateTableStatement::parse(
+        "CREATE USER TABLE IF NOT EXISTS test.user_data (id BIGINT PRIMARY KEY)",
+        &default_ns(),
+    )
+    .expect_err("CREATE USER TABLE must be rejected");
+    assert!(err.contains("CREATE USER TABLE"));
 
     let sql = "CREATE SHARED TABLE IF NOT EXISTS test.shared_data (id BIGINT PRIMARY KEY)";
     let stmt = CreateTableStatement::parse(sql, &default_ns()).unwrap();

@@ -17,4 +17,4 @@ pub use datafusion::scalar::ScalarValue;
 pub use execution_context::ExecutionContext;
 pub use execution_result::ExecutionResult;
 // Re-export SessionUserContext from kalamdb-session-datafusion for TableProviders.
-pub use kalamdb_session_datafusion::SessionUserContext;
+pub use kalamdb_session_datafusion::{SessionConfigValues, SessionUserContext};

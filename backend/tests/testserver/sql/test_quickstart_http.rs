@@ -15,7 +15,7 @@ async fn test_quickstart_workflow_over_http() -> anyhow::Result<()> {
     let user = unique_table("user_qs");
     let auth = create_user_auth_header_default(server, &user).await?;
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
     // USER table: messages

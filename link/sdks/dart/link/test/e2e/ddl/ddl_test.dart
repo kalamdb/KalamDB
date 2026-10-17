@@ -107,14 +107,14 @@ void main() {
     );
 
     // ─────────────────────────────────────────────────────────────────
-    // CREATE NAMESPACE
+    // CREATE SCHEMA
     // ─────────────────────────────────────────────────────────────────
     test(
-      'CREATE NAMESPACE IF NOT EXISTS is idempotent',
+      'CREATE SCHEMA IF NOT EXISTS is idempotent',
       () async {
         final name = uniqueName('ns_idem');
-        await client.query('CREATE NAMESPACE IF NOT EXISTS $name');
-        final res = await client.query('CREATE NAMESPACE IF NOT EXISTS $name');
+        await client.query('CREATE SCHEMA IF NOT EXISTS $name');
+        final res = await client.query('CREATE SCHEMA IF NOT EXISTS $name');
         expect(res.success, isTrue);
       },
       timeout: const Timeout(Duration(seconds: 30)),

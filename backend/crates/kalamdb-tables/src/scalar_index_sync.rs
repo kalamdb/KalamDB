@@ -12,7 +12,7 @@ use kalamdb_store::StorageBackend;
 
 use crate::{
     common::scalar_index_partition_name, new_indexed_shared_table_store,
-    new_indexed_user_table_store, storage_schema_for_table,
+    new_indexed_user_table_store, storage_schema_for_table, storage_schema_for_table_with_arrow,
 };
 
 /// Drop removed scalar indexes and backfill ones that were not in `previous`.
@@ -26,6 +26,18 @@ pub fn sync_scalar_indexes(
     table_id: &TableId,
     previous: Option<&TableDefinition>,
     table_def: &TableDefinition,
+) -> Result<(), String> {
+    sync_scalar_indexes_with_arrow(backend, table_id, previous, table_def, None)
+}
+
+/// Drop removed scalar indexes and backfill ones that were not in `previous`,
+/// using an optional resolved Arrow overlay for named/array columns.
+pub fn sync_scalar_indexes_with_arrow(
+    backend: Arc<dyn StorageBackend>,
+    table_id: &TableId,
+    previous: Option<&TableDefinition>,
+    table_def: &TableDefinition,
+    arrow_schema: Option<&datafusion::arrow::datatypes::Schema>,
 ) -> Result<(), String> {
     if !matches!(table_def.table_type, TableType::User | TableType::Shared) {
         return Ok(());
@@ -52,7 +64,11 @@ pub fn sync_scalar_indexes(
         .find(|column| column.is_primary_key)
         .map(|column| column.column_name.as_str())
         .ok_or_else(|| format!("table {table_id} has no primary key"))?;
-    let storage_schema = storage_schema_for_table(table_def)?;
+    let storage_schema = match arrow_schema {
+        Some(arrow) => storage_schema_for_table_with_arrow(table_def, arrow)
+            .or_else(|_| storage_schema_for_table(table_def))?,
+        None => storage_schema_for_table(table_def)?,
+    };
     let added_set: HashSet<&str> = added.into_iter().collect();
 
     let mut slot = 1usize;

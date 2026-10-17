@@ -43,7 +43,7 @@ export function CreateNamespaceDialog({
       return "Use only letters, digits and underscores. Must start with a letter or underscore.";
     }
     if (existingNames.includes(trimmed)) {
-      return `Namespace "${trimmed}" already exists.`;
+      return `Schema "${trimmed}" already exists.`;
     }
     return null;
   })();
@@ -61,10 +61,10 @@ export function CreateNamespaceDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FolderPlus className="h-4 w-4" />
-            New namespace
+            New schema
           </DialogTitle>
           <DialogDescription>
-            Namespaces group your tables (similar to a Postgres schema).
+            Schemas group tables, the same way a PostgreSQL schema does.
           </DialogDescription>
         </DialogHeader>
 

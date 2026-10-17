@@ -158,8 +158,8 @@ Existing KalamDB namespace aliases may remain supported:
 
 ```sql
 USE chat;
-USE NAMESPACE chat;
-SET NAMESPACE chat;
+SET SCHEMA chat;
+SET SCHEMA chat;
 ```
 
 but PostgreSQL-compatible syntax is preferred in public SQL examples:

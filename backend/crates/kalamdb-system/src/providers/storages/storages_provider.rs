@@ -51,11 +51,6 @@ impl StoragesTableProvider {
         Ok(())
     }
 
-    /// Alias for create_storage (for backward compatibility)
-    pub fn insert_storage(&self, storage: Storage) -> Result<(), SystemError> {
-        self.create_storage(storage)
-    }
-
     /// Get a storage by ID
     pub fn get_storage_by_id(
         &self,

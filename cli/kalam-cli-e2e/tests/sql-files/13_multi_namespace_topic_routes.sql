@@ -1,10 +1,10 @@
 -- Use two namespaces and route events from both explicit and current namespace references.
 
-DROP NAMESPACE IF EXISTS sql_file_case_13_a CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_13_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_13_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_13_b CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_13_a;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_13_b;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_13_a;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_13_b;
 
 USE sql_file_case_13_a;
 CREATE TABLE IF NOT EXISTS tasks (
@@ -36,5 +36,5 @@ UPDATE tasks SET status = 'done' WHERE id = 1302;
 CONSUME FROM b_task_events LIMIT 30;
 
 DROP TOPIC b_task_events;
-DROP NAMESPACE IF EXISTS sql_file_case_13_b CASCADE;
-DROP NAMESPACE IF EXISTS sql_file_case_13_a CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_13_b CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_13_a CASCADE;

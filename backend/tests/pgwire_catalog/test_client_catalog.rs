@@ -50,11 +50,11 @@ async fn connect_pgwire() -> Result<tokio_postgres::Client, String> {
 }
 
 async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), String> {
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {FIXTURE_NAMESPACE}");
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {FIXTURE_NAMESPACE}");
     client
         .batch_execute(&ns_sql)
         .await
-        .map_err(|e| format!("CREATE NAMESPACE fixture failed: {e}"))?;
+        .map_err(|e| format!("CREATE SCHEMA fixture failed: {e}"))?;
 
     let table_sql = format!(
         "CREATE TABLE IF NOT EXISTS {FIXTURE_NAMESPACE}.{FIXTURE_TABLE} (id INT PRIMARY KEY, name \
@@ -66,11 +66,11 @@ async fn seed_fixture_metadata(client: &tokio_postgres::Client) -> Result<(), St
         .map_err(|e| format!("CREATE TABLE fixture failed: {e}"))?;
 
     let procedure_sql =
-        format!("CREATE OR REPLACE PROCEDURE {FIXTURE_NAMESPACE}.ping(label TEXT) RETURNS TEXT");
+        format!("CREATE OR REPLACE FUNCTION {FIXTURE_NAMESPACE}.ping(label TEXT) RETURNS TEXT");
     client
         .batch_execute(&procedure_sql)
         .await
-        .map_err(|e| format!("CREATE PROCEDURE fixture failed: {e}"))?;
+        .map_err(|e| format!("CREATE FUNCTION fixture failed: {e}"))?;
 
     Ok(())
 }

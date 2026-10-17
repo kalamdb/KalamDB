@@ -152,14 +152,12 @@ async fn test_audit_log_for_table_access_change() {
     let server = TestServer::new_shared().await;
     let admin_id = create_system_user(&server, "audit_admin_2").await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE analytics", admin_id.as_str())
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA analytics", admin_id.as_str()).await;
     // Ignore if namespace already exists
     if resp.status != ResponseStatus::Success
         && !resp.error.as_ref().unwrap().message.contains("already exists")
     {
-        panic!("CREATE NAMESPACE failed: {:?}", resp.error);
+        panic!("CREATE SCHEMA failed: {:?}", resp.error);
     }
 
     // Shared tables are FORCE RLS; grant visibility with CREATE POLICY.

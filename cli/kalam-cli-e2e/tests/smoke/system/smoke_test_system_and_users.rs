@@ -66,7 +66,7 @@ fn smoke_system_tables_and_user_lifecycle() {
     // Create a test namespace and user table first
     // Use a unique namespace per run to avoid cross-test collisions when tests run in parallel
     let test_ns = generate_unique_namespace("smoke_test_flush");
-    let _ = execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", test_ns));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", test_ns));
 
     // Create a user table to flush (unique per run to avoid collisions)
     let unique_tbl = generate_unique_table("test_flush_table");
@@ -116,5 +116,5 @@ fn smoke_system_tables_and_user_lifecycle() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", test_ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", test_ns));
 }

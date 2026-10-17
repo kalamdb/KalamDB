@@ -130,7 +130,7 @@ async fn test_storage_management_over_http() -> anyhow::Result<()> {
 
         // Prevent dropping an in-use storage
         let ns = unique_namespace("stg");
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
 
         let resp = server

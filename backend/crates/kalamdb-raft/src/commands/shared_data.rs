@@ -153,7 +153,7 @@ impl SharedDataCommand {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -164,7 +164,7 @@ mod tests {
             transaction_id:      None,
             actor_user_id:       None,
             table_id:            TableId::new(
-                NamespaceId::from("ns"),
+                SchemaId::from("ns"),
                 TableName::from("shared_table"),
             ),
             updates:             vec![],
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_shared_data_command_table_id() {
-        let table_id = TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_t"));
+        let table_id = TableId::new(SchemaId::from("shared_ns"), TableName::from("shared_t"));
         let cmd = SharedDataCommand::Insert {
             required_meta_index: 10,
             transaction_id:      None,
@@ -198,7 +198,7 @@ mod tests {
             required_meta_index: 999,
             transaction_id:      None,
             actor_user_id:       None,
-            table_id:            TableId::new(NamespaceId::from("shared"), TableName::from("data")),
+            table_id:            TableId::new(SchemaId::from("shared"), TableName::from("data")),
             pk_values:           None,
         };
 
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_all_shared_command_variants_get_watermark() {
-        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+        let table_id = TableId::new(SchemaId::from("n"), TableName::from("t"));
 
         let commands = vec![
             SharedDataCommand::Insert {
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn test_shared_command_set_watermark_to_zero() {
         // Shared DML commands should also support watermark = 0
-        let table_id = TableId::new(NamespaceId::from("ns"), TableName::from("shared_table"));
+        let table_id = TableId::new(SchemaId::from("ns"), TableName::from("shared_table"));
 
         let mut insert = SharedDataCommand::Insert {
             required_meta_index: 100,
@@ -289,7 +289,7 @@ mod tests {
             required_meta_index: 10,
             transaction_id:      None,
             actor_user_id:       Some(actor_user_id.clone()),
-            table_id:            TableId::new(NamespaceId::from("shared"), TableName::from("data")),
+            table_id:            TableId::new(SchemaId::from("shared"), TableName::from("data")),
             rows:                vec![],
             encoded_fields:      Vec::new(),
         };
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn row_slot_count_matches_final_rows() {
-        let table_id = TableId::new(NamespaceId::from("n"), TableName::from("t"));
+        let table_id = TableId::new(SchemaId::from("n"), TableName::from("t"));
         let insert = SharedDataCommand::Insert {
             required_meta_index: 0,
             transaction_id:      None,

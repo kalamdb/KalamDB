@@ -1673,7 +1673,7 @@ export default function SqlStudio() {
         onEditSchema={(table) => {
           if (isReadOnlyNamespace(table.namespace)) {
             notify({
-              title: "Read-only namespace",
+              title: "Read-only schema",
               description: `${table.namespace} is managed by KalamDB and can't be edited.`,
               variant: "destructive",
             });
@@ -1692,7 +1692,7 @@ export default function SqlStudio() {
         onDropTable={(table) => {
           if (isReadOnlyNamespace(table.namespace)) {
             notify({
-              title: "Read-only namespace",
+              title: "Read-only schema",
               description: `${table.namespace} is managed by KalamDB and can't be dropped from here.`,
               variant: "destructive",
             });

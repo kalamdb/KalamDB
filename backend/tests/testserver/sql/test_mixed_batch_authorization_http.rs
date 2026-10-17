@@ -15,11 +15,11 @@ async fn test_regular_user_batch_rejects_admin_statement_without_side_effects(
     let auth = create_user_auth_header_default(server, &username).await?;
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(
         create_namespace.status == ResponseStatus::Success,
-        "CREATE NAMESPACE failed: {:?}",
+        "CREATE SCHEMA failed: {:?}",
         create_namespace.error
     );
 

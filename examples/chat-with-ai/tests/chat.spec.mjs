@@ -195,10 +195,10 @@ async function ensureRoomAccess(userId, roomId) {
 async function insertUserMessage(roomName, content, username = adminUsername) {
   await ensureRoomAccess(username, roomName);
   const token = await login(username, adminPassword);
-  await executeSql(token, `CALL chat_demo.join_room(${sqlLiteral(roomName)})`);
+  await executeSql(token, `SELECT chat_demo.join_room(${sqlLiteral(roomName)})`);
   await executeSql(
     token,
-    `CALL chat_demo.send_message('room', ${sqlLiteral(roomName)}, ${sqlLiteral(content)})`,
+    `SELECT chat_demo.send_message('room', ${sqlLiteral(roomName)}, ${sqlLiteral(content)})`,
   );
 }
 
