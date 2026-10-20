@@ -171,7 +171,8 @@ dotenv = "0.15"
 clap = { version = "4.6.7", features = ["derive", "color"] }
 console = { version = "0.16.6", default-features = false, features = ["unicode-width"] }
 humantime = "2.4.0"
-rustyline = { version = "19.0.0" }
+# 19.0.0 calls cfg_select!, which is unstable on the 1.94 MSRV.
+rustyline = { version = "18.0.1" }
 shlex = "2.0.1"
 
 # System
