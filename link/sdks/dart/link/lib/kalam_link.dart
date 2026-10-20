@@ -35,3 +35,4 @@ export 'src/live_event_delivery.dart';
 export 'src/models.dart';
 export 'src/version_id.dart';
 export 'src/sql_params.dart';
+export 'src/table/kalam_remote_table.dart';

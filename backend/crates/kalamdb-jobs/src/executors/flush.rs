@@ -224,10 +224,10 @@ impl FlushExecutor {
                 .note_retained_hot(table_id.as_ref(), None)
                 .map_err(|error| KalamDbError::Other(error.to_string()))?;
             return Ok(FlushJobResult {
-                rows_flushed: 0,
+                rows_flushed:  0,
                 parquet_files: vec![],
-                scope_hints: vec![],
-                metadata: kalamdb_flush::FlushMetadata::shared_table(),
+                scope_hints:   vec![],
+                metadata:      kalamdb_flush::FlushMetadata::shared_table(),
             });
         }
 

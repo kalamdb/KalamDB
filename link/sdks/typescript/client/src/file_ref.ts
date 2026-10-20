@@ -57,8 +57,8 @@ function sanitizeFilename(name: string): string {
 function extractExtension(name: string): string {
   const dot = name.lastIndexOf('.');
   if (dot === -1) return 'bin';
-  const ext = name.slice(dot + 1).toLowerCase();
-  return ext.length <= 10 && /^[a-z0-9]+$/.test(ext) ? ext : 'bin';
+  const ext = name.slice(dot + 1).replace(/[A-Z]/g, ch => ch.toLowerCase());
+  return ext.length <= 10 && /^[a-z0-9]*$/.test(ext) ? ext : 'bin';
 }
 
 function storedNameFallback(data: PgCatalogFile): string {

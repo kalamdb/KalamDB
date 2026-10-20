@@ -24,6 +24,9 @@ use crate::{
 };
 
 mod builder;
+
+#[cfg(feature = "tokio-runtime")]
+pub(crate) use builder::shared_rustls_client_config;
 mod endpoints;
 mod files;
 mod runtime;

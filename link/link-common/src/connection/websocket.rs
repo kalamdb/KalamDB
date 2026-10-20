@@ -9,6 +9,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{Error as IoError, ErrorKind},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -19,7 +20,7 @@ use tokio::{
     time::Instant as TokioInstant,
 };
 use tokio_tungstenite::{
-    client_async_tls_with_config,
+    client_async_tls_with_config, Connector,
     tungstenite::{
         error::{Error as WsError, UrlError},
         handshake::client::Response as WsResponse,
@@ -141,7 +142,11 @@ async fn connect_happy_eyeballs(
         );
     }
 
-    client_async_tls_with_config(request, stream, None, None).await
+    client_async_tls_with_config(request, stream, None, Some(rustls_connector())).await
+}
+
+fn rustls_connector() -> Connector {
+    Connector::Rustls(Arc::new(crate::client::shared_rustls_client_config()))
 }
 
 fn validate_ws_url(url: &Url, require_ws_scheme: bool, context: &str) -> Result<()> {
@@ -246,7 +251,13 @@ pub(crate) async fn connect_with_optional_local_bind(
             match socket.connect(remote_addr).await {
                 Ok(stream) => {
                     let _ = stream.set_nodelay(true);
-                    return client_async_tls_with_config(request, stream, None, None).await;
+                    return client_async_tls_with_config(
+                        request,
+                        stream,
+                        None,
+                        Some(rustls_connector()),
+                    )
+                    .await;
                 },
                 Err(connect_err) => {
                     last_error = Some(connect_err);

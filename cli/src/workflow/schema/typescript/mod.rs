@@ -133,16 +133,12 @@ CREATE USER TABLE okf_sync.notes (
         .unwrap();
         let schema = generate_schema_source(&snapshot, &hash, &names).unwrap();
         assert!(schema.contains("import { kTable, file } from '@kalamdb/orm';"), "{schema}");
+        assert!(schema.contains("kTable"), "{schema}");
+        assert!(!schema.contains("db.tables"), "{schema}");
         assert!(!schema.contains("export type KalamFileColumn"), "{schema}");
         assert!(!schema.contains("export interface FileRefData"), "{schema}");
-        assert!(schema.contains("export type File = {"), "{schema}");
-        assert!(schema.contains("id: string;"), "{schema}");
-        assert!(schema.contains("sub: string;"), "{schema}");
-        assert!(schema.contains("name: string;"), "{schema}");
-        assert!(schema.contains("size: bigint;"), "{schema}");
-        assert!(schema.contains("mime: string;"), "{schema}");
-        assert!(schema.contains("sha256: string;"), "{schema}");
-        assert!(schema.contains("shard: number | null;"), "{schema}");
+        assert!(schema.contains("export type File = PgCatalogFile;"), "{schema}");
+        assert!(schema.contains("import type { PgCatalogFile } from '@kalamdb/client';"), "{schema}");
         assert!(schema.contains("file_ref: File;"), "{schema}");
         assert!(
             schema.contains("import { text, timestamp } from 'drizzle-orm/pg-core';"),
@@ -152,7 +148,7 @@ CREATE USER TABLE okf_sync.notes (
         assert!(!schema.contains("integer("), "{schema}");
         assert!(!schema.contains("jsonb("), "{schema}");
         assert!(schema.contains("path: text(\"path\").primaryKey()"), "{schema}");
-        assert!(schema.contains("file_ref: file(\"file_ref\").notNull()"), "{schema}");
+        assert!(schema.contains("file_ref: file(\"file_ref\").$type<File>().notNull()"), "{schema}");
         assert!(!schema.contains("jsonb(\"file_ref\")"), "{schema}");
         assert!(schema.contains("export const okfSyncContextFiles"), "{schema}");
         assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");

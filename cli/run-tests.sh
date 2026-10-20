@@ -259,6 +259,11 @@ autodetect_cluster_mode
 if [ "$SERVER_TYPE" = "cluster" ] && [ -z "$TEST_JOBS" ]; then
     TEST_JOBS="${KALAMDB_CLUSTER_TEST_JOBS:-4}"
     TEST_JOBS_AUTO=true
+elif [ "$SERVER_TYPE" = "running" ] && [ -z "$TEST_JOBS" ] && [ -z "$TEST_FILTER" ] && [ -z "$TEST_LIST_FILE" ] && [ ${#PACKAGE_FILTERS[@]} -eq 0 ]; then
+    # A full run shares one debug server. Uncapped nextest (one test per core)
+    # makes DDL and schedule wakeups exceed their budgets.
+    TEST_JOBS="${KALAMDB_RUNNING_TEST_JOBS:-6}"
+    TEST_JOBS_AUTO=true
 fi
 
 parse_host_port_from_url() {
@@ -550,7 +555,11 @@ if [ -n "$TEST_LIST_FILE" ]; then
 fi
 if [ -n "$TEST_JOBS" ]; then
     if [ "$TEST_JOBS_AUTO" = true ]; then
-        echo "Jobs:            $TEST_JOBS (cluster default)"
+        if [ "$SERVER_TYPE" = "cluster" ]; then
+            echo "Jobs:            $TEST_JOBS (cluster default)"
+        else
+            echo "Jobs:            $TEST_JOBS (running-server default)"
+        fi
     else
         echo "Jobs:            $TEST_JOBS"
     fi

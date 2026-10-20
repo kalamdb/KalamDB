@@ -1349,7 +1349,7 @@ export class KalamDBClient {
         }
 
         if (normalizedEvent.type === 'initial_data_batch') {
-          rows = upsertLimited([], (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
+          rows = upsertLimited(rows, (normalizedEvent.rows ?? []).map(mapRow), getKey, options.limit);
           callback([...rows]);
           this.emitLiveCheckpoint(options.onCheckpoint, normalizedEvent.subscription_id);
           return;

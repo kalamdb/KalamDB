@@ -1,5 +1,8 @@
 {{header}}
 // {{contract_hash_line}}
+{{#if needs_file_type}}
+import type { PgCatalogFile } from '@kalamdb/client';
+{{/if}}
 
 {{#if needs_orm}}
 {{#if needs_file}}

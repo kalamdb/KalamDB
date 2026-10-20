@@ -81,7 +81,7 @@ test('integration: file roundtrip and isolation', { skip: !RUN_INTEGRATION }, as
   const hash = sha256Hex(bytes);
 
   try {
-    await upsertSyncFile(aliceDb, {
+    await upsertSyncFile(alice.client, aliceDb, {
       path,
       mimeType: 'text/markdown',
       fileBytes: bytes,

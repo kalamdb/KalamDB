@@ -124,6 +124,16 @@ pub(super) fn is_expected_ws_disconnect(error: &ProtocolError) -> bool {
     }
 }
 
+pub(super) fn is_ws_message_too_large(error: &ProtocolError) -> bool {
+    match error {
+        ProtocolError::Overflow => true,
+        ProtocolError::Io(io_err) => {
+            io_err.to_string().to_ascii_lowercase().contains("continuation size")
+        },
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

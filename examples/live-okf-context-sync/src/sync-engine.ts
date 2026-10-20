@@ -231,7 +231,7 @@ export class FolderSyncApp {
     }
 
     try {
-      await upsertSyncFile(this.kalamDb, {
+      await upsertSyncFile(this.client, this.kalamDb, {
         path: relativePath,
         fileBytes: bytes,
         mimeType: guessMimeType(relativePath),

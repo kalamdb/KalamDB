@@ -738,6 +738,10 @@ pub async fn set_user_id(client: &tokio_postgres::Client, user_id: &str) {
     client.batch_execute(&sql).await.expect("set user_id");
 }
 
+pub async fn clear_user_id(client: &tokio_postgres::Client) {
+    client.batch_execute("RESET kalam.user_id;").await.expect("reset user_id");
+}
+
 fn sql_row_count(result: &Value) -> i64 {
     result["results"]
         .as_array()

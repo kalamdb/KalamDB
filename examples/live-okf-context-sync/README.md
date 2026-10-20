@@ -40,7 +40,7 @@ src/
   models/              # generated KalamDB schema + local Drizzle schema
 ```
 
-Remote reads, deletes, and upserts use **Drizzle ORM**. FILE uploads pass `kalamFile('upload', file)` in `.values()` / `.set()`; `kalamDriver()` sends multipart SQL automatically.
+Remote reads and deletes use **Drizzle ORM**. Generated FILE columns are `PgCatalogFile` values, so uploads pass `sql.raw('FILE("upload")')` through `queryWithFiles`.
 
 ## Folder layout
 

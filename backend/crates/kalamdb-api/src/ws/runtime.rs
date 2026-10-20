@@ -1,4 +1,4 @@
-use actix_ws::{CloseCode, CloseReason, Message, Session};
+use actix_ws::{AggregatedMessage, CloseCode, CloseReason, Session};
 use futures_util::StreamExt;
 use kalamdb_commons::{websocket::SerializationType, WebSocketMessage};
 use kalamdb_jobs::health_monitor::{
@@ -15,7 +15,7 @@ use super::{
     },
     messages::{handle_binary_message, handle_text_message},
     models::WsErrorCode,
-    protocol::is_expected_ws_disconnect,
+    protocol::{is_expected_ws_disconnect, is_ws_message_too_large},
 };
 
 pub(super) async fn run_websocket(
@@ -36,7 +36,11 @@ pub(super) async fn run_websocket(
 
     {
         let mut session = session;
-        let mut msg_stream = msg_stream;
+        let max_message_size = handler_context.max_message_size;
+        let mut msg_stream = msg_stream
+            .max_frame_size(max_message_size)
+            .aggregate_continuations()
+            .max_continuation_size(max_message_size);
 
         if let Some(pending) = pending_auth {
             connection_state.mark_auth_started();
@@ -131,25 +135,25 @@ pub(super) async fn run_websocket(
 
                 msg = msg_stream.next() => {
                     match msg {
-                        Some(Ok(Message::Ping(bytes))) => {
+                        Some(Ok(AggregatedMessage::Ping(bytes))) => {
                             connection_state.update_heartbeat();
                             if session.pong(&bytes).await.is_err() {
                                 break;
                             }
                         }
-                        Some(Ok(Message::Pong(_))) => {
+                        Some(Ok(AggregatedMessage::Pong(_))) => {
                             connection_state.update_heartbeat();
                         }
-                        Some(Ok(Message::Text(text))) => {
+                        Some(Ok(AggregatedMessage::Text(text))) => {
                             record_activity_now();
                             connection_state.update_heartbeat();
 
-                            if text.len() > handler_context.max_message_size {
+                            if text.len() > max_message_size {
                                 warn!(
                                     "Message too large from {}: {} bytes (max {})",
                                     connection_id,
                                     text.len(),
-                                    handler_context.max_message_size
+                                    max_message_size
                                 );
                                 let _ = send_error(
                                     &mut session,
@@ -157,7 +161,7 @@ pub(super) async fn run_websocket(
                                     WsErrorCode::MessageTooLarge,
                                     &format!(
                                         "Message exceeds maximum size of {} bytes",
-                                        handler_context.max_message_size
+                                        max_message_size
                                     ),
                                     handler_context.compression_enabled,
                                 )
@@ -202,9 +206,30 @@ pub(super) async fn run_websocket(
                                 break;
                             }
                         }
-                        Some(Ok(Message::Binary(data))) => {
+                        Some(Ok(AggregatedMessage::Binary(data))) => {
                             record_activity_now();
                             connection_state.update_heartbeat();
+
+                            if data.len() > max_message_size {
+                                warn!(
+                                    "Binary message too large from {}: {} bytes (max {})",
+                                    connection_id,
+                                    data.len(),
+                                    max_message_size
+                                );
+                                let _ = send_error(
+                                    &mut session,
+                                    "protocol",
+                                    WsErrorCode::MessageTooLarge,
+                                    &format!(
+                                        "Message exceeds maximum size of {} bytes",
+                                        max_message_size
+                                    ),
+                                    handler_context.compression_enabled,
+                                )
+                                .await;
+                                continue;
+                            }
 
                             if let Err(err) = handle_binary_message(
                                 &connection_state,
@@ -216,6 +241,7 @@ pub(super) async fn run_websocket(
                                 &handler_context.live_query_manager,
                                 &handler_context.user_repo,
                                 handler_context.compression_enabled,
+                                max_message_size,
                             )
                             .await
                             {
@@ -240,13 +266,36 @@ pub(super) async fn run_websocket(
                                 break;
                             }
                         }
-                        Some(Ok(Message::Close(reason))) => {
+                        Some(Ok(AggregatedMessage::Close(reason))) => {
                             debug!("Client requested close: {:?}", reason);
                             let _ = session.close(reason).await;
                             break;
                         }
-                        Some(Ok(_)) => {}
                         Some(Err(err)) => {
+                            if is_ws_message_too_large(&err) {
+                                warn!(
+                                    "WebSocket message exceeded {} bytes ({})",
+                                    max_message_size, connection_id
+                                );
+                                let _ = send_error(
+                                    &mut session,
+                                    "protocol",
+                                    WsErrorCode::MessageTooLarge,
+                                    &format!(
+                                        "Message exceeds maximum size of {} bytes",
+                                        max_message_size
+                                    ),
+                                    handler_context.compression_enabled,
+                                )
+                                .await;
+                                let _ = session
+                                    .close(Some(CloseReason {
+                                        code: CloseCode::Size,
+                                        description: Some("Message too large".into()),
+                                    }))
+                                    .await;
+                                break;
+                            }
                             if is_expected_ws_disconnect(&err) {
                                 debug!("WebSocket client disconnected ({}): {}", connection_id, err);
                             } else {

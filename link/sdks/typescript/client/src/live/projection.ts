@@ -89,6 +89,9 @@ function compareProjectionValues(left: unknown, right: unknown): number {
     return -1;
   }
 
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() - right.getTime();
+  }
   if (typeof left === 'number' && typeof right === 'number') {
     return left - right;
   }

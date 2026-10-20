@@ -29,7 +29,25 @@ void main() {
       'sha256': 'abc123',
     });
 
-    test('parses JSON and delegates shared URL helpers', () {
+    test('builds the canonical FILE download path without FFI', () {
+      final ref = KalamFileRef(
+        id: '123',
+        sub: 'f0001',
+        name: 'My Photo.JPG',
+        size: 1,
+        mime: 'image/jpeg',
+        sha256: 'abc',
+        shard: 2,
+      );
+      expect(ref.storedName(), '123-my-photo.jpg');
+      expect(ref.relativePath(), 'shard-2/f0001/123-my-photo.jpg');
+      expect(
+        ref.relativeUrl('default', 'users'),
+        '/v1/files/default/users/f0001/123-my-photo.jpg',
+      );
+    });
+
+    test('parses JSON and builds shared URL helpers', () {
       final ref = KalamFileRef.fromJson(sampleJson);
       expect(ref, isNotNull);
       expect(ref!.name, 'avatar.png');

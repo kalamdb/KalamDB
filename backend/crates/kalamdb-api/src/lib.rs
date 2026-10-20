@@ -1,6 +1,5 @@
 // KalamDB API Library
 #![recursion_limit = "256"]
-//
 // This crate provides the REST API layer for KalamDB,
 // including HTTP handlers, routes, and request/response models.
 

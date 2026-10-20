@@ -16,6 +16,11 @@ void main() {
     expect(changes.single.initial, isTrue);
     expect(changes.single.seq, const VersionId(12));
     expect(changes.single.row, {'id': 'message-1', 'text': 'hello'});
+    expect(changes.single.rowWithVersion, {
+      'id': 'message-1',
+      'text': 'hello',
+      '_version': 12,
+    });
   });
 
   test('sorts batched changes by sequence before local application', () {

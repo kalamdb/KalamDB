@@ -211,7 +211,7 @@ pub fn shared_http_client() -> Client {
         .connect_timeout(Duration::from_secs(5))
         // DDL on a busy running server can exceed a few seconds; keep this aligned
         // with CLI client waits so ensure_ready/SQL helpers do not false-fail first.
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .tcp_nodelay(true)
         .build()
         .expect("failed to build test HTTP client")
@@ -790,7 +790,7 @@ impl TestAuthManager {
                 .timeouts(
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
@@ -809,7 +809,7 @@ impl TestAuthManager {
             .timeouts(
                 KalamLinkTimeouts::builder()
                     .connection_timeout_secs(5)
-                    .receive_timeout_secs(30)
+                    .receive_timeout_secs(60)
                     .send_timeout_secs(10)
                     .subscribe_timeout_secs(10)
                     .auth_timeout_secs(10)
@@ -2525,7 +2525,7 @@ pub async fn execute_sql_via_http_on_url(
     let mut request = client
         .post(format!("{}/v1/api/sql", base_url))
         .header("Authorization", format!("Bearer {}", token))
-        .timeout(Duration::from_secs(15));
+        .timeout(Duration::from_secs(60));
     if let Some(request_id) = request_id {
         request = request.header("X-Request-ID", request_id);
     }
@@ -3669,7 +3669,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
                 .env_remove("https_proxy")
                 .env_remove("ALL_PROXY")
                 .env_remove("all_proxy")
-                .arg("--no-spinner")     // Disable spinner for cleaner output
+                .arg("--no-spinner") // Disable spinner for cleaner output
+                .arg("--receive-timeout")
+                .arg("60")
                 .args(extra_args)
                 .arg("--command")
                 .arg(sql)
@@ -3684,8 +3686,9 @@ fn execute_sql_via_cli_as_with_args_and_urls(
 
             let wait_start = Instant::now();
 
-            // Wait for child with timeout to avoid hanging tests
-            let timeout_duration = Duration::from_secs(60);
+            // Wait for child with timeout to avoid hanging tests.
+            // The CLI receive timeout is 60s; leave room for it to return.
+            let timeout_duration = Duration::from_secs(90);
             match child.wait_timeout(timeout_duration)? {
                 Some(status) => {
                     let wait_duration = wait_start.elapsed();
@@ -3903,6 +3906,8 @@ pub fn execute_sql_file_as_root_via_cli(
                 .env_remove("ALL_PROXY")
                 .env_remove("all_proxy")
                 .arg("--no-spinner")
+                .arg("--receive-timeout")
+                .arg("60")
                 .arg("--file")
                 .arg(&file_arg)
                 .stdout(std::process::Stdio::piped())
@@ -3912,7 +3917,7 @@ pub fn execute_sql_file_as_root_via_cli(
             let (stdout_reader, stderr_reader) = take_child_output_readers(&mut child);
             use wait_timeout::ChildExt;
 
-            match child.wait_timeout(Duration::from_secs(60))? {
+            match child.wait_timeout(Duration::from_secs(90))? {
                 Some(status) => {
                     let stdout = join_child_output_reader(stdout_reader)?;
                     let stderr = join_child_output_reader(stderr_reader)?;
@@ -4258,7 +4263,7 @@ fn execute_sql_via_client_internal(
                 {
                     let timeouts = KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)
@@ -4874,7 +4879,7 @@ pub fn ensure_cli_auth_ready_on_server(username: &str, password: &str, server: &
 
     let timeouts = KalamLinkTimeouts::builder()
         .connection_timeout_secs(10)
-        .receive_timeout_secs(30)
+        .receive_timeout_secs(60)
         .send_timeout_secs(30)
         .subscribe_timeout_secs(5)
         .auth_timeout_secs(5)
@@ -5467,7 +5472,7 @@ impl SubscriptionListener {
                     &password,
                     KalamLinkTimeouts::builder()
                         .connection_timeout_secs(5)
-                        .receive_timeout_secs(30)
+                        .receive_timeout_secs(60)
                         .send_timeout_secs(10)
                         .subscribe_timeout_secs(10)
                         .auth_timeout_secs(10)

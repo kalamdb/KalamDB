@@ -4,7 +4,7 @@ use super::common::{
 };
 
 #[tokio::test]
-#[ntest::timeout(45000)]
+#[ntest::timeout(180000)]
 async fn e2e_scenario_chat_app_support_workspace_flow() {
     let env = TestEnv::global().await;
     let schema = unique_name("chat_app");

@@ -5,7 +5,12 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::{models::TableId, schemas::TableType, JobId};
+use kalamdb_commons::{
+    models::{StorageId, TableId},
+    schemas::{TableDefinition, TableType},
+    JobId,
+};
+use kalamdb_core::schema_registry::CachedTableData;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -37,21 +42,18 @@ pub struct DropTableHandler {
 const CLEANUP_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
+pub(crate) fn storage_id_for_cleanup(table: &TableDefinition) -> StorageId {
+    CachedTableData::extract_storage_id(table).unwrap_or_else(StorageId::local)
+}
+
 pub(crate) fn capture_storage_cleanup_details(
     app_context: &Arc<AppContext>,
-    table_id: &TableId,
+    storage_id: &StorageId,
     table_type: TableType,
 ) -> Result<StorageCleanupDetails, KalamDbError> {
-    let registry = app_context.schema_registry();
-    let cached = registry.get(table_id).ok_or_else(|| {
-        KalamDbError::InvalidOperation(format!("Table cache entry not found for {}", table_id))
-    })?;
-
-    let storage_id = cached.storage_id.clone();
-
     let storage = app_context
         .storage_registry()
-        .get_storage(&storage_id)
+        .get_storage(storage_id)
         .map_err(|e| KalamDbError::Other(format!("Failed to get storage: {}", e)))?
         .ok_or_else(|| {
             KalamDbError::InvalidOperation(format!("Storage '{}' not found", storage_id.as_str()))
@@ -77,7 +79,7 @@ pub(crate) fn capture_storage_cleanup_details(
     };
 
     Ok(StorageCleanupDetails {
-        storage_id,
+        storage_id: storage_id.clone(),
         base_directory: base_dir,
         relative_path_template: relative_template,
     })
@@ -255,6 +257,12 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
             }
         }
 
+        let storage_id = table_metadata
+            .as_ref()
+            .or(registry_def.as_deref())
+            .map(storage_id_for_cleanup)
+            .unwrap_or_else(StorageId::local);
+
         // Log table details before dropping
         if let Some(metadata) = table_metadata {
             log::debug!(
@@ -294,10 +302,10 @@ impl TypedStatementHandler<DropTableStatement> for DropTableHandler {
         .await?;
 
         let app_ctx = self.app_context.clone();
-        let tid = table_id.clone();
         let at = actual_type;
         let storage_details =
-            run_blocking(move || capture_storage_cleanup_details(&app_ctx, &tid, at)).await?;
+            run_blocking(move || capture_storage_cleanup_details(&app_ctx, &storage_id, at))
+                .await?;
 
         // Cancel any active flush jobs for this table before dropping
         let job_manager = self.app_context.job_manager();

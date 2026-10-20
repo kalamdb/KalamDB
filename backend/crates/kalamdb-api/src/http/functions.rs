@@ -6,7 +6,7 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
     conversions::arrow_json_conversion::scalar_value_to_json,
-    models::{SchemaId, RoutineId},
+    models::{RoutineId, SchemaId},
     KalamDataType,
 };
 use kalamdb_core::{
@@ -103,10 +103,12 @@ pub async fn invoke_function_v1(
             response: Arc::clone(&response),
         };
 
-        let exec_ctx =
-            ExecutionContext::from_session(session, Arc::clone(&app_context.base_session_context()))
-                .with_namespace_id(namespace_id)
-                .with_request_id(Uuid::now_v7().to_string());
+        let exec_ctx = ExecutionContext::from_session(
+            session,
+            Arc::clone(&app_context.base_session_context()),
+        )
+        .with_namespace_id(namespace_id)
+        .with_request_id(Uuid::now_v7().to_string());
         (origin, exec_ctx)
     };
 
@@ -119,8 +121,7 @@ pub async fn invoke_function_v1(
             args,
         ),
         "func.invoke"
-    )
-    {
+    ) {
         Ok(result) => {
             let _span = kalamdb_observability::kdb_info_span_entered!("func.http.encode_response");
             let payload = match function_http_payload(&result.value) {
@@ -303,7 +304,7 @@ mod tests {
     use std::collections::HashMap;
 
     use kalamdb_commons::{
-        models::{SchemaId, RoutineId, RoutineParameterId},
+        models::{RoutineId, RoutineParameterId, SchemaId},
         KalamDataType,
     };
     use kalamdb_core::{error::KalamDbError, functions::routine_value_as_json};

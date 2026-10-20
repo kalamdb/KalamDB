@@ -42,6 +42,23 @@ void main() {
     expect(rowState.pendingValuesJson, contains('message-1'));
   });
 
+  test('returns the existing action when the same id is enqueued again', () async {
+    const draft = KalamActionDraft(
+      id: 'mailbox:393216',
+      accountKey: 'server/user-a',
+      actionKey: 'masky.mailbox.project',
+      payloadJson: '{"id":"request:15"}',
+    );
+
+    final first = await store.enqueue(draft);
+    final second = await store.enqueue(draft);
+
+    final stored = await database.select(database.kalamActions).get();
+    expect(stored, hasLength(1));
+    expect(second.id, first.id);
+    expect(second.status, KalamActionStatus.queued);
+  });
+
   test('rolls back action and row state when optimistic work fails', () async {
     await expectLater(
       store.enqueue(
@@ -173,5 +190,76 @@ void main() {
       isNull,
     );
     expect(await database.select(database.kalamRowStates).get(), isEmpty);
+  });
+
+  test('seeds a checkpoint once and resets only the named actions', () async {
+    final seeded = await store.seedCheckpointIfAbsent(
+      accountKey: 'server/user-a',
+      subscriptionId: 'public.messages',
+      seq: VersionId.parse('4'),
+    );
+    final again = await store.seedCheckpointIfAbsent(
+      accountKey: 'server/user-a',
+      subscriptionId: 'public.messages',
+      seq: VersionId.parse('9'),
+    );
+    expect(seeded, isTrue);
+    expect(again, isFalse);
+    expect(
+      (await store.readCheckpoint(
+        accountKey: 'server/user-a',
+        subscriptionId: 'public.messages',
+      ))!
+          .seq,
+      VersionId.parse('4'),
+    );
+
+    await database.into(database.kalamActions).insert(
+          KalamActionsCompanion.insert(
+            id: 'mailbox-1',
+            accountKey: 'server/user-a',
+            actionKey: 'mailbox.project',
+            payloadJson: '{}',
+            status: 'queued',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    await database.into(database.kalamActionSteps).insert(
+          KalamActionStepsCompanion.insert(
+            actionId: 'mailbox-1',
+            name: 'fetch',
+            status: 'done',
+            updatedAt: now,
+          ),
+        );
+    await database.into(database.kalamActions).insert(
+          KalamActionsCompanion.insert(
+            id: 'send-1',
+            accountKey: 'server/user-a',
+            actionKey: 'messages.send',
+            payloadJson: '{}',
+            status: 'queued',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+
+    await store.resetProjection(
+      accountKey: 'server/user-a',
+      subscriptionIds: const ['public.messages'],
+      actionKeys: const ['mailbox.project'],
+    );
+
+    expect(
+      await store.readCheckpoint(
+        accountKey: 'server/user-a',
+        subscriptionId: 'public.messages',
+      ),
+      isNull,
+    );
+    final remaining = await database.select(database.kalamActions).get();
+    expect(remaining.map((action) => action.id), ['send-1']);
+    expect(await database.select(database.kalamActionSteps).get(), isEmpty);
   });
 }

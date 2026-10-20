@@ -32,19 +32,30 @@ pub fn render_field_type(field: &ContractField, names: &AssignedNames, lang: Tar
 }
 
 fn named_or_builtin(field: &ContractField, names: &AssignedNames, lang: TargetLang) -> String {
+    if is_file_field(field) {
+        return match lang {
+            // Dart already has the FILE column type in kalam_link, exported by kalam_sync.
+            TargetLang::Dart => "KalamFileRef".to_string(),
+            TargetLang::TypeScript | TargetLang::Rust => "File".to_string(),
+        };
+    }
     if let Some(type_id) = &field.type_id {
         return names.type_ident(type_id.as_str()).to_string();
-    }
-    if field.type_name.eq_ignore_ascii_case("FILE")
-        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
-    {
-        return "File".to_string();
     }
     let sql_name = field
         .data_type
         .map(|data_type| data_type.sql_name())
         .unwrap_or_else(|| field.type_name.clone());
     builtin(&sql_name, lang).to_string()
+}
+
+pub fn is_file_field(field: &ContractField) -> bool {
+    field.type_name.eq_ignore_ascii_case("FILE")
+        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
+        || field
+            .type_id
+            .as_ref()
+            .is_some_and(|type_id| type_id.as_str() == "pg_catalog.file")
 }
 
 pub fn builtin(sql_type: &str, lang: TargetLang) -> &'static str {

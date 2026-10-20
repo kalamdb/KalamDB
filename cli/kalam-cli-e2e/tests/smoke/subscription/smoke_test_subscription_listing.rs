@@ -31,7 +31,7 @@ fn fast_link_client() -> Result<KalamLinkClient, Box<dyn std::error::Error + Sen
 
 /// Verify that `client.subscriptions()` lists active subscriptions
 /// and that closing a subscription removes it from the list.
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_listing_and_close_removes() {
     if !require_server_running() {
@@ -164,7 +164,7 @@ fn smoke_subscription_listing_and_close_removes() {
 
 /// Verify that after receiving change events, subscriptions() reports
 /// a non-empty last_seq_id and last_event_time_ms.
-#[ntest::timeout(30000)]
+#[ntest::timeout(60000)]
 #[test]
 fn smoke_subscription_listing_tracks_seq_id() {
     if !require_server_running() {

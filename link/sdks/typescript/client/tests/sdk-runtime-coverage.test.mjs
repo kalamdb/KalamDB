@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   Auth,
+  FileRef,
   LogLevel,
   VersionId,
   createClient,
@@ -701,3 +702,37 @@ test('live reports default onError fields for live-row errors', async () => {
   await unsub();
 });
 
+
+
+test('custom-key live accumulates and deduplicates initial batches', async () => {
+  const client = createClient({url: 'http://localhost:2900', authProvider: async () => Auth.jwt('test')});
+  const wasm = createRuntimeCoverageWasmClient();
+  client.initialized = true;
+  client.wasmClient = wasm;
+  const seen = [];
+  const stop = await client.live('SELECT * FROM items', rows => seen.push(rows.map(row => row.id)), {
+    getKey: row => row.id,
+    mapRow: row => ({id: row.id.asString()}),
+  });
+  const batch = (batch_num, ids) => wasm.emitSubscription('sub-1', {
+    type: 'initial_data_batch', subscription_id: 'sub-1',
+    rows: ids.map(id => ({id})),
+    batch_control: {batch_num, has_more: true, status: 'loading', last_seq_id: null},
+  }, 1);
+  batch(1, ['a']);
+  batch(2, ['b']);
+  batch(2, ['b']); // replay is idempotent by key
+  assert.deepEqual(seen, [['a'], ['a', 'b'], ['a', 'b']]);
+  await stop();
+});
+
+
+for (const [name, expected] of [
+  ['file.', '123-file.'], ['file.K', '123-file.bin'],
+  ['K-file.TXT', '123-file.txt'], [`a${' '.repeat(60)}b.txt`, '123-a.txt'],
+]) {
+  test(`FILE fallback agrees with the server for ${JSON.stringify(name)}`, () => {
+    const ref = new FileRef({id: '123', sub: 'f', name, size: 1, mime: 'text/plain', sha256: 'abc'});
+    assert.equal(ref.storedName(), expected);
+  });
+}

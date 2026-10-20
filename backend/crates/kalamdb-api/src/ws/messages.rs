@@ -1,8 +1,7 @@
-use std::{io::Read, sync::Arc};
+use std::sync::Arc;
 
 use actix_ws::Session;
 use bytes::Bytes;
-use flate2::read::GzDecoder;
 use kalamdb_auth::UserRepository;
 use kalamdb_commons::{
     models::ConnectionInfo,
@@ -11,6 +10,7 @@ use kalamdb_commons::{
 use kalamdb_live::{LiveQueryManager, SharedConnectionState};
 
 use super::{
+    compression::decompress_gzip_limited,
     events::{
         auth::{handle_authenticate, send_current_auth_success},
         batch::handle_next_batch,
@@ -62,21 +62,19 @@ pub(super) async fn handle_binary_message(
     live_query_manager: &Arc<LiveQueryManager>,
     user_repo: &Arc<dyn UserRepository>,
     compression_enabled: bool,
+    max_message_size: usize,
 ) -> Result<(), String> {
     match connection_state.serialization_type() {
         SerializationType::MessagePack => {
-            let raw = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
-                let mut decoder = GzDecoder::new(&data[..]);
-                let mut buf = Vec::new();
-                decoder
-                    .read_to_end(&mut buf)
-                    .map_err(|_| "Failed to decompress binary msgpack".to_string())?;
-                buf
+            let owned;
+            let raw: &[u8] = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+                owned = decompress_gzip_limited(&data, max_message_size)?;
+                owned.as_slice()
             } else {
-                data.to_vec()
+                data.as_ref()
             };
 
-            let client_msg = rmp_serde::from_slice::<ClientMessage>(&raw)
+            let client_msg = rmp_serde::from_slice::<ClientMessage>(raw)
                 .map_err(|e| format!("Invalid MessagePack: {}", e))?;
 
             handle_client_message(

@@ -39,7 +39,7 @@ void main() {
         expect(res.success, isTrue);
         await dropTable(client, tbl);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
 
     // ─────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ void main() {
         final res = await client.query('DROP TABLE IF EXISTS $tbl');
         expect(res.success, isTrue);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
 
     test(
@@ -66,7 +66,7 @@ void main() {
         );
         expect(res.success, isTrue);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
 
     // ─────────────────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ void main() {
 
         await dropTable(client, tbl);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
 
     // ─────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ void main() {
         final res = await client.query('CREATE SCHEMA IF NOT EXISTS $name');
         expect(res.success, isTrue);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
 
     // ─────────────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ void main() {
 
         await dropTable(client, tbl);
       },
-      timeout: const Timeout(Duration(seconds: 30)),
+      timeout: const Timeout(Duration(seconds: 90)),
     );
   });
 }

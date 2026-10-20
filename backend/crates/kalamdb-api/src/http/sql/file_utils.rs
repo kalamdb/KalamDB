@@ -21,9 +21,10 @@ use kalamdb_filestore::FileStorageService;
 use kalamdb_system::{FileRef, FileSubfolderState};
 
 use super::models::{ErrorCode, FileError, ParsedMultipartRequest, ParsedSqlPayload, QueryRequest};
+use crate::http::HTTP_PAYLOAD_BODY_LIMIT;
 
-const MAX_MULTIPART_BUFFERED_BYTES: usize = 100 * 1024 * 1024; // cap chunked multipart memory use
-const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = 1024 * 1024; // SQL and params fields
+const MAX_MULTIPART_BUFFERED_BYTES: usize = HTTP_PAYLOAD_BODY_LIMIT;
+const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH;
 const MAX_NAMESPACE_FIELD_SIZE: usize = 4096;
 
 fn account_multipart_bytes(
@@ -84,7 +85,7 @@ pub async fn parse_multipart_request(
 ) -> Result<ParsedMultipartRequest, FileError> {
     let max_file_size = config.max_size_bytes;
     let max_files = config.max_files_per_request;
-    const MAX_FILE_PART_SIZE: usize = 100 * 1024 * 1024; // 100MB absolute max
+    const MAX_FILE_PART_SIZE: usize = HTTP_PAYLOAD_BODY_LIMIT;
 
     let mut sql: Option<String> = None;
     let mut params_json: Option<String> = None;

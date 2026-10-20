@@ -23,7 +23,7 @@ use kalamdb_transfer::{
 };
 use serde::{Deserialize, Serialize};
 
-const MAX_IMPORT_ZIP_BYTES: usize = 100 * 1024 * 1024;
+const MAX_IMPORT_ZIP_BYTES: usize = crate::http::HTTP_PAYLOAD_BODY_LIMIT;
 const MAX_TEXT_FIELD_BYTES: usize = 4096;
 
 #[derive(Debug, Deserialize)]

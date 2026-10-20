@@ -93,6 +93,11 @@ tls_enabled = false
 prepared_statement_limit = 1024
 portal_limit = 1024
 
+[pg_extension]
+# FDW/extension gRPC bridge on the cluster RPC port. cli/run-tests.sh dials it
+# for native pg_kalam e2e. The code default stays off.
+enabled = true
+
 [datafusion]
 # Memory limit for query execution in bytes (default: 64MB)
 # KalamDB is optimised for mobile/OLTP workloads, not heavy analytics.

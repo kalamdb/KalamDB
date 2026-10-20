@@ -557,7 +557,7 @@ impl SchemaRegistry {
         cached.touch(self.version_cache_counter.fetch_add(1, Ordering::Relaxed));
     }
 
-    fn maybe_evict_table_cache_lru(&self) {
+    fn maybe_evict_table_cache_lru(&self, protect: Option<&TableId>) {
         if self.table_cache.len() <= self.table_cache_max_entries {
             return;
         }
@@ -572,6 +572,9 @@ impl SchemaRegistry {
             .table_cache
             .iter()
             .filter_map(|entry| {
+                if protect.is_some_and(|table_id| table_id == entry.key()) {
+                    return None;
+                }
                 let cached = entry.value();
                 cached
                     .get_provider()
@@ -695,6 +698,7 @@ impl SchemaRegistry {
             &table_id,
             Arc::new(table_def.clone()),
         )?);
+        let arrow_schema = cached_data.arrow_schema()?;
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
         self.touch_cached(&cached_data);
 
@@ -714,7 +718,7 @@ impl SchemaRegistry {
                     }
                 }
             },
-            _ => match self.create_table_provider(&table_def) {
+            _ => match self.create_table_provider(&table_def, arrow_schema) {
                 Ok(kalam_provider) => {
                     let table_provider =
                         Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
@@ -743,7 +747,7 @@ impl SchemaRegistry {
             },
         }
 
-        self.maybe_evict_table_cache_lru();
+        self.maybe_evict_table_cache_lru(Some(&table_id));
 
         Ok(())
     }
@@ -804,16 +808,24 @@ impl SchemaRegistry {
         if cached.get_provider().is_some() || cached.table.table_type == TableType::System {
             return Ok(());
         }
-        let kalam_provider = self.create_table_provider(cached.table.as_ref())?;
+        let arrow_schema = cached.arrow_schema()?;
+        let kalam_provider = self.create_table_provider(cached.table.as_ref(), arrow_schema)?;
         let table_provider = Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
         cached.set_provider(Arc::clone(&table_provider));
         self.register_with_datafusion(table_id, table_provider)
     }
 
-    /// Internal helper to create a KalamTableProvider based on table definition
+    /// Internal helper to create a KalamTableProvider based on table definition.
+    ///
+    /// `arrow_schema` must already be resolved. Looking it up through
+    /// [`Self::get_arrow_schema`] re-enters [`Self::load_cached_table`] for this
+    /// same table. Under the 256-entry cache, LRU eviction drops the in-flight
+    /// entry (it has no provider yet), the lookup misses, and the worker recurses
+    /// until the stack overflows.
     fn create_table_provider(
         &self,
         table_def: &TableDefinition,
+        arrow_schema: SchemaRef,
     ) -> Result<Arc<dyn kalamdb_tables::KalamTableProvider>, KalamDbError> {
         use kalamdb_commons::schemas::TableOptions;
         use kalamdb_sharding::ShardRouter;
@@ -872,14 +884,6 @@ impl SchemaRegistry {
             )
             .with_table_policies(app_ctx.system_tables().table_policies()),
         );
-
-        // Get Arrow schema from registry (cached at core level)
-        let arrow_schema = tables_schema_registry.get_arrow_schema(&table_id).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to get Arrow schema for {}: {}",
-                table_id, e
-            ))
-        })?;
 
         // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
         let table_def_arc = Arc::new(table_def.clone());
@@ -957,8 +961,8 @@ impl SchemaRegistry {
     /// Insert fully initialized cached table data into the cache
     pub fn insert_cached(&self, table_id: TableId, data: Arc<CachedTableData>) {
         self.touch_cached(&data);
-        self.table_cache.insert(table_id, data);
-        self.maybe_evict_table_cache_lru();
+        self.table_cache.insert(table_id.clone(), data);
+        self.maybe_evict_table_cache_lru(Some(&table_id));
     }
 
     /// Invalidate (remove) cached table data

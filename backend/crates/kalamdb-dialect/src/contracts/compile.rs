@@ -7,6 +7,11 @@ use kalamdb_commons::{
     datatypes::{assert_finite_type_graph, TypeGraphNode},
     models::{RoutineId, SchemaId, TypeId},
 };
+use sqlparser::{
+    ast::{Expr, TableConstraint},
+    parser::Parser,
+    tokenizer::Token,
+};
 
 use super::{
     arrow::resolve_arrow_type,
@@ -28,7 +33,7 @@ use crate::{
         EnumValueNeighbor, GrantExecuteStatement, RevokeExecuteStatement, SetSearchPathStatement,
         TypeReference, UseSchemaStatement,
     },
-    split_statements,
+    split_statements, KalamDbDialect,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -614,12 +619,56 @@ fn parse_contract_table(
         matching_paren(after).ok_or_else(|| ContractError::new("unterminated column list"))?;
     let body = &after[1..close];
     let mut fields = Vec::new();
+    let mut primary_key = None;
     for part in crate::ddl::create_type::split_top_level(body, ',') {
         let part = part.trim();
-        if part.is_empty() || starts_ci(part, "PRIMARY KEY") || starts_ci(part, "CONSTRAINT") {
+        if part.is_empty() {
+            continue;
+        }
+        if starts_ci(part, "PRIMARY KEY")
+            || starts_ci(part, "CONSTRAINT")
+            || starts_ci(part, "UNIQUE")
+            || starts_ci(part, "CHECK")
+            || starts_ci(part, "FOREIGN KEY")
+        {
+            let dialect = KalamDbDialect::default();
+            let mut parser = Parser::new(&dialect)
+                .try_with_sql(part)
+                .map_err(|error| ContractError::new(error.to_string()))?;
+            let constraint = parser
+                .parse_optional_table_constraint()
+                .map_err(|error| ContractError::new(error.to_string()))?;
+            if constraint.is_none() || parser.peek_token().token != Token::EOF {
+                return Err(ContractError::new("invalid table constraint"));
+            }
+            if let Some(TableConstraint::PrimaryKey(key)) = constraint {
+                if key.columns.len() != 1 {
+                    return Err(ContractError::new("Composite PRIMARY KEYs are not supported yet"));
+                }
+                if primary_key.is_some() {
+                    return Err(ContractError::new("Multiple PRIMARY KEY definitions found"));
+                }
+                let Expr::Identifier(column) = &key.columns[0].column.expr else {
+                    return Err(ContractError::new("PRIMARY KEY must name a column"));
+                };
+                primary_key = Some(fold_ident(&column.value));
+            }
             continue;
         }
         fields.push(parse_table_column(part, &schema)?);
+    }
+    if let Some(key) = primary_key {
+        if fields.iter().any(|field| field.primary_key) {
+            return Err(ContractError::new("Multiple PRIMARY KEY definitions found"));
+        }
+        let field = fields.iter_mut().find(|field| field.name == key).ok_or_else(|| {
+            ContractError::new(format!("PRIMARY KEY references unknown column '{key}'"))
+        })?;
+        field.primary_key = true;
+        field.not_null = true;
+    }
+    if fields.iter().filter(|field| field.primary_key).count() > 1 {
+        return Err(ContractError::new("Multiple PRIMARY KEY definitions found"));
     }
     for (index, field) in fields.iter_mut().enumerate() {
         field.slot = (index + 1) as i32;

@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use actix_web::{App, HttpServer};
+use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use kalamdb_api::http::client_cancel::watch_http_client_disconnect;
 use kalamdb_configs::ServerConfig;
@@ -93,6 +93,8 @@ impl HttpServerRuntime {
     ) -> Result<Self> {
         let runtime = HttpRuntimeState::new(config, components, app_context, auth_runtime_mode)?;
         let ui_status = runtime.ui_status();
+        let json_body_limit = kalamdb_api::http::HTTP_JSON_BODY_LIMIT;
+        let payload_body_limit = kalamdb_api::http::HTTP_PAYLOAD_BODY_LIMIT;
 
         let server = HttpServer::new(move || {
             let runtime = runtime.clone();
@@ -100,6 +102,8 @@ impl HttpServerRuntime {
                 .wrap(runtime.connection_protection.clone())
                 .wrap(TracingLogger::<KalamDbRootSpanBuilder>::new())
                 .wrap(middleware::build_cors_from_settings(runtime.cors_settings.as_ref()))
+                .app_data(web::JsonConfig::default().limit(json_body_limit))
+                .app_data(web::PayloadConfig::new(payload_body_limit))
                 .app_data(runtime.app_context.clone())
                 .app_data(runtime.session_factory.clone())
                 .app_data(runtime.sql_executor.clone())

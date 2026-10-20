@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'auth.dart';
 import 'cell_value.dart';
 import 'file_ref.dart';
@@ -70,7 +72,27 @@ class KalamClient {
   ///   // call connect() inside your widget/provider after the first frame
   /// }
   /// ```
-  static Future<void> init() => _ensureRustRuntimeInitialized();
+  /// Android and iOS load the native bridge. Other platforms fail explicitly.
+  static bool get isSupportedPlatform {
+    if (kIsWeb) return false;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android || TargetPlatform.iOS => true,
+      _ => false,
+    };
+  }
+
+  /// Loads the native bridge. [timeout] clears a failed attempt so a later
+  /// call can try again.
+  static Future<void> init({Duration? timeout}) {
+    final future = _ensureRustRuntimeInitialized();
+    if (timeout == null) return future;
+    return future.timeout(timeout, onTimeout: () {
+      if (!_isRustRuntimeInitialized) {
+        _rustRuntimeInitInFlight = null;
+      }
+      throw TimeoutException('KalamClient.init timed out', timeout);
+    });
+  }
 
   static Future<void> _ensureRustRuntimeInitialized() {
     // Tests may bootstrap the bridge via RustLib.initMock before connect().

@@ -39,6 +39,10 @@ The local database identity includes server URL, namespace, and authenticated
 subject. Account switching stops the old coordinator and opens a different
 cache, preventing cross-account reads or outbox flushes.
 
+An application can pass that same Drift database into `Kalam.open`, or let
+Kalam open it and return the handle. Foreground and background work share the
+connection. Remote SQL stays on `kalam_link`; Drift queries the local file.
+
 ## Durability invariants
 
 1. Action enqueue and optimistic cached-row mutation commit together.
@@ -64,3 +68,14 @@ The sync coordinator uses acknowledged batches, commits all decoded rows and
 the batch checkpoint together, and only then advances transport progress.
 Disconnect-during-apply resumes from the SQLite-committed checkpoint even when
 the transport acknowledgement is lost.
+
+## October 2026 correctness follow-up
+
+Generated table specs remain the shared metadata boundary: `bind(client)` reuses
+key/decoder metadata for remote operations, while the sync runtime owns durable
+actions and checkpoints. Typed generated `KalamColumn<T>` members eliminate raw
+column names for ordinary filters. TS continues to use Drizzle. Both remote live
+APIs project order/limit after retaining the full matching set; filters must bound
+working-set memory. Duplicate action IDs reject mismatched request identity, and
+checkpoint seeding is transactional. These changes do not introduce server-side
+idempotency, new replay guarantees, or persistent TypeScript materialization.

@@ -18,6 +18,7 @@ use crate::{
 mod functions;
 mod rows;
 mod tables;
+mod table_column_context;
 
 use functions::{functions_context, procedure_types, ResultAlias};
 use rows::{row_class_context, RowClassContext};
@@ -113,6 +114,10 @@ fn dart_context(
                 });
             },
             ContractTypeKind::Composite { fields } => {
+                // FILE columns use KalamFileRef from kalam_link. Do not emit a JSON class.
+                if id == "pg_catalog.file" {
+                    continue;
+                }
                 named_classes.push(row_class_context(
                     names.type_ident(id),
                     fields,
@@ -226,12 +231,47 @@ CREATE TABLE users (
         assert!(source.contains("this.createdAt"));
         assert!(source.contains("factory Users.fromJson"));
         assert!(source.contains("static final users = KalamTableSpec<Users>("));
-        assert!(source.contains("tableId: 'users'"));
+        assert!(source.contains("tableId: 'public.users'"));
         assert!(source.contains("keyColumn: 'id'"));
         assert!(source.contains("mode: KalamSyncMode.bidirectional"));
         assert!(source.contains("keyOf: (row) => row.kalamRowKey"));
         assert!(source.contains("encode: (row) => row.toJson()"));
         assert!(source.contains("decode: Users.fromJson"));
+    }
+
+    #[test]
+    fn file_columns_use_kalam_file_ref() {
+        let mut snapshot = compile_contract_sql(
+            r#"
+CREATE TABLE messages (
+  id TEXT PRIMARY KEY,
+  attachment FILE
+);
+"#,
+            "public",
+        )
+        .unwrap();
+        crate::workflow::schema::load::merge_builtin_file_extension(&mut snapshot);
+        let hash = kalamdb_sql::canonical_contract_hash(&snapshot);
+        let names = assign_names(
+            &snapshot,
+            NamingOptions {
+                unqualified_names: false,
+            },
+        )
+        .unwrap();
+        let source = generate_dart_source(&snapshot, &hash, &names).unwrap();
+        assert!(source.contains("final KalamFileRef? attachment;"), "{source}");
+        assert!(source.contains("'attachment': attachment?.toMap(),"), "{source}");
+        assert!(
+            source.contains("attachment: KalamFileRef.tryParse(json['attachment']),"),
+            "{source}"
+        );
+        assert!(source.contains("typedef FilePutResult = KalamFileRef;"), "{source}");
+        assert!(source.contains("final KalamFileRef file;"), "{source}");
+        assert!(source.contains("'file': file.toMap()"), "{source}");
+        assert!(!source.contains("final class File {"), "{source}");
+        assert!(!source.contains("File.fromJson"), "{source}");
     }
 
     #[test]

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tokio::time::{sleep, timeout, Instant};
 
 use super::common::{
-    await_user_shard_leader, create_shared_public_kalam_table_in_schema,
+    await_user_shard_leader, clear_user_id, create_shared_public_kalam_table_in_schema,
     create_user_kalam_table_in_schema, drop_kalam_tables, set_user_id, unique_name, TestEnv,
 };
 
@@ -152,6 +152,10 @@ async fn e2e_scenario_mobilechat_oidc_pg_subscription_embeddings() {
         "embedding agent should consume one topic message for every document insert"
     );
 
+    // Notification inserts leave kalam.user_id on this session. The embedding
+    // agent writes as the FDW login, which bypasses FORCE RLS only when that
+    // GUC is unset.
+    clear_user_id(&pg_admin).await;
     update_embeddings_through_postgres(&pg_admin, &schema, &documents, &documents_to_insert).await;
 
     for user in &oidc_users {

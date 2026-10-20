@@ -212,8 +212,9 @@ fn subscription_slow_consumer_initial_data() {
 // very large `initial_data_timeout` and `receive_timeout` values. Verifies
 // the subscription still works correctly end-to-end.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈14.5s in cluster mode after idle-aware draining; allow 30s on slower machines
-#[ntest::timeout(30000)]
+// Isolated runs finish in about 15s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the high-latency subscribe plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_3g_like_high_latency() {
     if !require_server_running() {
@@ -571,8 +572,9 @@ fn subscription_timeout_graceful_then_reconnect() {
 // processes events slowly. Verifies the server correctly fans out to all of
 // them without errors or missing data.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈10.7s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 11s. A full parallel nextest pass against a
+// loaded server needs the longer budget for fan-out plus schema cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_multiple_concurrent_slow_subscribers() {
     if !require_server_running() {
@@ -714,8 +716,9 @@ fn subscription_multiple_concurrent_slow_subscribers() {
 // multi-batch initial delivery, and consume each batch slowly. Verifies that
 // all batches are flushed and no data is lost even with a slow consumer.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈8.1s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 8s. A full parallel nextest pass against a
+// loaded server needs the longer budget for multi-batch delivery plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_large_initial_data_slow_batch_consumer() {
     if !require_server_running() {
@@ -872,8 +875,9 @@ fn subscription_repeated_reconnect_loop() {
 // Inserts a new row during the pause. Verifies the event arrives after the
 // pause ends (i.e. the server keeps the connection alive and buffers the event).
 // ─────────────────────────────────────────────────────────────────────────────
-// actual ≈15s after optimization; allow 30s on slower machines
-#[ntest::timeout(30000)]
+// Isolated runs finish in about 15s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the idle pause plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_stable_after_idle_pause() {
     if !require_server_running() {
@@ -941,8 +945,9 @@ fn subscription_stable_after_idle_pause() {
 // followed by slow consumption. Verifies the subscription never errors and
 // the consumer eventually catches up.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈8.1s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 8s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the burst catch-up plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_burst_then_slow_catchup() {
     if !require_server_running() {

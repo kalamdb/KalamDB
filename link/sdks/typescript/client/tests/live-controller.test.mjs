@@ -50,3 +50,43 @@ test('LiveQueryController projects snapshots and supports refetch', async () => 
   assert.equal(client.unsubscribeCount, 1);
   assert.equal(client.calls.length, 2);
 });
+
+test('obsolete errors and checkpoints do not mutate a new or disposed session', async () => {
+  const client = createFakeClient();
+  let errors = 0;
+  let checkpoints = 0;
+  const controller = new LiveQueryController(client,
+    createLiveQueryDescriptor({mode: 'sql', sourceSql: 'SELECT * FROM messages'}),
+    {onError: () => errors++, onCheckpoint: () => checkpoints++});
+  await controller.start();
+  const old = client.calls[0];
+  await controller.refetch();
+  old.options.onError({message: 'old'});
+  old.options.onCheckpoint({lastVersionId: '1'});
+  assert.equal(controller.getSnapshot().status, 'loading');
+  await controller.dispose();
+  client.calls[1].options.onError({message: 'late'});
+  client.calls[1].options.onCheckpoint({lastVersionId: '2'});
+  assert.equal(controller.getSnapshot().status, 'disposed');
+  assert.equal(errors, 0);
+  assert.equal(checkpoints, 0);
+  await assert.rejects(controller.start(), /disposed/);
+  assert.equal(client.calls.length, 2);
+});
+
+test('disposing during teardown cannot launch a replacement subscription', async () => {
+  let release;
+  const client = {calls: 0, async live() {
+    this.calls++;
+    return () => new Promise(resolve => {release = resolve;});
+  }};
+  const controller = new LiveQueryController(client,
+    createLiveQueryDescriptor({mode: 'sql', sourceSql: 'SELECT * FROM messages'}));
+  await controller.start();
+  const restarting = controller.refetch();
+  await controller.dispose();
+  release();
+  await restarting;
+  assert.equal(client.calls, 1);
+  assert.equal(controller.getSnapshot().status, 'disposed');
+});

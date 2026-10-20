@@ -135,12 +135,29 @@ fn estimate_row_payload_bytes(row: &RowData) -> usize {
     total
 }
 
+fn json_number_len(number: &serde_json::Number) -> usize {
+    use std::fmt::{self, Write};
+
+    struct Counter(usize);
+
+    impl Write for Counter {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            self.0 = self.0.saturating_add(text.len());
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter(0);
+    write!(counter, "{number}").expect("counting formatter does not fail");
+    counter.0
+}
+
 fn estimate_json_value_bytes(value: &JsonValue) -> usize {
     match value {
         JsonValue::Null => 4,
         JsonValue::Bool(true) => 4,
         JsonValue::Bool(false) => 5,
-        JsonValue::Number(number) => number.to_string().len(),
+        JsonValue::Number(number) => json_number_len(number),
         JsonValue::String(text) => text.len().saturating_add(2),
         JsonValue::Array(values) => {
             let mut total = 2usize;
@@ -207,7 +224,7 @@ async fn send_data(session: &mut Session, data: Vec<u8>, compress: bool) -> Resu
         return session.text(owned).await.map_err(|_| ());
     }
 
-    let (payload, compressed) = maybe_compress(&data);
+    let (payload, compressed) = maybe_compress(data);
 
     if compressed && is_gzip(&payload) {
         // Send compressed data as binary frame
@@ -229,6 +246,6 @@ async fn send_data_binary(session: &mut Session, data: Vec<u8>, compress: bool) 
         return session.binary(data).await.map_err(|_| ());
     }
 
-    let (payload, _compressed) = maybe_compress(&data);
+    let (payload, _compressed) = maybe_compress(data);
     session.binary(payload).await.map_err(|_| ())
 }

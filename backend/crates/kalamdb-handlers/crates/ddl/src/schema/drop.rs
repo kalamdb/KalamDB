@@ -23,7 +23,8 @@ use crate::{
         guards::{block_anonymous_write, require_admin},
     },
     table::drop::{
-        capture_storage_cleanup_details, schedule_drop_table_cleanup, wait_for_cleanup_job,
+        capture_storage_cleanup_details, schedule_drop_table_cleanup, storage_id_for_cleanup,
+        wait_for_cleanup_job,
     },
 };
 
@@ -142,10 +143,11 @@ impl TypedStatementHandler<DropSchemaStatement> for DropSchemaHandler {
             let table_type = table.table_type;
 
             let app_ctx = self.app_context.clone();
-            let tid = table_id.clone();
-            let storage_details =
-                run_blocking(move || capture_storage_cleanup_details(&app_ctx, &tid, table_type))
-                    .await?;
+            let storage_id = storage_id_for_cleanup(&table);
+            let storage_details = run_blocking(move || {
+                capture_storage_cleanup_details(&app_ctx, &storage_id, table_type)
+            })
+            .await?;
 
             self.app_context
                 .applier()

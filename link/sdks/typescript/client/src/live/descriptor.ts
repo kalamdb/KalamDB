@@ -45,7 +45,7 @@ const UNSUPPORTED_LIVE_SQL = /\b(group\s+by|having|union|intersect|except|join|w
 const TABLE_REF = '(?:"[^"]+"|[A-Za-z_][\\w$]*)(?:\\.(?:"[^"]+"|[A-Za-z_][\\w$]*))?';
 const LIVE_SELECT_RE = new RegExp(
   `^select\\s+(.+?)\\s+from\\s+(${TABLE_REF})(?:\\s+where\\s+(.+?))?(?:\\s+order\\s+by\\s+(.+?))?(?:\\s+limit\\s+(\\d+))?\\s*$`,
-  'i',
+  'is',
 );
 
 export class LiveQueryDescriptorError extends Error {
@@ -134,7 +134,7 @@ export function normalizeLiveSql(query: string, optionLimit?: number): Normalize
 }
 
 function normalizeSqlText(query: string): string {
-  return query.trim().replace(/;\s*$/, '').replace(/\s+/g, ' ');
+  return query.trim().replace(/;\s*$/, '');
 }
 
 function combineLimits(queryLimit?: number, optionLimit?: number): number | undefined {

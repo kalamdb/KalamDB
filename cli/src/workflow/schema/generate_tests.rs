@@ -425,6 +425,13 @@ fn tsc_bin() -> Option<std::path::PathBuf> {
 }
 
 fn write_functions_tsconfig(root: &std::path::Path) {
+    // These tests isolate procedure signatures; full SDK row shapes are checked by the SDK fixture.
+    fs::create_dir_all(root.join("node_modules/@kalamdb/client")).unwrap();
+    fs::write(
+        root.join("node_modules/@kalamdb/client/index.d.ts"),
+        "export interface PgCatalogFile {}\n",
+    )
+    .unwrap();
     let functions = root.join("functions");
     fs::create_dir_all(functions.join("node_modules/@kalamdb/orm")).unwrap();
     fs::write(
@@ -524,8 +531,8 @@ fn inline_procedure_types_are_checked_by_tsc() {
     }
     let temp = TempDir::new().unwrap();
     let root = temp.path();
-    let schema = "CREATE FUNCTION chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE \
-                  JAVASCRIPT AS $$ return input.name; $$;";
+    let schema = "CREATE FUNCTION chat.greet(name TEXT NOT NULL) RETURNS TEXT LANGUAGE JAVASCRIPT \
+                  AS $$ return input.name; $$;";
     fs::write(root.join("schema.sql"), schema).unwrap();
     generate_languages(root, &typescript_project_config(), &[LanguageTarget::TypeScript], None)
         .unwrap();
@@ -619,4 +626,65 @@ export const createMessage = procedure.chat.createMessage(async () => ({ id: 1n 
     .unwrap();
     let (ok, output) = run_tsc(root).expect("tsc");
     assert!(!ok, "missing required return fields should fail tsc: {output}");
+}
+
+#[test]
+fn generated_arrays_and_primary_keys_follow_the_contract() {
+    let snapshot = compile_contract_sql(
+        "CREATE TABLE inventory (id TEXT NOT NULL, sku TEXT PRIMARY KEY, tags TEXT[], dates \
+         TIMESTAMP[]);",
+        "public",
+    )
+    .unwrap();
+    let names = assign_names(
+        &snapshot,
+        NamingOptions {
+            unqualified_names: false,
+        },
+    )
+    .unwrap();
+    let dart = generate_dart_source(&snapshot, "test", &names).unwrap();
+    let ts = generate_schema_source(&snapshot, "test", &names).unwrap();
+    assert!(dart.contains("keyColumn: 'sku'"), "{dart}");
+    assert!(dart.contains("String get kalamRowKey => sku;"), "{dart}");
+    assert!(dart.contains("_asList(json['tags'], (item) => _asString(item))"), "{dart}");
+    assert!(dart.contains("dates?.map((item) => item.toIso8601String()).toList()"), "{dart}");
+    assert!(ts.contains("text(\"tags\").array()"), "{ts}");
+    assert!(ts.contains("text(\"sku\").primaryKey()"), "{ts}");
+    assert!(!ts.contains("text(\"id\").primaryKey()"), "{ts}");
+}
+
+#[test]
+fn dart_does_not_invent_sync_keys_for_keyless_tables() {
+    let snapshot = compile_contract_sql("CREATE TABLE logs (message TEXT);", "public").unwrap();
+    let names = assign_names(
+        &snapshot,
+        NamingOptions {
+            unqualified_names: false,
+        },
+    )
+    .unwrap();
+    let dart = generate_dart_source(&snapshot, "test", &names).unwrap();
+    assert!(!dart.contains("KalamTableSpec<"), "{dart}");
+    assert!(!dart.contains("get kalamRowKey"), "{dart}");
+}
+
+#[test]
+fn table_constraint_keys_are_preserved_and_unsupported_keys_fail_early() {
+    let snapshot = compile_contract_sql(
+        "CREATE TABLE inventory (id TEXT, sku TEXT, CONSTRAINT inventory_pk PRIMARY KEY (sku));",
+        "public",
+    )
+    .unwrap();
+    let table = snapshot.tables.values().next().unwrap();
+    assert!(!table.fields[0].primary_key);
+    assert!(table.fields[1].primary_key && table.fields[1].not_null);
+    for sql in [
+        "CREATE TABLE pairs (a TEXT, b TEXT, PRIMARY KEY (a, b));",
+        "CREATE TABLE bad (a TEXT, PRIMARY KEY (missing));",
+        "CREATE TABLE bad (a TEXT PRIMARY KEY, b TEXT, PRIMARY KEY (b));",
+        "CREATE TABLE bad (a TEXT PRIMARY KEY, b TEXT PRIMARY KEY);",
+    ] {
+        assert!(compile_contract_sql(sql, "public").is_err(), "{sql}");
+    }
 }

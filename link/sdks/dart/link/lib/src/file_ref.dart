@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'generated/api.dart' as bridge;
 import 'generated/models.dart' as gen;
 
 /// Data shape for a file reference stored in a KalamDB FILE column.
@@ -154,31 +153,30 @@ class KalamFileRef implements KalamFileRefData {
   /// // → http://localhost:18080/v1/files/default/messages/f0001/12345-photo.jpg
   /// ```
   String getDownloadUrl(String baseUrl, String namespace, String table) {
-    return bridge.dartFileRefDownloadUrl(
-      fileRefJson: toJson(),
-      baseUrl: baseUrl,
-      namespace: namespace,
-      table: table,
-    );
+    final base = baseUrl.replaceFirst(RegExp(r'/+$'), '');
+    return '$base${relativeUrl(namespace, table)}';
   }
 
   /// Relative HTTP download path for this file.
+  ///
+  /// `/v1/files/{namespace}/{table}/{sub}/{storedName}`.
   String relativeUrl(String namespace, String table) {
-    return bridge.dartFileRefRelativeUrl(
-      fileRefJson: toJson(),
-      namespace: namespace,
-      table: table,
-    );
+    return '/v1/files/$namespace/$table/$sub/${storedName()}';
   }
 
-  /// Stored filename used by the backend file service.
+  /// Stored filename used by the file service: `{id}-{sanitized-name}.{ext}`.
   String storedName() {
-    return bridge.dartFileRefStoredName(fileRefJson: toJson());
+    final sanitized = _sanitizeFilename(name);
+    final ext = _extractExtension(name);
+    if (sanitized.isEmpty) return '$id.$ext';
+    return '$id-$sanitized.$ext';
   }
 
   /// Relative storage path within the table folder.
   String relativePath() {
-    return bridge.dartFileRefRelativePath(fileRefJson: toJson());
+    final stored = storedName();
+    if (shard != null) return 'shard-$shard/$sub/$stored';
+    return '$sub/$stored';
   }
 
   /// Whether this is an image file (based on MIME type).
@@ -242,6 +240,53 @@ class KalamFileRef implements KalamFileRefData {
 
   @override
   String toString() => 'KalamFileRef($name, $mime, ${formatSize()})';
+}
+
+String _sanitizeFilename(String name) {
+  final withoutExt = name.contains('.')
+      ? name.substring(0, name.lastIndexOf('.'))
+      : name;
+  final buffer = StringBuffer();
+  var lastWasDash = true;
+  var accepted = 0;
+  for (final char in withoutExt.split('')) {
+    final code = char.codeUnitAt(0);
+    final alphanumeric = (code >= 48 && code <= 57) ||
+        (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+    String? next;
+    if (alphanumeric) {
+      next = char.toLowerCase();
+    } else if (char == ' ' || char == '_' || char == '-') {
+      next = '-';
+    }
+    if (next == null) continue;
+    if (accepted++ >= 50) break;
+    if (next == '-') {
+      if (!lastWasDash) buffer.write(next);
+      lastWasDash = true;
+    } else {
+      buffer.write(next);
+      lastWasDash = false;
+    }
+  }
+  var result = buffer.toString();
+  if (result.endsWith('-')) {
+    result = result.substring(0, result.length - 1);
+  }
+  return result;
+}
+
+String _extractExtension(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot < 0) return 'bin';
+  final ext = name.substring(dot + 1).replaceAllMapped(
+    RegExp('[A-Z]'), (match) => match[0]!.toLowerCase());
+  final valid = ext.length <= 10 &&
+      ext.codeUnits.every((code) {
+        return (code >= 48 && code <= 57) ||
+            (code >= 97 && code <= 122);
+      });
+  return valid ? ext : 'bin';
 }
 
 /// Multipart upload payload for SQL `FILE("placeholder")` expressions.

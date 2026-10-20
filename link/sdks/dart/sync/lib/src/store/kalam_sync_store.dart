@@ -18,9 +18,11 @@ typedef KalamClock = DateTime Function();
 /// Single-writer access to Kalam's private persistence tables.
 final class KalamSyncStore {
   KalamSyncStore(this.database, {KalamClock? clock})
-    : _clock = clock ?? DateTime.now;
+    : _tables = database as KalamSyncTables,
+      _clock = clock ?? DateTime.now;
 
-  final KalamSyncDatabase database;
+  final GeneratedDatabase database;
+  final KalamSyncTables _tables;
   final KalamClock _clock;
 
   Future<KalamActionRecord> enqueue(
@@ -29,15 +31,32 @@ final class KalamSyncStore {
     Future<void> Function()? applyOptimistic,
   }) {
     return database.transaction(() async {
+      final existing = await (database.select(
+        _tables.kalamActions,
+      )..where((row) => row.id.equals(draft.id))).getSingleOrNull();
+      if (existing != null) {
+        if (existing.accountKey != draft.accountKey ||
+            existing.actionKey != draft.actionKey ||
+            existing.version != draft.version ||
+            existing.kind != draft.kind ||
+            existing.payloadJson != draft.payloadJson ||
+            existing.orderingKey != draft.orderingKey ||
+            existing.rowTableId != optimisticRow?.tableId ||
+            existing.rowKey != optimisticRow?.rowKey) {
+          throw StateError('Action ID is already bound to a different request');
+        }
+        return _toActionRecord(existing);
+      }
+
       final now = _clock();
-      final maxPosition = database.kalamActions.queuePosition.max();
-      final positionQuery = database.selectOnly(database.kalamActions)
+      final maxPosition = _tables.kalamActions.queuePosition.max();
+      final positionQuery = database.selectOnly(_tables.kalamActions)
         ..addColumns([maxPosition]);
       final highestPosition = await positionQuery
           .map((row) => row.read(maxPosition))
           .getSingle();
       await database
-          .into(database.kalamActions)
+          .into(_tables.kalamActions)
           .insert(
             KalamActionsCompanion.insert(
               id: draft.id,
@@ -58,7 +77,7 @@ final class KalamSyncStore {
 
       if (optimisticRow != null) {
         await database
-            .into(database.kalamRowStates)
+            .into(_tables.kalamRowStates)
             .insertOnConflictUpdate(
               KalamRowStatesCompanion.insert(
                 accountKey: draft.accountKey,
@@ -76,14 +95,14 @@ final class KalamSyncStore {
       await applyOptimistic?.call();
 
       final stored = await (database.select(
-        database.kalamActions,
+        _tables.kalamActions,
       )..where((row) => row.id.equals(draft.id))).getSingle();
       return _toActionRecord(stored);
     });
   }
 
   Stream<List<KalamActionRecord>> watchActions(String accountKey) {
-    final query = database.select(database.kalamActions)
+    final query = database.select(_tables.kalamActions)
       ..where((row) => row.accountKey.equals(accountKey))
       ..orderBy([(row) => OrderingTerm.asc(row.queuePosition)]);
     return query.watch().map(
@@ -93,7 +112,7 @@ final class KalamSyncStore {
 
   Future<KalamActionRecord?> readAction(String id) async {
     final stored = await (database.select(
-      database.kalamActions,
+      _tables.kalamActions,
     )..where((row) => row.id.equals(id))).getSingleOrNull();
     return stored == null ? null : _toActionRecord(stored);
   }
@@ -109,7 +128,7 @@ final class KalamSyncStore {
     Set<String> blockedOrderingKeys = const {},
   }) {
     return database.transaction(() async {
-      final query = database.select(database.kalamActions)
+      final query = database.select(_tables.kalamActions)
         ..where((row) {
           final eligible =
               row.status.equals(KalamActionStatus.queued.name) |
@@ -131,7 +150,7 @@ final class KalamSyncStore {
       if (stored == null) return null;
 
       await (database.update(
-        database.kalamActions,
+        _tables.kalamActions,
       )..where((row) => row.id.equals(stored!.id))).write(
         KalamActionsCompanion(
           status: Value(KalamActionStatus.running.name),
@@ -162,7 +181,7 @@ final class KalamSyncStore {
   /// Makes interrupted work eligible after a process/runtime restart.
   Future<int> recoverRunningActions(DateTime now, {String? accountKey}) {
     return database.transaction(() async {
-      final query = database.select(database.kalamActions)
+      final query = database.select(_tables.kalamActions)
         ..where(
           (row) => accountKey == null
               ? row.status.equals(KalamActionStatus.running.name)
@@ -172,7 +191,7 @@ final class KalamSyncStore {
       final interrupted = await query.get();
       if (interrupted.isEmpty) return 0;
 
-      final update = database.update(database.kalamActions)
+      final update = database.update(_tables.kalamActions)
         ..where((row) => row.status.equals(KalamActionStatus.running.name));
       if (accountKey != null) {
         update.where((row) => row.accountKey.equals(accountKey));
@@ -229,7 +248,7 @@ final class KalamSyncStore {
     required String accountKey,
     required String tableId,
   }) {
-    final query = database.select(database.kalamRowStates)
+    final query = database.select(_tables.kalamRowStates)
       ..where(
         (row) =>
             row.accountKey.equals(accountKey) & row.tableId.equals(tableId),
@@ -243,7 +262,7 @@ final class KalamSyncStore {
     required String accountKey,
     required String tableId,
   }) {
-    final query = database.select(database.kalamCachedRows)
+    final query = database.select(_tables.kalamCachedRows)
       ..where(
         (row) =>
             row.accountKey.equals(accountKey) & row.tableId.equals(tableId),
@@ -264,7 +283,7 @@ final class KalamSyncStore {
     required String valuesJson,
   }) {
     return database
-        .into(database.kalamCachedRows)
+        .into(_tables.kalamCachedRows)
         .insertOnConflictUpdate(
           KalamCachedRowsCompanion.insert(
             accountKey: accountKey,
@@ -280,7 +299,7 @@ final class KalamSyncStore {
     required String accountKey,
     required String tableId,
   }) {
-    return (database.delete(database.kalamCachedRows)..where(
+    return (database.delete(_tables.kalamCachedRows)..where(
           (row) =>
               row.accountKey.equals(accountKey) & row.tableId.equals(tableId),
         ))
@@ -292,7 +311,7 @@ final class KalamSyncStore {
     required String tableId,
     required String rowKey,
   }) {
-    return (database.delete(database.kalamCachedRows)..where(
+    return (database.delete(_tables.kalamCachedRows)..where(
           (row) =>
               row.accountKey.equals(accountKey) &
               row.tableId.equals(tableId) &
@@ -317,7 +336,7 @@ final class KalamSyncStore {
         return;
       }
       await database
-          .into(database.kalamRowStates)
+          .into(_tables.kalamRowStates)
           .insertOnConflictUpdate(
             KalamRowStatesCompanion.insert(
               accountKey: accountKey,
@@ -350,7 +369,7 @@ final class KalamSyncStore {
         tableId: tableId,
         rowKey: rowKey,
       );
-      await (database.delete(database.kalamRowStates)..where(
+      await (database.delete(_tables.kalamRowStates)..where(
             (row) =>
                 row.accountKey.equals(accountKey) &
                 row.tableId.equals(tableId) &
@@ -363,7 +382,7 @@ final class KalamSyncStore {
 
   Future<String?> readCompletedStep(String actionId, String name) async {
     final step =
-        await (database.select(database.kalamActionSteps)..where(
+        await (database.select(_tables.kalamActionSteps)..where(
               (row) => row.actionId.equals(actionId) & row.name.equals(name),
             ))
             .getSingleOrNull();
@@ -374,7 +393,7 @@ final class KalamSyncStore {
 
   Future<void> completeStep(String actionId, String name, String resultJson) {
     return database
-        .into(database.kalamActionSteps)
+        .into(_tables.kalamActionSteps)
         .insertOnConflictUpdate(
           KalamActionStepsCompanion.insert(
             actionId: actionId,
@@ -388,7 +407,7 @@ final class KalamSyncStore {
 
   Future<void> failStep(String actionId, String name, String error) {
     return database
-        .into(database.kalamActionSteps)
+        .into(_tables.kalamActionSteps)
         .insertOnConflictUpdate(
           KalamActionStepsCompanion.insert(
             actionId: actionId,
@@ -405,7 +424,7 @@ final class KalamSyncStore {
     required String subscriptionId,
   }) async {
     final stored =
-        await (database.select(database.kalamCheckpoints)..where(
+        await (database.select(_tables.kalamCheckpoints)..where(
               (row) =>
                   row.accountKey.equals(accountKey) &
                   row.subscriptionId.equals(subscriptionId),
@@ -439,7 +458,7 @@ final class KalamSyncStore {
       await apply();
       final now = _clock();
       await database
-          .into(database.kalamCheckpoints)
+          .into(_tables.kalamCheckpoints)
           .insertOnConflictUpdate(
             KalamCheckpointsCompanion.insert(
               accountKey: accountKey,
@@ -452,11 +471,69 @@ final class KalamSyncStore {
     });
   }
 
+  /// Writes [seq] only when this subscription has no checkpoint yet.
+  Future<bool> seedCheckpointIfAbsent({
+    required String accountKey,
+    required String subscriptionId,
+    required VersionId seq,
+  }) {
+    return database.transaction(() async {
+      final existing = await readCheckpoint(
+        accountKey: accountKey,
+        subscriptionId: subscriptionId,
+      );
+      if (existing != null) return false;
+      await database.into(_tables.kalamCheckpoints).insert(
+        KalamCheckpointsCompanion.insert(
+          accountKey: accountKey,
+          subscriptionId: subscriptionId,
+          seq: seq.toString(),
+          updatedAt: _clock(),
+        ),
+      );
+      return true;
+    });
+  }
+
+  /// Drops checkpoints and the named action keys for one account.
+  /// Other action keys stay queued.
+  Future<void> resetProjection({
+    required String accountKey,
+    required Iterable<String> subscriptionIds,
+    Iterable<String> actionKeys = const [],
+  }) {
+    return database.transaction(() async {
+      for (final subscriptionId in subscriptionIds) {
+        await deleteCheckpoint(
+          accountKey: accountKey,
+          subscriptionId: subscriptionId,
+        );
+      }
+      for (final actionKey in actionKeys) {
+        final ids = database.selectOnly(_tables.kalamActions)
+          ..addColumns([_tables.kalamActions.id])
+          ..where(
+            _tables.kalamActions.accountKey.equals(accountKey) &
+                _tables.kalamActions.actionKey.equals(actionKey),
+          );
+        await (database.delete(
+          _tables.kalamActionSteps,
+        )..where((step) => step.actionId.isInQuery(ids))).go();
+        await (database.delete(_tables.kalamActions)..where(
+              (action) =>
+                  action.accountKey.equals(accountKey) &
+                  action.actionKey.equals(actionKey),
+            ))
+            .go();
+      }
+    });
+  }
+
   Future<void> deleteCheckpoint({
     required String accountKey,
     required String subscriptionId,
   }) {
-    return (database.delete(database.kalamCheckpoints)..where(
+    return (database.delete(_tables.kalamCheckpoints)..where(
           (row) =>
               row.accountKey.equals(accountKey) &
               row.subscriptionId.equals(subscriptionId),
@@ -495,7 +572,7 @@ final class KalamSyncStore {
   }) {
     return database.transaction(() async {
       final action = await (database.select(
-        database.kalamActions,
+        _tables.kalamActions,
       )..where((row) => row.id.equals(id))).getSingleOrNull();
       if (action == null) throw StateError('Unknown Kalam action "$id".');
       if (action.status == KalamActionStatus.succeeded.name ||
@@ -504,7 +581,7 @@ final class KalamSyncStore {
       }
 
       await (database.update(
-        database.kalamActions,
+        _tables.kalamActions,
       )..where((row) => row.id.equals(id))).write(
         KalamActionsCompanion(
           status: Value(status.name),
@@ -534,7 +611,7 @@ final class KalamSyncStore {
     String? errorMessage,
   }) async {
     if (action.rowTableId == null || action.rowKey == null) return;
-    await (database.update(database.kalamRowStates)..where(
+    await (database.update(_tables.kalamRowStates)..where(
           (row) =>
               row.accountKey.equals(action.accountKey) &
               row.tableId.equals(action.rowTableId!) &
@@ -575,7 +652,7 @@ final class KalamSyncStore {
     required String tableId,
     required String rowKey,
   }) {
-    return (database.select(database.kalamRowStates)..where(
+    return (database.select(_tables.kalamRowStates)..where(
           (row) =>
               row.accountKey.equals(accountKey) &
               row.tableId.equals(tableId) &
@@ -587,7 +664,7 @@ final class KalamSyncStore {
   Future<void> _completeReconciledAction(String? actionId) async {
     if (actionId == null) return;
     await (database.update(
-      database.kalamActions,
+      _tables.kalamActions,
     )..where((row) => row.id.equals(actionId))).write(
       KalamActionsCompanion(
         status: Value(KalamActionStatus.succeeded.name),

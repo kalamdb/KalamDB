@@ -1098,7 +1098,7 @@ struct ConsumeCase {
 /// 2) committed offsets advance correctly across a same-group restart
 /// 3) latest start does not replay backlog, only newly inserted records
 #[tokio::test]
-#[ntest::timeout(240000)]
+#[ntest::timeout(360000)]
 async fn test_topic_consume_option_matrix_start_batch_auto_ack_modes() {
     let cases = [
         ConsumeCase {

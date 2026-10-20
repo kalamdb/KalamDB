@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use actix_web::{HttpRequest, HttpResponse};
 use kalamdb_commons::{
-    models::{SchemaId, NodeId, UserId},
+    models::{NodeId, SchemaId, UserId},
     schemas::TableType,
 };
 use kalamdb_core::{app_context::AppContext, error::KalamDbError};
