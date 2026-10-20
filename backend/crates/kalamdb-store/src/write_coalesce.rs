@@ -46,7 +46,10 @@ struct CoalesceGuard(u64);
 impl Drop for CoalesceGuard {
     fn drop(&mut self) {
         lock_pending().remove(&self.0);
-        hook_map().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&self.0);
+        hook_map()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
     }
 }
 

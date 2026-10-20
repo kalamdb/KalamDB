@@ -158,6 +158,26 @@ impl DdlExecutor {
         let table_id = table_id.clone();
         with_plan_cache_invalidation(app_context, move |app_context: Arc<AppContext>| async move {
             run_blocking_applier(move || {
+                if let Ok(Some(table_def)) =
+                    app_context.schema_registry().get_table_if_exists(&table_id)
+                {
+                    if table_def.table_type != TableType::System {
+                        if let Err(e) =
+                            crate::operations::table_cleanup::cleanup_table_partitions_sync(
+                                app_context.as_ref(),
+                                &table_id,
+                                table_def.table_type,
+                            )
+                        {
+                            log::warn!(
+                                "CommandExecutorImpl: Failed to clean up partitions for {}: {}",
+                                table_id.full_name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
                 app_context
                     .schema_registry()
                     .delete_table_definition(&table_id)

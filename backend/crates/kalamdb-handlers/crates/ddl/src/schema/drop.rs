@@ -23,8 +23,8 @@ use crate::{
         guards::{block_anonymous_write, require_admin},
     },
     table::drop::{
-        capture_storage_cleanup_details, schedule_drop_table_cleanup, storage_id_for_cleanup,
-        wait_for_cleanup_job,
+        capture_storage_cleanup_details, cleanup_dropped_table_partitions,
+        enqueue_drop_table_cleanup_job, storage_id_for_cleanup, wait_for_cleanup_job,
     },
 };
 
@@ -149,13 +149,15 @@ impl TypedStatementHandler<DropSchemaStatement> for DropSchemaHandler {
             })
             .await?;
 
+            cleanup_dropped_table_partitions(&self.app_context, &table_id, table_type).await?;
+
             self.app_context
                 .applier()
                 .drop_table(table_id.clone())
                 .await
                 .map_err(|e| KalamDbError::ExecutionError(format!("DROP TABLE failed: {}", e)))?;
 
-            let cleanup_job_id = schedule_drop_table_cleanup(
+            let cleanup_job_id = enqueue_drop_table_cleanup_job(
                 &self.app_context,
                 &table_id,
                 table_type,

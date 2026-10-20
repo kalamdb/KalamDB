@@ -823,12 +823,7 @@ where
     /// built from that value, so this does not read RocksDB again. When
     /// `previous` is `None`, this is an insert. When the keys match, stale
     /// index entries are dropped and the entity is overwritten.
-    pub fn replace(
-        &self,
-        previous: Option<(&K, &V)>,
-        new_key: &K,
-        new_entity: &V,
-    ) -> Result<()> {
+    pub fn replace(&self, previous: Option<(&K, &V)>, new_key: &K, new_entity: &V) -> Result<()> {
         let mut operations = Vec::with_capacity(2 + self.indexes.len() * 2);
         self.push_replace(&mut operations, previous, new_key, new_entity)?;
         self.backend.batch(operations)
@@ -902,7 +897,7 @@ where
         let value = self.codec.encode(new_key, new_entity)?;
         operations.push(Operation::Put {
             partition: self.main_partition.clone(),
-            key:       new_storage,
+            key: new_storage,
             value,
         });
         for (index, index_partition) in self.indexes.iter().zip(self.index_partitions.iter()) {
@@ -1319,11 +1314,7 @@ where
         new_key: K,
         new_entity: V,
     ) -> Result<()> {
-        self.replace(
-            previous.as_ref().map(|(key, entity)| (key, entity)),
-            &new_key,
-            &new_entity,
-        )
+        self.replace(previous.as_ref().map(|(key, entity)| (key, entity)), &new_key, &new_entity)
     }
 
     /// Async version of [`Self::replace_batch`].

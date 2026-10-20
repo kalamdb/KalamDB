@@ -68,6 +68,23 @@ impl NamespaceExecutor {
                 for table in tables {
                     let table_id =
                         TableId::new(table.namespace_id.clone(), table.table_name.clone());
+                    if table.table_type != kalamdb_commons::schemas::TableType::System {
+                        if let Err(e) =
+                            crate::operations::table_cleanup::cleanup_table_partitions_sync(
+                                app_context.as_ref(),
+                                &table_id,
+                                table.table_type,
+                            )
+                        {
+                            log::warn!(
+                                "Failed to clean up partitions for table {} while dropping \
+                                 namespace {}: {}",
+                                table_id,
+                                namespace_id,
+                                e
+                            );
+                        }
+                    }
                     app_context.schema_registry().delete_table_definition(&table_id).map_err(
                         |e| {
                             ApplierError::Execution(format!(
@@ -76,6 +93,18 @@ impl NamespaceExecutor {
                             ))
                         },
                     )?;
+                }
+
+                if let Err(e) = app_context
+                    .system_tables()
+                    .catalog_stores()
+                    .drop_namespace_catalog(&namespace_id)
+                {
+                    log::warn!(
+                        "Failed to clean up catalog objects while dropping namespace {}: {}",
+                        namespace_id,
+                        e
+                    );
                 }
 
                 app_context

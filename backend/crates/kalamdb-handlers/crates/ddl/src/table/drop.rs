@@ -85,6 +85,7 @@ pub(crate) fn capture_storage_cleanup_details(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn schedule_drop_table_cleanup(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
@@ -143,7 +144,7 @@ pub(crate) async fn wait_for_cleanup_job(
     }
 }
 
-async fn enqueue_drop_table_cleanup_job(
+pub(crate) async fn enqueue_drop_table_cleanup_job(
     app_context: &Arc<AppContext>,
     table_id: &TableId,
     table_type: TableType,
