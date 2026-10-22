@@ -1,93 +1,89 @@
-# Shared metadata and durable state
+# Shared metadata, resource ownership and durable state
 
-## Contract metadata
+**Revised:** 2026-10-22. Current fresh-start epoch only. [Spec](spec.md), [protocol](contracts/protocol.md), [API](contracts/public-api.md) and [performance contract](contracts/serialization-performance.md) are normative.
 
-Extend the canonical `ContractSnapshot`/type identity machinery, rather than deriving semantics independently in emitters. Preserve the shared parsed representation and planner ownership.
+## 1. Canonical descriptors
 
-| Entity | Required fields and invariants |
+Extend the catalog/ContractSnapshot/LogicalTypeRef owners, not independent target-language interpretations.
+
+| Entity | Required data |
 | --- | --- |
-| Manifest | Format/API/codec versions, deterministic hash, entity hashes, stable names, owned output list, minimum capabilities |
-| Type | Stable TypeId, recursive semantic kind, nullability, array shape/element nullability, precision/scale, temporal precision/zone semantics, codec version |
-| Field | Wire/public names, type identity, nullable/default/identity/generated/read-only flags, field slot and dropped status |
-| Table | Qualified TableId, row/input/patch types, ordered key columns, writable/live policy; no guessed `id` key |
-| Routine | RoutineId and overload signature, parameter modes/defaults, scalar/nullable/set/void result, public exposure, security, explicit durability policy |
-| Query | Stable query name/id, parsed/planned shape, bound parameter types, result columns/cardinality, key identity, live eligibility |
-| Generation | One names/type-policy/catalog pass, target emitters, staged output manifest; atomic publish of related outputs |
+| Manifest | Current API/format/codec epoch, generator version, scoped entity hashes, owned output files and capability requirements |
+| Type | Stable identity, recursive semantic kind, precision/scale/range, array dimensions/element nullability and temporal semantics |
+| Field | Stable field identity/slot, exact SQL and public names, type, nullable/default/identity/generated/read-only flags |
+| Table | Qualified identity, ordered real keys, row/insert/patch contracts, permissions and live policy |
+| Routine | Stable identity and overload signature, language/kind, modes/default definitions, input/output/cardinality, exposure and execution policy |
+| Query | Parsed/analyzed definition, parameter/result types, cardinality/key/order/pagination and live eligibility |
+| Call | Immutable operation revision plus validated supplied arguments/presence; no I/O during bind |
+| Capability | Current epoch/features and quantitative limits, scoped to server and authenticated access where needed |
 
-The current contract's `is_array`, `primary_key`, and `has_default` flags are insufficient for all requested metadata. Add missing semantics at canonical parse/catalog/plan boundaries and version their serialization/hash. Never recover constraints by scanning leftover SQL text in a new downstream emitter.
+No inferred primary key from a column called id and no type reconstruction from SQL text in emitters. Pin immutable descriptor revisions for in-flight work; bounded caches invalidate on relevant type/layout/routine/grant/settings changes. Do not cache volatile default values or permission decisions without correct scope. Unrelated schema additions do not invalidate every descriptor.
 
-Runtime definitions use typed IDs and immutable descriptors. Shared schemas/codecs are memoized by entity identity/version; per-query values and scopes are not captured in process-global unbounded maps.
+## 2. One codec, distinct frames
 
-## Typed function transport and native call descriptors (Slice 2)
+Backend and Link/native/WASM/FRB use one Rust-owned binary value codec chosen by Gate D. The lean core does not depend on Arrow, DataFusion, RocksDB, V8 or HTTP. Optional server adapters derive physical representations from logical descriptors; they do not introduce a second SQL type authority.
 
-The canonical contract snapshot owns function signature/identity, ordered argument names/modes/types/defaults, result cardinality, immutable schema/ABI/codec revision, and security dependency epochs. The generated TypeScript and Dart descriptors refer to these stable identities and one shared `LogicalTypeRef` meaning, never a separate function-specific type enum.
+RPC request/result, WS live/control/ack and internal persisted/Raft envelopes have distinct kind tags and permissions over the same domain-value encoding. A valid internal command is not accepted at a public endpoint. Neither client-supplied schema objects nor native pointers establish trust. JSON is explicit external representation only; native binary values do not traverse generic JSON or MessagePack trees.
 
-Two lossless transports (typed JSON and versioned binary) encode the **same** canonical argument slots. An invocation frame carries only routing/contract metadata and caller-visible request options; principal, RLS context, current transaction and privileged V8 host objects remain server-owned. Binary codecs reuse `kalamdb-serialization`, and V8/native calls use `RoutineValue`/authorized Arrow owners without unnecessary JSON trees. No independent serialized argument format becomes a competing type authority.
+A validated input owns or safely borrows immutable bytes, its pinned descriptor and bounded resource charge. Safe owned data is the baseline. Proposed view/transfer extensions are optional P2 and must measure a benefit. Existing raw-handle ownership problems are mandatory fixes independently of that priority.
 
-The server caches immutable, revision-pinned call descriptors and invalidates them on incompatible routine/type/grant/security changes. In-flight calls pin a safe revision, and an incompatible generated descriptor is rejected before effects. Nested values/read views retain generation/root/principal/projection provenance and a charged byte owner; ordinary JS objects are materialized and validated. These lifetimes are not persisted in SDK or Drift tables.
+## 3. Memory and work accounting
 
-Existing PostgreSQL routine meaning and ABI/value ownership are described in [037 routines-postgresql](../037-pg18-compatibility/contracts/routines-postgresql.md) and [037 functions-v8](../037-pg18-compatibility/contracts/functions-v8.md); 038 owns SDK transport integration. See [protocol](contracts/protocol.md) and T051–T081; persisted/Raft follow-up tasks are independent release gates.
+Charge before allocation/recursion/Arrow construction. Budgets cover compressed/plain wire size, element counts including null/empty elements, nesting including skipped fields, traversal work, decoded memory, queued messages, descriptor caches, encoded payload caches, pool capacity and V8/Arrow pins. Apply request, connection, tenant and global limits.
 
-## Single binary value model and transport ownership (Slice 2)
+Count shared buffer owners once globally, but enforce per-invocation retention/admission policy. Moving an owner transfers its charge without gaps or double release. A small slice may pin a huge allocation; compact-copy when this reduces retained memory. No RocksDB iterator/lock/snapshot remains held solely for a detached result. Exported padding/null slots contain no uninitialized or unauthorized bytes.
 
-`LogicalTypeRef` and the revision-pinned catalog descriptor are the only semantic authorities. A **single Rust canonical typed-value codec** is implemented in `kalamdb-serialization` (or its internal lean codec-core extracted solely to avoid Arrow/DataFusion/WASM dependency cycles). The client/server codec library has no separate TS/Dart type registry or serializer; TS uses the Rust/WASM implementation and Dart uses the Rust/FRB implementation. Binary input is never parsed into a generic JSON tree en route to SQL or V8.
+Fanout caching includes authorized projection, current permission scope, type/codec revision and compression policy. Per-subscriber cursor/request headers remain separate. Bounded byte/time batching does not remove intermediate events or alter user-function invocation count. Queue pressure produces backpressure or safe resumable termination, never silent loss.
 
-The wire carries a bounded common header (protocol/codec version, message kind, length/capabilities) and kind-specific envelopes: RPC call/result and WebSocket subscribe, snapshot, data change, patch, delete, completion, cursor/ack, error/control. The same typed-value tags/null/presence/precision semantics apply to RPC and live data; message semantics may differ but codecs do not. Clients cannot supply trusted native handles, principals, schema objects or authorization frames.
+## 4. Query identity and membership
 
-WebSocket transition metadata tracks compatible server/client protocol versions, supported Kalam Binary capabilities, per-connection negotiated wire mode and retirement/upgrade errors. During the documented transition an isolated legacy MessagePack adapter remains; after the sunset **MessagePack is absent from active server WebSocket, native Link, WASM and Dart live code**. JSON remains an explicitly supported external interoperability format only where necessary, never an intermediate representation for Kalam Binary.
+A logical query identity includes server/epoch, subject/tenant, namespace, authorization revision, descriptor, canonical parameters, result/key codec and supported live semantics. Sharing is prohibited across inequivalent scopes or projections. Persisted membership is per query/generation; filtered results and partial selected rows cannot overwrite unrelated complete models.
 
-Bounded decode spans the input body, decompression, framing, typed arrays/composites, Arrow creation and host/V8 conversion. Any borrowed bytes/read views carry verified owner/lifetime/offset/projection/depth/memory-budget metadata; crossing JS/WASM/FRB boundaries may require copies. Legacy RocksDB/Raft envelopes are never treated as authenticated client requests. Their own old-reader/write-new migration and compatibility gates occur separately after live transport convergence.
+Delivery cursors bind current epoch, history incarnation, query/domain and authorization scope. They are opaque and server-issued. Do not compare opaque cursors or row versions from different domains. VersionId, delivery identity, call identity and generation are separate models.
 
-## Query identity and membership
+## 5. Current-epoch Drift schema
 
-A logical query key includes server identity, authenticated subject and tenant, namespace, authorization scope revision, query/operation descriptor version, canonical parameter bytes, result/key/codec identity, and live semantics. Presentation order/window can share membership but each observer retains its own projection settings. No sharing across security scopes or incompatible row projections.
+One managed or attached Drift connection per account session includes SDK and optional application tables. No import or migration of a pre-epoch store is required. Thereafter accepted work and same-epoch state must survive crashes.
 
-Opaque server cursors bind subscription scope, version domain, history incarnation, and protocol version. Store them as opaque bytes/text with metadata for diagnostics; never compare opaque cursors or row versions from different domains. Resume uses the last safe received/applied cursor for the chosen delivery contract.
-
-Default persisted cache begins with query-scoped rows and membership so filtered/projection results cannot overwrite unrelated queries. Normalized full-table row sharing is an optimization only after full-image and scope guarantees are proven. Partial selected rows must never overwrite full cached models.
-
-These tables live in the one session Drift database, beside any application tables included in that schema. Names may follow existing Drift conventions:
-
-| Table | Key and purpose |
+| State | Key and purpose |
 | --- | --- |
-| QueryDefinitions | account/query ID -> descriptor, parameter hash, codec versions, security scope |
-| SnapshotGenerations | account/query/generation -> building/active state, progress, completion cursor |
-| QueryRows | account/query/generation/encoded key -> authoritative row, row version/domain |
-| InboxDeliveries | account/feed/delivery identity -> payload, received cursor, processing outcome, retry/retention metadata |
-| ProjectionProgress | account/projection/generation -> applied delivery/cursor and codec version |
-| Actions | account/action ID -> operation identity/version, input, ordering/dependencies, lifecycle, attempts, lease, expiry |
-| ActionResults | account/action ID -> result codec version/value, acceptance/reconciliation metadata |
-| OptimisticMutations | account/action/table/key/mutation index -> ordered patch/tombstone; multiple actions per row supported |
-| WorkerLeases | account/work kind -> owner, generation/fencing token, expiry |
-| RetainedReceipts | bounded dedupe/idempotency evidence protected by history and retry horizons |
+| QueryDefinitions | Account/query -> descriptor, canonical parameter identity, scope and epoch |
+| SnapshotGenerations | Account/query/generation -> building/active state and snapshot frontier |
+| QueryMembership | Account/query/generation/key -> authoritative membership/order |
+| QueryRows | Account/query/generation/key -> checked row/patch and scoped version |
+| InboxDeliveries | Account/feed/delivery -> durable event, origin and processing outcome |
+| ProjectionProgress | Account/projection/generation -> applied cursor and receipt state |
+| Actions | Account/action -> operation revision, input, dependencies, ordering, retry state and expiry |
+| ActionResults | Account/action -> checked result revision and acceptance/reconciliation status |
+| OptimisticMutations | Account/action/key/ordinal -> ordered overlay/tombstone |
+| WorkerLeases | Account/work-kind -> owner, fencing generation and expiry |
+| RetainedReceipts | Bounded dedupe/idempotency evidence for guaranteed replay horizons |
 
-Use indexes for eligible actions by account/status/next-attempt/queue position, ordering-key blockers, pending counts, query membership, and oldest safely removable entries. Avoid decoding all historical actions to compute status or claim one item.
+Indexes support bounded claim/schedule/status queries. Do not scan/decode all historical completed work to find the next action. Retention cannot remove unapplied events, unresolved overlays or receipts still needed by an advertised guarantee.
 
-## Transaction and crash boundaries
+## 6. Transaction and crash boundaries
 
-1. Session-database projection: apply the row batch or app-table writes, enqueue follow-up actions, and advance the applied cursor in one Drift transaction; acknowledge transport afterwards.
-2. Foreign database projection: commit inbox delivery and received cursor together on the session database; acknowledge after durable receipt. Apply with a destination-database receipt transaction; mark session progress afterwards. A crash between the two databases replays and consults the destination receipt. This path is only for a destination that cannot use the session connection.
-3. Outgoing action: commit encoded input and all optimistic mutations atomically; background runner claims using an account-scoped fenced lease.
-4. Remote execution: automatic safe retry requires a server idempotency receipt coupled to effects or an explicitly equivalent downstream guarantee.
-5. Snapshot replacement: build a new generation alongside the readable old one, then atomically activate it on explicit completion. An empty completed generation is valid. Crash/cancellation before activation leaves old data marked stale.
-6. Multiple changes sharing a row version must not be dropped solely because a previous change used that number. Dedupe uses actual delivery/event identities and the server's ordered cursor semantics.
+1. Durably persist inbox data with received progress before acknowledging durable receipt.
+2. Same-Drift projection writes, queued follow-up actions and applied progress commit in one transaction.
+3. A foreign projection records its own receipt/effects atomically; SDK applied progress follows that evidence. No cross-database atomicity is claimed.
+4. Action input and optimistic overlays commit together locally. Authoritative server receipts and protected database effects commit together remotely in the supported data group.
+5. Snapshot activation replaces membership atomically, including an empty result; interrupted rebuild does not report completeness.
+6. Cancellation and response loss preserve possible remote effects. Local action records alone do not prove exactly-once execution.
 
-Memory/network queues are bounded. Saturation pauses receipt or closes with a recoverable cursor; it never discards an unapplied event and reports success.
+New persisted/Raft bytes use the selected codec and a new explicit format/cluster epoch. Old stores/peers are rejected, not parsed through historical readers or silently reset. New data requires recovery, corruption and snapshot tests under unchanged WAL/fsync/quorum/visibility semantics. Current-schema evolution within this new epoch remains a database requirement; it is not support for an obsolete release format.
 
-## Action state and ordering
+## 7. Actions, ordering and lifecycle
 
-State progression is queued -> sending -> accepted -> reconciled where observable; retryWaiting, uncertain, rejected, and cancelled are explicit branches. `result` resolves on durable server acceptance with a decoded result; reconciliation is separately observable. A function without a correlated row change need not wait for a mirror to become complete.
+States: queued -> sending -> accepted -> reconciled, with retryWaiting, uncertain, rejected and cancelled branches. Result completion can precede mirror reconciliation. Restore only with the matching current operation descriptor; incompatible definitions are surfaced without guessing or replaying uncertain effects.
 
-For one ordering key, an unresolved earlier action blocks later actions even while waiting for retry. Different keys may run concurrently under a bounded scheduler. Unknown outcome blocks dependent actions until resolved by receipt lookup or explicit application policy. Action ID reuse with different arguments is rejected.
+An unresolved earlier action blocks later actions for the same ordering key. Other keys may progress within concurrency budgets. Worker fences prevent old foreground/background owners from acting after lease replacement. Stack optimistic overlays and reconcile them individually rather than erasing new local intent with an older server echo.
 
-Optimistic state is an ordered set of action patches over authoritative rows. An older server echo cannot erase a newer local action. Rejecting one action removes/reverts only its overlay and recomputes dependent state. Do not assume last-write-wins is correct for every domain operation.
+Server receipt lookup precedes reevaluating defaults. Canonical digest describes supplied typed inputs/presence under a versioned policy; initial defaults are bound once. Expiry cannot be extended by client metadata, and pruned old receipts cannot turn an expired request into a new execution. Replayed results still require current authorization.
 
-## Migrations and retention
+Account switches stop old work before changing scope. Token refresh can reuse a same-account session; it does not reuse stale permissions. Mirror disposal releases only its lease, not every observer or the session connection. Foreground/background catch-up shares definitions and connection with explicit budgets and safe drain/cancel.
 
-- Introduce a versioned migration from existing checkpoint/cache/action/step tables. Preserve action IDs, ordering, named-step receipts, and valid account boundaries.
-- Numeric legacy checkpoints without proven scope/domain/history are hints, not trusted durable cursors. Rebootstrap a mirror; event consumers report an unverified-history gap or use an explicit validated migration policy.
-- Migrate result/input codecs by operation version or quarantine incompatible records. Contract changes in unrelated entities do not invalidate valid actions.
-- Projection reset invalidates its own progress/membership/inbox application state, never unrelated outgoing actions or server receipts.
-- Rows referenced by active generations/optimistic work and events still unapplied cannot be pruned. Applied history/result retention is configurable with observable limits and receipt safety.
-- Expired server idempotency guarantees produce an explicit expired/uncertain result. Local pruning cannot make an old operation look new.
-- Logout policy is explicit retain/delete; workers and streams stop before changing account ownership. Cache scope revisions handle permissions/tenant changes even if a user ID remains the same.
+## 8. Publication and evidence
+
+Current generation stages all target outputs, validates them and publishes a recoverable complete generation marker. A failure retains working application files and leaves unrelated files untouched; no old API compatibility layer is implied. Historical review notes are not active retention requirements.
+
+No migration tool, dual-format reader or old alias ships. Fresh reset remains an explicit operator decision, never an action performed by this specification. [Tasks](tasks.md) and the performance/security contract require evidence before claiming exactness, durability, lower memory or higher throughput.

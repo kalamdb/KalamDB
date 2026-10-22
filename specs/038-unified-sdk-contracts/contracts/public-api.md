@@ -1,206 +1,106 @@
-# Unified public API contract
+# Unified public API contract - current cohort
 
-All signatures and examples in this document are proposed API version 2. Existing symbols mentioned in the migration table remain compatibility entry points. Signature sketches omit constructors/private implementation and are not files to copy into generated output by hand.
+**Revised:** 2026-10-22. Signatures are implementation requirements/sketches, not claims that these APIs already exist. Generate and compile their executable fixtures before release. [Protocol](protocol.md), [performance](serialization-performance.md) and [spec](../spec.md) define semantics.
 
-Wire/state guarantees are specified in [protocol.md](protocol.md). Public generics must compile in both targets; interface sketches do not authorize unchecked casts.
+## 1. One API generation, no aliases for old releases
 
-## 1. Package and generated entry points
+Generate one current API epoch for server, TS, Dart and local sync. Remove old facade aliases, previous request decoders, MessagePack options and earlier generator modes instead of supporting them through wrappers. Projects regenerate and adopt the current surface. Old epoch errors are explicit; no automatic downgrade, old-data import or reset.
 
-| Responsibility | TypeScript | Dart |
+Keep supported SQL/PGWire, Drizzle, React and Flutter product functionality, not every historical symbol. Distinct concerns remain in existing packages:
+
+| Concern | TypeScript | Dart |
 | --- | --- | --- |
-| Auth, transport, scalar types/codecs, descriptors, typed execution, live controller | `@kalamdb/client` | `kalam_link` |
-| Table queries | Existing Drizzle integration in `@kalamdb/orm` (`kTable`, `kalamDriver`, `liveTable`, `kalamFile`, `executeAsUser`, `queryWithFiles`, `bindFunctionOrm`) | Typed table/query builder in `kalam_link` (no separate `kalam_orm` package) |
-| Local database | Not added in this feature | Drift on the one session database; local queries and schema, not a remote SQL driver |
-| UI binding | Existing `@kalamdb/react` (`KalamProvider`, `useLiveQuery`, `useLiveQueries`, `useLiveSelection`, `useMutationState`, `useMutationActions`) | Flutter adapters (`KalamScope`, `StreamBuilder`-ready streams) |
-| Durable cache/inbox/outbox/mirror | Not added in this feature | `kalam_sync` |
-| Custom action generation | Ordinary typed operation definitions | Existing `kalam_sync_generator`, using shared codecs |
-| Topic worker | Existing `@kalamdb/consumer` | Not conflated with `kalam_sync.consume` |
+| Session/transport/exact scalars/typed execution | @kalamdb/client, shared Rust/WASM | kalam_link, shared Rust/FRB |
+| Remote table queries | @kalamdb/orm Drizzle and generated kTable | Thin generated table builder in kalam_link |
+| UI | @kalamdb/react | StreamBuilder-ready handles and optional KalamScope |
+| Local database/durable sync | Not added | kalam_sync, one Drift connection |
+| Topic workers | @kalamdb/consumer | Not conflated with local sync |
 
-Emit equivalent logical modules: `models`, `codecs`, `tables`, `operations`, `functions`, `queries`, `kalam`, and optional `orm`/`sync`. Dart emits one model per file with barrel exports. TypeScript may group declarations by namespace for compact output. Both emit the same `contract.json` semantic manifest and an owned-output manifest. Existing `identity.json` type identities remain authoritative and are referenced rather than independently recreated.
+Emit models, codecs, tables, operations, functions, queries, kalam and optional orm/sync modules. Dart uses one model per file with barrel exports. Shared contract.json includes epoch, stable type/operation identities, revisions, exact SQL/public name mapping and owned-output manifest. Lightweight function imports do not load ORM, sync or UI libraries. Generated target-language model validators/bridge adapters are not independent binary parsers.
 
-- `models`, `codecs`, `tables`, `operations`, `functions`, `queries` depend only on the base client/link package (`@kalamdb/client` or `kalam_link`).
-- `kalam` is the convenient generated facade.
-- `orm` exports Drizzle `kTable` schemas in TypeScript. Dart local Drift schemas are part of the session database owned by `kalam_sync`, not a second SQLite file. No dependency cycle from base SDK to adapters.
-- `sync` provides optional Dart declarations/registries using the same descriptors (including schema-qualified `tableId: '<schema>.<table>'` and default `KalamSyncMode`). Do not generate a second set of business rows or routine input types.
-- Function-only usage is `createKalamFunctions(client)` from `functions`; ordinary usage is `createKalam(client)` from `kalam`.
-- `operations` also exports an immutable unbound `appOperations` registry for durable-result restoration and handler registration. `db.operations` binds these descriptors to arguments/session policy without executing them.
-
-### Preserved public SDK entry points
-
-All existing public exports remain supported:
-- `@kalamdb/client`: `createClient`, `KalamDBClient`, `Auth`, `query`, `queryOne`, `queryAll`, `queryRows`, `queryWithFiles`, `insert`, `delete`, `executeAsUser`, `live`, `liveTable`, `liveEvents`, `createLiveQueryDescriptor`, `createRawSqlLiveDescriptor`, `LiveQueryController`, `FileRef`, `BoundFileRef`, `parseFileRef`, `parseFileRefs`, `wrapRows`, `KalamRow`, `KalamCellValue`, `VersionId`, `UserId`, `login`, `refreshAccessToken`, `healthCheck`.
-- `@kalamdb/orm`: `kalamDriver`, `kTable`, `kSystemColumns`, `configureKalamOrm`, `getKalamTableConfig`, `getKalamOrmConfig`, `file`, `bytes`, `embedding`, `kalamFile`, `isKalamFileUpload`, `rewriteSqlParamsForFileUploads`, `liveTable`, `compileLiveTableDescriptor`, `getLiveTableName`, `compileQuery`, `executeAsUser`, `queryWithFiles`, `generateSchema`, `bindFunctionOrm`, `kalamFunctionDb`, `kalamFunctionDriver`, `toDrizzleRows`.
-- `@kalamdb/react`: `KalamProvider`, `useKalamClient`, `LiveQuery`, `LiveQueries`, `useLiveQuery`, `useLiveQueries`, `useLiveSelection`, `useMutationState`, `useMutationActions`.
-- `kalam_link`: `KalamClient.init`, `KalamClient.isSupportedPlatform`, `KalamClient.connect`, `KalamClient.create` / `createClient`, `query`, `queryWithFiles`, `insert`, `delete`, `live`, `liveTable`, `liveEvents`, `liveEventsWithAck`, `cancelSubscription`, `subscriptions`, `login`, `refreshAccessToken`, `healthCheck`, `Auth`, `AuthProvider`, `ConnectionHandlers`, `KalamCellValue`, `KalamFileRef`, `VersionId`, `SqlParam`, `SubscriptionConfig`, `LiveRowsConfig`.
-- `kalam_sync` & `kalam_sync_generator`: `Kalam.open`, `Kalam.catchUp`, `Kalam.fromComponents`, `Kalam.id`, `KalamScope`, `KalamTableSpec`, `KalamTableBinding`, `KalamSyncMode`, `KalamReplicaOverlay`, `KalamSyncedRow`, `KalamEventConsumer`, `KalamEventConsumer.consume`, `KalamConsumeContext`, `KalamActionDefinition`, `KalamActionRunner`, `KalamActionContext` (`step`, `query`, `queryWithFiles`), `@KalamAction`, `@KalamActionModule`, `@KalamActionPayload`.
-
-### Required usage parity
-
-| Operation | TypeScript | Dart | Deliberate difference |
-| --- | --- | --- | --- |
-| Construct session client | `createClient(options)` | `createClient(...)` | Object versus named arguments |
-| Generated facade | `createKalam(client)` | `createKalam(client)` | TS facade focuses on `functions`, `operations`, `queries`, `contract`; Dart also includes `tables` |
-| Routine & named-query namespaces | `db.queries`, `db.functions`, `db.operations` | `db.tables`, `db.queries`, `db.functions`, `db.operations` | Input objects versus generated input classes; TS tables use Drizzle |
-| Table CRUD & queries | Drizzle `db.select().from(t)`, `db.insert(t)`, `db.update(t)`, `db.delete(t)` | `db.tables.<schema>.<table>` (`query`, `get`, `insert`, `update`, `delete`) | TypeScript keeps Drizzle syntax; Dart uses generated table manager in `kalam_link` |
-| Named query operations | `get`, `getOne`, `getOptional`, `live` | Same | Promise versus Future |
-| Live construction | `liveTable(client, table, ...)` or `query.live()` | `query.live()` | TS supports Drizzle `liveTable` plus descriptor `live()` |
-| Live observation | `live.subscribe(...)`, `live.snapshot` | `live.stream.listen(...)`, `live.snapshot` | Native observation idioms |
-| Lifecycle | `start`, `refetch`, `dispose` | Same | Promise versus Future |
-| UI | Existing React hooks | Flutter stream adapter | Framework-specific only |
-| Persistent cache/action queue | Deferred | `sync.mirror`, `sync.enqueue`, `sync.consume` | Explicit optional Dart capability |
-| Topic workers | Existing `@kalamdb/consumer` | Outside this feature | Not a persistence-equivalence claim |
-
-## 2. Common facade and naming
-
-Both generated facades expose:
+## 2. Canonical facade
 
 ```text
-db.functions.<schema>.<routine>    immediate typed invocation (legacy db.<schema>.<routine> alias preserved)
-db.operations.<schema>.<routine>   creates a typed bound call, no I/O
-db.queries.<schema>.<query>        creates a bound named query, no I/O
-db.contract                        immutable generated contract metadata
+createKalam(client)
+  .functions.<schema>.<routine>(input, options?)  immediate typed call
+  .operations.<schema>.<routine>(input)          bound call, no I/O
+  .queries.<schema>.<query>(parameters)          named query, no I/O
+  .contract                                    immutable current manifest
+  .tables.<schema>.<table>                      Dart only
+
+createKalamFunctions(client)                    function-only import
 ```
 
-Dart's generated facade additionally exposes:
+Use explicit namespaces, camelCase members/fields and PascalCase nominal models. Preserve exact SQL names in descriptors. Resolve normalization/reserved-name collisions deterministically or fail generation; preserve distinct quoted identifiers. Overloads have canonical signature identity and deterministic public names. No runtime JSON shape guessing selects an overload.
 
-```text
-db.tables.<schema>.<table>         bound typed Dart table manager (TypeScript uses Drizzle kTable instead)
-```
+Lazy createClient construction performs no network I/O; first use awaits runtime/auth readiness. connect/disconnect are idempotent; disconnected clients can reconnect, disposed clients reject work. No global mutable singleton. Capabilities are scoped/cached and old epochs fail, rather than enabling a fallback runtime.
 
-Use camelCase public members/fields and PascalCase nominal models in both new targets. Preserve original SQL/JSON names in descriptor metadata. Use explicit namespaces, including `public`; project-home aliases are compatibility conveniences, never wire identities. Reserved-name and normalization collisions are assigned stable manifest-backed suffixes, or fail generation when no unambiguous migration is possible. An overloaded routine includes its canonical input signature in its identity; generated overload names use deterministic suffixes, not target-language overload guessing.
+## 3. Typed executor and codecs
 
-Setup remains language-idiomatic: TS `createClient(options)` is lazy; Dart gains a lazy `createClient(...)` factory delegating to the existing client runtime, while `KalamClient.connect` remains. Lazy construction does no network I/O; first operation awaits runtime/auth/connect. Both expose idempotent `connect`, `disconnect`, and terminal `dispose`; disconnected clients can reconnect, disposed clients reject new work. No new singleton or global mutable client.
-
-## 3. Descriptor and executor interfaces
+Conceptual TypeScript interface:
 
 ```ts
 interface KalamCodec<T> {
-  readonly typeId: string;
-  readonly version: number;
-  decode(value: JsonValue, context?: DecodeContext): T;
-  encode(value: T): JsonValue;
+  readonly type: TypeDescriptor<T>;
+  validate(value: unknown, context?: DecodeContext): T;
 }
-interface KalamTable<Row, Key, Insert, Patch> {
-  readonly id: TableId;
-  readonly key: KeyCodec<Key>;
-  readonly rowCodec: KalamCodec<Row>;
-  readonly insertCodec: KalamCodec<Insert>;
-  readonly patchCodec: KalamCodec<Patch>;
-  readonly columns: ColumnDescriptors<Row>;
-  readonly capabilities: TableCapabilities;
+interface OperationDefinition<Input, Output> {
+  readonly descriptor: RoutineDescriptor<Input, Output>;
+  bind(input: Input): KalamCall<Output>;
 }
-interface KalamQuery<Row> {
-  readonly descriptor: QueryDescriptor<Row>;
-}
-interface KalamLiveQuery<Row> extends KalamQuery<Row> {
-  readonly liveCapability: LiveCapability;
-}
-interface KalamCall<Result> {
-  readonly operation: OperationDescriptor<Result>;
-  readonly arguments: EncodedArguments;
-}
-interface KalamDurableCall<Result> extends KalamCall<Result> {
-  readonly durability: DurableOperationCapability;
+interface KalamCall<Output> {
+  readonly operation: OperationDescriptor<Output>;
+  readonly arguments: BoundTypedArguments;
 }
 interface KalamExecutor {
+  invoke<I, O>(op: OperationDefinition<I, O>, input: I,
+               options?: InvocationOptions): Promise<O>;
+  execute<O>(call: KalamCall<O>, options?: InvocationOptions): Promise<O>;
   get<Row>(query: KalamQuery<Row>, options?: RequestOptions): Promise<Row[]>;
   getOne<Row>(query: KalamQuery<Row>, options?: RequestOptions): Promise<Row>;
   getOptional<Row>(query: KalamQuery<Row>, options?: RequestOptions): Promise<Row | null>;
-  execute<Result>(call: KalamCall<Result>, options?: RequestOptions): Promise<Result>;
-  createLiveQueryController<Row>(query: KalamLiveQuery<Row>, options?: LiveOptions): LiveQuery<Row>;
 }
 ```
 
-```dart
-abstract interface class KalamCodec<T> {
-  String get typeId;
-  int get version;
-  T decode(JsonValue value, {DecodeContext? context});
-  JsonValue encode(T value);
-}
-abstract interface class KalamExecutor {
-  Future<List<Row>> get<Row>(KalamQuery<Row> query, {RequestOptions? options});
-  Future<Row> getOne<Row>(KalamQuery<Row> query, {RequestOptions? options});
-  Future<Row?> getOptional<Row>(KalamQuery<Row> query, {RequestOptions? options});
-  Future<Result> execute<Result>(KalamCall<Result> call, {RequestOptions? options});
-  LiveQuery<Row> createLiveQueryController<Row>(
-    KalamLiveQuery<Row> query, {LiveOptions? options});
-}
-```
+Dart has corresponding typed definitions, generated input classes and Future results. Descriptor generics retain both input and output types. A generic assertion is not a decoder. `KalamCodec<T>` describes validation/model construction; encoding of domain bytes belongs to the common Rust implementation. Do not force `encode(T): JsonValue` into this base contract. Explicit JSON adapters are separate from native/binary conversion.
 
-Dart supplies corresponding descriptor classes, with generated inference hiding their generic parameters. `getOne` rejects zero/multiple rows; `getOptional` rejects multiple rows; an empty list is distinct from a nullable result and a void operation. Requests support an explicit deadline and cancellation abstraction (`AbortSignal` in TS, cancellation token in Dart). Cancellation stops local delivery; it does not assert that an already dispatched mutation was rolled back.
+A bound call validates/snapshots mutable inputs under a documented ownership policy before async or durable execution. It does not perform network I/O or repeatedly encode the same value. Byte arrays cannot be borrowed while caller mutation can change validated inputs. Small safe copies are acceptable.
 
-Raw SQL remains an escape hatch returning raw cells/maps. Typed raw results require an explicit codec; supplying `<T>` alone cannot claim decoding. Parameter APIs preserve value types and exact identifier quoting. The new structured builder compiles a plan once per immutable query definition, not once per event. Raw SQL validation uses the canonical parser; do not add another regex SQL parser or reparse downstream user SQL.
+getOne rejects zero or multiple results; getOptional rejects multiple results. Void, null and an empty set remain distinct. Deadlines/cancellation are explicit (AbortSignal in TS, a typed token in Dart). Local cancellation does not prove the server rolled back.
 
-Unbound `OperationDefinition<Input, Result>` includes identity, input/result codecs, parameter modes/cardinality, execution policy, and optional durable capability. Its generated `bind(input)` creates a call. Generated named-query methods return bound query handles with `get`/cardinality methods and, only when eligible, `live`; they do not return a bare metadata object that applications must wire to an executor manually.
-
-## 3A. Native generated routine invocation (proposed API v2; Slice 2)
-
-The generated immediate-call surface remains `db.functions.<schema>.<routine>(typedInput)` for TS and Dart. Its implementation MUST bind `OperationDefinition<Input, Result>`/a generated descriptor to an SDK typed executor rather than emitting SQL text. For example, current `client.query("SELECT chat_demo.send_message($1,...)", params)` is a **legacy implementation detail**, not the v2 contract.
+## 4. Native routine calls
 
 ```ts
-// Illustrative v2 generated facade and base-client contract, not implemented yet:
-const result = await db.functions.chatDemo.sendMessage({ target: "room", targetId: "main", content: "Hi" });
-const same = await client.invoke(appOperations.chatDemo.sendMessage, { target: "room", targetId: "main", content: "Hi" }, { format: "auto" });
-// Underneath both use the existing FunctionService, never query("CALL ...").
+const db = createKalam(client);
+const result = await db.functions.chat.sendMessage({ conversationId, text });
+// Alternative, not a second call to add after the first example:
+const call = db.operations.chat.sendMessage({ conversationId, text });
+const resultFromBoundCall = await client.execute(call);
 ```
 
 ```dart
-// Illustrative v2 generated Dart method, not implemented yet:
-final result = await db.functions.chatDemo.sendMessage(
-  ChatDemoSendMessageInput(target: MessageTarget.room, targetId: 'main', content: 'Hi'),
-);
+final db = createKalam(client);
+final result = await db.functions.chat.sendMessage(
+  ChatSendMessageInput(conversationId: conversationId, text: text));
 ```
 
-An unbound operation descriptor contains canonical routine signature/revision ID, argument slots/defaults, logical types, result/cardinality, input/result codecs, ABI/codec versions and optional validated capability flags. `bind(input)` is allocation-light and does no I/O; immediate `invoke`/existing `execute(KalamCall)` shares one typed implementation with durable call creation. TypeScript and Dart never hand-author argument arrays or SQL, and generated decoders validate the returned shape rather than relying on an unchecked `as Result`. Keep the existing TS namespace alias and Dart `KalamFunctions` migration adapters, as well as direct SQL calls for expert/PGWire users.
+Generated calls use the native executor and FunctionService directly. They never synthesize SELECT/CALL or invoke the SQL query API. Current raw SQL remains available for intentional SQL use.
 
-Invocation options carry a negotiated `format: "auto" | "json" | "binary"` preference, cancellation/deadline and optional idempotency key; they do not expose principal, trusted origin, root transaction or privileged function context. An existing older server supports only its advertised legacy route/body; unsupported binary/capability is rejected or selected away **before effects**. No automatic retry/fallback after an uncertain mutation outcome. JSON and binary use one canonical type policy, shared Rust/native codec where feasible, and the same public result/error type. The exact versions, typed JSON distinctions, wire envelope and V8 chaining semantics are defined in [protocol.md](protocol.md); ownership/permission requirements also derive from [037 functions-v8](../../037-pg18-compatibility/contracts/functions-v8.md).
+InvocationOptions expose deadline/cancellation and, when eligible, idempotency metadata. Binary is the selected default only after the evidence gate passes. Explicit `format: 'json'` may be offered for current HTTP interoperability; this is not negotiation with an old server, not a binary-to-JSON conversion step, and not an uncertain-mutation retry policy. WS exposes the current binary epoch, not a selectable MessagePack/JSON compatibility menu.
 
-Server-side `ctx.functions.<schema>.<method>(input)` remains typed, in-process, transaction-scoped composition. No client-authored arbitrary JS workflow/DAG execution is introduced. Nested native Arrow/read-view borrowing is private runtime behavior with strict lifetime/owner/budget validation, not a public cross-boundary pointer/zero-copy promise. Workloads spanning multiple data Raft groups are not advertised atomic.
+Operation descriptors contain routine/signature identity, parameter modes/ordinals/default definitions, exact types, cardinality, ABI/codec revisions and execution capabilities. Server identity/authorization remains authoritative. Clients cannot provide principal, trusted origin, transaction or host objects. Errors identify signature mismatches before effects; actual return values are checked.
 
-## 4. Table access: Drizzle in TypeScript, thin table manager in Dart
+Server handlers and nested `ctx.functions.<schema>.<method>(input)` methods come from the same catalog. Nested calls stay in-process with typed owned values and the root transaction/deadline/cancellation. Each permission frame applies EXECUTE and INVOKER/DEFINER/RLS rules. No arbitrary client-JavaScript workflow engine, cross-group atomicity or external-effect rollback is introduced. New zero-copy views are not a public requirement.
 
-### One TypeScript ORM (Drizzle)
+## 5. Table and named-query access
 
-TypeScript table access stays Drizzle. Generated `schema.ts` remains `kTable` columns, and applications keep `drizzle(kalamDriver(client))`, `liveTable`, React `{ table, where, orderBy }`, `kalamFile()`, `onConflictDoUpdate`, SQL fragments, `queryWithFiles`, `executeAsUser`, and server-side `bindFunctionOrm`. `kalam schema gen` and `kalam dev` keep emitting that file. Do not add a parallel `db.tables.*.query()` builder in TypeScript.
+TS table access stays Drizzle: generated kTable schemas, select/insert/update/delete, typed file upload, conflict update, SQL fragments and gated executeAsUser. Do not add another TS table engine. Both local schema generation and introspection consume the canonical contract rather than invent independent naming/type rules.
 
-### Dart table manager and query builder (in `kalam_link`)
+Dart's thin TableClient has query/get/insert/update/delete. Immutable query methods provide where/orderBy/limit/page/get/getOne/getOptional/live using generated typed columns and legal operators. MutationResult reports affected rows and declared returned keys/rows. No guessed id, writable generated fields or ambiguous missing/null patches. Remote queries use KalamDB; Drift queries address the local database only.
 
-```dart
-abstract interface class TableClient<Row, Key, Insert, Patch> {
-  TableQuery<Row> query();
-  Future<Row?> get(Key key, {RequestOptions? options});
-  Future<MutationResult<Row, Key>> insert(Insert value, {MutationOptions? options});
-  Future<MutationResult<Row, Key>> update(Key key, Patch patch, {MutationOptions? options});
-  Future<MutationResult<Row, Key>> delete(Key key, {MutationOptions? options});
-}
-abstract interface class TableQuery<Row> implements KalamLiveQuery<Row> {
-  TableQuery<Row> where(Predicate Function(TypedColumns<Row> columns) build);
-  TableQuery<Row> orderBy(OrderSpec Function(TypedColumns<Row> columns) build);
-  TableQuery<Row> limit(int count);
-  Future<List<Row>> get({RequestOptions? options});
-  Future<Row> getOne({RequestOptions? options});
-  Future<Row?> getOptional({RequestOptions? options});
-  Future<QueryPage<Row>> page(PageRequest options);
-  LiveQuery<Row> live({LiveOptions? options});
-}
-```
+Named queries generate parameters, result shape/cardinality, real keys, pagination and eligibility through canonical SQL analysis. Raw SQL preserves parameters/quotes and returns documented raw cells; typed raw output requires an actual codec. No regex SQL parser or per-event reanalysis of a fixed query definition.
 
-Dart's generated table manager lives in `kalam_link` (no separate `kalam_orm` package). Column predicates support equality, inequality, null checks, comparisons, bounded `inList`, and boolean composition. Only type-appropriate operators are generated. Queries are immutable. Selected/computed/join shapes come from named query descriptors or raw SQL; `link-common` executes those queries and materializes live rows without embedding SeaORM, Diesel, SQLx, or another ORM.
-
-The sketch shows the keyed/live-capable table case. Generate read-only query/table interfaces when keys or write capability are absent, and one-shot named-query interfaces when live eligibility is absent. Do not advertise impossible operations through generic inheritance. Runtime permission and capability checks still apply even to statically eligible operations.
-
-`MutationResult<Row, Key>` has affected row count, returned keys, optional requested returned rows, and request/operation ID. A zero-row mutation remains distinguishable from success affecting a row; expected-version conflicts have a typed conflict error. Do not fabricate returned data when the server does not support the requested returning mode. Bulk operations must report transaction/partial-success boundaries explicitly and are deferred unless supported end to end.
-
-Insert defaults are applied on the server. TS omission/undefined means absent and null means explicit SQL null. Dart generated defaultable fields use `Field.absent()` / `Field.value(value)`; required non-default fields use required ordinary constructor arguments. Patch fields use `Field<T>` for every writable field, and generated row models emit both a full `Row.fromJson` / `fromCells` decoder and a partial `Patch.fromCells` decoder for live `update` deltas (`change.kind == KalamChangeKind.update && !change.initial`). Encode absent fields by omission, not null. Computed/generated/key-immutable fields are excluded from write types.
-
-`page` uses a server-supported cursor with explicit stability/snapshot semantics. Never call a locally truncated list a complete server page. If only offset pagination is available, expose an explicit offset method with its weaker concurrent-write semantics instead of manufacturing a stable cursor.
-
-Generate Drift tables for mirrored rows into the one session database. Never send Drift's SQLite SQL directly to the remote PostgreSQL interface. Local Drift queries read that database after the mirror has stored rows.
-
-Preserve exact identifiers and values through the Drizzle driver. Retire `stripQuotedIdentifiers`, empty default sentinels, and other compatibility rewriting only after paired server tests prove the replacement.
-
-## 5. Live query handle and framework bindings
+## 6. Live handles
 
 ```ts
 interface QuerySnapshot<Row> {
@@ -215,180 +115,65 @@ interface QuerySnapshot<Row> {
 }
 interface LiveQuery<Row> {
   readonly snapshot: QuerySnapshot<Row>;
-  subscribe(listener: (state: QuerySnapshot<Row>) => void): Unsubscribe;
+  subscribe(listener: (snapshot: QuerySnapshot<Row>) => void): Unsubscribe;
   start(): Promise<void>;
   refetch(): Promise<void>;
   dispose(): Promise<void>;
 }
 ```
 
-Dart exposes `snapshot`, replaying `Stream<QuerySnapshot<Row>> get stream`, and matching `start`, `refetch`, `dispose`. First observation attaches before starting and gets the latest state without a gap; explicit `start` supports prefetch. Query handles acquire leases on a shared controller keyed by query/account/codec identity. Final observer release stops the active subscription unless an explicit prefetch/pin lease exists. `dispose` releases only the caller's handle; it cannot terminate other users' leases.
+Dart supplies a replaying snapshot stream and corresponding lifecycle. First observation attaches without a gap. Shared subscription leases are scoped by account/query/projection/codec/authorization; disposing one handle must not disconnect others. Reconfigure/refetch/account changes fence old generations. Extend existing controllers rather than writing a second materializer for the same mirror.
 
-`useLiveQuery({query})` gains a typed descriptor overload; existing `{table, where, orderBy}` and raw-string forms compile to the same controller. `useLiveQueries` and mutation hooks reuse common state. Flutter uses a generated/SDK StreamBuilder-friendly handle; optional provider helpers remain thin. Do not require Riverpod or React to use the core SDK.
+FullRow, PartialPatch and DeletedRow are distinct typed variants. Key-only delete/filter-exit and empty snapshot are valid. Decode errors never become an empty success. React/Flutter consume these snapshots without adding framework dependencies to the core.
 
-The new handle extends the current TS controller semantics and preserves `getSnapshot()` as a compatibility alias. Errors include structured auth, transport, SQL, decode, conflict, capacity, unsupported-query, cursor-expired, scope-mismatch, and replay-gap variants.
+`limit` for a one-shot query is remote SQL semantics. Live presentation windows, snapshot batch size, requested history and retained-memory capacity are separately named. An exact client top-N needs complete membership or a proven server-maintained window. Use deterministic ordering/key tie breakers and only supported collation semantics. Overflow is an explicit capacity/recovery outcome, not silent eviction of required rows/events.
 
-### Ordering and limits
+## 7. Current server contract
 
-- `query.limit(n)` limits a one-shot remote result; in live mode it is a local presentation window over complete subscribed membership.
-- `batchSize` only controls initial transfer chunks. `lastRows` selects a historical window and must mark that scope explicitly; it is not a synonym for presentation limit.
-- `maxRetainedRows`/bytes protects resources. On overflow the SDK pauses/fails with a capacity error or invokes a supported server window protocol; it does not silently evict hidden rows needed for future results.
-- Local ordering is restricted to contract-supported deterministic scalar comparisons, explicit null ordering, and an added key tie-breaker. Unsupported collations/expressions fail live preparation. Unicode/locale sorting must not silently replace PostgreSQL semantics.
-- A live ordered top-N view is exact only when the entire subscribed membership is retained or the server provides a correct maintained window. A delete/filter exit must promote the next eligible row.
+Authorized capability/manifest endpoints expose current epoch, operation/type revisions, codec versions and actual replay/idempotency/platform support. The function HTTP endpoint uses the new descriptor-bound envelope. No private code/secrets are published. Entity-scoped ETags prevent unrelated DDL from invalidating everything. No discovery round trip per ordinary call.
 
-## 6. Generated functions and server contracts
+Current WS supports typed auth/control/subscribe/snapshot/change/ack/reset/error and opaque scoped resume cursors. Explicit completion and contiguous acknowledgment follow protocol.md. Old MessagePack or another epoch receives an actionable unsupported-format error, never a parser fallback.
 
-```ts
-const result = await db.functions.chat.sendMessage({ conversationId, text });
-const call = db.operations.chat.sendMessage({ conversationId, text }); // no I/O
-const sameTypedResult = await client.execute(call);
-```
+A durable operation capability exists only when authoritative server effects and receipts can be committed atomically in the supported consistency domain. Input/signature/key conflicts, pending duplicates and expired guarantees are explicit. Replay checks authorization and does not reevaluate volatile defaults. External effects require downstream guarantees or remain uncertain.
 
-```dart
-final result = await db.functions.chat.sendMessage(
-  ChatSendMessageInput(conversationId: conversationId, text: text));
-final call = db.operations.chat.sendMessage(
-  ChatSendMessageInput(conversationId: conversationId, text: text));
-final sameTypedResult = await client.execute(call);
-```
+## 8. Dart persistence
 
-The direct method delegates to the operation descriptor. Names are illustrative schema-generated names, not assertions that Masky already has these routines. Existing generated request/result class names remain aliases where compatible. Void, nullable scalar, composite, and set-returning results have distinct codecs/cardinality. Overload selection is generated from canonical routine identity and parameter types, never from lossy runtime JSON heuristics.
+`KalamSyncConfig` is the canonical shared configuration for account/auth resolution, current contract, mirror/consumer/action definitions, Drift database mode and lifecycle policy. `Kalam.open(config: ...)` and `Kalam.catchUp(config: ..., budget: ...)` reuse it. Do not add old named-argument wrapper APIs solely for compatibility.
 
-Preserve the existing generated backend handler registry and strict input/result checking. Add generated handler definitions/registration helpers backed by the same operation catalog rather than a second hand-maintained route registry. Server context retains authenticated identity, transactions, and permission-aware database access; none of these are accepted from an ordinary public input object. SQL and HTTP invocations must execute the same resolved routine and authorization policy.
+Database modes are explicit typed choices: managed SDK schema, managed application Drift constructor including SDK tables, or attached already-open application database. All use one connection; attached mode does not close the application's database. Foreground/background workers coordinate on it. An unrelated external projection destination is the only case requiring a separate database receipt.
 
-For API v2, generated immediate invocation MUST use the typed native executor rather than parameterized SQL; v1 legacy clients retain their SQL path until migrated. Explicit HTTP execution uses the existing `POST /v1/functions/{namespace}/{procedure}` endpoint. The chosen transport is part of call policy and errors never trigger an automatic cross-transport mutation retry. A HTTP routine signature header/operation identity resolves overloads only after server support is implemented; otherwise ambiguous calls return an explicit unsupported/ambiguous error.
+Fresh stores start in the current epoch. No older-store import exists. Thereafter inbox/projection/checkpoint/actions/results/optimistic state survive restart correctly. `mirror(query)` is lazy and exposes cached rows/freshness before network readiness; a query from another account cannot be silently mirrored. Same-epoch resnapshot activates a new generation atomically and preserves unrelated accepted work.
 
-## 7. Wire and server additions
+`enqueue(KalamDurableCall, optimistic, orderingKey, dependencies, actionId)` commits local input/overlay and returns a typed ActionHandle with id, state stream, result, retry and cancel. `actions.restore` verifies operation revision before decoding. States distinguish queued/sending/retryWaiting/uncertain/accepted/reconciled/rejected/cancelled. Ordinary unsafe calls cannot enter automatic retry.
 
-Extend existing query/live envelopes compatibly; do not implement a second server query engine.
+`sync.consume` processes event history rather than just latest rows. Handlers return applied/retry/rejected; decode/transient failures do not advance progress. Same-Drift projections and follow-up actions commit with progress; foreign projections use their own receipts after durable inbox receipt. Network effects occur outside local transactions. User-visible effects can distinguish snapshot/replay origin.
 
-| Addition | Contract |
-| --- | --- |
-| `GET /v1/api/sdk/capabilities` (new) | Protocol/contract versions and supported live/parameter/replay/idempotency features; authenticated and permission-safe |
-| `GET /v1/api/sdk/contract` (new) | Authorized public manifest/hash, conditional fetch via ETag; excludes bodies, secrets, privileged context, and inaccessible tables/routines |
-| Existing function POST | Typed arguments/results/errors plus optional validated operation-signature and idempotency metadata; preserve existing request format |
-| Live subscribe | Typed parameters, descriptor identity, expected schema compatibility, and opaque resume cursor with scope/domain/history binding |
-| Live delivery | Delivery identity, snapshot generation/begin/end, hasMore, typed changes, cursor/watermark, and explicit reset/gap outcomes |
-| Explicit ack | Acknowledges a delivered cursor/identity after durable receipt/application, not a guessed row maximum |
+Expose account-scoped projections.reset/rebuild, actions.restore/retry, cache.invalidate and diagnostics.snapshot without handing apps SDK storage tables. Checkpoint seeding accepts only an authoritative scope-bound current cursor or an explicitly restricted bootstrap operation; a raw row maximum does not prove replay progress.
 
-Capability discovery is cached per server/protocol and is not a per-query round trip. Local project generation remains schema-first; remote manifests support verification/introspection/import workflows. Do not hash user secrets into logs or expose values inside diagnostic query IDs.
+Masky requirements remain: qualified table IDs and default sync modes/live descriptors; full versus partial change decoding without JSON-to-cell round trips; deterministic follow-up actions and post-network local acknowledgments on the same connection; coalesced session reconciliation, retryable runtime init/auth recovery and configurable transient-state debounce. Keep domain mapping and REST/UI behavior application-owned.
 
-Contract compatibility is scoped to referenced entities and codec versions. A new unrelated table must not invalidate all clients, caches, or queued calls. A mismatch reports the affected operation/type and required regeneration/migration; retain valid old cache until a replacement is usable.
+Catch-up budgets include total/per-consumer rows, bytes/time and optional outbox flush. Return actual received/applied/completed progress, hasMore/errors/timeouts. Finish at safe stream boundaries; do not close storage under unawaited work. Fenced claims prevent simultaneous foreground/background duplication.
 
-### Durable execution capability
+## 9. Exact scalar mapping
 
-A routine may expose a durable capability only when its server implementation can enforce it. Metadata binds operation signature/version, maximum idempotency lifetime, input digest algorithm, and guarantee kind. SQL `SELECT` syntax and volatility labels alone do not prove external side-effect safety.
-
-For supported transactional database mutations, atomically commit effects and an idempotency receipt/result in the same authoritative consistency domain. If a routine spans domains, use an explicit supported coordinator or decline this capability. For external effects, require downstream idempotency or report an uncertain outcome; local named steps do not imply exactly-once execution.
-
-Idempotency requests bind principal/tenant, operation version/signature, key, and input digest. Repeated identical requests return the stored typed result; differing input returns conflict. Retention expiry must be detectable after receipt pruning through an epoch/expiry contract or retained tombstone; an old retry cannot silently execute again. Generated durable calls expire within the server's guarantee window. Local queue cancellation cannot retract an acknowledged server effect.
-
-## 8. Dart sync extension
-
-```dart
-// Kalam opens one Drift database and returns it.
-final sync = await Kalam.open(
-  url: serverUrl, subject: userId, authProvider: resolveAuth,
-  contract: appContract);
-final db = createKalam(sync.remote); // executor over the same lazy client
-final query = db.tables.chat.messages.query(); // full table from the server cursor
-final mirror = sync.mirror(query);
-final states = mirror.stream;
-final action = await sync.enqueue(db.operations.chat.sendMessage(input));
-final ChatSendMessageResult result = await action.result;
-
-// Same connection, with the app's own tables and migrations.
-final syncWithApp = await Kalam.open(
-  url: serverUrl, subject: userId, authProvider: resolveAuth,
-  contract: appContract,
-  database: AppDatabase.new);
-final drafts = syncWithApp.database.select(syncWithApp.database.drafts);
-
-// App already opened Drift. Pass it in; Kalam does not open a second file.
-final syncAttached = await Kalam.open(
-  url: serverUrl, subject: userId, authProvider: resolveAuth,
-  contract: appContract,
-  database: existingAppDatabase);
-```
-
-`Kalam.open` uses one Drift database per account session.
-
-- **Managed, sync tables only.** Omit `database`. Kalam opens the file, migrates sync and mirror tables, closes it on dispose, and exposes it as `sync.database`.
-- **Managed, app schema.** Pass a Drift constructor `QueryExecutor -> GeneratedDatabase`. Kalam opens the single connection and calls that constructor. The app database includes the exported Kalam sync tables plus local tables, and its `schemaVersion` / `MigrationStrategy` composes Kalam's migration steps with the app's. `sync.database` is that database. This is how an app adds tables, migrations, and Drift queries without a second SQLite file.
-- **Attached.** Pass an already opened Drift database that includes the Kalam sync tables. Kalam uses that connection and does not open or close the file. Use this when the application already owns `AppDatabase`.
-
-Foreground and background sessions share that connection. Another access style may use the returned Drift executor; it must not open the same file with a second engine. Remote `where` / `query()` compile to the shared Rust query. Drift queries run only against the local database.
-
-`mirror` accepts a bound live descriptor and returns a `Mirror<Row>` extending the live snapshot/stream interface. Its `get()` reads persisted local rows, `refresh()` schedules authoritative resync, and `clearCache()` is explicit and account/query-scoped. Mirror construction is lazy; cached state is available independently of auth/network readiness. A query with no local filter mirrors the full server result from the resume cursor. Existing `table(spec).consumer()` delegates during migration.
-
-`refetch()` is the common lifecycle name; `refresh()` is a sync convenience alias with the same resync behavior. Session construction owns `sync.remote`; disposing a mirror releases its own observation and does not dispose that client. A query bound to a different session/account cannot be mirrored silently.
-
-`enqueue<Result>(KalamDurableCall<Result>, {optimistic, orderingKey, dependencies, actionId})` commits input/optimistic changes in one local transaction and returns `ActionHandle<Result>`. Handle: `id`, `state`, replaying status stream, `result`, `retry`, and `cancel`. Reopen via `actions.restore(id, operation: generatedDescriptor)`; verify stored operation/version before decoding. Pending states distinguish local queued, sending, retry waiting, uncertain outcome, server accepted, reconciled, rejected, and cancelled. Server acceptance can resolve the typed result before a mirror catches up; expose reconciliation separately.
-
-Do not accept an ordinary unsafe `KalamCall` in automatic durable execution. Custom REST actions use typed definitions/codecs plus explicit retry/idempotency policy. On definition upgrades, migrate stored payloads/results deterministically or quarantine with an actionable error; never run old data against a new signature by guessing.
-
-### Durable event consumers and projections
-
-`sync.consume(feed, handler, {projection, retention, ordering})` differs from `mirror`: it processes events and must report history gaps that cannot be repaired by a current snapshot. Handler outcome is a sealed applied/retry/rejected result; thrown transient errors retain the work. Rejections retain a diagnostic record and require an explicit application policy. Decode failures cannot count as applied.
-
-The default SDK cache applies rows, queued follow-up work, and applied cursor in one Drift transaction on the session database. A projection into an application table on that same database uses that same transaction. A destination that cannot share the connection exposes `applyBatch`, `resetGeneration`, and transactional receipts in that other database. SDK receipt and remote acknowledgement may precede that foreign projection only after the event itself is durable in the inbox. Replaying a received event checks the destination receipt. Network requests use the outbox; UI effects run after commit with replay/snapshot origin metadata.
-
-Provide `projections.reset(id, {clearActionKeys})`, `projections.rebuild(id)`, `checkpoints.seedIfAbsent(subscriptionId, seq)`, `actions.restore`, `actions.retry`, `cache.invalidate`, and `diagnostics.snapshot`. These are account-scoped and must not require exposing SDK storage tables (`kalamActions`, `kalamActionSteps`, `kalamCheckpoints`). Snapshot rebuild must preserve unrelated outgoing actions and their idempotency keys.
-
-### First-class support for Masky sync patterns
-
-To eliminate handwritten glue in `masky-v3`:
-- **Qualified table specs & live SQL**: `kalam schema gen` emits schema-qualified `tableId: '<schema>.<table>'` (e.g. `'public.messages'`) and default `KalamSyncMode` (`replicaOnly` for server-authored/mailbox feeds when configured, or `copyWith` override) plus `spec.liveSql`, so apps do not need wrapper spec files to fix unqualified table IDs.
-- **Full vs. partial live change decoding**: `KalamRemoteChange` provides typed `Map<String, KalamCellValue> cells`, `VersionId? seq`, and `bool isPartialUpdate` (`kind == KalamChangeKind.update && !initial`), and generated table codecs provide `decodeChange(change)` yielding a sealed `FullRow<Row> | PartialPatch<Patch> | DeletedRow<Key>` without `jsonToCellRow` round-trips.
-- **Mailbox poke -> durable action + local DB ack**: `KalamEventConsumer.consume` enqueues deterministic follow-up actions (`context.enqueue`) in the same Drift transaction as the checkpoint, and `KalamActionContext.step` supports multi-step durable execution (e.g., step 1: remote REST/procedure call; step 2: local Drift `markMessageAsSent` / `markConversationPushed` on the shared session database) so post-network local acks are never lost on crash.
-- **Coalesced session lifecycle, auth recovery & UI state debounce**: `KalamClient.init(timeout: ...)` resets in-flight state on failure so retries succeed and exposes `KalamClient.isSupportedPlatform`. `Kalam` provides a session controller that coalesces `reconcileSession(loggedIn, userId, authToken)` calls (reusing the open session when only the token changes for the same `userId`, replacing on `userId` change, stopping on logout), runs automatic token-refresh + `pause()`/`resume()` on `isAuthError`, and exposes a debounced connection-state stream (`transientDebounce: Duration(milliseconds: 800)`) so brief `offline`/`catchingUp` transitions do not flicker UI banners.
-
-### Shared configuration and background catch-up
-
-Add immutable `KalamSyncConfig` containing account identity resolver, auth provider, contract, mirror/consumer definitions, action registry, Drift database mode, and lifecycle policy. The database mode is managed or attached, as defined above. Both `Kalam.open(config: ...)` and `Kalam.catchUp(config: ..., budget: ...)` consume it and the same Drift connection; keep current named-argument entry points as wrappers. Catch-up must not open a second SQLite file for the account.
-
-Catch-up uses `SyncBudget(maxRowsTotal, maxRowsPerConsumer, maxDuration, flushOutbox)` and returns per-consumer received/applied counts, completion, hasMore, timeout, and errors. Finish at explicit server snapshot/batch boundaries, not by assuming a short/empty batch means completion. A stopped budget cannot close storage under an unawaited apply. Outbox work respects the same remaining deadline and ownership lease.
-
-## 9. Type fidelity and serialization
-
-| Semantic value | TS | Dart | Wire/persistence rule |
+| SQL concept | TS | Dart | Rule |
 | --- | --- | --- | --- |
-| 32-bit integer | `number` | `int` | Validate integer/range |
-| 64-bit integer | `bigint` | `BigInt` in v2 generated models | Decimal string wire form; never truncate via double |
-| Decimal | Branded decimal string/scalar | Decimal scalar wrapping canonical string | Preserve declared precision/scale |
-| Boolean/text | `boolean`/`string` | `bool`/`String` | Strict shape; no arbitrary toString coercion |
-| JSON | `JsonValue` | sealed `JsonValue` or equivalent checked representation | JSON null distinguished from outer SQL null |
-| Date/time without zone | SDK date/local-time/local-datetime scalar | Corresponding SDK scalars | Preserve wall-clock semantics and declared precision |
-| Instant/timestamptz | SDK instant scalar; explicit `Date` convenience conversion | Corresponding instant scalar; explicit `DateTime` conversion | Preserve precision before any native lossy conversion |
-| Enum | Generated string union plus codec | Generated value type/enum plus codec | Reject unknown values or explicit unknown wrapper policy; never choose first member |
-| Domain/ID | Branded type plus codec | Nominal value class | Preserve domain identity and underlying type; server checks remain authoritative |
-| Bytes | `Uint8Array` | `Uint8List` | Explicit base64/binary encoding |
-| Stored file | Existing file reference with typed metadata | Existing `KalamFileRef` | Separate stored reference from upload input |
-| Array/composite | Generated nested arrays/objects | Generated immutable nested classes/lists | Recursive codecs including element nullability and array metadata |
+| 32-bit integer | number | int | Integral/range checked |
+| 64-bit integer | bigint | BigInt | No double conversion; binary width is explicit |
+| NUMERIC/decimal | Exact scalar or branded canonical decimal | Exact decimal scalar | Preserve supported scale/range; unsupported cases fail |
+| Boolean/text | boolean/string | bool/String | Strict validation, no arbitrary coercion |
+| JSON/JSONB | Checked JsonValue | Checked JSON model | Distinguish SQL NULL/JSON null; retain declared SQL semantics |
+| Local dates/times | Exact SDK scalars | Exact SDK scalars | No locale parsing or implicit timezone conversion |
+| TIMESTAMPTZ | Precise instant scalar | Precise instant scalar | Date/DateTime convenience conversion explicitly accounts for precision loss |
+| Enum/domain/ID | Generated union/branded value | Generated nominal type | Stable identity and declared constraints |
+| Binary | Uint8Array | Uint8List | Bounded raw bytes in binary, owned safely across async calls |
+| File | Typed stored reference | Typed stored reference | Separate authorized reference from upload request |
+| Composite/array | Generated nested types | Generated immutable models | Full recursive/element/shape checks |
 
-Do not infer every TEXT ID as a distinct domain: generate nominal IDs from actual domain/key metadata or explicit configuration. Shared vectors define field order, missing/null semantics, UTF-8, number representation, version bounds, composite-key encoding, and canonical hashes. `VersionId` is distinct from an operation ID, snapshot generation, and resume cursor; comparisons are meaningful only in their declared domain.
+Current JSON HTTP adapters may use exact strings/base64, but these do not become the native representation or binary bridge. VersionId, operation ID, delivery ID, generation and resume cursor are different types.
 
-### Shared binary codec and live client transport (API v2; Slice 2)
+## 10. Generation and release
 
-Generated TS and Dart types are independent of transport, but the one Rust `kalamdb-serialization` typed-value codec is used by `link-common` native, TS/WASM and Dart/FRB. The same decoder powers binary routine RPC and typed WebSocket snapshots/changes/control/acks. RPC and WebSocket use separate versioned message kinds, not separate type serializers. Scalar codecs **must not** decode binary into `serde_json::Value`; JSON remains only a separately selected external compatibility representation.
+`kalam schema gen --languages typescript,dart` remains the generation entry point and `--check` writes nothing. One current manifest/API epoch is generated; old layouts/symbols are not emitted. Staged multi-root generation preserves working files on failure and avoids touching unrelated application files.
 
-New WebSocket connections negotiate `kalam-binary` plus codec/version capabilities; existing JSON/MessagePack peers work only during the bounded transition. **At the final sunset, server and maintained client WebSocket MessagePack support MUST be deleted entirely**, not merely deprecated; unsupported clients receive explicit update-required errors. No permanent `SerializationType::MessagePack`, `serialization=msgpack` or `rmp_serde` WS code remains in production. Storage/raft historical MessagePack compatibility is separate.
-
-Memory and zero-copy guarantees: validated borrowed/owned Rust/Arrow views may reuse buffer bytes only with checked owner/lifetime/size/projection; HTTP/WS network receive, WASM and FRB crossings may copy. The JS-visible generated API never exposes raw host pointers or arbitrary server schema metadata. See [protocol](protocol.md) and ordered [tasks](../tasks.md) T064–T081.
-
-## 10. CLI and compatibility
-
-Extend existing target configuration with explicit generator `api_version = 2`; new project templates select v2, existing projects keep their declared/default v1 until migrated. Keep `kalam schema gen --languages typescript,dart` as the one generation command. Add `kalam schema gen --check` to verify stale artifacts without writing. Optional query files use named statements and a manifest entry for result cardinality/live intent, validated against the canonical SQL pipeline.
-
-| Existing API | Compatibility behavior |
-| --- | --- |
-| TS `createKalam(client).chat.sendMessage(input)` | Alias to `functions.chat.sendMessage`; preserve old input field naming in v1 adapter |
-| Dart `KalamFunctions(client).chat.sendMessage(input)` | Delegate to generated function facade |
-| TS `live`, `liveTable`, `createLiveQueryController` | Retain; new descriptors execute through shared machinery |
-| React `{table, where, orderBy}` / raw query hooks | Retain; compile to new descriptor/controller |
-| Dart `live`, `liveTable`, `liveEventsWithAck` | Retain transport-level forms; typed descriptors add safe entry points |
-| Dart `KalamTableSpec`, bindings, event consumer, current `open/catchUp` | Adapt to new descriptors/config where semantics are equivalent |
-| Existing raw result envelopes | Preserve; new typed facade normalizes structured exceptions |
-| ORM introspection CLI | Fetch/build the shared manifest and use the same emitter policy |
-
-Publish a migration guide with renamed outputs, input-field casing, bigint/decimal/temporal changes, sync DB migration, minimum server capabilities, and explicit alias removal in a future breaking release. Update the TS package cohort together. Do not introduce persistent sync guarantees into legacy callbacks or convert unsafe calls into queued work automatically.
+Update packages as a coordinated cohort; record explicit unsupported platform/epoch errors. Fresh project and Masky examples must compile/run without editing generated artifacts. Publication must distinguish schema readiness, handler activation and application health. The performance contract determines production promotion; the API never promises universal zero-copy, speedup or absence of vulnerabilities.

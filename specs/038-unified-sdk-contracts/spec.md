@@ -1,268 +1,157 @@
 # Feature Specification: Unified TypeScript and Dart SDK Contracts
 
-**Feature directory**: `specs/038-unified-sdk-contracts`  
-**Created**: 2026-10-18  
-**Status**: Implementation handoff; proposed APIs, not implemented behavior  
-**0.8 integration**: The SDK-native invocation and typed V8 value boundary from `specs/037-pg18-compatibility/contracts/functions-v8.md` are incorporated as unimplemented Slice 2 requirements here. 037 retains PostgreSQL SQL/PLpgSQL compatibility ownership; 038 owns generated TypeScript/Dart invocation and transport acceptance.  
-**Feature branch**: Not created; specification authored on the existing checkout  
-**Input**: Make TypeScript and Dart usage very similar across generated types, tables, functions, queries, and ORM access; minimize application boilerplate; preserve Dart's additional persistent sync capabilities and migrate Masky as a real consumer.
+**Feature directory:** `specs/038-unified-sdk-contracts`  
+**Created:** 2026-10-18  
+**Revised:** 2026-10-22 - research-backed, fresh-start release policy  
+**Branch:** `feat/pg-dialect`, PR #402  
+**Status:** Implementation specification. New runtime behavior and performance are NOT established by this document.
 
-## Overview
+## Decision and precedence
 
-Generate one coherent application API from KalamDB's authoritative schema and routine contracts. Both languages expose the same conceptual names, table operations, query semantics, errors, live state, and function results. Language-specific syntax and framework bindings remain idiomatic. Dart synchronization composes with these shared contracts.
+This revision replaces earlier preservation, dual-version, migration-window, alias and old-reader requirements in this feature. The owner explicitly authorized a fresh start: **no historical-data preservation and no backward compatibility** for old KalamDB-owned storage, Raft payloads, WebSocket messages, SDK contracts, generated files or local sync formats. There is no temporary MessagePack adapter or staged read-old/write-new rollout. Ship server, nodes, SDKs and generated artifacts as one new format/API cohort.
 
-The existing TypeScript live descriptor/controller, Drizzle integration, React hooks, shared Rust client, and language-neutral procedure catalog are foundations. This feature extends and consolidates them. It does not require replacing Drizzle or reproducing it in Dart.
+Reject old files, peers and SDK contracts before effects with an actionable format/epoch error. Do not silently reinterpret or automatically delete user directories. Clean bootstrap uses explicitly selected empty directories; this specification edit does not authorize deleting any deployed data. Once bootstrapped, durability, crash recovery, replay and preservation of newly accepted effects remain mandatory.
 
-Generated routine calls currently emit `client.query("SELECT ...($1) ...", params)` / `CALL` SQL strings. **API v2 MUST instead use native descriptor-based typed invocation** through the existing function execution service, with explicit JSON and binary wire encodings. SQL `SELECT function(...)` and `CALL procedure(...)` remain supported and semantically equivalent for SQL users. The function runtime, transactional ownership, and security model remain single-source; SDKs must not create a second executor or parser.
+Version fields, current-schema revisions and same-epoch DDL remain necessary for correctness; they do not promise support for an older release. SQL/PGWire, Parquet and explicitly supported Arrow interoperability are product interfaces, not obsolete KalamDB adapters. Spec 037 remains authoritative for SQL meaning and security. For this delivery, 038 supersedes any old requirement to block release on zero-copy or to preserve older KalamDB encodings. Historical review notes are diagnostic evidence, not current release policy.
 
-Read [research](research.md) for current gaps, [API contracts](contracts/public-api.md) for normative proposed signatures, [protocol contracts](contracts/protocol.md) for replay and wire guarantees, [data model](data-model.md) for state and persistence, [plan](plan.md) for ownership, [tasks](tasks.md) for implementation order, and [quickstart](quickstart.md) for paired usage and handoff instructions. Where old examples conflict, the contracts in this feature define the new API generation version.
+## Goal and priorities
 
-## User Scenarios & Testing
+Generate one checked application contract from the SQL catalog for TS and Dart, and use **one Rust-owned binary domain-value codec** through backend, `link-common`, WASM and FRB. Native routine calls must not synthesize SQL. WebSocket and owned persistence/Raft payloads use the selected codec with distinct message kinds. JSON is an explicit external representation, never a mandatory intermediate tree for binary calls.
 
-### User Story 1 — Generate and call the same application API (Priority: P1)
+Priority order: **P0 correctness/security/durability; P1 lower CPU, allocations and retained memory with higher measured throughput; P2 selective zero-copy.** Safe owned values and deliberate copies are acceptable. Fix existing native handle leaks/lifetime errors at P0; do not make new unsafe views a prerequisite.
 
-A developer defines schema and routines once and generates TypeScript and Dart clients without rewriting models, parameter lists, codecs, or method registries.
+The architecture is selected, but no library is certified fastest by external benchmarks. Gate D compares the hardened Kalam schema-directed candidate against Postcard and Prost using identical SQL semantics and validation. Only one wins production use. Alternatives remain isolated benchmarks, not negotiated production serializers. [Research](research.md) explains the sources; [performance contract](contracts/serialization-performance.md) defines measurable selection and release gates.
 
-**Independent Test**: Generate both targets from one fixture, compile both generated clients, call the same routines, and compare decoded results and errors.
+## User stories and acceptance
 
-**Acceptance Scenarios**:
+### US1 - Generate and call the same application API (P1)
 
-1. Given a schema with nested types, arrays, domains, enums, defaults, and routines, generation produces corresponding typed inputs and outputs in both languages with the same contract identity.
-2. Given a routine argument or result shape change, incompatible application calls fail analysis, and malformed remote results raise a structured decode error rather than passing through a cast.
-3. Given a function-only application, importing its generated function client does not load ORM, sync, or UI adapter packages. Existing native runtime requirements of `kalam_link` remain explicit.
-4. Given an incompatible generation failure, previously valid generated artifacts remain intact and the error identifies the schema location and target.
+Generate types, keys, inserts, patches, operation references and codecs once. Compile TS and Dart positive/negative fixtures. Nested types, arrays, domains, enums, defaults, overloads and result cardinality agree. Invalid remote values fail decoding instead of passing through assertions. Function-only imports avoid ORM/sync/UI dependencies. Failed generation leaves the previously valid working output intact; that publication safety is not support for an older API.
 
-### User Story 2 — Query and mutate tables with minimal repeated code (Priority: P1)
+### US2 - Typed table access without repeated boilerplate (P1)
 
-A developer uses corresponding typed table managers and named queries in both languages, while existing TypeScript applications keep their Drizzle workflows.
+TS uses Drizzle and generated `kTable` schemas; Dart uses a thin remote builder in `kalam_link`. Real keys come from the catalog, not a field called `id`. Writable/default/generated fields are distinguished. Missing patch fields differ from null. Named queries are analyzed through the canonical SQL parser and retain quoting, types and cardinality. Local Drift and remote query execution remain distinct.
 
-**Independent Test**: Run paired CRUD/query examples against a disposable server, including a composite key and fields whose names differ from their public identifiers.
+### US3 - Typed live queries (P1)
 
-**Acceptance Scenarios**:
+The same descriptor supports get and live operations. Paired tests prove empty/multi-batch snapshots, explicit completion, insert/patch/delete/filter transitions, ordering, shared observers and bounded retained state. Cursor/replay gaps are explicit; socket connectivity is not snapshot completion. No client silently loses changes during reconfiguration, reconnect or pressure.
 
-1. A generated table exposes typed key, row, insert, and patch shapes derived from actual catalog metadata.
-2. Inserts can omit server-defaulted fields. Updates distinguish omission from explicit null. Generated/read-only fields cannot be written through typed inputs.
-3. The same named query has equivalent parameters, result cardinality, ordering, and errors across both targets.
-4. Quoted identifiers, reserved words, and unusual string values retain their meaning. Parameter values are never treated as identifiers or concatenated SQL.
+### US4 - Dart persistence and recoverable actions (P2)
 
-### User Story 3 — Observe a typed live query in either language (Priority: P1)
+Use one managed or attached Drift connection per account. Fresh local stores begin in the new epoch; no old-store import is required. Thereafter inbox receipt, same-database projection, checkpoint and queued follow-up work are transactionally coordinated. Typed results survive restart. Unsafe operations cannot be auto-retried. Account switches and competing foreground/background workers are fenced. Foreign projections require their own receipts, not imaginary cross-database atomicity.
 
-A developer attaches a live handle or framework binding to the same query definition without defining row reconciliation or connection state.
+### US5 - One server routine contract (P1)
 
-**Independent Test**: Feed both SDKs the same snapshot/change/reconnect traces and compare row sets, ordering, completeness, and errors.
+Handlers, generated clients and HTTP exports use the same identity, defaults, logical types, permissions and result shape. OpenAPI documents actual operations. Clients cannot supply execution principals, transactions or host capabilities. A lost mutation response is uncertain unless an authoritative idempotency receipt resolves it.
 
-**Acceptance Scenarios**:
+### US6 - Fresh project and coordinated release (P1)
 
-1. Empty and multi-batch snapshots reach an explicit complete state. Socket connection alone does not mark results complete.
-2. Inserts, partial updates, key-only deletes, and filter exits produce the correct result membership.
-3. Two observers of an identical query share its transport subscription; releasing one observer does not stop the other.
-4. Local presentation limits never silently discard state needed to produce a correct ordered result. Exceeding a configured working-set budget produces an explicit capacity outcome.
+Create untouched TS/Flutter projects, generate the current API, execute CRUD/routines/live flows, and adopt the new API in Masky without altering its domain rules. Remove obsolete aliases, old decoders and package defaults. New format restart/crash tests pass. Old clients/data are rejected, not migrated or erased. Previous Slice 1 completion records remain historical evidence only.
 
-### User Story 4 — Add persistent Dart mirroring and recoverable actions (Priority: P2)
+### US7 - Native typed RPC and in-process composition (P1)
 
-A mobile developer passes the same generated query or operation to `kalam_sync` to persist rows, recover after restart, and queue eligible actions.
+Generated calls execute descriptor-bound operations directly through `FunctionService::invoke`, without `query("SELECT ...")` or generated `CALL`. Current-epoch JSON and binary have equivalent checked results/errors. Nested server calls share transaction, cancellation and deadlines, apply each routine's EXECUTE and INVOKER/DEFINER rules, and pass native typed values without HTTP, SQL generation or avoidable JSON envelopes. Single-data-Raft-group limits remain explicit.
 
-**Independent Test**: Kill and restart a disposable Flutter application while receiving changes and executing queued work, including foreground/background overlap.
+### US8 - One secure, efficient codec for client/server data (P1)
 
-**Acceptance Scenarios**:
+Harden first; extract a lightweight core; select by measured evidence; implement RPC; converge WebSocket; consolidate fresh persistence/Raft. The same Rust codec passes golden and adversarial vectors on server, native Link, browser WASM and Dart/FRB. MessagePack is removed directly, without a transition release. Direct Arrow construction for bulk values, encode-once authorized fanout, bounded batching, connection reuse and bounded pools precede optional views. No library, language or binary format is presumed secure or fast.
 
-1. A mirror immediately exposes persisted rows and freshness metadata, then resumes from durably committed progress.
-2. Separate filtered queries over the same table retain independent membership. An empty resnapshot removes obsolete membership.
-3. Received events remain available for retry when an external projection fails. Network work is outside local database transactions.
-4. A queued generated operation yields a typed durable result and can be recovered by ID after restart. Operations lacking retry safety cannot silently enter an automatic durable retry loop.
-5. Account changes stop old work and prevent old-account data, callbacks, or actions from leaking into the new session.
+## Functional requirements
 
-### User Story 5 — Develop routines and HTTP APIs from one contract (Priority: P2)
+Requirement IDs remain stable for task traceability; wording below is the current scope.
 
-A developer implements a backend function once and gets checked handler inputs/results, SDK calls, HTTP documentation, and optional durable-call eligibility from the same contract.
+- **FR-001:** TS/Dart MUST expose corresponding generated contracts and documented language/platform differences.
+- **FR-002:** One authoritative catalog/type/naming pass MUST generate deterministic artifacts and stable entity identities.
+- **FR-003:** Models/codecs/operations/facades MUST avoid accidental ORM, UI, persistence or server dependency chains.
+- **FR-004:** Keys, writability, defaults, parameter modes, overloads and result cardinality MUST derive from semantic metadata.
+- **FR-005:** Supported types MUST round-trip losslessly; unsupported mappings fail explicitly.
+- **FR-006:** Runtime boundary checks MUST validate actual values; generic parameters and casts are not validation.
+- **FR-007:** Names MUST retain exact SQL identity with deterministic collision handling and explicit schema components.
+- **FR-008:** Both targets MUST provide typed CRUD/query/routine concepts.
+- **FR-009:** TS table access MUST stay Drizzle-based; Dart remote access MUST remain separate from local Drift.
+- **FR-010:** Named queries MUST expose analyzed parameter/result/key/cardinality and live eligibility.
+- **FR-011:** Values and identifiers MUST be bound correctly without repeated ad hoc SQL rewrites.
+- **FR-012:** Live descriptors MUST expose common lifecycle, freshness, errors and completion semantics.
+- **FR-013:** Live changes MUST preserve full/partial/delete/filter membership and reject malformed incomplete rows.
+- **FR-014:** Subscription sharing MUST respect account, query, projection, authorization and codec identity.
+- **FR-015:** Snapshot chunking, history scope, presentation limit and memory limit MUST be independent.
+- **FR-016:** Replay MUST use authoritative scoped delivery/cursor identities, not maximum row versions.
+- **FR-017:** New-epoch Dart mirrors MUST persist row membership and progress atomically and recover after crashes.
+- **FR-018:** Consumers MUST retain unapplied work and report unrepairable event-history gaps.
+- **FR-019:** Foreign projections MUST supply their own idempotency receipts; no cross-database atomicity claim.
+- **FR-020:** Durable actions MUST reuse current operation codecs and only retry under a proven safe policy.
+- **FR-021:** Server receipts MUST bind principal/tenant, operation revision, key, canonical input digest, result and expiry.
+- **FR-022:** Ordering, optimistic overlays, dependencies and worker fencing MUST survive same-epoch restarts.
+- **FR-023:** Account/session ownership MUST prevent stale callbacks and cross-account cache or work leakage.
+- **FR-024:** Background catch-up MUST obey global/per-consumer budgets and safely drain or cancel in-flight work.
+- **FR-025:** Recovery, reset, diagnostics and retention MUST have public account-scoped APIs.
+- **FR-026:** Handler/HTTP/SDK contracts MUST share validation, identity, cardinality and permissions.
+- **FR-027:** OpenAPI MUST document real current-epoch paths, schemas, security and structured errors.
+- **FR-028:** Generation MUST be reproducible, checked for stale artifacts and exercised in untouched projects.
+- **FR-029:** This release MUST make a clean break: no old API aliases, fallback decoders, dual-stack adapters, transition window or preserved historical data requirement.
+- **FR-030:** Queues, caches, pools and scheduler scans MUST be bounded; observe actual retained capacity.
+- **FR-031:** Authentication, EXECUTE, RLS and role checks MUST remain server-enforced independently of descriptors.
+- **FR-032:** Shared semantics MUST have compile, golden, negative, property, real-server and cross-language tests.
+- **FR-033:** Specs, current architecture docs, SDK examples and generated outputs MUST match implementation status.
+- **FR-034:** TS topic workers MUST not be misrepresented as Dart local synchronization.
+- **FR-035:** Managed/app-constructed/attached Dart modes MUST use one session Drift connection.
+- **FR-036:** Dart table generation MUST preserve qualified names and typed changes without a new ORM package.
+- **FR-037:** Masky adoption MUST remove generic glue without rewriting application-specific REST/domain/UI rules.
+- **FR-038:** Generated routine calls MUST bypass SQL parsing and invoke the existing function service.
+- **FR-039:** Binary RPC MUST use the selected common codec; explicit typed JSON is only an external adapter over the same contract.
+- **FR-040:** All boundaries MUST preserve exact numeric/temporal/array/domain semantics and distinguish omission, SQL NULL, JSON null and void.
+- **FR-041:** Nested routine calls MUST be in-process and typed, with no avoidable serialization; safe owned values are sufficient.
+- **FR-042:** Descriptors MUST be revision-pinned, dependency-aware and boundedly cached; mismatches fail before effects.
+- **FR-043:** SQL/native calls MUST share authorization, deadlines, transaction ownership, error and staged-publication semantics; cross-group ACID and external/STREAM rollback are not invented.
+- **FR-044:** Unknown outcomes MUST NOT trigger automatic mutation replay or format fallback without authoritative idempotency protection.
+- **FR-045:** Performance comparisons MUST include full validation, bridges, materialization, authentication and real execution, not unchecked access-only timings.
+- **FR-046:** Zero-copy is optional P2. Any implemented view MUST prove immutable ownership, bounds, projection, lifetime, cancellation and memory accounting; a copy is preferred when safer or smaller.
+- **FR-047:** Use Spec 037 SQL/type/security semantics, but 038's fresh-start and P0/P1/P2 priority rules govern this delivery. Do not claim unfinished upstream ABI work complete.
+- **FR-048:** Exactly one Rust-owned binary domain-value codec MUST serve backend and Link/native/WASM/FRB. One type authority; no parallel SDK serializers.
+- **FR-049:** Untrusted counts/offsets/depth/work and total decoded allocations MUST be bounded before allocation/recursion/Arrow construction, including skipped and null-heavy collections.
+- **FR-050:** The lean codec MUST compile without Arrow, DataFusion, RocksDB, HTTP servers or V8; backend adapters are optional and dependency direction is acyclic.
+- **FR-051:** RPC, WS and owned durable/raft messages MUST share value encoding, with distinct endpoint-authorized message kinds and versioned framing.
+- **FR-052:** Remove MessagePack WS/server/native/WASM/FRB paths, enum variants, defaults, negotiation and unused dependencies directly; no temporary adapter.
+- **FR-053:** New owned persistence/Raft encodings MUST start fresh and remove historical readers. Test new-format recovery, corruption and crash durability with unchanged acknowledgment/quorum/fsync semantics.
+- **FR-054:** Optimize total CPU/allocated/retained memory, not copy count; bounded pooling and compact copying may beat borrowed slices.
+- **FR-055:** Promotion MUST meet the pre-registered memory/CPU/throughput and latency gates in the performance contract. External results are hypotheses, not KalamDB measurements.
+- **FR-056:** CI MUST enforce codec ownership across backend/API/commons/Link/WASM/FRB and detect obsolete serializer dependencies. External protocols have narrow named exemptions, not a blanket exemption for old readers.
+- **FR-057:** Compression MUST be off for ordinary small calls initially; any enabled compressed path has input/output/work/window limits and no permissive sniff-and-fallback decoder.
+- **FR-058:** Release MUST pass hostile-frame fuzzing, property tests, arithmetic/lifetime/permission checks and lockfile advisory review; passing these is not a claim of invulnerability.
+- **FR-059:** Gate D MUST compare a hardened schema-directed candidate, Postcard and Prost with identical supported semantics, exact types, limits and conversion costs; ship one winner only.
+- **FR-060:** Implement or measure bounded byte/time microbatching, authorization-safe encode-once fanout, pooled connections, bulk Arrow builders and bounded buffer reuse before optional zero-copy.
+- **FR-061:** New format/API/cluster epochs MUST reject old artifacts without automatic deletion or reinterpretation. Same-epoch schema evolution and durable restart remain correct.
+- **FR-062:** Report CPU time/op, allocations/op, peak/retained memory, p50/p95/p99, throughput at a fixed latency SLO, wire/disk bytes and WASM footprint with pinned reproducible evidence; no cherry-picked aggregate hides a failed critical workload.
 
-**Independent Test**: Exercise an exported routine through both SDKs and its documented HTTP endpoint, including invalid input, authorization rejection, overload identity, and idempotent retry.
+## Success criteria
 
-**Acceptance Scenarios**:
+- **SC-001:** Paired examples compile and agree across the supported platform matrix.
+- **SC-002:** Generated routine calls require no handwritten SQL, string key, serializer or registry.
+- **SC-003:** A basic live query needs at most six application statements; a mirror adds one construction call.
+- **SC-004:** Untouched project generation, current-schema evolution, CRUD, live, routine and handler tests pass.
+- **SC-005:** Fault tests recover required changes or report an explicit gap/unknown outcome, never silent loss.
+- **SC-006:** Supported types round-trip exactly; malformed/unsupported values fail explicitly.
+- **SC-007:** Unchanged inputs yield byte-identical generated artifacts; failed publication leaves working files intact.
+- **SC-008:** 1k/10k/100k-row and fanout workloads have reproducible timing, resource and retained-memory evidence.
+- **SC-009:** Masky targets at least 50% reduction in measured generic sync glue, excluding domain/UI code.
+- **SC-010:** The new cohort passes its regression suite; old clients/data are rejected without adapters or implicit reset.
+- **SC-011:** Traces prove generated native routine invocation never enters SQL parsing.
+- **SC-012:** SQL, explicit current JSON, binary and nested calls agree on supported values, ACL/RLS and errors.
+- **SC-013:** Stale descriptors, forbidden context, cross-group writes and cancellation fail without privilege widening or unsafe retries.
+- **SC-014:** Validated RPC performance meets the declared promotion gate; no assumed binary advantage.
+- **SC-015:** One lean codec passes native/WASM/FRB golden vectors without server dependency inflation.
+- **SC-016:** Adversarial full-path tests remain within allocation/work/depth budgets without crash, leak or bypass.
+- **SC-017:** New binary WS delivers correct snapshot/change/patch/delete/ack/replay behavior in all supported SDKs.
+- **SC-018:** No production MessagePack WS or obsolete first-party reader/alias remains; old protocol rejection is tested.
+- **SC-019:** Memory, CPU and throughput improve on the predeclared representative workloads; critical tail-latency guardrails pass.
+- **SC-020:** New persistence/Raft data survives equivalent-durability restart/crash tests; old data does not need migration.
+- **SC-021:** Gate D records the selected implementation, rejected alternatives, security posture, dynamic-schema limitations and reproducible comparisons.
+- **SC-022:** Every performance/security claim is marked measured, source-observed, proposed or unverified; P2 zero-copy can be deferred without blocking release.
 
-1. Generated server handler contracts, SQL routine calls, and HTTP operation definitions agree on names, types, defaults, result cardinality, and error semantics.
-2. OpenAPI includes actual exported operation paths and correctly typed schemas; unrelated Masky REST endpoints remain application-owned.
-3. Public clients cannot supply privileged execution context or bypass permission checks using generated metadata.
-4. A lost mutation response has a defined recovery outcome; no SDK promises exactly-once effects based only on a local action record.
+## Delivery order and scope
 
-### User Story 6 — Adopt incrementally and prove the developer workflow (Priority: P2)
+Harden current code (S) -> lean shared core plus measured codec decision (C0/D) -> native RPC (B2) -> binary WS without MessagePack (W) -> fresh owned persistence/Raft (P) -> measured release (R). Core metadata/live/sync work follows [tasks](tasks.md). Existing unsafe lifetime defects are P0 regardless of P2 deferral.
 
-Existing applications upgrade through compatibility adapters while new projects get the concise paired examples by default.
+No arbitrary client workflow execution, new distributed transaction coordinator, TypeScript persistent sync package, general local relational engine or storage-engine replacement is added. Research from Kafka, TigerBeetle, Aeron/SBE, RocksDB, DuckDB and gRPC supplies scoped techniques, not a mandate to import their entire stacks.
 
-**Independent Test**: Create untouched TypeScript and Flutter projects, evolve their schema/routines, run them, and migrate Masky's sync wrappers.
-
-**Acceptance Scenarios**:
-
-1. Existing supported TypeScript client, Drizzle, React, and Dart calls continue to pass their regression suites during the migration window.
-2. Generated output is reproducible and contains a manifest identifying contract and generator versions.
-3. Schema generation, backend activation, and application health are reported separately. Failed activation does not replay committed DDL.
-4. Masky retains its business rules but removes redundant generic synchronization, codec, queue, and session wiring.
-
-### User Story 7 — Invoke and compose typed routines without SQL text (Priority: P1; Slice 2)
-
-A TypeScript or Dart developer calls generated routines directly, using a lossless schema-aware transport, while server-side routines compose typed nested calls in-process without JSON detours.
-
-**Independent Test**: For the same SQL-defined routine, generate both SDKs and execute through SQL, legacy REST JSON, v2 typed JSON, and v2 binary against a real server. Compare typed results, default handling, errors, authorization, RLS, commits, and rollback; measure parsing, allocations, wire bytes, and latency.
-
-**Acceptance Scenarios**:
-
-1. Generated routine methods call a typed operation executor, **never synthesize SQL `SELECT`/`CALL` text or route through the SQL parser**; the legacy SQL interfaces still work.
-2. Both SDKs generate typed input/output and codecs from one immutable routine descriptor, rejecting stale or incompatible signature revisions **before effects**.
-3. Native JSON and binary requests/results agree on large integers, decimals, timestamps, JSON/SQL null, missing/default arguments, domains, enums, arrays, composites, BYTES, and cardinality. Unsupported values fail explicitly rather than narrowing or silently coercing.
-4. `auto` transport selects only advertised compatible encodings, does not require a new round trip per call, and never silently retries a possibly executed mutation when probing/falling back.
-5. A composed `ctx.functions.<schema>.<method>` call shares the root transaction/deadline/cancellation and preserves each routine's INVOKER/DEFINER and EXECUTE checks; no HTTP round trip or stringify/parse of native intermediate results is required.
-6. Binary transport and native V8 value reuse show measured improvements where applicable; no blanket zero-copy or binary-faster claim is made. A caller-supplied forged native handle or privileged context is rejected.
-
-### User Story 8 — One safe binary serialization core across RPC and WebSocket (Priority: P1; Slice 2)
-
-KalamDB uses one canonical schema-directed binary value codec owned by `kalamdb-serialization`, reused by the backend, `link-common`, browser WASM and Dart's Rust bridge. Native function RPC and live WebSocket frames use distinct **message kinds/envelopes over the same binary codec**, without intermediary `serde_json::Value` conversions. The existing WebSocket MessagePack transport is **fully retired** after a controlled negotiated migration, not retained as an indefinite second binary standard.
-
-**Independent Test**: Starting from unchanged v1 clients and mixed server/SDK versions, harden/fuzz all decoding boundaries; compile the lightweight shared codec for native, browser WASM and Dart/FRB; call typed RPC and run snapshot/change/ack/resume WebSocket flows over Kalam Binary; prove conformance, memory limits, crash safety, latency/allocation/byte baselines and security parity. Verify the final release has **zero MessagePack encode/decode/negotiation paths in WebSocket runtime or maintained SDK live clients**. Existing durable/raft file formats are migrated only under their own versioned storage gates.
-
-**Acceptance Scenarios**:
-
-1. A malformed network frame or encoded value containing oversized counts, nested inputs, decompression bombs, invalid offsets/UTF-8, forged types or privileged metadata is rejected before unbounded allocation, stack growth or function execution; fuzz/property tests and memory limits pass.
-2. Browser WASM, native `link-common`, Dart FRB and the backend reuse the **same Rust-owned safe codec implementation** and conformance vectors. Arrow/DataFusion/storage-only dependencies are feature-gated away from the small browser binary.
-3. The server emits a versioned, bounded Kalam Binary live envelope carrying authenticated message semantics (snapshot start/end, row changes, deletes, cursor/ack, errors and control frames). Generated SDK live clients decode without redundant JSON/MessagePack trees and preserve every existing live/replay/RLS requirement.
-4. During a finite documented compatibility window, negotiated old MessagePack clients continue to work with compatible servers. The new binary becomes the default for capable clients; unsupported peers get explicit upgrades/errors, never bytes silently reinterpreted as another format.
-5. After migration gates, **remove MessagePack completely from WebSocket/server, native Link, WASM and Dart live-runtime code, configuration, tests and wire negotiations**. Keep JSON as an explicit external/interoperability option where required; no additional default binary serializer.
-6. Storage/Raft consolidation is a separate versioned migration with old-data readers, crash/restart/rollback evidence and no disk-format switch required merely to ship RPC or WebSocket binary.
-7. Eligible zero-copy views are proved at **named safe boundaries** with validated owners and lifetimes; network/WASM/FRB crossings, strings and ordinary JS objects never receive an unqualified zero-copy claim.
-
-### Edge Cases
-
-- Empty results versus nullable single results versus void routine returns; multi-row and set-returning results.
-- Composite keys, keyless results, non-key columns named `id`, renamed fields, quoted namespaces, reserved identifiers, and overloads differing only by argument types.
-- SQL null versus JSON null; absent versus explicit null; nested nullable arrays; unknown enum values; decimal precision; integers outside JavaScript's safe range; timestamp precision/time zones; binary/file values.
-- A query changes parameters while receiving an old callback; two accounts share a server; two tenants share a subject; permission changes invalidate a cache.
-- Reconnect during a snapshot, empty resnapshot, stale cursor, wrong version domain, history reset, duplicate batches, out-of-order delivery, and delete/filter exit while offline.
-- Two consumers receive a batch with equal row versions: event identity and cursor boundaries must not be reduced to a single global numeric comparison.
-- Multiple optimistic actions affect one row; an earlier action retries while a later action is queued; cancellation after possible server execution.
-- An external REST side effect commits before process death; a local projection fails after durable receipt; corrupt or incompatible cached payloads.
-- Foreground and background workers overlap; disposal occurs during apply; a catch-up time budget expires during a batch; authentication refresh fails temporarily.
-- A local ordered view loses its first row and needs a previously hidden row; working-set eviction cannot silently turn it into an incomplete top-N result.
-- Native/binary calls race with routine replace, revoke, type evolution, transport negotiation, or a stale generated descriptor; invalidate/pin revisions and fail safely before effects.
-- JSON null versus SQL NULL, missing/defaulted arguments, wide NUMERIC, bigint beyond JS safe integer, sub-millisecond timestamps, null array elements, foreign V8 read-view handles, and async ownership across cancellation.
-- Binary validation rejects unknown codec versions, malformed lengths/offsets, oversized payloads, untrusted metadata, and forbidden client-supplied actor/transaction frames.
-- Function chains may encounter different Raft groups or STREAM DML: cross-group atomic commits are rejected, and STREAM autocommit is not part of the root rollback guarantee.
-- Malformed/deep/large binary payloads, hostile declared list counts, decompression expansion, offset overflow, wrong message kind, unsafe Arrow ownership and V8 handle reuse across sessions.
-- Mixed-version WebSocket clients during and after MessagePack sunset; unknown wire type/codec version, invalid upgrade negotiation, reconnect cursor loss, incompatible frame compression, replay and ack semantics.
-- Legacy stored KOBJ/FlexBuffers/MessagePack snapshots after network MessagePack removal; no unversioned durable-data rewrite, rollback breakage, or accidental Raft-format switch.
-
-## Requirements
-
-### Functional Requirements
-
-- **FR-001**: Both SDKs MUST expose the shared API vocabulary and behavioral parity matrix defined in the API contract; differences MUST be limited to documented language/framework conventions and optional capabilities.
-- **FR-002**: All generated artifacts MUST derive from the same authoritative contract and shared naming/type/operation metadata, with stable identities and deterministic output.
-- **FR-003**: Generation MUST separate models/codecs, table metadata, operation definitions, client facades, and optional ORM/sync adapters so lightweight consumers avoid unrelated dependencies.
-- **FR-004**: Generated SDK code MUST represent inputs, outputs, keys, inserts, patches, defaults, read-only fields, nested types, routine identity, and result cardinality accurately.
-- **FR-005**: Decoders and encoders MUST preserve supported values across TypeScript, Dart, the wire, and persisted actions. Unsupported types MUST fail explicitly with actionable diagnostics.
-- **FR-006**: Typed APIs MUST validate external values at boundaries and preserve structured errors; selecting a generic type or using a type assertion MUST NOT substitute for decoding.
-- **FR-007**: Public identifiers MUST follow one deterministic naming policy while retaining exact wire names. Namespace/type/field collisions MUST be detected and resolved consistently.
-- **FR-008**: Both targets MUST provide matching table query, get, CRUD, and function invocation concepts with language-appropriate typed inputs.
-- **FR-009**: Existing TypeScript Drizzle APIs MUST remain usable, sharing codecs, metadata, and execution behavior with the generated facade. Dart remote ORM behavior MUST remain separate from local SQLite query behavior.
-- **FR-010**: Named parameterized queries MUST generate typed parameters, result shape, and cardinality; live capability MUST be explicitly checked against server semantics.
-- **FR-011**: Identifiers and values MUST be safely bound/quoted, and query semantics MUST follow the authoritative parser/planner without new ad hoc hot-path SQL rewrite passes.
-- **FR-012**: Both SDKs MUST expose compatible live descriptors, result snapshots, lifecycle, connection/error state, and completion metadata.
-- **FR-013**: Live application MUST handle snapshots, partial patches, deletes, filter transitions, duplicate delivery, and stale callbacks correctly; unsupported server capabilities MUST fail explicitly.
-- **FR-014**: Identical queries MUST share subscriptions within a client/account scope and have deterministic reference-counted lifetime; raw and generated queries MUST not accidentally share incompatible codecs.
-- **FR-015**: Live presentation order/limit, snapshot batch size, history selection, and retained-state capacity MUST be separately named and tested.
-- **FR-016**: Resume MUST preserve server delivery identity, history/domain/scope binding, and received/applied boundaries. A row version alone MUST NOT imply durable event replay.
-- **FR-017**: Dart mirrors MUST persist data and required progress atomically, expose cached data promptly, and rebuild membership safely after invalidation or expired history.
-- **FR-018**: Event consumers MUST retain unapplied work, distinguish retries from explicit rejection, and surface unrecoverable replay gaps. Snapshot rebuild cannot substitute for missing intermediate events.
-- **FR-019**: External local projections MUST have an explicit idempotency/receipt contract; the SDK MUST NOT claim cross-database atomicity.
-- **FR-020**: Durable actions MUST reuse generated operation input/output codecs, persist typed results, expose recovery/status, and only retry under an explicit safe-execution policy.
-- **FR-021**: Server-supported idempotency MUST bind identity, operation signature/version, input digest, result, and retention. Conflicting reuse and expired guarantees MUST have explicit errors.
-- **FR-022**: Action ordering, optimistic overlays, dependencies, retries, and reconciliation MUST remain correct through restart and concurrent foreground/background execution.
-- **FR-023**: Session ownership MUST serialize lifecycle/account changes, isolate auth/cache scopes, provide reliable current-state observation, and coordinate persistent workers.
-- **FR-024**: Background catch-up MUST reuse foreground definitions with explicit global/per-consumer budgets, completion metadata, and cancellation that drains or safely rolls back in-flight work.
-- **FR-025**: Public APIs MUST support projection reset, cache invalidation, action recovery, diagnostics, and retention without application access to SDK persistence tables.
-- **FR-026**: Routine handler contracts and HTTP exports MUST share canonical definitions with both generated SDKs, including validation, cardinality, overload identity, permission boundaries, and errors.
-- **FR-027**: OpenAPI output MUST contain accurate scalar/nested/nullability schemas, actual exported operation paths, security requirements, and structured errors without exposing private routine bodies.
-- **FR-028**: Existing generation/execution workflows MUST gain reproducible outputs, stale-artifact checks, actionable compatibility errors, and one paired example with minimal handwritten setup.
-- **FR-029**: Legacy APIs MUST migrate through bounded compatibility adapters with one documented canonical new API. No adapter may silently change write/retry/durability semantics.
-- **FR-030**: SDK runtimes MUST bound queues and retained histories, avoid full-history scans for scheduling/status, and provide paged/delta observation for large results.
-- **FR-031**: Authorization MUST remain server-enforced; generated write/live/durable capabilities are usability constraints, not authorization grants.
-- **FR-032**: Shared behavior MUST have cross-language conformance fixtures, compile-positive/negative generation tests, real-server integration tests, and disposable-project acceptance.
-- **FR-033**: SDK docs, canonical skills, architecture decisions, examples, and package/version constraints MUST be updated with implementation; generated files MUST be regenerated from sources.
-- **FR-034**: TypeScript's topic consumer package MUST retain its worker/topic meaning and MUST NOT be presented as the equivalent of Dart's local sync package.
-- **FR-035**: Slice 1 Dart database modes and projection helpers MUST use one application/session Drift connection, with explicit checkpoint ownership and no fabricated remote transaction guarantee. This codifies pre-existing T038/T041/T045 scope.
-- **FR-036**: The TypeScript table layer MUST remain Drizzle-based; Dart's thin generated remote table builder MUST preserve schema-qualified names and typed row/query behavior without introducing a parallel Dart ORM package. This codifies pre-existing T018/T019 scope.
-- **FR-037**: Slice 1 Masky migration and Dart session/checkpoint helpers MUST preserve existing application domain logic and receive regression coverage without inadvertently enabling unfinished Slice 2 features. This codifies pre-existing T001/T018/T038/T045 scope.
-- **FR-038**: Generated TS and Dart **immediate routine calls MUST dispatch through native typed operation execution**, not generated SQL text, SQL `query()`, or a SQL parser/planner. Reuse `FunctionService::invoke` and preserve raw SQL `CALL` / `SELECT` compatibility.
-- **FR-039**: Versioned, authenticated **JSON and binary routine transports MUST share one canonical `LogicalTypeRef` / catalog-derived descriptor and validation owner**. `auto`, `json`, and `binary` are capability-gated preferences, not separate business contracts; binary MUST reuse the existing serializer and logical type registry rather than create a new one.
-- **FR-040**: Typed JSON, binary, SDK/native/WASM/FRB, and V8 boundaries MUST round-trip all supported SQL routine types without numeric or temporal precision loss or conflating SQL NULL, JSON null, omitted/defaulted arguments, and void. Each unsupported mapping MUST reject explicitly with a typed error.
-- **FR-041**: Nested `ctx.functions.<schema>.<method>` calls MUST dispatch in-process using **native typed values / validated read views** when eligible, avoiding intermediate SQL generation and JSON stringify/parse. Preserve separate V8 child-realm frames, immutable principal/authorization state, the root transaction/deadline/cancellation, and ownership lifetimes.
-- **FR-042**: Generated and server-side immutable routine descriptors MUST carry canonical routine/signature identity, argument ordinals/modes/defaults, result cardinality, codec/ABI versions, and dependency epochs. Cache/pin/invalidate on DDL, type/layout, grants, revision, and relevant authorization changes; mismatches MUST fail before mutation.
-- **FR-043**: All invocation paths MUST use the same authentication, `EXECUTE` ACL, INVOKER/DEFINER, RLS, rollback, topic staging, observability, and resource budgets. Do not expose privileged host context in wire input. Single-Raft-data-group transaction scope and STREAM autocommit limitations MUST remain explicit, not silently widened.
-- **FR-044**: Negotiation and fallback MUST be safe for non-idempotent mutations: select compatible encoding before dispatch; never retry across transports on an uncertain outcome without proven server idempotency/receipt support. Preserve legacy request shape unless the client explicitly opts into v2.
-- **FR-045**: Benchmark generated SQL, direct typed JSON, and direct typed binary **with identical routine bodies** under native/WASM/FRB paths as supported; measure cold/warm p50/p95, allocations, conversion/parse time, CPU, bytes, throughput, nested-call overhead and failure/cancel costs. Do not hardcode a binary preference absent evidence.
-- **FR-046**: Eligible native Arrow/buffer ownership transfer across host/V8 frames MUST be versioned, lifetime-checked, memory-budgeted, projection/authorization-validated and cancellation-safe; do not claim zero-copy for ordinary JS objects, network encoding, transcodes or unsupported buffer ownership.
-- **FR-047**: 038 specification, protocol, API, manifest, tasks, tests and migration guidance MUST incorporate the applicable 037 `functions-v8.md` and `routines-postgresql.md` guarantees without copying PostgreSQL-specific execution into an SDK or declaring 037's unfinished ABI work complete.
-
-- **FR-048**: KalamDB MUST maintain **one canonical binary typed-value codec owner** (`kalamdb-serialization` or a factored feature-gated codec core), derived from `LogicalTypeRef`. Backend and `link-common`/Rust, browser WASM and Dart/FRB MUST reuse the same Rust encoder, decoder, error types, conformance vectors and canonical hashing rules. Never add parallel TypeScript/Dart/Rust codecs, runtime JSON trees inside binary, or multiple competing type registries.
-- **FR-049**: BEFORE network binary decoding is exposed, bound wire bytes, frame/message count, argument/column count, recursive depth, array/list cardinality, string/byte length, decoded memory, CPU work, compression expansion and host/V8 pin budgets. All untrusted lengths MUST be validated against remaining payload and per-call budgets **before allocation**, recursion or Arrow construction, with checked integer arithmetic. Reject malformed data with typed errors; no panic, process abort, oversized allocation or execution.
-- **FR-050**: `kalamdb-serialization` MUST have a lightweight shared build for `link-common`, native Rust/WASM/FRB, with Arrow, DataFusion, durable row storage, Raft and backend-only dependencies feature-gated or behind a thin adapter. Avoid circular crate dependencies and unrelated WASM size inflation. Reuse existing physical row/value encoding when compatible, without reusing unvalidated storage envelopes as trusted network objects.
-- **FR-051**: Native function RPC and WebSocket MUST use the same **versioned Kalam Binary framing family and canonical typed-value encoding**, but distinct authenticated message kinds and semantics. WebSocket frames MUST support typed snapshot/change/patch/delete/control/ack/error/cursor messages and preserve all existing subscription/completeness/replay and RLS guarantees. No second live serializer may become the binary default.
-- **FR-052**: WebSocket MessagePack MUST be **fully removed** from the server and maintained native/TS-WASM/Dart-FRB Link live paths after a finite, documented capability-negotiated migration. Prior to removal, serve old peers only through an isolated bounded legacy adapter; subsequently remove `SerializationType::MessagePack`, `serialization=msgpack`, WebSocket-specific `rmp_serde` encoders/decoders and obsolete dependencies/tests/docs. Unknown legacy formats MUST fail with an actionable upgrade error, not JSON coercion, silent protocol fallback or lost live events.
-- **FR-053**: Persistence/Raft format convergence MUST be a separately gated storage change with durable schema/kind versions, old-data compatibility, rolling-upgrade capability, corruption/rollback/restart and mixed-version cluster tests. No persisted-object, log or snapshot byte changes are prerequisites for native function RPC or WebSocket convergence.
-- **FR-054**: Zero-copy MUST be a proven **bounded borrowed/owned view** at a particular Rust/Arrow/native boundary with validated offsets, length, alignment, principal/projection, owner generation, memory charge, cancellation and lifetime. Use safe copying when ownership or transport crossing cannot satisfy these conditions. Network receive, WASM JS typed-array passage, FRB and V8 materialization are not globally zero-copy.
-- **FR-055**: Reproducibly benchmark old WS JSON and MessagePack against Kalam Binary and old SQL/JSON function calls against binary RPC, including high-fanout, tiny and large payloads, decode/encode CPU, bytes, allocations, throughput, p50/p95, retained/peak memory, reconnect and mixed versions. No more than 10% unexplained regression; any zero-copy or binary-performance claim MUST have profiler and ownership evidence.
-- **FR-056**: Expand `scripts/check-serialization-boundary.py` or a replacement CI rule to cover public WS/RPC codecs in `backend/crates/kalamdb-api`, `backend/crates/kalamdb-commons`, `link/link-common`, `link/kalam-link-wasm` and `link/kalam-link-dart`. After removal, reject reintroduction of direct `rmp_serde` WS paths or parallel serializers; permit explicitly documented JSON/PGWire/Arrow IPC/legacy durable adapters without conflating their formats.
-- **FR-057**: All compressed network input paths (server, native Link, WASM, Dart) MUST apply a strict compressed and decompressed byte budget and terminate invalid compressed data with an error. No unbounded `decompress_if_gzip` / `usize::MAX` path or 'failed gzip -> borrow compressed bytes' fallback is allowed for untrusted messages.
-- **FR-058**: The pre-exposure security gate MUST include decoder fuzzing, property-based roundtrips, malicious lengths/nesting/UTF-8/offset and decompression fixtures, memory-pressure/concurrency/cancellation tests, and a native V8 `NativeReadViewHandle` leak/alias/lifetime review. Known safety findings remain explicit blockers until fixes and tests are recorded.
-
-### Key Entities
-
-- **Contract manifest**: Versioned schema, type, key, query, routine, codec, and capability identities used by every target.
-- **Table descriptor**: Qualified identity, real key, read/write shapes, columns, and codecs.
-- **Query descriptor**: Typed bound inputs, result/cardinality, live eligibility, membership identity, and presentation settings.
-- **Operation and bound call**: Routine signature, input/output contracts, execution semantics, and supplied arguments.
-- **Native routine descriptor and wire format**: Canonical, revision-pinned function identity; named/ordinal parameters; logical types; JSON/binary codec versions and capability negotiation; normalized structured errors.
-- **Kalam Binary typed codec and frame kinds**: One schema-directed byte/value encoder, bounded decoder, revisioned message-kind frame variants for function request/result and WebSocket live/control.
-- **Wire compatibility epoch**: Advertised supported codec/message versions, legacy MessagePack cutoff, explicit upgrade status and client capability/replay recovery behavior.
-- **In-process typed value/read view**: Native owned Arrow/scalar or eligible exclusive-buffer representation with projection, revision, principal and memory-budget provenance.
-- **Live snapshot and delivery**: Materialized rows and completeness, versus ordered server events and progress metadata.
-- **Account/cache scope**: Server, subject, tenant/namespace, and authorization scope defining ownership.
-- **Mirror membership and generation**: Rows included by one persisted query and its active/rebuilding snapshot generation.
-- **Inbox, projection receipt, action, and result**: Durable receipt, application progress, outgoing work, and typed completion.
-
-## Success Criteria
-
-### Measurable Outcomes
-
-- **SC-001**: Every shared operation in the parity matrix has a compiling TypeScript and Dart example and a conformance test; all deliberate exceptions are listed.
-- **SC-002**: A generated remote function call needs no handwritten SQL, string operation key, serializer, decoder, or registration list in either application.
-- **SC-003**: After session creation, a basic typed live query needs at most six handwritten statements; a Dart mirror needs one additional construction statement and no checkpoint/reconnect callbacks.
-- **SC-004**: The paired fresh-project acceptance suite passes generation, schema evolution, CRUD, live queries, routine invocation, server-handler checking, and application health without editing generated files.
-- **SC-005**: Crash/reconnect/gap tests either recover every required change or report an explicit unrecoverable gap; no test may pass by silently skipping an unapplied event.
-- **SC-006**: All supported type fixtures round-trip without precision loss or missing/null conflation; unsupported cases fail generation or decoding rather than being misrepresented.
-- **SC-007**: Repeated generation from unchanged input produces byte-identical owned artifacts and leaves unrelated files untouched.
-- **SC-008**: Paired performance results record first-data latency, catch-up runtime, allocation/retained-memory behavior, and wire/subscription counts at 1,000, 10,000, and 100,000 rows. All relevant runtimes are reported in seconds; no unexplained greater-than-10-percent regression against a recorded baseline is accepted.
-- **SC-009**: Masky's generic sync/session/queue/codec glue is measured before and after migration, with a target reduction of at least 50 percent in the explicitly classified reusable glue. Business mapping/UI behavior is excluded from this target.
-- **SC-010**: Existing supported SDK regression suites remain green throughout the documented compatibility window; API/contract mismatches produce actionable errors instead of data loss.
-- **SC-011**: Both generated SDKs call an existing routine through **native typed invocation without generated SQL text**, while SQL `SELECT` / `CALL` remain compatible; verified with real-server traces that prove the native request bypasses SQL parsing.
-- **SC-012**: A shared conformance matrix demonstrates parity among typed JSON, typed binary, SQL, TS, Dart, WASM/FRB and nested V8 where available; all supported scalar, composite, null, default, cardinality, error, and ACL/RLS fixtures pass without data loss.
-- **SC-013**: Malformed/stale descriptors, forbidden metadata, unauthorized nested calls, cross-group transactional chains, cancellation/unknown outcomes, buffer lifetime and budget probes fail explicitly and never widen permission or silently retry effects.
-- **SC-014**: A reproducible comparison of SQL vs native JSON vs native binary and nested typed calls records p50/p95, throughput, CPU, allocations, payload bytes and conversion/parsing breakdown; any claimed improvement is supported by measured evidence and no unexplained >10% regression is accepted.
-
-- **SC-015**: A single `kalamdb-serialization`-owned encoder/decoder passes identical golden/negative vectors across backend, native Link, browser WASM and Dart FRB; browser codec build remains free of Arrow/DataFusion/backend-heavy dependencies.
-- **SC-016**: Network fuzz/property/negative corpus exercises oversized lengths, malicious nesting, compressed bombs, forged metadata, V8 handle safety and cancellation; inputs are rejected within enforced CPU/memory/time budgets with no panic, crash, unbounded allocation or auth bypass.
-- **SC-017**: Identical WebSocket live/replay snapshots, changes, deletes, acks, errors and reconnect cursors produce byte/semantic-compatible outcomes in new Kalam Binary across supported SDKs, including mixed-version migration; no missed events or scope leakage.
-- **SC-018**: After the declared MessagePack sunset, automated repository/runtime checks show zero supported WS/Link/WASM/FRB MessagePack encode/decode/negotiation paths, and explicit upgrade errors for retired clients. A tested old-client compatibility period is recorded.
-- **SC-019**: Memory/CPU/throughput/latency baselines compare Kalam Binary vs MessagePack and JSON WebSocket, and binary RPC vs typed JSON/SQL; zero-copy only accepted where measured and ownership-tested, with no unexplained >10% regressions.
-- **SC-020**: Persisted/Raft migration remains independent and version-safe; no release of binary RPC/live requires a RocksDB, Raft log or snapshot rewrite. Any later format removal has its own rollback and durable restart evidence.
-
-## Assumptions
-
-- TypeScript and Dart share semantics and recognizable method names, not identical syntax, async primitives, or UI dependencies.
-- Persistent offline synchronization remains a Dart extension in this feature. Adding a TypeScript persistent sync package is deferred; core interfaces leave that possible without implying it already exists.
-- This is a coordinated SDK, codegen, bridge, and narrowly scoped backend contract change. Missing backend replay/idempotency capability is a required dependency, not something client wrappers can manufacture.
-- Initial live support remains the server-supported keyed single-table subset. General SQL remains available for one-shot queries; unsupported live joins/aggregates fail clearly.
-- Masky's external REST/domain models remain application-owned. Generated Kalam routines can progressively replace manual wrappers where the application actually defines those routines.
-- New generator output is versioned. Existing projects opt into the new layout; compatibility adapters share the new runtime and are removed only in a documented breaking release.
-- Existing SDK edits in this checkout belong to other work and must be preserved. Implementation must revalidate the source inventory before applying changes.
-- Spec 038's generated-client work consumes Spec 037's canonical PostgreSQL routine/type semantics and planned native V8 value ABI; it does not mark 037 implementations complete or change SQL execution into a JSON envelope.
-- The backend currently provides a JSON `POST /v1/functions/{namespace}/{procedure}` route and request-owned transactions; binary RPC, generated direct invocation, shared lightweight codec and Kalam Binary WebSocket are **proposed Slice 2 deliverables**, not currently shipped features.
-- WebSocket currently uses JSON and MessagePack; 038 specifies **mandatory complete MessagePack retirement from the WS and SDK live stack** after migration gates. Durable catalog/Raft codecs retain their existing formats until separate versioned migrations.
+Related contracts: [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance and security](contracts/serialization-performance.md), [data model](data-model.md), [plan](plan.md), [tasks](tasks.md), [quickstart](quickstart.md), [research](research.md).
