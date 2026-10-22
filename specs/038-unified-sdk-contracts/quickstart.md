@@ -159,7 +159,15 @@ export const bookAndBill = procedure.school.bookAndBill(async (ctx, input) => {
 });
 ```
 
-The two nested calls remain in-process under the root transaction and permissions. Cross-Raft-data-group transactional writes fail explicitly, and STREAM/external side effects are not part of rollback guarantees. The native typed-value/read-view optimization and binary codec are **not** implemented until T051–T063 and Gate B2 pass. Review [API](contracts/public-api.md), [protocol](contracts/protocol.md), [tasks](tasks.md), and [037 ABI](../037-pg18-compatibility/contracts/functions-v8.md).
+The two nested calls remain in-process under the root transaction and permissions. Cross-Raft-data-group transactional writes fail explicitly, and STREAM/external side effects are not part of rollback guarantees. The native typed-value/read-view optimization and binary codec are **not** implemented until T051–T063 and Gate B2 pass, including prior codec security prerequisites. Review [API](contracts/public-api.md), [protocol](contracts/protocol.md), [tasks](tasks.md), and [037 ABI](../037-pg18-compatibility/contracts/functions-v8.md).
+
+## 4B. Migrate WebSocket live traffic to the same binary codec (proposed Slice 2)
+
+The current live WebSocket implementation negotiates JSON text or MessagePack binary; that **does not yet mean** it supports function RPC's future Kalam Binary codec. In the target API, both typed RPC and live subscriptions use the same Rust `kalamdb-serialization` value encoder/decoder through `link-common`, native SDK, browser WASM and Dart FRB, with distinct RPC and live message kinds. No per-event generic JSON tree is needed for the binary path.
+
+Migration order: (1) harden decoder/decompression/V8 lifetime and fuzz, (2) build lightweight shared Rust codec, (3) finish typed JSON/binary function RPC with benchmarks, (4) negotiate Kalam Binary WebSockets and migrate SDKs, then **remove MessagePack completely from WebSocket/SDK live code** after a documented old-client compatibility window, (5) assess persisted/Raft migration separately. Old MessagePack bytes must never be treated as Kalam Binary; unsupported clients receive an upgrade error after retirement. No implicit zero-copy promise exists across network/WASM/FRB; eligible native borrowed views require validation.
+
+This is specification-only until tasks T064–T081, prior T051–T063 and the new security/live sunset gates pass. See [binary/wire protocol](contracts/protocol.md), [execution plan](plan.md), and [research findings](research.md).
 
 ## 5. Add Dart persistence to the same query
 
@@ -206,7 +214,7 @@ For each selected supported platform, the implementing agent must run:
 4. Restart the Flutter app offline; show cached rows, preserve pending input/results, reconnect, and resolve/reconcile without duplicate effects.
 5. Add a nullable field and regenerate; change a routine input incompatibly and verify the compiler error and stale-artifact check; verify failed generation preserves the previous output.
 6. Exercise unsupported query/server capabilities and expired cursors/idempotency windows. Inspect actionable errors instead of accepting empty-success fallbacks.
-7. Run the crash/conformance/performance gates in [plan.md](plan.md), then migrate Masky with the recorded before/after glue baseline.
+7. Run the hardening, shared-codec, RPC, WebSocket MessagePack-removal, crash/conformance/performance gates in [plan.md](plan.md), then migrate Masky with the recorded before/after glue baseline. Persisted/Raft byte migration has separate release/rollback gates.
 
 ## 7. Prompt for the implementation agent
 
@@ -222,6 +230,8 @@ connection, and the Masky session/checkpoint/projection helpers on today's
 wire format and sync tables. Do not start generator API v2, live replay
 cursors, the sync storage rewrite, or server idempotency.
 ```
+
+**For a Slice 2 implementation agent after Slice 1**, follow T051 and the ordered prerequisites T064–T071 before native RPC T052–T063, then WebSocket T072–T078 and independently gated storage/Raft work T079–T081. Do not treat existing WebSocket MessagePack as Kalam Binary; remove it entirely only after the documented wire compatibility gate and test coverage.
 
 The active `.specify/feature.json` points to this feature. To validate the handoff location without implementing it:
 

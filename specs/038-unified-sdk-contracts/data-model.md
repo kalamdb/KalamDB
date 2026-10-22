@@ -26,7 +26,17 @@ Two lossless transports (typed JSON and versioned binary) encode the **same** ca
 
 The server caches immutable, revision-pinned call descriptors and invalidates them on incompatible routine/type/grant/security changes. In-flight calls pin a safe revision, and an incompatible generated descriptor is rejected before effects. Nested values/read views retain generation/root/principal/projection provenance and a charged byte owner; ordinary JS objects are materialized and validated. These lifetimes are not persisted in SDK or Drift tables.
 
-Existing PostgreSQL routine meaning and ABI/value ownership are described in [037 routines-postgresql](../037-pg18-compatibility/contracts/routines-postgresql.md) and [037 functions-v8](../037-pg18-compatibility/contracts/functions-v8.md); 038 owns SDK transport integration. See [protocol](contracts/protocol.md) and T051–T063.
+Existing PostgreSQL routine meaning and ABI/value ownership are described in [037 routines-postgresql](../037-pg18-compatibility/contracts/routines-postgresql.md) and [037 functions-v8](../037-pg18-compatibility/contracts/functions-v8.md); 038 owns SDK transport integration. See [protocol](contracts/protocol.md) and T051–T081; persisted/Raft follow-up tasks are independent release gates.
+
+## Single binary value model and transport ownership (Slice 2)
+
+`LogicalTypeRef` and the revision-pinned catalog descriptor are the only semantic authorities. A **single Rust canonical typed-value codec** is implemented in `kalamdb-serialization` (or its internal lean codec-core extracted solely to avoid Arrow/DataFusion/WASM dependency cycles). The client/server codec library has no separate TS/Dart type registry or serializer; TS uses the Rust/WASM implementation and Dart uses the Rust/FRB implementation. Binary input is never parsed into a generic JSON tree en route to SQL or V8.
+
+The wire carries a bounded common header (protocol/codec version, message kind, length/capabilities) and kind-specific envelopes: RPC call/result and WebSocket subscribe, snapshot, data change, patch, delete, completion, cursor/ack, error/control. The same typed-value tags/null/presence/precision semantics apply to RPC and live data; message semantics may differ but codecs do not. Clients cannot supply trusted native handles, principals, schema objects or authorization frames.
+
+WebSocket transition metadata tracks compatible server/client protocol versions, supported Kalam Binary capabilities, per-connection negotiated wire mode and retirement/upgrade errors. During the documented transition an isolated legacy MessagePack adapter remains; after the sunset **MessagePack is absent from active server WebSocket, native Link, WASM and Dart live code**. JSON remains an explicitly supported external interoperability format only where necessary, never an intermediate representation for Kalam Binary.
+
+Bounded decode spans the input body, decompression, framing, typed arrays/composites, Arrow creation and host/V8 conversion. Any borrowed bytes/read views carry verified owner/lifetime/offset/projection/depth/memory-budget metadata; crossing JS/WASM/FRB boundaries may require copies. Legacy RocksDB/Raft envelopes are never treated as authenticated client requests. Their own old-reader/write-new migration and compatibility gates occur separately after live transport convergence.
 
 ## Query identity and membership
 

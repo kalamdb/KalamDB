@@ -113,6 +113,22 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 5. A composed `ctx.functions.<schema>.<method>` call shares the root transaction/deadline/cancellation and preserves each routine's INVOKER/DEFINER and EXECUTE checks; no HTTP round trip or stringify/parse of native intermediate results is required.
 6. Binary transport and native V8 value reuse show measured improvements where applicable; no blanket zero-copy or binary-faster claim is made. A caller-supplied forged native handle or privileged context is rejected.
 
+### User Story 8 — One safe binary serialization core across RPC and WebSocket (Priority: P1; Slice 2)
+
+KalamDB uses one canonical schema-directed binary value codec owned by `kalamdb-serialization`, reused by the backend, `link-common`, browser WASM and Dart's Rust bridge. Native function RPC and live WebSocket frames use distinct **message kinds/envelopes over the same binary codec**, without intermediary `serde_json::Value` conversions. The existing WebSocket MessagePack transport is **fully retired** after a controlled negotiated migration, not retained as an indefinite second binary standard.
+
+**Independent Test**: Starting from unchanged v1 clients and mixed server/SDK versions, harden/fuzz all decoding boundaries; compile the lightweight shared codec for native, browser WASM and Dart/FRB; call typed RPC and run snapshot/change/ack/resume WebSocket flows over Kalam Binary; prove conformance, memory limits, crash safety, latency/allocation/byte baselines and security parity. Verify the final release has **zero MessagePack encode/decode/negotiation paths in WebSocket runtime or maintained SDK live clients**. Existing durable/raft file formats are migrated only under their own versioned storage gates.
+
+**Acceptance Scenarios**:
+
+1. A malformed network frame or encoded value containing oversized counts, nested inputs, decompression bombs, invalid offsets/UTF-8, forged types or privileged metadata is rejected before unbounded allocation, stack growth or function execution; fuzz/property tests and memory limits pass.
+2. Browser WASM, native `link-common`, Dart FRB and the backend reuse the **same Rust-owned safe codec implementation** and conformance vectors. Arrow/DataFusion/storage-only dependencies are feature-gated away from the small browser binary.
+3. The server emits a versioned, bounded Kalam Binary live envelope carrying authenticated message semantics (snapshot start/end, row changes, deletes, cursor/ack, errors and control frames). Generated SDK live clients decode without redundant JSON/MessagePack trees and preserve every existing live/replay/RLS requirement.
+4. During a finite documented compatibility window, negotiated old MessagePack clients continue to work with compatible servers. The new binary becomes the default for capable clients; unsupported peers get explicit upgrades/errors, never bytes silently reinterpreted as another format.
+5. After migration gates, **remove MessagePack completely from WebSocket/server, native Link, WASM and Dart live-runtime code, configuration, tests and wire negotiations**. Keep JSON as an explicit external/interoperability option where required; no additional default binary serializer.
+6. Storage/Raft consolidation is a separate versioned migration with old-data readers, crash/restart/rollback evidence and no disk-format switch required merely to ship RPC or WebSocket binary.
+7. Eligible zero-copy views are proved at **named safe boundaries** with validated owners and lifetimes; network/WASM/FRB crossings, strings and ordinary JS objects never receive an unqualified zero-copy claim.
+
 ### Edge Cases
 
 - Empty results versus nullable single results versus void routine returns; multi-row and set-returning results.
@@ -129,6 +145,9 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 - JSON null versus SQL NULL, missing/defaulted arguments, wide NUMERIC, bigint beyond JS safe integer, sub-millisecond timestamps, null array elements, foreign V8 read-view handles, and async ownership across cancellation.
 - Binary validation rejects unknown codec versions, malformed lengths/offsets, oversized payloads, untrusted metadata, and forbidden client-supplied actor/transaction frames.
 - Function chains may encounter different Raft groups or STREAM DML: cross-group atomic commits are rejected, and STREAM autocommit is not part of the root rollback guarantee.
+- Malformed/deep/large binary payloads, hostile declared list counts, decompression expansion, offset overflow, wrong message kind, unsafe Arrow ownership and V8 handle reuse across sessions.
+- Mixed-version WebSocket clients during and after MessagePack sunset; unknown wire type/codec version, invalid upgrade negotiation, reconnect cursor loss, incompatible frame compression, replay and ack semantics.
+- Legacy stored KOBJ/FlexBuffers/MessagePack snapshots after network MessagePack removal; no unversioned durable-data rewrite, rollback breakage, or accidental Raft-format switch.
 
 ## Requirements
 
@@ -182,6 +201,18 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 - **FR-046**: Eligible native Arrow/buffer ownership transfer across host/V8 frames MUST be versioned, lifetime-checked, memory-budgeted, projection/authorization-validated and cancellation-safe; do not claim zero-copy for ordinary JS objects, network encoding, transcodes or unsupported buffer ownership.
 - **FR-047**: 038 specification, protocol, API, manifest, tasks, tests and migration guidance MUST incorporate the applicable 037 `functions-v8.md` and `routines-postgresql.md` guarantees without copying PostgreSQL-specific execution into an SDK or declaring 037's unfinished ABI work complete.
 
+- **FR-048**: KalamDB MUST maintain **one canonical binary typed-value codec owner** (`kalamdb-serialization` or a factored feature-gated codec core), derived from `LogicalTypeRef`. Backend and `link-common`/Rust, browser WASM and Dart/FRB MUST reuse the same Rust encoder, decoder, error types, conformance vectors and canonical hashing rules. Never add parallel TypeScript/Dart/Rust codecs, runtime JSON trees inside binary, or multiple competing type registries.
+- **FR-049**: BEFORE network binary decoding is exposed, bound wire bytes, frame/message count, argument/column count, recursive depth, array/list cardinality, string/byte length, decoded memory, CPU work, compression expansion and host/V8 pin budgets. All untrusted lengths MUST be validated against remaining payload and per-call budgets **before allocation**, recursion or Arrow construction, with checked integer arithmetic. Reject malformed data with typed errors; no panic, process abort, oversized allocation or execution.
+- **FR-050**: `kalamdb-serialization` MUST have a lightweight shared build for `link-common`, native Rust/WASM/FRB, with Arrow, DataFusion, durable row storage, Raft and backend-only dependencies feature-gated or behind a thin adapter. Avoid circular crate dependencies and unrelated WASM size inflation. Reuse existing physical row/value encoding when compatible, without reusing unvalidated storage envelopes as trusted network objects.
+- **FR-051**: Native function RPC and WebSocket MUST use the same **versioned Kalam Binary framing family and canonical typed-value encoding**, but distinct authenticated message kinds and semantics. WebSocket frames MUST support typed snapshot/change/patch/delete/control/ack/error/cursor messages and preserve all existing subscription/completeness/replay and RLS guarantees. No second live serializer may become the binary default.
+- **FR-052**: WebSocket MessagePack MUST be **fully removed** from the server and maintained native/TS-WASM/Dart-FRB Link live paths after a finite, documented capability-negotiated migration. Prior to removal, serve old peers only through an isolated bounded legacy adapter; subsequently remove `SerializationType::MessagePack`, `serialization=msgpack`, WebSocket-specific `rmp_serde` encoders/decoders and obsolete dependencies/tests/docs. Unknown legacy formats MUST fail with an actionable upgrade error, not JSON coercion, silent protocol fallback or lost live events.
+- **FR-053**: Persistence/Raft format convergence MUST be a separately gated storage change with durable schema/kind versions, old-data compatibility, rolling-upgrade capability, corruption/rollback/restart and mixed-version cluster tests. No persisted-object, log or snapshot byte changes are prerequisites for native function RPC or WebSocket convergence.
+- **FR-054**: Zero-copy MUST be a proven **bounded borrowed/owned view** at a particular Rust/Arrow/native boundary with validated offsets, length, alignment, principal/projection, owner generation, memory charge, cancellation and lifetime. Use safe copying when ownership or transport crossing cannot satisfy these conditions. Network receive, WASM JS typed-array passage, FRB and V8 materialization are not globally zero-copy.
+- **FR-055**: Reproducibly benchmark old WS JSON and MessagePack against Kalam Binary and old SQL/JSON function calls against binary RPC, including high-fanout, tiny and large payloads, decode/encode CPU, bytes, allocations, throughput, p50/p95, retained/peak memory, reconnect and mixed versions. No more than 10% unexplained regression; any zero-copy or binary-performance claim MUST have profiler and ownership evidence.
+- **FR-056**: Expand `scripts/check-serialization-boundary.py` or a replacement CI rule to cover public WS/RPC codecs in `backend/crates/kalamdb-api`, `backend/crates/kalamdb-commons`, `link/link-common`, `link/kalam-link-wasm` and `link/kalam-link-dart`. After removal, reject reintroduction of direct `rmp_serde` WS paths or parallel serializers; permit explicitly documented JSON/PGWire/Arrow IPC/legacy durable adapters without conflating their formats.
+- **FR-057**: All compressed network input paths (server, native Link, WASM, Dart) MUST apply a strict compressed and decompressed byte budget and terminate invalid compressed data with an error. No unbounded `decompress_if_gzip` / `usize::MAX` path or 'failed gzip -> borrow compressed bytes' fallback is allowed for untrusted messages.
+- **FR-058**: The pre-exposure security gate MUST include decoder fuzzing, property-based roundtrips, malicious lengths/nesting/UTF-8/offset and decompression fixtures, memory-pressure/concurrency/cancellation tests, and a native V8 `NativeReadViewHandle` leak/alias/lifetime review. Known safety findings remain explicit blockers until fixes and tests are recorded.
+
 ### Key Entities
 
 - **Contract manifest**: Versioned schema, type, key, query, routine, codec, and capability identities used by every target.
@@ -189,6 +220,8 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 - **Query descriptor**: Typed bound inputs, result/cardinality, live eligibility, membership identity, and presentation settings.
 - **Operation and bound call**: Routine signature, input/output contracts, execution semantics, and supplied arguments.
 - **Native routine descriptor and wire format**: Canonical, revision-pinned function identity; named/ordinal parameters; logical types; JSON/binary codec versions and capability negotiation; normalized structured errors.
+- **Kalam Binary typed codec and frame kinds**: One schema-directed byte/value encoder, bounded decoder, revisioned message-kind frame variants for function request/result and WebSocket live/control.
+- **Wire compatibility epoch**: Advertised supported codec/message versions, legacy MessagePack cutoff, explicit upgrade status and client capability/replay recovery behavior.
 - **In-process typed value/read view**: Native owned Arrow/scalar or eligible exclusive-buffer representation with projection, revision, principal and memory-budget provenance.
 - **Live snapshot and delivery**: Materialized rows and completeness, versus ordered server events and progress metadata.
 - **Account/cache scope**: Server, subject, tenant/namespace, and authorization scope defining ownership.
@@ -214,6 +247,13 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 - **SC-013**: Malformed/stale descriptors, forbidden metadata, unauthorized nested calls, cross-group transactional chains, cancellation/unknown outcomes, buffer lifetime and budget probes fail explicitly and never widen permission or silently retry effects.
 - **SC-014**: A reproducible comparison of SQL vs native JSON vs native binary and nested typed calls records p50/p95, throughput, CPU, allocations, payload bytes and conversion/parsing breakdown; any claimed improvement is supported by measured evidence and no unexplained >10% regression is accepted.
 
+- **SC-015**: A single `kalamdb-serialization`-owned encoder/decoder passes identical golden/negative vectors across backend, native Link, browser WASM and Dart FRB; browser codec build remains free of Arrow/DataFusion/backend-heavy dependencies.
+- **SC-016**: Network fuzz/property/negative corpus exercises oversized lengths, malicious nesting, compressed bombs, forged metadata, V8 handle safety and cancellation; inputs are rejected within enforced CPU/memory/time budgets with no panic, crash, unbounded allocation or auth bypass.
+- **SC-017**: Identical WebSocket live/replay snapshots, changes, deletes, acks, errors and reconnect cursors produce byte/semantic-compatible outcomes in new Kalam Binary across supported SDKs, including mixed-version migration; no missed events or scope leakage.
+- **SC-018**: After the declared MessagePack sunset, automated repository/runtime checks show zero supported WS/Link/WASM/FRB MessagePack encode/decode/negotiation paths, and explicit upgrade errors for retired clients. A tested old-client compatibility period is recorded.
+- **SC-019**: Memory/CPU/throughput/latency baselines compare Kalam Binary vs MessagePack and JSON WebSocket, and binary RPC vs typed JSON/SQL; zero-copy only accepted where measured and ownership-tested, with no unexplained >10% regressions.
+- **SC-020**: Persisted/Raft migration remains independent and version-safe; no release of binary RPC/live requires a RocksDB, Raft log or snapshot rewrite. Any later format removal has its own rollback and durable restart evidence.
+
 ## Assumptions
 
 - TypeScript and Dart share semantics and recognizable method names, not identical syntax, async primitives, or UI dependencies.
@@ -224,4 +264,5 @@ A TypeScript or Dart developer calls generated routines directly, using a lossle
 - New generator output is versioned. Existing projects opt into the new layout; compatibility adapters share the new runtime and are removed only in a documented breaking release.
 - Existing SDK edits in this checkout belong to other work and must be preserved. Implementation must revalidate the source inventory before applying changes.
 - Spec 038's generated-client work consumes Spec 037's canonical PostgreSQL routine/type semantics and planned native V8 value ABI; it does not mark 037 implementations complete or change SQL execution into a JSON envelope.
-- The backend currently provides a JSON `POST /v1/functions/{namespace}/{procedure}` route and request-owned transactions; binary RPC, generated direct invocation, and the general native-value V8 optimization are **proposed Slice 2 deliverables**, not current guaranteed features.
+- The backend currently provides a JSON `POST /v1/functions/{namespace}/{procedure}` route and request-owned transactions; binary RPC, generated direct invocation, shared lightweight codec and Kalam Binary WebSocket are **proposed Slice 2 deliverables**, not currently shipped features.
+- WebSocket currently uses JSON and MessagePack; 038 specifies **mandatory complete MessagePack retirement from the WS and SDK live stack** after migration gates. Durable catalog/Raft codecs retain their existing formats until separate versioned migrations.

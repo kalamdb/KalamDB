@@ -47,6 +47,26 @@ These are design inputs, not claims that their guarantees equal KalamDB's.
 | [Firestore snapshot metadata](https://firebase.google.com/docs/reference/js/firestore.snapshotmetadata) | Cached-source and pending-write metadata | Add completeness/freshness metadata to live and persisted snapshots |
 | [Supabase Dart streams](https://supabase.com/docs/reference/dart/stream) | Simple initial-data-plus-change subscription | Keep subscription setup small; explicitly test filter exits, which its docs identify as a limitation |
 
+## Binary protocol, gRPC lessons and KalamDB audit findings (2026-10-22)
+
+**Scope**: static source review of `feat/pg-dialect`; findings below are not exploit proof, completed fuzz tests or measured performance improvements. The new Kalam Binary RPC and live protocol are **not implemented yet**. gRPC/Protobuf inspires framing, generated type contracts, bounded parsing and transport discipline; KalamDB does not add the gRPC stack or Protobuf as another competing serialization authority.
+
+| Existing source | Finding and required decision |
+| --- | --- |
+| [`kalamdb-serialization/src/function_value.rs`](../../backend/crates/kalamdb-serialization/src/function_value.rs) | FlexBuffers wraps a `serde_json::Value`; unsuitable as a no-JSON typed RPC value codec. Replace native hot path with direct typed encoding, preserve old object decoding separately. |
+| [`kalamdb-serialization/src/row/value.rs`](../../backend/crates/kalamdb-serialization/src/row/value.rs) | `decode_list()` reserves a client-supplied u32 length before verifying available bytes and budget; `skip_value()` recursively visits unbounded depth. Harden **before** routing untrusted public frames into this code. |
+| [`link/link-common/src/compression.rs`](../../link/link-common/src/compression.rs), [WASM helpers](../../link/kalam-link-wasm/src/helpers.rs) | Unbounded `decompress_if_gzip` calls bounded decoder with `usize::MAX`, and may return original bytes on malformed compressed input. Unify strict bounded decompression for native/WASM/Dart. |
+| [`kalamdb-functions/src/abi/convert.rs`](../../backend/crates/kalamdb-functions/src/abi/convert.rs) | Native V8 read-view handle wraps raw pointer/`unsafe` access. Require explicit owning lease, cleanup, generation and cross-realm lifetime audits. No exploit claim without testing. |
+| [`link-common/src/models/kalam_cell_value.rs`](../../link/link-common/src/models/kalam_cell_value.rs) | `as_decimal` converts to `f64`; some narrow integer getters cast without range checks. New binary/typed model must preserve exact decimal and range-checked integers. |
+| [server WS messages](../../backend/crates/kalamdb-api/src/ws/messages.rs), [server events](../../backend/crates/kalamdb-api/src/ws/events/mod.rs), [Link WS](../../link/link-common/src/connection/websocket.rs), [WASM WS](../../link/kalam-link-wasm/src/helpers.rs) | Current live binary is MessagePack, with direct `rmp_serde` usage in multiple owners. Migrate to shared Kalam Binary code, then fully delete MessagePack WS paths/dependencies when upgrade cohort passes. |
+| [`scripts/check-serialization-boundary.py`](../../scripts/check-serialization-boundary.py) | Enforces persistence codec ownership but exempts API and omits much of Link; expand enforcement to network encoders/decoders with clear JSON/PGWire/Arrow exceptions. |
+
+**Five-step delivery decision**: (1) pre-allocation/recursion/compression/V8 lifetime hardening and fuzz gates; (2) feature-gated shared lightweight `kalamdb-serialization` core consumed by Link/WASM/FRB; (3) direct typed RPC over exactly that codec, plus JSON for external compatibility; (4) WebSocket migration to the same **value encoding** and versioned message-kind framing, followed by COMPLETE removal of WS MessagePack; (5) separate persisted/Raft format consolidation behind durable upgrade gates.
+
+**gRPC lessons adopted**: compact positional wire fields and framing; immutable service signatures; bounded recursion, message sizes and decompression; connection reuse; explicit status/error contracts and safe retry outcomes. **Lessons not copied**: introducing separate Protobuf schemas/registries, assuming deterministic bytes guarantee canonical semantic hashing across versions, assuming network decoding is zero-copy, or making a new HTTP/2 infrastructure prerequisite. Always validate values against the server-owned SQL descriptor before execution.
+
+**Tradeoff**: One authoritative serializer/codebase does not force one physical *envelope* for RPC, WebSocket and persisted/Raft. Use a shared typed-value codec with distinct message kinds and durable-format versions. Binary RPC and WS can ship before persisted/Raft changes. JSON remains optional at external interoperability boundaries, not a hidden intermediate serialization hop. The current binary RPC and WS improvements must be benchmarked and fuzzed before a performance/security claim.
+
 ## Chosen tradeoffs
 
 - Canonical facade: `createKalam(client)` in both languages, with `functions`, `queries`, and `operations` namespaces (plus `tables` in Dart). Existing TS direct namespace methods and Dart `KalamFunctions` delegate during migration.

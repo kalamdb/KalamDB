@@ -256,7 +256,7 @@ The direct method delegates to the operation descriptor. Names are illustrative 
 
 Preserve the existing generated backend handler registry and strict input/result checking. Add generated handler definitions/registration helpers backed by the same operation catalog rather than a second hand-maintained route registry. Server context retains authenticated identity, transactions, and permission-aware database access; none of these are accepted from an ordinary public input object. SQL and HTTP invocations must execute the same resolved routine and authorization policy.
 
-Default immediate invocation may use the existing parameterized SQL route. Explicit HTTP execution uses the existing `POST /v1/functions/{namespace}/{procedure}` endpoint. The chosen transport is part of call policy and errors never trigger an automatic cross-transport mutation retry. A HTTP routine signature header/operation identity resolves overloads only after server support is implemented; otherwise ambiguous calls return an explicit unsupported/ambiguous error.
+For API v2, generated immediate invocation MUST use the typed native executor rather than parameterized SQL; v1 legacy clients retain their SQL path until migrated. Explicit HTTP execution uses the existing `POST /v1/functions/{namespace}/{procedure}` endpoint. The chosen transport is part of call policy and errors never trigger an automatic cross-transport mutation retry. A HTTP routine signature header/operation identity resolves overloads only after server support is implemented; otherwise ambiguous calls return an explicit unsupported/ambiguous error.
 
 ## 7. Wire and server additions
 
@@ -367,6 +367,14 @@ Catch-up uses `SyncBudget(maxRowsTotal, maxRowsPerConsumer, maxDuration, flushOu
 | Array/composite | Generated nested arrays/objects | Generated immutable nested classes/lists | Recursive codecs including element nullability and array metadata |
 
 Do not infer every TEXT ID as a distinct domain: generate nominal IDs from actual domain/key metadata or explicit configuration. Shared vectors define field order, missing/null semantics, UTF-8, number representation, version bounds, composite-key encoding, and canonical hashes. `VersionId` is distinct from an operation ID, snapshot generation, and resume cursor; comparisons are meaningful only in their declared domain.
+
+### Shared binary codec and live client transport (API v2; Slice 2)
+
+Generated TS and Dart types are independent of transport, but the one Rust `kalamdb-serialization` typed-value codec is used by `link-common` native, TS/WASM and Dart/FRB. The same decoder powers binary routine RPC and typed WebSocket snapshots/changes/control/acks. RPC and WebSocket use separate versioned message kinds, not separate type serializers. Scalar codecs **must not** decode binary into `serde_json::Value`; JSON remains only a separately selected external compatibility representation.
+
+New WebSocket connections negotiate `kalam-binary` plus codec/version capabilities; existing JSON/MessagePack peers work only during the bounded transition. **At the final sunset, server and maintained client WebSocket MessagePack support MUST be deleted entirely**, not merely deprecated; unsupported clients receive explicit update-required errors. No permanent `SerializationType::MessagePack`, `serialization=msgpack` or `rmp_serde` WS code remains in production. Storage/raft historical MessagePack compatibility is separate.
+
+Memory and zero-copy guarantees: validated borrowed/owned Rust/Arrow views may reuse buffer bytes only with checked owner/lifetime/size/projection; HTTP/WS network receive, WASM and FRB crossings may copy. The JS-visible generated API never exposes raw host pointers or arbitrary server schema metadata. See [protocol](protocol.md) and ordered [tasks](../tasks.md) T064–T081.
 
 ## 10. CLI and compatibility
 

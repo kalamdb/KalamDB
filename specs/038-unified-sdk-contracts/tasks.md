@@ -29,6 +29,44 @@ T001's Slice 1 scope is above. The remaining baseline work is Slice 2. Typed RPC
 
 **Gate A**: Shared vectors and metadata are authoritative; no target invents a key/type/nullability policy.
 
+## Mandatory binary consolidation work — five-stage ordered dependency chain (Slice 2; US8)
+
+**Order is normative even when the task appears in a different phase**: harden (S) → lightweight shared codec (C0) → native RPC (B2) → new WS protocol + total MessagePack removal (W) → separately gated persistence/Raft (P). Existing T052–T063 require S and C0 before opening a public binary handler. None of these tasks are complete merely because this document exists.
+
+### Stage 1 — Harden existing decoder (BEFORE sharing it with untrusted network clients)
+
+- [ ] T064 [US8] Audit/fix `backend/crates/kalamdb-serialization/src/row/value.rs`: bound `decode_list` element count **before** `Vec::with_capacity`, check minimal/remaining encoded bytes and aggregate allocation budget, depth-limit `skip_value` during recursion and validate `decode_embedding` dimensions before reserve. Apply checked arithmetic to lengths/offsets and safe Arrow construction. Cover malformed lists, depth bombs, offset wrap and oversized count fixtures. FR-049, FR-058.
+- [ ] T065 [US8] Harden all network decompression call sites. Replace unbounded `decompress_if_gzip` (`usize::MAX`) and failure-as-borrowed-data behavior in `link/link-common/src/compression.rs` and `link/kalam-link-wasm/src/helpers.rs`; ensure native, WASM, Dart, and server WS/HTTP binary paths enforce compressed/decompressed message size, expansion, time and cancellation budgets. FR-049, FR-057.
+- [ ] T066 [US8] Audit and fix `NativeReadViewHandle` raw `Box::into_raw`/`unsafe` lifetime, finalizer/disposal, pin accounting, stale handle, cross-isolate/principal/projection leakage in `kalamdb-functions/src/abi/convert.rs` and allocator/host frames; prefer owned handles with explicit lease and checked generation over unchecked pointers. FR-054, FR-058.
+- [ ] T067 [US8] Add libFuzzer/cargo-fuzz or equivalent targets and property/negative fixtures for envelopes, lists, recursion, Arrow offsets, optional compression, function values, WebSocket frames and canonical codecs; verify deterministic errors with strict resource budgets, no OOM/panic/stack overflow, no effect or privilege bypass. Run on native and WASM-relevant decoders. FR-049, FR-058.
+- [ ] T068 [US8] **Gate S** security sign-off: versioned function schema checks, stream body limits independent of `Content-Length`, max input+decoded bytes, maximum counts/depth/work, V8 pin/lifetime tests and CI fuzz seeds. Record remediation and performance baseline before exposing any untrusted binary RPC/WS handler. Depends T064–T067. FR-049, FR-057/058.
+
+### Stage 2 — Extract shared lightweight canonical codec
+
+- [ ] T069 [US8] Feature-gate/refactor `kalamdb-serialization` so a lightweight codec core builds in `link/link-common` and browser `kalam-link-wasm` **without Arrow/DataFusion/RocksDB/server dependencies**; keep one canonical `LogicalTypeRef` type meaning and reuse existing scalar/ordinal binary encodings where compatible. If dependency cycles require a minimal internal crate, keep `kalamdb-serialization` as public owner, not a second protocol. FR-048, FR-050.
+- [ ] T070 [US8] Implement one versioned KOBJ-family **network** framing/message-kind codec for function RPC and WS live, backed by the shared typed-value implementation. Share canonical encoding, null/presence, decimal/BigInt, timestamp precision, structured error, idempotency hash and strict decoder budgets across native Rust, backend, TS/WASM and Dart/FRB. Use distinct frame kinds, never arbitrary storage bytes accepted as a trusted RPC. FR-048, FR-051.
+- [ ] T071 [US8] **Gate C0**: produce cross-runtime byte-identical golden/negative vectors, exact-type and memory/allocation tests; extend `scripts/check-serialization-boundary.py` CI to prohibit direct new WS/RPC `rmp_serde`, `flexbuffers` and duplicate JSON-based binary encoders in API/Link/WASM/FRB. Scoped documented exceptions for legacy durable/PGWire/Arrow IPC and explicit JSON external formats; benchmark wasm size and startup. Depends T068–T070. FR-048, FR-050, FR-056.
+
+### Stage 3 — Typed native RPC
+
+Existing tasks T052–T063 now have explicit prerequisites **T068 and T071** before T053/T056/T057 binary exposure and Gate B2. No `serde_json::Value` intermediate in the new binary transport; generated TypeScript/Dart call typed operation descriptors; `FunctionService::invoke` remains the only executor. Preserve safe v1 JSON compatibility. Measure rather than assume speed or zero-copy.
+
+### Stage 4 — Converge WebSocket and REMOVE MessagePack COMPLETELY
+
+- [ ] T072 [US8] Inventory `backend/crates/kalamdb-api/src/ws`, `backend/crates/kalamdb-commons/src/websocket*`, `link/link-common/src/connection`, `link/kalam-link-wasm/src`, `link/kalam-link-dart`, Dart generated clients and consumers for MessagePack codec/enum/negotiation/dep use; document old/current frame shape, subscriber scopes, compression, reconnection and server/SDK compatibility matrix. Depends T071/B2. FR-051, FR-052.
+- [ ] T073 [US8] Implement bounded binary WebSocket server frames from the same Rust codec as RPC (distinct WS message kinds) for subscribe/auth control, snapshot begin/batch/end, event patch/put/delete, ack/cursor, error/reset and resume, maintaining RLS, auth scope, ordering, fanout/refcounts, bounded backpressure, server replay semantics and projection-specific authorization. No generic JSON/MessagePack tree roundtrip in new binary path. Depends T072 and B2. FR-051.
+- [ ] T074 [US8] Implement WebSocket Kalam Binary parse/emit and identical typed event materialization through shared `link-common` core on native SDK, browser TS/WASM and Dart/FRB, eliminating duplicate `rmp_serde` and serde_json pass-through in new binary live path. Preserve event identity, snapshot completeness and cursor/ack parity. Depends T073. FR-048, FR-051.
+- [ ] T075 [US8] Provide versioned authenticated WS capability negotiation, a **temporary isolated** legacy MessagePack adapter for a finite documented client/server upgrade window, and safe downgrade/upgrade errors. Old MessagePack must never be interpreted as Kalam Binary. Mixed-version/resume/ack/cancellation tests, streaming limits and fallback semantics are blockers. Depends T073/T074. FR-052.
+- [ ] T076 [US8] Benchmark JSON/old MessagePack/new Kalam Binary WS under 1k/10k/100k row snapshots, 100k+ subscribers/high fanout, tiny/large patches, gzip, reconnect/ack and mixed versions; measure p50/p95, CPU, input/output bytes, allocations, retained/peak memory and per-field serialization. Prove specific eligible borrowed/Arrow views and account for copies across network/WASM/FRB. Depends T073–T075. FR-054/055.
+- [ ] T077 [US8] After T075 compatibility window and validated cohort, **fully delete WebSocket MessagePack**: `SerializationType::MessagePack`, `serialization=msgpack`, direct `rmp_serde` calls, native Link/WASM/Dart WS branches, fallback, WS-only tests, docs and dependencies. Preserve `rmp-serde` only if proven necessary for independent durable/Raft legacy readers; new WS does not call it. Unknown/old clients receive explicit upgrade errors. Depends T075/T076. FR-052/056.
+- [ ] T078 [US8] **Gate W**: real backend+native+browser+Flutter conformance and mixed-version upgrade tests, no WS MessagePack references outside clearly documented historical fixtures, pass static CI boundary scan, no lost snapshot/change/ack/replay/RLS event and no unexplained >10% perf regression. Record final removal commit and supported protocol versions. Depends T072–T077. FR-051/052/055/056.
+
+### Stage 5 — Persistent and Raft formats independently
+
+- [ ] T079 [US8] Inventory catalog/system FlexBuffers, persisted KOBJ row/stream, Raft protocol and snapshot MessagePack, PGWire and Arrow IPC; decide which *value encoding* can be shared and which physical framing/durable semantics must stay distinct. Do not conflate removal of WS MessagePack with historical disk/log decode. FR-053.
+- [ ] T080 [US8] If a persisted/Raft encoding change is justified, implement durable versioned readers/writers, historical fixtures, rollback, corruption, rolling-upgrade/mixed-node, crash/recovery and schema-version isolation; preserve existing data. RPC/WS must not depend on this migration. FR-053.
+- [ ] T081 [US8] **Gate P** separate release decision: measure disk/raft space, CPU, memory and upgrade risk against existing formats; retire legacy durable decoders only after proven data migration and compatibility. Do not block Gate B2 or W merely because P is deferred. FR-053.
+
 ## Phase B — US1 generated API and US5 routine contracts (Slice 2)
 
 - [ ] T006 [US1] Add recursive codec emitters using the common semantic type tree in `cli/src/workflow/schema/typescript/` and `dart/`; reuse them in custom Dart action payload generation. Covers FR-004, FR-005, FR-006.
@@ -107,7 +145,7 @@ T045 and T046 Slice 1 scopes are listed above. Broader Masky mirror migration an
 - [ ] T047 [US6] Benchmark paired 1k/10k/100k row workloads, reconnect, large action history, cache startup, and attach/dispose retention; record each relevant runtime in seconds and explain regressions against baseline. Covers FR-030, SC-008.
 T048 Slice 1 scope is listed above. The parity/platform matrix for Slice 2 lands with T049.
 - [ ] T049 [US6] Align TS cohort and Dart package constraints, generator/runtime/server compatibility checks, and version verification; remove obsolete duplicate implementations only after adapters pass. Covers FR-003, FR-028, FR-029, FR-033.
-- [ ] T050 [US6] Complete final cross-artifact/API/security review, confirm all success criteria with recorded evidence, and leave no unimplemented advertised examples or silent capability downgrades. Covers FR-001 through FR-047, SC-001 through SC-014.
+- [ ] T050 [US6] Complete final cross-artifact/API/security review, confirm all success criteria with recorded evidence, and leave no unimplemented advertised examples or silent capability downgrades. Covers FR-001 through FR-058, SC-001 through SC-020.
 - [ ] T061 [US7] Benchmark generated SQL `SELECT`/`CALL` vs direct JSON vs direct binary using identical bodies and native/WASM/FRB paths; include zero-arg, scalars, INT64/DECIMAL, large composites/arrays, nested calls, warm/cold p50/p95, throughput, CPU, allocations, parser/codec overhead and wire bytes. Set `auto` preference from reproducible evidence; no speed/zero-copy claims without measurements. Depends on T055–T060. Covers FR-045, SC-014.
 - [ ] T062 [US7] Reconcile and publish native RPC/ABI documents across `spec.md`, `plan.md`, `tasks.md`, `data-model.md`, `contracts/protocol.md`, `contracts/public-api.md`, quickstart, generated API docs and OpenAPI. Explicitly link 037 normative dependencies, v1/v2 compatibility, single-group transactions and STREAM/external effects; generate accurate examples only after tests. Depends on T060. Covers FR-047, SC-011–SC-013.
 - [ ] T063 [US7] Final two-SDK/native transport release gate: verify Gate B2, no duplicate serializer/executor, stale/revision and unsafe retry behavior, lifecycle/memory probes, reproducible perf records and correct 037 ownership. Preserve legacy coverage; mark completion only with recorded evidence. Depends on T060–T062. Covers FR-038–FR-047, SC-011–SC-014.
@@ -115,7 +153,7 @@ T048 Slice 1 scope is listed above. The parity/platform matrix for Slice 2 lands
 ## Dependencies and execution rules
 
 - Slice 1 order is T001, T019, T018, T038, T045, T046, T048. Stop at the Slice 1 gate.
-- Slice 2 order is A, then B and B2 native RPC (T051–T060), then the Slice 2 remainder of C, then D; T061–T063 finish in F. T052 waits for canonical metadata/T008/T012, T053 for T052/T013, T054 for typed JSON/T006–T010, T056 for codec parity, T057 for binary/capabilities, and T058/T059 for approved 037 typed ABI mapping. T031–T033 start after T023–T027. T035 cannot complete before T034. T036 precedes overlapping background-worker claims.
+- Slice 2 SERIALIZATION order is mandatory: T064–T068 (Gate S) → T069–T071 (Gate C0) → RPC T052–T063 (Gate B2) → WS T072–T078 (Gate W) → independently deferred storage/Raft T079–T081 (Gate P). Non-serialization A/B/C/D/E/F work remains separately sequenced. T051 source inventory starts immediately. Both T053 direct binary endpoint preparation and T056/T057 public binary require T068/T071. Gate W must include full WS MessagePack removal, not merely new-format support. T061–T063 finish the RPC gate in F. T052 waits for canonical metadata/T008/T012, T053 for T052/T013, T054 for typed JSON/T006–T010, T056 for codec parity, T057 for binary/capabilities, and T058/T059 for approved 037 typed ABI mapping. T031–T033 start after T023–T027. T035 cannot complete before T034. T036 precedes overlapping background-worker claims.
 - Slice 2 must not be used to finish a Slice 1 task.
 - Do not check off a task based only on generated text or implementation presence. Record focused passing validation and any remaining capability limitations.
 - Batch edits before checks, fix all errors from one captured output, use dev builds and `cargo nextest`, and follow local instructions for smoke/e2e tests.
@@ -134,3 +172,6 @@ T048 Slice 1 scope is listed above. The parity/platform matrix for Slice 2 lands
 | FR-029 through FR-037 | T001, T018-T022, T030-T050 | SC-001, SC-004, SC-008, SC-009, SC-010 |
 | FR-038 through FR-044 | T003-T010, T012-T013, T051-T058, T060 | SC-011, SC-012, SC-013 |
 | FR-045 through FR-047 | T051-T063 | SC-011, SC-012, SC-013, SC-014 |
+| FR-048 through FR-050, FR-057-FR-058 | T064-T071 | SC-015, SC-016 |
+| FR-051, FR-052, FR-054-FR-056 | T070-T078 | SC-015, SC-017, SC-018, SC-019 |
+| FR-053 | T079-T081 | SC-020 |
