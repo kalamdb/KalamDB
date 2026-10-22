@@ -2,7 +2,7 @@
 
 **Revised:** 2026-10-22. **Status:** implementation planning only. This document performs no runtime operation or data reset.
 
-Read [spec](spec.md), [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance contract](contracts/serialization-performance.md), [research](research.md) and [tasks](tasks.md) together.
+Read [spec](spec.md), [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance contract](contracts/serialization-performance.md), [research](research.md) and [tasks](tasks.md) together. The application extension is also normative: [readiness/requirements](app-readiness.md), [application contract](contracts/application-development.md), [database stability](contracts/database-stability.md), [platform research](research-app-platforms.md) and [tasks T094-T121](tasks-app-stability.md).
 
 ## Release policy
 
@@ -12,7 +12,7 @@ Supported SQL/PGWire, Parquet and explicitly selected Arrow interoperability rem
 
 ## Priorities
 
-P0 is correctness, security, ownership, authorization and durability. P1 is measured reduction in CPU, allocation and retained memory while increasing useful throughput. P2 is selective zero-copy. Existing unsafe or leaking native handles require P0 remediation; adding new views is optional. Safe owned values are a valid first implementation.
+P0 is correctness, security, ownership, authorization and durability. P1 is measured reduction in CPU, allocation and retained memory while increasing useful throughput, plus the simplest complete application path. P2 is selective zero-copy. Existing unsafe or leaking native handles require P0 remediation; adding new views is optional. Safe owned values are a valid first implementation.
 
 ## Owners
 
@@ -29,6 +29,8 @@ P0 is correctness, security, ownership, authorization and durability. P1 is meas
 | File lifecycle and Parquet | kalamdb-filestore |
 | TS tables/UI | Drizzle and React integration |
 | Dart remote/local state | kalam_link remote builder; kalam_sync owns one Drift connection |
+| App lifecycle/auth/SSR | Existing CLI/auth/session/SDK/framework owners, with request/account-scoped adapters |
+| Engine reliability | Existing transaction/store/Raft/flush/catalog tests plus deterministic fault hooks and real processes |
 
 Backend and Link depend on the shared codec; the backend does not depend on an HTTP client for decoding. There is one semantic type authority. Physical adapters do not redefine SQL types. Follow repository rules for source models, dependencies and storage ownership.
 
@@ -56,7 +58,7 @@ T006-T014 and T052-T063 generate current operation descriptors and checked TS/Da
 
 Validate descriptors and permissions before effects. Cache immutable plans by revision and scope, not evaluated defaults. Nested calls pass typed values in-process with existing EXECUTE, INVOKER/DEFINER, RLS, transaction, cancellation and deadline semantics. Cross-data-Raft-group atomicity and external/STREAM rollback are not introduced.
 
-T059 advanced views are P2 and excluded from Gate B2 dependencies. T066 handle safety remains P0. Uncertain outcomes do not justify automatic replay or transport switching without authoritative idempotency protection.
+T059 advanced views are P2 and excluded from Gate B2 dependencies. T066 handle safety remains P0. Uncertain outcomes do not justify automatic replay or transport switching without authoritative idempotency protection. T110's guarantee matrix and statement-atomicity checks apply to advertised SQL/native behavior; using the same executor is not itself evidence of correct atomicity.
 
 ### 4. Shared binary WebSocket - Gate W
 
@@ -70,26 +72,42 @@ T079-T081 use the selected codec for new KalamDB-owned row/catalog/stream/Raft v
 
 T085 measures lawful WriteBatch/apply/replication batching and repeated-conversion reduction. Keep transaction visibility, WAL, fsync, quorum and commit acknowledgment semantics unchanged. Existing tonic/gRPC may remain an outer transport for canonical payload bytes rather than another domain serializer. RocksDB/Parquet/PGWire/Arrow implementation formats remain ecosystem boundaries.
 
-Test the newly created format through clean/unclean restart, snapshot restore, interrupted writes, corruption and schema revisions. These are current-data correctness tests, not a migration program.
+Test the newly created format through clean/unclean restart, snapshot restore, interrupted writes, corruption and schema revisions. These are current-data correctness tests, not a migration program. T112-T116 extend this to real multi-node fault histories, hot/cold publication and independent backup restore.
 
-### 6. Release evidence - Gate R
+### 6. Application completion - Gate APP
 
-T088 tests the fresh-cohort policy and obsolete-path absence; T089 exercises correctness under pressure; T090 runs the joint performance gates; T091/T093 reconcile sources and evidence. T092 selective zero-copy stays optional.
+T094-T108 and T119-T120 cover real developer setup, secure sessions/organizations, request-scoped SSR, descriptor-driven UI/optimism, keyset/read models, field errors, internal/external operation boundaries, FILE workflows, isolated test helpers, staged deploy and safe diagnostics. Reuse existing owners; do not add a second query engine, cache, auth authority or job orchestrator.
 
-Finish the table/query, live and Dart durability tracks with untouched TS/Flutter projects and Masky. Preserve domain/UI responsibilities while replacing generic glue. Generated artifacts must come from generators. No source-only assertion closes a runtime task.
+Execute DX-01 school, DX-02 helpdesk/chat, DX-03 clean setup/schema-edit/deploy, and DX-04 multi-identity testkit from application-development.md. Test real TS/browser/SSR and supported Flutter targets. The school races 100 independent clients for one slot, verifying one committed booking and no partial related writes. Fake only external providers, not transaction/permission guarantees.
+
+Target less handwritten infrastructure, not merely shorter examples. Measure equivalent authentication/error/recovery coverage, round trips, runtime resources and at least 50% reduction of generic baseline glue. Preserve business/UI responsibilities. Optional presence/search/sites/browser-persistence/branch merge remain explicitly outside the core; unsupported capabilities cannot be represented as successful fixture results.
+
+### 7. Database stability - Gate STABLE
+
+Begin T109/T110 alongside the foundational work, not after UI completion. DB-01..DB-20 in database-stability.md define precise guarantee/history oracles and faults for atomicity, isolation, SQL correctness, Raft, storage, hot/cold flush, catalog revisions, RLS, live/replay, idempotency, files, SDK lifecycle and restore. Source documentation presently warns direct provider DML does not add statement-wide atomicity; reverify and fix/reroute/reject affected atomic operations rather than papering over the gap.
+
+T111-T118 add concurrency histories with negative controls, deterministic fault hooks plus actual processes, wrong-result differential/metamorphic tests, scoped denial tests, resource pressure, new-format restore and sustained release workloads. Raft is not proof of global SQL serializability. Mocks, source review, checklists and finite fuzzing alone do not certify stability. Unsupported claims must be explicit; unresolved corruption/data-loss/security/false-atomicity defects block release.
+
+### 8. Release evidence - Gate R
+
+T088 tests the fresh-cohort policy and obsolete-path absence; T089 exercises correctness under pressure; T090 runs joint performance gates; T091/T093 reconcile sources and evidence. **T121 APP/STABLE acceptance is also required before Gate R, T093 and final T050 can close.** T092 selective zero-copy stays optional.
+
+Finish table/query/live/Dart durability with untouched TS/Flutter projects and Masky. Generated artifacts come from generators. No source-only assertion closes a runtime task. Publish the capability matrix and tested platform/failure-model scope, not a blanket claim to outperform all platforms or cover every app feature.
 
 ## Other feature dependencies
 
 T015-T022 table/named-query work consumes canonical metadata. T023-T030 live semantics precede final WS acceptance. T031-T041 initializes the new local schema and proves same-epoch inbox/projection/action durability. T035 waits for T034 authoritative idempotency. T036 worker fencing precedes concurrent foreground/background claims. T042-T050 complete generation, project examples and package/evidence checks.
 
+T094-T121 are in tasks-app-stability.md, the normative continuation of tasks.md. They extend requirements to FR-080 and criteria to SC-032 through app-readiness.md. T107 depends on actual business atomicity and tested intent boundaries. Conditional capabilities are either implemented and tested or visibly unsupported; new schema evolution and backup obligations do not reintroduce historical-release compatibility.
+
 ## Measurement gates
 
 The performance contract specifies equivalent workloads, raw results and proposed targets: 15% lower CPU/op, 20% lower allocated bytes/op, 10% lower retained pipeline memory and 15% greater throughput at equal latency SLO on pre-registered primary workloads. Critical p95/p99 and whole-process memory cannot regress more than 5% beyond noise. These are targets, not measurements. An unmet gate remains open; no hidden scope or durability change is allowed.
 
-Measure native/WASM/FRB, small and large messages, fanout, cold startup, sustained compaction and slow consumers. Report allocation counts and retained capacity separately, plus full RSS, CPU, bytes and tail latency. Upstream project benchmarks supply hypotheses, not transferable speedup factors.
+Measure native/WASM/FRB, small and large messages, fanout, cold startup, sustained compaction and slow consumers. Report allocation counts and retained capacity separately, plus full RSS, CPU, bytes and tail latency. Upstream project benchmarks supply hypotheses, not transferable speedup factors. APP measures boilerplate/setup/round trips separately from engine throughput.
 
 ## Execution discipline
 
 Use current repository instructions, scoped edits and generators. Routine feedback uses repository dev builds and cargo nextest. Benchmark profiles are deliberate, identical and documented. Backend/CLI behavior changes require isolated-server smoke/e2e tests. Documentation-only edits require consistency, link, task-ID and scoped-diff checks; they do not establish runtime test success. No production credentials or live data are test fixtures.
 
-Completion order is S -> C0/D -> B2 -> W -> P -> R. There is no backward compatibility stage. Optional P2 views never block a safe owned release, while known safety defects always do.
+Completion combines S -> C0/D -> B2 -> W -> P, plus APP and STABLE, then R. There is no backward compatibility stage. Optional P2 views never block a safe owned release, while known safety, correctness and durability defects always do.

@@ -2,9 +2,9 @@
 
 **Feature directory:** `specs/038-unified-sdk-contracts`  
 **Created:** 2026-10-18  
-**Revised:** 2026-10-22 - research-backed, fresh-start release policy  
+**Revised:** 2026-10-22 - research-backed fresh-start release, application readiness and database stability  
 **Branch:** `feat/pg-dialect`, PR #402  
-**Status:** Implementation specification. New runtime behavior and performance are NOT established by this document.
+**Status:** Implementation specification. New runtime behavior, stability and performance are NOT established by this document.
 
 ## Decision and precedence
 
@@ -14,11 +14,13 @@ Reject old files, peers and SDK contracts before effects with an actionable form
 
 Version fields, current-schema revisions and same-epoch DDL remain necessary for correctness; they do not promise support for an older release. SQL/PGWire, Parquet and explicitly supported Arrow interoperability are product interfaces, not obsolete KalamDB adapters. Spec 037 remains authoritative for SQL meaning and security. For this delivery, 038 supersedes any old requirement to block release on zero-copy or to preserve older KalamDB encodings. Historical review notes are diagnostic evidence, not current release policy.
 
+The [application readiness extension](app-readiness.md) is normative: US9/US10, FR-063..FR-080, SC-023..SC-032 and [T094..T121](tasks-app-stability.md) extend this specification. [Application development](contracts/application-development.md) and [database stability](contracts/database-stability.md) add APP and STABLE prerequisites to Gate R and final T050. They do not create another SDK/serializer/transaction architecture or restore old-release compatibility.
+
 ## Goal and priorities
 
 Generate one checked application contract from the SQL catalog for TS and Dart, and use **one Rust-owned binary domain-value codec** through backend, `link-common`, WASM and FRB. Native routine calls must not synthesize SQL. WebSocket and owned persistence/Raft payloads use the selected codec with distinct message kinds. JSON is an explicit external representation, never a mandatory intermediate tree for binary calls.
 
-Priority order: **P0 correctness/security/durability; P1 lower CPU, allocations and retained memory with higher measured throughput; P2 selective zero-copy.** Safe owned values and deliberate copies are acceptable. Fix existing native handle leaks/lifetime errors at P0; do not make new unsafe views a prerequisite.
+Priority order: **P0 correctness/security/durability; P1 lower CPU, allocations and retained memory with higher measured throughput and less application boilerplate; P2 selective zero-copy.** Safe owned values and deliberate copies are acceptable. Fix existing native handle leaks/lifetime errors at P0; do not make new unsafe views a prerequisite.
 
 The architecture is selected, but no library is certified fastest by external benchmarks. Gate D compares the hardened Kalam schema-directed candidate against Postcard and Prost using identical SQL semantics and validation. Only one wins production use. Alternatives remain isolated benchmarks, not negotiated production serializers. [Research](research.md) explains the sources; [performance contract](contracts/serialization-performance.md) defines measurable selection and release gates.
 
@@ -56,9 +58,13 @@ Generated calls execute descriptor-bound operations directly through `FunctionSe
 
 Harden first; extract a lightweight core; select by measured evidence; implement RPC; converge WebSocket; consolidate fresh persistence/Raft. The same Rust codec passes golden and adversarial vectors on server, native Link, browser WASM and Dart/FRB. MessagePack is removed directly, without a transition release. Direct Arrow construction for bulk values, encode-once authorized fanout, bounded batching, connection reuse and bounded pools precede optional views. No library, language or binary format is presumed secure or fast.
 
+### US9/US10 - Complete developer experience and verified database guarantees
+
+Defined in [app-readiness.md](app-readiness.md). Execute the secure school/helpdesk applications (DX-01..DX-04), then validate advertised engine/SDK promises against DB-01..DB-20. Auth, tenant membership, request-scoped SSR, optimistic state, bounded pagination, files/jobs, testing/deployment, diagnostics and independent current-format restore are explicit. Optional features are documented, not silently assumed complete. A real database failure test is not replaced by an SDK mock or a shorter code sample.
+
 ## Functional requirements
 
-Requirement IDs remain stable for task traceability; wording below is the current scope.
+Requirement IDs remain stable for task traceability; wording below is the current scope. FR-063..FR-080 are defined once in the normative [application extension](app-readiness.md).
 
 - **FR-001:** TS/Dart MUST expose corresponding generated contracts and documented language/platform differences.
 - **FR-002:** One authoritative catalog/type/naming pass MUST generate deterministic artifacts and stable entity identities.
@@ -125,6 +131,8 @@ Requirement IDs remain stable for task traceability; wording below is the curren
 
 ## Success criteria
 
+SC-023..SC-032 in [app-readiness.md](app-readiness.md) add the application/stability outcomes; they are equally binding.
+
 - **SC-001:** Paired examples compile and agree across the supported platform matrix.
 - **SC-002:** Generated routine calls require no handwritten SQL, string key, serializer or registry.
 - **SC-003:** A basic live query needs at most six application statements; a mirror adds one construction call.
@@ -150,8 +158,8 @@ Requirement IDs remain stable for task traceability; wording below is the curren
 
 ## Delivery order and scope
 
-Harden current code (S) -> lean shared core plus measured codec decision (C0/D) -> native RPC (B2) -> binary WS without MessagePack (W) -> fresh owned persistence/Raft (P) -> measured release (R). Core metadata/live/sync work follows [tasks](tasks.md). Existing unsafe lifetime defects are P0 regardless of P2 deferral.
+Harden current code (S) -> lean shared core plus measured codec decision (C0/D) -> native RPC (B2) -> binary WS without MessagePack (W) -> fresh owned persistence/Raft (P). In parallel, start guarantee/SQL fault oracles early and complete application Gate APP plus database Gate STABLE. **Gate R and final T050 require APP/STABLE evidence (T121), not only codec benchmarks.** Core metadata/live/sync work follows [tasks](tasks.md) and its normative [T094-T121 extension](tasks-app-stability.md). Existing unsafe lifetime defects are P0 regardless of P2 deferral.
 
-No arbitrary client workflow execution, new distributed transaction coordinator, TypeScript persistent sync package, general local relational engine or storage-engine replacement is added. Research from Kafka, TigerBeetle, Aeron/SBE, RocksDB, DuckDB and gRPC supplies scoped techniques, not a mandate to import their entire stacks.
+No arbitrary client workflow execution, new distributed transaction coordinator, TypeScript persistent sync package, general local relational engine or storage-engine replacement is added. Research from Kafka, TigerBeetle, Aeron/SBE, RocksDB, DuckDB and gRPC supplies scoped techniques, not a mandate to import their entire stacks. App/platform research adds ergonomic and testing patterns from Convex, Supabase, Firebase, Neon, SQLite, FoundationDB and SQLancer; no feature or superiority claim is inferred without corresponding evidence.
 
-Related contracts: [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance and security](contracts/serialization-performance.md), [data model](data-model.md), [plan](plan.md), [tasks](tasks.md), [quickstart](quickstart.md), [research](research.md).
+Related contracts: [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance and security](contracts/serialization-performance.md), [data model](data-model.md), [plan](plan.md), [tasks](tasks.md), [quickstart](quickstart.md), [research](research.md), [app readiness](app-readiness.md), [app development](contracts/application-development.md), [stability tests](contracts/database-stability.md), [app/platform research](research-app-platforms.md), [application tasks](tasks-app-stability.md).
