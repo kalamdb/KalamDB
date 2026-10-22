@@ -9,7 +9,7 @@
 
 Ship Slice 1 before any Slice 2 work. Slice 1 keeps Drizzle as the only TypeScript table API and adds the thin Dart table builder in `kalam_link`, schema-qualified sync specs, full-versus-partial live decoding, one Drift connection (managed, app constructor, or attached), and the session/checkpoint/projection helpers Masky currently hand-writes. It rides the existing query, live, checkpoint, and action implementations.
 
-Slice 2, after Slice 1 has shipped, is the shared contract manifest, generator API v2, live replay protocol, sync storage rewrite, and server idempotency. Do not start those in order to finish Slice 1.
+Slice 2, after Slice 1 has shipped, is the shared contract manifest, generator API v2, **native typed function RPC with negotiated JSON/binary codecs and in-process typed V8 chaining**, live replay protocol, sync storage rewrite, and server idempotency. Do not start those in order to finish Slice 1.
 
 The earlier Dart-only proposal is superseded where it would introduce different public method names or independent type/query/action machinery. Common surfaces are implemented and tested in pairs; Dart-only persistence is explicitly isolated.
 
@@ -21,8 +21,8 @@ The earlier Dart-only proposal is superseded where it would introduce different 
 | Generation orchestration | `cli/src/workflow/schema/gen.rs`, `load.rs`, `naming.rs`, `types.rs`, `procedures.rs`, `output.rs` |
 | Language emitters | `cli/src/workflow/schema/typescript/`, `dart/`, `cli/templates/schema-gen/` |
 | API exports | `cli/src/workflow/schema/api_exports/`; existing protobuf/FlatBuffers consumers must remain compatible |
-| Function execution contracts | `backend/crates/kalamdb-api/src/http/functions.rs`, `routes.rs`, core function orchestration, `kalamdb-functions` |
-| Shared transport/materialization | `link/link-common/src/`, `link/sdks/rust`, `link/kalam-link-wasm`, `link/kalam-link-dart` |
+| Function execution contracts | `backend/crates/kalamdb-api/src/http/functions.rs`, `routes.rs`, `backend/crates/kalamdb-core/src/functions/{executor,bind,convert,acl}.rs`, `kalamdb-functions` |
+| Shared transport/materialization | `link/link-common/src/`, `link/sdks/rust`, `link/kalam-link-wasm`, `link/kalam-link-dart`, `kalamdb-serialization`; reuse canonical `LogicalTypeRef` and `RoutineValue` |
 | TS core and live facade | `link/sdks/typescript/client/src/`, existing `live/descriptor.ts`, `controller.ts`, `projection.ts` |
 | TS ORM and React | `link/sdks/typescript/orm/src/`, `react/src/`; keep framework concerns out of client |
 | Dart base and remote table builder | `link/sdks/dart/link/lib/src/`; one model per file; regenerate FRB through its build workflow (no separate `kalam_orm` package) |
@@ -31,6 +31,19 @@ The earlier Dart-only proposal is superseded where it would introduce different 
 | Documentation | `docs/architecture/decisions/2026-08-16-kalam-sync-dart-package.md`, SDK READMEs/examples, `../KalamSite/content/sdk/**`, `../kalamdb-skills` and generated mirrors |
 
 Use existing repository build profiles and dependency policy. No new runtime validation framework or new SDK package is required: generated codecs and Dart's remote table builder live in existing packages (`@kalamdb/client`, `@kalamdb/orm`, `kalam_link`, `kalam_sync`). Keep rich validation adapters optional. Do not turn this feature into a backend parser rewrite, general transaction API, or a new all-purpose ORM.
+
+### Spec 037 handoff integrated into Spec 038
+
+Spec 038 is the implementation owner for the generated SDK/native RPC path; it **consumes**, rather than supersedes, Spec 037's PostgreSQL-facing semantics and V8/value ABI contract:
+
+| Existing 037 contract | Binding work in 038 | Guardrail |
+| --- | --- | --- |
+| [`functions-v8.md`](../037-pg18-compatibility/contracts/functions-v8.md), immutable `LogicalTypeRef` descriptors and typed `RoutineValue` ownership | Phase A descriptor/codecs, Phase B2 native JSON/binary calls and nested V8 value forwarding | No second type registry, codec framework, serializer, or independent function executor |
+| [`functions-v8.md`](../037-pg18-compatibility/contracts/functions-v8.md), host views, ownership, cancellation and byte budgets | T058/T059 below, Rust/V8 and TS/Dart conformance | No blanket zero-copy; independently validate ownership, aliasing, projection, principal and lifetime |
+| [`routines-postgresql.md`](../037-pg18-compatibility/contracts/routines-postgresql.md), signature binding/overloads/defaults/SQL CALL semantics | T052/T053/T060 descriptor revision and SQL/native parity | No SQL parser change or JSON envelope required for PostgreSQL SQL clients |
+| Spec 037 `#393`, `#394`, `#397` evidence streams | Reuse upstream G3/G4 tests and record their status in Slice 2 gate | A checked box in 037 is not a substitute for observed 038 integration evidence |
+
+Spec 037 owns PostgreSQL compatibility and its separate release gates. Spec 038 owns **generated TS/Dart invocation, transport negotiation, and integration into that ABI**. Any incompatible semantic change must be reconciled in both contracts with explicit versioning; do not quietly re-specify PostgreSQL behavior.
 
 ## Constitution check
 
@@ -41,6 +54,8 @@ Use existing repository build profiles and dependency policy. No new runtime val
 | Minimal dependencies | Zero new SDK packages; `kalam_link` has no Drift dependency; `kalam_sync` uses Drift as its one local database; no TS persistence dependency is introduced |
 | Tests and docs together | Every implementation slice has executable parity tests and paired docs; generator examples are compiled |
 | Composable APIs | Same generated table/function/query descriptors serve ordinary calls, live views, UI hooks, and optional sync |
+| Native RPC without duplicating execution | JSON and binary adapters bind canonical typed arguments once and invoke existing `FunctionService::invoke`; PostgreSQL SQL stays available |
+| Security/transaction fidelity | Native and nested calls preserve EXECUTE, RLS, DEFINER/INVOKER, cancellation, transaction ownership and single-Raft-group limitation |
 
 ## Delivery phases
 
@@ -66,7 +81,19 @@ Create cross-language vectors under a new `link/tests/sdk-contracts/` fixture ar
 
 ### Phase B — Generate and execute routines (Slice 2)
 
-Split generated modules and add versioned manifests/atomic output publication. Add typed executor/error contracts to TS and Dart, decoding function results and honoring cardinality. Generate operations once and have immediate methods delegate to them. Add capability/contract discovery and version-aware HTTP operation export.
+Split generated modules and add versioned manifests/atomic output publication. Add typed executor/error contracts to TS and Dart, decoding function results and honoring cardinality. Generate operations once and have immediate methods delegate to them. Add capability/contract discovery and version-aware HTTP operation export. **Immediate generated function methods use the native operation executor, not `client.query("SELECT ...")` or `CALL` text.** The legacy SQL path remains a separate compatibility interface.
+
+### Phase B2 — Native typed RPC, JSON/binary transport and in-process V8 chaining (Slice 2; US7)
+
+**Migrate the generated client first, not SQL parsing.** Inventory existing `POST /v1/functions/{namespace}/{procedure}`, `FunctionService::invoke`, `RoutineValue`, `ProcedureCatalog`, generated TS/Dart calls, 037 ABI tasks and the serialization crate. Make a canonical, revision-pinned routine descriptor (types, modes, ordinals, defaults, result/cardinality, ABI/codec version and permission dependencies) once, reused by HTTP, Rust, WASM, FRB and V8. Allow unknown/newer descriptors to fail before a mutation; pin in-flight revisions. Do not cache evaluated volatile defaults.
+
+**JSON first:** Extend the existing route and shared link client with a versioned typed request/response path; preserve the unversioned JSON body for existing callers and preserve PostgreSQL SQL `SELECT` / `CALL`. Feed descriptor-bound values directly to `FunctionService::invoke` without synthesizing or parsing SQL. Generate both SDKs to call that path with checked codecs; retain compatibility aliases.
+
+**Binary second:** Add a versioned binary envelope with operation signature and codec version, encoded by the existing canonical serialization/type owners. Reuse the same argument/result binder and execution path as JSON. Negotiate `auto`/`json`/`binary` once per compatible server/auth scope and choose a measured default; JSON must remain a full-featured fallback selected **before execution**. The two encodings do not represent different semantics. No new serializer, type enum, or redundant serialization through `serde_json::Value` for binary calls.
+
+**Internal V8 boundary:** Reconcile with 037 `functions-v8.md` by passing native typed scalar/Arrow owners and explicit materialized JS values as appropriate. Eliminate redundant nested-call JSON tree round trips, preserve child isolate/revision/permission frames and bounded async lifetimes, and account for pinned Arrow buffers and external V8 memory. Zero-copy is an individually proven eligible boundary, not an API-wide claim.
+
+**Gate B2:** Both generated SDKs call the same routine via direct JSON and binary RPC with lossless conformance; nested typed calls and SQL/native parity pass authorization, RLS, transaction, cancellation, ABI and revision tests. Cross-data-Raft-group writes explicitly fail atomicity; STREAM autocommit and external effects remain outside rollback guarantees. Measure p50/p95, CPU, allocations and wire bytes against generated SQL before selecting `auto` policy. Track T051–T063; do not advertise B2 prior to this evidence.
 
 ### Phase C — Add common queries and ORM adapters (Slice 1, then Slice 2)
 
@@ -104,8 +131,13 @@ Update docs and canonical skills; generate any mirrors. Publish migration exampl
 | Sync durability | Process kill around every receipt/apply/ack/execute boundary, incomplete generation, failed external projection, outbox result recovery, codec migration |
 | Ordering/ownership | Same-key retry cannot be overtaken, stacked overlays survive old echoes, foreground/background competing claims are fenced, account callbacks cannot leak |
 | Server API | SQL/HTTP same routine semantics, authentication/authorization, forbidden context inputs, permission-safe manifests, idempotency reuse/conflict/expiry |
+| Native function RPC | Generated TS/Dart calls bypass SQL parsing; identical typed results/defaults/errors in legacy SQL, v2 JSON and v2 binary via one FunctionService |
+| V8 typed ABI and chaining | No nested SQL/HTTP/JSON detour, child-realm security and single-group transaction preserved; Arrow/buffer ownership, invalidation and memory-budget probes pass |
+| Binary and fallback safety | Canonical lossless nested codecs, negotiated format versions, forged/stale/malformed inputs rejected; no automatic post-dispatch mutation fallback/retry |
 | Product workflow | Untouched projects plus real Masky migration; no hand-edited generated files, truthful readiness/error output |
 | Performance | 1k/10k/100k rows, cold/warm cache, sustained mutation stream, reconnect burst, large completed-action history, repeated attach/dispose |
+
+Native invocation benchmarks must compare the same routine in generated SQL, direct typed JSON and direct binary plus two-step nested functions; include zero-argument, tiny scalars, large integers/decimals, composites, arrays and larger payloads. Measure parser/planner time, codec time, CPU, allocations, wire bytes, throughput, p50/p95 and V8/bridge crossing cost. Prefer JSON for small calls unless actual measurements justify binary. 
 
 Performance runs use the same machine/profile/dataset, warm-up and at least five measured repetitions. Report median and p95 latency/runtime in seconds, peak/retained memory, decoded rows/bytes, local transactions, and socket/subscription counts. Compare before/after at each relevant path; explain any >10% regression. Memory should plateau under repeated attach/dispose and configured retention, rather than grow with total historical actions/events. Do not claim improvements without measurements.
 
@@ -131,8 +163,12 @@ For backend/CLI behavior changes, start an isolated server, build the CLI before
 - Complete replay, stable pagination, and idempotency are backend capabilities. When unavailable, expose unsupported/gap/uncertain outcomes; do not hide the dependency behind a client helper.
 - Sync storage migrations must be restart-safe and preserve pending actions/receipts. Include rollback/recovery fixtures and bounded checkpoint rebootstrap.
 - Native binaries/generated bridges already have unrelated local changes. Keep edits scoped and regenerate only after source changes are ready; inspect actual current diff before any overwrite.
+- Do not silently retry/fallback an ambiguous function mutation after response loss or negotiation failure; a safe v2 idempotency receipt must be proven for any replayed effects.
+- If staged writes span separate data Raft groups, the current transaction model rejects them. No automatic cross-group ACID or rollback for STREAM DML and external HTTP actions.
+- Preserve the 037 ownership/read-view lifetime model: do not smuggle guest context or arbitrary V8 values across security realms, or label ordinary JS/network payloads zero-copy.
+- v2 JSON and binary routing is an explicit negotiated upgrade. Old servers and legacy SDKs keep their existing route/shape; unknown versions fail before dispatch.
 - External documentation/application paths may require the implementation environment's write permission. Produce and validate repository-side work first, then report the concrete remaining external edits if blocked.
 
 ## Completion boundary
 
-Slice 1 is complete when its gate passes and the docs for those APIs match the code. Slice 2 remains required for the full feature and is complete only when every Slice 2 task and gate passes. A passing generator unit test, a written API sketch, or a successful connection alone is not completion of either slice. Do not treat Slice 1 as done by starting Slice 2.
+Slice 1 is complete when its gate passes and the docs for those APIs match the code. Slice 2 remains required for the full feature and is complete only when every Slice 2 task and gate passes, including new Gate B2. A passing generator unit test, a written API sketch, or a successful connection alone is not completion of either slice. Do not treat Slice 1 as done by starting Slice 2.

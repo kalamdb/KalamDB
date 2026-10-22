@@ -30,6 +30,50 @@ All boundary errors normalize to `KalamError` carrying stable `code`, safe `mess
 
 Cancellation or timeout after dispatch does not prove absence of server effects. Errors must preserve that uncertainty. No SDK automatically retries a mutation across transports merely because its first transport returned an error.
 
+## Native typed function invocation (Slice 2; normative)
+
+This section incorporates the SDK-relevant typed-value/ABI requirements from [037 functions-v8](../../037-pg18-compatibility/contracts/functions-v8.md) and PostgreSQL routine binding from [037 routines-postgresql](../../037-pg18-compatibility/contracts/routines-postgresql.md). 037 remains owner of SQL semantics; 038 owns generated TypeScript/Dart calls and compatible network adapters. These are **proposed**, not supported 0.8 behavior until T051–T063 are validated.
+
+### Execution dispatch and identity
+
+Generated routine calls MUST bind one immutable `OperationDescriptor<Input, Result>` and call the SDK native typed executor rather than generating `SELECT schema.fn($1)`, `CALL schema.proc($1)`, or invoking the SQL query API. The server authenticates and binds the descriptor directly to the existing `FunctionService::invoke` path; no second routine implementation, parser, planner, serializer, type registry, or privilege evaluator. SQL SELECT/CALL and legacy `POST /v1/functions/{namespace}/{procedure}` remain valid entry points with their existing semantics.
+
+Canonical descriptor identity includes the catalog routine identity, schema-qualified name, ordered effective input type identities/modes, routine kind, output/result cardinality, revision/dependency epochs, ABI and codec versions. Parameter names are mapped independently from positions; composite fields are not mistaken for routine argument keys. Defaults evaluate at invocation, never at codegen or descriptor-cache time. The server checks the authenticated caller's access to the routine, pins compatible revisions for in-flight work, and rejects incompatible/stale descriptors **before effects**. An operation hash is not a grant.
+
+### Wire versions and envelopes
+
+Negotiate supported `routineInvocationFormats` and individual protocol/codec versions via the existing authenticated capability mechanism. No per-invocation capability roundtrip; cache by server identity and appropriate auth scope. Define `format: "auto" | "json" | "binary"` as the SDK preference. JSON and binary represent the **same logical argument/result contract**, selected before dispatch. Unknown codec/frame versions or incompatible signatures return typed errors before invocation. Fallback to JSON is allowed only if binary was rejected before execution, or when a proven idempotency receipt covers a retry. A disconnect/timeout after dispatch is an unknown outcome, not permission to retry another transport.
+
+Conceptual v2 request (not a second public router or finalized field names):
+
+```text
+InvokeRequestV2 {
+  operation: canonical routine identity + signature/revision/version,
+  codecVersion, format,
+  arguments: descriptor-encoded ordered typed values,
+  optional idempotencyKey, clientRequestId, deadline
+}
+InvokeResultV2 { operation, codecVersion, cardinality, typed result OR structured error }
+```
+
+The server derives principal, RLS context, transaction identity, origin, privileges, and audit fields from trusted session/runtime data, NEVER client-supplied arguments/envelopes. Continue rejecting reserved `ctx`, `actor`, `principal`, `tx`, `source` metadata. HTTP content negotiation may reuse/extend the existing function route; preserve the ordinary legacy JSON body unchanged.
+
+JSON v2 uses canonical descriptor-directed encodings already described under Value and error boundary. The `{"json":...}` distinction applies only at a field whose **declared type** is JSON; never heuristically inspect arbitrary objects as envelopes. Strings for wide integers/decimals and precise timestamps are lossless typed values, not arbitrary untyped JSON. No JavaScript Number coercion for unsafe INT64 or DECIMAL. Binary v2 uses the repository's **existing canonical serialization and logical type registry** with versioned framing and bounded lengths. It must decode straight to native typed routine values; it MUST NOT decode into JSON and reparse/convert that JSON to build native input. Do not invent a second FlatBuffers schema registry or an independent SDK codec rule. Native/WASM/FRB bridges must share byte-level positive/negative fixtures.
+
+Both modes distinguish: missing/defaulted input vs SQL NULL vs JSON null; distinct void/null/empty-set results; scalar/composite/set shape and errors; INT64 and exact NUMERIC (including wide values or explicit unsupported errors); TIMESTAMPTZ precision/time zone; enum/domain identities; arrays, dimensions and element nullability; binary/FILE and nested types. Reject invalid UTF-8, malformed framing/lengths, invalid offsets, overflow, untrusted types/handles, excessive depth and unsupported values with bounded, location-aware `KalamError`, not silent coercion or partial effects.
+
+### In-process typed chaining and V8 ABI
+
+Generated `ctx.functions.<schema>.<method>` operations remain in-process nested calls under the same root execution/transaction/deadline/cancellation. No SQL query or another HTTP request is performed for a nested call. Argument/result forwarding uses validated `RoutineValue` and compatible native Arrow owners/read views where applicable, without stringify/parse or redundant scalar/JSON/Arrow round trips. Guest-origin JS objects must still be validated/materialized once against the canonical descriptor. Preserve distinct child V8 realm and invoker/definer principal; never share parent context objects, arbitrary JS prototypes/getters, raw V8 handles, or untrusted capability fields between frames.
+
+A native view must carry generation, root identity, revision, principal/projection provenance, owner lifetime and charged byte budget. Borrowed/transient buffers cannot escape an await or worker boundary without an owning lease. Explicit exclusive ownership transfer is needed to avoid a buffer copy; aliasing, slices exposing unauthorized bytes, incompatible allocators, and mutation fall back to a safe copy or rejection. No payload-copy claim applies to mandatory network serialization, ordinary guest JS strings/objects or durable writes. Cancellation, timeout, completion, memory pressure and errors must invalidate handles and release owner charges.
+
+RLS, EXECUTE ACL, security mode, logs, error codes, topic staging and rollback are identical to SQL/legacy REST for the same invocation. Root transactions currently commit atomically only within **one data Raft group**; crossing groups fails explicitly. STREAM DML autocommits outside the root transaction as documented; external HTTP effects are not database-rollbackable. No implicit client DAG/atomic batching API is added by this feature; existing server-side procedure composition is the supported model.
+
+### Required conformance and performance evidence
+
+Real-server parity tests must execute identical routines through SQL SELECT/CALL, legacy JSON, typed JSON, typed binary, TS/WASM and Dart/FRB; include RLS and grant revocation, EXECUTE, definer/invoker nesting, defaults/overloads, null/precision/arrays, malformed/stale frames, cross-group rollback rejection, cancellation, lifetime/aliasing, and uncertain retry outcomes. Benchmark SQL-generated calls vs native JSON vs native binary with identical bodies at warm/cold p50/p95, throughput, CPU, allocations, wire bytes, parser/codec cost, and small/large nested payloads. Never choose binary by assumption or mark this ABI complete based only on type declarations. Task ownership and release gates: [tasks](../tasks.md) T051–T063, [plan](../plan.md) Gate B2.
+
 ## Live subscription request and deliveries
 
 A new subscribe request extends the existing request with these conceptual fields:

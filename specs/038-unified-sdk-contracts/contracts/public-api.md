@@ -134,6 +134,30 @@ Raw SQL remains an escape hatch returning raw cells/maps. Typed raw results requ
 
 Unbound `OperationDefinition<Input, Result>` includes identity, input/result codecs, parameter modes/cardinality, execution policy, and optional durable capability. Its generated `bind(input)` creates a call. Generated named-query methods return bound query handles with `get`/cardinality methods and, only when eligible, `live`; they do not return a bare metadata object that applications must wire to an executor manually.
 
+## 3A. Native generated routine invocation (proposed API v2; Slice 2)
+
+The generated immediate-call surface remains `db.functions.<schema>.<routine>(typedInput)` for TS and Dart. Its implementation MUST bind `OperationDefinition<Input, Result>`/a generated descriptor to an SDK typed executor rather than emitting SQL text. For example, current `client.query("SELECT chat_demo.send_message($1,...)", params)` is a **legacy implementation detail**, not the v2 contract.
+
+```ts
+// Illustrative v2 generated facade and base-client contract, not implemented yet:
+const result = await db.functions.chatDemo.sendMessage({ target: "room", targetId: "main", content: "Hi" });
+const same = await client.invoke(appOperations.chatDemo.sendMessage, { target: "room", targetId: "main", content: "Hi" }, { format: "auto" });
+// Underneath both use the existing FunctionService, never query("CALL ...").
+```
+
+```dart
+// Illustrative v2 generated Dart method, not implemented yet:
+final result = await db.functions.chatDemo.sendMessage(
+  ChatDemoSendMessageInput(target: MessageTarget.room, targetId: 'main', content: 'Hi'),
+);
+```
+
+An unbound operation descriptor contains canonical routine signature/revision ID, argument slots/defaults, logical types, result/cardinality, input/result codecs, ABI/codec versions and optional validated capability flags. `bind(input)` is allocation-light and does no I/O; immediate `invoke`/existing `execute(KalamCall)` shares one typed implementation with durable call creation. TypeScript and Dart never hand-author argument arrays or SQL, and generated decoders validate the returned shape rather than relying on an unchecked `as Result`. Keep the existing TS namespace alias and Dart `KalamFunctions` migration adapters, as well as direct SQL calls for expert/PGWire users.
+
+Invocation options carry a negotiated `format: "auto" | "json" | "binary"` preference, cancellation/deadline and optional idempotency key; they do not expose principal, trusted origin, root transaction or privileged function context. An existing older server supports only its advertised legacy route/body; unsupported binary/capability is rejected or selected away **before effects**. No automatic retry/fallback after an uncertain mutation outcome. JSON and binary use one canonical type policy, shared Rust/native codec where feasible, and the same public result/error type. The exact versions, typed JSON distinctions, wire envelope and V8 chaining semantics are defined in [protocol.md](protocol.md); ownership/permission requirements also derive from [037 functions-v8](../../037-pg18-compatibility/contracts/functions-v8.md).
+
+Server-side `ctx.functions.<schema>.<method>(input)` remains typed, in-process, transaction-scoped composition. No client-authored arbitrary JS workflow/DAG execution is introduced. Nested native Arrow/read-view borrowing is private runtime behavior with strict lifetime/owner/budget validation, not a public cross-boundary pointer/zero-copy promise. Workloads spanning multiple data Raft groups are not advertised atomic.
+
 ## 4. Table access: Drizzle in TypeScript, thin table manager in Dart
 
 ### One TypeScript ORM (Drizzle)

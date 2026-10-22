@@ -18,6 +18,16 @@ The current contract's `is_array`, `primary_key`, and `has_default` flags are in
 
 Runtime definitions use typed IDs and immutable descriptors. Shared schemas/codecs are memoized by entity identity/version; per-query values and scopes are not captured in process-global unbounded maps.
 
+## Typed function transport and native call descriptors (Slice 2)
+
+The canonical contract snapshot owns function signature/identity, ordered argument names/modes/types/defaults, result cardinality, immutable schema/ABI/codec revision, and security dependency epochs. The generated TypeScript and Dart descriptors refer to these stable identities and one shared `LogicalTypeRef` meaning, never a separate function-specific type enum.
+
+Two lossless transports (typed JSON and versioned binary) encode the **same** canonical argument slots. An invocation frame carries only routing/contract metadata and caller-visible request options; principal, RLS context, current transaction and privileged V8 host objects remain server-owned. Binary codecs reuse `kalamdb-serialization`, and V8/native calls use `RoutineValue`/authorized Arrow owners without unnecessary JSON trees. No independent serialized argument format becomes a competing type authority.
+
+The server caches immutable, revision-pinned call descriptors and invalidates them on incompatible routine/type/grant/security changes. In-flight calls pin a safe revision, and an incompatible generated descriptor is rejected before effects. Nested values/read views retain generation/root/principal/projection provenance and a charged byte owner; ordinary JS objects are materialized and validated. These lifetimes are not persisted in SDK or Drift tables.
+
+Existing PostgreSQL routine meaning and ABI/value ownership are described in [037 routines-postgresql](../037-pg18-compatibility/contracts/routines-postgresql.md) and [037 functions-v8](../037-pg18-compatibility/contracts/functions-v8.md); 038 owns SDK transport integration. See [protocol](contracts/protocol.md) and T051–T063.
+
 ## Query identity and membership
 
 A logical query key includes server identity, authenticated subject and tenant, namespace, authorization scope revision, query/operation descriptor version, canonical parameter bytes, result/key/codec identity, and live semantics. Presentation order/window can share membership but each observer retains its own projection settings. No sharing across security scopes or incompatible row projections.

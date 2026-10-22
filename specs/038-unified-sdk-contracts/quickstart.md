@@ -133,6 +133,34 @@ These are separate usage demonstrations, not a recipe to send the same message t
 
 Function-only applications import `createKalamFunctions` from the generated `functions` entry point, with no ORM or sync import. `kalam dev` and `kalam schema gen` keep emitting the Drizzle `kTable` schema for TypeScript tables. Dart table calls use `createKalam` from the generated facade.
 
+## 4A. Native typed RPC, transport selection and server-side chaining (proposed Slice 2)
+
+The generated function syntax shown above is unchanged, but API v2 implementations **must not emit** SQL `SELECT` / `CALL` text for the generated client invocation. Instead, a generated operation descriptor invokes the current function service through a native typed executor, using a negotiated JSON or binary encoding. Both modes preserve SQL types and error semantics. The SQL API is still separately available.
+
+```ts
+// Proposed v2: the generated method chooses typed JSON/binary internally.
+const db = createKalam(client);
+const reply = await db.functions.chatDemo.sendMessage({
+  target: "room", targetId: "main", content: "Hello"
+});
+// Optional explicit transport preference on the lower-level base SDK:
+const reply2 = await client.invoke(appOperations.chatDemo.sendMessage, {
+  target: "room", targetId: "main", content: "Hello"
+}, { format: "binary" });
+```
+
+Nested procedure composition is server-side, not a client-defined arbitrary function graph:
+
+```ts
+// Illustrative project-defined routines, both generated from schema.
+export const bookAndBill = procedure.school.bookAndBill(async (ctx, input) => {
+  const booking = await ctx.functions.school.bookLesson(input);
+  return ctx.functions.school.createInvoice({ bookingId: booking.id });
+});
+```
+
+The two nested calls remain in-process under the root transaction and permissions. Cross-Raft-data-group transactional writes fail explicitly, and STREAM/external side effects are not part of rollback guarantees. The native typed-value/read-view optimization and binary codec are **not** implemented until T051–T063 and Gate B2 pass. Review [API](contracts/public-api.md), [protocol](contracts/protocol.md), [tasks](tasks.md), and [037 ABI](../037-pg18-compatibility/contracts/functions-v8.md).
+
 ## 5. Add Dart persistence to the same query
 
 ```dart

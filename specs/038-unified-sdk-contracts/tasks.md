@@ -20,11 +20,12 @@ Do not start these to finish Slice 1. Server replay, a new sync schema, and idem
 
 ## Phase A — Baseline and shared semantics (Slice 2)
 
-T001's Slice 1 scope is above. The remaining baseline work is Slice 2.
+T001's Slice 1 scope is above. The remaining baseline work is Slice 2. Typed RPC and V8 ABI work below is an extension of Slice 2, not a reopening of checked Slice 1 tasks.
 - [ ] T002 Add schema/type/query/routine and live-trace conformance fixture format plus TS/Dart harness entry points under `link/tests/sdk-contracts/` and existing target test directories. Covers FR-032.
 - [ ] T003 Extend canonical metadata in `backend/crates/kalamdb-dialect/src/contracts/` for ordered actual keys, identity/generated/default policy, recursive type fidelity, routine overload/cardinality, and relevant entity versions; use authoritative AST/catalog/planner data. Covers FR-002, FR-004, FR-010, FR-011.
 - [ ] T004 Implement shared stable naming, exact wire/public-name mapping, scoped entity hashes, manifest serialization/versioning, and collision tests in `cli/src/workflow/schema/` and contract owners. Covers FR-002, FR-007.
 - [ ] T005 Define shared wire/codecs/errors in Rust client contracts and TS/Dart base SDKs, including large numbers, JSON/SQL null distinctions, temporal/file types, and error locations. Add positive/negative codec vectors. Covers FR-005, FR-006.
+- [ ] T051 [US7] Inventory the live 0.8 JSON function endpoint, generated SQL wrappers, `FunctionService::invoke`, `RoutineValue`, serializer, native/WASM/FRB bridges, and [037 `functions-v8.md`](../037-pg18-compatibility/contracts/functions-v8.md) / [`routines-postgresql.md`](../037-pg18-compatibility/contracts/routines-postgresql.md); record exact implementation gaps and upstream #393/#394/#397 dependencies without claiming prior tasks complete. Covers FR-038, FR-047.
 
 **Gate A**: Shared vectors and metadata are authoritative; no target invents a key/type/nullability policy.
 
@@ -40,7 +41,21 @@ T001's Slice 1 scope is above. The remaining baseline work is Slice 2.
 - [ ] T013 [US5] Extend existing generated server handler contracts/registries and function invocation service to resolve typed operation identity consistently across SQL and HTTP; test authentication, overloaded/ambiguous routines, forbidden context, and result validation. Covers FR-026, FR-031.
 - [ ] T014 [US5] Generate complete OpenAPI 3.1 operation paths, scalar/nested schemas, required/nullability/default rules, security and errors through `api_exports/openapi.rs`; preserve other exporters or version incompatibilities explicitly. Covers FR-027.
 
-**Gate B**: A schema-defined routine can be invoked through both generated clients and HTTP with equivalent typed results/errors, without handwritten serialization/registration.
+**Gate B**: A schema-defined routine can be invoked through both generated clients and HTTP with equivalent typed results/errors, without handwritten serialization/registration. Complete Gate B2 before claiming native transport performance or full 037 V8 parity.
+
+### Phase B2 — US7 native routine RPC and native V8 values (Slice 2; after Phase A and T008/T009/T012/T013)
+
+- [ ] T052 [US7] Resolve one immutable revision-pinned operation/call descriptor from canonical routine/type metadata (`LogicalTypeRef`, `ProcedureCatalog`, signature identity, argument names/modes/ordinals/defaults, result/cardinality, ABI/codec version and security dependencies). Generate matching TS/Dart descriptors; invalidate on DDL/type/grants/revisions and reject stale callers before effects. Depends on T003–T005, T008, T012. Covers FR-038, FR-040, FR-042.
+- [ ] T053 [US7] Extend existing `POST /v1/functions/{namespace}/{procedure}` and shared Rust/link client with an explicit v2 descriptor-bound **typed JSON** invocation, dispatching directly to `FunctionService::invoke` without generated SQL or SQL parser use. Keep legacy route/body and SQL `CALL`/`SELECT` semantics intact; reject client-supplied privileged context. Depends on T052, T013. Covers FR-038, FR-039, FR-043, FR-044.
+- [ ] T054 [US7] Replace generated TypeScript/Dart `client.query(\"SELECT ...\")` and `CALL` wrappers with typed `execute/invoke(operationDescriptor, input, options)` calls against the direct v2 JSON function path. Emit checked codecs and preserve documented old SDK aliases/version opt-in; compile generated clients against real SDK APIs. Depends on T053, T006–T010. Covers FR-038, FR-040, FR-047, SC-011.
+- [ ] T055 [US7] Add canonical JSON/typed-value parity tests for NULL versus JSON null, missing/default/volatile values, INT64, exact NUMERIC, sub-millisecond timestamps, BYTEA, FILE, enum/domain, multidimensional/nullable arrays, composites, scalar/void/set results and malformed wire. Execute TS, Dart, native Rust, browser WASM and FRB where supported; no unchecked `as Result` and no lossy conversion. Depends on T052–T054. Covers FR-039, FR-040, SC-012.
+- [ ] T056 [US7] Define and implement a versioned **binary routine request/response envelope** using existing `kalamdb-serialization` / canonical `LogicalTypeRef` descriptors and codec owner, not a second serializer/type registry. Cover minimal routing identity, signature/codec version, positional typed values, framing/limits and structured errors; bind directly to `RoutineValue` without passing through JSON. Depends on T052/T055. Covers FR-039, FR-040, FR-046.
+- [ ] T057 [US7] Expose binary transport in Rust/link, TypeScript/WASM and Dart/FRB clients using the same conformance vectors. Implement `auto`/`json`/`binary` with scope-aware capability caching; default selection is evidence-based, and fallback happens only when non-execution is known or a proven idempotency receipt protects it. Keep legacy JSON clients compatible. Depends on T056/T012. Covers FR-039, FR-044, SC-012/SC-013.
+- [ ] T058 [US7] Make nested `ctx.functions.<schema>.<method>` invocation pass typed native values in-process under the same root transaction/cancellation/deadline; eliminate redundant `pack_named_call_input` JSON stringify/parse, preserve child-realm/EXECUTE/INVOKER/DEFINER/RLS checks, validate typed return values and pin revisions. Do not add a second HTTP or SQL call. Reconcile with 037 V8 contract. Depends on T052/T055. Covers FR-041, FR-043, SC-012/SC-013.
+- [ ] T059 [US7] Evolve the existing `RoutineValue`/V8 host path to preserve eligible Arrow owners/read views or explicitly transferred exclusive buffers with bounds, owner/generation/projection validation, child-realm rewrapping and byte budgets. No blind zero-copy claims or untracked pins; test cancellation, cross-await lifetime, aliasing and disposal. Coordinate with 037 #393/#394. Depends on T058 and approved ABI mapping. Covers FR-041, FR-046.
+- [ ] T060 [US7] Add real-server SQL-vs-v2-JSON-vs-binary/nested parity and fault tests: EXECUTE grants, RLS, SECURITY INVOKER/DEFINER, forbidden context, signature/version mismatch, malformed frames, cancellation/timeout, rollback/topic staging, cross-data-Raft-group rejection, STREAM autocommit, unknown retry outcomes and external effects. Reuse 037 tests, do not duplicate their owners. Depends on T053–T059. Covers FR-040–FR-044, SC-011–SC-013.
+
+**Gate B2**: Both generated SDKs call without synthesized SQL; JSON/binary and native nested typed calls share execution/security/transaction semantics. Codec and ABI/lifetime tests pass; any 037 implementation gaps remain tracked blockers, not assumed complete. Performance and docs finish in Phase F tasks T061–T063.
 
 ## Phase C — US2 common query and ORM experience (Slice 2 except T018 and T019)
 
@@ -92,16 +107,20 @@ T045 and T046 Slice 1 scopes are listed above. Broader Masky mirror migration an
 - [ ] T047 [US6] Benchmark paired 1k/10k/100k row workloads, reconnect, large action history, cache startup, and attach/dispose retention; record each relevant runtime in seconds and explain regressions against baseline. Covers FR-030, SC-008.
 T048 Slice 1 scope is listed above. The parity/platform matrix for Slice 2 lands with T049.
 - [ ] T049 [US6] Align TS cohort and Dart package constraints, generator/runtime/server compatibility checks, and version verification; remove obsolete duplicate implementations only after adapters pass. Covers FR-003, FR-028, FR-029, FR-033.
-- [ ] T050 [US6] Complete final cross-artifact/API/security review, confirm all success criteria with recorded evidence, and leave no unimplemented advertised examples or silent capability downgrades. Covers FR-001 through FR-034, SC-001 through SC-010.
+- [ ] T050 [US6] Complete final cross-artifact/API/security review, confirm all success criteria with recorded evidence, and leave no unimplemented advertised examples or silent capability downgrades. Covers FR-001 through FR-047, SC-001 through SC-014.
+- [ ] T061 [US7] Benchmark generated SQL `SELECT`/`CALL` vs direct JSON vs direct binary using identical bodies and native/WASM/FRB paths; include zero-arg, scalars, INT64/DECIMAL, large composites/arrays, nested calls, warm/cold p50/p95, throughput, CPU, allocations, parser/codec overhead and wire bytes. Set `auto` preference from reproducible evidence; no speed/zero-copy claims without measurements. Depends on T055–T060. Covers FR-045, SC-014.
+- [ ] T062 [US7] Reconcile and publish native RPC/ABI documents across `spec.md`, `plan.md`, `tasks.md`, `data-model.md`, `contracts/protocol.md`, `contracts/public-api.md`, quickstart, generated API docs and OpenAPI. Explicitly link 037 normative dependencies, v1/v2 compatibility, single-group transactions and STREAM/external effects; generate accurate examples only after tests. Depends on T060. Covers FR-047, SC-011–SC-013.
+- [ ] T063 [US7] Final two-SDK/native transport release gate: verify Gate B2, no duplicate serializer/executor, stale/revision and unsafe retry behavior, lifecycle/memory probes, reproducible perf records and correct 037 ownership. Preserve legacy coverage; mark completion only with recorded evidence. Depends on T060–T062. Covers FR-038–FR-047, SC-011–SC-014.
 
 ## Dependencies and execution rules
 
 - Slice 1 order is T001, T019, T018, T038, T045, T046, T048. Stop at the Slice 1 gate.
-- Slice 2 order is A, then B, then the Slice 2 remainder of C, then D. T031–T033 start after T023–T027. T035 cannot complete before T034. T036 precedes overlapping background-worker claims.
+- Slice 2 order is A, then B and B2 native RPC (T051–T060), then the Slice 2 remainder of C, then D; T061–T063 finish in F. T052 waits for canonical metadata/T008/T012, T053 for T052/T013, T054 for typed JSON/T006–T010, T056 for codec parity, T057 for binary/capabilities, and T058/T059 for approved 037 typed ABI mapping. T031–T033 start after T023–T027. T035 cannot complete before T034. T036 precedes overlapping background-worker claims.
 - Slice 2 must not be used to finish a Slice 1 task.
 - Do not check off a task based only on generated text or implementation presence. Record focused passing validation and any remaining capability limitations.
 - Batch edits before checks, fix all errors from one captured output, use dev builds and `cargo nextest`, and follow local instructions for smoke/e2e tests.
 - No runtime implementation is part of writing this specification. All proposed APIs require implementation and compiling examples before release.
+- 037 PostgreSQL routine/ABI semantics remain normative dependencies. Use [037 `functions-v8.md`](../037-pg18-compatibility/contracts/functions-v8.md) and [`routines-postgresql.md`](../037-pg18-compatibility/contracts/routines-postgresql.md) for type and execution meanings; 038 owns SDK transport/codegen implementation and verification, not a second execution engine.
 
 ## Requirement and success coverage
 
@@ -113,3 +132,5 @@ T048 Slice 1 scope is listed above. The parity/platform matrix for Slice 2 lands
 | FR-017 through FR-025 | T031-T041, T045 | SC-003, SC-005, SC-009 |
 | FR-026 through FR-028 | T008, T010, T012-T014, T042-T044 | SC-002, SC-004, SC-007 |
 | FR-029 through FR-037 | T001, T018-T022, T030-T050 | SC-001, SC-004, SC-008, SC-009, SC-010 |
+| FR-038 through FR-044 | T003-T010, T012-T013, T051-T058, T060 | SC-011, SC-012, SC-013 |
+| FR-045 through FR-047 | T051-T063 | SC-011, SC-012, SC-013, SC-014 |
