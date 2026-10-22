@@ -11,8 +11,8 @@ pub mod permissions;
 pub mod secured_provider;
 
 pub use context::{
-    install_extension, RlsCommandContext, ScanDiagnosticsContext, SessionConfigValues,
-    SessionUserContext,
+    install_extension, PostgresStar, RlsCommandContext, ScanDiagnosticsContext,
+    SessionConfigValues, SessionUserContext,
 };
 pub use permissions::{
     check_shared_table_access, check_shared_table_write_access, check_system_table_access,

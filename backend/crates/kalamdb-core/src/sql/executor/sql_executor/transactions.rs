@@ -9,7 +9,9 @@ use kalamdb_commons::{
 };
 use kalamdb_session_datafusion::install_extension;
 use kalamdb_sql::classifier::{SqlStatement, SqlStatementKind};
-use kalamdb_transactions::{TransactionQueryContext, TransactionQueryExtension};
+use kalamdb_transactions::{
+    primary_key_claims, TransactionQueryContext, TransactionQueryExtension,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -173,16 +175,21 @@ impl SqlExecutor {
             )));
         }
 
-        Ok(Some(TransactionQueryContext::new(
-            transaction_id.clone(),
-            Arc::clone(&handle.snapshot_log_index),
-            Arc::new(crate::transactions::CoordinatorOverlayView::new(
-                Arc::clone(&coordinator),
+        Ok(Some(
+            TransactionQueryContext::new(
                 transaction_id.clone(),
-            )),
-            Arc::new(crate::transactions::CoordinatorMutationSink::new(coordinator)),
-            Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),
-        )))
+                Arc::clone(&handle.snapshot_log_index),
+                Arc::new(crate::transactions::CoordinatorOverlayView::new(
+                    Arc::clone(&coordinator),
+                    transaction_id.clone(),
+                )),
+                Arc::new(crate::transactions::CoordinatorMutationSink::new(coordinator)),
+                Arc::new(CoordinatorAccessValidator::new(
+                    self.app_context.transaction_coordinator(),
+                )),
+            )
+            .with_pk_claims(primary_key_claims()),
+        ))
     }
 
     pub(super) fn user_session_state(
@@ -477,6 +484,18 @@ impl SqlExecutor {
         exec_ctx: &ExecutionContext,
     ) -> Result<(), KalamDbError> {
         if !Self::is_ddl_statement(classified.kind()) {
+            return Ok(());
+        }
+        // ALTER TABLE, CREATE TABLE, and DROP TABLE are applied immediately.
+        // PostgreSQL installers such as Directus create, alter, and drop
+        // collections inside an explicit transaction. The statements are not
+        // rolled back with the transaction.
+        if matches!(
+            classified.kind(),
+            SqlStatementKind::AlterTable(_)
+                | SqlStatementKind::CreateTable(_)
+                | SqlStatementKind::DropTable(_)
+        ) {
             return Ok(());
         }
 

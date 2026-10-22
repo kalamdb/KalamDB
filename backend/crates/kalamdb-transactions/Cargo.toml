@@ -18,6 +18,7 @@ kalamdb-sharding = { path = "../kalamdb-sharding" }
 datafusion = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }
+tokio = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 

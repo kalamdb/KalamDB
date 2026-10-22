@@ -118,8 +118,8 @@ fn test_snapshot_creation() {
         println!("{:?}", result);
 
         // Cleanup
-        let _ = execute_query_with_retry(&client, &format!("DROP SCHEMA {} CASCADE", namespace))
-            .await;
+        let _ =
+            execute_query_with_retry(&client, &format!("DROP SCHEMA {} CASCADE", namespace)).await;
     });
 }
 
@@ -203,8 +203,8 @@ fn test_snapshot_with_high_write_load() {
         println!("✅ Data integrity verified after snapshot");
 
         // Cleanup
-        let _ = execute_query_with_retry(&client, &format!("DROP SCHEMA {} CASCADE", namespace))
-            .await;
+        let _ =
+            execute_query_with_retry(&client, &format!("DROP SCHEMA {} CASCADE", namespace)).await;
     });
 }
 

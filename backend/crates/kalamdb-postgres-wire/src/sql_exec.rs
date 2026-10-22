@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kalamdb_backend::manager::{BackendSessionError, BackendSessionManager};
 use kalamdb_core::{
     app_context::AppContext,
-    sql::{executor::PreparedExecutionStatement, ExecutionContext, ScalarValue, SqlExecutor},
+    sql::{ExecutionContext, ScalarValue, SqlExecutor, executor::PreparedExecutionStatement},
 };
 use kalamdb_sql::classifier::SqlStatementKind;
 use pgwire::{
@@ -17,11 +17,34 @@ use pgwire::{
 use crate::{
     connection::WireConnectionState,
     row_encoder::execution_result_to_responses_with_format,
-    tx_control::{execute_transaction_control, WireTransactionControl, WireTransactionOutcome},
+    tx_control::{WireTransactionControl, WireTransactionOutcome, execute_transaction_control},
 };
 
 const IN_FAILED_SQLSTATE: &str = "25P02";
 const SQL_ERROR_SQLSTATE: &str = "XX000";
+
+/// Session for one wire connection.
+///
+/// `SELECT *` includes storage columns unless `postgres_wire.show_system_columns`
+/// is false. An explicit `SELECT _version` still resolves either way.
+pub(crate) fn execution_context_for_wire(
+    app_context: &AppContext,
+    state: &WireConnectionState,
+) -> ExecutionContext {
+    let context = ExecutionContext::with_namespace(
+        state.auth().user_id.clone(),
+        state.auth().role,
+        state.current_schema(),
+        app_context.base_session_context(),
+    )
+    .with_request_id(format!("wire:{}", state.session_id()))
+    .with_session_config(state.session_config());
+    if app_context.config().postgres_wire.show_system_columns {
+        context
+    } else {
+        context.with_postgres_star()
+    }
+}
 
 #[derive(Clone)]
 pub struct WireSqlExecutor {
@@ -66,9 +89,10 @@ impl WireSqlExecutor {
             return self.execute_connection_transaction(state, control).await;
         }
 
-        let is_rollback_to_savepoint = metadata.classified_statement.as_ref().is_some_and(|stmt| {
-            matches!(stmt.kind(), SqlStatementKind::RollbackToSavepoint(_))
-        });
+        let is_rollback_to_savepoint = metadata
+            .classified_statement
+            .as_ref()
+            .is_some_and(|stmt| matches!(stmt.kind(), SqlStatementKind::RollbackToSavepoint(_)));
 
         if !is_rollback_to_savepoint {
             if let Err(error) = self.session_manager.ensure_block_allows_work(state.session_id()) {
@@ -123,21 +147,14 @@ impl WireSqlExecutor {
                     "ERROR",
                     "42601",
                     error.user_message(),
-                )))])
+                )))]);
             },
         };
         self.execute_metadata(state, &metadata, Vec::new(), None).await
     }
 
     fn execution_context(&self, state: &WireConnectionState) -> ExecutionContext {
-        ExecutionContext::with_namespace(
-            state.auth().user_id.clone(),
-            state.auth().role,
-            state.current_schema(),
-            self.app_context.base_session_context(),
-        )
-        .with_request_id(format!("wire:{}", state.session_id()))
-        .with_session_config(state.session_config())
+        execution_context_for_wire(&self.app_context, state)
     }
 
     fn mark_statement_failed_if_in_block(&self, state: &WireConnectionState) {
@@ -212,7 +229,20 @@ pub fn pg_error(message: impl Into<String>) -> PgWireError {
 }
 
 fn sql_error_info(error: &kalamdb_core::error::KalamDbError) -> ErrorInfo {
-    error_info("ERROR", error.sqlstate(), error.user_message())
+    let message = error.user_message();
+    let mut info = error_info("ERROR", error.sqlstate(), message.as_ref());
+    if let Some((_, rest)) = message.split_once("foreign key violation on table \"") {
+        if let Some((table, after)) = rest.split_once('"') {
+            info.table = Some(table.to_string());
+            if let Some((_, detail)) = after.split_once(" detail ") {
+                let detail = detail.trim();
+                if !detail.is_empty() {
+                    info.detail = Some(detail.to_string());
+                }
+            }
+        }
+    }
+    info
 }
 
 fn error_info(
@@ -221,4 +251,25 @@ fn error_info(
     message: impl Into<String>,
 ) -> ErrorInfo {
     ErrorInfo::new(severity.into(), code.into(), message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use kalamdb_core::error::KalamDbError;
+
+    use super::sql_error_info;
+
+    #[test]
+    fn foreign_key_error_puts_the_column_in_the_first_detail_group() {
+        let message = "foreign key violation on table \"posts\" detail Key (author)=(999) is not \
+                       present in table \"authors\".";
+        let info = sql_error_info(&KalamDbError::InvalidOperation(message.to_string()));
+
+        assert_eq!(info.code, "23503");
+        assert_eq!(info.table.as_deref(), Some("posts"));
+        assert_eq!(
+            info.detail.as_deref(),
+            Some("Key (author)=(999) is not present in table \"authors\".")
+        );
+    }
 }

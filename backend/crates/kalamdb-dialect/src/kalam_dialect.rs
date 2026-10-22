@@ -237,3 +237,30 @@ impl Dialect for KalamDbDialect {
         self.dialect.supports_comment_optimizer_hint()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use kalamdb_commons::helpers::naming::{
+        is_postgresql_identifier_part, is_postgresql_identifier_start,
+    };
+    use sqlparser::dialect::Dialect;
+
+    use super::*;
+
+    #[test]
+    fn identifier_character_rules_match_the_postgresql_parser() {
+        let dialect = KalamDbDialect::new();
+        for character in ['a', 'Z', '_', '$', '-', 'é', '1', ' ', '"', '.'] {
+            assert_eq!(
+                dialect.is_identifier_start(character),
+                is_postgresql_identifier_start(character),
+                "identifier start for {character:?}"
+            );
+            assert_eq!(
+                dialect.is_identifier_part(character),
+                is_postgresql_identifier_part(character),
+                "identifier part for {character:?}"
+            );
+        }
+    }
+}

@@ -259,10 +259,8 @@ mod tests {
         };
 
         let cached = StorageCached::with_default_timeouts(storage);
-        let table_id = TableId::new(
-            SchemaId::new("sql_file_case_28_a"),
-            TableName::new("case28_wide_user"),
-        );
+        let table_id =
+            TableId::new(SchemaId::new("sql_file_case_28_a"), TableName::new("case28_wide_user"));
         let user_id = UserId::new("case28_user");
 
         let result = cached.get_relative_path(

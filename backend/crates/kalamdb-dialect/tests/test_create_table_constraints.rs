@@ -195,3 +195,21 @@ fn test_validation_primary_key_must_exist() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not found"));
 }
+
+#[test]
+fn varchar_limit_is_kept_on_the_column_field() {
+    let sql = "CREATE TABLE test.items (id BIGINT PRIMARY KEY, name VARCHAR(255), body TEXT)";
+    let stmt = CreateTableStatement::parse(sql, &default_ns()).unwrap();
+    let name = stmt.schema.field_with_name("name").unwrap();
+    let body = stmt.schema.field_with_name("body").unwrap();
+    assert_eq!(
+        name.metadata()
+            .get(kalamdb_commons::conversions::KALAM_CHAR_MAX_METADATA_KEY)
+            .map(String::as_str),
+        Some("255")
+    );
+    assert!(body
+        .metadata()
+        .get(kalamdb_commons::conversions::KALAM_CHAR_MAX_METADATA_KEY)
+        .is_none());
+}

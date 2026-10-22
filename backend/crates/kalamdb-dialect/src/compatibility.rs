@@ -110,6 +110,8 @@ pub fn sql_type_to_type_reference(sql_type: &SQLDataType) -> Result<TypeReferenc
                         tr.name = "JSONB".to_string();
                     } else if ident.eq_ignore_ascii_case("timestamptz") {
                         tr.name = "TIMESTAMPTZ".to_string();
+                    } else if ident.eq_ignore_ascii_case("geometry") {
+                        tr.name = "GEOMETRY".to_string();
                     }
                     Ok(tr)
                 },
@@ -195,14 +197,38 @@ fn map_custom_kalam_type(name: &ObjectName, modifiers: &[String]) -> Result<Kala
             let dim = parse_embedding_dimension(modifiers)?;
             Ok(KalamDataType::Embedding(dim))
         },
-        "serial" | "serial4" | "signed" => Ok(KalamDataType::Int),
+        // serial/serial4 are int4 and default to serial_id(), so clients receive
+        // a 32-bit integer. bigserial/serial8 stay bigint and use SNOWFLAKE_ID().
+        "serial" | "serial4" => Ok(KalamDataType::Int),
         "bigserial" | "serial8" => Ok(KalamDataType::BigInt),
+        "signed" => Ok(KalamDataType::Int),
         "smallserial" | "serial2" | "int1" | "int2" => Ok(KalamDataType::SmallInt),
         "int4" => Ok(KalamDataType::Int),
         "int8" => Ok(KalamDataType::BigInt),
-        "tinytext" | "mediumtext" | "longtext" | "ntext" | "citext" => Ok(KalamDataType::Text),
+        "tinytext" | "mediumtext" | "longtext" | "ntext" | "citext" | "geometry" => {
+            Ok(KalamDataType::Text)
+        },
         other => KalamDataType::from_sql_name(other)
             .ok_or_else(|| format!("Unsupported custom data type '{other}'")),
+    }
+}
+
+/// PostgreSQL character maximum length. `character` with no length is 1.
+/// `varchar` and `text` with no length stay unlimited.
+pub fn character_maximum_length(data_type: &SQLDataType) -> Option<u32> {
+    let (length, bare_character) = match data_type {
+        Char(length) | Character(length) => (length.as_ref(), true),
+        Varchar(length) | CharacterVarying(length) | CharVarying(length) | Nvarchar(length) => {
+            (length.as_ref(), false)
+        },
+        _ => return None,
+    };
+    match length {
+        Some(sqlparser::ast::CharacterLength::IntegerLength { length, .. }) => {
+            u32::try_from(*length).ok()
+        },
+        None if bare_character => Some(1),
+        _ => None,
     }
 }
 
@@ -229,7 +255,9 @@ mod tests {
     #[test]
     fn maps_postgres_serial_types() {
         assert_eq!(map_sql_type_to_kalam(&custom("serial")).unwrap(), KalamDataType::Int);
+        assert_eq!(map_sql_type_to_kalam(&custom("serial4")).unwrap(), KalamDataType::Int);
         assert_eq!(map_sql_type_to_kalam(&custom("serial8")).unwrap(), KalamDataType::BigInt);
+        assert_eq!(map_sql_type_to_kalam(&custom("bigserial")).unwrap(), KalamDataType::BigInt);
         assert_eq!(map_sql_type_to_kalam(&custom("smallserial")).unwrap(), KalamDataType::SmallInt);
     }
 
@@ -292,5 +320,32 @@ mod tests {
     fn rejects_embedding_dimension_too_large() {
         let err = map_sql_type_to_kalam(&custom_with_size("EMBEDDING", 9000)).unwrap_err();
         assert!(err.contains("between 1 and 8192"));
+    }
+
+    #[test]
+    fn geometry_subtype_stays_a_builtin_text_column() {
+        let dtype = SQLDataType::Custom(
+            ObjectName(vec![sqlparser::ast::ObjectNamePart::Identifier(Ident::new(
+                "geometry",
+            ))]),
+            vec!["geometry".to_string(), "4326".to_string()],
+        );
+        let type_ref = sql_type_to_type_reference(&dtype).unwrap();
+        assert_eq!(type_ref.name, "GEOMETRY");
+        assert_eq!(type_ref.builtin_data_type(), Some(KalamDataType::Text));
+        assert!(type_ref.namespace_id.is_none());
+    }
+
+    #[test]
+    fn character_limits_follow_postgres() {
+        use sqlparser::ast::CharacterLength;
+        let varchar_255 = SQLDataType::Varchar(Some(CharacterLength::IntegerLength {
+            length: 255,
+            unit:   None,
+        }));
+        assert_eq!(character_maximum_length(&varchar_255), Some(255));
+        assert_eq!(character_maximum_length(&SQLDataType::Character(None)), Some(1));
+        assert_eq!(character_maximum_length(&SQLDataType::CharacterVarying(None)), None);
+        assert_eq!(character_maximum_length(&SQLDataType::Text), None);
     }
 }

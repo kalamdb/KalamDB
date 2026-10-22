@@ -61,6 +61,8 @@ host = "127.0.0.1"
 port = 5432
 ```
 
+`SELECT *` on this listener includes `_version` and `_deleted`. Set `show_system_columns = false` in that section to omit storage columns. An explicit `SELECT _version` still works.
+
 Connect using your KalamDB root password:
 
 ```bash

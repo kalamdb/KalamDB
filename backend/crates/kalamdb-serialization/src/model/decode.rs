@@ -195,7 +195,7 @@ impl<'de> MapAccess<'de> for RowMapAccess<'_> {
         let data_type = column.data_type();
         seed.deserialize(FieldDeserializer {
             scalar,
-            data_type:          &data_type,
+            data_type: &data_type,
             scale_timestamp_ms: self.scale_timestamp_ms,
         })
     }
@@ -399,11 +399,13 @@ fn model_i64(scalar: &ScalarValue) -> i64 {
 
 fn model_timestamp_ms(scalar: &ScalarValue) -> Result<i64, DeError> {
     match scalar {
-        ScalarValue::TimestampSecond(Some(seconds), _) => seconds.checked_mul(1_000).ok_or_else(|| {
-            DeError(format!(
-                "timestamp value {seconds} overflows when converted to milliseconds"
-            ))
-        }),
+        ScalarValue::TimestampSecond(Some(seconds), _) => {
+            seconds.checked_mul(1_000).ok_or_else(|| {
+                DeError(format!(
+                    "timestamp value {seconds} overflows when converted to milliseconds"
+                ))
+            })
+        },
         ScalarValue::TimestampMillisecond(Some(ms), _) | ScalarValue::Int64(Some(ms)) => Ok(*ms),
         ScalarValue::TimestampMicrosecond(Some(micros), _) => Ok(*micros / 1_000),
         ScalarValue::TimestampNanosecond(Some(nanos), _) => Ok(*nanos / 1_000_000),
@@ -413,7 +415,9 @@ fn model_timestamp_ms(scalar: &ScalarValue) -> Result<i64, DeError> {
 
 fn utf8_scalar(scalar: &ScalarValue) -> Option<&str> {
     match scalar {
-        ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => Some(value.as_str()),
+        ScalarValue::Utf8(Some(value)) | ScalarValue::LargeUtf8(Some(value)) => {
+            Some(value.as_str())
+        },
         _ => None,
     }
 }

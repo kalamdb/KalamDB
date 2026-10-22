@@ -406,6 +406,5 @@ fn test_reactive_transactions_schema_and_stream_workflow() {
     message_listener.stop().ok();
     conversation_listener.stop().ok();
     typing_listener.stop().ok();
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

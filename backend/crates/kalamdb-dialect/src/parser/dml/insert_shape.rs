@@ -64,6 +64,29 @@ pub fn insert_has_on_conflict(insert: &Insert) -> bool {
     matches!(insert.on.as_ref(), Some(OnInsert::OnConflict(_)))
 }
 
+/// DataFusion cannot plan `INSERT`/`UPDATE`/`DELETE ... RETURNING`.
+/// Describe the result as `SELECT <returning> FROM <table> WHERE FALSE`.
+pub fn returning_describe_sql(statement: &Statement) -> Option<String> {
+    use sqlparser::ast::FromTable;
+
+    let (from, returning) = match statement {
+        Statement::Insert(insert) => (insert.table.to_string(), insert.returning.as_deref()?),
+        Statement::Update(update) => (update.table.to_string(), update.returning.as_deref()?),
+        Statement::Delete(delete) => {
+            let tables = match &delete.from {
+                FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => tables,
+            };
+            (tables.first()?.to_string(), delete.returning.as_deref()?)
+        },
+        _ => return None,
+    };
+    if returning.is_empty() {
+        return None;
+    }
+    let projection = returning.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+    Some(format!("SELECT {projection} FROM {from} WHERE FALSE"))
+}
+
 /// Returns the RETURNING projection list when present.
 pub fn insert_returning_items(insert: &Insert) -> Option<&[SelectItem]> {
     insert.returning.as_deref()

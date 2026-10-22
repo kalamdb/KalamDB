@@ -51,39 +51,39 @@ pub fn decode_payloads_to_arrow_batch(
             .map_err(|error| SerializationError::Decode(error.to_string()));
     }
 
-            let arrays: Result<Vec<ArrayRef>> = columns
-                .into_iter()
-                .enumerate()
-                .map(|(index, values)| {
-                    let field = &arrow_schema.fields()[index];
-                    if values.is_empty() {
-                        return Ok(arrow::array::new_null_array(field.data_type(), 0));
-                    }
-                    let array = match field.data_type() {
-                        arrow::datatypes::DataType::Struct(fields) if fields.is_empty() => {
-                            let len = values.len();
-                            let validity: Vec<bool> = values.iter().map(|v| !v.is_null()).collect();
-                            let nulls = if validity.iter().all(|valid| *valid) {
-                                None
-                            } else {
-                                Some(arrow::buffer::NullBuffer::from(validity))
-                            };
-                            let struct_arr = arrow::array::StructArray::try_new_with_length(
-                                fields.clone(),
-                                Vec::new(),
-                                nulls,
-                                len,
-                            )
-                            .map_err(|error| SerializationError::Decode(error.to_string()))?;
-                            std::sync::Arc::new(struct_arr) as ArrayRef
-                        },
-                        _ => ScalarValue::iter_to_array(values)
-                            .map_err(|error| SerializationError::Decode(error.to_string()))?,
+    let arrays: Result<Vec<ArrayRef>> = columns
+        .into_iter()
+        .enumerate()
+        .map(|(index, values)| {
+            let field = &arrow_schema.fields()[index];
+            if values.is_empty() {
+                return Ok(arrow::array::new_null_array(field.data_type(), 0));
+            }
+            let array = match field.data_type() {
+                arrow::datatypes::DataType::Struct(fields) if fields.is_empty() => {
+                    let len = values.len();
+                    let validity: Vec<bool> = values.iter().map(|v| !v.is_null()).collect();
+                    let nulls = if validity.iter().all(|valid| *valid) {
+                        None
+                    } else {
+                        Some(arrow::buffer::NullBuffer::from(validity))
                     };
-                    kalamdb_commons::conversions::align_array_to_field(array, field.as_ref())
-                        .map_err(SerializationError::Decode)
-                })
-                .collect();
+                    let struct_arr = arrow::array::StructArray::try_new_with_length(
+                        fields.clone(),
+                        Vec::new(),
+                        nulls,
+                        len,
+                    )
+                    .map_err(|error| SerializationError::Decode(error.to_string()))?;
+                    std::sync::Arc::new(struct_arr) as ArrayRef
+                },
+                _ => ScalarValue::iter_to_array(values)
+                    .map_err(|error| SerializationError::Decode(error.to_string()))?,
+            };
+            kalamdb_commons::conversions::align_array_to_field(array, field.as_ref())
+                .map_err(SerializationError::Decode)
+        })
+        .collect();
     RecordBatch::try_new(arrow_schema, arrays?)
         .map_err(|error| SerializationError::Decode(error.to_string()))
 }
@@ -127,10 +127,7 @@ mod tests {
 
     #[test]
     fn empty_payloads_build_empty_batch() {
-        let storage = StorageSchema::new(
-            1,
-            vec![StorageField::new("id", StorageDataType::Int64)],
-        );
+        let storage = StorageSchema::new(1, vec![StorageField::new("id", StorageDataType::Int64)]);
         let schema = Arc::new(arrow::datatypes::Schema::new(vec![arrow::datatypes::Field::new(
             "id",
             arrow::datatypes::DataType::Int64,
@@ -203,7 +200,8 @@ mod tests {
         )
         .unwrap();
 
-        // v3: DROP COLUMN legacy_note (tombstoned at ordinal 2), RENAME qty -> quantity + widen Int32 -> Int64, ADD COLUMN score: Int64
+        // v3: DROP COLUMN legacy_note (tombstoned at ordinal 2), RENAME qty -> quantity + widen
+        // Int32 -> Int64, ADD COLUMN score: Int64
         let mut tombstoned = StorageField::new("legacy_note", StorageDataType::Utf8);
         tombstoned.dropped = true;
         let schema_v3 = StorageSchema::new(

@@ -5,8 +5,11 @@ use std::{
 
 use arrow::datatypes::{DataType, Field, Schema};
 use kalamdb_commons::{
-    conversions::with_kalam_data_type_metadata,
-    models::{datatypes::ToArrowType, SchemaId, StorageId, TableName},
+    conversions::{with_character_maximum_length, with_kalam_data_type_metadata},
+    models::{
+        datatypes::{KalamDataType, ToArrowType},
+        SchemaId, StorageId, TableName,
+    },
     schemas::{policy::FlushPolicy, ColumnDefault, TableCompression, TableType},
 };
 use once_cell::sync::Lazy;
@@ -15,7 +18,7 @@ use sqlparser::ast::{ColumnOption, CreateTable, ObjectNamePart, Statement, Table
 
 use super::types::CreateTableStatement;
 use crate::{
-    compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
+    compatibility::{character_maximum_length, map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::column_default::expr_to_column_default,
     parser::{utils::format_span, KalamParser},
     validation::validate_column_name,
@@ -32,6 +35,14 @@ static CREATE_TYPED_PREFIX_RE: Lazy<Regex> =
 /// PostgreSQL uses this for table access methods, e.g. `CREATE TABLE t (...) USING kalamdb`.
 static USING_ACCESS_METHOD_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\)\s*USING\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*").unwrap());
+
+fn object_name_ident(part: &ObjectNamePart) -> Result<&str, String> {
+    match part {
+        ObjectNamePart::Identifier(ident) if !ident.value.is_empty() => Ok(ident.value.as_str()),
+        _ => Err("Invalid table name format. Expected 'table_name' or 'namespace.table_name'"
+            .to_string()),
+    }
+}
 
 impl CreateTableStatement {
     /// Parse a SQL statement into a CreateTableStatement
@@ -70,11 +81,11 @@ impl CreateTableStatement {
             }) => {
                 // 1. Parse table name and namespace
                 let (namespace_id, table_name) = if name.0.len() == 1 {
-                    (default_namespace.clone(), TableName::from(name.0[0].to_string().as_str()))
+                    (default_namespace.clone(), TableName::from(object_name_ident(&name.0[0])?))
                 } else if name.0.len() == 2 {
                     (
-                        SchemaId::from(name.0[0].to_string().as_str()),
-                        TableName::from(name.0[1].to_string().as_str()),
+                        SchemaId::from(object_name_ident(&name.0[0])?),
+                        TableName::from(object_name_ident(&name.0[1])?),
                     )
                 } else {
                     return Err("Invalid table name format. Expected 'table_name' or \
@@ -363,6 +374,7 @@ impl CreateTableStatement {
                         || type_ref.is_array
                         || type_ref.name.eq_ignore_ascii_case("jsonb")
                         || type_ref.name.eq_ignore_ascii_case("timestamptz")
+                        || type_ref.name.eq_ignore_ascii_case("geometry")
                     {
                         column_type_refs.insert(col_name.clone(), type_ref);
                     }
@@ -401,7 +413,7 @@ impl CreateTableStatement {
                                 if s.to_uppercase().contains("AUTO_INCREMENT") {
                                     column_defaults.insert(
                                         col_name.clone(),
-                                        ColumnDefault::function("SNOWFLAKE_ID", vec![]),
+                                        generated_id_default(&kalam_type),
                                     );
                                 }
                             },
@@ -413,34 +425,30 @@ impl CreateTableStatement {
                                 generation_expr: None,
                                 ..
                             } => {
-                                column_defaults.insert(
-                                    col_name.clone(),
-                                    ColumnDefault::function("SNOWFLAKE_ID", vec![]),
-                                );
+                                column_defaults
+                                    .insert(col_name.clone(), generated_id_default(&kalam_type));
                             },
                             ColumnOption::Identity(..) => {
-                                column_defaults.insert(
-                                    col_name.clone(),
-                                    ColumnDefault::function("SNOWFLAKE_ID", vec![]),
-                                );
+                                column_defaults
+                                    .insert(col_name.clone(), generated_id_default(&kalam_type));
                             },
                             _ => {},
                         }
                     }
 
                     // SERIAL/BIGSERIAL/SMALLSERIAL types imply auto-increment.
-                    // Add SNOWFLAKE_ID() default if no explicit default was set.
+                    // int4/int2 serials use serial_id(); bigint serials use SNOWFLAKE_ID().
                     if !column_defaults.contains_key(&col_name) && is_serial_type(&col.data_type) {
-                        column_defaults.insert(
-                            col_name.clone(),
-                            ColumnDefault::function("SNOWFLAKE_ID", vec![]),
-                        );
+                        column_defaults.insert(col_name.clone(), generated_id_default(&kalam_type));
                     }
 
                     // Create the field and attach KalamDataType metadata for types
                     // that aren't recoverable from Arrow (like FILE, JSON)
                     let field = Field::new(&col_name, data_type, col_is_nullable);
-                    let field = with_kalam_data_type_metadata(field, &kalam_type);
+                    let mut field = with_kalam_data_type_metadata(field, &kalam_type);
+                    if let Some(max_chars) = character_maximum_length(&col.data_type) {
+                        field = with_character_maximum_length(field, max_chars);
+                    }
                     arrow_fields.push(field);
                 }
 
@@ -456,7 +464,9 @@ impl CreateTableStatement {
                             found = true;
                             // Force PK to be non-nullable
                             if field.is_nullable() {
-                                *field = Field::new(pk, field.data_type().clone(), false);
+                                let data_type = field.data_type().clone();
+                                let metadata = field.metadata().clone();
+                                *field = Field::new(pk, data_type, false).with_metadata(metadata);
                             }
                             break;
                         }
@@ -529,6 +539,16 @@ fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
     }
 }
 
+/// int4 and int2 identity columns use a process-local int4 counter. bigint
+/// identity columns keep `SNOWFLAKE_ID()` so existing 64-bit ids still fit.
+fn generated_id_default(data_type: &KalamDataType) -> ColumnDefault {
+    let name = match data_type {
+        KalamDataType::BigInt => "SNOWFLAKE_ID",
+        _ => "serial_id",
+    };
+    ColumnDefault::function(name, Vec::new())
+}
+
 /// Returns true if the SQL data type is a PostgreSQL SERIAL type that implies
 /// auto-increment semantics (SERIAL, BIGSERIAL, SMALLSERIAL and their aliases).
 fn is_serial_type(data_type: &sqlparser::ast::DataType) -> bool {
@@ -558,6 +578,13 @@ mod tests {
         SchemaId::new(DEFAULT_NS)
     }
 
+    fn default_function_name<'a>(stmt: &'a CreateTableStatement, column: &str) -> Option<&'a str> {
+        match stmt.column_defaults.get(column) {
+            Some(ColumnDefault::FunctionCall(call)) => Some(call.unqualified_name()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn modern_create_table_parses() {
         let sql = r#"
@@ -579,6 +606,19 @@ WITH (
         assert_eq!(stmt.namespace_id.as_str(), "sales");
         assert_eq!(stmt.storage_id.unwrap().as_str(), "s3-us");
         assert!(matches!(stmt.flush_policy, Some(FlushPolicy::Combined { .. })));
+    }
+
+    #[test]
+    fn quoted_create_table_keeps_postgres_names() {
+        let stmt = CreateTableStatement::parse(
+            r#"CREATE TABLE "directus_fields" ("id" serial primary key, "sort" integer, "limit" integer)"#,
+            &default_ns(),
+        )
+        .unwrap();
+        assert_eq!(stmt.table_name.as_str(), "directus_fields");
+        let names: Vec<_> =
+            stmt.schema.fields().iter().map(|field| field.name().as_str()).collect();
+        assert_eq!(names, vec!["id", "sort", "limit"]);
     }
 
     #[test]
@@ -796,10 +836,10 @@ CREATE TABLE sales.orders (
 
     #[test]
     fn test_serial_variants_get_auto_increment() {
-        for (serial_type, label) in &[
-            ("SERIAL", "SERIAL"),
-            ("BIGSERIAL", "BIGSERIAL"),
-            ("SMALLSERIAL", "SMALLSERIAL"),
+        for (serial_type, label, default_name) in &[
+            ("SERIAL", "SERIAL", "serial_id"),
+            ("BIGSERIAL", "BIGSERIAL", "snowflake_id"),
+            ("SMALLSERIAL", "SMALLSERIAL", "serial_id"),
         ] {
             let sql = format!(
                 "CREATE TABLE sales.t_{} (id {} PRIMARY KEY, name TEXT) WITH (TYPE = 'SHARED')",
@@ -808,9 +848,10 @@ CREATE TABLE sales.orders (
             );
             let stmt = CreateTableStatement::parse(&sql, &default_ns())
                 .unwrap_or_else(|e| panic!("{label} failed: {e}"));
-            assert!(
-                stmt.column_defaults.contains_key("id"),
-                "{label} should auto-add SNOWFLAKE_ID() default"
+            assert_eq!(
+                default_function_name(&stmt, "id"),
+                Some(*default_name),
+                "{label} should default to {default_name}()"
             );
         }
     }
@@ -855,9 +896,10 @@ CREATE TABLE sales.identity_test (
 ) WITH (TYPE = 'SHARED')
 "#;
         let stmt = CreateTableStatement::parse(sql, &default_ns()).unwrap();
-        assert!(
-            stmt.column_defaults.contains_key("id"),
-            "GENERATED ALWAYS AS IDENTITY should add SNOWFLAKE_ID() default"
+        assert_eq!(
+            default_function_name(&stmt, "id"),
+            Some("serial_id"),
+            "INTEGER GENERATED ALWAYS AS IDENTITY should default to serial_id()"
         );
     }
 

@@ -14,6 +14,7 @@ pub mod metrics;
 pub mod overlay;
 pub mod overlay_exec;
 pub mod owner;
+pub mod pk_claims;
 pub mod query_context;
 pub mod query_extension;
 pub mod request;
@@ -22,15 +23,14 @@ pub mod write_set;
 
 pub use access::{TransactionAccessError, TransactionAccessValidator};
 pub use binding::TransactionRaftBinding;
-pub use commit_sequence::{
-    CommitSequenceSource, CommitSequenceTracker, SNAPSHOT_UNSET,
-};
+pub use commit_sequence::{CommitSequenceSource, CommitSequenceTracker, SNAPSHOT_UNSET};
 pub use engine::{TransactionEngine, TransactionEngineError, TransactionEngineResult};
 pub use handle::TransactionHandle;
 pub use metrics::ActiveTransactionMetric;
 pub use overlay::{ScopedPkKey, TransactionOverlay, TransactionOverlayEntry};
 pub use overlay_exec::TransactionOverlayExec;
 pub use owner::{ExecutionOwnerKey, TransactionOwnerParseError};
+pub use pk_claims::{primary_key_claims, PrimaryKeyClaims};
 pub use query_context::{TransactionMutationSink, TransactionOverlayView, TransactionQueryContext};
 pub use query_extension::{extract_transaction_query_context, TransactionQueryExtension};
 pub use request::{

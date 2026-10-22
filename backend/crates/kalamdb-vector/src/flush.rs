@@ -343,14 +343,8 @@ pub fn flush_user_scope_vectors(
         }
 
         let snapshot_path = vector_snapshot_filename(&column_name, next_version);
-        let bytes = build_snapshot_bytes(
-            table_id,
-            dimensions,
-            metric,
-            max_seq,
-            next_key,
-            &vectors_by_pk,
-        )?;
+        let bytes =
+            build_snapshot_bytes(table_id, dimensions, metric, max_seq, next_key, &vectors_by_pk)?;
 
         storage_cached
             .put_sync(TableType::User, table_id, Some(user_id), &snapshot_path, Bytes::from(bytes))
@@ -450,14 +444,8 @@ pub fn flush_shared_scope_vectors(
         }
 
         let snapshot_path = vector_snapshot_filename(&column_name, next_version);
-        let bytes = build_snapshot_bytes(
-            table_id,
-            dimensions,
-            metric,
-            max_seq,
-            next_key,
-            &vectors_by_pk,
-        )?;
+        let bytes =
+            build_snapshot_bytes(table_id, dimensions, metric, max_seq, next_key, &vectors_by_pk)?;
 
         storage_cached
             .put_sync(TableType::Shared, table_id, None, &snapshot_path, Bytes::from(bytes))

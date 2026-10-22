@@ -213,7 +213,7 @@ impl InitialDataFetcher {
     /// * `table_type` - User or Shared table
     /// * `options` - Options for the fetch (timestamp, limit, etc.)
     /// * `where_clause` - Optional WHERE clause string to include in the query
-    /// * `projections` - Optional column projections (None = SELECT *, all columns)
+    /// * `projections` - Optional column projections (`None` selects every column)
     ///
     /// # Returns
     /// InitialDataResult with rows and metadata
@@ -245,8 +245,7 @@ impl InitialDataFetcher {
         // Execute via trait — handles user scoping and RLS internally
         let table_name = quoted_table_sql(table_id);
 
-        // Build SELECT clause: either specific columns or *
-        // Always include _seq column for pagination, even if not in projections
+        // `None` is `*`. Star expansion keeps `_version`, which this snapshot orders by.
         let table_capabilities = self.table_capabilities(table_id)?;
         let select_clause = if let Some(cols) = projections {
             let mut columns = cols.to_vec();

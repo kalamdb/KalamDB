@@ -106,9 +106,7 @@ fn canonical_type_key(type_sql: &str) -> Result<String, String> {
     }
 
     if normalized.starts_with("DECIMAL(") || normalized.starts_with("NUMERIC(") {
-        let rest = normalized
-            .trim_start_matches("DECIMAL")
-            .trim_start_matches("NUMERIC");
+        let rest = normalized.trim_start_matches("DECIMAL").trim_start_matches("NUMERIC");
         return Ok(format!("DECIMAL{rest}{array_suffix}"));
     }
 
@@ -134,20 +132,25 @@ fn canonical_type_key(type_sql: &str) -> Result<String, String> {
         "FLOAT" | "REAL" | "FLOAT4" => "FLOAT",
         "DOUBLE" | "DOUBLE PRECISION" | "FLOAT8" | "FLOAT64" => "DOUBLE",
         "DECIMAL" | "NUMERIC" => "DECIMAL(38,10)",
-        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER" | "CHARACTER VARYING" | "STRING" | "NVARCHAR" => "TEXT",
+        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER" | "CHARACTER VARYING" | "STRING" | "NVARCHAR" => {
+            "TEXT"
+        },
         "BYTES" | "BINARY" | "VARBINARY" | "BLOB" | "BYTEA" => "BYTES",
         "JSON" | "JSONB" => "JSON",
         "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => "TIMESTAMP",
         "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => "TIMESTAMPTZ",
         "TIME" | "TIME WITHOUT TIME ZONE" => "TIME",
         "TIMETZ" | "TIME WITH TIME ZONE" => "TIMETZ",
-        "DATE" | "DATETIME" | "INTERVAL" | "UUID" | "FILE" | "INET" | "CIDR" | "MACADDR" => normalized.as_str(),
+        "DATE" | "DATETIME" | "INTERVAL" | "UUID" | "FILE" | "INET" | "CIDR" | "MACADDR" => {
+            normalized.as_str()
+        },
         "PG_CATALOG.FILE" => "FILE",
-        other if other.starts_with("VARCHAR(")
-            || other.starts_with("CHAR(")
-            || other.starts_with("CHARACTER(")
-            || other.starts_with("CHARACTER VARYING(")
-            || other.starts_with("NVARCHAR(") =>
+        other
+            if other.starts_with("VARCHAR(")
+                || other.starts_with("CHAR(")
+                || other.starts_with("CHARACTER(")
+                || other.starts_with("CHARACTER VARYING(")
+                || other.starts_with("NVARCHAR(") =>
         {
             "TEXT"
         },
@@ -174,9 +177,7 @@ fn is_valid_custom_type_name(name: &str) -> bool {
     parts.iter().all(|part| {
         let part = part.trim().trim_matches('"');
         !part.is_empty()
-            && part
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && part.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
             && !part.chars().next().unwrap_or('0').is_ascii_digit()
     })
 }

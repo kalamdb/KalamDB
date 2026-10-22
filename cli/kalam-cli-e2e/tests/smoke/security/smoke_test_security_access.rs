@@ -325,8 +325,7 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
             let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
             let _ =
                 execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_public));
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
             return;
         }
     }
@@ -349,8 +348,7 @@ fn smoke_security_subscription_blocked_for_system_and_private_shared() {
             let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
             let _ =
                 execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_public));
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
             return;
         }
     }

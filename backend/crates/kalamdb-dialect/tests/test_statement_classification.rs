@@ -160,6 +160,52 @@ fn test_classify_create_index_on_as_alter_table() {
 }
 
 #[test]
+fn test_classify_drop_index_as_alter_table() {
+    let ns = SchemaId::new("default");
+    let stmt =
+        SqlStatement::classify_and_parse("DROP INDEX IF EXISTS idx_users2_email", &ns, Role::User)
+            .expect("classify DROP INDEX");
+    match stmt.kind() {
+        SqlStatementKind::AlterTable(alter) => match &alter.operation {
+            kalamdb_dialect::ddl::ColumnOperation::DropStandaloneIndex { indexes, if_exists } => {
+                assert!(if_exists);
+                assert_eq!(indexes[0].name, "idx_users2_email");
+                assert_eq!(indexes[0].namespace_id, ns);
+            },
+            other => panic!("expected DropStandaloneIndex, got {other:?}"),
+        },
+        other => panic!("expected AlterTable, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classify_alter_index_rename_as_alter_table() {
+    let ns = SchemaId::new("default");
+    let stmt = SqlStatement::classify_and_parse(
+        "ALTER INDEX IF EXISTS idx_users2_email RENAME TO idx_users2_email_lookup",
+        &ns,
+        Role::User,
+    )
+    .expect("classify ALTER INDEX");
+    match stmt.kind() {
+        SqlStatementKind::AlterTable(alter) => match &alter.operation {
+            kalamdb_dialect::ddl::ColumnOperation::RenameStandaloneIndex {
+                index,
+                new_name,
+                if_exists,
+            } => {
+                assert!(if_exists);
+                assert_eq!(index.name, "idx_users2_email");
+                assert_eq!(new_name, "idx_users2_email_lookup");
+                assert_eq!(index.namespace_id, ns);
+            },
+            other => panic!("expected RenameStandaloneIndex, got {other:?}"),
+        },
+        other => panic!("expected AlterTable, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_classify_show_transaction_isolation_level_for_jdbc() {
     let ns = SchemaId::new("default");
     for role in [Role::User, Role::Service, Role::Dba] {

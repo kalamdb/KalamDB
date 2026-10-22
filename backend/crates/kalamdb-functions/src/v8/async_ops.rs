@@ -90,8 +90,7 @@ fn host_operation(
         if values.length() > 1024 {
             return Err(FunctionsError::ResourceLimit("host arguments".into()));
         }
-        let is_named_call =
-            kind == "call" && args.length() > 3 && args.get(3).boolean_value(scope);
+        let is_named_call = kind == "call" && args.length() > 3 && args.get(3).boolean_value(scope);
         let mut budget = ConversionBudget::new(scope);
         let mut params = Vec::with_capacity(values.length() as usize);
         for index in 0..values.length() {
@@ -271,7 +270,8 @@ impl V8Session {
             }
             if pending.is_empty() && nested.is_empty() {
                 let value = {
-                    let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.poll_return");
+                    let _span =
+                        kalamdb_observability::kdb_info_span_entered!("func.v8.poll_return");
                     self.poll_return(&returned, invocation)?.ok_or_else(|| {
                         FunctionsError::Javascript(
                             "procedure Promise cannot settle: no pending host operations".into(),

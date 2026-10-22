@@ -77,8 +77,7 @@ fn smoke_test_watermark_dml_insert_performance() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // The key assertion: INSERTs should work and not hang
     assert!(
@@ -159,8 +158,7 @@ fn smoke_test_watermark_dml_update() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(elapsed.as_secs() < 30, "Total UPDATE time exceeded 30 second limit");
 }
@@ -226,8 +224,7 @@ fn smoke_test_watermark_dml_delete() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(elapsed.as_secs() < 90, "Total DELETE time exceeded 90 second limit");
 }
@@ -284,8 +281,7 @@ fn smoke_test_watermark_ddl_then_dml() {
     println!("  ✅ PASS: DDL→DML ordering works correctly (Raft guarantees)");
 
     // Cleanup namespace
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(
         elapsed.as_secs() < 120,

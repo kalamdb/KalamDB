@@ -81,6 +81,8 @@
 pub mod column_default;
 pub mod column_definition;
 pub mod field_flag;
+#[cfg(feature = "table-definition")]
+pub mod foreign_key_definition;
 pub mod policy;
 #[cfg(feature = "table-definition")]
 pub mod scalar_index_definition;
@@ -94,9 +96,11 @@ pub mod table_name;
 pub mod table_options;
 pub mod table_type;
 
-pub use column_default::ColumnDefault;
+pub use column_default::{serial_sequence_name, ColumnDefault};
 pub use column_definition::ColumnDefinition;
 pub use field_flag::{FieldFlag, FieldFlags};
+#[cfg(feature = "table-definition")]
+pub use foreign_key_definition::{ForeignKeyAction, ForeignKeyDefinition};
 #[cfg(feature = "table-definition")]
 pub use scalar_index_definition::ScalarIndexDefinition;
 pub use schema_field::SchemaField;

@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    AuthorizationRelation, BoundExprShape, InvalidationStrategy, SchemaId, PolicyProgram,
-    PrincipalExpr, TableId, TableName,
+    AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyProgram, PrincipalExpr,
+    SchemaId, TableId, TableName,
 };
 
 use super::{PolicyCompiler, PolicyTableResolver};

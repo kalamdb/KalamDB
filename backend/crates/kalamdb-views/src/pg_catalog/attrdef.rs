@@ -38,7 +38,15 @@ impl PgAttrdefView {
     }
 }
 
-fn format_column_default(default: &ColumnDefault) -> Option<String> {
+fn format_column_default(
+    namespace: &str,
+    table: &str,
+    column: &str,
+    default: &ColumnDefault,
+) -> Option<String> {
+    if default.is_serial_sequence() {
+        return default.postgres_display_sql(namespace, table, column);
+    }
     match default {
         ColumnDefault::None => None,
         ColumnDefault::Literal(value) => Some(value.to_string()),
@@ -79,7 +87,12 @@ impl PgCatalogView for PgAttrdefView {
             let relid = class_oid(namespace, table_name);
 
             for column in &table.columns {
-                let Some(default_expr) = format_column_default(&column.default_value) else {
+                let Some(default_expr) = format_column_default(
+                    namespace,
+                    table_name,
+                    &column.column_name,
+                    &column.default_value,
+                ) else {
                     continue;
                 };
                 let ordinal_str = column.ordinal_position.to_string();

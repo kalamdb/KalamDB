@@ -99,8 +99,7 @@ fn smoke_test_insert_throughput_single() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(successful > 0, "Expected at least some successful inserts, got 0");
 }
@@ -195,8 +194,7 @@ fn smoke_test_insert_throughput_batched() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(total_rows > 0, "Expected at least some rows inserted, got 0");
 }
@@ -302,8 +300,7 @@ fn smoke_test_insert_throughput_parallel() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", *full_table_name));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     assert!(total_success > 0, "Expected at least some successful inserts, got 0");
 }
@@ -462,8 +459,7 @@ fn smoke_test_insert_throughput_summary() {
     println!();
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     println!("=== Insert Throughput Benchmark Complete ===\n");
 }

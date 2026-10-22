@@ -79,10 +79,7 @@ pub fn parse_table_id(namespace: &str, table_name: &str) -> Result<TableId, Stat
     if table_name.trim().is_empty() {
         return Err(Status::invalid_argument("table_name must not be empty"));
     }
-    Ok(TableId::new(
-        SchemaId::new(namespace.trim()),
-        TableName::new(table_name.trim()),
-    ))
+    Ok(TableId::new(SchemaId::new(namespace.trim()), TableName::new(table_name.trim())))
 }
 
 pub fn parse_user_id(raw: Option<&str>) -> Option<UserId> {

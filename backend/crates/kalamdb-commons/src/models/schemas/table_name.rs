@@ -5,7 +5,7 @@ use std::{fmt, sync::Arc};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::helpers::naming::{validate_sql_identifier, SqlIdentifierError};
+use crate::helpers::naming::{validate_relation_identifier, SqlIdentifierError};
 
 /// Error returned when a table name fails validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +87,7 @@ impl TableName {
     pub fn try_new(name: impl Into<String>) -> Result<Self, TableNameValidationError> {
         let name = name.into();
         Self::validate(&name)?;
-        validate_sql_identifier(&name).map_err(|error| TableNameValidationError {
+        validate_relation_identifier(&name).map_err(|error| TableNameValidationError {
             name:   name.clone(),
             reason: error.to_string(),
         })?;

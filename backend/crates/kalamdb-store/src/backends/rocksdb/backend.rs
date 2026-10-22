@@ -323,8 +323,11 @@ impl RocksDBBackend {
     }
 
     fn cf_has_unflushed_entries(&self, cf: &Arc<BoundColumnFamily<'_>>) -> bool {
-        let active =
-            self.db.property_int_value_cf(cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY).ok().flatten();
+        let active = self
+            .db
+            .property_int_value_cf(cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .ok()
+            .flatten();
         let imm = self.db.property_int_value_cf(cf, IMM_MEMTABLE_ENTRIES_PROPERTY).ok().flatten();
         match (active, imm) {
             (Some(a), Some(i)) => a > 0 || i > 0,

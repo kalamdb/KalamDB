@@ -513,7 +513,7 @@ fn supports_display_fallback(data_type: &DataType) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Arc};
 
     use arrow::{
         array::{
@@ -879,5 +879,36 @@ mod tests {
                 && (timestamptz_text.ends_with("+00") || timestamptz_text.ends_with("+00:00")),
             "expected UTC offset in TIMESTAMPTZ text, got {timestamptz_text}"
         );
+    }
+
+    #[test]
+    fn encodes_arrow_json_text_as_postgres_json_without_reencoding() {
+        let field =
+            Field::new("metadata_color_json", DataType::Utf8, true).with_metadata(HashMap::from([
+                ("ARROW:extension:name".to_string(), "arrow.json".to_string()),
+                ("is_json".to_string(), "true".to_string()),
+            ]));
+        let schema = Arc::new(Schema::new(vec![field]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(StringArray::from(vec![r#""red""#])) as ArrayRef],
+        )
+        .expect("batch is valid");
+
+        let responses = execution_result_to_responses(ExecutionResult::Rows {
+            batches:   vec![batch],
+            row_count: 1,
+            schema:    Some(schema),
+        })
+        .expect("json values encode");
+
+        let Response::Query(query) = &responses[0] else {
+            panic!("expected query response");
+        };
+        assert_eq!(query.row_schema[0].datatype(), &Type::JSON);
+
+        let row = first_encoded_row(responses);
+        let payloads = field_payloads(&row);
+        assert_eq!(payloads[0], br#""red""#);
     }
 }

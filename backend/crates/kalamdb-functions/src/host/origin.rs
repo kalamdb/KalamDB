@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_commons::{
-    models::{FunctionRevisionId, SchemaId, RoutineId, UserId},
+    models::{FunctionRevisionId, RoutineId, SchemaId, UserId},
     Role, RoutineSecurityMode,
 };
 use parking_lot::Mutex;
@@ -77,7 +77,8 @@ pub struct PrincipalKey {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // revision_id/security/volatility are kept on the frame for nested INVOKER/DEFINER & volatility enforcement
+#[allow(dead_code)] // revision_id/security/volatility are kept on the frame for nested INVOKER/DEFINER & volatility
+                    // enforcement
 pub struct ProcedureFrame {
     pub routine_id:     RoutineId,
     pub revision_id:    FunctionRevisionId,

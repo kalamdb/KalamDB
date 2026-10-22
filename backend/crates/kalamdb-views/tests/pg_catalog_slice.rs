@@ -7,12 +7,16 @@ use datafusion::{
 };
 use kalamdb_commons::{
     models::{
-        datatypes::KalamDataType, AuthType, CatalogTypeKind, Role, RoutineId, RoutineKind,
-        RoutineNullSafety, RoutineParallelSafety, RoutineParameterId, RoutineParameterMode,
-        RoutineSecurityMode, RoutineVolatility, SchemaId, StorageId, TableId, TableName,
-        TypeFieldId, TypeId, UserId,
+        datatypes::KalamDataType, AuthType, CatalogTypeKind, LogicalTypeRef, Role, RoutineId,
+        RoutineKind, RoutineNullSafety, RoutineParallelSafety, RoutineParameterId,
+        RoutineParameterMode, RoutineSecurityMode, RoutineVolatility, SchemaId, StorageId, TableId,
+        TableName, TypeFieldId, TypeId, UserId,
     },
-    schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
+    schemas::{
+        ColumnDefault, ColumnDefinition, ForeignKeyAction, ForeignKeyDefinition,
+        ScalarIndexDefinition, TableDefinition, TableOptions, TableType,
+    },
+    ColumnId,
 };
 use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 use kalamdb_system::{
@@ -282,4 +286,187 @@ async fn pg_catalog_slice_projects_schemas_tables_enums_routines_defaults_and_ro
     assert_eq!(roles_batches[0].num_rows(), 1);
     let can_login = roles_batches[0].column(1).as_any().downcast_ref::<BooleanArray>().unwrap();
     assert!(can_login.value(0));
+}
+
+#[tokio::test]
+async fn directus_catalog_reports_indexes_foreign_keys_and_column_types() {
+    let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
+    let registry = Arc::new(SystemTablesRegistry::new(Arc::clone(&backend)));
+    registry
+        .namespaces()
+        .create_namespace(Namespace {
+            namespace_id: SchemaId::new("directus"),
+            name:         "directus".to_string(),
+            created_at:   1_000,
+            options:      None,
+            table_count:  2,
+        })
+        .expect("create schema");
+
+    let mut authors = TableDefinition::new(
+        SchemaId::new("directus"),
+        TableName::new("authors"),
+        TableType::Shared,
+        vec![ColumnDefinition::primary_key(
+            1,
+            "id",
+            1,
+            KalamDataType::Int,
+        )],
+        TableOptions::shared(),
+        None,
+    )
+    .expect("authors");
+    authors.schema_version = 1;
+    registry
+        .tables()
+        .create_table(&TableId::new(SchemaId::new("directus"), TableName::new("authors")), &authors)
+        .expect("register authors");
+
+    let mut title = ColumnDefinition::simple(2, "title", 2, KalamDataType::Text);
+    title.character_maximum_length = Some(255);
+    let mut shape = ColumnDefinition::simple(3, "shape", 3, KalamDataType::Text);
+    shape.logical_type = LogicalTypeRef::geometry();
+    let mut articles = TableDefinition::new(
+        SchemaId::new("directus"),
+        TableName::new("articles"),
+        TableType::Shared,
+        vec![
+            ColumnDefinition::primary_key(1, "id", 1, KalamDataType::Int),
+            title,
+            shape,
+            ColumnDefinition::simple(4, "author", 4, KalamDataType::Int),
+        ],
+        TableOptions::shared(),
+        None,
+    )
+    .expect("articles");
+    articles.schema_version = 1;
+    articles.scalar_indexes.push(ScalarIndexDefinition::new(
+        "articles_title_index",
+        vec![ColumnId::new(2)],
+        false,
+    ));
+    articles.scalar_indexes.push(ScalarIndexDefinition::new(
+        "articles_missing_index",
+        vec![ColumnId::new(99)],
+        false,
+    ));
+    articles.foreign_keys.push(ForeignKeyDefinition {
+        name:                 "articles_author_foreign".to_string(),
+        columns:              vec!["author".to_string()],
+        referenced_namespace: SchemaId::new("directus"),
+        referenced_table:     TableName::new("authors"),
+        referenced_columns:   vec!["id".to_string()],
+        on_update:            ForeignKeyAction::NoAction,
+        on_delete:            ForeignKeyAction::Cascade,
+    });
+    articles.foreign_keys.push(ForeignKeyDefinition {
+        name:                 "articles_editor_foreign".to_string(),
+        columns:              vec!["author".to_string()],
+        referenced_namespace: SchemaId::new("directus"),
+        referenced_table:     TableName::new("editors"),
+        referenced_columns:   vec!["id".to_string()],
+        on_update:            ForeignKeyAction::NoAction,
+        on_delete:            ForeignKeyAction::SetNull,
+    });
+    registry
+        .tables()
+        .create_table(
+            &TableId::new(SchemaId::new("directus"), TableName::new("articles")),
+            &articles,
+        )
+        .expect("register articles");
+
+    let pg_catalog =
+        Arc::new(PgCatalogSchemaProvider::new(Arc::clone(&registry), Arc::new(Vec::new)));
+    let ctx = SessionContext::new();
+    ctx.catalog("datafusion")
+        .expect("default catalog")
+        .register_schema("pg_catalog", pg_catalog as Arc<dyn SchemaProvider>)
+        .expect("register pg_catalog");
+
+    let foreign_keys = query_rows(
+        &ctx,
+        "SELECT conname, confupdtype, confdeltype FROM pg_catalog.pg_constraint WHERE contype = \
+         'f' ORDER BY conname",
+    )
+    .await;
+    assert_eq!(
+        foreign_keys,
+        vec![vec![
+            "articles_author_foreign".to_string(),
+            "a".to_string(),
+            "c".to_string()
+        ]]
+    );
+
+    let index_class = query_rows(
+        &ctx,
+        "SELECT relkind FROM pg_catalog.pg_class WHERE relname = 'articles_title_index'",
+    )
+    .await;
+    assert_eq!(index_class, vec![vec!["i".to_string()]]);
+    let hidden = query_rows(
+        &ctx,
+        "SELECT relname FROM pg_catalog.pg_class WHERE relname = 'articles_missing_index'",
+    )
+    .await;
+    assert!(hidden.is_empty());
+
+    let index_flags = query_rows(
+        &ctx,
+        "SELECT indisunique, indisprimary FROM pg_catalog.pg_index WHERE indexrelid = (SELECT oid \
+         FROM pg_catalog.pg_class WHERE relname = 'articles_title_index')",
+    )
+    .await;
+    assert_eq!(index_flags, vec![vec!["false".to_string(), "false".to_string()]]);
+
+    let columns = query_rows(
+        &ctx,
+        "SELECT att.attname, att.atttypmod, typ.typname FROM pg_catalog.pg_attribute att JOIN \
+         pg_catalog.pg_class rel ON att.attrelid = rel.oid JOIN pg_catalog.pg_type typ ON typ.oid \
+         = att.atttypid WHERE rel.relname = 'articles' AND att.attname IN ('title', 'shape', \
+         '_version') ORDER BY att.attname",
+    )
+    .await;
+    assert_eq!(
+        columns,
+        vec![
+            vec![
+                "shape".to_string(),
+                "-1".to_string(),
+                "geometry".to_string()
+            ],
+            vec![
+                "title".to_string(),
+                "259".to_string(),
+                "varchar".to_string()
+            ],
+        ]
+    );
+}
+
+async fn query_rows(ctx: &SessionContext, sql: &str) -> Vec<Vec<String>> {
+    let batches = ctx.sql(sql).await.expect(sql).collect().await.expect(sql);
+    let mut rows = Vec::new();
+    for batch in batches {
+        for row in 0..batch.num_rows() {
+            let mut values = Vec::with_capacity(batch.num_columns());
+            for column in 0..batch.num_columns() {
+                let array = batch.column(column);
+                if let Some(strings) = array.as_any().downcast_ref::<StringArray>() {
+                    values.push(strings.value(row).to_string());
+                } else if let Some(ints) = array.as_any().downcast_ref::<Int64Array>() {
+                    values.push(ints.value(row).to_string());
+                } else if let Some(flags) = array.as_any().downcast_ref::<BooleanArray>() {
+                    values.push(flags.value(row).to_string());
+                } else {
+                    panic!("unsupported catalog column {}", array.data_type());
+                }
+            }
+            rows.push(values);
+        }
+    }
+    rows
 }

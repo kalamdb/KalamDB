@@ -1,6 +1,6 @@
 use std::env;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use super::{
     cluster::{ClusterConfig, PeerConfig},
@@ -117,6 +117,8 @@ impl ServerConfig {
     /// - KALAMDB_ENABLE_PG_EXTENSION: Override pg_extension.enabled ("true" | "false")
     /// - KALAMDB_PGWIRE_HOST: Override postgres_wire.host
     /// - KALAMDB_PGWIRE_PORT: Override postgres_wire.port
+    /// - KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS: Override postgres_wire.show_system_columns ("true" |
+    ///   "false")
     ///
     /// Environment variables take precedence over server.toml values (T031)
     pub fn apply_env_overrides(&mut self) -> Result<()> {
@@ -149,6 +151,9 @@ impl ServerConfig {
             if let Ok(port) = value.parse() {
                 self.postgres_wire.port = port;
             }
+        }
+        if let Some(show) = env_truthy("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS") {
+            self.postgres_wire.show_system_columns = show;
         }
     }
 
@@ -478,6 +483,28 @@ mod tests {
         assert_eq!(config.server.port, 3900);
 
         env::remove_var("KALAMDB_SERVER_PORT");
+    }
+
+    #[test]
+    fn test_env_override_pgwire_show_system_columns() {
+        let _guard = acquire_env_lock();
+        env::remove_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS");
+
+        let config = ServerConfig::default();
+        assert!(config.postgres_wire.show_system_columns);
+
+        env::set_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS", "false");
+        let mut hidden = ServerConfig::default();
+        hidden.apply_env_overrides().unwrap();
+        assert!(!hidden.postgres_wire.show_system_columns);
+
+        env::set_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS", "true");
+        let mut shown = ServerConfig::default();
+        shown.postgres_wire.show_system_columns = false;
+        shown.apply_env_overrides().unwrap();
+        assert!(shown.postgres_wire.show_system_columns);
+
+        env::remove_var("KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS");
     }
 
     #[test]

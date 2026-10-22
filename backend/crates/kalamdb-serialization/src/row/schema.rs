@@ -9,7 +9,8 @@ pub struct StorageField {
     pub data_type:       StorageDataType,
     /// Dropped physical slot. Encoded as NULL; decoded values are discarded.
     pub dropped:         bool,
-    /// Materialized missing-column default for rows written before `ADD COLUMN ... DEFAULT <expr>`.
+    /// Materialized missing-column default for rows written before `ADD COLUMN ... DEFAULT
+    /// <expr>`.
     pub missing_default: Option<ScalarValue>,
 }
 
@@ -74,7 +75,8 @@ pub enum StorageDataType {
 }
 
 impl StorageDataType {
-    /// Fixed byte width in the v2 row body fixed region, or `None` for variable-width / nested types.
+    /// Fixed byte width in the v2 row body fixed region, or `None` for variable-width / nested
+    /// types.
     #[inline]
     pub const fn fixed_byte_width(&self) -> Option<usize> {
         match self {
@@ -89,9 +91,11 @@ impl StorageDataType {
             | Self::TimestampMicrosecond
             | Self::TimestampNanosecond => Some(8),
             Self::Decimal { .. } => Some(16),
-            Self::Utf8 | Self::Binary | Self::Embedding { .. } | Self::Struct(_) | Self::List(_) => {
-                None
-            },
+            Self::Utf8
+            | Self::Binary
+            | Self::Embedding { .. }
+            | Self::Struct(_)
+            | Self::List(_) => None,
         }
     }
 }
@@ -100,15 +104,16 @@ impl StorageDataType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageVersionLayout {
     /// Physical ordinal span (`fields.len()`).
-    pub slot_span: usize,
+    pub slot_span:                 usize,
     /// Fixed-width ordinals ordered widest-first for compact packing.
-    pub fixed_permutation: Vec<usize>,
-    /// For each physical ordinal `0..slot_span`: `Some((fixed_byte_offset, byte_width))` if fixed-width.
-    pub fixed_offsets: Vec<Option<(usize, usize)>>,
+    pub fixed_permutation:         Vec<usize>,
+    /// For each physical ordinal `0..slot_span`: `Some((fixed_byte_offset, byte_width))` if
+    /// fixed-width.
+    pub fixed_offsets:             Vec<Option<(usize, usize)>>,
     /// Total byte length of the packed fixed region.
-    pub fixed_region_len: usize,
+    pub fixed_region_len:          usize,
     /// Physical ordinals of variable-width non-dropped columns in ordinal order.
-    pub variable_ordinals: Vec<usize>,
+    pub variable_ordinals:         Vec<usize>,
     /// For each physical ordinal `0..slot_span`: `Some(var_slot_index)` if variable-width.
     pub variable_slot_for_ordinal: Vec<Option<usize>>,
 }
@@ -161,8 +166,8 @@ impl StorageVersionLayout {
 /// Schema used to encode/decode a table row by ordinal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageSchema {
-    pub version: u16,
-    pub fields:  Vec<StorageField>,
+    pub version:            u16,
+    pub fields:             Vec<StorageField>,
     pub layout:             StorageVersionLayout,
     pub historical_layouts: std::collections::BTreeMap<u16, StorageVersionLayout>,
 }
@@ -181,8 +186,7 @@ impl StorageSchema {
     }
 
     pub fn register_historical_version(&mut self, version: u16, fields: &[StorageField]) {
-        self.historical_layouts
-            .insert(version, StorageVersionLayout::compute(fields));
+        self.historical_layouts.insert(version, StorageVersionLayout::compute(fields));
     }
 
     pub fn layout_for_version(&self, version: u16) -> Option<&StorageVersionLayout> {

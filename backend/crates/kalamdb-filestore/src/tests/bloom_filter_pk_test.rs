@@ -67,8 +67,8 @@ fn test_bloom_filter_for_primary_key_column() {
 
     // Schema with PRIMARY KEY column "id" + _version system column
     let schema = Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Int64, false),   // PRIMARY KEY
-        Field::new("name", DataType::Utf8, true),   // Regular column
+        Field::new("id", DataType::Int64, false), // PRIMARY KEY
+        Field::new("name", DataType::Utf8, true), // Regular column
         Field::new("_version", DataType::Int64, false), // System column
     ]));
 
@@ -162,7 +162,7 @@ fn test_bloom_filter_for_composite_primary_key() {
         Field::new("user_id", DataType::Int64, false), // PRIMARY KEY part 1
         Field::new("order_id", DataType::Int64, false), // PRIMARY KEY part 2
         Field::new("amount", DataType::Int64, true),   // Regular column
-        Field::new("_version", DataType::Int64, false),    // System column
+        Field::new("_version", DataType::Int64, false), // System column
     ]));
 
     // Create batch with 1024 rows (minimum for bloom filters)

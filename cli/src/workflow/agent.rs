@@ -293,11 +293,19 @@ ALTER TYPE app.profile DROP ATTRIBUTE obsolete_field;
         assert!(!objects.iter().any(|item| item.contains("fake")), "{objects:?}");
         assert!(objects.iter().any(|item| item.contains("type `app.old_status`")), "{objects:?}");
         assert!(objects.iter().any(|item| item.contains("domain `app.old_qty`")), "{objects:?}");
-        assert!(objects.iter().any(|item| item.contains("function `app.legacy_fn`")), "{objects:?}");
-        assert!(objects.iter().any(|item| item.contains("procedure `app.legacy_proc`")), "{objects:?}");
+        assert!(
+            objects.iter().any(|item| item.contains("function `app.legacy_fn`")),
+            "{objects:?}"
+        );
+        assert!(
+            objects.iter().any(|item| item.contains("procedure `app.legacy_proc`")),
+            "{objects:?}"
+        );
         assert!(objects.iter().any(|item| item.contains("schema `legacy_ns`")), "{objects:?}");
         assert!(
-            objects.iter().any(|item| item.contains("attribute `app.profile.obsolete_field`")),
+            objects
+                .iter()
+                .any(|item| item.contains("attribute `app.profile.obsolete_field`")),
             "{objects:?}"
         );
     }

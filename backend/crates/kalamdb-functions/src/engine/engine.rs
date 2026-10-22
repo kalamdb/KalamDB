@@ -897,8 +897,8 @@ async fn run_v8(
                 );
                 if let Some(mut instance) = taken {
                     instance.session.limits = limits;
-                    // The warm match is the most valuable isolate here; shed other idle entries before
-                    // giving it up.
+                    // The warm match is the most valuable isolate here; shed other idle entries
+                    // before giving it up.
                     loop {
                         if instance.try_resize_charge(hard, runtime.config.max_memory_bytes) {
                             break;
@@ -914,12 +914,14 @@ async fn run_v8(
                     continue;
                 }
                 let memory_charge =
-                    match reserve_session_memory(runtime, hard, idle, &work.invocation.scope).await {
+                    match reserve_session_memory(runtime, hard, idle, &work.invocation.scope).await
+                    {
                         Ok(charge) => charge,
                         Err(error) => return Err(error),
                     };
                 let session = {
-                    let _load_span = kalamdb_observability::kdb_info_span_entered!("func.v8.cold_load");
+                    let _load_span =
+                        kalamdb_observability::kdb_info_span_entered!("func.v8.cold_load");
                     match V8Session::load((*work.invocation.revision).clone(), limits) {
                         Ok(session) => session,
                         Err(error) => return Err(error),

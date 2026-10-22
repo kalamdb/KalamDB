@@ -2,7 +2,7 @@
 //!
 //! Validates:
 //! - Parameter binding for INSERT/UPDATE/DELETE ($1, $2, ...)
-//! - Parameter validation (max 50 params, 512KB each)
+//! - Parameter validation (max 65535 params, 512KB each)
 //! - Params not allowed with multi-statement batches
 
 use kalam_client::models::ResponseStatus;
@@ -203,12 +203,9 @@ async fn test_parameterized_dml_over_http() {
             anyhow::ensure!(cnt == 0, "expected 0 rows after delete, got {}", cnt);
         }
 
-        // Parameter count validation (max 50)
+        // Parameter count validation (PostgreSQL extended-protocol maximum)
         {
-            let mut params = Vec::new();
-            for i in 1..=51 {
-                params.push(json!(i));
-            }
+            let params = (1..=65536).map(|i| json!(i)).collect::<Vec<_>>();
 
             let resp = server
                 .execute_sql_with_auth_and_params(

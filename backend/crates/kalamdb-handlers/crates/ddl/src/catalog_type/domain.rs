@@ -3,9 +3,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use kalamdb_commons::{
-    conversions::{
-        arrow_json_conversion::validate_domain_constraints_for_field, DomainCheckSpec,
-    },
+    conversions::{arrow_json_conversion::validate_domain_constraints_for_field, DomainCheckSpec},
     datatypes::KalamDataType,
     models::{CatalogTypeKind, TableId, TopicId, TypeId},
     schemas::{TableName, TableType},
@@ -78,10 +76,8 @@ fn persist_create_domain(
             statement.namespace_id, statement.name
         )));
     }
-    let table_id = TableId::new(
-        statement.namespace_id.clone(),
-        TableName::new(statement.name.as_str()),
-    );
+    let table_id =
+        TableId::new(statement.namespace_id.clone(), TableName::new(statement.name.as_str()));
     if app.schema_registry().get(&table_id).is_some() {
         return Err(KalamDbError::AlreadyExists(format!(
             "type {}.{} already exists",
@@ -108,12 +104,13 @@ fn persist_create_domain(
         &statement.base_type,
         Some((&statement.namespace_id, statement.name.as_str())),
     )?;
-    if let Some((base_ns, base_name)) = statement.base_type.resolved_name(&statement.namespace_id)
-    {
+    if let Some((base_ns, base_name)) = statement.base_type.resolved_name(&statement.namespace_id) {
         let base_catalog = stores
             .find_type(&base_ns, &base_name)
             .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-            .ok_or_else(|| KalamDbError::NotFound(format!("type {base_ns}.{base_name} not found")))?;
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("type {base_ns}.{base_name} not found"))
+            })?;
         if base_catalog.kind == CatalogTypeKind::TopicPayload {
             return Err(KalamDbError::InvalidSql(format!(
                 "topic payload type {base_ns}.{base_name} cannot be used as a domain base type"
@@ -145,12 +142,8 @@ fn persist_create_domain(
     )?;
     check_new_type_graph(&stores, &type_id, &catalog_fields)?;
 
-    let next_slot = catalog_fields
-        .iter()
-        .map(CatalogTypeField::physical_slot)
-        .max()
-        .unwrap_or(1)
-        + 1;
+    let next_slot =
+        catalog_fields.iter().map(CatalogTypeField::physical_slot).max().unwrap_or(1) + 1;
     let mut catalog_type = CatalogType::named(
         type_id,
         statement.namespace_id.clone(),
@@ -361,12 +354,8 @@ fn persist_alter_domain(
                 default_expr.as_deref(),
                 &checks,
             )?;
-            let next_slot = new_fields
-                .iter()
-                .map(CatalogTypeField::physical_slot)
-                .max()
-                .unwrap_or(1)
-                + 1;
+            let next_slot =
+                new_fields.iter().map(CatalogTypeField::physical_slot).max().unwrap_or(1) + 1;
             let prev_header = catalog_type.clone();
             let mut updated_header = catalog_type.clone();
             updated_header.type_revision = updated_header.type_revision.saturating_add(1);
@@ -676,8 +665,7 @@ fn validate_existing_table_rows_for_domain(
             .columns
             .iter()
             .filter(|col| {
-                col.named_type_id()
-                    .is_some_and(|tid| related_type_ids.iter().any(|r| r == tid))
+                col.named_type_id().is_some_and(|tid| related_type_ids.iter().any(|r| r == tid))
             })
             .map(|col| col.column_name.clone())
             .collect();

@@ -101,13 +101,32 @@ impl SqlExecutor {
             return Ok(None);
         };
 
+        let foreign_keys = self
+            .app_context
+            .schema_registry()
+            .get_table_if_exists(table_id)?
+            .map(|definition| definition.foreign_keys.clone())
+            .unwrap_or_default();
+        if !foreign_keys.is_empty() {
+            let session = self.create_session_with_transaction_context(exec_ctx)?;
+            let state = session.state();
+            let registry = self.app_context.schema_registry();
+            kalamdb_tables::utils::datafusion_dml::reject_missing_foreign_keys(
+                registry.as_ref(),
+                &state,
+                table_id,
+                &foreign_keys,
+                &insert_rows.rows,
+            )
+            .await
+            .map_err(Self::datafusion_to_execution_error)?;
+        }
+
         if has_active_tx {
             let Some(transaction_id) = self.active_request_transaction_id(exec_ctx)? else {
                 return Ok(None);
             };
-            if insert_rows.returning.is_some()
-                || !matches!(insert_rows.table_type, TableType::User | TableType::Shared)
-            {
+            if !matches!(insert_rows.table_type, TableType::User | TableType::Shared) {
                 return Ok(None);
             }
             let Some(pk_column) = insert_rows.primary_key_column.as_deref() else {
@@ -155,6 +174,8 @@ impl SqlExecutor {
                 )?;
             }
             let rows_affected = insert_rows.rows.len();
+            let returning = insert_rows.returning.clone();
+            let returning_rows = returning.as_ref().map(|_| insert_rows.rows.clone());
             let user_id = crate::sql::executor::transaction_batch_insert::staged_mutation_user_id(
                 insert_rows.table_type,
                 exec_ctx,
@@ -171,6 +192,12 @@ impl SqlExecutor {
             self.app_context
                 .transaction_coordinator()
                 .stage_batch(&transaction_id, mutations)?;
+            if let (Some(returning), Some(returning_rows)) = (returning.as_ref(), returning_rows) {
+                return self
+                    .build_on_conflict_returning_result(table_id, returning, returning_rows)
+                    .await
+                    .map(Some);
+            }
             return Ok(Some(ExecutionResult::Inserted { rows_affected }));
         }
 

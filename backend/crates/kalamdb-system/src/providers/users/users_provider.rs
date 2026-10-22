@@ -293,9 +293,7 @@ impl UsersTableProvider {
     /// Return all stored user records (including soft-deleted rows).
     pub fn list_users(&self) -> Result<Vec<User>, SystemError> {
         let rows = self.store.scan_all_typed(None, None, None)?;
-        rows.into_iter()
-            .map(|(_, row)| Self::decode_user_row(&row))
-            .collect()
+        rows.into_iter().map(|(_, row)| Self::decode_user_row(&row)).collect()
     }
 
     fn refresh_role_caches(&self) -> Result<(), SystemError> {

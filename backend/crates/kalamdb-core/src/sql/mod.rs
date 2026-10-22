@@ -33,6 +33,7 @@ pub mod executor;
 pub mod functions;
 pub mod impersonation;
 pub mod plan_cache;
+pub(crate) mod serial_sequence;
 pub mod table_functions;
 
 pub use context::{ExecutionContext, ScalarValue, SessionConfigValues};

@@ -336,8 +336,8 @@ mod tests {
         datatypes::KalamDataType,
         models::rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        AuthorizationRelation, BoundExprShape, InvalidationStrategy, SchemaId, PolicyCommand,
-        PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr, Role, TableId, TableName,
+        AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+        PolicyProgram, PolicyTarget, PrincipalExpr, Role, SchemaId, TableId, TableName,
         TablePolicy, UserId,
     };
 

@@ -32,6 +32,7 @@ use crate::{
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
     schema_registry::{cached_table_data::CachedTableData, type_registry::TypeRegistry},
+    sql::serial_sequence::{forget_serial_columns, remember_serial_columns},
 };
 
 #[derive(Debug, Default)]
@@ -692,6 +693,11 @@ impl SchemaRegistry {
         let table_id = table_def.table_id();
         let app_ctx = self.app_context();
 
+        // A replaced table reuses schema version numbers. Drop stale layouts
+        // before the overlay lookup so the new definition is compiled.
+        self.type_registry()
+            .forget_table_layouts(table_id.namespace_id(), table_id.table_name());
+
         // 1. Create CachedTableData with named-type Arrow overlay
         let cached_data = Arc::new(CachedTableData::from_table_definition(
             app_ctx.as_ref(),
@@ -748,6 +754,7 @@ impl SchemaRegistry {
         }
 
         self.maybe_evict_table_cache_lru(Some(&table_id));
+        remember_serial_columns(&table_def);
 
         Ok(())
     }
@@ -999,9 +1006,12 @@ impl SchemaRegistry {
 
     /// Invalidate all versions of a table (for DROP TABLE)
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
+        forget_serial_columns(table_id);
         self.table_cache.remove(table_id);
 
         self.version_cache.retain(|key, _| key.table_id() != table_id);
+        self.type_registry()
+            .forget_table_layouts(table_id.namespace_id(), table_id.table_name());
 
         let _ = self.deregister_from_datafusion(table_id);
     }
@@ -1514,6 +1524,13 @@ impl SchemaRegistryTrait for SchemaRegistry {
 
     fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, Self::Error> {
         self.get_storage_id(table_id)
+    }
+
+    fn get_table_provider(
+        &self,
+        table_id: &TableId,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.get_provider(table_id)
     }
 }
 

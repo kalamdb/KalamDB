@@ -177,11 +177,7 @@ pub fn scalar_to_json_for_column(
 ///
 /// Rounds fractional digits half-away-from-zero, rejects `NaN` / `Infinity`,
 /// and checks that the rounded magnitude fits within `precision` digits.
-pub fn parse_decimal_value_bounded(
-    value: &str,
-    precision: u8,
-    scale: i8,
-) -> Result<i128, String> {
+pub fn parse_decimal_value_bounded(value: &str, precision: u8, scale: i8) -> Result<i128, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("cannot parse empty string as numeric".to_string());
@@ -218,12 +214,13 @@ pub fn parse_decimal_value_bounded(
         return Err(format!("invalid numeric literal '{value}'"));
     }
 
-    let integer_part = if integer_raw.is_empty() { "0" } else { integer_raw };
+    let integer_part = if integer_raw.is_empty() {
+        "0"
+    } else {
+        integer_raw
+    };
     let scale_usize = scale as usize;
-    let round_up = fractional_raw
-        .as_bytes()
-        .get(scale_usize)
-        .is_some_and(|&digit| digit >= b'5');
+    let round_up = fractional_raw.as_bytes().get(scale_usize).is_some_and(|&digit| digit >= b'5');
 
     let mut normalized_fraction = String::with_capacity(scale_usize);
     if fractional_raw.len() >= scale_usize {
@@ -236,9 +233,9 @@ pub fn parse_decimal_value_bounded(
     }
 
     let joined = format!("{integer_part}{normalized_fraction}");
-    let mut magnitude = joined
-        .parse::<i128>()
-        .map_err(|_| format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})"))?;
+    let mut magnitude = joined.parse::<i128>().map_err(|_| {
+        format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})")
+    })?;
     if round_up {
         magnitude = magnitude.checked_add(1).ok_or_else(|| {
             format!("numeric field overflow: '{value}' exceeds NUMERIC({precision}, {scale})")

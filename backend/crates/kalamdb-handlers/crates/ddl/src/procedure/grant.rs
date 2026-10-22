@@ -11,7 +11,9 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::{ExecuteGrantee, ExecuteTarget, GrantExecuteStatement, RevokeExecuteStatement};
+use kalamdb_sql::ddl::{
+    ExecuteGrantee, ExecuteTarget, GrantExecuteStatement, RevokeExecuteStatement,
+};
 use kalamdb_system::CatalogRoutineGrant;
 
 use crate::helpers::{async_blocking::run_blocking, guards::require_admin};
@@ -89,9 +91,9 @@ impl TypedStatementHandler<GrantExecuteStatement> for GrantExecuteHandler {
                             && routine.language.as_deref() != Some("INTERNAL")
                         {
                             let grant = CatalogRoutineGrant {
-                                grant_id: RoutineGrantId::new(&routine.routine_id, &grantee),
+                                grant_id:   RoutineGrantId::new(&routine.routine_id, &grantee),
                                 routine_id: routine.routine_id.clone(),
-                                grantee: grantee.clone(),
+                                grantee:    grantee.clone(),
                             };
                             stores
                                 .upsert_grant(grant)

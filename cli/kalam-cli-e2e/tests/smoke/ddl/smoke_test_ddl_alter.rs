@@ -32,8 +32,7 @@ fn smoke_test_alter_table_add_column() {
     println!("🧪 Testing ALTER TABLE ADD COLUMN");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -115,8 +114,7 @@ fn smoke_test_alter_table_add_column() {
     println!("✅ Verified ADD COLUMN with DEFAULT works");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test ALTER TABLE DROP COLUMN
@@ -140,8 +138,7 @@ fn smoke_test_alter_table_drop_column() {
     println!("🧪 Testing ALTER TABLE DROP COLUMN");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -196,8 +193,7 @@ fn smoke_test_alter_table_drop_column() {
     println!("✅ Verified column dropped and other data preserved");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test ALTER TABLE MODIFY COLUMN
@@ -220,8 +216,7 @@ fn smoke_test_alter_table_modify_column() {
     println!("🧪 Testing ALTER TABLE MODIFY COLUMN");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -268,8 +263,7 @@ fn smoke_test_alter_table_modify_column() {
     }
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test that ACCESS_LEVEL is rejected on ALTER TABLE
@@ -285,8 +279,7 @@ fn smoke_test_alter_shared_table_rejects_access_level() {
     let table = generate_unique_table("shared_access_test");
     let full_table = format!("{}.{}", namespace, table);
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -313,8 +306,7 @@ fn smoke_test_alter_shared_table_rejects_access_level() {
         "unexpected error: {err}"
     );
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test error: ADD NOT NULL column without DEFAULT on non-empty table
@@ -337,8 +329,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("🧪 Testing error: ADD NOT NULL column without DEFAULT");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -388,8 +379,7 @@ fn smoke_test_alter_add_not_null_without_default_error() {
     println!("✅ Verified error when adding NOT NULL column without DEFAULT to non-empty table");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test error: Cannot ALTER system columns
@@ -412,8 +402,7 @@ fn smoke_test_alter_system_columns_error() {
     println!("🧪 Testing error: Cannot ALTER system columns");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -470,6 +459,5 @@ fn smoke_test_alter_system_columns_error() {
     println!("✅ Verified system columns are protected from ALTER operations");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

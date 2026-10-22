@@ -3,8 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    SchemaId, PolicyCommand, PolicyId, PolicyTarget, Role, TableId, TableName, TablePolicy,
-    UserId,
+    PolicyCommand, PolicyId, PolicyTarget, Role, SchemaId, TableId, TableName, TablePolicy, UserId,
 };
 
 use crate::{

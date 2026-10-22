@@ -1,8 +1,8 @@
 use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
 
 use kalam_client::{
-    models::BatchStatus, seq_tracking::row_seq, ChangeEvent, VersionId, SubscriptionConfig,
-    SubscriptionOptions,
+    models::BatchStatus, seq_tracking::row_seq, ChangeEvent, SubscriptionConfig,
+    SubscriptionOptions, VersionId,
 };
 use tokio::time::{sleep, timeout, Instant};
 

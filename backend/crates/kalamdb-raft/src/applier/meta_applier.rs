@@ -12,7 +12,7 @@
 use async_trait::async_trait;
 use kalamdb_commons::models::{
     schemas::{TableDefinition, TableType},
-    FunctionRevisionId, JobId, SchemaId, NodeId, StorageId, TableId, UserId,
+    FunctionRevisionId, JobId, NodeId, SchemaId, StorageId, TableId, UserId,
 };
 use kalamdb_system::{
     providers::jobs::models::Job, CatalogFunctionArtifact, CatalogFunctionModule,

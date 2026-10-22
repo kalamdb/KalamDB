@@ -17,9 +17,7 @@ use std::sync::{
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot,
-};
+use super::{decode, encode, ApplyResult, KalamStateMachine, StateMachineSnapshot};
 use crate::{
     applier::MetaApplier,
     commands::{MetaCommand, MetaResponse},

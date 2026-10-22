@@ -582,8 +582,8 @@ async fn test_topic_sql_consume_requires_explicit_ack_to_commit_group_offset() {
     assert_eq!(parse_u64_row_field(&offsets_after_ack[0], "last_acked_offset"), last_offset);
 
     let _ = common::execute_sql_via_http_as_root(&format!("DROP TOPIC {}", topic)).await;
-    let _ = common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace))
-        .await;
+    let _ =
+        common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 }
 
 #[tokio::test]
@@ -1544,8 +1544,8 @@ async fn test_topic_http_consume_preserves_impersonated_user_and_payloads() {
     }
 
     let _ = common::execute_sql_via_http_as_root(&format!("DROP TOPIC {}", topic)).await;
-    let _ = common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace))
-        .await;
+    let _ =
+        common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", service_user)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", alice_user)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", bob_user)).await;
@@ -1626,8 +1626,8 @@ async fn test_topic_sql_consume_docs_getting_started_flow() {
     assert!(payload.get("created").is_some(), "payload should include created timestamp");
 
     let _ = common::execute_sql_via_http_as_root(&format!("DROP TOPIC {}", topic)).await;
-    let _ = common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace))
-        .await;
+    let _ =
+        common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
 }
 
 #[tokio::test]
@@ -1800,8 +1800,8 @@ async fn test_topic_http_consume_direct_multi_user_publishers_no_missing_changes
     );
 
     let _ = common::execute_sql_via_http_as_root(&format!("DROP TOPIC {}", topic)).await;
-    let _ = common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace))
-        .await;
+    let _ =
+        common::execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", user_a)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", user_b)).await;
     let _ = common::execute_sql_via_http_as_root(&format!("DROP USER {}", user_c)).await;

@@ -143,12 +143,41 @@ pub fn pg_format_type(oid: i64) -> &'static str {
         1082 => "date",
         1083 => "time without time zone",
         1114 => "timestamp without time zone",
+        1042 => "character",
+        1043 => "character varying",
         1700 => "numeric",
         2278 => "void",
         2950 => "uuid",
         _ if oid == stable_oid(&["type", "pg_catalog", "file"]) => "file",
         _ if oid == stable_oid(&["type", "pg_catalog", "embedding"]) => "embedding",
+        _ if oid == stable_oid(&["type", "pg_catalog", "geometry"]) => "geometry",
         _ => "unknown",
+    }
+}
+
+/// PostgreSQL `pg_attribute` `(atttypid, atttypmod)` for a column.
+///
+/// `varchar(n)` is oid 1043 with typmod `n + 4`. `numeric(p, s)` packs
+/// precision and scale the same way PostgreSQL does. Unlimited `text` stays
+/// oid 25 with typmod `-1`.
+pub(crate) fn pg_attribute_type(
+    data_type: &KalamDataType,
+    character_maximum_length: Option<u32>,
+    modifier: Option<&str>,
+) -> (i64, i64) {
+    if modifier == Some("geometry") {
+        return (stable_oid(&["type", "pg_catalog", "geometry"]), -1);
+    }
+    match data_type {
+        KalamDataType::Text => match character_maximum_length {
+            Some(length) => (1043, i64::from(length).saturating_add(4)),
+            None => (pg_type_oid(data_type), -1),
+        },
+        KalamDataType::Decimal { precision, scale } => {
+            let packed = (i64::from(*precision) << 16) | (i64::from(*scale) & 0xffff);
+            (1700, packed.saturating_add(4))
+        },
+        other => (pg_type_oid(other), -1),
     }
 }
 
@@ -190,5 +219,27 @@ mod tests {
     fn udt_name_to_info_schema_data_type_maps_pg_names() {
         assert_eq!(udt_name_to_info_schema_data_type("int8"), "bigint");
         assert_eq!(udt_name_to_info_schema_data_type("text"), "text");
+    }
+
+    #[test]
+    fn varchar_limit_is_a_postgres_typmod() {
+        assert_eq!(pg_attribute_type(&KalamDataType::Text, Some(255), None), (1043, 259));
+        assert_eq!(pg_attribute_type(&KalamDataType::Text, None, None), (25, -1));
+        assert_eq!(pg_format_type(1043), "character varying");
+        assert_eq!(
+            pg_attribute_type(
+                &KalamDataType::Decimal {
+                    precision: 10,
+                    scale:     5,
+                },
+                None,
+                None
+            ),
+            (1700, ((10_i64 << 16) | 5) + 4)
+        );
+        let (geometry_oid, geometry_typmod) =
+            pg_attribute_type(&KalamDataType::Text, None, Some("geometry"));
+        assert_eq!(geometry_typmod, -1);
+        assert_eq!(pg_format_type(geometry_oid), "geometry");
     }
 }

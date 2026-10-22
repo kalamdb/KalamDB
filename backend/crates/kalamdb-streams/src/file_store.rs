@@ -723,10 +723,14 @@ impl FileStreamLogStore {
                             return Ok(false);
                         }
                     },
-                    StreamLogRecord::Delete { row_id, timestamp: _ } => {
+                    StreamLogRecord::Delete {
+                        row_id,
+                        timestamp: _,
+                    } => {
                         let version = row_id.version().as_i64();
                         deleted.insert(version);
-                        results.retain(|(existing_id, _)| existing_id.version().as_i64() != version);
+                        results
+                            .retain(|(existing_id, _)| existing_id.version().as_i64() != version);
                     },
                 }
                 Ok(true)

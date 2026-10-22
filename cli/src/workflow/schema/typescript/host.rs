@@ -112,11 +112,7 @@ pub fn write_procedure_artifacts(
 ) -> Result<()> {
     let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
     remove_stale_inline_shims(&generated_dir, procedures)?;
-    if !procedures
-        .procedures()
-        .iter()
-        .any(|spec| is_typescript_routine(spec.routine))
-    {
+    if !procedures.procedures().iter().any(|spec| is_typescript_routine(spec.routine)) {
         return Ok(());
     }
     let tsconfig = project_root.join(FUNCTIONS_DIR).join("tsconfig.json");

@@ -28,8 +28,7 @@ fn test_cli_list_tables() {
     let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -61,8 +60,7 @@ fn test_cli_list_tables() {
     assert!(output.contains(&table_name), "Should contain table info: {}", output);
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// T042: Test describe table command (\d table)
@@ -77,8 +75,7 @@ fn test_cli_describe_table() {
     let namespace = generate_unique_namespace("test_cli");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create test table
     let create_sql = format!(
@@ -109,8 +106,7 @@ fn test_cli_describe_table() {
     assert!(output.contains(&table_name), "Should contain table name: {}", output);
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// T055: Test batch file execution

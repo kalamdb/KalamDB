@@ -443,9 +443,8 @@ fn decode_struct(
     for _ in live_count..count {
         skip_value(reader)?;
     }
-    let struct_array =
-        StructArray::try_new_with_length(Fields::from(fields_vec), columns, None, 1)
-            .map_err(|err| SerializationError::Decode(format!("struct array: {err}")))?;
+    let struct_array = StructArray::try_new_with_length(Fields::from(fields_vec), columns, None, 1)
+        .map_err(|err| SerializationError::Decode(format!("struct array: {err}")))?;
     Ok(ScalarValue::Struct(Arc::new(struct_array)))
 }
 

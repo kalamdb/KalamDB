@@ -104,8 +104,7 @@ fn test_live_subscription_default_options() {
     );
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe with batch_size option and verify it's respected
@@ -179,8 +178,7 @@ fn test_live_subscription_with_batch_size() {
     println!("[TEST] Received {} snapshot rows", snapshot_rows.len());
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe with last_rows option to get only recent data
@@ -261,8 +259,7 @@ fn test_live_subscription_with_last_rows() {
     assert!(!seq_nums_received.is_empty(), "Expected to receive some rows from subscription");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Subscribe and track seq_id for potential resumption
@@ -348,8 +345,7 @@ fn test_live_subscription_seq_id_tracking() {
     println!("[TEST] Subscription received events successfully - seq_id tracking works");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Multiple concurrent subscriptions to the same table
@@ -435,8 +431,7 @@ fn test_live_multiple_subscriptions() {
     println!("[TEST] Multi-subscription test: sub1={}, sub2={}", sub1_received, sub2_received);
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Connection timeout with unreachable server (client-side option validation)
@@ -553,8 +548,7 @@ fn test_live_subscription_change_event_order() {
     println!("[TEST] Successfully received {} change events", received_orders.len());
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test: Execute query using HTTP/2 protocol

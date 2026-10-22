@@ -3,7 +3,9 @@
 //! Identity (`user_id`, `_version`) is not written. Reconstruct it from the RocksDB key.
 
 use datafusion_common::ScalarValue;
-use kalamdb_commons::models::rows::{Row, RowEnvelope, SharedTableRow, StreamTableRow, UserTableRow};
+use kalamdb_commons::models::rows::{
+    Row, RowEnvelope, SharedTableRow, StreamTableRow, UserTableRow,
+};
 
 use super::{
     scalar::TAG_NULL,
@@ -192,8 +194,8 @@ fn encode_row_body_v2(
         (3, 4)
     };
 
-    let mut row_flags: u8 = (offset_width_code << V2_ROW_FLAG_OFFSET_WIDTH_SHIFT)
-        & V2_ROW_FLAG_OFFSET_WIDTH_MASK;
+    let mut row_flags: u8 =
+        (offset_width_code << V2_ROW_FLAG_OFFSET_WIDTH_SHIFT) & V2_ROW_FLAG_OFFSET_WIDTH_MASK;
     if has_any_null {
         row_flags |= V2_ROW_FLAG_NULL_BITMAP;
     }
@@ -324,9 +326,12 @@ fn encode_variable_value_v2(
             buf.extend_from_slice(b);
             Ok(())
         },
-        (StorageDataType::Embedding { .. } | StorageDataType::Struct(_) | StorageDataType::List(_), _) => {
-            encode_value(buf, value, expected)
-        },
+        (
+            StorageDataType::Embedding { .. }
+            | StorageDataType::Struct(_)
+            | StorageDataType::List(_),
+            _,
+        ) => encode_value(buf, value, expected),
         _ => Err(SerializationError::Encode(format!(
             "v2 variable value {value:?} does not match storage type {expected:?}"
         ))),

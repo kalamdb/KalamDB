@@ -8,7 +8,7 @@ use std::{
 };
 
 use datafusion::{logical_expr::LogicalPlan, scalar::ScalarValue};
-use kalamdb_commons::{models::UserId, schemas::TableType, SchemaId, Role, TableId};
+use kalamdb_commons::{models::UserId, schemas::TableType, Role, SchemaId, TableId};
 use moka::{notification::RemovalCause, sync::Cache};
 
 const DEFAULT_PLAN_MAX_ENTRIES: u64 = 1000;
@@ -396,7 +396,11 @@ pub enum FastInsertDefaultTemplate {
     Literal(ScalarValue),
     CurrentTimestamp,
     CurrentUser,
+    CurrentRole,
+    CurrentSchema,
+    CurrentDatabase,
     SnowflakeId,
+    SerialId,
     UuidV7,
     Ulid,
     Procedure(kalamdb_commons::RoutineCall),

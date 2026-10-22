@@ -334,13 +334,9 @@ fn persist_add_value(
     let next_slot = catalog_type
         .next_slot
         .max(fields.iter().map(|field| field.physical_slot()).max().unwrap_or(0) + 1);
-    let added = CatalogTypeField::enum_value_with_slot(
-        catalog_type.type_id.clone(),
-        label,
-        next_slot,
-        0,
-    )
-    .map_err(KalamDbError::InvalidSql)?;
+    let added =
+        CatalogTypeField::enum_value_with_slot(catalog_type.type_id.clone(), label, next_slot, 0)
+            .map_err(KalamDbError::InvalidSql)?;
     fields.insert(insert_at, added);
     for (index, field) in fields.iter_mut().enumerate() {
         field.ordinal = (index + 1) as i32;
@@ -431,10 +427,7 @@ fn rewrite_stored_enum_values(
     from: &str,
     to: &str,
 ) -> Result<(), KalamDbError> {
-    use kalamdb_commons::{
-        models::TableId,
-        schemas::TableType,
-    };
+    use kalamdb_commons::{models::TableId, schemas::TableType};
 
     let tables = app
         .system_tables()
@@ -716,9 +709,7 @@ pub(super) fn collect_enclosing_type_ids(
                 continue;
             }
             let references_current = ty.source_type_id.as_ref() == Some(&current)
-                || fields
-                    .iter()
-                    .any(|f| !f.dropped && f.field_type_id.as_ref() == Some(&current));
+                || fields.iter().any(|f| !f.dropped && f.field_type_id.as_ref() == Some(&current));
             if references_current {
                 enclosing.push(ty.type_id.clone());
                 queue.push(ty.type_id.clone());

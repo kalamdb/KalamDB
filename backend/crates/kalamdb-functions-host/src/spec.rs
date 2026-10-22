@@ -61,12 +61,14 @@ pub const HOST_METHODS: &[HostMethod] = &[
     },
     HostMethod {
         path:     "db.queryView",
-        ts:       "queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<ReadView<T>>",
+        ts:       "queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+                   Promise<ReadView<T>>",
         dispatch: HostDispatch::AsyncOp("query_view"),
     },
     HostMethod {
         path:     "db.queryBatches",
-        ts:       "queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): AsyncIterableIterator<ReadView<T>>",
+        ts:       "queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+                   AsyncIterableIterator<ReadView<T>>",
         dispatch: HostDispatch::AsyncOp("query_batches"),
     },
     HostMethod {

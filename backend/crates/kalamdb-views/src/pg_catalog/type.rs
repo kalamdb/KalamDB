@@ -30,6 +30,8 @@ const PG_CATALOG_TYPES: &[(&str, i64, i64)] = &[
     ("int2", 21, 2),
     ("int4", 23, 4),
     ("text", 25, -1),
+    ("bpchar", 1042, -1),
+    ("varchar", 1043, -1),
     ("oid", 26, 4),
     ("json", 114, -1),
     ("float4", 700, 4),
@@ -171,6 +173,12 @@ impl PgCatalogView for PgTypeView {
         for (typname, oid, typlen) in PG_CATALOG_TYPES {
             builders.push(*oid, typname, pg_catalog_oid, *typlen);
         }
+        builders.push(
+            stable_oid(&["type", "pg_catalog", "geometry"]),
+            "geometry",
+            pg_catalog_oid,
+            -1,
+        );
 
         let catalog_stores = self.system_registry.catalog_stores();
         let catalog_types = catalog_stores.list_types().map_err(|error| {

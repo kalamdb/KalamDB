@@ -131,8 +131,7 @@ fn smoke_test_timing_scaling_medium_table() {
     let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace
-    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
-        .expect("create namespace");
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace)).expect("create namespace");
 
     // Create table
     execute_sql_as_root_via_cli(&format!(
@@ -340,9 +339,8 @@ fn smoke_test_timing_ddl_operations() {
     let full = format!("{}.{}", namespace, table);
 
     // Create namespace - verify timing output
-    let output =
-        execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
-            .expect("create namespace");
+    let output = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("create namespace");
 
     let timing = parse_timing_ms(&output);
     println!("CREATE SCHEMA timing: {:?}", timing);

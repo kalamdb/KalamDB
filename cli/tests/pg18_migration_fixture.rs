@@ -4,7 +4,8 @@ use kalam_schema_diff::diff_schema_sql;
 
 #[test]
 fn pg18_migration_fixture_has_expected_schema_types_and_data() {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pg18_migration_fixture.sql");
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pg18_migration_fixture.sql");
     let sql = std::fs::read_to_string(&fixture_path).expect("read pg18_migration_fixture.sql");
 
     assert!(sql.contains("CREATE SCHEMA IF NOT EXISTS mig_app;"));

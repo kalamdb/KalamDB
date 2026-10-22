@@ -54,10 +54,7 @@ impl NamespacesTableProvider {
     }
 
     /// Get a namespace by ID
-    pub fn get_namespace(
-        &self,
-        namespace_id: &SchemaId,
-    ) -> Result<Option<Namespace>, SystemError> {
+    pub fn get_namespace(&self, namespace_id: &SchemaId) -> Result<Option<Namespace>, SystemError> {
         let row = self.store.get(namespace_id)?;
         row.map(|value| Self::decode_namespace_row(&value)).transpose()
     }

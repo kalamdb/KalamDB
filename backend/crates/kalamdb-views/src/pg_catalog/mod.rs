@@ -18,7 +18,8 @@ use datafusion::{
     physical_plan::ExecutionPlan,
 };
 use kalamdb_commons::{
-    schemas::{TableDefinition, TableType as KalamTableType},
+    constants::SystemColumnNames,
+    schemas::{ScalarIndexDefinition, TableDefinition, TableType as KalamTableType},
     Role, SystemTable,
 };
 use kalamdb_datafusion_sources::{
@@ -379,6 +380,50 @@ pub(crate) fn primary_constraint_oid(namespace: &str, table: &str) -> i64 {
 
 pub(crate) fn primary_index_relname(table: &str) -> String {
     format!("{table}_pkey")
+}
+
+pub(crate) fn scalar_index_oid(namespace: &str, table: &str, index: &str) -> i64 {
+    stable_oid(&["class", namespace, table, "index", index])
+}
+
+/// Attribute numbers for a secondary index, in key order.
+///
+/// Numbers match `pg_attribute.attnum` (`ordinal_position`). Missing or storage
+/// columns make the index invisible so `pg_index` and `pg_class` stay aligned.
+pub(crate) fn scalar_index_attnums(
+    table: &TableDefinition,
+    index: &ScalarIndexDefinition,
+) -> Option<Vec<i64>> {
+    if index.columns.is_empty() {
+        return None;
+    }
+    let mut attnums = Vec::with_capacity(index.columns.len());
+    for column_id in &index.columns {
+        let column = table.columns.iter().find(|column| column.column_id == column_id.as_u64())?;
+        if SystemColumnNames::is_system_column(column.column_name.as_str()) {
+            return None;
+        }
+        attnums.push(i64::from(column.ordinal_position));
+    }
+    Some(attnums)
+}
+
+pub(crate) fn named_column_attnums(table: &TableDefinition, names: &[String]) -> Option<Vec<i64>> {
+    if names.is_empty() {
+        return None;
+    }
+    let mut attnums = Vec::with_capacity(names.len());
+    for name in names {
+        let column = table
+            .columns
+            .iter()
+            .find(|column| column.column_name.eq_ignore_ascii_case(name))?;
+        if SystemColumnNames::is_system_column(column.column_name.as_str()) {
+            return None;
+        }
+        attnums.push(i64::from(column.ordinal_position));
+    }
+    Some(attnums)
 }
 
 pub(crate) fn primary_key_attnums(table: &TableDefinition) -> Vec<i64> {

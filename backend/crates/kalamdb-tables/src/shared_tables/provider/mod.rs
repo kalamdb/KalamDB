@@ -43,7 +43,9 @@ use kalamdb_session_datafusion::{
     RlsCommandContext,
 };
 use kalamdb_store::EntityStore;
-use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
+use kalamdb_transactions::{
+    build_insert_staged_mutations, extract_transaction_query_context, StagedMutation,
+};
 use kalamdb_vector::{
     new_indexed_shared_vector_hot_store, SharedVectorHotOpId, SharedVectorHotStore,
 };

@@ -1,10 +1,11 @@
 //! Parameter binding and validation for SQL execution
 //!
 //! This module handles:
-//! - Parameter validation (max 50 params, 512KB per param)
+//! - Parameter validation (max 65535 params, 512KB per param)
 //! - DataFusion LogicalPlan placeholder replacement ($1, $2, ...)
 //! - ScalarValue type checking
 
+use arrow::datatypes::{DataType, Field};
 use datafusion::{
     common::{
         tree_node::{Transformed, TransformedResult, TreeNode},
@@ -13,11 +14,15 @@ use datafusion::{
     logical_expr::{Expr, LogicalPlan},
     scalar::ScalarValue,
 };
+use kalamdb_commons::conversions::arrow_json_conversion::coerce_scalar_to_field;
 
 use crate::error::KalamDbError;
 
-/// Maximum number of parameters allowed per statement
-const MAX_PARAMS: usize = 50;
+/// Maximum number of parameters allowed per statement.
+///
+/// PostgreSQL's extended protocol encodes the parameter count as an int16,
+/// so 65535 is the protocol maximum.
+const MAX_PARAMS: usize = 65535;
 
 /// Maximum size per individual parameter (512KB)
 const MAX_PARAM_SIZE_BYTES: usize = 512 * 1024;
@@ -89,11 +94,53 @@ pub fn replace_placeholders_in_plan(
     // - Type inference via infer_placeholder_types
     // - Subquery traversal
     // - Schema updates after replacement
-    let param_values: ParamValues = params.to_vec().into();
+    //
+    // Wire clients send UUID values as text. The placeholder is inferred as
+    // FixedSizeBinary(16), and DataFusion will not compare that to Utf8.
+    let params = coerce_params_to_placeholder_fields(&plan, params)?;
+    let param_values: ParamValues = params.into();
     plan.with_param_values(param_values)
         .map_err(|error| KalamDbError::ParameterBindingError {
             message: error.to_string(),
         })
+}
+
+fn coerce_params_to_placeholder_fields(
+    plan: &LogicalPlan,
+    params: &[ScalarValue],
+) -> Result<Vec<ScalarValue>, KalamDbError> {
+    let fields =
+        plan.get_parameter_fields()
+            .map_err(|error| KalamDbError::ParameterBindingError {
+                message: error.to_string(),
+            })?;
+    let mut coerced = params.to_vec();
+    for (id, field) in fields {
+        let Some(field) = field else {
+            continue;
+        };
+        let Some(index) = placeholder_index(&id) else {
+            continue;
+        };
+        let Some(value) = coerced.get(index).cloned() else {
+            continue;
+        };
+        coerced[index] = coerce_bound_parameter(value, field.as_ref())?;
+    }
+    Ok(coerced)
+}
+
+/// PostgreSQL accepts a text parameter where a `uuid` column is expected.
+/// DataFusion stores UUID as `FixedSizeBinary(16)` and rejects `uuid = utf8`.
+fn coerce_bound_parameter(value: ScalarValue, field: &Field) -> Result<ScalarValue, KalamDbError> {
+    if !matches!(field.data_type(), DataType::FixedSizeBinary(16)) {
+        return Ok(value);
+    }
+    if value.data_type() == *field.data_type() {
+        return Ok(value);
+    }
+    coerce_scalar_to_field(value, field)
+        .map_err(|message| KalamDbError::ParameterBindingError { message })
 }
 
 fn placeholder_index(id: &str) -> Option<usize> {
@@ -117,7 +164,7 @@ pub fn bind_placeholders_in_expr(expr: Expr, params: &[ScalarValue]) -> Result<E
         let Some(index) = placeholder_index(&placeholder.id) else {
             return Ok(Transformed::no(Expr::Placeholder(placeholder)));
         };
-        let Some(value) = params.get(index) else {
+        let Some(mut value) = params.get(index).cloned() else {
             bind_error = Some(KalamDbError::ParameterBindingError {
                 message: format!(
                     "placeholder {} is out of range for {} parameters",
@@ -127,7 +174,16 @@ pub fn bind_placeholders_in_expr(expr: Expr, params: &[ScalarValue]) -> Result<E
             });
             return Ok(Transformed::no(Expr::Placeholder(placeholder)));
         };
-        Ok(Transformed::yes(Expr::Literal(value.clone(), None)))
+        if let Some(field) = placeholder.field.clone() {
+            match coerce_bound_parameter(value, field.as_ref()) {
+                Ok(coerced) => value = coerced,
+                Err(error) => {
+                    bind_error = Some(error);
+                    return Ok(Transformed::no(Expr::Placeholder(placeholder)));
+                },
+            }
+        }
+        Ok(Transformed::yes(Expr::Literal(value, None)))
     });
     if let Some(error) = bind_error {
         return Err(error);
@@ -169,12 +225,10 @@ mod tests {
 
     #[test]
     fn test_validate_params_count() {
-        // Valid: under limit
-        let params = vec![ScalarValue::Int64(Some(1)); 40];
+        let params = vec![ScalarValue::Int64(Some(1)); 94];
         assert!(validate_params(&params).is_ok());
 
-        // Invalid: over limit
-        let params = vec![ScalarValue::Int64(Some(1)); 51];
+        let params = vec![ScalarValue::Int64(Some(1)); 65536];
         assert!(matches!(validate_params(&params), Err(KalamDbError::ParamCountExceeded { .. })));
     }
 
@@ -209,6 +263,20 @@ mod tests {
             ),
             2
         );
+    }
+
+    #[test]
+    fn text_uuid_parameter_coerces_to_fixed_size_binary() {
+        let field = Field::new("id", DataType::FixedSizeBinary(16), true);
+        let coerced = coerce_bound_parameter(
+            ScalarValue::Utf8(Some("abf8a154-5b1c-4a46-ac9c-7300570f4f17".to_string())),
+            &field,
+        )
+        .expect("uuid text");
+        match coerced {
+            ScalarValue::FixedSizeBinary(16, Some(bytes)) => assert_eq!(bytes.len(), 16),
+            other => panic!("expected uuid bytes, got {other:?}"),
+        }
     }
 
     #[test]

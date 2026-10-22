@@ -31,16 +31,19 @@ fn pg18_table_schema_diff_supports_timestamptz_arrays_custom_types_and_ordering(
 
     let diff = diff_schema_sql(before, after).expect("diff pg18 table schema");
     assert!(
-        diff.up.contains("ALTER TYPE commerce.order_status ADD VALUE 'shipped' AFTER 'paid';"),
+        diff.up
+            .contains("ALTER TYPE commerce.order_status ADD VALUE 'shipped' AFTER 'paid';"),
         "expected enum value addition in:\n{}",
         diff.up
     );
     assert!(
-        diff.up.contains("ALTER TABLE commerce.orders ADD COLUMN updated_at TIMESTAMPTZ;"),
+        diff.up
+            .contains("ALTER TABLE commerce.orders ADD COLUMN updated_at TIMESTAMPTZ;"),
         "expected column addition in:\n{}",
         diff.up
     );
-    // TIMESTAMPTZ and TIMESTAMP WITH TIME ZONE canonicalize to the same key, so placed_at is unchanged
+    // TIMESTAMPTZ and TIMESTAMP WITH TIME ZONE canonicalize to the same key, so placed_at is
+    // unchanged
     assert!(
         !diff.up.contains("MODIFY COLUMN placed_at"),
         "TIMESTAMPTZ alias should not trigger column modification:\n{}",
@@ -71,18 +74,9 @@ fn pg18_table_schema_diff_orders_schemas_types_tables_routines_and_drops() {
         .up
         .find("CREATE NAMESPACE IF NOT EXISTS commerce;")
         .expect("namespace emitted");
-    let type_pos = diff
-        .up
-        .find("CREATE TYPE commerce.order_status")
-        .expect("enum emitted");
-    let domain_pos = diff
-        .up
-        .find("CREATE DOMAIN commerce.positive_cents")
-        .expect("domain emitted");
-    let table_pos = diff
-        .up
-        .find("CREATE SHARED TABLE commerce.orders")
-        .expect("table emitted");
+    let type_pos = diff.up.find("CREATE TYPE commerce.order_status").expect("enum emitted");
+    let domain_pos = diff.up.find("CREATE DOMAIN commerce.positive_cents").expect("domain emitted");
+    let table_pos = diff.up.find("CREATE SHARED TABLE commerce.orders").expect("table emitted");
     let fn_pos = diff
         .up
         .find("CREATE OR REPLACE FUNCTION commerce.normalize_sku")
@@ -98,7 +92,7 @@ fn pg18_table_schema_diff_orders_schemas_types_tables_routines_and_drops() {
         "",
         &DiffOptions {
             allow_destructive: true,
-            default_schema: None,
+            default_schema:    None,
         },
     )
     .expect("reverse destructive diff");
@@ -106,20 +100,20 @@ fn pg18_table_schema_diff_orders_schemas_types_tables_routines_and_drops() {
         .up
         .find("DROP FUNCTION commerce.normalize_sku;")
         .expect("drop function emitted");
-    let drop_table_pos = reverse
-        .up
-        .find("DROP TABLE commerce.orders;")
-        .expect("drop table emitted");
+    let drop_table_pos =
+        reverse.up.find("DROP TABLE commerce.orders;").expect("drop table emitted");
     let drop_domain_pos = reverse
         .up
         .find("DROP DOMAIN commerce.positive_cents;")
         .expect("drop domain emitted");
-    let drop_type_pos = reverse
-        .up
-        .find("DROP TYPE commerce.order_status;")
-        .expect("drop type emitted");
+    let drop_type_pos =
+        reverse.up.find("DROP TYPE commerce.order_status;").expect("drop type emitted");
 
     assert!(drop_fn_pos < drop_table_pos, "drop routine before drop table:\n{}", reverse.up);
-    assert!(drop_table_pos < drop_domain_pos, "drop table before drop domain:\n{}", reverse.up);
+    assert!(
+        drop_table_pos < drop_domain_pos,
+        "drop table before drop domain:\n{}",
+        reverse.up
+    );
     assert!(drop_table_pos < drop_type_pos, "drop table before drop type:\n{}", reverse.up);
 }

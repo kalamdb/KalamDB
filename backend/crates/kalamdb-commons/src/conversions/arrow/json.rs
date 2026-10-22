@@ -50,8 +50,9 @@ use crate::{
     conversions::{
         scalar::json::{format_decimal_value, parse_decimal_value_bounded},
         schema_metadata::{
-            read_kalam_data_type_metadata, read_kalam_domain_constraints,
-            read_logical_type_modifier, validate_enum_label, DomainConstraintSpec,
+            read_character_maximum_length, read_kalam_data_type_metadata,
+            read_kalam_domain_constraints, read_logical_type_modifier, validate_enum_label,
+            DomainConstraintSpec,
         },
     },
     errors::CommonError,
@@ -178,8 +179,7 @@ fn get_column_defaults(schema: &SchemaRef) -> Vec<Option<ScalarValue>> {
                     return Some(coerced);
                 }
             }
-            if let Ok(Some(domain_default)) = materialize_domain_default_for_field(field.as_ref())
-            {
+            if let Ok(Some(domain_default)) = materialize_domain_default_for_field(field.as_ref()) {
                 return Some(domain_default);
             }
             if let Some(labels) =
@@ -365,6 +365,8 @@ fn coerce_scalar_to_field_inner(
         return Ok(typed_null);
     }
 
+    reject_character_maximum_length(&value, field)?;
+
     if enforce_domain_constraints {
         validate_enum_scalar(field, &value)?;
     } else if &value.data_type() == field.data_type() {
@@ -502,6 +504,7 @@ fn coerce_scalar_to_field_inner(
         validate_domain_constraints_for_field(field, &coerced)?;
     }
 
+    reject_character_maximum_length(&coerced, field)?;
     Ok(coerced)
 }
 
@@ -520,7 +523,8 @@ fn coerce_file_column_scalar(
         | ScalarValue::Utf8View(Some(text)) => text.as_str(),
         other => {
             return Err(format!(
-                "column '{}' is of type pg_catalog.file and cannot be constructed from {:?}; use file_put()",
+                "column '{}' is of type pg_catalog.file and cannot be constructed from {:?}; use \
+                 file_put()",
                 field.name(),
                 other.data_type()
             ));
@@ -534,7 +538,8 @@ fn coerce_file_column_scalar(
     })?;
     if !parsed.is_well_formed() {
         return Err(format!(
-            "invalid or forged pg_catalog.file reference in column '{}': required metadata fields are missing",
+            "invalid or forged pg_catalog.file reference in column '{}': required metadata fields \
+             are missing",
             field.name()
         ));
     }
@@ -602,7 +607,8 @@ fn coerce_decimal_scalar(
         ScalarValue::Float32(Some(f)) => {
             if !f.is_finite() {
                 return Err(format!(
-                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, {scale}) in column '{}'",
+                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, \
+                     {scale}) in column '{}'",
                     field.name()
                 ));
             }
@@ -611,7 +617,8 @@ fn coerce_decimal_scalar(
         ScalarValue::Float64(Some(f)) => {
             if !f.is_finite() {
                 return Err(format!(
-                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, {scale}) in column '{}'",
+                    "numeric value '{f}' is not supported by bounded NUMERIC({precision}, \
+                     {scale}) in column '{}'",
                     field.name()
                 ));
             }
@@ -703,7 +710,10 @@ fn coerce_nested_json_scalar(
                 let elem_scalar =
                     arrow_value_to_scalar(&values_arr, idx).map_err(|e| e.to_string())?;
                 if elem_scalar.is_null() && !item_field.is_nullable() {
-                    return Err(format!("array element in column '{}' cannot be null", field.name()));
+                    return Err(format!(
+                        "array element in column '{}' cannot be null",
+                        field.name()
+                    ));
                 }
                 coerced_items.push(coerce_scalar_to_field(elem_scalar, item_field)?);
             }
@@ -818,9 +828,8 @@ fn json_value_to_scalar_for_data_type(
                 let scalar = json_value_to_scalar_for_field(child_json, child)?;
                 arrays.push(scalar.to_array().map_err(|error| error.to_string())?);
             }
-            let struct_array =
-                StructArray::try_new_with_length(fields.clone(), arrays, None, 1)
-                    .map_err(|error| error.to_string())?;
+            let struct_array = StructArray::try_new_with_length(fields.clone(), arrays, None, 1)
+                .map_err(|error| error.to_string())?;
             Ok(ScalarValue::Struct(Arc::new(struct_array)))
         },
         DataType::List(item) | DataType::LargeList(item) => {
@@ -901,8 +910,7 @@ pub fn materialize_domain_default_for_field(field: &Field) -> Result<Option<Scal
     let Some(specs) = read_kalam_domain_constraints(field) else {
         return Ok(None);
     };
-    let Some(default_expr) =
-        specs.iter().rev().find_map(|spec| spec.default_expr.as_deref())
+    let Some(default_expr) = specs.iter().rev().find_map(|spec| spec.default_expr.as_deref())
     else {
         return Ok(None);
     };
@@ -945,9 +953,8 @@ fn eval_domain_default_expr(raw: &str, field: &Field) -> Result<ScalarValue, Str
                 let coerced = coerce_scalar_to_field(child_scalar, child_field.as_ref())?;
                 child_arrays.push(coerced.to_array().map_err(|e| e.to_string())?);
             }
-            let sa =
-                StructArray::try_new_with_length(children.clone(), child_arrays, None, 1)
-                    .map_err(|e| e.to_string())?;
+            let sa = StructArray::try_new_with_length(children.clone(), child_arrays, None, 1)
+                .map_err(|e| e.to_string())?;
             return Ok(ScalarValue::Struct(Arc::new(sa)));
         }
     }
@@ -1282,6 +1289,19 @@ fn eval_domain_operand(raw: &str, value: &ScalarValue) -> Result<ScalarValue, St
     Err(format!("unsupported operand '{trimmed}' in domain expression"))
 }
 
+fn reject_character_maximum_length(value: &ScalarValue, field: &Field) -> Result<(), String> {
+    let Some(max_chars) = read_character_maximum_length(field) else {
+        return Ok(());
+    };
+    let Some(text) = scalar_as_str(value) else {
+        return Ok(());
+    };
+    if text.chars().count() > usize::try_from(max_chars).unwrap_or(usize::MAX) {
+        return Err(format!("value too long for type character varying({max_chars})"));
+    }
+    Ok(())
+}
+
 fn scalar_as_str(val: &ScalarValue) -> Option<&str> {
     match val {
         ScalarValue::Utf8(Some(s))
@@ -1445,9 +1465,10 @@ fn strip_trailing_type_cast(s: &str) -> &str {
     if let Some(pos) = last_cast {
         let suffix = s[pos + 2..].trim();
         if !suffix.is_empty()
-            && suffix
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '[' | ']' | ' ' | '(' | ')' | ','))
+            && suffix.chars().all(|c| {
+                c.is_ascii_alphanumeric()
+                    || matches!(c, '_' | '.' | '[' | ']' | ' ' | '(' | ')' | ',')
+            })
         {
             return s[..pos].trim();
         }
@@ -1471,16 +1492,11 @@ fn split_top_level_keyword<'a>(s: &'a str, keyword: &str) -> Vec<&'a str> {
             b'(' | b'[' if !in_single && !in_double => depth += 1,
             b')' | b']' if !in_single && !in_double => depth -= 1,
             _ if !in_single && !in_double && depth == 0 && i + kw_len <= bytes.len() => {
-                let prev_ok = i == 0
-                    || bytes[i - 1].is_ascii_whitespace()
-                    || bytes[i - 1] == b')';
+                let prev_ok = i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b')';
                 let next_ok = i + kw_len == bytes.len()
                     || bytes[i + kw_len].is_ascii_whitespace()
                     || bytes[i + kw_len] == b'(';
-                if prev_ok
-                    && next_ok
-                    && s[i..i + kw_len].eq_ignore_ascii_case(keyword)
-                {
+                if prev_ok && next_ok && s[i..i + kw_len].eq_ignore_ascii_case(keyword) {
                     parts.push(s[start..i].trim());
                     i += kw_len;
                     start = i;
@@ -1744,11 +1760,7 @@ fn split_function_call(s: &str) -> Option<(&str, &str)> {
     }
     let open = trimmed.find('(')?;
     let fn_name = trimmed[..open].trim();
-    if fn_name.is_empty()
-        || !fn_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if fn_name.is_empty() || !fn_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
     let mut depth = 0i32;
@@ -1845,6 +1857,31 @@ mod tests {
             values.insert(key.to_string(), value);
         }
         Row::new(values)
+    }
+
+    #[test]
+    fn varchar_limit_rejects_one_extra_character() {
+        use crate::conversions::with_character_maximum_length;
+
+        let field = with_character_maximum_length(Field::new("string", DataType::Utf8, true), 255);
+        let accepted = coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(255))), &field)
+            .expect("255 characters fit varchar(255)");
+        match accepted {
+            ScalarValue::Utf8(Some(text)) => assert_eq!(text.chars().count(), 255),
+            other => panic!("unexpected value {other:?}"),
+        }
+
+        let rejected = coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(256))), &field)
+            .expect_err("256 characters overflow varchar(255)");
+        assert!(rejected.contains("value too long for type character varying(255)"));
+
+        let missing = coerce_scalar_to_field(ScalarValue::Utf8(None), &field).unwrap();
+        assert!(missing.is_null());
+
+        let unlimited = Field::new("string", DataType::Utf8, true);
+        assert!(
+            coerce_scalar_to_field(ScalarValue::Utf8(Some("0".repeat(256))), &unlimited).is_ok()
+        );
     }
 
     #[test]
@@ -2792,8 +2829,8 @@ pub fn rows_to_json_arrays(
             // keys. Missing keys become JSON null — that is how
             // `SELECT name AS title` regressed on skip-Arrow.
             let scalar = row.values.remove(field.name()).unwrap_or(ScalarValue::Null);
-            let coerced =
-                coerce_scalar_to_field_inner(scalar, field, false).map_err(CommonError::invalid_input)?;
+            let coerced = coerce_scalar_to_field_inner(scalar, field, false)
+                .map_err(CommonError::invalid_input)?;
             json_row.push(scalar_value_to_json(&coerced)?);
         }
         json_rows.push(json_row);

@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kalamdb_commons::{
     models::{
-        rows::Row, schemas::TableType, JobId, SchemaId, NodeId, StorageId, TableName, UserId,
+        rows::Row, schemas::TableType, JobId, NodeId, SchemaId, StorageId, TableName, UserId,
     },
     TableId,
 };
@@ -824,10 +824,8 @@ async fn test_user_data_shard_operations() {
     // Test all 4 user data shards
     for shard in 0..4 {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
-        let table_id = TableId::new(
-            SchemaId::from("ns1"),
-            TableName::from(format!("user_table_{}", shard)),
-        );
+        let table_id =
+            TableId::new(SchemaId::from("ns1"), TableName::from(format!("user_table_{}", shard)));
         let user_id = UserId::from(format!("user_{}", shard));
 
         // Test Insert

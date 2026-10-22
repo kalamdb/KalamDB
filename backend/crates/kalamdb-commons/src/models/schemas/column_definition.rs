@@ -45,7 +45,8 @@ pub struct ColumnDefinition {
     #[serde(default, skip_serializing_if = "ColumnDefault::is_none")]
     pub default_value: ColumnDefault,
 
-    /// Materialized missing-column default for rows/segments written before `ADD COLUMN ... DEFAULT <expr>`.
+    /// Materialized missing-column default for rows/segments written before `ADD COLUMN ...
+    /// DEFAULT <expr>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missing_default: Option<ColumnDefault>,
 
@@ -61,6 +62,13 @@ pub struct ColumnDefinition {
 
     /// Whether this column is part of the partition key (for distributed tables)
     pub is_partition_key: bool,
+
+    /// PostgreSQL `character_maximum_length`, counted in characters.
+    ///
+    /// `None` means unlimited (`text`, or `varchar` without a length). Old
+    /// schemas deserialize as unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_maximum_length: Option<u32>,
 }
 
 impl ColumnDefinition {
@@ -99,6 +107,7 @@ impl ColumnDefinition {
             default_value,
             missing_default: None,
             column_comment,
+            character_maximum_length: None,
         }
     }
 
@@ -134,9 +143,13 @@ impl ColumnDefinition {
             LogicalTypeRef::TimestampTz if data_type == KalamDataType::Timestamp => {
                 LogicalTypeRef::TimestampTz
             },
-            LogicalTypeRef::Builtin(_) | LogicalTypeRef::Jsonb | LogicalTypeRef::TimestampTz => {
-                LogicalTypeRef::from_builtin(data_type)
+            LogicalTypeRef::Geometry if data_type == KalamDataType::Text => {
+                LogicalTypeRef::Geometry
             },
+            LogicalTypeRef::Builtin(_)
+            | LogicalTypeRef::Jsonb
+            | LogicalTypeRef::TimestampTz
+            | LogicalTypeRef::Geometry => LogicalTypeRef::from_builtin(data_type),
             LogicalTypeRef::Named { .. }
             | LogicalTypeRef::List { .. }
             | LogicalTypeRef::Map { .. } => return,
@@ -235,6 +248,7 @@ const fn storage_payload(type_ref: &LogicalTypeRef) -> KalamDataType {
         LogicalTypeRef::Builtin(data_type) => *data_type,
         LogicalTypeRef::Jsonb => KalamDataType::Json,
         LogicalTypeRef::TimestampTz => KalamDataType::Timestamp,
+        LogicalTypeRef::Geometry => KalamDataType::Text,
         LogicalTypeRef::Named { .. } => KalamDataType::Text,
         LogicalTypeRef::List { element, .. } => storage_payload(element),
         LogicalTypeRef::Map { value, .. } => storage_payload(value),

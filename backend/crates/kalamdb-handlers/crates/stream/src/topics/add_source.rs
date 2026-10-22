@@ -123,7 +123,7 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{SchemaId, PayloadMode, TableId, TopicOp};
+    use kalamdb_commons::models::{PayloadMode, SchemaId, TableId, TopicOp};
     use kalamdb_system::providers::topics::models::TopicRoute;
 
     use super::AddTopicSourceHandler;

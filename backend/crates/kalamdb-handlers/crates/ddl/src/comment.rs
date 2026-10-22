@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kalamdb_commons::models::{SchemaId, RoutineId};
+use kalamdb_commons::models::{RoutineId, SchemaId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Fields};
 use kalamdb_commons::{
     conversions::{
-        nested_parquet_occurrence_id, with_kalam_data_type_metadata, with_kalam_type_id_metadata,
-        with_logical_type_modifier, with_parquet_field_id,
+        nested_parquet_occurrence_id, with_character_maximum_length, with_kalam_data_type_metadata,
+        with_kalam_type_id_metadata, with_logical_type_modifier, with_parquet_field_id,
     },
     models::schemas::TableDefinition,
 };
@@ -73,6 +73,9 @@ impl TypeRegistry {
             );
             occurrence = with_kalam_data_type_metadata(occurrence, &column.data_type());
             occurrence = with_logical_type_modifier(occurrence, &layout.type_ref);
+            if let Some(max_chars) = column.character_maximum_length {
+                occurrence = with_character_maximum_length(occurrence, max_chars);
+            }
             let parent_id = i32::try_from(column.column_id).unwrap_or(i32::MAX);
             occurrence = with_parquet_field_id(occurrence, parent_id);
             if let Some(type_id) = column.named_type_id() {

@@ -8,7 +8,7 @@ use kalamdb_commons::{
         },
         ColumnId,
     },
-    BoundExprShape, SchemaId, PolicyId, PolicyProgram, PrincipalExpr, Role, TableId, TableName,
+    BoundExprShape, PolicyId, PolicyProgram, PrincipalExpr, Role, SchemaId, TableId, TableName,
     UserId,
 };
 use kalamdb_core::{

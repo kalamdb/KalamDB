@@ -74,8 +74,7 @@ mod versions;
 
 pub use cold_pk::{
     ensure_pk_absent_in_cold, ensure_unique_pk_value, find_row_by_pk, pk_exists_batch_in_cold,
-    pk_exists_in_cold,
-    validate_pk_update,
+    pk_exists_in_cold, validate_pk_update,
 };
 pub(crate) use deferred::scan_diagnostics_enabled;
 pub use deferred::{

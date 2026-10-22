@@ -752,6 +752,7 @@ mod tests {
             schema_version: 1,
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }

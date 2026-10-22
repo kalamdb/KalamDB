@@ -1274,6 +1274,10 @@ start_pgwire_test_server() {
     PGWIRE_PORT="$(allocate_free_local_port)"
     pgwire_host="127.0.0.1"
     PGWIRE_SERVER_URL="http://127.0.0.1:$http_port"
+    # The native pg_kalam suite dials this server's gRPC port. An ephemeral
+    # HTTP port does not imply 2910, so publish the listener we actually start.
+    export KALAMDB_GRPC_HOST="$pgwire_host"
+    export KALAMDB_GRPC_PORT="$(allocate_free_local_port)"
 
     PGWIRE_SERVER_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kalamdb-pgwire-test-server.XXXXXX")"
     server_log="$PGWIRE_SERVER_WORK_DIR/server.log"
@@ -1287,6 +1291,8 @@ start_pgwire_test_server() {
         KALAMDB_URL="$PGWIRE_SERVER_URL" \
         KALAMDB_ENABLE_PGWIRE=true \
         KALAMDB_ENABLE_PG_EXTENSION=true \
+        KALAMDB_GRPC_HOST="$KALAMDB_GRPC_HOST" \
+        KALAMDB_GRPC_PORT="$KALAMDB_GRPC_PORT" \
         KALAMDB_PGWIRE_HOST="$pgwire_host" \
         KALAMDB_PGWIRE_PORT="$PGWIRE_PORT" \
         KALAMDB_ROOT_PASSWORD="$TEST_ROOT_PASSWORD" \
@@ -1771,6 +1777,13 @@ start_supplementary_server_if_needed() {
         echo "Start KalamDB on that URL or rerun with --server-type fresh." >&2
         exit 1
     fi
+
+    # The pgwire server already bound the gRPC port exported for native pg_kalam
+    # tests. This HTTP server is its own single-node cluster, so system.settings
+    # still exposes cluster.cluster_id, and it must not reuse that listener.
+    export KALAMDB_GRPC_HOST="127.0.0.1"
+    export KALAMDB_GRPC_PORT="$(allocate_free_local_port)"
+    unset KALAMDB_CLUSTER_RPC_ADDR
 
     server_port="$(allocate_free_local_port)"
     SUPPLEMENTARY_SERVER_URL="http://127.0.0.1:$server_port"

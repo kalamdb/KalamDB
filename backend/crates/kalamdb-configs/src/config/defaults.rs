@@ -115,6 +115,10 @@ pub fn default_postgres_wire_portal_limit() -> usize {
     1024
 }
 
+pub fn default_postgres_wire_show_system_columns() -> bool {
+    true
+}
+
 pub fn default_transaction_timeout_secs() -> u64 {
     300 // 5 minutes
 }
@@ -281,9 +285,9 @@ pub fn default_enable_connection_protection() -> bool {
 
 pub fn default_rate_limit_cache_max_entries() -> u64 {
     1_000 // Maximum 1k cached rate limit entries
-          // MEMORY OPTIMIZATION: reduced from 10k. Moka internal bookkeeping
-          // scales with max_capacity. 5 caches × 10k was over-provisioned.
-          // 1k handles typical mobile-app deployments without waste.
+    // MEMORY OPTIMIZATION: reduced from 10k. Moka internal bookkeeping
+    // scales with max_capacity. 5 caches × 10k was over-provisioned.
+    // 1k handles typical mobile-app deployments without waste.
 }
 
 pub fn default_rate_limit_cache_ttl_seconds() -> u64 {

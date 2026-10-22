@@ -11,6 +11,7 @@ use kalamdb_commons::{
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
+use kalamdb_transactions::primary_key_claims;
 use tokio::{runtime::Handle, time::MissedTickBehavior};
 use uuid::Uuid;
 
@@ -98,6 +99,7 @@ impl TransactionCoordinator {
                     )));
                 }
 
+                self.release_primary_key_claims(&existing_transaction_id);
                 self.active_by_id.remove(&existing_transaction_id);
                 self.write_sets.remove(&existing_transaction_id);
                 self.active_by_id.insert(transaction_id.clone(), handle);
@@ -166,6 +168,7 @@ impl TransactionCoordinator {
             handle.mark_state(TransactionState::Aborted);
             drop(handle);
             self.write_sets.remove(transaction_id);
+            self.release_primary_key_claims(transaction_id);
 
             tracing::warn!(
                 transaction_id = %transaction_id,
@@ -260,6 +263,7 @@ impl TransactionCoordinator {
             handle.mark_state(TransactionState::Aborted);
             drop(handle);
             self.write_sets.remove(transaction_id);
+            self.release_primary_key_claims(transaction_id);
 
             tracing::warn!(
                 transaction_id = %transaction_id,
@@ -328,6 +332,7 @@ impl TransactionCoordinator {
                 )));
             };
             sealed_handle.mark_state(TransactionState::Committed);
+            self.release_primary_key_claims(transaction_id);
             crate::functions::flush_staged_publishes(self.app_context.as_ref(), transaction_id)?;
 
             return Ok(TransactionCommitResult::committed(
@@ -347,12 +352,16 @@ impl TransactionCoordinator {
             .commit_transaction(transaction_id.clone(), mutations)
             .await
         {
-            Ok(response) => response,
+            Ok(response) => {
+                self.release_primary_key_claims(transaction_id);
+                response
+            },
             Err(error) => {
                 self.active_by_owner.remove(&owner_key);
                 if let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) {
                     sealed_handle.mark_state(TransactionState::Aborted);
                 }
+                self.release_primary_key_claims(transaction_id);
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
                 let source = error.into_coded();
                 return Err(KalamDbError::Coded(source.with_context(
@@ -412,6 +421,7 @@ impl TransactionCoordinator {
                 let owner_key = handle.owner_key;
                 drop(handle);
                 self.write_sets.remove(transaction_id);
+                self.release_primary_key_claims(transaction_id);
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
                 self.active_by_owner.remove(&owner_key);
                 self.active_by_id.remove(transaction_id);
@@ -427,6 +437,7 @@ impl TransactionCoordinator {
         };
 
         self.write_sets.remove(transaction_id);
+        self.release_primary_key_claims(transaction_id);
         crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
         self.active_by_owner.remove(&owner_key);
         let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
@@ -744,6 +755,7 @@ impl TransactionCoordinator {
         handle.mark_state(TransactionState::TimedOut);
         drop(handle);
         self.write_sets.remove(transaction_id);
+        self.release_primary_key_claims(transaction_id);
 
         tracing::warn!(
             transaction_id = %transaction_id,
@@ -751,6 +763,10 @@ impl TransactionCoordinator {
             idle_ms = idle.as_millis() as u64,
             "transaction timed out"
         );
+    }
+
+    fn release_primary_key_claims(&self, transaction_id: &TransactionId) {
+        primary_key_claims().release_owner(transaction_id);
     }
 
     fn state_error(

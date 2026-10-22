@@ -384,4 +384,3 @@ async function kalamInvoke(name, args) {
     let result = engine.invoke(invocation, host).await.unwrap();
     assert_eq!(result.value, ScalarValue::Utf8(Some("2:202:second:2".to_string())));
 }
-

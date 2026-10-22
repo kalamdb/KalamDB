@@ -6,8 +6,12 @@ use std::sync::Arc;
 use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_commons::{
     models::{
-        schemas::{ColumnDefinition, ScalarIndexDefinition, TableDefinition},
-        ColumnId, SchemaId, TableId, UserId,
+        datatypes::KalamDataType,
+        schemas::{
+            ColumnDefinition, ForeignKeyAction, ForeignKeyDefinition, ScalarIndexDefinition,
+            TableDefinition,
+        },
+        BuiltinDefault, ColumnId, SchemaId, TableId, TableName, UserId,
     },
     schemas::{ColumnDefault, TableOptions, TableType},
 };
@@ -19,7 +23,9 @@ use kalamdb_core::{
         executor::handlers::TypedStatementHandler,
     },
 };
-use kalamdb_sql::ddl::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
+use kalamdb_sql::ddl::{
+    AlterTableStatement, ColumnOperation, StandaloneIndexName, TablePropertyUpdates,
+};
 use kalamdb_store::{EntityStore, Partition};
 use kalamdb_system::{VectorEngine, VectorIndexState, VectorMetric};
 use kalamdb_vector::{
@@ -364,9 +370,7 @@ impl AlterTableHandler {
                 if let Some(mut entry) = manifest.vector_indexes.remove(&old_key) {
                     entry.column_name = new_column_name.to_string();
                     entry.updated_at = chrono::Utc::now().timestamp_millis();
-                    manifest
-                        .vector_indexes
-                        .insert(new_column_name.to_string(), entry);
+                    manifest.vector_indexes.insert(new_column_name.to_string(), entry);
                     manifest_service
                         .persist_manifest(table_id, scope.as_ref(), &manifest)
                         .map_err(|e| {
@@ -720,6 +724,159 @@ impl AlterTableHandler {
 
         Ok((table_def, change_desc, changed))
     }
+
+    /// Resolve PostgreSQL `DROP INDEX name` to the table that owns each scalar index.
+    fn plan_standalone_drop_indexes(
+        &self,
+        indexes: &[StandaloneIndexName],
+        if_exists: bool,
+    ) -> Result<Vec<AlterTableStatement>, KalamDbError> {
+        if indexes.is_empty() {
+            return Err(KalamDbError::InvalidOperation(
+                "DROP INDEX requires an index name".to_string(),
+            ));
+        }
+        let tables = self.app_context.schema_registry().scan_all_table_definitions()?;
+        let mut planned = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            let mut owner: Option<TableName> = None;
+            for table in &tables {
+                if table.namespace_id != index.namespace_id {
+                    continue;
+                }
+                let matches_name = table
+                    .scalar_indexes
+                    .iter()
+                    .any(|existing| existing.name.eq_ignore_ascii_case(&index.name));
+                if !matches_name {
+                    continue;
+                }
+                if owner.is_some() {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "index '{}' is defined on more than one table in schema '{}'",
+                        index.name,
+                        index.namespace_id.as_str()
+                    )));
+                }
+                owner = Some(table.table_name.clone());
+            }
+            let Some(table_name) = owner else {
+                if if_exists {
+                    continue;
+                }
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "index '{}' does not exist",
+                    index.name
+                )));
+            };
+            planned.push(AlterTableStatement {
+                table_name,
+                namespace_id: index.namespace_id.clone(),
+                operation: ColumnOperation::DropIndex {
+                    name: index.name.clone(),
+                    if_exists,
+                },
+            });
+        }
+        Ok(planned)
+    }
+
+    /// Resolve PostgreSQL `ALTER INDEX name RENAME TO new_name`.
+    fn plan_standalone_rename_index(
+        &self,
+        index: &StandaloneIndexName,
+        new_name: &str,
+        if_exists: bool,
+    ) -> Result<Option<AlterTableStatement>, KalamDbError> {
+        if new_name.is_empty() {
+            return Err(KalamDbError::InvalidOperation(
+                "ALTER INDEX requires a new name".to_string(),
+            ));
+        }
+        let tables = self.app_context.schema_registry().scan_all_table_definitions()?;
+        let owner = match self.find_scalar_index_owner(&tables, index)? {
+            Some(table_name) => table_name,
+            None if if_exists => return Ok(None),
+            None => {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "index '{}' does not exist",
+                    index.name
+                )));
+            },
+        };
+        if new_name.eq_ignore_ascii_case(&index.name)
+            || self.scalar_index_name_exists(&tables, &index.namespace_id, new_name)?
+        {
+            return Err(KalamDbError::InvalidOperation(format!(
+                "index '{new_name}' already exists"
+            )));
+        }
+        Ok(Some(AlterTableStatement {
+            table_name:   owner,
+            namespace_id: index.namespace_id.clone(),
+            operation:    ColumnOperation::RenameIndex {
+                name:     index.name.clone(),
+                new_name: new_name.to_string(),
+            },
+        }))
+    }
+
+    fn find_scalar_index_owner(
+        &self,
+        tables: &[TableDefinition],
+        index: &StandaloneIndexName,
+    ) -> Result<Option<TableName>, KalamDbError> {
+        let mut owner = None;
+        for table in tables {
+            if table.namespace_id != index.namespace_id {
+                continue;
+            }
+            let matches_name = table
+                .scalar_indexes
+                .iter()
+                .any(|existing| existing.name.eq_ignore_ascii_case(&index.name));
+            if !matches_name {
+                continue;
+            }
+            if owner.is_some() {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "index '{}' is defined on more than one table in schema '{}'",
+                    index.name,
+                    index.namespace_id.as_str()
+                )));
+            }
+            owner = Some(table.table_name.clone());
+        }
+        Ok(owner)
+    }
+
+    fn scalar_index_name_exists(
+        &self,
+        tables: &[TableDefinition],
+        namespace_id: &SchemaId,
+        name: &str,
+    ) -> Result<bool, KalamDbError> {
+        let mut found = false;
+        for table in tables {
+            if &table.namespace_id != namespace_id {
+                continue;
+            }
+            if table
+                .scalar_indexes
+                .iter()
+                .any(|existing| existing.name.eq_ignore_ascii_case(name))
+            {
+                if found {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "index '{name}' is defined on more than one table in schema '{}'",
+                        namespace_id.as_str()
+                    )));
+                }
+                found = true;
+            }
+        }
+        Ok(found)
+    }
 }
 
 impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
@@ -727,6 +884,89 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         &self,
         statement: AlterTableStatement,
         _params: Vec<ScalarValue>,
+        context: &ExecutionContext,
+    ) -> Result<ExecutionResult, KalamDbError> {
+        if let ColumnOperation::DropStandaloneIndex { indexes, if_exists } = &statement.operation {
+            let planned = self.plan_standalone_drop_indexes(indexes, *if_exists)?;
+            if planned.is_empty() {
+                let name = indexes.first().map(|index| index.name.as_str()).unwrap_or("INDEX");
+                return Ok(ExecutionResult::Success {
+                    message: format!("DROP INDEX {name}"),
+                });
+            }
+            let mut last = None;
+            for statement in planned {
+                self.check_authorization(&statement, context).await?;
+                last = Some(self.execute_alter(statement, context).await?);
+            }
+            return Ok(last.expect("planned DROP INDEX"));
+        }
+        if let ColumnOperation::RenameStandaloneIndex {
+            index,
+            new_name,
+            if_exists,
+        } = &statement.operation
+        {
+            let Some(planned) = self.plan_standalone_rename_index(index, new_name, *if_exists)?
+            else {
+                return Ok(ExecutionResult::Success {
+                    message: format!("ALTER INDEX {}", index.name),
+                });
+            };
+            self.check_authorization(&planned, context).await?;
+            return self.execute_alter(planned, context).await;
+        }
+        self.execute_alter(statement, context).await
+    }
+
+    async fn check_authorization(
+        &self,
+        statement: &AlterTableStatement,
+        context: &ExecutionContext,
+    ) -> Result<(), KalamDbError> {
+        use crate::helpers::guards::block_anonymous_write;
+
+        // The owning table is not known until execution. Reject anonymous
+        // callers here, then authorize each resolved table before it is altered.
+        if matches!(
+            statement.operation,
+            ColumnOperation::DropStandaloneIndex { .. }
+                | ColumnOperation::RenameStandaloneIndex { .. }
+        ) {
+            let command =
+                if matches!(statement.operation, ColumnOperation::DropStandaloneIndex { .. }) {
+                    "DROP INDEX"
+                } else {
+                    "ALTER INDEX"
+                };
+            block_anonymous_write(context, command)?;
+            return Ok(());
+        }
+
+        // Block anonymous users from DDL operations
+        block_anonymous_write(context, "ALTER TABLE")?;
+
+        let namespace_id = &statement.namespace_id;
+        let table_id = TableId::from_ref(namespace_id, &statement.table_name);
+
+        let registry = self.app_context.schema_registry();
+        if let Ok(Some(def)) = registry.get_table_if_exists(&table_id) {
+            let is_owner = matches!(def.table_type, TableType::User);
+
+            if !kalamdb_session::can_alter_table(context.user_role(), def.table_type, is_owner) {
+                return Err(KalamDbError::Unauthorized(
+                    "Insufficient privileges to alter table".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl AlterTableHandler {
+    async fn execute_alter(
+        &self,
+        statement: AlterTableStatement,
         context: &ExecutionContext,
     ) -> Result<ExecutionResult, KalamDbError> {
         if matches!(
@@ -771,25 +1011,23 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
         // Only apply changes if something actually changed
         if changed {
             if let Some(ref prev_def) = prev_table_def {
-                apply_alter_data_migrations(
-                    &self.app_context,
-                    context,
-                    &table_id,
-                    prev_def,
-                    &mut table_def,
-                    &statement.operation,
-                )
-                .await?;
+                for operation in alter_operations(&statement.operation) {
+                    apply_alter_data_migrations(
+                        &self.app_context,
+                        context,
+                        &table_id,
+                        prev_def,
+                        &mut table_def,
+                        operation,
+                    )
+                    .await?;
+                }
             }
 
-            let dropped_index_name =
-                if let ColumnOperation::DropIndex { name, .. } = &statement.operation {
-                    Some(name.clone())
-                } else {
-                    None
-                };
-            let created_scalar =
-                matches!(statement.operation, ColumnOperation::CreateScalarIndex { .. });
+            let dropped_index_names = prev_table_def.as_ref().map_or_else(Vec::new, |prev_def| {
+                removed_scalar_index_names(&statement.operation, prev_def)
+            });
+            let created_scalar = creates_scalar_index(&statement.operation);
 
             self.app_context
                 .applier()
@@ -798,16 +1036,12 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 .map_err(|e| KalamDbError::ExecutionError(format!("ALTER TABLE failed: {}", e)))?;
 
             let stores = self.app_context.system_tables().catalog_stores();
-            if let Ok(Some(implicit_type_id)) = crate::catalog_type::sync_implicit_row_type(
-                &stores,
-                &table_id,
-                &table_def,
-            ) {
-                let bumped = crate::catalog_type::bump_enclosing_type_revisions(
-                    &stores,
-                    &implicit_type_id,
-                )
-                .unwrap_or_default();
+            if let Ok(Some(implicit_type_id)) =
+                crate::catalog_type::sync_implicit_row_type(&stores, &table_id, &table_def)
+            {
+                let bumped =
+                    crate::catalog_type::bump_enclosing_type_revisions(&stores, &implicit_type_id)
+                        .unwrap_or_default();
                 let mut related = vec![implicit_type_id.clone()];
                 for id in bumped {
                     if !related.contains(&id) {
@@ -827,9 +1061,7 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
                 for id in &related {
                     self.app_context.schema_registry().type_registry().invalidate(id);
                 }
-                self.app_context
-                    .schema_registry()
-                    .invalidate_tables_using_named_types(&related);
+                self.app_context.schema_registry().invalidate_tables_using_named_types(&related);
                 let _ = crate::catalog_type::replicate_stored_type(
                     &self.app_context,
                     &implicit_type_id,
@@ -840,19 +1072,15 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             if created_scalar {
                 self.backfill_scalar_index(&table_id, &table_def)?;
             }
-            if let Some(name) = dropped_index_name {
-                self.drop_scalar_index_partition(&table_id, table_def.table_type, &name);
+            for name in &dropped_index_names {
+                self.drop_scalar_index_partition(&table_id, table_def.table_type, name);
             }
-            if let ColumnOperation::Rename {
-                old_column_name,
-                new_column_name,
-            } = &statement.operation
-            {
+            for (old_column_name, new_column_name) in renamed_columns(&statement.operation) {
                 self.rename_vector_index_if_present(
                     &table_id,
                     &table_def,
-                    old_column_name,
-                    new_column_name,
+                    &old_column_name,
+                    &new_column_name,
                     context.user_id(),
                 )?;
             }
@@ -910,32 +1138,6 @@ impl TypedStatementHandler<AlterTableStatement> for AlterTableHandler {
             })
         }
     }
-
-    async fn check_authorization(
-        &self,
-        statement: &AlterTableStatement,
-        context: &ExecutionContext,
-    ) -> Result<(), KalamDbError> {
-        use crate::helpers::guards::block_anonymous_write;
-
-        // Block anonymous users from DDL operations
-        block_anonymous_write(context, "ALTER TABLE")?;
-
-        let namespace_id = &statement.namespace_id;
-        let table_id = TableId::from_ref(namespace_id, &statement.table_name);
-
-        let registry = self.app_context.schema_registry();
-        if let Ok(Some(def)) = registry.get_table_if_exists(&table_id) {
-            let is_owner = matches!(def.table_type, TableType::User);
-
-            if !kalamdb_session::can_alter_table(context.user_role(), def.table_type, is_owner) {
-                return Err(KalamDbError::Unauthorized(
-                    "Insufficient privileges to alter table".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Check if a column name is a system column that cannot be altered
@@ -945,6 +1147,103 @@ fn is_system_column(column_name: &str) -> bool {
 
 /// Apply an ALTER TABLE operation to a table definition
 /// Returns (description, changed) tuple where changed is false if no actual modifications were made
+fn eq_names(left: &[String], right: &[String]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+/// Widen an `integer` column that references a `bigint` key, then store the
+/// foreign key. The names are already `Ident` values from `KalamParser` /
+/// `KalamDbDialect` (`TableConstraint::ForeignKey`). This function does not
+/// parse SQL.
+fn align_foreign_key_columns(
+    app_context: &Arc<AppContext>,
+    table_def: &mut TableDefinition,
+    name: &str,
+    columns: &[String],
+    referenced_namespace: &SchemaId,
+    referenced_table: &TableName,
+    referenced_columns: &[String],
+    on_update: ForeignKeyAction,
+    on_delete: ForeignKeyAction,
+) -> Result<(String, bool), KalamDbError> {
+    let summary = format!(
+        "ADD FOREIGN KEY ({}) REFERENCES {}",
+        columns.join(", "),
+        referenced_table.as_str()
+    );
+    let referenced_id = TableId::new(referenced_namespace.clone(), referenced_table.clone());
+    let Some(referenced) = app_context.schema_registry().get_table_if_exists(&referenced_id)?
+    else {
+        return Ok((summary, false));
+    };
+
+    let referenced_names = if referenced_columns.is_empty() {
+        referenced
+            .get_primary_key_columns()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    } else {
+        referenced_columns.to_vec()
+    };
+    if referenced_names.len() != columns.len() {
+        return Ok((summary, false));
+    }
+
+    let mut changed = false;
+    let existing = table_def.foreign_keys.iter_mut().find(|foreign_key| {
+        foreign_key.name.eq_ignore_ascii_case(name)
+            || (eq_names(&foreign_key.columns, columns)
+                && foreign_key
+                    .referenced_table
+                    .as_str()
+                    .eq_ignore_ascii_case(referenced_table.as_str())
+                && eq_names(&foreign_key.referenced_columns, &referenced_names))
+    });
+    if let Some(existing) = existing {
+        if existing.on_update != on_update || existing.on_delete != on_delete {
+            existing.on_update = on_update;
+            existing.on_delete = on_delete;
+            changed = true;
+        }
+    } else {
+        table_def.foreign_keys.push(ForeignKeyDefinition {
+            name: name.to_string(),
+            columns: columns.to_vec(),
+            referenced_namespace: referenced_namespace.clone(),
+            referenced_table: referenced_table.clone(),
+            referenced_columns: referenced_names.clone(),
+            on_update,
+            on_delete,
+        });
+        changed = true;
+    }
+    for (local_name, referenced_name) in columns.iter().zip(referenced_names.iter()) {
+        let referenced_type = referenced
+            .columns
+            .iter()
+            .find(|column| column.column_name.eq_ignore_ascii_case(referenced_name))
+            .map(|column| column.data_type());
+        if referenced_type != Some(KalamDataType::BigInt) {
+            continue;
+        }
+        let Some(local_column) = table_def
+            .columns
+            .iter_mut()
+            .find(|column| column.column_name.eq_ignore_ascii_case(local_name))
+        else {
+            continue;
+        };
+        if !matches!(local_column.data_type(), KalamDataType::Int | KalamDataType::SmallInt) {
+            continue;
+        }
+        local_column.set_data_type(KalamDataType::BigInt);
+        changed = true;
+    }
+    Ok((summary, changed))
+}
+
 fn apply_alter_operation(
     app_context: &Arc<AppContext>,
     table_def: &mut TableDefinition,
@@ -959,6 +1258,7 @@ fn apply_alter_operation(
             nullable,
             default_value,
             if_not_exists,
+            character_maximum_length,
         } => {
             // Block adding columns with system column names
             if is_system_column(column_name) {
@@ -1018,6 +1318,7 @@ fn apply_alter_operation(
                 default,
                 None,
             );
+            column.character_maximum_length = *character_maximum_length;
             if let Some(type_ref) = type_ref {
                 crate::helpers::table_creation::apply_column_type_ref(
                     app_context,
@@ -1322,6 +1623,99 @@ fn apply_alter_operation(
         ColumnOperation::DropIndex { name, if_exists } => {
             apply_drop_scalar_index(table_def, name, *if_exists)
         },
+        ColumnOperation::DropStandaloneIndex { .. } => Err(KalamDbError::InvalidOperation(
+            "DROP INDEX was not resolved to a table".to_string(),
+        )),
+        ColumnOperation::RenameIndex { name, new_name } => {
+            apply_rename_scalar_index(table_def, name, new_name)
+        },
+        ColumnOperation::RenameStandaloneIndex { .. } => Err(KalamDbError::InvalidOperation(
+            "ALTER INDEX was not resolved to a table".to_string(),
+        )),
+        ColumnOperation::AcceptedConstraint { summary } => Ok((summary.clone(), false)),
+        ColumnOperation::AlignForeignKey {
+            name,
+            columns,
+            referenced_namespace,
+            referenced_table,
+            referenced_columns,
+            on_update,
+            on_delete,
+        } => align_foreign_key_columns(
+            app_context,
+            table_def,
+            name,
+            columns,
+            referenced_namespace,
+            referenced_table,
+            referenced_columns,
+            *on_update,
+            *on_delete,
+        ),
+        ColumnOperation::DropConstraint { name } => {
+            // A primary key cannot be removed on its own: every table keeps one.
+            // `DROP CONSTRAINT {table}_pkey` is acknowledged, and the following
+            // `ADD PRIMARY KEY` replaces the key in one schema change.
+            let removed_foreign_key = {
+                let before = table_def.foreign_keys.len();
+                table_def
+                    .foreign_keys
+                    .retain(|foreign_key| !foreign_key.name.eq_ignore_ascii_case(name));
+                table_def.foreign_keys.len() != before
+            };
+            if table_def
+                .scalar_indexes
+                .iter()
+                .any(|index| index.name.eq_ignore_ascii_case(name))
+            {
+                let (_summary, changed) = apply_drop_scalar_index(table_def, name, true)?;
+                Ok((format!("DROP CONSTRAINT {name}"), changed || removed_foreign_key))
+            } else {
+                Ok((format!("DROP CONSTRAINT {name}"), removed_foreign_key))
+            }
+        },
+        ColumnOperation::SetPrimaryKey { columns } => {
+            if columns.len() != 1 {
+                return Err(KalamDbError::InvalidOperation(
+                    "composite primary keys are not supported".to_string(),
+                ));
+            }
+            let column_name = &columns[0];
+            let mut found = false;
+            let mut changed = false;
+            for column in &mut table_def.columns {
+                if column.column_name.eq_ignore_ascii_case(column_name) {
+                    found = true;
+                    if !column.is_primary_key || column.is_nullable {
+                        column.is_primary_key = true;
+                        column.is_nullable = false;
+                        changed = true;
+                    }
+                } else if column.is_primary_key {
+                    column.is_primary_key = false;
+                    changed = true;
+                }
+            }
+            if !found {
+                return Err(KalamDbError::InvalidOperation(format!(
+                    "Column '{column_name}' does not exist"
+                )));
+            }
+            Ok((format!("ADD PRIMARY KEY ({column_name})"), changed))
+        },
+        ColumnOperation::Batch(operations) => {
+            let mut summaries = Vec::with_capacity(operations.len());
+            let mut changed_any = false;
+            for operation in operations {
+                let (summary, changed) =
+                    apply_alter_operation(app_context, table_def, operation, table_id)?;
+                if changed {
+                    changed_any = true;
+                }
+                summaries.push(summary);
+            }
+            Ok((summaries.join(", "), changed_any))
+        },
     }
 }
 
@@ -1392,6 +1786,30 @@ fn apply_drop_scalar_index(
     };
     table_def.scalar_indexes.remove(idx);
     Ok((format!("DROP INDEX {}", name), true))
+}
+
+fn apply_rename_scalar_index(
+    table_def: &mut TableDefinition,
+    name: &str,
+    new_name: &str,
+) -> Result<(String, bool), KalamDbError> {
+    if new_name.eq_ignore_ascii_case(name)
+        || table_def
+            .scalar_indexes
+            .iter()
+            .any(|index| index.name.eq_ignore_ascii_case(new_name))
+    {
+        return Err(KalamDbError::InvalidOperation(format!("index '{new_name}' already exists")));
+    }
+    let Some(index) = table_def
+        .scalar_indexes
+        .iter_mut()
+        .find(|index| index.name.eq_ignore_ascii_case(name))
+    else {
+        return Err(KalamDbError::InvalidOperation(format!("index '{name}' does not exist")));
+    };
+    index.name = new_name.to_string();
+    Ok((format!("ALTER INDEX {name} RENAME TO {new_name}"), true))
 }
 
 fn apply_table_property_updates(
@@ -1613,12 +2031,11 @@ async fn apply_alter_data_migrations(
                             )
                             .map_err(KalamDbError::InvalidOperation)?
                         {
-                            let json_val =
-                                kalamdb_commons::conversions::scalar_to_json_for_column(
-                                    &domain_default,
-                                    &new_def.columns[col_idx].data_type(),
-                                )
-                                .unwrap_or(serde_json::Value::Null);
+                            let json_val = kalamdb_commons::conversions::scalar_to_json_for_column(
+                                &domain_default,
+                                &new_def.columns[col_idx].data_type(),
+                            )
+                            .unwrap_or(serde_json::Value::Null);
                             new_def.columns[col_idx].missing_default =
                                 Some(ColumnDefault::Literal(json_val));
                         } else if table_has_live_rows(app_context, table_id, prev_def)? {
@@ -1643,10 +2060,9 @@ async fn apply_alter_data_migrations(
                     if !is_volatile {
                         let scalar =
                             evaluate_default_function_call(app_context, context, call).await?;
-                        let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
-                            scalar, new_field,
-                        )
-                        .map_err(KalamDbError::InvalidOperation)?;
+                        let coerced =
+                            kalamdb_commons::conversions::coerce_scalar_to_field(scalar, new_field)
+                                .map_err(KalamDbError::InvalidOperation)?;
                         let json_val = kalamdb_commons::conversions::scalar_to_json_for_column(
                             &coerced,
                             &new_def.columns[col_idx].data_type(),
@@ -1695,7 +2111,9 @@ async fn apply_alter_data_migrations(
                 .field_with_name(&new_def.columns[new_col_idx].column_name)
                 .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
 
-            if let Some(ColumnDefault::Literal(ref def_json)) = new_def.columns[new_col_idx].missing_default {
+            if let Some(ColumnDefault::Literal(ref def_json)) =
+                new_def.columns[new_col_idx].missing_default
+            {
                 let scalar = kalamdb_commons::conversions::json_value_to_scalar(def_json);
                 if let Ok(coerced) =
                     kalamdb_commons::conversions::coerce_scalar_to_field(scalar, new_field)
@@ -1740,7 +2158,13 @@ async fn apply_alter_data_migrations(
             let new_field = new_arrow_schema
                 .field_with_name(column_name)
                 .map_err(|e| KalamDbError::ExecutionError(e.to_string()))?;
-            validate_existing_rows_not_null(app_context, table_id, prev_def, column_name, new_field)?;
+            validate_existing_rows_not_null(
+                app_context,
+                table_id,
+                prev_def,
+                column_name,
+                new_field,
+            )?;
         },
         _ => {},
     }
@@ -1752,11 +2176,8 @@ fn is_default_call_volatile(
     app_context: &Arc<AppContext>,
     call: &kalamdb_commons::models::RoutineCall,
 ) -> Result<bool, KalamDbError> {
-    if call.scalar_udf_name().is_some() {
-        return Ok(matches!(
-            call.unqualified_name(),
-            "snowflake_id" | "auto_increment" | "uuid_v7" | "ulid"
-        ));
+    if let Some(builtin) = call.builtin_default() {
+        return Ok(builtin.is_volatile());
     }
     let stores = app_context.system_tables().catalog_stores();
     if let Some(routine) = stores
@@ -1776,28 +2197,46 @@ async fn evaluate_default_function_call(
     context: &ExecutionContext,
     call: &kalamdb_commons::models::RoutineCall,
 ) -> Result<ScalarValue, KalamDbError> {
-    if call.scalar_udf_name().is_some() {
-        return match call.unqualified_name() {
-            "now" | "current_timestamp" => Ok(ScalarValue::TimestampMicrosecond(
+    if let Some(builtin) = call.builtin_default() {
+        return match builtin {
+            BuiltinDefault::Now => Ok(ScalarValue::TimestampMicrosecond(
                 Some(chrono::Utc::now().timestamp_micros()),
                 None,
             )),
-            "current_user" => Ok(ScalarValue::Utf8(Some(
-                context.user_id().as_str().to_string(),
-            ))),
-            "uuid_v7" => Ok(ScalarValue::Utf8(Some(uuid::Uuid::now_v7().to_string()))),
-            "ulid" => {
+            BuiltinDefault::CurrentUser => {
+                Ok(ScalarValue::Utf8(Some(context.user_id().as_str().to_string())))
+            },
+            BuiltinDefault::CurrentRole => {
+                Ok(ScalarValue::Utf8(Some(context.user_role().as_str().to_string())))
+            },
+            BuiltinDefault::CurrentSchema => {
+                Ok(ScalarValue::Utf8(Some(context.default_namespace().as_str().to_string())))
+            },
+            BuiltinDefault::CurrentDatabase => {
+                let session = context.create_session_with_user();
+                let name = session.state().config().options().catalog.default_catalog.clone();
+                let name = if name.is_empty() {
+                    "kalam".to_string()
+                } else {
+                    name
+                };
+                Ok(ScalarValue::Utf8(Some(name)))
+            },
+            BuiltinDefault::UuidV7 => Ok(ScalarValue::Utf8(Some(uuid::Uuid::now_v7().to_string()))),
+            BuiltinDefault::Ulid => {
                 let func = kalamdb_core::sql::functions::UlidFunction::new();
                 let args = datafusion::logical_expr::ScalarFunctionArgs {
-                    args: Vec::new(),
-                    arg_fields: Vec::new(),
-                    number_rows: 1,
-                    return_field: std::sync::Arc::new(datafusion::arrow::datatypes::Field::new(
+                    args:           Vec::new(),
+                    arg_fields:     Vec::new(),
+                    number_rows:    1,
+                    return_field:   std::sync::Arc::new(datafusion::arrow::datatypes::Field::new(
                         "ulid",
                         datafusion::arrow::datatypes::DataType::Utf8,
                         false,
                     )),
-                    config_options: std::sync::Arc::new(datafusion::config::ConfigOptions::default()),
+                    config_options: std::sync::Arc::new(
+                        datafusion::config::ConfigOptions::default(),
+                    ),
                 };
                 use datafusion::logical_expr::ScalarUDFImpl;
                 let col = func
@@ -1807,12 +2246,12 @@ async fn evaluate_default_function_call(
                     .and_then(|arr| ScalarValue::try_from_array(&arr, 0))
                     .map_err(|e| KalamDbError::ExecutionError(e.to_string()))
             },
-            "snowflake_id" | "auto_increment" => {
+            BuiltinDefault::SnowflakeId => {
                 Ok(ScalarValue::Int64(Some(chrono::Utc::now().timestamp_micros())))
             },
-            other => Err(KalamDbError::InvalidOperation(format!(
-                "Unsupported default function '{other}'"
-            ))),
+            BuiltinDefault::SerialId => Err(KalamDbError::InvalidOperation(
+                "Unsupported default function 'serial_id'".to_string(),
+            )),
         };
     }
     kalamdb_core::functions::FunctionService::execute_routine_call(
@@ -1861,10 +2300,8 @@ fn table_has_live_rows(
             let mut latest: std::collections::BTreeMap<String, (i64, bool)> =
                 std::collections::BTreeMap::new();
             for (_key, row) in entries {
-                let pk_key = format!(
-                    "{:?}",
-                    row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null)
-                );
+                let pk_key =
+                    format!("{:?}", row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null));
                 let ver = row._version.as_i64();
                 if latest.get(&pk_key).is_none_or(|(prev_v, _)| ver >= *prev_v) {
                     latest.insert(pk_key, (ver, row._deleted));
@@ -1887,10 +2324,8 @@ fn table_has_live_rows(
             let mut latest: std::collections::BTreeMap<(String, String), (i64, bool)> =
                 std::collections::BTreeMap::new();
             for (_key, row) in entries {
-                let pk_key = format!(
-                    "{:?}",
-                    row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null)
-                );
+                let pk_key =
+                    format!("{:?}", row.fields.values.get(pk_col).unwrap_or(&ScalarValue::Null));
                 let map_key = (row.user_id.as_str().to_string(), pk_key);
                 let ver = row._version.as_i64();
                 if latest.get(&map_key).is_none_or(|(prev_v, _)| ver >= *prev_v) {
@@ -1959,7 +2394,8 @@ async fn backfill_volatile_added_column(
             let mut staged = Vec::with_capacity(entries.len());
             for (key, mut row) in entries {
                 if !row._deleted {
-                    let raw_val = evaluate_default_function_call(app_context, context, call).await?;
+                    let raw_val =
+                        evaluate_default_function_call(app_context, context, call).await?;
                     let coerced =
                         kalamdb_commons::conversions::coerce_scalar_to_field(raw_val, new_field)
                             .map_err(KalamDbError::InvalidOperation)?;
@@ -1996,7 +2432,8 @@ async fn backfill_volatile_added_column(
             let mut staged = Vec::with_capacity(entries.len());
             for (key, mut row) in entries {
                 if !row._deleted {
-                    let raw_val = evaluate_default_function_call(app_context, context, call).await?;
+                    let raw_val =
+                        evaluate_default_function_call(app_context, context, call).await?;
                     let coerced =
                         kalamdb_commons::conversions::coerce_scalar_to_field(raw_val, new_field)
                             .map_err(KalamDbError::InvalidOperation)?;
@@ -2092,12 +2529,8 @@ fn rewrite_table_column_for_type_change(
             let mut staged = Vec::with_capacity(entries.len());
             for (key, mut row) in entries {
                 if !row._deleted {
-                    let old_val = row
-                        .fields
-                        .values
-                        .get(col_name)
-                        .cloned()
-                        .unwrap_or(ScalarValue::Null);
+                    let old_val =
+                        row.fields.values.get(col_name).cloned().unwrap_or(ScalarValue::Null);
                     let converted = convert_column_value_for_alter(
                         &old_val,
                         &row.fields,
@@ -2142,12 +2575,8 @@ fn rewrite_table_column_for_type_change(
             let mut staged = Vec::with_capacity(entries.len());
             for (key, mut row) in entries {
                 if !row._deleted {
-                    let old_val = row
-                        .fields
-                        .values
-                        .get(col_name)
-                        .cloned()
-                        .unwrap_or(ScalarValue::Null);
+                    let old_val =
+                        row.fields.values.get(col_name).cloned().unwrap_or(ScalarValue::Null);
                     let converted = convert_column_value_for_alter(
                         &old_val,
                         &row.fields,
@@ -2196,6 +2625,15 @@ fn convert_column_value_for_alter(
         .map_err(KalamDbError::InvalidOperation)
 }
 
+fn unquote_sql_ident(value: &str) -> &str {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        &trimmed[1..trimmed.len() - 1]
+    } else {
+        trimmed
+    }
+}
+
 fn eval_using_expression(
     expr: &str,
     col_name: &str,
@@ -2221,10 +2659,11 @@ fn eval_using_expression(
             return eval_using_expression(inner, col_name, col_val, row_fields);
         }
     }
-    if trimmed.eq_ignore_ascii_case(col_name) || trimmed.eq_ignore_ascii_case("VALUE") {
+    let ident = unquote_sql_ident(trimmed);
+    if ident.eq_ignore_ascii_case(col_name) || ident.eq_ignore_ascii_case("VALUE") {
         return Ok(col_val.clone());
     }
-    if let Some(other_val) = row_fields.values.get(trimmed) {
+    if let Some(other_val) = row_fields.values.get(ident) {
         return Ok(other_val.clone());
     }
     if trimmed.eq_ignore_ascii_case("NULL") {
@@ -2319,9 +2758,9 @@ fn scalar_to_text(v: &ScalarValue) -> Result<String, KalamDbError> {
         ScalarValue::Float64(Some(f)) => Ok(f.to_string()),
         ScalarValue::Float32(Some(f)) => Ok(f.to_string()),
         ScalarValue::Boolean(Some(b)) => Ok(b.to_string()),
-        ScalarValue::Decimal128(Some(d), _, s) => Ok(
-            kalamdb_commons::conversions::format_decimal_value(*d, (*s).max(0) as u8),
-        ),
+        ScalarValue::Decimal128(Some(d), _, s) => {
+            Ok(kalamdb_commons::conversions::format_decimal_value(*d, (*s).max(0) as u8))
+        },
         other => Err(KalamDbError::InvalidOperation(format!(
             "cannot convert {:?} to text in USING expression",
             other.data_type()
@@ -2341,7 +2780,9 @@ fn scalar_to_f64_val(v: &ScalarValue) -> Result<f64, KalamDbError> {
             Ok((*d as f64) / 10_f64.powi(scale))
         },
         ScalarValue::Utf8(Some(s)) => s.trim().parse::<f64>().map_err(|_| {
-            KalamDbError::InvalidOperation(format!("invalid numeric value '{s}' in USING expression"))
+            KalamDbError::InvalidOperation(format!(
+                "invalid numeric value '{s}' in USING expression"
+            ))
         }),
         other => Err(KalamDbError::InvalidOperation(format!(
             "cannot convert {:?} to numeric in USING expression",
@@ -2552,9 +2993,7 @@ fn split_top_level_fn_call(s: &str) -> Option<(&str, &str)> {
     }
     let fn_name = s[..open].trim();
     if fn_name.is_empty()
-        || !fn_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        || !fn_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
     {
         return None;
     }
@@ -2608,6 +3047,49 @@ fn split_top_level_args(s: &str) -> Vec<&str> {
     parts
 }
 
+fn alter_operations(operation: &ColumnOperation) -> Vec<&ColumnOperation> {
+    match operation {
+        ColumnOperation::Batch(operations) => operations.iter().collect(),
+        other => vec![other],
+    }
+}
+
+fn creates_scalar_index(operation: &ColumnOperation) -> bool {
+    match operation {
+        ColumnOperation::CreateScalarIndex { .. } => true,
+        ColumnOperation::Batch(operations) => operations.iter().any(creates_scalar_index),
+        _ => false,
+    }
+}
+
+fn removed_scalar_index_names(operation: &ColumnOperation, prev: &TableDefinition) -> Vec<String> {
+    match operation {
+        ColumnOperation::DropIndex { name, .. } | ColumnOperation::DropConstraint { name } => {
+            if prev.scalar_indexes.iter().any(|index| index.name.eq_ignore_ascii_case(name)) {
+                vec![name.clone()]
+            } else {
+                Vec::new()
+            }
+        },
+        ColumnOperation::Batch(operations) => operations
+            .iter()
+            .flat_map(|operation| removed_scalar_index_names(operation, prev))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn renamed_columns(operation: &ColumnOperation) -> Vec<(String, String)> {
+    match operation {
+        ColumnOperation::Rename {
+            old_column_name,
+            new_column_name,
+        } => vec![(old_column_name.clone(), new_column_name.clone())],
+        ColumnOperation::Batch(operations) => operations.iter().flat_map(renamed_columns).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Get a summary string for the operation for logging
 fn get_operation_summary(op: &ColumnOperation) -> String {
     match op {
@@ -2655,6 +3137,36 @@ fn get_operation_summary(op: &ColumnOperation) -> String {
         },
         ColumnOperation::CreateScalarIndex { name, .. } => format!("CREATE INDEX {}", name),
         ColumnOperation::DropIndex { name, .. } => format!("DROP INDEX {}", name),
+        ColumnOperation::RenameIndex { name, new_name } => {
+            format!("ALTER INDEX {name} RENAME TO {new_name}")
+        },
+        ColumnOperation::RenameStandaloneIndex {
+            index, new_name, ..
+        } => {
+            format!("ALTER INDEX {} RENAME TO {new_name}", index.name)
+        },
+        ColumnOperation::AcceptedConstraint { summary } => summary.clone(),
+        ColumnOperation::AlignForeignKey {
+            columns,
+            referenced_table,
+            ..
+        } => format!(
+            "ADD FOREIGN KEY ({}) REFERENCES {}",
+            columns.join(", "),
+            referenced_table.as_str()
+        ),
+        ColumnOperation::DropConstraint { name } => format!("DROP CONSTRAINT {name}"),
+        ColumnOperation::SetPrimaryKey { columns } => {
+            format!("ADD PRIMARY KEY ({})", columns.join(", "))
+        },
+        ColumnOperation::Batch(operations) => {
+            operations.iter().map(get_operation_summary).collect::<Vec<_>>().join(", ")
+        },
+        ColumnOperation::DropStandaloneIndex { indexes, .. } => {
+            let names =
+                indexes.iter().map(|index| index.name.as_str()).collect::<Vec<_>>().join(", ");
+            format!("DROP INDEX {names}")
+        },
     }
 }
 
@@ -2671,7 +3183,10 @@ mod tests {
     use kalamdb_core::test_helpers::test_app_context_simple;
     use kalamdb_sql::ddl::ColumnOperation;
 
-    use super::{apply_create_scalar_index, apply_drop_scalar_index, AlterTableHandler};
+    use super::{
+        apply_create_scalar_index, apply_drop_scalar_index, eval_using_expression,
+        AlterTableHandler,
+    };
 
     fn user_table() -> TableDefinition {
         TableDefinition::new(
@@ -2686,6 +3201,17 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn quoted_column_cast_is_a_using_identity() {
+        let row = kalamdb_commons::models::rows::Row {
+            values: std::collections::BTreeMap::new(),
+        };
+        let value = kalamdb_core::sql::context::ScalarValue::Utf8(Some("Ada".to_string()));
+        let evaluated = eval_using_expression(r#""first_name"::text"#, "first_name", &value, &row)
+            .expect("quoted cast");
+        assert_eq!(evaluated, value);
     }
 
     #[test]
@@ -2856,5 +3382,112 @@ mod tests {
         handler.drop_scalar_index_partition(&table_id, table.table_type, "idx_conv");
         let after_drop = app_ctx.schema_registry().get_table_if_exists(&table_id).unwrap().unwrap();
         assert!(after_drop.scalar_indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drop_index_without_table_resolves_scalar_index() {
+        use kalamdb_core::test_helpers::test_app_context_simple;
+        use kalamdb_sql::ddl::{parse_alter_index, parse_drop_index};
+
+        let app_ctx = test_app_context_simple();
+        let namespace_id = SchemaId::default();
+        let table_name = TableName::new("drop_index_users");
+        let mut table = TableDefinition::new(
+            namespace_id.clone(),
+            table_name.clone(),
+            TableType::User,
+            vec![
+                ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
+                ColumnDefinition::simple(2, "email", 2, KalamDataType::Text),
+            ],
+            TableOptions::user(),
+            None,
+        )
+        .unwrap();
+        apply_create_scalar_index(
+            &mut table,
+            "idx_users_email",
+            &["email".to_string()],
+            false,
+            false,
+        )
+        .unwrap();
+        app_ctx.schema_registry().register_table(table).unwrap();
+
+        let handler = AlterTableHandler::new(app_ctx);
+        let found =
+            parse_drop_index("DROP INDEX IF EXISTS idx_users_email", &namespace_id).unwrap();
+        let ColumnOperation::DropStandaloneIndex { indexes, if_exists } = found.operation else {
+            panic!("expected standalone DROP INDEX");
+        };
+        let planned = handler.plan_standalone_drop_indexes(&indexes, if_exists).unwrap();
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].table_name, table_name);
+        assert_eq!(planned[0].namespace_id, namespace_id);
+        assert!(matches!(
+            &planned[0].operation,
+            ColumnOperation::DropIndex { name, if_exists: true } if name == "idx_users_email"
+        ));
+
+        let missing =
+            parse_drop_index("DROP INDEX IF EXISTS idx_users_email_gone", &namespace_id).unwrap();
+        let ColumnOperation::DropStandaloneIndex { indexes, if_exists } = missing.operation else {
+            panic!("expected standalone DROP INDEX");
+        };
+        assert!(handler.plan_standalone_drop_indexes(&indexes, if_exists).unwrap().is_empty());
+
+        let required = parse_drop_index("DROP INDEX idx_users_email_gone", &namespace_id).unwrap();
+        let ColumnOperation::DropStandaloneIndex { indexes, if_exists } = required.operation else {
+            panic!("expected standalone DROP INDEX");
+        };
+        let err = handler.plan_standalone_drop_indexes(&indexes, if_exists).unwrap_err();
+        assert!(err.to_string().contains("does not exist"));
+
+        let rename = parse_alter_index(
+            "ALTER INDEX idx_users_email RENAME TO idx_users_email_lookup",
+            &namespace_id,
+        )
+        .unwrap();
+        let ColumnOperation::RenameStandaloneIndex {
+            index,
+            new_name,
+            if_exists,
+        } = rename.operation
+        else {
+            panic!("expected standalone ALTER INDEX");
+        };
+        let planned = handler
+            .plan_standalone_rename_index(&index, &new_name, if_exists)
+            .unwrap()
+            .expect("rename target");
+        assert_eq!(planned.table_name, table_name);
+        assert!(matches!(
+            planned.operation,
+            ColumnOperation::RenameIndex { name, new_name }
+                if name == "idx_users_email" && new_name == "idx_users_email_lookup"
+        ));
+
+        let collision = handler
+            .plan_standalone_rename_index(&index, "idx_users_email", false)
+            .unwrap_err();
+        assert!(collision.to_string().contains("already exists"));
+
+        let missing_rename = parse_alter_index(
+            "ALTER INDEX IF EXISTS idx_users_email_gone RENAME TO idx_users_email_next",
+            &namespace_id,
+        )
+        .unwrap();
+        let ColumnOperation::RenameStandaloneIndex {
+            index,
+            new_name,
+            if_exists,
+        } = missing_rename.operation
+        else {
+            panic!("expected standalone ALTER INDEX");
+        };
+        assert!(handler
+            .plan_standalone_rename_index(&index, &new_name, if_exists)
+            .unwrap()
+            .is_none());
     }
 }

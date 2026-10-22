@@ -37,12 +37,12 @@ use tempfile::TempDir;
 
 fn make_project_config(env_name: &str, purpose: Option<EnvironmentPurpose>) -> KalamProjectConfig {
     KalamProjectConfig {
-        project: ProjectSection {
-            name: "pg18_demo".into(),
-            default_env: env_name.into(),
+        project:    ProjectSection {
+            name:            "pg18_demo".into(),
+            default_env:     env_name.into(),
             package_manager: None,
-            kalam_dir: "kalam".into(),
-            server_version: None,
+            kalam_dir:       "kalam".into(),
+            server_version:  None,
         },
         connection: HashMap::from([(
             env_name.into(),
@@ -52,31 +52,31 @@ fn make_project_config(env_name: &str, purpose: Option<EnvironmentPurpose>) -> K
                 purpose,
             },
         )]),
-        schema: SchemaSection {
-            mode: SchemaMode::Sql,
-            path: Some("schema.sql".into()),
-            watch: true,
+        schema:     SchemaSection {
+            mode:      SchemaMode::Sql,
+            path:      Some("schema.sql".into()),
+            watch:     true,
             languages: vec!["typescript".into()],
-            targets: HashMap::from([(
+            targets:   HashMap::from([(
                 "typescript".into(),
                 SchemaTarget {
-                    output: "src/generated/kalam.ts".into(),
+                    output:            "src/generated/kalam.ts".into(),
                     unqualified_names: false,
                 },
             )]),
         },
         migrations: MigrationsSection {
-            dir: "kalam/migrations".into(),
+            dir:         "kalam/migrations".into(),
             auto_create: true,
         },
-        dev: DevSection {
+        dev:        DevSection {
             apply_schema: true,
             generate_types: true,
             watch: true,
             ..DevSection::default()
         },
-        logging: LoggingSection::default(),
-        functions: FunctionsSection::default(),
+        logging:    LoggingSection::default(),
+        functions:  FunctionsSection::default(),
     }
 }
 
@@ -118,7 +118,8 @@ async fn rapid_multi_save_during_dev_watch_debounces_to_final_schema() {
         std::thread::sleep(std::time::Duration::from_millis(35));
         fs::write(
             &writer_path,
-            "CREATE SCHEMA app;\nCREATE DOMAIN app.qty AS INT CHECK (VALUE > 0);\nCREATE TABLE app.items (id BIGINT PRIMARY KEY, qty app.qty NOT NULL);",
+            "CREATE SCHEMA app;\nCREATE DOMAIN app.qty AS INT CHECK (VALUE > 0);\nCREATE TABLE \
+             app.items (id BIGINT PRIMARY KEY, qty app.qty NOT NULL);",
         )
         .unwrap();
     });
@@ -144,14 +145,18 @@ fn concurrent_schema_edit_during_migration_apply_refreshes_draft() {
     update_schema_baseline(root, &config, &output).unwrap();
 
     // Edit to v2 (adds enum + column) -> draft created
-    let v2 = "CREATE SCHEMA app;\nCREATE TYPE app.status AS ENUM ('open', 'closed');\nCREATE TABLE app.orders (id BIGINT PRIMARY KEY, status app.status);\n";
+    let v2 = "CREATE SCHEMA app;\nCREATE TYPE app.status AS ENUM ('open', 'closed');\nCREATE \
+              TABLE app.orders (id BIGINT PRIMARY KEY, status app.status);\n";
     fs::write(root.join("schema.sql"), v2).unwrap();
     let draft_v2 = update_draft_migration(root, &config, &output).unwrap();
     assert!(draft_v2.is_some());
 
-    // Simulate v2 being applied and baseline updated to v2 while user concurrently edits schema.sql to v3
+    // Simulate v2 being applied and baseline updated to v2 while user concurrently edits schema.sql
+    // to v3
     fs::write(config.schema_baseline_path(root), v2).unwrap();
-    let v3 = "CREATE SCHEMA app;\nCREATE TYPE app.status AS ENUM ('open', 'closed', 'archived');\nCREATE TABLE app.orders (id BIGINT PRIMARY KEY, status app.status, note TEXT);\n";
+    let v3 = "CREATE SCHEMA app;\nCREATE TYPE app.status AS ENUM ('open', 'closed', \
+              'archived');\nCREATE TABLE app.orders (id BIGINT PRIMARY KEY, status app.status, \
+              note TEXT);\n";
     fs::write(root.join("schema.sql"), v3).unwrap();
 
     // Refreshing the draft after concurrent edit must capture only the v2 -> v3 delta
@@ -159,8 +164,14 @@ fn concurrent_schema_edit_during_migration_apply_refreshes_draft() {
     assert!(refreshed.is_some());
     let draft_sql =
         fs::read_to_string(config.migrations_dir(root).join(DRAFT_MIGRATION_FILE)).unwrap();
-    assert!(draft_sql.contains("archived"), "expected v2->v3 enum delta in draft:\n{draft_sql}");
-    assert!(draft_sql.contains("ADD COLUMN note"), "expected v2->v3 column delta:\n{draft_sql}");
+    assert!(
+        draft_sql.contains("archived"),
+        "expected v2->v3 enum delta in draft:\n{draft_sql}"
+    );
+    assert!(
+        draft_sql.contains("ADD COLUMN note"),
+        "expected v2->v3 column delta:\n{draft_sql}"
+    );
 }
 
 #[test]
@@ -232,7 +243,10 @@ ALTER TYPE app.shipping_addr DROP ATTRIBUTE zip;
     assert!(objects.iter().any(|o| o.contains("domain `app.positive_qty`")), "{objects:?}");
     assert!(objects.iter().any(|o| o.contains("function `app.calc_tax`")), "{objects:?}");
     assert!(objects.iter().any(|o| o.contains("procedure `app.purge_audit`")), "{objects:?}");
-    assert!(objects.iter().any(|o| o.contains("attribute `app.shipping_addr.zip`")), "{objects:?}");
+    assert!(
+        objects.iter().any(|o| o.contains("attribute `app.shipping_addr.zip`")),
+        "{objects:?}"
+    );
 
     let agent_err = AgentError::destructive_schema_change(&objects.join(", "));
     assert_eq!(agent_err.code, AgentErrorCode::DestructiveSchemaChange);
@@ -255,22 +269,22 @@ async fn failed_function_build_preserves_prior_active_artifact_and_manifest() {
     let config = make_project_config("dev", Some(EnvironmentPurpose::Development));
     let ctx = make_context(root, config);
 
-    // First build succeeds (no implemented TS handler yet -> valid empty module artifact + manifest)
+    // First build succeeds (no implemented TS handler yet -> valid empty module artifact +
+    // manifest)
     build_functions(&ctx).await.expect("initial function build should succeed");
     let artifact_path = root.join("functions/.kalam/build/module.js");
     let manifest_path = root.join("functions/.kalam/build/manifest.json");
     let good_artifact = fs::read_to_string(&artifact_path).unwrap();
     let good_manifest = fs::read_to_string(&manifest_path).unwrap();
 
-    // Introduce forbidden `eval(` in function source -> build must fail and keep prior artifact intact
+    // Introduce forbidden `eval(` in function source -> build must fail and keep prior artifact
+    // intact
     fs::write(
         root.join("functions/src/api/bad.ts"),
         "export const bad = () => eval('1 + 1');\n",
     )
     .unwrap();
-    let err = build_functions(&ctx)
-        .await
-        .expect_err("function build with eval() must fail");
+    let err = build_functions(&ctx).await.expect_err("function build with eval() must fail");
     assert!(err.to_string().contains("must not use eval"), "{err}");
 
     assert_eq!(fs::read_to_string(&artifact_path).unwrap(), good_artifact);
@@ -305,12 +319,12 @@ fn stale_pid_in_instance_json_and_dev_session_json_is_not_treated_as_live() {
 
     let session_path = root.join(".kalam/dev-session.json");
     let stale_session = DevSession {
-        pid: 1_999_999_999,
-        started_at: "2026-10-15T00:00:00Z".into(),
+        pid:          1_999_999_999,
+        started_at:   "2026-10-15T00:00:00Z".into(),
         project_root: root.to_path_buf(),
-        log_path: root.join(".kalam/logs/kalam.log"),
-        exe: PathBuf::from("/nonexistent/kalam"),
-        url: Some("http://127.0.0.1:2900".into()),
+        log_path:     root.join(".kalam/logs/kalam.log"),
+        exe:          PathBuf::from("/nonexistent/kalam"),
+        url:          Some("http://127.0.0.1:2900".into()),
     };
     fs::create_dir_all(session_path.parent().unwrap()).unwrap();
     fs::write(&session_path, serde_json::to_vec_pretty(&stale_session).unwrap()).unwrap();
@@ -322,27 +336,27 @@ fn stale_pid_in_instance_json_and_dev_session_json_is_not_treated_as_live() {
 #[test]
 fn stopped_instance_with_port_reused_by_another_live_server_is_detected() {
     let stopped = InstanceSummary {
-        name: "old-project".into(),
-        kind: InstanceKind::Local,
-        state: InstanceState::Stopped,
-        url: Some("http://127.0.0.1:2900".into()),
-        folder: Some(PathBuf::from("/tmp/old-project")),
-        global: false,
-        user: None,
-        auth: None,
-        aliases: Vec::new(),
+        name:     "old-project".into(),
+        kind:     InstanceKind::Local,
+        state:    InstanceState::Stopped,
+        url:      Some("http://127.0.0.1:2900".into()),
+        folder:   Some(PathBuf::from("/tmp/old-project")),
+        global:   false,
+        user:     None,
+        auth:     None,
+        aliases:  Vec::new(),
         identity: "/tmp/old-project/.kalam/run/instance.json".into(),
     };
     let live_other = InstanceSummary {
-        name: "active-project".into(),
-        kind: InstanceKind::Local,
-        state: InstanceState::Running,
-        url: Some("http://localhost:2900".into()),
-        folder: Some(PathBuf::from("/tmp/active-project")),
-        global: false,
-        user: None,
-        auth: None,
-        aliases: Vec::new(),
+        name:     "active-project".into(),
+        kind:     InstanceKind::Local,
+        state:    InstanceState::Running,
+        url:      Some("http://localhost:2900".into()),
+        folder:   Some(PathBuf::from("/tmp/active-project")),
+        global:   false,
+        user:     None,
+        auth:     None,
+        aliases:  Vec::new(),
         identity: "/tmp/active-project/.kalam/run/instance.json".into(),
     };
     let catalog = vec![stopped.clone(), live_other];
@@ -386,7 +400,8 @@ fn deploy_blocked_when_schema_diverges_from_committed_migrations() {
     config.connection.get_mut("prod").unwrap().url = "https://db.example.com".into();
     let output = WorkflowOutput::new(false, WorkflowLoggingPolicy::disabled());
 
-    // Baseline has v1, schema.sql has uncommitted v2, and kalam/migrations has no covering migration
+    // Baseline has v1, schema.sql has uncommitted v2, and kalam/migrations has no covering
+    // migration
     fs::create_dir_all(root.join("kalam/migrations")).unwrap();
     fs::write(
         config.schema_baseline_path(root),
@@ -395,7 +410,8 @@ fn deploy_blocked_when_schema_diverges_from_committed_migrations() {
     .unwrap();
     fs::write(
         root.join("schema.sql"),
-        "CREATE SCHEMA app;\nCREATE TABLE app.items (id BIGINT PRIMARY KEY, price NUMERIC(10,2));\n",
+        "CREATE SCHEMA app;\nCREATE TABLE app.items (id BIGINT PRIMARY KEY, price \
+         NUMERIC(10,2));\n",
     )
     .unwrap();
 

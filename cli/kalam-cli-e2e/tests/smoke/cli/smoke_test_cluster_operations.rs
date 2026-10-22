@@ -193,8 +193,7 @@ fn smoke_test_cluster_table_type_consistency() {
     let namespace = generate_unique_namespace("cluster_tables");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -312,8 +311,7 @@ fn smoke_test_cluster_user_data_partitioning() {
     let namespace = generate_unique_namespace("cluster_partition");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and user table
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -412,8 +410,7 @@ fn smoke_test_cluster_shared_table_consistency() {
     let namespace = generate_unique_namespace("cluster_shared");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared table
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -482,8 +479,7 @@ fn smoke_test_cluster_concurrent_operations() {
     let namespace = generate_unique_namespace("cluster_concurrent");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and shared counter table
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -557,8 +553,7 @@ fn smoke_test_cluster_batch_insert_consistency() {
     let namespace = generate_unique_namespace("cluster_batch");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -638,8 +633,7 @@ fn smoke_test_cluster_job_tracking() {
     let namespace = generate_unique_namespace("cluster_jobs");
 
     // Cleanup if exists
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     // Create namespace and table
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
@@ -728,8 +722,7 @@ fn smoke_test_cluster_storage_operations() {
     // Create namespace and table using specific storage
     let namespace = generate_unique_namespace("cluster_storage");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");

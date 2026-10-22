@@ -165,8 +165,8 @@ impl CatalogTypeField {
     ) -> Result<Self, String> {
         let name = name.into();
         let slot = if ordinal > 0 { ordinal } else { 1 };
-        let type_field_id =
-            TypeFieldId::from_slot(&type_id, slot).or_else(|_| TypeFieldId::new(&type_id, &name))?;
+        let type_field_id = TypeFieldId::from_slot(&type_id, slot)
+            .or_else(|_| TypeFieldId::new(&type_id, &name))?;
         Ok(Self {
             type_field_id,
             type_id,
@@ -194,8 +194,8 @@ impl CatalogTypeField {
     ) -> Result<Self, String> {
         let name = name.into();
         let slot = if slot > 0 { slot } else { 1 };
-        let type_field_id =
-            TypeFieldId::from_slot(&type_id, slot).or_else(|_| TypeFieldId::new(&type_id, &name))?;
+        let type_field_id = TypeFieldId::from_slot(&type_id, slot)
+            .or_else(|_| TypeFieldId::new(&type_id, &name))?;
         Ok(Self {
             type_field_id,
             type_id,

@@ -106,6 +106,10 @@ pub fn parse_string_as_scalar(
                 .map_err(|e| format!("Failed to parse '{}' as Float32: {}", value_str, e))?;
             Ok(ScalarValue::Float32(Some(val)))
         },
+        DataType::FixedSizeBinary(16) => {
+            let bytes = parse_uuid_bytes(value_str)?;
+            Ok(ScalarValue::FixedSizeBinary(16, Some(bytes)))
+        },
         other => {
             #[cfg(feature = "full")]
             log::warn!(
@@ -143,6 +147,30 @@ pub fn parse_string_as_scalar(
 /// let str_value = ScalarValue::Utf8(Some("user123".to_string()));
 /// assert_eq!(scalar_to_pk_string(&str_value).unwrap(), "user123");
 /// ```
+fn parse_uuid_bytes(value: &str) -> Result<Vec<u8>, String> {
+    let hex: String = value.chars().filter(|ch| *ch != '-').collect();
+    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("Failed to parse '{value}' as UUID"));
+    }
+    let hex = hex.as_bytes();
+    let mut bytes = Vec::with_capacity(16);
+    for index in 0..16 {
+        let high = hex_nibble(hex[index * 2]);
+        let low = hex_nibble(hex[index * 2 + 1]);
+        bytes.push((high << 4) | low);
+    }
+    Ok(bytes)
+}
+
+fn hex_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 0,
+    }
+}
+
 pub fn scalar_to_pk_string(value: &ScalarValue) -> Result<String, String> {
     crate::conversions::pk_bucket::try_pk_bucket_key(value).map(|key| key.to_string())
 }
@@ -197,5 +225,24 @@ mod tests {
     fn test_parse_string_as_scalar_invalid() {
         let result = parse_string_as_scalar("not_a_number", &DataType::Int64);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_string_as_scalar_uuid() {
+        let value = parse_string_as_scalar(
+            "25f91b30-3bae-4f0b-91b0-3c09ce4da0d5",
+            &DataType::FixedSizeBinary(16),
+        )
+        .unwrap();
+        let ScalarValue::FixedSizeBinary(16, Some(bytes)) = value else {
+            panic!("expected fixed-size uuid");
+        };
+        assert_eq!(
+            bytes,
+            vec![
+                0x25, 0xf9, 0x1b, 0x30, 0x3b, 0xae, 0x4f, 0x0b, 0x91, 0xb0, 0x3c, 0x09, 0xce, 0x4d,
+                0xa0, 0xd5
+            ]
+        );
     }
 }

@@ -790,6 +790,9 @@ fn classify_message_sqlstate(msg: &str, default_code: &'static str) -> &'static 
     if lower.contains("violates check constraint") || lower.contains("domain check") {
         return "23514";
     }
+    if lower.contains("foreign key violation") {
+        return "23503";
+    }
     if lower.contains("unique constraint")
         || lower.contains("duplicate key")
         || lower.contains("primary key violation")
@@ -798,6 +801,9 @@ fn classify_message_sqlstate(msg: &str, default_code: &'static str) -> &'static 
     }
     if lower.contains("division by zero") || lower.contains("divide by zero") {
         return "22012";
+    }
+    if lower.contains("value too long") {
+        return "22001";
     }
     if lower.contains("numeric field overflow")
         || lower.contains("out of range")
@@ -997,5 +1003,24 @@ mod tests {
     fn coded_user_message_is_the_rendered_template() {
         let err = KalamDbError::Coded(kalamdb_commons::CodedError::not_null("id", 1));
         assert_eq!(err.user_message(), "column 'id' cannot be NULL (row 1)");
+    }
+
+    #[test]
+    fn foreign_key_violation_is_sqlstate_23503_not_unique() {
+        let message = "foreign key violation on table \"posts\" detail Key (author)=(999) is not \
+                       present in table \"authors\".";
+        let error = KalamDbError::InvalidOperation(message.to_string());
+        assert_eq!(error.sqlstate(), "23503");
+
+        let unique = KalamDbError::InvalidOperation("duplicate key value violates unique".into());
+        assert_eq!(unique.sqlstate(), "23505");
+    }
+
+    #[test]
+    fn value_too_long_is_sqlstate_22001() {
+        let error = KalamDbError::InvalidOperation(
+            "Schema coercion failed: value too long for type character varying(255)".into(),
+        );
+        assert_eq!(error.sqlstate(), "22001");
     }
 }

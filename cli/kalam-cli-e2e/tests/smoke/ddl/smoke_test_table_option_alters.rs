@@ -33,8 +33,7 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for USER tables");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
@@ -147,8 +146,7 @@ fn smoke_test_alter_user_table_options_preserves_query_dml_and_flush() {
         "user table rows after post-flush insert",
     );
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180000)]
@@ -165,8 +163,7 @@ fn smoke_test_alter_shared_table_options_preserves_query_dml_and_flush() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for SHARED tables");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
@@ -275,8 +272,7 @@ fn smoke_test_alter_shared_table_options_preserves_query_dml_and_flush() {
         "shared table rows after post-flush insert",
     );
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 #[ntest::timeout(180000)]
@@ -293,8 +289,7 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
 
     println!("🧪 Testing ALTER TABLE SET TBLPROPERTIES for STREAM tables");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
@@ -408,8 +403,7 @@ fn smoke_test_alter_stream_table_options_preserves_query_and_dml() {
         "stream table rows after rejected flush",
     );
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 fn wait_for_schema_history(

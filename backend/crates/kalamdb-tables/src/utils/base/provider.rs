@@ -10,6 +10,7 @@ use datafusion::{
     datasource::TableProvider,
     error::{DataFusionError, Result as DataFusionResult},
     logical_expr::{Expr, TableProviderFilterPushDown},
+    physical_expr::PhysicalExpr,
     physical_plan::{ExecutionPlan, Statistics},
 };
 use kalamdb_commons::{
@@ -516,14 +517,10 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             return self.base_scan(state, projection, filters, limit).await;
         };
 
-        let overlay_projection = crate::utils::datafusion_dml::prepare_overlay_scan_projection(
-            &self.schema_ref(),
-            projection,
-            self.primary_key_field_name(),
-        )?;
-        let base_plan = self
-            .base_scan(state, overlay_projection.effective_projection.as_ref(), filters, limit)
-            .await?;
+        // Scan the full row so the residual predicate can see columns that the
+        // caller did not project, then project back to the requested columns.
+        let base_plan = self.base_scan(state, None, filters, limit).await?;
+        let residual_filter = overlay_residual_filter(state, &base_plan.schema(), filters)?;
 
         Ok(Arc::new(TransactionOverlayExec::try_new(
             base_plan,
@@ -531,8 +528,9 @@ pub trait BaseTableProvider<K: StorageKey, V>: Send + Sync + TableProvider {
             self.primary_key_field_name().to_string(),
             overlay,
             overlay_user,
-            overlay_projection.final_projection,
+            projection.cloned(),
             None,
+            residual_filter,
         )?))
     }
 
@@ -686,6 +684,20 @@ pub(crate) fn transaction_access_error_to_datafusion(
         },
         TransactionAccessError::InvalidOperation(message) => DataFusionError::Execution(message),
     }
+}
+
+/// Rebuild the scan predicate so rows staged in the open transaction are
+/// filtered the same way as committed rows.
+fn overlay_residual_filter(
+    state: &dyn Session,
+    schema: &SchemaRef,
+    filters: &[Expr],
+) -> DataFusionResult<Option<Arc<dyn PhysicalExpr>>> {
+    let Some(filter) = combined_filter(filters) else {
+        return Ok(None);
+    };
+    let df_schema = DFSchema::try_from(Arc::clone(schema))?;
+    Ok(Some(state.create_physical_expr(filter, &df_schema)?))
 }
 
 fn kalam_error_to_datafusion(error: KalamDbError) -> DataFusionError {

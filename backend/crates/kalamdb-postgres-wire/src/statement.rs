@@ -4,19 +4,19 @@ use async_trait::async_trait;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{
-        context::ExecutionContext,
+        ExecutionContext,
         executor::{
-            parameter_binding::max_placeholder_index, PreparedExecutionStatement, SqlExecutor,
+            PreparedExecutionStatement, SqlExecutor, parameter_binding::max_placeholder_index,
         },
         functions::classify_postgres_show,
     },
 };
 use pgwire::{
     api::{
+        ClientInfo, Type,
         portal::Format,
         results::{FieldFormat, FieldInfo},
         stmt::QueryParser,
-        ClientInfo, Type,
     },
     error::{ErrorInfo, PgWireError, PgWireResult},
 };
@@ -24,7 +24,7 @@ use pgwire::{
 use crate::{
     connection::WireConnectionState,
     pg_types::{pg_type_for_arrow, pg_type_for_field},
-    sql_exec::pg_error,
+    sql_exec::{execution_context_for_wire, pg_error},
 };
 
 /// Prepared statement cached at PostgreSQL wire Parse time.
@@ -76,14 +76,7 @@ impl QueryParser for KalamQueryParser {
             .get::<WireConnectionState>()
             .ok_or_else(|| pg_error("wire connection state is missing"))?;
 
-        let exec_ctx = ExecutionContext::with_namespace(
-            state.auth().user_id.clone(),
-            state.auth().role,
-            state.current_schema(),
-            self.app_context.base_session_context(),
-        )
-        .with_request_id(format!("wire:{}", state.session_id()))
-        .with_session_config(state.session_config());
+        let exec_ctx = execution_context_for_wire(&self.app_context, &state);
 
         let metadata = self
             .sql_executor
@@ -141,6 +134,30 @@ impl KalamQueryParser {
                         datatype: Type::TEXT,
                     }],
                 );
+            }
+        }
+
+        if let Some(describe_sql) =
+            metadata.parsed_dml.as_deref().and_then(kalamdb_sql::returning_describe_sql)
+        {
+            if let Ok(plan) =
+                self.sql_executor.logical_plan_for_session(&describe_sql, exec_ctx).await
+            {
+                let parameter_types = (0..count)
+                    .map(|index| {
+                        hinted_types.get(index).and_then(|ty| ty.clone()).unwrap_or(Type::TEXT)
+                    })
+                    .collect();
+                let columns = plan
+                    .schema()
+                    .fields()
+                    .iter()
+                    .map(|field| WireResultColumn {
+                        name:     field.name().to_string(),
+                        datatype: pg_type_for_field(field).unwrap_or(Type::TEXT),
+                    })
+                    .collect();
+                return (parameter_types, columns);
             }
         }
 

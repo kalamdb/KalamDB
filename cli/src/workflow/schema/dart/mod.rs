@@ -17,8 +17,8 @@ use crate::{
 
 mod functions;
 mod rows;
-mod tables;
 mod table_column_context;
+mod tables;
 
 use functions::{functions_context, procedure_types, ResultAlias};
 use rows::{row_class_context, RowClassContext};

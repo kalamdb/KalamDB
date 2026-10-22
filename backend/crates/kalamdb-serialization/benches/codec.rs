@@ -92,14 +92,8 @@ fn text_heavy_row() -> UserTableRow {
                 .to_string(),
         )),
     );
-    values.insert(
-        "content".to_string(),
-        ScalarValue::Utf8(Some("x".repeat(512))),
-    );
-    values.insert(
-        "author".to_string(),
-        ScalarValue::Utf8(Some("kalamdb-team".to_string())),
-    );
+    values.insert("content".to_string(), ScalarValue::Utf8(Some("x".repeat(512))));
+    values.insert("author".to_string(), ScalarValue::Utf8(Some("kalamdb-team".to_string())));
     values.insert(
         "metadata".to_string(),
         ScalarValue::Utf8(Some("{\"env\":\"prod\",\"region\":\"us-east-1\"}".to_string())),

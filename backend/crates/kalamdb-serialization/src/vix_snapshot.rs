@@ -65,9 +65,7 @@ pub fn encode_vix_snapshot(snapshot: &VixSnapshotFile) -> Result<Vec<u8>> {
     }
 
     let blob_len = u32::try_from(snapshot.index_blob.len()).map_err(|_| {
-        SerializationError::Encode(
-            "Index blob too large to encode in vector snapshot".to_string(),
-        )
+        SerializationError::Encode("Index blob too large to encode in vector snapshot".to_string())
     })?;
     output.extend_from_slice(&blob_len.to_le_bytes());
     output.extend_from_slice(&snapshot.index_blob);
@@ -115,9 +113,7 @@ pub fn decode_vix_snapshot(input: &[u8]) -> Result<VixSnapshotFile> {
     let index_blob = read_bytes(input, &mut cursor, blob_len)?.to_vec();
 
     if cursor != input.len() {
-        return Err(SerializationError::Decode(
-            "Vector snapshot has trailing bytes".to_string(),
-        ));
+        return Err(SerializationError::Decode("Vector snapshot has trailing bytes".to_string()));
     }
 
     Ok(VixSnapshotFile {
@@ -145,9 +141,7 @@ fn decode_metric(code: u8) -> Result<VectorMetric> {
         0 => Ok(VectorMetric::Cosine),
         1 => Ok(VectorMetric::L2),
         2 => Ok(VectorMetric::Dot),
-        _ => Err(SerializationError::Decode(format!(
-            "Unknown vector metric code {code}"
-        ))),
+        _ => Err(SerializationError::Decode(format!("Unknown vector metric code {code}"))),
     }
 }
 
@@ -162,9 +156,9 @@ fn write_string(output: &mut Vec<u8>, value: &str) -> Result<()> {
 
 fn read_bytes<'a>(input: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8]> {
     let start = *cursor;
-    let end = start.checked_add(len).ok_or_else(|| {
-        SerializationError::Decode("Vector snapshot cursor overflow".to_string())
-    })?;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| SerializationError::Decode("Vector snapshot cursor overflow".to_string()))?;
     let slice = input.get(start..end).ok_or_else(|| {
         SerializationError::Decode("Unexpected EOF while decoding vector snapshot".to_string())
     })?;
@@ -203,8 +197,9 @@ fn read_i64(input: &[u8], cursor: &mut usize) -> Result<i64> {
 fn read_str<'a>(input: &'a [u8], cursor: &mut usize) -> Result<&'a str> {
     let len = read_u32(input, cursor)? as usize;
     let bytes = read_bytes(input, cursor, len)?;
-    std::str::from_utf8(bytes)
-        .map_err(|e| SerializationError::Decode(format!("Invalid UTF-8 string in vector snapshot: {e}")))
+    std::str::from_utf8(bytes).map_err(|e| {
+        SerializationError::Decode(format!("Invalid UTF-8 string in vector snapshot: {e}"))
+    })
 }
 
 fn read_string(input: &[u8], cursor: &mut usize) -> Result<String> {
@@ -246,10 +241,7 @@ mod tests {
 
     #[test]
     fn vix_snapshot_rejects_invalid_magic_and_trailing_bytes() {
-        assert_eq!(
-            decode_vix_snapshot(b"BAD00"),
-            Err(SerializationError::InvalidMagic)
-        );
+        assert_eq!(decode_vix_snapshot(b"BAD00"), Err(SerializationError::InvalidMagic));
 
         let snapshot = VixSnapshotFile {
             table_id:         TableId::from_strings("app", "docs"),
@@ -263,9 +255,6 @@ mod tests {
         };
         let mut encoded = encode_vix_snapshot(&snapshot).expect("encode");
         encoded.push(0xFF);
-        assert!(matches!(
-            decode_vix_snapshot(&encoded),
-            Err(SerializationError::Decode(_))
-        ));
+        assert!(matches!(decode_vix_snapshot(&encoded), Err(SerializationError::Decode(_))));
     }
 }

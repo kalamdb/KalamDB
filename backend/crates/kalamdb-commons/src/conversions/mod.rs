@@ -53,14 +53,15 @@ pub use scalar::string::{parse_string_as_scalar, scalar_to_pk_string};
 pub use schema_metadata::{mask_sensitive_rows_for_role, schema_fields_from_arrow_schema};
 #[cfg(feature = "schema-metadata")]
 pub use schema_metadata::{
-    nested_parquet_occurrence_id, read_kalam_column_flags_metadata,
+    nested_parquet_occurrence_id, read_character_maximum_length, read_kalam_column_flags_metadata,
     read_kalam_data_type_metadata, read_kalam_domain_constraints, read_kalam_enum_labels,
     read_kalam_missing_default, read_kalam_type_id_metadata, read_logical_type_modifier,
-    read_parquet_field_id, validate_enum_label, with_kalam_column_flags_metadata,
-    with_kalam_data_type_metadata, with_kalam_domain_constraints, with_kalam_enum_labels,
-    with_kalam_missing_default, with_kalam_type_id_metadata, with_logical_type_modifier,
-    with_parquet_field_id, DomainCheckSpec, DomainConstraintSpec, KALAM_COLUMN_FLAGS_METADATA_KEY,
-    KALAM_DATA_TYPE_METADATA_KEY, KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY,
-    KALAM_ENUM_LABELS_METADATA_KEY, KALAM_MISSING_DEFAULT_METADATA_KEY,
-    KALAM_TYPE_ID_METADATA_KEY, KALAM_TYPE_MODIFIER_METADATA_KEY, PARQUET_FIELD_ID_METADATA_KEY,
+    read_parquet_field_id, validate_enum_label, with_character_maximum_length,
+    with_kalam_column_flags_metadata, with_kalam_data_type_metadata, with_kalam_domain_constraints,
+    with_kalam_enum_labels, with_kalam_missing_default, with_kalam_type_id_metadata,
+    with_logical_type_modifier, with_parquet_field_id, DomainCheckSpec, DomainConstraintSpec,
+    KALAM_CHAR_MAX_METADATA_KEY, KALAM_COLUMN_FLAGS_METADATA_KEY, KALAM_DATA_TYPE_METADATA_KEY,
+    KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY, KALAM_ENUM_LABELS_METADATA_KEY,
+    KALAM_MISSING_DEFAULT_METADATA_KEY, KALAM_TYPE_ID_METADATA_KEY,
+    KALAM_TYPE_MODIFIER_METADATA_KEY, PARQUET_FIELD_ID_METADATA_KEY,
 };

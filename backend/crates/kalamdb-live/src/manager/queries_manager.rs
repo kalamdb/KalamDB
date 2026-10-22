@@ -700,6 +700,7 @@ mod tests {
             }),
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }
@@ -721,6 +722,7 @@ mod tests {
             }),
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }

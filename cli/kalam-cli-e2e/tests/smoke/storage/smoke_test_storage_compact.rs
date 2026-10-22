@@ -74,8 +74,7 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
     let full_table = format!("{}.{}", namespace, table);
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
@@ -120,6 +119,5 @@ fn smoke_storage_compact_table_job_and_rocksdb() {
     }
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

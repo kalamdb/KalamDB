@@ -79,6 +79,14 @@ impl TableProvider for UserTableProvider {
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        crate::utils::datafusion_dml::reject_missing_foreign_keys(
+            self.schema_registry().as_ref(),
+            state,
+            self.core.table_id(),
+            &self.core.table_def().foreign_keys,
+            &rows,
+        )
+        .await?;
         if let Some(transaction_query_context) = extract_transaction_query_context(state) {
             let inserted = crate::utils::datafusion_dml::stage_insert_rows(
                 transaction_query_context,
@@ -111,7 +119,6 @@ impl TableProvider for UserTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_user_table_write_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
-        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
@@ -149,11 +156,23 @@ impl TableProvider for UserTableProvider {
             }
 
             if let Some(staged_mutations) = staged_mutations.as_mut() {
+                let context = transaction_query_context
+                    .as_ref()
+                    .expect("transaction_query_context must exist when staging DELETE");
+                if let Some(claims) = context.pk_claims() {
+                    claims.acquire(self.core.table_id(), &pk_value, &context.transaction_id).await;
+                    let live = self.committed_primary_key_is_live(&user_id, &pk_value).await?;
+                    if !live {
+                        claims.release_key(
+                            self.core.table_id(),
+                            &pk_value,
+                            &context.transaction_id,
+                        );
+                        continue;
+                    }
+                }
                 staged_mutations.push(StagedMutation::new(
-                    transaction_query_context
-                        .expect("transaction_query_context must exist when staging DELETE")
-                        .transaction_id
-                        .clone(),
+                    context.transaction_id.clone(),
                     self.core.table_id().clone(),
                     TableType::User,
                     Some(user_id.clone()),
@@ -201,21 +220,26 @@ impl TableProvider for UserTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_user_table_write_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
-        crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
 
         let pk_column = self.primary_key_field_name().to_string();
-        crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
+        crate::utils::datafusion_dml::validate_update_assignments(&assignments)?;
+        let relocates_pk =
+            assignments.iter().any(|(column, _)| column.eq_ignore_ascii_case(&pk_column));
 
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let schema = self.schema_ref();
-        let projection = crate::utils::datafusion_dml::dml_scan_projection(
-            &schema,
-            &filters,
-            &assignments,
-            &[&pk_column],
-        )?;
+        let projection = if relocates_pk {
+            None
+        } else {
+            crate::utils::datafusion_dml::dml_scan_projection(
+                &schema,
+                &filters,
+                &assignments,
+                &[&pk_column],
+            )?
+        };
         let rows = self
             .collect_matching_rows_for_subject(state, &filters, projection.as_ref())
             .await?;
@@ -234,7 +258,9 @@ impl TableProvider for UserTableProvider {
         let mut staged_mutations =
             transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
 
-        let evaluator = PreparedUpdateAssignments::new(state, &schema, &assignments)?;
+        let eval_schema =
+            crate::utils::datafusion_dml::projected_schema(&schema, projection.as_deref())?;
+        let evaluator = PreparedUpdateAssignments::new(state, &eval_schema, &assignments)?;
         let batch_size = state.config().batch_size().max(1);
         let mut remaining = rows.into_iter();
         loop {
@@ -246,6 +272,77 @@ impl TableProvider for UserTableProvider {
             for (row, evaluated_updates) in batch.into_iter().zip(evaluated) {
                 let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
                 if !seen.insert(pk_value.clone()) {
+                    continue;
+                }
+
+                if let Some(_new_pk) = crate::utils::datafusion_dml::relocated_primary_key(
+                    &evaluated_updates,
+                    &pk_column,
+                    &pk_value,
+                )? {
+                    if self.core.is_auto_increment_pk() {
+                        return Err(DataFusionError::Plan(format!(
+                            "Cannot modify auto-increment primary key column '{}'",
+                            pk_column
+                        )));
+                    }
+                    let inserted_row = coerce_updates(
+                        crate::utils::datafusion_dml::row_for_primary_key_move(
+                            &row,
+                            &evaluated_updates,
+                        ),
+                        &schema,
+                    )
+                    .map_err(DataFusionError::Execution)?;
+                    if let Some(staged_mutations) = staged_mutations.as_mut() {
+                        let transaction_id = transaction_query_context
+                            .expect("transaction_query_context must exist when staging UPDATE")
+                            .transaction_id
+                            .clone();
+                        staged_mutations.extend(
+                            build_insert_staged_mutations(
+                                &transaction_id,
+                                self.core.table_id(),
+                                TableType::User,
+                                Some(user_id.clone()),
+                                &pk_column,
+                                vec![inserted_row],
+                            )
+                            .map_err(|error| DataFusionError::Execution(error.to_string()))?,
+                        );
+                        staged_mutations.push(StagedMutation::new(
+                            transaction_id,
+                            self.core.table_id().clone(),
+                            TableType::User,
+                            Some(user_id.clone()),
+                            OperationKind::Delete,
+                            pk_value,
+                            Row::new(std::collections::BTreeMap::new()),
+                            true,
+                        ));
+                        updated += 1;
+                        continue;
+                    }
+
+                    let insert_version = version_from_commit_seq(
+                        commit_seq.expect("commit_seq must exist for direct UPDATE"),
+                        ordinal,
+                    )
+                    .map_err(crate::error::into_datafusion)?;
+                    ordinal = ordinal.saturating_add(1);
+                    self.insert_batch_with_versions(user_id, vec![inserted_row], &[insert_version])
+                        .await
+                        .map_err(crate::error::into_datafusion)?;
+                    let delete_version = version_from_commit_seq(
+                        commit_seq.expect("commit_seq must exist for direct UPDATE"),
+                        ordinal,
+                    )
+                    .map_err(crate::error::into_datafusion)?;
+                    ordinal = ordinal.saturating_add(1);
+                    self.delete_by_pk_value_with_version(user_id, &pk_value, delete_version)
+                        .await
+                        .map_err(crate::error::into_datafusion)?;
+                    updated += 1;
                     continue;
                 }
 
@@ -611,5 +708,23 @@ impl UserTableProvider {
         }
         .instrument(span)
         .await
+    }
+}
+
+impl UserTableProvider {
+    /// Latest committed row, ignoring this transaction's snapshot.
+    async fn committed_primary_key_is_live(
+        &self,
+        user_id: &UserId,
+        primary_key: &str,
+    ) -> DataFusionResult<bool> {
+        let target = self
+            .load_mutation_target(user_id, primary_key)
+            .await
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        Ok(matches!(
+            target,
+            crate::versioned::MutationTarget::Hot(_, _) | crate::versioned::MutationTarget::Cold(_)
+        ))
     }
 }

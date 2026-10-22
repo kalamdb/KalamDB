@@ -19,6 +19,8 @@ pub enum LogicalTypeRef {
     Builtin(KalamDataType),
     Jsonb,
     TimestampTz,
+    /// PostGIS type name stored as text. Spatial functions are not implemented.
+    Geometry,
     Named {
         type_id: TypeId,
     },
@@ -48,6 +50,11 @@ impl LogicalTypeRef {
     #[inline]
     pub const fn timestamptz() -> Self {
         Self::TimestampTz
+    }
+
+    #[inline]
+    pub const fn geometry() -> Self {
+        Self::Geometry
     }
 
     #[inline]
@@ -89,7 +96,7 @@ impl LogicalTypeRef {
             Self::Named { type_id } => Some(type_id),
             Self::List { element, .. } => element.named_type_id(),
             Self::Map { value, .. } => value.named_type_id(),
-            Self::Builtin(_) | Self::Jsonb | Self::TimestampTz => None,
+            Self::Builtin(_) | Self::Jsonb | Self::TimestampTz | Self::Geometry => None,
         }
     }
 
@@ -145,6 +152,7 @@ impl LogicalTypeRef {
         match self.peel_list() {
             Self::Jsonb => Some("jsonb"),
             Self::TimestampTz => Some("timestamptz"),
+            Self::Geometry => Some("geometry"),
             _ => None,
         }
     }
@@ -157,6 +165,7 @@ impl LogicalTypeRef {
             Self::Builtin(data_type) => Some(*data_type),
             Self::Jsonb => Some(KalamDataType::Json),
             Self::TimestampTz => Some(KalamDataType::Timestamp),
+            Self::Geometry => Some(KalamDataType::Text),
             Self::Named { .. } | Self::List { .. } | Self::Map { .. } => None,
         }
     }
@@ -170,6 +179,7 @@ impl LogicalTypeRef {
             },
             Self::Jsonb => Cow::Borrowed("JSONB"),
             Self::TimestampTz => Cow::Borrowed("TIMESTAMPTZ"),
+            Self::Geometry => Cow::Borrowed("GEOMETRY"),
             Self::Named { type_id } => Cow::Owned(type_id.to_string()),
             Self::List {
                 element,
@@ -228,7 +238,10 @@ impl LogicalTypeRef {
 
 fn collect_type_ids(type_ref: &LogicalTypeRef, out: &mut Vec<TypeId>) {
     match type_ref {
-        LogicalTypeRef::Builtin(_) | LogicalTypeRef::Jsonb | LogicalTypeRef::TimestampTz => {},
+        LogicalTypeRef::Builtin(_)
+        | LogicalTypeRef::Jsonb
+        | LogicalTypeRef::TimestampTz
+        | LogicalTypeRef::Geometry => {},
         LogicalTypeRef::Named { type_id } => out.push(type_id.clone()),
         LogicalTypeRef::List { element, .. } => collect_type_ids(element, out),
         LogicalTypeRef::Map { key, value, .. } => {
@@ -251,6 +264,7 @@ impl fmt::Display for LogicalTypeRef {
             Self::Builtin(data_type) => write!(f, "{data_type}"),
             Self::Jsonb => f.write_str("JSONB"),
             Self::TimestampTz => f.write_str("TIMESTAMPTZ"),
+            Self::Geometry => f.write_str("GEOMETRY"),
             Self::Named { type_id } => write!(f, "{type_id}"),
             Self::List {
                 element,

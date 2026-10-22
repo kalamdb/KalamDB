@@ -32,8 +32,7 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("🧪 Testing schema history in system.schemas");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -225,8 +224,7 @@ fn smoke_test_schema_history_in_system_tables() {
     println!("🎉 Schema history test PASSED!");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================
@@ -325,8 +323,7 @@ fn smoke_test_drop_table_removes_schema_history() {
     println!("🧪 Testing DROP TABLE removes schema history");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -400,6 +397,5 @@ fn smoke_test_drop_table_removes_schema_history() {
     println!("🎉 DROP removes history test PASSED!");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

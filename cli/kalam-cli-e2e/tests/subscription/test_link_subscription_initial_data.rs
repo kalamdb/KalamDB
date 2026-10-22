@@ -49,8 +49,7 @@ fn test_link_subscription_initial_batch_then_inserts() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -139,8 +138,7 @@ fn test_link_subscription_empty_table_then_inserts() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -221,8 +219,7 @@ fn test_link_subscription_batch_status_transition() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -288,8 +285,7 @@ fn test_link_subscription_multiple_live_inserts() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };
@@ -374,8 +370,7 @@ fn test_link_subscription_delete_events() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("⚠️  Failed to start subscription: {}. Skipping test.", e);
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             return;
         },
     };

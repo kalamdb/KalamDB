@@ -216,8 +216,7 @@ mod tests {
     #[tokio::test]
     async fn test_shared_data_applier_insert() {
         let applier = MockSharedDataApplier::new();
-        let table_id =
-            TableId::new(SchemaId::from("shared_ns"), TableName::from("shared_table"));
+        let table_id = TableId::new(SchemaId::from("shared_ns"), TableName::from("shared_table"));
 
         let result = applier.insert(&table_id, None, &[], &[], &[]).await;
         assert!(result.is_ok());

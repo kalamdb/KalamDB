@@ -453,23 +453,16 @@ mod tests {
         let view = RowView::parse(payload, &schema, header.flags).unwrap();
         assert!(!view.is_deleted());
         assert!(!view.is_null(0));
-        assert_eq!(
-            view.fixed_bytes(0, &schema).unwrap(),
-            Some(42i64.to_le_bytes().as_slice())
-        );
+        assert_eq!(view.fixed_bytes(0, &schema).unwrap(), Some(42i64.to_le_bytes().as_slice()));
         assert_eq!(view.fixed_bytes(1, &schema).unwrap(), Some(&[1u8][..]));
         assert_eq!(
             view.decode_field(2, &schema).unwrap(),
             ScalarValue::Utf8(Some("hello v2".to_string()))
         );
 
-        let decoded = decode_user_row(
-            encoded.as_slice(),
-            &schema,
-            row.user_id.clone(),
-            row._version,
-        )
-        .unwrap();
+        let decoded =
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._version)
+                .unwrap();
         assert_eq!(decoded, row);
 
         let selected = decode_user_row_selected(
@@ -555,11 +548,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(batch.num_rows(), 2);
-        let scores = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
+        let scores = batch.column(2).as_any().downcast_ref::<Int64Array>().unwrap();
         assert_eq!(scores.value(0), 100);
         assert_eq!(scores.value(1), 250);
     }
@@ -603,7 +592,8 @@ mod tests {
 
         // Corrupt the first variable end offset so end0 > end1 (non-monotonic).
         let mut bad_offsets = payload.to_vec();
-        // Layout: schema_version(2) + row_flags(1) + slot_span(2) + fixed(8) = 13; offsets start at 13.
+        // Layout: schema_version(2) + row_flags(1) + slot_span(2) + fixed(8) = 13; offsets start at
+        // 13.
         bad_offsets[13] = 10;
         bad_offsets[14] = 5;
         let err = RowView::parse(&bad_offsets, &schema, header.flags).unwrap_err();
@@ -627,10 +617,7 @@ mod tests {
         );
         let mut values = std::collections::BTreeMap::new();
         values.insert("id".to_string(), ScalarValue::Int32(Some(77)));
-        values.insert(
-            "legacy_name".to_string(),
-            ScalarValue::Utf8(Some("drop-me".to_string())),
-        );
+        values.insert("legacy_name".to_string(), ScalarValue::Utf8(Some("drop-me".to_string())));
         let row = UserTableRow {
             user_id:  UserId::new("u1"),
             _version: VersionId::try_from_i64(1).unwrap(),
@@ -639,7 +626,8 @@ mod tests {
         };
         let encoded_v1 = encode_user_row(&row, &v1).unwrap();
 
-        // v4 after: ALTER id TYPE BIGINT, DROP legacy_name (slot 1 hole), ADD title WITH DEFAULT, RENAME title -> label
+        // v4 after: ALTER id TYPE BIGINT, DROP legacy_name (slot 1 hole), ADD title WITH DEFAULT,
+        // RENAME title -> label
         let mut v4 = StorageSchema::new(
             4,
             vec![

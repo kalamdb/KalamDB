@@ -357,6 +357,10 @@ default unless explicitly enabled:
   TLS is enabled
 - `prepared_statement_limit`: per-connection cap for named prepared statements
 - `portal_limit`: per-connection cap for portals
+- `show_system_columns`: include storage columns such as `_version` and `_deleted`
+  in `SELECT *` (default true). Set false to return only declared columns.
+  `KALAMDB_PGWIRE_SHOW_SYSTEM_COLUMNS` overrides the file. An explicit
+  `SELECT _version` still works when the flag is false.
 
 Prepared statement and portal state is protocol state and lives in
 `kalamdb-postgres-wire`. It is bounded per connection and is cleared on protocol

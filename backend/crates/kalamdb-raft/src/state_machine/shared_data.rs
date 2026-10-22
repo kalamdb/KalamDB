@@ -653,7 +653,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, SchemaId, OperationKind, UserId},
+        models::{rows::Row, OperationKind, SchemaId, UserId},
         TableId,
     };
     use parking_lot::Mutex;

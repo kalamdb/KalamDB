@@ -852,6 +852,10 @@ impl AppContext {
         if let Err(e) = manager.restore_state_machines_from_snapshots().await {
             log::error!("Failed to restore state machines from snapshots: {:?}", e);
         } else {
+            let tracker = self.commit_sequence_tracker();
+            for (group_id, applied_index) in manager.applied_log_frontiers() {
+                tracker.observe_committed(group_id, applied_index);
+            }
             log::debug!("✓ Raft state machines restored successfully");
         }
     }

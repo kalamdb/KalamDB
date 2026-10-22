@@ -248,8 +248,7 @@ fn smoke_shared_table_subscription_default_deny_allowed() {
                 "Skipping transient live-query backend failure for shared subscription: {}",
                 error
             );
-            let _ =
-                execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
+            let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
             let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", user));
             return;
         }

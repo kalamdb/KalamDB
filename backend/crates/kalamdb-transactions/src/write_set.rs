@@ -179,7 +179,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, SchemaId, OperationKind, TableId, TableName},
+        models::{rows::Row, OperationKind, SchemaId, TableId, TableName},
         TableType,
     };
 

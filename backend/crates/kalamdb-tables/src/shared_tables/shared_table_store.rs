@@ -488,7 +488,11 @@ mod tests {
             ColumnDefinition::primary_key(1, "id", 1, KalamDataType::BigInt),
             ColumnDefinition::simple(2, "status", 2, KalamDataType::Text),
         ];
-        let indexes = [ScalarIndexDefinition::new("orders_status", vec![ColumnId::new(2)], false)];
+        let indexes = [ScalarIndexDefinition::new(
+            "orders_status",
+            vec![ColumnId::new(2)],
+            false,
+        )];
         let store = new_indexed_shared_table_store(
             backend.clone(),
             &table_id,
@@ -502,9 +506,7 @@ mod tests {
         store.insert(&first_key, &first_row).unwrap();
         let (second_key, second_row) = status_row(2, "closed", false);
         let batches_before = backend.batch_calls();
-        store
-            .replace(Some((&first_key, &first_row)), &second_key, &second_row)
-            .unwrap();
+        store.replace(Some((&first_key, &first_row)), &second_key, &second_row).unwrap();
         assert_eq!(backend.batch_calls(), batches_before + 1);
         assert!(store.get(&first_key).unwrap().is_none());
         assert_eq!(store.get(&second_key).unwrap().unwrap()._version, second_key);
@@ -517,14 +519,14 @@ mod tests {
         let latest = store.get_latest_by_index_prefix(0, &pk_prefix).unwrap().unwrap();
         assert_eq!(latest.0, second_key);
 
-        let status_filter = datafusion::logical_expr::col("status")
-            .eq(datafusion::logical_expr::lit("open"));
+        let status_filter =
+            datafusion::logical_expr::col("status").eq(datafusion::logical_expr::lit("open"));
         assert!(store.find_best_index_for_filter_expr(None, &status_filter).is_some());
         let (open_idx, open_prefix) =
             store.find_best_index_for_filter_expr(None, &status_filter).unwrap();
         assert!(store.scan_by_index(open_idx, Some(&open_prefix), None).unwrap().is_empty());
-        let closed_filter = datafusion::logical_expr::col("status")
-            .eq(datafusion::logical_expr::lit("closed"));
+        let closed_filter =
+            datafusion::logical_expr::col("status").eq(datafusion::logical_expr::lit("closed"));
         let (closed_idx, closed_prefix) =
             store.find_best_index_for_filter_expr(None, &closed_filter).unwrap();
         let closed_hits = store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap();
@@ -542,9 +544,7 @@ mod tests {
         assert_eq!(tombstone_hits[0].0, tombstone_key);
 
         let (live_key, live_row) = status_row(4, "open", false);
-        store
-            .replace(Some((&tombstone_key, &tombstone)), &live_key, &live_row)
-            .unwrap();
+        store.replace(Some((&tombstone_key, &tombstone)), &live_key, &live_row).unwrap();
         assert!(store.get(&tombstone_key).unwrap().is_none());
         assert!(store.scan_by_index(closed_idx, Some(&closed_prefix), None).unwrap().is_empty());
         let open_hits = store.scan_by_index(open_idx, Some(&open_prefix), None).unwrap();

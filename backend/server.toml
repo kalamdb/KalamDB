@@ -92,6 +92,10 @@ tls_enabled = false
 # tls_key_path = "./certs/postgres-wire.key"
 prepared_statement_limit = 1024
 portal_limit = 1024
+# Include _version, _deleted, and the other storage columns in SELECT *.
+# Set false when a PostgreSQL client should see only declared columns.
+# An explicit SELECT _version still works either way.
+show_system_columns = true
 
 [pg_extension]
 # FDW/extension gRPC bridge on the cluster RPC port. cli/run-tests.sh dials it

@@ -314,7 +314,7 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        SchemaId, Role, TableId, TableName,
+        Role, SchemaId, TableId, TableName,
     };
     use kalamdb_store::{test_utils::InMemoryBackend, CrossUserTableStore};
 

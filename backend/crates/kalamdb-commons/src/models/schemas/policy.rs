@@ -255,7 +255,9 @@ impl FlushPolicy {
     pub fn interval_seconds(&self) -> Option<u32> {
         match self {
             FlushPolicy::TimeInterval { interval_seconds } => Some(*interval_seconds),
-            FlushPolicy::Combined { interval_seconds, .. } => Some(*interval_seconds),
+            FlushPolicy::Combined {
+                interval_seconds, ..
+            } => Some(*interval_seconds),
             FlushPolicy::RowLimit { .. } => None,
         }
     }

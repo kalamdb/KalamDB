@@ -19,7 +19,10 @@ use kalamdb_commons::{
         schema_metadata::read_kalam_data_type_metadata,
     },
     ids::SnowflakeGenerator,
-    models::{datatypes::KalamDataType, rows::row::Row, OperationKind, TransactionId, UserId},
+    models::{
+        datatypes::KalamDataType, rows::row::Row, BuiltinDefault, OperationKind, TransactionId,
+        UserId,
+    },
     schemas::{ColumnDefault, TableType},
     PolicyCommand, Role, TableId,
 };
@@ -33,8 +36,8 @@ use kalamdb_sql::{
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{build_insert_staged_mutations, StagedMutation};
 use sqlparser::ast::{
-    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName, ObjectNamePart, Parens,
-    SelectItem, Statement, UnaryOperator, Value as SqlValue,
+    Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Insert, ObjectName, ObjectNamePart,
+    Parens, SelectItem, Statement, UnaryOperator, Value as SqlValue,
 };
 use ulid::Ulid;
 use uuid::Uuid;
@@ -132,6 +135,7 @@ enum PreparedDefaultValue {
 
 enum VolatileDefaultFunction {
     SnowflakeId,
+    SerialId,
     UuidV7,
     Ulid,
 }
@@ -150,6 +154,7 @@ impl From<KalamDbError> for InsertValuesRowsError {
 async fn apply_missing_defaults(
     rows: &mut [Row],
     missing_defaults: &[FastInsertDefaultEntry],
+    table_id: &TableId,
     exec_ctx: &ExecutionContext,
     app_context: Arc<AppContext>,
 ) -> Result<(), KalamDbError> {
@@ -168,7 +173,8 @@ async fn apply_missing_defaults(
     for row in rows.iter_mut() {
         for (col_name, prepared_default) in &prepared_defaults {
             let scalar =
-                materialize_prepared_default(prepared_default, exec_ctx, &app_context).await?;
+                materialize_prepared_default(prepared_default, exec_ctx, &app_context, table_id)
+                    .await?;
             row.values.insert(col_name.clone(), scalar);
         }
     }
@@ -202,8 +208,15 @@ async fn try_build_insert_rows_from_values_rows(
     };
 
     if !insert_metadata.missing_defaults.is_empty() {
-        apply_missing_defaults(&mut rows, &insert_metadata.missing_defaults, exec_ctx, app_context)
-            .await?;
+        let defaults_table_id = cached_table.table.table_id();
+        apply_missing_defaults(
+            &mut rows,
+            &insert_metadata.missing_defaults,
+            &defaults_table_id,
+            exec_ctx,
+            app_context,
+        )
+        .await?;
     }
 
     Ok(Some(rows))
@@ -592,7 +605,8 @@ async fn materialize_explicit_default(
             entry.insert(prepare_explicit_default(column_name, cached_table, exec_ctx)?)
         },
     };
-    materialize_prepared_default(prepared_default, exec_ctx, app_context).await
+    let table_id = cached_table.table.table_id();
+    materialize_prepared_default(prepared_default, exec_ctx, app_context, &table_id).await
 }
 
 fn prepare_explicit_default(
@@ -624,6 +638,97 @@ fn prepare_explicit_default(
 
     let template = prepare_default_template(&column.default_value)?;
     prepare_statement_default(&template, exec_ctx)
+}
+
+fn build_default_values_metadata(
+    cached_table: &CachedTableData,
+) -> Result<FastInsertMetadata, KalamDbError> {
+    let missing_defaults = cached_table
+        .table
+        .columns
+        .iter()
+        .filter(|column| !column.column_name.starts_with('_'))
+        .filter(|column| !column.default_value.is_none())
+        .map(|column| {
+            Ok(FastInsertDefaultEntry::new(
+                column.column_name.clone(),
+                prepare_default_template(&column.default_value)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, KalamDbError>>()?;
+
+    let pk_columns = cached_table.table.get_primary_key_columns();
+    Ok(FastInsertMetadata {
+        table_type: cached_table.table.table_type.into(),
+        column_names: Vec::new(),
+        missing_defaults,
+        primary_key_column: if pk_columns.len() == 1 {
+            Some(pk_columns[0].to_string())
+        } else {
+            None
+        },
+    })
+}
+
+async fn build_default_values_insert_rows(
+    insert: &Insert,
+    app_context: Arc<AppContext>,
+    exec_ctx: &ExecutionContext,
+    table_id: &TableId,
+    include_returning: bool,
+) -> Result<Option<LiteralInsertRows>, KalamDbError> {
+    if !insert.columns.is_empty() {
+        return Err(KalamDbError::InvalidOperation(
+            "INSERT ... DEFAULT VALUES cannot specify a column list".to_string(),
+        ));
+    }
+
+    let cached_table = match app_context.schema_registry().get(table_id) {
+        Some(cached) => cached,
+        None => return Ok(None),
+    };
+
+    let cached_table_entry = cached_table.table_entry();
+    if cached_table_entry.table_type == TableType::Shared
+        && matches!(exec_ctx.user_role(), Role::Anonymous)
+    {
+        return Err(KalamDbError::PermissionDenied(
+            "Anonymous shared-table writes are denied".to_string(),
+        ));
+    }
+
+    let metadata = build_default_values_metadata(cached_table.as_ref())?;
+    let mut rows = vec![Row::new(BTreeMap::new())];
+    apply_missing_defaults(
+        &mut rows,
+        &metadata.missing_defaults,
+        table_id,
+        exec_ctx,
+        Arc::clone(&app_context),
+    )
+    .await?;
+
+    let schema = cached_table.arrow_schema()?;
+    let rows = coerce_rows(rows, &schema)
+        .map_err(|e| KalamDbError::InvalidOperation(format!("Schema coercion failed: {}", e)))?;
+    validate_file_columns_in_rows(
+        &rows,
+        cached_table.as_ref(),
+        table_id,
+        staged_mutation_user_id(metadata.table_type, exec_ctx).as_ref(),
+        &app_context,
+    )?;
+
+    Ok(Some(LiteralInsertRows {
+        table_type: metadata.table_type,
+        primary_key_column: metadata.primary_key_column,
+        rows,
+        returning: if include_returning {
+            insert.returning.clone()
+        } else {
+            None
+        },
+    }))
 }
 
 pub(crate) struct LiteralInsertRows {
@@ -677,6 +782,19 @@ async fn try_build_literal_insert_rows_inner(
 ) -> Result<Option<LiteralInsertRows>, KalamDbError> {
     if table_id.namespace_id().is_system_namespace() {
         return Ok(None);
+    }
+
+    if let Statement::Insert(insert) = statement {
+        if insert.source.is_none() && !insert.overwrite && insert.on.is_none() {
+            return build_default_values_insert_rows(
+                insert,
+                app_context,
+                exec_ctx,
+                table_id,
+                !allow_on_conflict,
+            )
+            .await;
+        }
     }
 
     let shape_options = if allow_on_conflict {
@@ -991,17 +1109,24 @@ fn prepare_default_template(
                     "DEFAULT procedure arguments cannot use placeholders".to_string(),
                 ));
             }
-            if let Some(builtin) = call.scalar_udf_name() {
-                match call.unqualified_name() {
-                    "now" | "current_timestamp" => Ok(FastInsertDefaultTemplate::CurrentTimestamp),
-                    "current_user" => Ok(FastInsertDefaultTemplate::CurrentUser),
-                    "snowflake_id" | "auto_increment" => Ok(FastInsertDefaultTemplate::SnowflakeId),
-                    "uuid_v7" => Ok(FastInsertDefaultTemplate::UuidV7),
-                    "ulid" => Ok(FastInsertDefaultTemplate::Ulid),
-                    _ => Err(KalamDbError::InvalidOperation(format!(
-                        "Unsupported default function '{builtin}' in transaction batch INSERT"
-                    ))),
+            if let Some(builtin) = call.builtin_default() {
+                if !call.arguments.is_empty() {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "built-in default {}() does not take arguments",
+                        builtin.canonical_name().to_ascii_uppercase()
+                    )));
                 }
+                Ok(match builtin {
+                    BuiltinDefault::Now => FastInsertDefaultTemplate::CurrentTimestamp,
+                    BuiltinDefault::CurrentUser => FastInsertDefaultTemplate::CurrentUser,
+                    BuiltinDefault::CurrentRole => FastInsertDefaultTemplate::CurrentRole,
+                    BuiltinDefault::CurrentSchema => FastInsertDefaultTemplate::CurrentSchema,
+                    BuiltinDefault::CurrentDatabase => FastInsertDefaultTemplate::CurrentDatabase,
+                    BuiltinDefault::SnowflakeId => FastInsertDefaultTemplate::SnowflakeId,
+                    BuiltinDefault::SerialId => FastInsertDefaultTemplate::SerialId,
+                    BuiltinDefault::UuidV7 => FastInsertDefaultTemplate::UuidV7,
+                    BuiltinDefault::Ulid => FastInsertDefaultTemplate::Ulid,
+                })
             } else {
                 Ok(FastInsertDefaultTemplate::Procedure(call.clone()))
             }
@@ -1026,8 +1151,27 @@ fn prepare_statement_default(
                 user_id.as_str().to_string(),
             ))))
         },
+        FastInsertDefaultTemplate::CurrentRole => Ok(PreparedDefaultValue::Constant(
+            ScalarValue::Utf8(Some(exec_ctx.user_role().as_str().to_string())),
+        )),
+        FastInsertDefaultTemplate::CurrentSchema => Ok(PreparedDefaultValue::Constant(
+            ScalarValue::Utf8(Some(exec_ctx.default_namespace().as_str().to_string())),
+        )),
+        FastInsertDefaultTemplate::CurrentDatabase => {
+            let session = exec_ctx.create_session_with_user();
+            let name = session.state().config().options().catalog.default_catalog.clone();
+            let name = if name.is_empty() {
+                "kalam".to_string()
+            } else {
+                name
+            };
+            Ok(PreparedDefaultValue::Constant(ScalarValue::Utf8(Some(name))))
+        },
         FastInsertDefaultTemplate::SnowflakeId => {
             Ok(PreparedDefaultValue::Volatile(VolatileDefaultFunction::SnowflakeId))
+        },
+        FastInsertDefaultTemplate::SerialId => {
+            Ok(PreparedDefaultValue::Volatile(VolatileDefaultFunction::SerialId))
         },
         FastInsertDefaultTemplate::UuidV7 => {
             Ok(PreparedDefaultValue::Volatile(VolatileDefaultFunction::UuidV7))
@@ -1045,6 +1189,7 @@ async fn materialize_prepared_default(
     prepared_default: &PreparedDefaultValue,
     exec_ctx: &ExecutionContext,
     app_context: &Arc<AppContext>,
+    table_id: &TableId,
 ) -> Result<ScalarValue, KalamDbError> {
     match prepared_default {
         PreparedDefaultValue::Constant(value) => Ok(value.clone()),
@@ -1056,6 +1201,9 @@ async fn materialize_prepared_default(
                 ))
             })?;
             Ok(ScalarValue::Int64(Some(id)))
+        },
+        PreparedDefaultValue::Volatile(VolatileDefaultFunction::SerialId) => {
+            Ok(ScalarValue::Int32(Some(crate::sql::serial_sequence::next_serial_id(table_id)?)))
         },
         PreparedDefaultValue::Volatile(VolatileDefaultFunction::UuidV7) => {
             Ok(ScalarValue::Utf8(Some(Uuid::now_v7().to_string())))

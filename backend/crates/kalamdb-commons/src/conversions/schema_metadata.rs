@@ -25,8 +25,11 @@ pub const KALAM_ENUM_LABELS_METADATA_KEY: &str = "kalam_enum_labels";
 pub const KALAM_TYPE_MODIFIER_METADATA_KEY: &str = "kalam_type_modifier";
 /// Domain constraint chain attached to an Arrow field (`kalam_domain_constraints`).
 pub const KALAM_DOMAIN_CONSTRAINTS_METADATA_KEY: &str = "kalam_domain_constraints";
-/// Missing-column default attached to an Arrow field (`kalam_missing_default`) for `ADD COLUMN ... DEFAULT`.
+/// Missing-column default attached to an Arrow field (`kalam_missing_default`) for `ADD COLUMN ...
+/// DEFAULT`.
 pub const KALAM_MISSING_DEFAULT_METADATA_KEY: &str = "kalam_missing_default";
+/// PostgreSQL character maximum length, counted in characters.
+pub const KALAM_CHAR_MAX_METADATA_KEY: &str = "kalam_character_maximum_length";
 
 /// A single `CHECK (expr)` constraint on a domain.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -69,6 +72,20 @@ pub fn with_logical_type_modifier(mut field: Field, type_ref: &LogicalTypeRef) -
     metadata.insert(KALAM_TYPE_MODIFIER_METADATA_KEY.to_string(), label.to_string());
     field = field.with_metadata(metadata);
     field
+}
+
+/// Attach a PostgreSQL character maximum length to an Arrow field.
+pub fn with_character_maximum_length(mut field: Field, length: u32) -> Field {
+    let mut metadata = field.metadata().clone();
+    metadata.insert(KALAM_CHAR_MAX_METADATA_KEY.to_string(), length.to_string());
+    field = field.with_metadata(metadata);
+    field
+}
+
+/// Read a PostgreSQL character maximum length from an Arrow field.
+#[inline]
+pub fn read_character_maximum_length(field: &Field) -> Option<u32> {
+    field.metadata().get(KALAM_CHAR_MAX_METADATA_KEY)?.parse().ok()
 }
 
 /// Read the builtin modifier label (`"jsonb"` or `"timestamptz"`), if present.

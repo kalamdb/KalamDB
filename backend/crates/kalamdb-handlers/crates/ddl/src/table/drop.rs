@@ -10,11 +10,11 @@ use kalamdb_commons::{
     schemas::{TableDefinition, TableType},
     JobId,
 };
-use kalamdb_core::schema_registry::CachedTableData;
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
     operations::table_cleanup::cleanup_table_data_internal,
+    schema_registry::CachedTableData,
     sql::{
         context::{ExecutionContext, ExecutionResult, ScalarValue},
         executor::handlers::TypedStatementHandler,
@@ -79,8 +79,8 @@ pub(crate) fn capture_storage_cleanup_details(
     };
 
     Ok(StorageCleanupDetails {
-        storage_id: storage_id.clone(),
-        base_directory: base_dir,
+        storage_id:             storage_id.clone(),
+        base_directory:         base_dir,
         relative_path_template: relative_template,
     })
 }

@@ -17,9 +17,9 @@ use kalamdb_commons::{
     datatypes::KalamDataType,
     models::rows::Row,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    AuthorizationRelation, BoundExprShape, InvalidationStrategy, SchemaId, PolicyCommand,
-    PolicyId, PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, Role,
-    ScalarPredicate, TableId, TableName, TablePolicy, UserId,
+    AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+    PolicyProgram, PolicyScalar, PolicyTarget, PredicateOperator, PrincipalExpr, Role,
+    ScalarPredicate, SchemaId, TableId, TableName, TablePolicy, UserId,
 };
 
 use crate::{

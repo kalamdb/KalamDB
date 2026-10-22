@@ -24,8 +24,7 @@ fn setup_json_table(prefix: &str, extra_cols: &str) -> (String, String) {
     let table = generate_unique_table(&format!("{prefix}_tbl"));
     let full_table = format!("{namespace}.{table}");
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {namespace}"))
         .expect("create namespace");
 
@@ -45,8 +44,7 @@ fn setup_json_table(prefix: &str, extra_cols: &str) -> (String, String) {
 }
 
 fn cleanup(namespace: &str) {
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
 }
 
 // ── JSON round-trip: objects, arrays, nested, primitives ──────────────────

@@ -30,8 +30,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
     println!("🧪 Testing flush with PK integrity: {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -245,8 +244,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     println!("🧪 Testing flush with PK integrity (SHARED): {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");

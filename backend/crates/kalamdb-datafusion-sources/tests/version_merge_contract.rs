@@ -30,8 +30,18 @@ fn greater_version_wins() {
 #[test]
 fn newer_hot_beats_older_cold() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new(PkBucketKey::Int(1), v(2), false, "hot")],
-        vec![VersionCandidate::new(PkBucketKey::Int(1), v(1), false, "cold")],
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            v(2),
+            false,
+            "hot",
+        )],
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            v(1),
+            false,
+            "cold",
+        )],
         None,
         false,
     );
@@ -47,7 +57,12 @@ fn newer_hot_beats_older_cold() {
 fn newer_cold_beats_older_hot() {
     let winners = select_latest_versions(
         vec![VersionCandidate::new("a".to_string(), v(1), false, "hot-a")],
-        vec![VersionCandidate::new("a".to_string(), v(2), false, "cold-a")],
+        vec![VersionCandidate::new(
+            "a".to_string(),
+            v(2),
+            false,
+            "cold-a",
+        )],
         None,
         false,
     );
@@ -62,8 +77,18 @@ fn newer_cold_beats_older_hot() {
 #[test]
 fn equal_version_is_one_row() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new(PkBucketKey::Int(1), v(7), false, "hot")],
-        vec![VersionCandidate::new(PkBucketKey::Int(1), v(7), false, "cold")],
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            v(7),
+            false,
+            "hot",
+        )],
+        vec![VersionCandidate::new(
+            PkBucketKey::Int(1),
+            v(7),
+            false,
+            "cold",
+        )],
         None,
         false,
     );
@@ -71,14 +96,21 @@ fn equal_version_is_one_row() {
     assert_eq!(winners.len(), 1);
     match &winners[0] {
         SelectedVersion::Hot(payload) => assert_eq!(*payload, "hot"),
-        SelectedVersion::Cold(payload) => panic!("equal versions must collapse to one row, got {payload}"),
+        SelectedVersion::Cold(payload) => {
+            panic!("equal versions must collapse to one row, got {payload}")
+        },
     }
 }
 
 #[test]
 fn snapshot_hides_newer_hot_so_older_cold_wins() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new("a".to_string(), raft(501, 0), false, "hot")],
+        vec![VersionCandidate::new(
+            "a".to_string(),
+            raft(501, 0),
+            false,
+            "hot",
+        )],
         vec![VersionCandidate::new(
             "a".to_string(),
             raft(490, 0),
@@ -92,15 +124,27 @@ fn snapshot_hides_newer_hot_so_older_cold_wins() {
     assert_eq!(winners.len(), 1);
     match &winners[0] {
         SelectedVersion::Cold(payload) => assert_eq!(*payload, "cold-visible"),
-        SelectedVersion::Hot(payload) => panic!("snapshot must hide the newer hot row, got {payload}"),
+        SelectedVersion::Hot(payload) => {
+            panic!("snapshot must hide the newer hot row, got {payload}")
+        },
     }
 }
 
 #[test]
 fn hot_row_within_snapshot_beats_older_cold() {
     let winners = select_latest_versions(
-        vec![VersionCandidate::new("a".to_string(), raft(500, 0), false, "hot")],
-        vec![VersionCandidate::new("a".to_string(), raft(490, 0), false, "cold")],
+        vec![VersionCandidate::new(
+            "a".to_string(),
+            raft(500, 0),
+            false,
+            "hot",
+        )],
+        vec![VersionCandidate::new(
+            "a".to_string(),
+            raft(490, 0),
+            false,
+            "cold",
+        )],
         Some(snapshot_through_log(500)),
         false,
     );
@@ -135,7 +179,12 @@ fn snapshot_hides_newer_cold_so_older_cold_wins() {
 fn tombstone_of_winner_hides_row_unless_keep_deleted() {
     let winners = select_latest_versions(
         vec![VersionCandidate::new("b".to_string(), v(5), false, "hot-b")],
-        vec![VersionCandidate::new("b".to_string(), v(6), true, "cold-b-delete")],
+        vec![VersionCandidate::new(
+            "b".to_string(),
+            v(6),
+            true,
+            "cold-b-delete",
+        )],
         None,
         false,
     );
@@ -143,7 +192,12 @@ fn tombstone_of_winner_hides_row_unless_keep_deleted() {
 
     let kept = select_latest_versions(
         vec![VersionCandidate::new("b".to_string(), v(5), false, "hot-b")],
-        vec![VersionCandidate::new("b".to_string(), v(6), true, "cold-b-delete")],
+        vec![VersionCandidate::new(
+            "b".to_string(),
+            v(6),
+            true,
+            "cold-b-delete",
+        )],
         None,
         true,
     );
@@ -175,8 +229,5 @@ fn version_fallback_does_not_collide_with_text_version_key() {
 #[test]
 fn integer_bucket_key_does_not_equal_stringified_integer() {
     assert_ne!(PkBucketKey::Int(1), PkBucketKey::Text("1".to_string()));
-    assert_ne!(
-        PkBucketKey::Version(1),
-        PkBucketKey::Text("_version:1".to_string())
-    );
+    assert_ne!(PkBucketKey::Version(1), PkBucketKey::Text("_version:1".to_string()));
 }

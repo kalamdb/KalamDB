@@ -5,7 +5,7 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
     models::{
-        ids::{JobId, SchemaId, NodeId},
+        ids::{JobId, NodeId, SchemaId},
         TableName,
     },
     KSerializable,

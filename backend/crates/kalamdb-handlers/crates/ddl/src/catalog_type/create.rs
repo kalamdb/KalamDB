@@ -73,10 +73,8 @@ fn persist_create_type(
             statement.namespace_id, statement.name
         )));
     }
-    let table_id = TableId::new(
-        statement.namespace_id.clone(),
-        TableName::new(statement.name.as_str()),
-    );
+    let table_id =
+        TableId::new(statement.namespace_id.clone(), TableName::new(statement.name.as_str()));
     if app.schema_registry().get(&table_id).is_some() {
         return Err(KalamDbError::AlreadyExists(format!(
             "type {}.{} already exists",

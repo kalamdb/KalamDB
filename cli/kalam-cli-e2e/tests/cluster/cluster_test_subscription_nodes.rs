@@ -177,8 +177,7 @@ fn cluster_test_subscription_leader_to_leader() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table instead of SHARED - subscriptions only work on USER/STREAM tables
@@ -268,8 +267,7 @@ fn cluster_test_subscription_follower_to_leader() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup on leader
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -355,8 +353,7 @@ fn cluster_test_subscription_multi_node_identical() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -450,8 +447,7 @@ fn cluster_test_subscription_initial_data_consistency() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup and insert data
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     // Use USER table - subscriptions only work on USER/STREAM tables
@@ -567,8 +563,7 @@ fn cluster_test_subscription_user_table_any_node() {
     let full = format!("{}.{}", namespace, table);
 
     // Setup
-    let _ =
-        execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&leader_url, &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     execute_on_node(&leader_url, &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(

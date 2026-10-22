@@ -2,9 +2,10 @@
 
 use std::{collections::HashSet, sync::Arc};
 
-use datafusion::{logical_expr::Expr, scalar::ScalarValue};
+use datafusion::{arrow::datatypes::DataType, logical_expr::Expr, scalar::ScalarValue};
 use kalamdb_commons::{
-    models::rows::Row, schemas::TableType, try_pk_bucket_key, StorageKey, TableId, UserId,
+    conversions::parse_string_as_scalar, models::rows::Row, schemas::TableType, try_pk_bucket_key,
+    StorageKey, TableId, UserId,
 };
 use kalamdb_datafusion_sources::exec::prefers_version;
 use kalamdb_filestore::registry::{ListResult, StorageCached};
@@ -38,21 +39,28 @@ where
     P: BaseTableProvider<K, V>,
     K: StorageKey,
 {
-    use datafusion::prelude::{col, lit};
+    use datafusion::prelude::col;
 
     use crate::utils::version_resolution::{parquet_batch_to_rows, ParquetRowData};
 
     let pk_name = provider.primary_key_field_name();
     let user_scope = resolve_user_scope(scope);
 
-    // Build filter for the specific PK value
-    let filter: Expr = col(pk_name).eq(lit(pk_value));
-
     // Get core from provider (we need schema, table_id, table_type, and storage access)
     let core = provider.core();
     let table_id = provider.table_id();
     let table_type = provider.provider_table_type();
     let schema = provider.schema_ref();
+
+    // UUID keys are stored as FixedSizeBinary(16). A text literal does not
+    // compare equal to that type, so parse the key into the column type.
+    let pk_type = schema
+        .field_with_name(pk_name)
+        .map(|field| field.data_type().clone())
+        .unwrap_or(DataType::Utf8);
+    let pk_scalar = parse_string_as_scalar(pk_value, &pk_type)
+        .unwrap_or_else(|_| ScalarValue::Utf8(Some(pk_value.to_owned())));
+    let filter: Expr = col(pk_name).eq(Expr::Literal(pk_scalar, None));
 
     // Scan cold storage for this PK value using async I/O
     let batch = scan_parquet_files_as_batch_async(

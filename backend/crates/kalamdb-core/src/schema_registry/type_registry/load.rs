@@ -25,13 +25,14 @@ impl TypeRegistry {
         type_ref: &LogicalTypeRef,
     ) -> Result<ResolvedLayout, KalamDbError> {
         match type_ref {
-            LogicalTypeRef::Builtin(_) | LogicalTypeRef::Jsonb | LogicalTypeRef::TimestampTz => {
-                Ok(ResolvedLayout {
-                    type_ref:   type_ref.clone(),
-                    arrow_type: arrow_type_for_ref(type_ref, None)?,
-                    nested:     None,
-                })
-            },
+            LogicalTypeRef::Builtin(_)
+            | LogicalTypeRef::Jsonb
+            | LogicalTypeRef::TimestampTz
+            | LogicalTypeRef::Geometry => Ok(ResolvedLayout {
+                type_ref:   type_ref.clone(),
+                arrow_type: arrow_type_for_ref(type_ref, None)?,
+                nested:     None,
+            }),
             LogicalTypeRef::Named { type_id } => {
                 let nested = self.get_or_load(stores, type_id)?;
                 Ok(ResolvedLayout {
@@ -343,6 +344,9 @@ fn arrow_type_for_ref(
             .to_arrow_type()
             .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
         LogicalTypeRef::TimestampTz => KalamDataType::DateTime
+            .to_arrow_type()
+            .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
+        LogicalTypeRef::Geometry => KalamDataType::Text
             .to_arrow_type()
             .map_err(|error| KalamDbError::InvalidSql(error.to_string())),
         LogicalTypeRef::Named { .. } => {

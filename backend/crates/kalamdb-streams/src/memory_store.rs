@@ -345,7 +345,10 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                StreamLogRecord::Delete {
+                    row_id: _,
+                    timestamp: _,
+                } => {
                     let version = Self::version_from_key(seq_bytes);
                     deleted.insert(version);
                     // Remove from results if already added
@@ -387,7 +390,10 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                StreamLogRecord::Delete {
+                    row_id: _,
+                    timestamp: _,
+                } => {
                     let version = Self::version_from_key(seq_bytes);
                     deleted.insert(version);
                 },

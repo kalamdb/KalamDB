@@ -110,6 +110,7 @@ pub use models::{
     AuthType,
     AuthorizationRelation,
     BoundExprShape,
+    BuiltinDefault,
     CallArgument,
     CatalogTypeKind,
     ColumnId,

@@ -11,8 +11,9 @@ use kalamdb_system::SystemTablesRegistry;
 use crate::{
     error::RegistryError,
     pg_catalog::{
-        class_oid, namespace_oid, primary_constraint_oid, primary_index_oid, primary_index_relname,
-        primary_key_attnums, relation_is_view, visible_table_definitions, PgCatalogView,
+        class_oid, named_column_attnums, namespace_oid, primary_constraint_oid, primary_index_oid,
+        primary_index_relname, primary_key_attnums, relation_is_view, stable_oid,
+        visible_table_definitions, PgCatalogView,
     },
 };
 
@@ -33,7 +34,7 @@ fn schema() -> SchemaRef {
                 Field::new("confrelid", DataType::Int64, false),
                 Field::new("conindid", DataType::Int64, false),
                 Field::new("conkey", int64_list_type(), false),
-                Field::new("confkey", int64_list_type(), false),
+                Field::new("confkey", int64_list_type(), true),
                 Field::new("conparentid", DataType::Int64, false),
                 Field::new("confupdtype", DataType::Utf8, false),
                 Field::new("confdeltype", DataType::Utf8, false),
@@ -76,31 +77,77 @@ impl PgCatalogView for PgConstraintView {
         let mut update_rules = StringBuilder::new();
         let mut delete_rules = StringBuilder::new();
 
-        for table in visible_table_definitions(&self.system_registry, role)? {
-            if relation_is_view(&table) {
-                continue;
-            }
-            let attnums = primary_key_attnums(&table);
-            if attnums.is_empty() {
+        let tables = visible_table_definitions(&self.system_registry, role)?;
+        for table in &tables {
+            if relation_is_view(table) {
                 continue;
             }
             let namespace = table.namespace_id.as_str();
             let table_name = table.table_name.as_str();
-            oids.append_value(primary_constraint_oid(namespace, table_name));
-            names.append_value(primary_index_relname(table_name));
-            namespaces.append_value(namespace_oid(namespace));
-            types.append_value("p");
-            rel_oids.append_value(class_oid(namespace, table_name));
-            foreign_rel_oids.append_value(0);
-            index_oids.append_value(primary_index_oid(namespace, table_name));
-            for attnum in attnums {
-                conkeys.values().append_value(attnum);
+            let attnums = primary_key_attnums(table);
+            if !attnums.is_empty() {
+                oids.append_value(primary_constraint_oid(namespace, table_name));
+                names.append_value(primary_index_relname(table_name));
+                namespaces.append_value(namespace_oid(namespace));
+                types.append_value("p");
+                rel_oids.append_value(class_oid(namespace, table_name));
+                foreign_rel_oids.append_value(0);
+                index_oids.append_value(primary_index_oid(namespace, table_name));
+                for attnum in attnums {
+                    conkeys.values().append_value(attnum);
+                }
+                conkeys.append(true);
+                // Primary keys have no referenced columns. Postgres stores that as
+                // NULL, and `confkey IS NULL` is how schema inspectors tell them apart
+                // from an empty key list.
+                confkeys.append(false);
+                parent_ids.append_value(0);
+                update_rules.append_value("a");
+                delete_rules.append_value("a");
             }
-            conkeys.append(true);
-            confkeys.append(true);
-            parent_ids.append_value(0);
-            update_rules.append_value("a");
-            delete_rules.append_value("a");
+
+            for foreign_key in &table.foreign_keys {
+                let Some(local_attnums) = named_column_attnums(table, &foreign_key.columns) else {
+                    continue;
+                };
+                let Some(referenced) = tables.iter().find(|other| {
+                    other.namespace_id == foreign_key.referenced_namespace
+                        && other.table_name == foreign_key.referenced_table
+                }) else {
+                    continue;
+                };
+                let Some(foreign_attnums) =
+                    named_column_attnums(referenced, &foreign_key.referenced_columns)
+                else {
+                    continue;
+                };
+                let referenced_namespace = referenced.namespace_id.as_str();
+                let referenced_name = referenced.table_name.as_str();
+                oids.append_value(stable_oid(&[
+                    "constraint",
+                    namespace,
+                    table_name,
+                    "fk",
+                    foreign_key.name.as_str(),
+                ]));
+                names.append_value(foreign_key.name.as_str());
+                namespaces.append_value(namespace_oid(namespace));
+                types.append_value("f");
+                rel_oids.append_value(class_oid(namespace, table_name));
+                foreign_rel_oids.append_value(class_oid(referenced_namespace, referenced_name));
+                index_oids.append_value(0);
+                for attnum in local_attnums {
+                    conkeys.values().append_value(attnum);
+                }
+                conkeys.append(true);
+                for attnum in foreign_attnums {
+                    confkeys.values().append_value(attnum);
+                }
+                confkeys.append(true);
+                parent_ids.append_value(0);
+                update_rules.append_value(foreign_key.on_update.pg_code());
+                delete_rules.append_value(foreign_key.on_delete.pg_code());
+            }
         }
 
         RecordBatch::try_new(

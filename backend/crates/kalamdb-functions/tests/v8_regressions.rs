@@ -167,7 +167,8 @@ fn throwing_result_accessors_fail_conversion() {
 fn unsafe_int64_uses_bigint_and_numeric_uses_decimal_string() {
     let mut session = V8Session::load(
         ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
-            "return { big: typeof input.big === 'bigint' ? input.big + 1n : 0n, price: input.price };",
+            "return { big: typeof input.big === 'bigint' ? input.big + 1n : 0n, price: \
+             input.price };",
         )),
         RuntimeLimits::default(),
     )
@@ -201,6 +202,7 @@ fn unsafe_int64_uses_bigint_and_numeric_uses_decimal_string() {
 #[test]
 fn read_view_supports_lazy_projection_and_materialization() {
     use std::sync::Arc;
+
     use arrow::{
         array::{Int64Array, RecordBatch, StringArray},
         datatypes::{DataType, Field, Schema},
@@ -221,7 +223,8 @@ fn read_view_supports_lazy_projection_and_materialization() {
     let view_arg = RoutineValue::from_read_view_batches(vec![batch]);
     let mut session = V8Session::load(
         ModuleRevision::typescript_fixture(kalamdb_functions::wrap_procedure_source(
-            "const second = input.at(1); const all = input.materialize(); return { len: input.length, secondName: second.name, allCount: all.length, firstId: all[0].id };",
+            "const second = input.at(1); const all = input.materialize(); return { len: \
+             input.length, secondName: second.name, allCount: all.length, firstId: all[0].id };",
         )),
         RuntimeLimits::default(),
     )
@@ -249,4 +252,3 @@ fn read_view_supports_lazy_projection_and_materialization() {
         ScalarValue::Int32(Some(10))
     );
 }
-

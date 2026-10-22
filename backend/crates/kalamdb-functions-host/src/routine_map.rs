@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::idents::{method_ident, namespace_object_ident};
 
-/// `{ "api": { "createOrder": "api.create_order", "create_order": "api.create_order" } }` for `__kalamMakeCtx`.
+/// `{ "api": { "createOrder": "api.create_order", "create_order": "api.create_order" } }` for
+/// `__kalamMakeCtx`.
 pub fn build_routine_js_map<'a>(
     routines: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
 ) -> String {

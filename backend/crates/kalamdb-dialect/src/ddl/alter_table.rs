@@ -7,18 +7,19 @@
 
 use kalamdb_commons::{
     models::{datatypes::KalamDataType, SchemaId, StorageId, TableId, TableName},
-    schemas::{policy::FlushPolicy, ColumnDefault, TableCompression},
+    schemas::{policy::FlushPolicy, ColumnDefault, ForeignKeyAction, TableCompression},
 };
 use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{
     AlterColumnOperation, AlterTableOperation, ColumnDef, ColumnOption, ColumnOptionDef,
-    DropBehavior, Expr, Ident, ObjectName, SqlOption, Statement, Value,
+    DropBehavior, Expr, Ident, IndexColumn, ObjectName, ReferentialAction, SqlOption, Statement,
+    TableConstraint, Value,
 };
 
 use crate::{
-    compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference},
+    compatibility::{character_maximum_length, map_sql_type_to_kalam, sql_type_to_type_reference},
     ddl::{column_default::expr_to_column_default, parsing::parse_table_reference, DdlResult},
     parser::KalamParser,
 };
@@ -28,12 +29,13 @@ use crate::{
 pub enum ColumnOperation {
     /// Add a new column
     Add {
-        column_name:   String,
-        data_type:     KalamDataType,
-        type_ref:      Option<crate::ddl::TypeReference>,
-        nullable:      bool,
-        default_value: Option<ColumnDefault>,
-        if_not_exists: bool,
+        column_name:              String,
+        data_type:                KalamDataType,
+        type_ref:                 Option<crate::ddl::TypeReference>,
+        nullable:                 bool,
+        default_value:            Option<ColumnDefault>,
+        if_not_exists:            bool,
+        character_maximum_length: Option<u32>,
     },
     /// Drop an existing column
     Drop { column_name: String },
@@ -81,6 +83,53 @@ pub enum ColumnOperation {
     /// Drop a scalar index, or a vector index when the name is not in the
     /// scalar catalog (`DROP INDEX` without the VECTOR keyword).
     DropIndex { name: String, if_exists: bool },
+    /// PostgreSQL `DROP INDEX [IF EXISTS] name` with no table. The handler
+    /// resolves each name to the table that owns that scalar index.
+    DropStandaloneIndex {
+        indexes:   Vec<StandaloneIndexName>,
+        if_exists: bool,
+    },
+    /// Rename a scalar index once the owning table is known.
+    RenameIndex { name: String, new_name: String },
+    /// PostgreSQL `ALTER INDEX [IF EXISTS] name RENAME TO new_name`.
+    RenameStandaloneIndex {
+        index:     StandaloneIndexName,
+        new_name:  String,
+        if_exists: bool,
+    },
+    /// Constraint accepted so PostgreSQL installers can proceed.
+    ///
+    /// `UNIQUE` is stored as a unique scalar index. Foreign keys and checks are
+    /// acknowledged without enforcement.
+    AcceptedConstraint { summary: String },
+    /// Foreign key stored for insert checks and `pg_constraint`. Integer columns
+    /// that point at a wider key are widened so the referenced ids fit.
+    /// `on_update` and `on_delete` are reported as written; they are not applied
+    /// when the referenced row changes.
+    AlignForeignKey {
+        name:                 String,
+        columns:              Vec<String>,
+        referenced_namespace: SchemaId,
+        referenced_table:     TableName,
+        referenced_columns:   Vec<String>,
+        on_update:            ForeignKeyAction,
+        on_delete:            ForeignKeyAction,
+    },
+    /// `ALTER TABLE ... DROP CONSTRAINT`. A matching unique index is removed.
+    /// A primary key, foreign key, or check that is not a stored index is a
+    /// successful no-op. The next `ADD PRIMARY KEY` replaces the key.
+    DropConstraint { name: String },
+    /// `ADD CONSTRAINT ... PRIMARY KEY (column)`.
+    SetPrimaryKey { columns: Vec<String> },
+    /// Several PostgreSQL alter actions in one statement, applied in order.
+    Batch(Vec<ColumnOperation>),
+}
+
+/// One index named by standalone `DROP INDEX`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneIndexName {
+    pub namespace_id: SchemaId,
+    pub name:         String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -164,12 +213,20 @@ impl AlterTableStatement {
             return Err("Expected ALTER TABLE statement".to_string());
         };
 
-        if operations.len() != 1 {
-            return Err("Only one ALTER TABLE operation is supported per statement".to_string());
+        if operations.is_empty() {
+            return Err("ALTER TABLE requires an operation".to_string());
         }
 
         let (namespace_id, table_name) = resolve_table_reference(name, current_namespace)?;
-        let operation = convert_operation(&operations[0], &namespace_id)?;
+        let mut converted = Vec::with_capacity(operations.len());
+        for operation in &operations {
+            converted.push(convert_operation(operation, &namespace_id)?);
+        }
+        let operation = if converted.len() == 1 {
+            converted.remove(0)
+        } else {
+            ColumnOperation::Batch(converted)
+        };
 
         Ok(Self {
             table_name,
@@ -262,7 +319,7 @@ fn normalize_alter_sql(sql: &str) -> String {
     sql.trim().trim_end_matches(';').to_string()
 }
 
-fn resolve_table_reference(
+pub(crate) fn resolve_table_reference(
     name: ObjectName,
     current_namespace: &SchemaId,
 ) -> DdlResult<(SchemaId, TableName)> {
@@ -335,8 +392,133 @@ fn convert_operation(
         AlterTableOperation::SetTblProperties { table_properties } => {
             build_set_table_properties_operation(table_properties)
         },
+        AlterTableOperation::AddConstraint { constraint, .. } => {
+            build_add_constraint_operation(constraint, default_namespace)
+        },
+        AlterTableOperation::DropConstraint { name, .. } => {
+            if name.value.is_empty() {
+                return Err("DROP CONSTRAINT requires a name".to_string());
+            }
+            Ok(ColumnOperation::DropConstraint {
+                name: name.value.clone(),
+            })
+        },
         _ => Err("Unsupported ALTER TABLE operation".to_string()),
     }
+}
+
+fn build_add_constraint_operation(
+    constraint: &TableConstraint,
+    default_namespace: &SchemaId,
+) -> DdlResult<ColumnOperation> {
+    match constraint {
+        TableConstraint::Unique(unique) => {
+            let columns = constraint_column_names(&unique.columns)?;
+            let name = unique
+                .name
+                .as_ref()
+                .or(unique.index_name.as_ref())
+                .map(|ident| ident.value.clone())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("unique_{}", columns.join("_")));
+            Ok(ColumnOperation::CreateScalarIndex {
+                name,
+                columns,
+                unique: true,
+                if_not_exists: false,
+            })
+        },
+        TableConstraint::ForeignKey(foreign_key) => {
+            let columns = ident_names(&foreign_key.columns, true)?;
+            let (referenced_namespace, referenced_table) =
+                resolve_table_reference(foreign_key.foreign_table.clone(), default_namespace)?;
+            let name = foreign_key
+                .name
+                .as_ref()
+                .map(|ident| ident.value.clone())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("fk_{}", columns.join("_")));
+            Ok(ColumnOperation::AlignForeignKey {
+                name,
+                columns,
+                referenced_namespace,
+                referenced_table,
+                referenced_columns: ident_names(&foreign_key.referred_columns, false)?,
+                on_update: foreign_key_action(foreign_key.on_update.as_ref()),
+                on_delete: foreign_key_action(foreign_key.on_delete.as_ref()),
+            })
+        },
+        TableConstraint::Check(check) => Ok(ColumnOperation::AcceptedConstraint {
+            summary: format!(
+                "ADD CONSTRAINT {} CHECK",
+                constraint_label(check.name.as_ref(), "CHECK")
+            ),
+        }),
+        TableConstraint::PrimaryKey(primary_key) => {
+            let columns = constraint_column_names(&primary_key.columns)?;
+            Ok(ColumnOperation::SetPrimaryKey { columns })
+        },
+        TableConstraint::PrimaryKeyUsingIndex(_)
+        | TableConstraint::UniqueUsingIndex(_)
+        | TableConstraint::Index(_)
+        | TableConstraint::FulltextOrSpatial(_) => Ok(ColumnOperation::AcceptedConstraint {
+            summary: "ADD CONSTRAINT".to_string(),
+        }),
+    }
+}
+
+fn foreign_key_action(action: Option<&ReferentialAction>) -> ForeignKeyAction {
+    match action {
+        Some(ReferentialAction::Restrict) => ForeignKeyAction::Restrict,
+        Some(ReferentialAction::Cascade) => ForeignKeyAction::Cascade,
+        Some(ReferentialAction::SetNull) => ForeignKeyAction::SetNull,
+        Some(ReferentialAction::SetDefault) => ForeignKeyAction::SetDefault,
+        Some(ReferentialAction::NoAction) | None => ForeignKeyAction::NoAction,
+    }
+}
+
+fn constraint_label(name: Option<&Ident>, fallback: &str) -> String {
+    name.map(|ident| ident.value.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn ident_names(columns: &[Ident], required: bool) -> DdlResult<Vec<String>> {
+    let names = columns
+        .iter()
+        .filter(|ident| !ident.value.is_empty())
+        .map(|ident| ident.value.clone())
+        .collect::<Vec<_>>();
+    if names.len() != columns.len() || (required && names.is_empty()) {
+        return Err("constraint requires a column name".to_string());
+    }
+    Ok(names)
+}
+
+fn constraint_column_names(columns: &[IndexColumn]) -> DdlResult<Vec<String>> {
+    let mut names = Vec::with_capacity(columns.len());
+    for column in columns {
+        match &column.column.expr {
+            Expr::Identifier(ident) if !ident.value.is_empty() => {
+                names.push(ident.value.clone());
+            },
+            Expr::CompoundIdentifier(parts) => {
+                let Some(ident) = parts.last().filter(|ident| !ident.value.is_empty()) else {
+                    return Err("constraint requires a column name".to_string());
+                };
+                names.push(ident.value.clone());
+            },
+            _ => {
+                return Err(
+                    "constraint expressions are not supported; use a column name".to_string()
+                );
+            },
+        }
+    }
+    if names.is_empty() {
+        return Err("constraint requires a column".to_string());
+    }
+    Ok(names)
 }
 
 fn build_add_column_operation(
@@ -366,6 +548,7 @@ fn build_add_column_operation(
         nullable,
         default_value,
         if_not_exists,
+        character_maximum_length: character_maximum_length(&column_def.data_type),
     })
 }
 
@@ -658,6 +841,22 @@ mod tests {
     }
 
     #[test]
+    fn add_varchar_keeps_character_maximum_length() {
+        let stmt = AlterTableStatement::parse(
+            "ALTER TABLE messages ADD COLUMN name VARCHAR(255)",
+            &test_namespace(),
+        )
+        .unwrap();
+        match stmt.operation {
+            ColumnOperation::Add {
+                character_maximum_length,
+                ..
+            } => assert_eq!(character_maximum_length, Some(255)),
+            other => panic!("expected add column, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_parse_add_column() {
         let stmt = AlterTableStatement::parse(
             "ALTER TABLE messages ADD COLUMN age INT",
@@ -683,6 +882,127 @@ mod tests {
                 assert!(!if_not_exists);
             },
             _ => panic!("Expected Add operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_add_unique_and_foreign_key_constraints() {
+        let unique = AlterTableStatement::parse(
+            "ALTER TABLE directus_users ADD CONSTRAINT directus_users_email_unique UNIQUE (email)",
+            &test_namespace(),
+        )
+        .unwrap();
+        match unique.operation {
+            ColumnOperation::CreateScalarIndex {
+                name,
+                columns,
+                unique,
+                if_not_exists,
+            } => {
+                assert_eq!(name, "directus_users_email_unique");
+                assert_eq!(columns, vec!["email".to_string()]);
+                assert!(unique);
+                assert!(!if_not_exists);
+            },
+            other => panic!("expected unique index, got {other:?}"),
+        }
+
+        let foreign_key = AlterTableStatement::parse(
+            "ALTER TABLE directus_users ADD CONSTRAINT directus_users_role_foreign FOREIGN KEY \
+             (role) REFERENCES directus_roles (id)",
+            &test_namespace(),
+        )
+        .unwrap();
+        match foreign_key.operation {
+            ColumnOperation::AlignForeignKey {
+                columns,
+                referenced_table,
+                referenced_columns,
+                on_update,
+                on_delete,
+                ..
+            } => {
+                assert_eq!(columns, vec!["role".to_string()]);
+                assert_eq!(referenced_table.as_str(), "directus_roles");
+                assert_eq!(referenced_columns, vec!["id".to_string()]);
+                assert_eq!(on_update, ForeignKeyAction::NoAction);
+                assert_eq!(on_delete, ForeignKeyAction::NoAction);
+            },
+            other => panic!("expected foreign key alignment, got {other:?}"),
+        }
+
+        let drop_constraint = AlterTableStatement::parse(
+            "ALTER TABLE \"directus_fields\" DROP CONSTRAINT \
+             \"directus_fields_collection_foreign\"",
+            &test_namespace(),
+        )
+        .unwrap();
+        match drop_constraint.operation {
+            ColumnOperation::DropConstraint { name } => {
+                assert_eq!(name, "directus_fields_collection_foreign");
+            },
+            other => panic!("expected drop constraint, got {other:?}"),
+        }
+
+        let batch = AlterTableStatement::parse(
+            "ALTER TABLE directus_relations DROP CONSTRAINT \
+             directus_relations_one_collection_foreign, DROP CONSTRAINT \
+             directus_relations_many_collection_foreign",
+            &test_namespace(),
+        )
+        .unwrap();
+        match batch.operation {
+            ColumnOperation::Batch(operations) => {
+                assert_eq!(operations.len(), 2);
+                assert!(matches!(
+                    &operations[0],
+                    ColumnOperation::DropConstraint { name }
+                        if name == "directus_relations_one_collection_foreign"
+                ));
+                assert!(matches!(
+                    &operations[1],
+                    ColumnOperation::DropConstraint { name }
+                        if name == "directus_relations_many_collection_foreign"
+                ));
+            },
+            other => panic!("expected batched drop constraints, got {other:?}"),
+        }
+
+        let primary_key = AlterTableStatement::parse(
+            "ALTER TABLE directus_extensions ADD CONSTRAINT directus_extensions_pkey PRIMARY KEY \
+             (id)",
+            &test_namespace(),
+        )
+        .unwrap();
+        match primary_key.operation {
+            ColumnOperation::SetPrimaryKey { columns } => {
+                assert_eq!(columns, vec!["id".to_string()]);
+            },
+            other => panic!("expected primary key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn foreign_key_on_delete_cascade_is_kept() {
+        let statement = AlterTableStatement::parse(
+            "ALTER TABLE articles ADD CONSTRAINT articles_author_foreign FOREIGN KEY (author) \
+             REFERENCES authors (id) ON UPDATE NO ACTION ON DELETE CASCADE",
+            &test_namespace(),
+        )
+        .unwrap();
+        match statement.operation {
+            ColumnOperation::AlignForeignKey {
+                name,
+                on_update,
+                on_delete,
+                ..
+            } => {
+                assert_eq!(name, "articles_author_foreign");
+                assert_eq!(on_update, ForeignKeyAction::NoAction);
+                assert_eq!(on_delete, ForeignKeyAction::Cascade);
+                assert_eq!(on_delete.pg_code(), "c");
+            },
+            other => panic!("expected foreign key, got {other:?}"),
         }
     }
 

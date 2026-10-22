@@ -70,14 +70,16 @@ pub(crate) fn reject_access_level_sql(sql: &str) -> DdlResult<()> {
 
 pub use alter_domain::{AlterDomainOperation, AlterDomainStatement};
 pub use alter_namespace::AlterSchemaStatement;
-pub use alter_table::{AlterTableStatement, ColumnOperation, TablePropertyUpdates};
+pub use alter_table::{
+    AlterTableStatement, ColumnOperation, StandaloneIndexName, TablePropertyUpdates,
+};
 pub use alter_type::{AlterTypeOperation, AlterTypeStatement, EnumValueNeighbor};
 pub use backup_namespace::BackupDatabaseStatement;
 pub use call::CallStatement;
 pub use comment::{CommentOnStatement, CommentOnTarget};
 pub use compact_commands::{CompactAllTablesStatement, CompactTableStatement};
 pub use create_domain::{CreateDomainStatement, DomainCheckClause};
-pub use create_index::parse_create_index_on;
+pub use create_index::{parse_alter_index, parse_create_index_on, parse_drop_index};
 pub use create_namespace::CreateNamespaceStatement;
 pub use create_procedure::{
     encode_config_changes, AlterRoutineAction, AlterRoutineStatement, CreateProcedureStatement,

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum RoutineNullSafety {
     /// Body is invoked even when an argument is `NULL` (`CALLED ON NULL INPUT`).
     CalledOnNullInput,
-    /// Returns `NULL` immediately when any argument is `NULL` (`RETURNS NULL ON NULL INPUT` / `STRICT`).
+    /// Returns `NULL` immediately when any argument is `NULL` (`RETURNS NULL ON NULL INPUT` /
+    /// `STRICT`).
     ReturnsNullOnNullInput,
 }
 

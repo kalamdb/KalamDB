@@ -91,6 +91,19 @@ pub fn is_reserved_sql_keyword(name: &str) -> bool {
 }
 
 pub fn validate_sql_identifier(name: &str) -> Result<(), SqlIdentifierError> {
+    validate_sql_identifier_inner(name, false)
+}
+
+/// Table and column names. Unquoted characters come from PostgreSQL
+/// (`is_identifier_start` / `is_identifier_part`). A hyphen is not one of
+/// those characters; it is allowed here because sqlparser already accepted
+/// it inside a quoted identifier and stored the bare `Ident` value.
+/// Namespaces stay on [`validate_sql_identifier`].
+pub fn validate_relation_identifier(name: &str) -> Result<(), SqlIdentifierError> {
+    validate_sql_identifier_inner(name, true)
+}
+
+fn validate_sql_identifier_inner(name: &str, allow_hyphen: bool) -> Result<(), SqlIdentifierError> {
     if name.is_empty() {
         return Err(SqlIdentifierError::Empty);
     }
@@ -111,10 +124,7 @@ pub fn validate_sql_identifier(name: &str) -> Result<(), SqlIdentifierError> {
         return Err(SqlIdentifierError::StartsWithNumber);
     }
 
-    if !name
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || character == '_')
-    {
+    if !sql_identifier_characters_ok(name, allow_hyphen) {
         return Err(SqlIdentifierError::InvalidCharacters(name.to_string()));
     }
 
@@ -123,6 +133,36 @@ pub fn validate_sql_identifier(name: &str) -> Result<(), SqlIdentifierError> {
     }
 
     Ok(())
+}
+
+/// Unquoted PostgreSQL identifier start. Same rule as
+/// `PostgreSqlDialect::is_identifier_start`, which `KalamDbDialect` uses
+/// while tokenizing. A dialect test keeps the two in lockstep.
+pub fn is_postgresql_identifier_start(character: char) -> bool {
+    character.is_alphabetic() || character == '_' || !character.is_ascii()
+}
+
+/// Unquoted PostgreSQL identifier continuation, including `$`.
+/// Same rule as `PostgreSqlDialect::is_identifier_part`.
+pub fn is_postgresql_identifier_part(character: char) -> bool {
+    character.is_alphabetic()
+        || character.is_ascii_digit()
+        || character == '$'
+        || character == '_'
+        || !character.is_ascii()
+}
+
+/// `allow_hyphen` covers a quoted identifier whose quotes the parser already
+/// removed. `-` is not an unquoted identifier character.
+fn sql_identifier_characters_ok(name: &str, allow_hyphen: bool) -> bool {
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    is_postgresql_identifier_start(first)
+        && characters.all(|character| {
+            is_postgresql_identifier_part(character) || (allow_hyphen && character == '-')
+        })
 }
 
 pub fn validate_user_namespace_name(name: &str) -> Result<(), SqlIdentifierError> {
@@ -187,6 +227,21 @@ mod tests {
     fn validate_sql_identifier_rejects_hyphens() {
         let err = validate_sql_identifier("dev-test1").unwrap_err();
         assert_eq!(err, SqlIdentifierError::InvalidCharacters("dev-test1".to_string()));
+    }
+
+    #[test]
+    fn validate_relation_identifier_allows_hyphens() {
+        assert!(validate_relation_identifier("collections_33e613c6-86c0-4d24-998c-eb498861b614")
+            .is_ok());
+        assert!(validate_relation_identifier("full-name").is_ok());
+        assert!(validate_sql_identifier("full-name").is_err());
+    }
+
+    #[test]
+    fn validate_sql_identifier_uses_postgresql_identifier_characters() {
+        assert!(validate_sql_identifier("a$b").is_ok());
+        assert!(validate_sql_identifier("café").is_ok());
+        assert!(validate_sql_identifier("a-b").is_err());
     }
 
     #[test]

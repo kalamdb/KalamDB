@@ -158,7 +158,7 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableOptions, TableType},
-        InvalidationStrategy, SchemaId, PolicyScalar, PrincipalExpr, TableId, TableName,
+        InvalidationStrategy, PolicyScalar, PrincipalExpr, SchemaId, TableId, TableName,
     };
 
     use super::*;

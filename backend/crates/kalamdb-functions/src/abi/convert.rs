@@ -118,25 +118,14 @@ fn read_view_batches_to_v8<'s>(
     let global = scope.get_current_context().global(scope);
     if let Ok(key) = string_to_v8(scope, "__kalamReadViewAt") {
         if let Some(val) = global.get(scope, key.into()) {
-            let _ = object.create_data_property(
-                scope,
-                string_to_v8(scope, "at")?.into(),
-                val,
-            );
+            let _ = object.create_data_property(scope, string_to_v8(scope, "at")?.into(), val);
         }
     }
     if let Ok(key) = string_to_v8(scope, "__kalamReadViewMaterialize") {
         if let Some(val) = global.get(scope, key.into()) {
-            let _ = object.create_data_property(
-                scope,
-                string_to_v8(scope, "materialize")?.into(),
-                val,
-            );
-            let _ = object.create_data_property(
-                scope,
-                string_to_v8(scope, "toArray")?.into(),
-                val,
-            );
+            let _ =
+                object.create_data_property(scope, string_to_v8(scope, "materialize")?.into(), val);
+            let _ = object.create_data_property(scope, string_to_v8(scope, "toArray")?.into(), val);
         }
     }
     Ok(object.into())
@@ -216,8 +205,9 @@ fn extract_read_view_handle<'s>(
     if ptr.is_null() {
         return None;
     }
-    // SAFETY: created in `attach_read_view_handle` with `Box::into_raw(Box::new(NativeReadViewHandle))`
-    // and only ever read on the isolate thread while the isolate is alive.
+    // SAFETY: created in `attach_read_view_handle` with
+    // `Box::into_raw(Box::new(NativeReadViewHandle))` and only ever read on the isolate thread
+    // while the isolate is alive.
     Some(unsafe { (*ptr).clone() })
 }
 
@@ -385,7 +375,9 @@ pub fn v8_to_routine<'s>(
                             let mut columns = Vec::with_capacity(expected_fields.len());
                             let mut fields_match = true;
                             for field in expected_fields.iter() {
-                                if let Some((col_idx, _)) = batch.schema().column_with_name(field.name()) {
+                                if let Some((col_idx, _)) =
+                                    batch.schema().column_with_name(field.name())
+                                {
                                     let col = batch.column(col_idx);
                                     if col.data_type() == field.data_type() {
                                         columns.push(col.slice(local_row, 1));
@@ -402,7 +394,9 @@ pub fn v8_to_routine<'s>(
                                     None,
                                     1,
                                 )
-                                .map_err(|error| FunctionsError::Invalid(format!("struct slice: {error}")))?;
+                                .map_err(|error| {
+                                    FunctionsError::Invalid(format!("struct slice: {error}"))
+                                })?;
                                 return Ok(RoutineValue {
                                     type_id:           template.type_id.clone(),
                                     value:             ScalarValue::Struct(Arc::new(struct_array)),
@@ -755,7 +749,11 @@ fn v8_to_scalar<'s>(
         },
         DataType::Date32 => {
             let v = js_to_i64(scope, value);
-            let days = if v.abs() >= 86_400_000 { (v / 86_400_000) as i32 } else { v as i32 };
+            let days = if v.abs() >= 86_400_000 {
+                (v / 86_400_000) as i32
+            } else {
+                v as i32
+            };
             Ok(ScalarValue::Date32(Some(days)))
         },
         DataType::Date64 => Ok(ScalarValue::Date64(Some(js_to_i64(scope, value)))),

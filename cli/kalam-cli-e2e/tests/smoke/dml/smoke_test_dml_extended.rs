@@ -34,8 +34,7 @@ fn smoke_test_multi_row_insert() {
     println!("🧪 Testing multi-row INSERT");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -87,8 +86,7 @@ fn smoke_test_multi_row_insert() {
     println!("✅ Verified all 4 rows inserted correctly");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for USER tables
@@ -113,8 +111,7 @@ fn smoke_test_soft_delete_user_table() {
     println!("🧪 Testing soft DELETE for USER table");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -194,8 +191,7 @@ fn smoke_test_soft_delete_user_table() {
     );
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test non-point UPDATE for USER tables after a batch insert.
@@ -216,8 +212,7 @@ fn smoke_test_non_point_update_user_table_after_batch_insert() {
     let table = generate_unique_table("non_point_update_test");
     let full_table = format!("{}.{}", namespace, table);
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -245,8 +240,7 @@ fn smoke_test_non_point_update_user_table_after_batch_insert() {
     assert!(output.contains("Bobby"), "Expected updated row in output: {}", output);
     assert!(!output.contains("\"Bob\""), "Expected old value to be gone: {}", output);
 
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test soft DELETE for SHARED tables
@@ -269,8 +263,7 @@ fn smoke_test_soft_delete_shared_table() {
     println!("🧪 Testing soft DELETE for SHARED table");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -308,8 +301,7 @@ fn smoke_test_soft_delete_shared_table() {
     println!("✅ Verified SHARED table uses soft delete");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test hard DELETE for STREAM tables
@@ -333,8 +325,7 @@ fn smoke_test_hard_delete_stream_table() {
     println!("🧪 Testing hard DELETE for STREAM table");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -406,8 +397,7 @@ fn smoke_test_hard_delete_stream_table() {
     }
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test aggregation queries (COUNT, SUM, GROUP BY)
@@ -433,8 +423,7 @@ fn smoke_test_aggregation_queries() {
     println!("🧪 Testing aggregation queries");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -534,8 +523,7 @@ fn smoke_test_aggregation_queries() {
     println!("✅ All aggregation queries successful");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 /// Test multi-row UPDATE
@@ -559,8 +547,7 @@ fn smoke_test_multi_row_update() {
     println!("🧪 Testing multi-row UPDATE (PK-based updates)");
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
@@ -623,6 +610,5 @@ fn smoke_test_multi_row_update() {
     println!("✅ Verified multi-row UPDATE affected all matching rows");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

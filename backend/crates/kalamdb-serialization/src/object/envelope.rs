@@ -188,7 +188,8 @@ pub(crate) fn decode_envelope(
     };
     if flags & !supported_mask != 0 {
         return Err(SerializationError::Decode(format!(
-            "unsupported envelope flags 0x{flags:04x} for {object_kind:?} (supported mask 0x{supported_mask:04x})"
+            "unsupported envelope flags 0x{flags:04x} for {object_kind:?} (supported mask \
+             0x{supported_mask:04x})"
         )));
     }
     let payload_len = u32::from_le_bytes([bytes[11], bytes[12], bytes[13], bytes[14]]) as usize;

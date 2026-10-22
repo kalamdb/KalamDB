@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{SchemaId, RoutineId, TopicId, TriggerId, UserId},
+    models::{RoutineId, SchemaId, TopicId, TriggerId, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};

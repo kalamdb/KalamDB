@@ -36,7 +36,7 @@ pub struct QueryRequest {
     pub sql: String,
 
     /// Optional query parameters for parameterized queries ($1, $2, ...).
-    /// Parameters are validated (max 50 params, 512KB each) before execution.
+    /// Parameters are validated (max 65535 params, 512KB each) before execution.
     /// Supported types: null, bool, integers, floats, strings, timestamps.
     #[serde(default)]
     pub params: Option<Vec<JsonValue>>,

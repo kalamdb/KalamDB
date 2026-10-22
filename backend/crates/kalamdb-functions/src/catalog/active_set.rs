@@ -110,7 +110,7 @@ pub struct FunctionExecutionRoot {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{SchemaId, RoutineId, RoutineSecurityMode, UserId},
+        models::{RoutineId, RoutineSecurityMode, SchemaId, UserId},
         ArtifactId, FunctionModuleId, Role,
     };
 

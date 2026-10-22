@@ -371,7 +371,8 @@ fn kobj_functions_rest_json_errors_and_sql_cast() {
     assert_eq!(parsed["text"], "pos", "{parsed}");
 
     let sql_rows = query_rows(&format!(
-        "SELECT {ns}.echo_json(CAST('{{\"conversationId\":\"c4\",\"text\":\"sql\"}}' AS JSON)) AS result"
+        "SELECT {ns}.echo_json(CAST('{{\"conversationId\":\"c4\",\"text\":\"sql\"}}' AS JSON)) AS \
+         result"
     ));
     let sql_parsed = json_result(&sql_rows[0]);
     assert_eq!(

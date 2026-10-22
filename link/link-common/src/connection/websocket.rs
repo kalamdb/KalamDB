@@ -20,13 +20,14 @@ use tokio::{
     time::Instant as TokioInstant,
 };
 use tokio_tungstenite::{
-    client_async_tls_with_config, Connector,
+    client_async_tls_with_config,
     tungstenite::{
         error::{Error as WsError, UrlError},
         handshake::client::Response as WsResponse,
         http::header::{HeaderValue, AUTHORIZATION},
         protocol::Message,
     },
+    Connector,
 };
 
 use super::{

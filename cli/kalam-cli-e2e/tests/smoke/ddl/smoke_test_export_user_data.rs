@@ -304,8 +304,7 @@ fn smoke_export_user_data_job_completes() {
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -424,8 +423,7 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -624,8 +622,7 @@ fn smoke_export_download_zip_is_valid() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -936,8 +933,7 @@ fn smoke_export_user_data_download_and_reimport() {
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source_fqn));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target_fqn));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -1036,8 +1032,7 @@ fn smoke_export_download_forbidden_for_other_user() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_a));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_b));
 }

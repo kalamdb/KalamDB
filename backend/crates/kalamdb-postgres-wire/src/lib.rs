@@ -1,6 +1,5 @@
 //! PostgreSQL wire protocol adapter for KalamDB.
 #![recursion_limit = "256"]
-//!
 //! This crate owns the connection: startup, extended-query messages, and row
 //! encoding. SQL behavior is `SqlExecutor` on the shared DataFusion session, so
 //! the same statements work on `/api/sql`.

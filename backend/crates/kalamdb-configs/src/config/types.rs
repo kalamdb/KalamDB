@@ -1161,6 +1161,12 @@ pub struct PostgresWireSettings {
     /// Maximum portals tracked per wire connection.
     #[serde(default = "default_postgres_wire_portal_limit")]
     pub portal_limit: usize,
+
+    /// Include storage columns such as `_version` and `_deleted` in `SELECT *`.
+    ///
+    /// An explicit `SELECT _version` still works when this is false.
+    #[serde(default = "default_postgres_wire_show_system_columns")]
+    pub show_system_columns: bool,
 }
 
 /// PostgreSQL extension gRPC bridge settings.
@@ -1191,6 +1197,7 @@ impl Default for PostgresWireSettings {
             tls_key_path:             None,
             prepared_statement_limit: default_postgres_wire_prepared_statement_limit(),
             portal_limit:             default_postgres_wire_portal_limit(),
+            show_system_columns:      default_postgres_wire_show_system_columns(),
         }
     }
 }

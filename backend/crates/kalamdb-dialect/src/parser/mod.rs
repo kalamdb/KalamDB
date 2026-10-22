@@ -25,6 +25,8 @@ pub mod extensions;
 mod kalam;
 mod pg_unnest;
 pub mod query_parser;
+mod sort_alias;
+mod star_columns;
 pub mod system;
 pub mod utils;
 
@@ -33,9 +35,9 @@ pub use dml::{
     conflict_target_is_primary_key, expr_to_scalar, expr_to_scalar_with_params,
     insert_from_statement, insert_has_on_conflict, insert_returning_items, is_default_expr,
     on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
-    parse_on_conflict_action_with_params, single_values_insert_row, sql_value_to_scalar,
-    strip_nested_expr, validate_primary_key_conflict_target, values_insert_view,
-    values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
+    parse_on_conflict_action_with_params, returning_describe_sql, single_values_insert_row,
+    sql_value_to_scalar, strip_nested_expr, validate_primary_key_conflict_target,
+    values_insert_view, values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
     OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
     ValuesInsertShapeOptions, ValuesInsertView,
 };
@@ -45,6 +47,7 @@ pub use explain::{
 pub use extensions::*;
 pub use kalam::KalamParser;
 pub use query_parser::*;
+pub use star_columns::{expand_stars_without_storage_columns, storage_star_table_names};
 pub use system::*;
 pub use utils::{
     apply_datafusion_ast_rewrites, extract_dml_table_id, extract_dml_table_id_fast,

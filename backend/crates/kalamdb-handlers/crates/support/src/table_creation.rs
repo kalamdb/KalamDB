@@ -202,8 +202,15 @@ pub fn build_table_definition(
                 default_val,
                 None,
             );
+            column.character_maximum_length =
+                kalamdb_commons::conversions::read_character_maximum_length(field);
             if let Some(type_ref) = stmt.column_type_refs.get(field.name()) {
-                apply_column_type_ref(app_context.as_ref(), &stmt.namespace_id, &mut column, type_ref)?;
+                apply_column_type_ref(
+                    app_context.as_ref(),
+                    &stmt.namespace_id,
+                    &mut column,
+                    type_ref,
+                )?;
             }
             Ok(column)
         })
@@ -357,6 +364,8 @@ pub fn apply_column_type_ref(
         kalamdb_commons::LogicalTypeRef::jsonb()
     } else if type_ref.name.eq_ignore_ascii_case("timestamptz") {
         kalamdb_commons::LogicalTypeRef::timestamptz()
+    } else if type_ref.name.eq_ignore_ascii_case("geometry") {
+        kalamdb_commons::LogicalTypeRef::geometry()
     } else {
         kalamdb_commons::LogicalTypeRef::from_builtin(
             type_ref.builtin_data_type().unwrap_or_else(|| column.data_type()),

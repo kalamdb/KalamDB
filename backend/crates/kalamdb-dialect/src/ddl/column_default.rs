@@ -1,7 +1,9 @@
 //! Parse DEFAULT expressions into the shared `CALL` models.
 
 use kalamdb_commons::{
-    models::{is_builtin_default_name, normalize_builtin_name, CallArgument, RoutineCall},
+    models::{
+        is_builtin_default_name, normalize_builtin_name, BuiltinDefault, CallArgument, RoutineCall,
+    },
     schemas::ColumnDefault,
     KalamDataType, RoutineId, SchemaId,
 };
@@ -24,21 +26,20 @@ pub fn expr_to_column_default(
         },
         Expr::Value(value) => Ok(value_to_literal_default(&value.value)),
         Expr::Identifier(identifier) => {
-            let normalized = identifier.value.to_ascii_uppercase();
-            match normalized.as_str() {
-                "CURRENT_TIMESTAMP" => Ok(ColumnDefault::function("NOW", vec![])),
-                "CURRENT_USER" => Ok(ColumnDefault::function("CURRENT_USER", vec![])),
-                "NULL" => Ok(ColumnDefault::literal(JsonValue::Null)),
-                _ => Ok(ColumnDefault::literal(JsonValue::String(identifier.value.clone()))),
+            if identifier.value.eq_ignore_ascii_case("null") {
+                return Ok(ColumnDefault::literal(JsonValue::Null));
             }
+            if let Some(builtin) = BuiltinDefault::parse(&identifier.value) {
+                return Ok(ColumnDefault::function(builtin.canonical_name(), vec![]));
+            }
+            Ok(ColumnDefault::literal(JsonValue::String(identifier.value.clone())))
         },
         _ => {
             let literal = expr.to_string();
-            let normalized = literal.to_ascii_uppercase();
-            if normalized == "NULL" {
+            if literal.eq_ignore_ascii_case("null") {
                 Ok(ColumnDefault::literal(JsonValue::Null))
-            } else if normalized == "CURRENT_TIMESTAMP" || normalized == "NOW()" {
-                Ok(ColumnDefault::function("NOW", vec![]))
+            } else if let Some(builtin) = builtin_default_text(&literal) {
+                Ok(ColumnDefault::function(builtin.canonical_name(), vec![]))
             } else {
                 let val = literal.trim_matches('\'').to_string();
                 Ok(ColumnDefault::literal(JsonValue::String(val)))
@@ -136,6 +137,16 @@ pub fn function_to_routine_call_with_placeholders(
     let (arguments, named_arguments) = function_args_to_call_arguments(&func.args)?;
     let routine_id = routine_id_from_function_name(&func.name, default_namespace)?;
     Ok(RoutineCall::with_named_arguments(routine_id, arguments, named_arguments))
+}
+
+fn builtin_default_text(text: &str) -> Option<BuiltinDefault> {
+    let trimmed = text.trim();
+    let bare = trimmed.strip_suffix("()").unwrap_or(trimmed).trim();
+    let call = format!("{bare}()");
+    if !trimmed.eq_ignore_ascii_case(bare) && !trimmed.eq_ignore_ascii_case(&call) {
+        return None;
+    }
+    BuiltinDefault::parse(bare)
 }
 
 fn function_to_routine_call(

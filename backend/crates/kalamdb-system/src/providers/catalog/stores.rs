@@ -155,11 +155,7 @@ impl CatalogStores {
                     .expect("FunctionArtifacts is a table"),
                 Vec::new(),
             ),
-            schedules: IndexedEntityStore::new(
-                backend.clone(),
-                "system_schedules",
-                Vec::new(),
-            ),
+            schedules: IndexedEntityStore::new(backend.clone(), "system_schedules", Vec::new()),
             triggers: IndexedEntityStore::new(
                 backend.clone(),
                 SystemTable::Triggers.column_family_name().expect("Triggers is a table"),
@@ -791,7 +787,7 @@ impl CatalogStores {
             .collect())
     }
 
-    ///Ensure the built-in KalamDB extension types (`pg_catalog.file`, `pg_catalog.embedding`)
+    /// Ensure the built-in KalamDB extension types (`pg_catalog.file`, `pg_catalog.embedding`)
     /// and internal file functions (`file_put`, `file_read`, `file_delete`) are persisted once
     /// in the catalog so they survive restart with the same `TypeId`, `RoutineId`, and OID.
     pub fn ensure_builtin_extension_catalog(&self) -> Result<(), SystemError> {

@@ -3,8 +3,8 @@ use std::fs;
 use tempfile::TempDir;
 
 use crate::test_project_workflow_dev::{
-    create_isolated_cli_std_command, start_migration_tracking_server,
-    store_test_dev_credentials, update_dev_project, write_owned_instance,
+    create_isolated_cli_std_command, start_migration_tracking_server, store_test_dev_credentials,
+    update_dev_project, write_owned_instance,
 };
 
 #[test]
@@ -87,7 +87,10 @@ $fn$;
         fs::read_to_string(project_dir.join("src/generated/schema.ts")).expect("ts schema");
     assert!(ts_schema.contains("OrderState"), "expected OrderState enum in TS schema");
     assert!(ts_schema.contains("MoneyPair"), "expected MoneyPair struct in TS schema");
-    assert!(ts_schema.contains("PositiveQty"), "expected PositiveQty domain alias in TS schema");
+    assert!(
+        ts_schema.contains("PositiveQty"),
+        "expected PositiveQty domain alias in TS schema"
+    );
 
     let dart_schema =
         fs::read_to_string(project_dir.join("lib/generated/kalam.dart")).expect("dart schema");
@@ -96,7 +99,8 @@ $fn$;
         "expected AppPositiveQty typedef in Dart schema:\n{dart_schema}"
     );
 
-    // 4. Create initial migration and verify -- UP / -- DOWN marker handling with dollar-quoted body
+    // 4. Create initial migration and verify -- UP / -- DOWN marker handling with dollar-quoted
+    //    body
     let mut mig_create = create_isolated_cli_std_command(&isolated_home, &credentials_path);
     mig_create
         .current_dir(&project_dir)
@@ -180,7 +184,8 @@ $fn$;
     );
     assert!(!evolve_sql.contains("MODIFY COLUMN"));
 
-    // 6. Invalid edit recovery: introduce syntax error, verify failure without erasing generated files, then fix
+    // 6. Invalid edit recovery: introduce syntax error, verify failure without erasing generated
+    //    files, then fix
     fs::write(project_dir.join("schema.sql"), "CREATE TABLE app.broken (id );\n")
         .expect("write invalid schema");
     let mut bad_gen = create_isolated_cli_std_command(&isolated_home, &credentials_path);

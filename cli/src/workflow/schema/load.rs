@@ -1,7 +1,6 @@
 //! Compile the project schema contract from local SQL files.
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use kalamdb_commons::{
     datatypes::ToArrowType,
@@ -125,16 +124,19 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
         .to_arrow_type()
         .expect("KalamDataType::File has a canonical Arrow DataType");
 
-    snapshot.types.entry("pg_catalog.file".to_string()).or_insert_with(|| ContractType {
-        type_id: file_type_id.clone(),
-        schema:  "pg_catalog".to_string(),
-        name:    "file".to_string(),
-        kind:    ContractTypeKind::Composite {
-            fields: file_fields,
-        },
-        arrow:   file_arrow,
-        comment: None,
-    });
+    snapshot
+        .types
+        .entry("pg_catalog.file".to_string())
+        .or_insert_with(|| ContractType {
+            type_id: file_type_id.clone(),
+            schema:  "pg_catalog".to_string(),
+            name:    "file".to_string(),
+            kind:    ContractTypeKind::Composite {
+                fields: file_fields,
+            },
+            arrow:   file_arrow,
+            comment: None,
+        });
 
     for table in snapshot.tables.values_mut() {
         for field in &mut table.fields {
@@ -194,10 +196,8 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
             comment:     None,
         });
 
-    snapshot
-        .routines
-        .entry("pg_catalog.file_read".to_string())
-        .or_insert_with(|| ContractRoutine {
+    snapshot.routines.entry("pg_catalog.file_read".to_string()).or_insert_with(|| {
+        ContractRoutine {
             routine_id:  RoutineId::new("pg_catalog.file_read"),
             schema:      "pg_catalog".to_string(),
             name:        "file_read".to_string(),
@@ -215,19 +215,14 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
                 slot:        1,
                 dropped:     false,
             }],
-            return_type: Some(builtin_field(
-                "returns",
-                "BYTES",
-                KalamDataType::Bytes,
-                true,
-                0,
-            )),
+            return_type: Some(builtin_field("returns", "BYTES", KalamDataType::Bytes, true, 0)),
             language:    Some("INTERNAL".to_string()),
             security:    RoutineSecurityMode::Invoker,
             body:        None,
             grants:      BTreeSet::new(),
             comment:     None,
-        });
+        }
+    });
 
     snapshot
         .routines

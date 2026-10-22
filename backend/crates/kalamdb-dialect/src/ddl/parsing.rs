@@ -3,7 +3,9 @@
 //! This module provides reusable parsing functions to eliminate code duplication
 //! across DDL statement parsers.
 
-use crate::ddl::DdlResult;
+use sqlparser::{parser::Parser, tokenizer::Token};
+
+use crate::{ddl::DdlResult, dialect::KalamDbDialect};
 
 /// True when `input` begins with ASCII `prefix`, compared without allocating.
 #[inline]
@@ -356,10 +358,10 @@ pub fn parse_optional_in_clause(sql: &str, command: &str) -> DdlResult<Option<St
             let ns = parts_orig
                 .next()
                 .ok_or_else(|| "Namespace name required after IN NAMESPACE".to_string())?;
-            Ok(Some(unquote_sql_identifier(ns)))
+            Ok(Some(parse_one_identifier(ns)?))
         } else {
             // Classic form: IN <namespace>
-            Ok(Some(unquote_sql_identifier(first_token_orig)))
+            Ok(Some(parse_one_identifier(first_token_orig)?))
         }
     } else if sql_upper.ends_with(" IN") {
         Err("Namespace name required after IN".to_string())
@@ -422,12 +424,53 @@ pub fn parse_create_drop_statement(
         } else {
             0
         };
-    let name = tokens
+    let raw_name = tokens
         .get(skip_tokens)
-        .ok_or_else(|| format!("Entity name is required after {}", command))?
-        .to_string();
+        .ok_or_else(|| format!("Entity name is required after {}", command))?;
+    let name = unquote_qualified_ident(raw_name);
 
     Ok((name, has_if_clause))
+}
+
+/// Strip PostgreSQL double quotes from an identifier, including `"schema"."table"`.
+fn unquote_qualified_ident(name: &str) -> String {
+    split_qualified_ident(name)
+        .into_iter()
+        .map(unquote_sql_ident)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn split_qualified_ident(name: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_quotes = false;
+    let bytes = name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if in_quotes && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                i += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+        } else if bytes[i] == b'.' && !in_quotes {
+            parts.push(&name[start..i]);
+            start = i + 1;
+        }
+        i += 1;
+    }
+    parts.push(&name[start..]);
+    parts
+}
+
+fn unquote_sql_ident(name: &str) -> String {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        name[1..name.len() - 1].replace("\"\"", "\"")
+    } else {
+        name.to_string()
+    }
 }
 
 /// Extract an identifier from a specific token position
@@ -473,90 +516,55 @@ pub fn validate_no_extra_tokens(
     Ok(())
 }
 
-/// Parse a potentially qualified table reference (namespace.table or just table)
+/// Parse `table` or `namespace.table` with `KalamDbDialect`.
 ///
-/// # Returns
-///
-/// Tuple of (Option<namespace>, table_name)
-///
-/// # Examples
-///
-/// ```ignore
-/// let (ns, table) = parse_table_reference("prod.events")?;
-/// assert_eq!(ns, Some("prod"));
-/// assert_eq!(table, "events");
-///
-/// let (ns, table) = parse_table_reference("users")?;
-/// assert_eq!(ns, None);
-/// assert_eq!(table, "users");
-/// ```
+/// Quoted identifiers, including hyphens, come from the parser. This does not
+/// split on `.` or strip quotes by hand.
 pub fn parse_table_reference(table_ref: &str) -> DdlResult<(Option<String>, String)> {
-    // Basic validation: table reference should not contain SQL keywords or complex expressions
     let trimmed = table_ref.trim();
     if trimmed.is_empty() {
         return Err("Table reference cannot be empty".to_string());
     }
 
-    // Check for SQL keywords that indicate this is not a simple table reference
-    let sql_keywords = [
-        "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER",
-    ];
-    let upper_ref = trimmed.to_uppercase();
-    for keyword in &sql_keywords {
-        if upper_ref.contains(&format!(" {}", keyword)) || upper_ref.starts_with(keyword) {
-            return Err(format!(
-                "Invalid table reference '{}'. Table references should be simple identifiers like \
-                 'table' or 'namespace.table', not SQL statements",
-                table_ref
-            ));
-        }
-    }
-
-    // Check for spaces (indicates complex expression)
-    if trimmed.contains(' ') {
+    let dialect = KalamDbDialect::new();
+    let mut parser =
+        Parser::new(&dialect).try_with_sql(trimmed).map_err(|error| error.to_string())?;
+    let name = parser.parse_object_name(false).map_err(|_| {
+        format!("Invalid table reference '{table_ref}'. Expected 'table' or 'namespace.table'")
+    })?;
+    if parser.peek_token().token != Token::EOF {
         return Err(format!(
-            "Invalid table reference '{}'. Table references should not contain spaces",
-            table_ref
+            "Invalid table reference '{table_ref}'. Table references should be simple identifiers \
+             like 'table' or 'namespace.table', not SQL statements"
         ));
     }
 
-    let mut parts = trimmed.split('.');
-    let first = parts.next();
-    let second = parts.next();
-    let third = parts.next();
-    match (first, second, third) {
-        (Some(table), None, None) => {
-            let table = unquote_sql_identifier(table);
-            if table.is_empty() {
-                return Err("Table name cannot be empty".to_string());
-            }
-            Ok((None, table))
-        },
-        (Some(namespace), Some(table), None) => {
-            let namespace = unquote_sql_identifier(namespace);
-            let table = unquote_sql_identifier(table);
-            if namespace.is_empty() {
-                return Err("Namespace name cannot be empty".to_string());
-            }
-            if table.is_empty() {
-                return Err("Table name cannot be empty".to_string());
-            }
-            Ok((Some(namespace), table))
-        },
+    let mut idents = Vec::with_capacity(name.0.len());
+    for part in &name.0 {
+        let Some(ident) = part.as_ident() else {
+            return Err("Function-based table references are not supported".to_string());
+        };
+        if ident.value.is_empty() {
+            return Err("Table name cannot be empty".to_string());
+        }
+        idents.push(ident.value.clone());
+    }
+
+    match idents.as_slice() {
+        [table] => Ok((None, table.clone())),
+        [namespace, table] => Ok((Some(namespace.clone()), table.clone())),
         _ => Err(format!(
-            "Invalid table reference '{}'. Expected 'table' or 'namespace.table'",
-            table_ref
+            "Invalid table reference '{table_ref}'. Expected 'table' or 'namespace.table'"
         )),
     }
 }
 
-fn unquote_sql_identifier(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
-        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
-    } else {
-        trimmed.to_string()
+fn parse_one_identifier(value: &str) -> DdlResult<String> {
+    let (namespace, name) = parse_table_reference(value)?;
+    if namespace.is_some() {
+        return Err(format!("Invalid identifier '{value}'. Expected a single name"));
     }
+    Ok(name)
 }
 
 /// Extract table reference after a command prefix
@@ -678,6 +686,23 @@ mod tests {
         assert_eq!(name, "app");
         assert!(has_if);
 
+        let (name, has_if) = parse_create_drop_statement(
+            "DROP TABLE \"directus_webhooks\" CASCADE",
+            "DROP TABLE",
+            "IF EXISTS",
+        )
+        .unwrap();
+        assert_eq!(name, "directus_webhooks");
+        assert!(!has_if);
+
+        let (name, _) = parse_create_drop_statement(
+            "DROP TABLE \"app\".\"directus_webhooks\"",
+            "DROP TABLE",
+            "IF EXISTS",
+        )
+        .unwrap();
+        assert_eq!(name, "app.directus_webhooks");
+
         // Preserve case
         let (name, _) = parse_create_drop_statement(
             "CREATE NAMESPACE MyApp",
@@ -734,6 +759,11 @@ mod tests {
         let (ns, table) = parse_table_reference("\"test_kalam_60\".\"users\"").unwrap();
         assert_eq!(ns, Some("test_kalam_60".to_string()));
         assert_eq!(table, "users");
+
+        // A name that merely starts with a keyword is still one identifier.
+        let (ns, table) = parse_table_reference("selection").unwrap();
+        assert_eq!(ns, None);
+        assert_eq!(table, "selection");
     }
 
     #[test]
@@ -742,6 +772,9 @@ mod tests {
         assert!(parse_table_reference("select * from users").is_err());
         assert!(parse_table_reference("SELECT * FROM users").is_err());
         assert!(parse_table_reference("users where id > 1").is_err());
+
+        // An unquoted hyphen is the minus operator, not part of the name.
+        assert!(parse_table_reference("my-table").is_err());
 
         // Spaces should be rejected
         assert!(parse_table_reference("my table").is_err());

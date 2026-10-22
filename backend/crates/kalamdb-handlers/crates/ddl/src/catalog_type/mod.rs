@@ -6,8 +6,8 @@ mod domain;
 mod drop;
 mod replicate;
 
-pub use alter::AlterTypeHandler;
 pub(crate) use alter::bump_enclosing_type_revisions;
+pub use alter::AlterTypeHandler;
 pub use create::{ensure_implicit_row_type, sync_implicit_row_type, CreateTypeHandler};
 pub(crate) use create::{require_procedure_types, resolve_named_type_id};
 pub use domain::{AlterDomainHandler, CreateDomainHandler, DropDomainHandler};

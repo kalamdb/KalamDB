@@ -572,7 +572,7 @@ mod tests {
 
     use async_trait::async_trait;
     use kalamdb_commons::{
-        models::{rows::Row, SchemaId, OperationKind},
+        models::{rows::Row, OperationKind, SchemaId},
         TableId, UserId,
     };
 

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{models::ReadContext, Role, SchemaId, TransactionId, UserId};
+use kalamdb_commons::{Role, SchemaId, TransactionId, UserId, models::ReadContext};
 use kalamdb_session::AuthSession;
-use kalamdb_session_datafusion::{install_extension, SessionConfigValues, SessionUserContext};
+use kalamdb_session_datafusion::{
+    PostgresStar, SessionConfigValues, SessionUserContext, install_extension,
+};
 use once_cell::sync::OnceCell;
 
 /// Unified execution context for SQL queries
@@ -26,6 +28,8 @@ pub struct ExecutionContext {
     base_session_context:    Arc<SessionContext>,
     /// Connection-scoped GUC values shared by `set_config` and `current_setting`.
     session_config:          Option<SessionConfigValues>,
+    /// When true, `SELECT *` omits storage columns. PostgreSQL clients set this.
+    hide_storage_star:       bool,
     /// Cached per-request SessionState with user context injected
     ///
     /// This avoids repeated allocations when a single request needs multiple
@@ -83,6 +87,7 @@ impl ExecutionContext {
             allow_stream_autocommit: false,
             base_session_context,
             session_config: Some(SessionConfigValues::new()),
+            hide_storage_star: false,
             session_context_cache: Arc::new(OnceCell::new()),
         }
     }
@@ -157,6 +162,16 @@ impl ExecutionContext {
             .expect("execution contexts always install settings")
     }
 
+    /// Omit storage columns from `SELECT *`.
+    ///
+    /// The wire listener calls this when `postgres_wire.show_system_columns` is
+    /// false. The extension bridge always calls it.
+    pub fn with_postgres_star(mut self) -> Self {
+        self.hide_storage_star = true;
+        self.session_context_cache = Arc::new(OnceCell::new());
+        self
+    }
+
     /// Share connection-scoped GUC storage with this request's DataFusion session.
     pub fn with_session_config(mut self, session_config: SessionConfigValues) -> Self {
         self.session_config = Some(session_config);
@@ -196,6 +211,7 @@ impl ExecutionContext {
         );
         ctx.transaction_id = self.transaction_id.clone();
         ctx.allow_stream_autocommit = self.allow_stream_autocommit;
+        ctx.hide_storage_star = self.hide_storage_star;
         ctx.session_config.clone_from(&self.session_config);
         ctx
     }
@@ -242,6 +258,9 @@ impl ExecutionContext {
         );
 
         install_extension(&mut session_state, session_user_context);
+        if self.hide_storage_star {
+            install_extension(&mut session_state, PostgresStar);
+        }
         if let Some(session_config) = &self.session_config {
             install_extension(&mut session_state, session_config.clone());
         }

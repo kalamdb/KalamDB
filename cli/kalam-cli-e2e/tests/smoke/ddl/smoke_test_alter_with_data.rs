@@ -291,8 +291,7 @@ fn smoke_test_alter_table_with_data_verification() {
     println!("   ✓ All operations maintain data integrity");
 
     // Cleanup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }
 
 // ============================================================================

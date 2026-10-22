@@ -1,4 +1,5 @@
-//! Routine parallel safety (`PARALLEL UNSAFE`, `PARALLEL RESTRICTED`, `PARALLEL SAFE`) persisted on `system.routines`.
+//! Routine parallel safety (`PARALLEL UNSAFE`, `PARALLEL RESTRICTED`, `PARALLEL SAFE`) persisted on
+//! `system.routines`.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

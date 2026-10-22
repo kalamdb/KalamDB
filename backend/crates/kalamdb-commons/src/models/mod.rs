@@ -83,7 +83,9 @@ pub use kalam_cell_value::KalamCellValue;
 pub use payload_mode::PayloadMode;
 pub use read_context::ReadContext;
 pub use role::Role;
-pub use routine_call::{is_builtin_default_name, normalize_builtin_name, RoutineCall};
+pub use routine_call::{
+    is_builtin_default_name, normalize_builtin_name, BuiltinDefault, RoutineCall,
+};
 pub use routine_grantee::RoutineGrantee;
 pub use routine_kind::RoutineKind;
 pub use routine_null_safety::RoutineNullSafety;

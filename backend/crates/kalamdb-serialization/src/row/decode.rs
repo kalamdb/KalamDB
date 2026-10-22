@@ -57,8 +57,8 @@ impl<'a> RowView<'a> {
                 "unsupported v2 row flags 0x{row_flags:02x}"
             )));
         }
-        let deleted = (row_flags & V2_ROW_FLAG_DELETED) != 0
-            || (envelope_flags & FLAG_TOMBSTONE_ONLY) != 0;
+        let deleted =
+            (row_flags & V2_ROW_FLAG_DELETED) != 0 || (envelope_flags & FLAG_TOMBSTONE_ONLY) != 0;
         if (envelope_flags & FLAG_TOMBSTONE_ONLY) != 0 {
             if !reader.is_empty() {
                 return Err(SerializationError::Decode(
@@ -78,9 +78,7 @@ impl<'a> RowView<'a> {
         }
 
         let slot_span = reader.u16()? as usize;
-        let layout = schema
-            .layout_for_version(stored_version)
-            .unwrap_or_else(|| schema.layout());
+        let layout = schema.layout_for_version(stored_version).unwrap_or_else(|| schema.layout());
         if slot_span != layout.slot_span {
             return Err(SerializationError::Decode(format!(
                 "v2 row slot span {slot_span} does not match schema layout span {}",
@@ -116,9 +114,8 @@ impl<'a> RowView<'a> {
                 "v2 row has variable columns but offset width is 0".to_string(),
             ));
         }
-        let offsets_byte_len = var_count
-            .checked_mul(offset_byte_width)
-            .ok_or(SerializationError::Truncated)?;
+        let offsets_byte_len =
+            var_count.checked_mul(offset_byte_width).ok_or(SerializationError::Truncated)?;
         let var_offsets_bytes = reader.take(offsets_byte_len)?;
         let var_data = reader.take(reader.remaining())?;
 
@@ -188,11 +185,8 @@ impl<'a> RowView<'a> {
         let layout = schema
             .layout_for_version(self.stored_version)
             .unwrap_or_else(|| schema.layout());
-        let (offset, width) = layout
-            .fixed_offsets
-            .get(ordinal)
-            .and_then(|opt| *opt)
-            .ok_or_else(|| {
+        let (offset, width) =
+            layout.fixed_offsets.get(ordinal).and_then(|opt| *opt).ok_or_else(|| {
                 SerializationError::Decode(format!("ordinal {ordinal} is not a fixed slot"))
             })?;
         Ok(Some(&self.fixed_region[offset..offset + width]))
@@ -200,20 +194,21 @@ impl<'a> RowView<'a> {
 
     /// Borrow the raw slice for a variable-width column at `ordinal`, or `None` if NULL.
     #[inline]
-    pub fn variable_slice(&self, ordinal: usize, schema: &StorageSchema) -> Result<Option<&'a [u8]>> {
+    pub fn variable_slice(
+        &self,
+        ordinal: usize,
+        schema: &StorageSchema,
+    ) -> Result<Option<&'a [u8]>> {
         if self.is_null(ordinal) {
             return Ok(None);
         }
         let layout = schema
             .layout_for_version(self.stored_version)
             .unwrap_or_else(|| schema.layout());
-        let var_idx = layout
-            .variable_slot_for_ordinal
-            .get(ordinal)
-            .and_then(|opt| *opt)
-            .ok_or_else(|| {
-                SerializationError::Decode(format!("ordinal {ordinal} is not a variable slot"))
-            })?;
+        let var_idx =
+            layout.variable_slot_for_ordinal.get(ordinal).and_then(|opt| *opt).ok_or_else(
+                || SerializationError::Decode(format!("ordinal {ordinal} is not a variable slot")),
+            )?;
         let start = if var_idx == 0 {
             0
         } else {
@@ -244,9 +239,7 @@ impl<'a> RowView<'a> {
             let slice = &self.fixed_region[offset..offset + width];
             return decode_fixed_value(slice, &field.data_type);
         }
-        let slice = self
-            .variable_slice(ordinal, schema)?
-            .ok_or(SerializationError::Truncated)?;
+        let slice = self.variable_slice(ordinal, schema)?.ok_or(SerializationError::Truncated)?;
         decode_variable_value_v2(slice, &field.data_type)
     }
 }
@@ -257,8 +250,12 @@ fn read_var_end_offset(bytes: &[u8], width: usize, index: usize) -> usize {
     match width {
         1 => bytes[base] as usize,
         2 => u16::from_le_bytes([bytes[base], bytes[base + 1]]) as usize,
-        4 => u32::from_le_bytes([bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3]])
-            as usize,
+        4 => u32::from_le_bytes([
+            bytes[base],
+            bytes[base + 1],
+            bytes[base + 2],
+            bytes[base + 3],
+        ]) as usize,
         _ => 0,
     }
 }
@@ -268,12 +265,12 @@ fn decode_fixed_value(slice: &[u8], expected: &StorageDataType) -> Result<Scalar
         StorageDataType::Boolean => Ok(ScalarValue::Boolean(Some(slice[0] != 0))),
         StorageDataType::Int8 => Ok(ScalarValue::Int8(Some(slice[0] as i8))),
         StorageDataType::UInt8 => Ok(ScalarValue::UInt8(Some(slice[0]))),
-        StorageDataType::Int16 => Ok(ScalarValue::Int16(Some(i16::from_le_bytes([
-            slice[0], slice[1],
-        ])))),
-        StorageDataType::UInt16 => Ok(ScalarValue::UInt16(Some(u16::from_le_bytes([
-            slice[0], slice[1],
-        ])))),
+        StorageDataType::Int16 => {
+            Ok(ScalarValue::Int16(Some(i16::from_le_bytes([slice[0], slice[1]]))))
+        },
+        StorageDataType::UInt16 => {
+            Ok(ScalarValue::UInt16(Some(u16::from_le_bytes([slice[0], slice[1]]))))
+        },
         StorageDataType::Int32 => Ok(ScalarValue::Int32(Some(i32::from_le_bytes([
             slice[0], slice[1], slice[2], slice[3],
         ])))),
@@ -286,15 +283,15 @@ fn decode_fixed_value(slice: &[u8], expected: &StorageDataType) -> Result<Scalar
         StorageDataType::Date32 => Ok(ScalarValue::Date32(Some(i32::from_le_bytes([
             slice[0], slice[1], slice[2], slice[3],
         ])))),
-        StorageDataType::Int64 => Ok(ScalarValue::Int64(Some(i64::from_le_bytes(
-            slice.try_into().unwrap(),
-        )))),
-        StorageDataType::UInt64 => Ok(ScalarValue::UInt64(Some(u64::from_le_bytes(
-            slice.try_into().unwrap(),
-        )))),
-        StorageDataType::Float64 => Ok(ScalarValue::Float64(Some(f64::from_le_bytes(
-            slice.try_into().unwrap(),
-        )))),
+        StorageDataType::Int64 => {
+            Ok(ScalarValue::Int64(Some(i64::from_le_bytes(slice.try_into().unwrap()))))
+        },
+        StorageDataType::UInt64 => {
+            Ok(ScalarValue::UInt64(Some(u64::from_le_bytes(slice.try_into().unwrap()))))
+        },
+        StorageDataType::Float64 => {
+            Ok(ScalarValue::Float64(Some(f64::from_le_bytes(slice.try_into().unwrap()))))
+        },
         StorageDataType::Time64Microsecond => Ok(ScalarValue::Time64Microsecond(Some(
             i64::from_le_bytes(slice.try_into().unwrap()),
         ))),
@@ -329,7 +326,9 @@ fn decode_variable_value_v2(slice: &[u8], expected: &StorageDataType) -> Result<
             Ok(ScalarValue::Utf8(Some(s.to_owned())))
         },
         StorageDataType::Binary => Ok(ScalarValue::Binary(Some(slice.to_vec()))),
-        StorageDataType::Embedding { .. } | StorageDataType::Struct(_) | StorageDataType::List(_) => {
+        StorageDataType::Embedding { .. }
+        | StorageDataType::Struct(_)
+        | StorageDataType::List(_) => {
             let mut reader = Reader::new(slice);
             let v = decode_value(&mut reader, expected)?;
             if !reader.is_empty() {
@@ -479,10 +478,7 @@ pub(crate) fn decode_row_body_into_columns(
             output_index += 1;
         } else if !field.dropped {
             columns[output_index].push(
-                field
-                    .missing_default
-                    .clone()
-                    .unwrap_or_else(|| null_for_type(&field.data_type)),
+                field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)),
             );
             output_index += 1;
         }
@@ -619,10 +615,7 @@ fn decode_named_fields(
         } else if !field.dropped {
             values.insert(
                 field.name.clone(),
-                field
-                    .missing_default
-                    .clone()
-                    .unwrap_or_else(|| null_for_type(&field.data_type)),
+                field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)),
             );
         }
     }
@@ -663,10 +656,7 @@ fn decode_selected_indexed(
         if ordinal >= stored_field_count {
             values.insert(
                 field.name.clone(),
-                field
-                    .missing_default
-                    .clone()
-                    .unwrap_or_else(|| null_for_type(&field.data_type)),
+                field.missing_default.clone().unwrap_or_else(|| null_for_type(&field.data_type)),
             );
             continue;
         }

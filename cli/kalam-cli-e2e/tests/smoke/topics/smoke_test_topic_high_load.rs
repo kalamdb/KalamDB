@@ -1165,9 +1165,7 @@ async fn test_topic_fan_out_different_groups_receive_all() {
     let group_a = format!("fanout-group-a-{}", common::random_string(8));
     let group_b = format!("fanout-group-b-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE SCHEMA {}", namespace))
-        .await
-        .expect("create ns");
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await.expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, data TEXT)", table))
         .await
         .expect("create table");
@@ -1254,9 +1252,7 @@ async fn test_topic_four_consumers_same_group_no_duplicates() {
     let topic = format!("{}.{}", namespace, common::generate_unique_table("stress4"));
     let group_id = format!("stress4-group-{}", common::random_string(8));
 
-    execute_sql(&format!("CREATE SCHEMA {}", namespace))
-        .await
-        .expect("create ns");
+    execute_sql(&format!("CREATE SCHEMA {}", namespace)).await.expect("create ns");
     execute_sql(&format!("CREATE TABLE {} (id INT PRIMARY KEY, value TEXT)", table))
         .await
         .expect("create table");

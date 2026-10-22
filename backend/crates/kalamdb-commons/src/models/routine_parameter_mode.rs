@@ -1,4 +1,5 @@
-//! Routine parameter mode (`IN`, `OUT`, `INOUT`, `VARIADIC`) persisted on `system.routine_parameters`.
+//! Routine parameter mode (`IN`, `OUT`, `INOUT`, `VARIADIC`) persisted on
+//! `system.routine_parameters`.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

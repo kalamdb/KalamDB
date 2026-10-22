@@ -3,9 +3,9 @@ use std::sync::Arc;
 use kalamdb_commons::{
     models::{
         ArtifactId, CatalogTypeKind, FunctionModuleId, FunctionRevisionId, FunctionRuntime,
-        SchemaId, RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId,
-        RoutineSecurityMode, ScheduleId, TableId, TopicId, TriggerAttemptId, TriggerId,
-        TypeFieldId, TypeId, UserId,
+        RoutineGrantId, RoutineGrantee, RoutineId, RoutineParameterId, RoutineSecurityMode,
+        ScheduleId, SchemaId, TableId, TopicId, TriggerAttemptId, TriggerId, TypeFieldId, TypeId,
+        UserId,
     },
     StorageKey, SystemTable,
 };

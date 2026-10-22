@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use kalamdb_commons::{
     models::{
         schemas::{TableDefinition, TableType},
-        FunctionRevisionId, JobId, SchemaId, NodeId, StorageId, TypeId, UserId,
+        FunctionRevisionId, JobId, NodeId, SchemaId, StorageId, TypeId, UserId,
     },
     TableId,
 };

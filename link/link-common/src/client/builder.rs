@@ -6,7 +6,6 @@ use std::{
 };
 
 use rustls::pki_types::{pem::PemObject, CertificateDer};
-
 #[cfg(feature = "healthcheck")]
 use tokio::sync::Mutex;
 

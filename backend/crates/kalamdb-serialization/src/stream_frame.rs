@@ -143,9 +143,9 @@ pub fn decode_raw_stream_record(bytes: &[u8]) -> Result<RawStreamRecord<'_>> {
                 ))),
             }
         },
-        other => Err(SerializationError::Decode(format!(
-            "unsupported stream schema version {other}"
-        ))),
+        other => {
+            Err(SerializationError::Decode(format!("unsupported stream schema version {other}")))
+        },
     }
 }
 

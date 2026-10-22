@@ -39,11 +39,9 @@ async fn test_root_can_create_namespace() {
     let namespace_name = generate_unique_namespace("test_root_ns");
 
     // Clean up any existing namespace (just in case)
-    let _ = execute_sql_via_http_as_root(&format!(
-        "DROP SCHEMA IF EXISTS {} CASCADE",
-        namespace_name
-    ))
-    .await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace_name))
+            .await;
 
     // Create namespace as root
     let result =
@@ -97,8 +95,7 @@ async fn test_root_can_create_namespace() {
     );
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test that root user can create and drop tables
@@ -142,8 +139,7 @@ async fn test_root_can_create_drop_tables() {
     assert_eq!(result["status"], "success", "Root user should be able to drop tables");
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test CREATE SCHEMA via CLI with root authentication
@@ -186,8 +182,7 @@ async fn test_cli_create_namespace_as_root() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test that non-admin users cannot create namespaces
@@ -316,8 +311,7 @@ async fn test_cli_admin_operations() {
     assert!(stdout.contains("Alice"), "SELECT should show inserted data. stdout: {}", stdout);
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test SHOW SCHEMAS command
@@ -330,8 +324,8 @@ async fn test_cli_show_namespaces() {
         return;
     }
 
-    let stdout = execute_sql_as_root_via_cli("SHOW SCHEMAS")
-        .expect("SHOW SCHEMAS command should succeed");
+    let stdout =
+        execute_sql_as_root_via_cli("SHOW SCHEMAS").expect("SHOW SCHEMAS command should succeed");
 
     // Should show table format with column headers
     assert!(
@@ -355,11 +349,9 @@ async fn test_cli_flush_table() {
     let namespace_name = generate_unique_namespace("flush_test_ns");
 
     // Setup: Create namespace and user table
-    let _ = execute_sql_via_http_as_root(&format!(
-        "DROP SCHEMA IF EXISTS {} CASCADE",
-        namespace_name
-    ))
-    .await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace_name))
+            .await;
 
     let _ = execute_sql_via_http_as_root(&format!("CREATE SCHEMA {}", namespace_name)).await;
 
@@ -551,8 +543,7 @@ async fn test_cli_flush_table() {
     assert_eq!(result["status"], "success");
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }
 
 /// Test STORAGE FLUSH ALL command via CLI
@@ -569,11 +560,9 @@ async fn test_cli_flush_all_tables() {
     let namespace_name = generate_unique_namespace("flush_all_test");
 
     // Setup: Create namespace with multiple tables
-    let _ = execute_sql_via_http_as_root(&format!(
-        "DROP SCHEMA IF EXISTS {} CASCADE",
-        namespace_name
-    ))
-    .await;
+    let _ =
+        execute_sql_via_http_as_root(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace_name))
+            .await;
 
     let _ = execute_sql_via_http_as_root(&format!("CREATE SCHEMA {}", namespace_name)).await;
 
@@ -779,6 +768,5 @@ async fn test_cli_flush_all_tables() {
     }
 
     // Cleanup
-    let _ =
-        execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
+    let _ = execute_sql_via_http_as_root(&format!("DROP SCHEMA {} CASCADE", namespace_name)).await;
 }

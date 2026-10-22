@@ -688,9 +688,7 @@ fn integer_to_scalar(
     let ts_micros = |v: i64| -> Result<i64, SerError> {
         if scale_timestamp_ms {
             v.checked_mul(1_000).ok_or_else(|| {
-                SerError(format!(
-                    "timestamp value {v} overflows when converted to microseconds"
-                ))
+                SerError(format!("timestamp value {v} overflows when converted to microseconds"))
             })
         } else {
             Ok(v)
@@ -701,7 +699,9 @@ fn integer_to_scalar(
         KalamDataType::SmallInt => ScalarValue::Int16(Some(value as i16)),
         KalamDataType::Int => ScalarValue::Int32(Some(value as i32)),
         KalamDataType::BigInt => ScalarValue::Int64(Some(value)),
-        KalamDataType::Timestamp => ScalarValue::TimestampMicrosecond(Some(ts_micros(value)?), None),
+        KalamDataType::Timestamp => {
+            ScalarValue::TimestampMicrosecond(Some(ts_micros(value)?), None)
+        },
         KalamDataType::DateTime => {
             ScalarValue::TimestampMicrosecond(Some(ts_micros(value)?), Some("UTC".into()))
         },

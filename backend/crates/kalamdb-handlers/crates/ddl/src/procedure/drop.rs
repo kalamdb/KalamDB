@@ -40,7 +40,10 @@ impl TypedStatementHandler<DropProcedureStatement> for DropProcedureHandler {
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
                 .or_else(|| {
                     let (_, name) = statement.routine_id.as_str().split_once('.')?;
-                    stores.get_routine(&kalamdb_commons::RoutineId::new(format!("pg_catalog.{name}"))).ok().flatten()
+                    stores
+                        .get_routine(&kalamdb_commons::RoutineId::new(format!("pg_catalog.{name}")))
+                        .ok()
+                        .flatten()
                 });
             let Some(existing) = existing else {
                 if statement.if_exists {

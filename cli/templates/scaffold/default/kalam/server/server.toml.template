@@ -26,6 +26,8 @@ port = 5432
 tls_enabled = false
 prepared_statement_limit = 1024
 portal_limit = 1024
+# Include _version, _deleted, and the other storage columns in SELECT *.
+show_system_columns = true
 
 [rate_limit]
 # Relaxed limits for local development and testing

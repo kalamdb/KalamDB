@@ -11,10 +11,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::{
     ast::{
-        BinaryOperator, CastKind, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
-        FunctionArgumentList, FunctionArguments, Ident, ObjectName, ObjectNamePart, Select,
-        SelectItem, SetExpr, Statement, TableFactor, TableObject, UnaryOperator, Value, VisitMut,
-        VisitorMut,
+        BinaryOperator, CastKind, DataType, DateTimeField, Expr, Function, FunctionArg,
+        FunctionArgExpr, FunctionArgumentList, FunctionArguments, Ident, ObjectName,
+        ObjectNamePart, Select, SelectItem, SetExpr, Statement, TableFactor, TableObject,
+        UnaryOperator, Value, VisitMut, VisitorMut,
     },
     dialect::Dialect,
     parser::{Parser, ParserError, ParserOptions},
@@ -25,11 +25,16 @@ use crate::dialect::KalamDbDialect;
 
 pub(crate) const DEFAULT_SQL_RECURSION_LIMIT: usize = 512;
 
+const PG_CATALOG_RELATION_SUFFIXES: &str = "aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|get_keywords|index|inherits|init_privs|language|largeobject|largeobject_metadata|matviews|namespace|opclass|operator|opfamily|parameter_acl|partitioned_table|policy|proc|publication|publication_namespace|publication_rel|range|replication_origin|replication_slots|rewrite|roles|seclabel|sequence|settings|shdepend|shdescription|shseclabel|stat_activity|stat_gssapi|stat_user_tables|statistic|statistic_ext|statistic_ext_data|subscription|subscription_rel|tables|tablespace|transform|trigger|ts_config|ts_config_map|ts_dict|ts_parser|ts_template|type|user_mapping|views";
+
 static UNQUALIFIED_PG_CATALOG_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"(?i)(^|[\s,(])pg_(aggregate|am|amop|amproc|attrdef|attribute|auth_members|authid|cast|class|collation|constraint|conversion|database|db_role_setting|default_acl|depend|description|enum|event_trigger|extension|foreign_data_wrapper|foreign_server|foreign_table|get_keywords|index|inherits|init_privs|language|largeobject|largeobject_metadata|matviews|namespace|opclass|operator|opfamily|parameter_acl|partitioned_table|policy|proc|publication|publication_namespace|publication_rel|range|replication_origin|replication_slots|rewrite|roles|seclabel|sequence|settings|shdepend|shdescription|shseclabel|stat_activity|stat_gssapi|stat_user_tables|statistic|statistic_ext|statistic_ext_data|subscription|subscription_rel|tables|tablespace|transform|trigger|ts_config|ts_config_map|ts_dict|ts_parser|ts_template|type|user_mapping|views)\b",
-    )
-    .expect("valid regex")
+    Regex::new(&format!(r"(?i)(^|[\s,(])pg_({PG_CATALOG_RELATION_SUFFIXES})\b"))
+        .expect("valid regex")
+});
+/// Knex quotes catalog names (`FROM "pg_proc"`). A bare `pg_proc` rewrite misses those.
+static QUOTED_UNQUALIFIED_PG_CATALOG_TABLE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(&format!(r#"(?i)(^|[\s,(])"pg_({PG_CATALOG_RELATION_SUFFIXES})""#))
+        .expect("valid regex")
 });
 /// DBeaver/pgAdmin metadata filter: correlated `pg_class.relkind` subquery that DataFusion
 /// cannot plan. Our `pg_type` shim always uses `typrelid = 0`, so the OR branch is redundant.
@@ -160,7 +165,17 @@ pub fn parser_options() -> ParserOptions {
 /// Qualify bare `pg_*` catalog tables so they resolve when the session namespace
 /// is not `pg_catalog` (PostgreSQL clients often omit the schema prefix).
 fn rewrite_unqualified_pg_catalog_tables(sql: &str) -> std::borrow::Cow<'_, str> {
-    UNQUALIFIED_PG_CATALOG_TABLE_RE.replace_all(sql, "${1}pg_catalog.pg_$2")
+    let quoted = QUOTED_UNQUALIFIED_PG_CATALOG_TABLE_RE.replace_all(sql, "${1}pg_catalog.pg_$2");
+    match quoted {
+        std::borrow::Cow::Borrowed(sql) => {
+            UNQUALIFIED_PG_CATALOG_TABLE_RE.replace_all(sql, "${1}pg_catalog.pg_$2")
+        },
+        std::borrow::Cow::Owned(sql) => std::borrow::Cow::Owned(
+            UNQUALIFIED_PG_CATALOG_TABLE_RE
+                .replace_all(&sql, "${1}pg_catalog.pg_$2")
+                .into_owned(),
+        ),
+    }
 }
 
 fn rewrite_dbeaver_typrelid_filter(sql: &str) -> std::borrow::Cow<'_, str> {
@@ -517,15 +532,18 @@ pub fn rewrite_context_functions_for_datafusion(sql: &str) -> std::borrow::Cow<'
 pub fn parse_statement_for_datafusion(
     sql: &str,
 ) -> Result<Statement, sqlparser::parser::ParserError> {
-    if sql.contains("typrelid") && sql.contains("relkind") {
+    let mut statement = if sql.contains("typrelid") && sql.contains("relkind") {
         let rewritten = rewrite_context_functions_for_datafusion(sql);
-        return super::KalamParser::parse_one(rewritten.as_ref());
-    }
-    let text_rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
-    let mut statement = super::KalamParser::parse_one(text_rewritten.as_ref())?;
-    if needs_ast_operator_rewrite(text_rewritten.as_ref()) {
-        apply_datafusion_ast_rewrites(&mut statement);
-    }
+        super::KalamParser::parse_one(rewritten.as_ref())?
+    } else {
+        let text_rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
+        let mut statement = super::KalamParser::parse_one(text_rewritten.as_ref())?;
+        if needs_ast_operator_rewrite(text_rewritten.as_ref()) {
+            apply_datafusion_ast_rewrites(&mut statement);
+        }
+        statement
+    };
+    super::sort_alias::disambiguate_order_by_output_names(&mut statement);
     Ok(statement)
 }
 
@@ -540,7 +558,8 @@ pub fn rewrite_wire_catalog_compat_for_datafusion(sql: &str) -> std::borrow::Cow
     }
 
     let rewritten_pk = rewrite_jdbc_catalog_queries(sql);
-    let s1 = rewrite_unqualified_pg_catalog_tables(rewritten_pk.as_ref());
+    let decorrelated = rewrite_correlated_lateral_subquery(rewritten_pk.as_ref());
+    let s1 = rewrite_unqualified_pg_catalog_tables(decorrelated.as_ref());
     let s2 = rewrite_dbeaver_typrelid_filter(&s1);
     let s3 = rewrite_pg_catalog_functions(&s2);
     if s3.as_ref() == sql {
@@ -548,6 +567,225 @@ pub fn rewrite_wire_catalog_compat_for_datafusion(sql: &str) -> std::borrow::Cow
     } else {
         Cow::Owned(s3.into_owned())
     }
+}
+
+/// Replace a correlated `LATERAL` subquery DataFusion cannot plan.
+///
+/// Directus reads `is_indexed` with
+/// `LEFT JOIN LATERAL (SELECT indexrelid FROM pg_index ... att.attnum = ALL(ix.indkey) ...)`.
+/// That becomes an equijoin on single-column non-unique indexes. Any other
+/// correlated `pg_index` lookup becomes a null row so the rest of the catalog
+/// query still runs.
+fn rewrite_correlated_lateral_subquery(sql: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = sql.as_bytes();
+    let mut search_from = 0;
+    let mut out = String::new();
+    let mut cursor = 0;
+    let mut changed = false;
+    while search_from < bytes.len() {
+        let Some(rel) = find_ignore_ascii_case(&sql[search_from..], "lateral") else {
+            break;
+        };
+        let start = search_from + rel;
+        let after = start + "lateral".len();
+        let boundary_before = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let boundary_after = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
+        if !boundary_before || !boundary_after {
+            search_from = start + "lateral".len();
+            continue;
+        }
+        let mut open = after;
+        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+            open += 1;
+        }
+        if open >= bytes.len() || bytes[open] != b'(' {
+            search_from = after;
+            continue;
+        }
+        let Some(close) = matching_paren(bytes, open) else {
+            search_from = after;
+            continue;
+        };
+        let body = &sql[open + 1..close];
+        if !lateral_body_is_correlated(body) {
+            search_from = close + 1;
+            continue;
+        }
+        out.push_str(&sql[cursor..start]);
+        if let Some(replacement) = decorrelated_index_lookup(sql, body, close) {
+            out.push_str(&replacement.sql);
+            cursor = replacement.end;
+        } else {
+            out.push_str("(SELECT CAST(NULL AS BIGINT) AS indexrelid)");
+            cursor = close + 1;
+        }
+        changed = true;
+        search_from = cursor;
+    }
+    if !changed {
+        std::borrow::Cow::Borrowed(sql)
+    } else {
+        out.push_str(&sql[cursor..]);
+        std::borrow::Cow::Owned(out)
+    }
+}
+
+struct DecorrelatedIndexLookup {
+    sql: String,
+    end: usize,
+}
+
+/// Turn Directus's single-column index probe into a join DataFusion can plan.
+///
+/// `attnum = ALL(indkey)` is true only when the index has one key and that key
+/// is the column. `LIMIT 1` is dropped; one matching index is enough for
+/// `is_indexed`.
+fn decorrelated_index_lookup(
+    sql: &str,
+    body: &str,
+    close: usize,
+) -> Option<DecorrelatedIndexLookup> {
+    if !lateral_body_is_index_name_lookup(body) {
+        return None;
+    }
+    let outer = ident_before_dot_keyword(body, "attrelid")?;
+    let (alias, end) = lateral_alias_on_true(sql, close)?;
+    let rewritten = format!(
+        "(SELECT indexrelid, indrelid, array_element(indkey, 1) AS attnum FROM pg_index WHERE \
+         indisunique = false AND array_length(indkey, 1) = 1) {alias} ON {outer}.attrelid = \
+         {alias}.indrelid AND {outer}.attnum = {alias}.attnum"
+    );
+    Some(DecorrelatedIndexLookup {
+        sql: rewritten,
+        end,
+    })
+}
+
+fn lateral_body_is_index_name_lookup(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("indexrelid")
+        && lower.contains("pg_index")
+        && lower.contains("attrelid")
+        && lower.contains("attnum")
+        && lower.contains("indkey")
+        && lower.contains("indisunique")
+}
+
+fn lateral_body_is_correlated(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("pg_index") && (lower.contains("att.") || lower.contains("rel."))
+}
+
+fn ident_before_dot_keyword<'a>(body: &'a str, keyword: &str) -> Option<&'a str> {
+    let bytes = body.as_bytes();
+    let rel = find_ignore_ascii_case(body, keyword)?;
+    let mut i = rel;
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i == 0 || bytes[i - 1] != b'.' {
+        return None;
+    }
+    i -= 1;
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let end = i;
+    while i > 0 && is_sql_ident_part(bytes[i - 1]) {
+        i -= 1;
+    }
+    if i == end || !is_sql_ident_start(bytes[i]) {
+        return None;
+    }
+    Some(&body[i..end])
+}
+
+fn lateral_alias_on_true(sql: &str, close: usize) -> Option<(&str, usize)> {
+    let bytes = sql.as_bytes();
+    let mut i = skip_ascii_whitespace(bytes, close + 1);
+    if starts_with_ignore_ascii_case(bytes, i, b"as") {
+        let after_as = i + 2;
+        if after_as >= bytes.len() || !is_sql_ident_part(bytes[after_as]) {
+            i = skip_ascii_whitespace(bytes, after_as);
+        }
+    }
+    let alias_start = i;
+    if i >= bytes.len() || !is_sql_ident_start(bytes[i]) {
+        return None;
+    }
+    i += 1;
+    while i < bytes.len() && is_sql_ident_part(bytes[i]) {
+        i += 1;
+    }
+    let alias = &sql[alias_start..i];
+    i = skip_ascii_whitespace(bytes, i);
+    if !starts_with_ignore_ascii_case(bytes, i, b"on") {
+        return None;
+    }
+    let after_on = i + 2;
+    if after_on < bytes.len() && is_sql_ident_part(bytes[after_on]) {
+        return None;
+    }
+    i = skip_ascii_whitespace(bytes, after_on);
+    if !starts_with_ignore_ascii_case(bytes, i, b"true") {
+        return None;
+    }
+    let after_true = i + 4;
+    if after_true < bytes.len() && is_sql_ident_part(bytes[after_true]) {
+        return None;
+    }
+    Some((alias, after_true))
+}
+
+fn skip_ascii_whitespace(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+fn is_sql_ident_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+fn is_sql_ident_part(byte: u8) -> bool {
+    is_sql_ident_start(byte) || byte.is_ascii_digit()
+}
+
+fn matching_paren(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            },
+            _ => {},
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() || bytes.len() < needle.len() {
+        return None;
+    }
+    let last = bytes.len() - needle.len();
+    let mut i = 0;
+    while i <= last {
+        if bytes[i..i + needle.len()].eq_ignore_ascii_case(needle) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Quick check for AST operator rewrites (JSON extraction, PostgreSQL regex, casts, unnest).
@@ -574,6 +812,16 @@ fn contains_ast_function_or_keyword_trigger(sql: &str) -> bool {
             },
             b'c' | b'C' => {
                 if starts_with_ignore_ascii_case(bytes, i, b"current_database") {
+                    return true;
+                }
+            },
+            b'e' | b'E' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"extract") {
+                    return true;
+                }
+            },
+            b'v' | b'V' => {
+                if starts_with_ignore_ascii_case(bytes, i, b"version") {
                     return true;
                 }
             },
@@ -712,7 +960,20 @@ struct DataFusionAstRewriter;
 impl VisitorMut for DataFusionAstRewriter {
     type Break = ();
 
+    fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(rewritten) = rewrite_regtype_text_cast(expr) {
+            *expr = rewritten;
+        }
+        ControlFlow::Continue(())
+    }
+
     fn post_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+        if let Some(rewritten) = rewrite_extract_expr(expr) {
+            *expr = rewritten;
+        }
+        if let Some(rewritten) = unwrap_json_storage_cast(expr) {
+            *expr = rewritten;
+        }
         if let Some(rewritten) = rewrite_json_expr(expr) {
             *expr = rewritten;
         }
@@ -736,33 +997,102 @@ impl VisitorMut for DataFusionAstRewriter {
             if let Some(unwrapped) = unwrap_redundant_pg_text_cast(expr) {
                 *expr = unwrapped;
             }
-            if is_unlabeled_current_database_call(expr) {
+            if let Some(alias) = postgres_function_result_name(expr) {
                 let call = expr.clone();
-                *item = SelectItem::ExprWithAlias {
-                    expr:  call,
-                    alias: Ident::new("current_database"),
-                };
+                *item = SelectItem::ExprWithAlias { expr: call, alias };
             }
         }
         ControlFlow::Continue(())
     }
 }
 
-fn is_unlabeled_current_database_call(expr: &Expr) -> bool {
+/// PostgreSQL names an unlabeled function call after the function (`SELECT version()` → `version`).
+fn postgres_function_result_name(expr: &Expr) -> Option<Ident> {
     let Expr::Function(func) = expr else {
-        return false;
+        return None;
     };
-    match func.name.0.as_slice() {
-        [ObjectNamePart::Identifier(ident)] => {
-            ident.value.eq_ignore_ascii_case("current_database")
-                || ident.value.eq_ignore_ascii_case("kdb_current_database")
-        },
-        [ObjectNamePart::Identifier(schema), ObjectNamePart::Identifier(ident)] => {
-            schema.value.eq_ignore_ascii_case("pg_catalog")
-                && ident.value.eq_ignore_ascii_case("current_database")
-        },
-        _ => false,
+    let ObjectNamePart::Identifier(ident) = func.name.0.last()? else {
+        return None;
+    };
+    if ident.value.is_empty() {
+        return None;
     }
+    let mut name = if ident.quote_style.is_some() {
+        ident.value.clone()
+    } else {
+        ident.value.to_ascii_lowercase()
+    };
+    if name.eq_ignore_ascii_case("kdb_current_database") {
+        name = "current_database".to_string();
+    }
+    Some(Ident::new(name))
+}
+
+/// `EXTRACT(DAY FROM ts)` is not implemented by DataFusion's expression planner.
+/// `date_part('day', ts)` is the same value.
+fn rewrite_extract_expr(expr: &Expr) -> Option<Expr> {
+    let Expr::Extract {
+        field,
+        expr: source,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let part = extract_date_part(field)?;
+    Some(make_function_call(
+        "date_part",
+        vec![
+            Expr::value(Value::SingleQuotedString(part)),
+            (**source).clone(),
+        ],
+    ))
+}
+
+fn extract_date_part(field: &DateTimeField) -> Option<String> {
+    let name = match field {
+        DateTimeField::Year | DateTimeField::Years => "year",
+        DateTimeField::Month | DateTimeField::Months => "month",
+        DateTimeField::Week(_) | DateTimeField::Weeks => "week",
+        DateTimeField::Day | DateTimeField::Days => "day",
+        DateTimeField::Hour | DateTimeField::Hours => "hour",
+        DateTimeField::Minute | DateTimeField::Minutes => "minute",
+        DateTimeField::Second | DateTimeField::Seconds => "second",
+        DateTimeField::Dow | DateTimeField::DayOfWeek => "dow",
+        DateTimeField::Doy | DateTimeField::DayOfYear => "doy",
+        DateTimeField::Epoch => "epoch",
+        DateTimeField::Isodow => "isodow",
+        DateTimeField::Isoyear => "isoyear",
+        DateTimeField::Quarter => "quarter",
+        DateTimeField::Microsecond | DateTimeField::Microseconds => "microsecond",
+        DateTimeField::Millisecond | DateTimeField::Milliseconds => "millisecond",
+        DateTimeField::Nanosecond | DateTimeField::Nanoseconds => "nanosecond",
+        _ => return None,
+    };
+    Some(name.to_string())
+}
+
+/// `::json` and `::jsonb` are identity casts. JSON is stored as text, and
+/// DataFusion rejects the SQL `JSON` type.
+fn unwrap_json_storage_cast(expr: &Expr) -> Option<Expr> {
+    let Expr::Cast {
+        kind,
+        expr: inner,
+        data_type,
+        array: false,
+        format: None,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) {
+        return None;
+    }
+    if !matches!(data_type, DataType::JSON | DataType::JSONB) {
+        return None;
+    }
+    Some((**inner).clone())
 }
 
 fn rewrite_json_expr(expr: &Expr) -> Option<Expr> {
@@ -781,7 +1111,34 @@ fn rewrite_json_expr(expr: &Expr) -> Option<Expr> {
         _ => return None,
     };
 
-    Some(make_function_call(function_name, vec![(**left).clone(), (**right).clone()]))
+    Some(make_function_call(
+        function_name,
+        vec![(**left).clone(), json_path_argument(right)],
+    ))
+}
+
+/// Untyped `$n` is planned as `Null`. `json_as_text` / `json_get_json` only
+/// accept a string or an int key, so the placeholder has to be cast first.
+fn json_path_argument(expr: &Expr) -> Expr {
+    if is_untyped_placeholder(expr) {
+        cast_expr_to_text(expr.clone())
+    } else {
+        expr.clone()
+    }
+}
+
+fn is_untyped_placeholder(expr: &Expr) -> bool {
+    matches!(expr, Expr::Value(value) if matches!(value.value, Value::Placeholder(_)))
+}
+
+fn cast_expr_to_text(expr: Expr) -> Expr {
+    Expr::Cast {
+        kind:      CastKind::Cast,
+        expr:      Box::new(expr),
+        data_type: DataType::Text,
+        array:     false,
+        format:    None,
+    }
 }
 
 fn is_json_path_operand(expr: &Expr) -> bool {
@@ -840,6 +1197,44 @@ fn is_column_reference(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
 }
 
+/// `atttypid::regtype::text` is the type name. A bare oid cast would print the
+/// number, which clients such as Directus cannot map to a field type.
+fn rewrite_regtype_text_cast(expr: &Expr) -> Option<Expr> {
+    let Expr::Cast {
+        kind,
+        expr: inner,
+        data_type,
+        array: false,
+        format: None,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    if !matches!(kind, CastKind::DoubleColon | CastKind::Cast) || !is_pg_text_cast_type(data_type) {
+        return None;
+    }
+    let Expr::Cast {
+        data_type: inner_type,
+        expr: value,
+        array: false,
+        ..
+    } = inner.as_ref()
+    else {
+        return None;
+    };
+    if pg_custom_type_name(inner_type).as_deref() != Some("regtype") {
+        return None;
+    }
+    Some(make_function_call(
+        "format_type",
+        vec![
+            value.as_ref().clone(),
+            cast_expr_to_bigint(Expr::value(Value::Null)),
+        ],
+    ))
+}
+
 fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
     let Expr::Cast {
         kind,
@@ -862,7 +1257,8 @@ fn rewrite_pg_oid_cast_expr(expr: &Expr) -> Option<Expr> {
         Expr::Value(value) => match &value.value {
             Value::Number(number, _) => Some(Expr::value(Value::Number(number.clone(), false))),
             Value::SingleQuotedString(name) | Value::DoubleQuotedString(name) => {
-                Some(Expr::value(Value::Number(regclass_oid_literal(name), false)))
+                let type_name = pg_custom_type_name(data_type).unwrap_or_default();
+                Some(Expr::value(Value::Number(pg_oid_literal(&type_name, name), false)))
             },
             _ => Some(cast_expr_to_bigint(inner.as_ref().clone())),
         },
@@ -912,10 +1308,22 @@ fn pg_custom_type_name(data_type: &DataType) -> Option<String> {
     }
 }
 
-fn regclass_oid_literal(name: &str) -> String {
+fn pg_oid_literal(type_name: &str, name: &str) -> String {
     let ident = name.rsplit('.').next().unwrap_or(name);
+    // `pg_namespace.oid` is `stable_oid(&["namespace", name])`. A bare name hash
+    // never matches `relnamespace IN ('directus'::regnamespace)`.
+    if type_name == "regnamespace" {
+        stable_catalog_oid(&["namespace", ident])
+    } else {
+        stable_catalog_oid(&[ident])
+    }
+}
+
+fn stable_catalog_oid(parts: &[&str]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    ident.hash(&mut hasher);
+    for part in parts {
+        part.hash(&mut hasher);
+    }
     (hasher.finish() & 0x7fff_ffff).to_string()
 }
 
@@ -1579,6 +1987,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn extract_day_plans_as_date_part() {
+        let sql = parse_statement_for_datafusion(
+            r#"SELECT (CASE WHEN ("users"."id" = $1) THEN EXTRACT(DAY FROM "articles"."date_created") END) AS "date_created_day" FROM "articles" LEFT JOIN "users" ON "articles"."user_created" = "users"."id" GROUP BY 2 ORDER BY 2"#,
+        )
+        .expect("parse")
+        .to_string();
+        let lower = sql.to_ascii_lowercase();
+        assert!(lower.contains("date_part('day'"), "{sql}");
+        assert!(!lower.contains("extract("), "{sql}");
+    }
+
+    #[test]
     fn test_normalize_sql() {
         assert_eq!(normalize_sql("  SELECT  * ;"), "SELECT *");
         assert_eq!(normalize_sql("CREATE\n  STORAGE\n  s3  "), "CREATE STORAGE s3");
@@ -1703,6 +2123,18 @@ mod tests {
             "SELECT CURRENT_USER, CURRENT_ROLE, CURRENT_SCHEMA, CURRENT_DATABASE, CURRENT_USER, \
              CURRENT_ROLE, CURRENT_SCHEMA, CURRENT_DATABASE"
         );
+    }
+
+    #[test]
+    fn test_rewrite_quoted_pg_catalog_tables_for_datafusion() {
+        let rewritten = rewrite_context_functions_for_datafusion(
+            r#"select "oid" from "pg_proc" where "proname" = $1"#,
+        );
+        assert_eq!(rewritten, r#"select "oid" from pg_catalog.pg_proc where "proname" = $1"#);
+        let qualified = rewrite_context_functions_for_datafusion(
+            r#"select "oid" from "pg_catalog"."pg_proc" where "proname" = $1"#,
+        );
+        assert_eq!(qualified, r#"select "oid" from "pg_catalog"."pg_proc" where "proname" = $1"#);
     }
 
     #[test]
@@ -1854,10 +2286,40 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
     }
 
     #[test]
+    fn json_cast_arrow_with_placeholder_drops_the_json_type() {
+        let statement = parse_statement_for_datafusion(
+            r#"SELECT "metadata"::json->>$1 FROM "products" WHERE ("metadata"::jsonb->$1->>$2 = $3)"#,
+        )
+        .unwrap();
+        let sql = statement.to_string();
+        assert_eq!(
+            sql,
+            "SELECT json_as_text(\"metadata\", CAST($1 AS TEXT)) AS json_as_text FROM \
+             \"products\" WHERE (json_as_text(json_get_json(\"metadata\", CAST($1 AS TEXT)), \
+             CAST($2 AS TEXT)) = $3)"
+        );
+    }
+
+    #[test]
+    fn json_text_extraction_keeps_a_numeric_cast() {
+        let statement = parse_statement_for_datafusion(
+            r#"SELECT ("metadata"::json->>$1)::numeric FROM "products""#,
+        )
+        .unwrap();
+        assert_eq!(
+            statement.to_string(),
+            "SELECT (json_as_text(\"metadata\", CAST($1 AS TEXT)))::NUMERIC FROM \"products\""
+        );
+    }
+
+    #[test]
     fn test_rewrite_json_question_operator_for_datafusion() {
         let rewritten =
             rewrite_context_functions_for_datafusion("SELECT doc ? 'customer_id' FROM docs");
-        assert_eq!(rewritten, "SELECT json_contains(doc, 'customer_id') FROM docs");
+        assert_eq!(
+            rewritten,
+            "SELECT json_contains(doc, 'customer_id') AS json_contains FROM docs"
+        );
     }
 
     #[test]
@@ -1941,6 +2403,17 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
     }
 
     #[test]
+    fn test_unlabeled_version_uses_postgres_column_name() {
+        let rewritten = rewrite_context_functions_for_datafusion("SELECT version()");
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            lower.contains("version() as version") || lower.contains("version as version"),
+            "expected PostgreSQL column name version: {rewritten}"
+        );
+        assert!(!lower.contains("as version()"), "{rewritten}");
+    }
+
+    #[test]
     fn test_rewrite_preserves_current_database_column_alias() {
         let sql = "SELECT current_database() AS current_database, n.nspname, p.proname FROM \
                    pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON p.pronamespace = n.oid";
@@ -1955,6 +2428,69 @@ SELECT t.typname FROM pg_catalog.pg_type t WHERE (t.typrelid = 0 OR (SELECT c.re
             !lower.contains("as current_database()"),
             "did not expect alias rewritten into a function call: {rewritten}"
         );
+    }
+
+    #[test]
+    fn test_rewrite_correlated_pg_index_lateral_to_index_lookup() {
+        let sql = "SELECT ix_rel.relname AS index_name FROM pg_attribute att LEFT JOIN LATERAL ( \
+                   SELECT indexrelid FROM pg_index ix WHERE att.attrelid = ix.indrelid AND \
+                   att.attnum = ALL(ix.indkey) AND ix.indisunique = false LIMIT 1 ) ix ON true \
+                   LEFT JOIN pg_class ix_rel ON ix_rel.oid = ix.indexrelid";
+        let rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            lower.contains("array_element(indkey, 1) as attnum"),
+            "expected single-key projection: {rewritten}"
+        );
+        assert!(
+            lower.contains("indisunique = false") && lower.contains("array_length(indkey, 1) = 1"),
+            "expected non-unique single-column filter: {rewritten}"
+        );
+        assert!(
+            lower.contains("att.attrelid = ix.indrelid")
+                && lower.contains("att.attnum = ix.attnum"),
+            "expected equijoin on the outer attribute: {rewritten}"
+        );
+        assert!(!lower.contains("lateral"), "lateral should be removed: {rewritten}");
+        assert!(!lower.contains("on true"), "correlation must move into the join: {rewritten}");
+        assert!(lower.contains("pg_class"), "index name join must stay: {rewritten}");
+    }
+
+    #[test]
+    fn test_other_correlated_pg_index_lateral_stays_null() {
+        let sql = "SELECT * FROM pg_attribute att LEFT JOIN LATERAL (SELECT indrelid FROM \
+                   pg_index ix WHERE att.attrelid = ix.indrelid) ix ON true";
+        let rewritten = rewrite_wire_catalog_compat_for_datafusion(sql);
+        let lower = rewritten.to_ascii_lowercase();
+        assert!(
+            lower.contains("select cast(null as bigint) as indexrelid"),
+            "expected null lookup: {rewritten}"
+        );
+        assert!(!lower.contains("lateral"), "lateral should be removed: {rewritten}");
+    }
+
+    #[test]
+    fn regtype_text_cast_prints_the_type_name() {
+        let sql = "SELECT att.atttypid::regtype::text AS data_type FROM pg_attribute att";
+        let statement = parse_statement_for_datafusion(sql).expect("parse");
+        let text = statement.to_string().to_ascii_lowercase();
+        assert!(text.contains("format_type"), "expected regtype output as format_type: {text}");
+        assert!(
+            !text.contains("regtype"),
+            "regtype cast should not survive as an oid print: {text}"
+        );
+    }
+
+    #[test]
+    fn test_regnamespace_literal_uses_namespace_oid() {
+        let sql = "SELECT rel.relname FROM pg_class rel WHERE rel.relnamespace IN \
+                   ('directus'::regnamespace)";
+        let statement = parse_statement_for_datafusion(sql).expect("parse");
+        let text = statement.to_string();
+        let expected = stable_catalog_oid(&["namespace", "directus"]);
+        let bare = stable_catalog_oid(&["directus"]);
+        assert_ne!(expected, bare);
+        assert!(text.contains(&expected), "expected namespace oid {expected} in {text}");
     }
 
     #[test]

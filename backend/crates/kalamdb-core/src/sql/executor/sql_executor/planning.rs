@@ -1,17 +1,20 @@
 //! Statement parsing, DataFusion planning, and SELECT limit shaping.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use datafusion::{
-    common::tree_node::{TreeNode, TreeNodeRecursion},
+    common::{
+        tree_node::{TreeNode, TreeNodeRecursion},
+        TableReference,
+    },
     dataframe::DataFrame,
     logical_expr::LogicalPlan,
     prelude::SessionContext,
     sql::parser::Statement as DfStatement,
 };
 use kalamdb_commons::models::SchemaId;
-use sqlparser::ast::Statement;
+use sqlparser::ast::{ObjectName, ObjectNamePart, Statement};
 
 /// Which caller is retrying a plan after a missing table provider.
 pub(super) enum ProviderReload {
@@ -29,7 +32,66 @@ use crate::{
     },
 };
 
-fn table_ref_is_client_catalog(table: &datafusion::common::TableReference) -> bool {
+/// PostgreSQL sessions omit storage columns from a star. The Kalam SQL API
+/// keeps them, because live snapshots and row clients read `_version` there.
+/// An explicit `SELECT _version` still resolves on either path.
+async fn hide_storage_columns_from_star(session: &SessionContext, statement: &mut Statement) {
+    if session
+        .state()
+        .config()
+        .options()
+        .extensions
+        .get::<kalamdb_session_datafusion::PostgresStar>()
+        .is_none()
+    {
+        return;
+    }
+    let tables = kalamdb_sql::storage_star_table_names(statement);
+    if tables.is_empty() {
+        return;
+    }
+    let mut columns_by_table = HashMap::with_capacity(tables.len());
+    for table in tables {
+        let Some(key) = kalamdb_sql::object_name_to_string(&table) else {
+            continue;
+        };
+        let Some(reference) = table_reference_from_object_name(&table) else {
+            continue;
+        };
+        let Ok(provider) = session.table_provider(reference).await else {
+            continue;
+        };
+        let names = provider
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().to_string())
+            .collect();
+        columns_by_table.insert(key, names);
+    }
+    kalamdb_sql::expand_stars_without_storage_columns(statement, &columns_by_table);
+}
+
+fn table_reference_from_object_name(name: &ObjectName) -> Option<TableReference> {
+    let parts: Vec<&str> = name
+        .0
+        .iter()
+        .filter_map(|part| match part {
+            ObjectNamePart::Identifier(ident) => Some(ident.value.as_str()),
+            ObjectNamePart::Function(_) => None,
+        })
+        .collect();
+    match *parts.as_slice() {
+        [table] => Some(TableReference::bare(table.to_string())),
+        [schema, table] => Some(TableReference::partial(schema.to_string(), table.to_string())),
+        [catalog, schema, table] => {
+            Some(TableReference::full(catalog.to_string(), schema.to_string(), table.to_string()))
+        },
+        _ => None,
+    }
+}
+
+fn table_ref_is_client_catalog(table: &TableReference) -> bool {
     matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
 }
 
@@ -68,9 +130,11 @@ impl SqlExecutor {
         session: &SessionContext,
         statement: &Statement,
     ) -> Result<DataFrame, datafusion::error::DataFusionError> {
+        let mut statement = statement.clone();
+        hide_storage_columns_from_star(session, &mut statement).await;
         let plan = session
             .state()
-            .statement_to_plan(DfStatement::Statement(Box::new(statement.clone())))
+            .statement_to_plan(DfStatement::Statement(Box::new(statement)))
             .await?;
         session.execute_logical_plan(plan).await
     }
@@ -153,9 +217,10 @@ impl SqlExecutor {
 
     /// One unoptimized plan for prepared parameter and result metadata.
     pub async fn logical_plan(&self, sql: &str) -> Result<LogicalPlan, KalamDbError> {
-        let statement = Self::parse_statement_for_datafusion_exec(sql)?;
-        self.app_context
-            .base_session_context()
+        let session = self.app_context.base_session_context();
+        let mut statement = Self::parse_statement_for_datafusion_exec(sql)?;
+        hide_storage_columns_from_star(&session, &mut statement).await;
+        session
             .state()
             .statement_to_plan(DfStatement::Statement(Box::new(statement)))
             .await
@@ -173,13 +238,32 @@ impl SqlExecutor {
         if let Some(statement) =
             metadata.datafusion_statement.as_deref().or(metadata.parsed_dml.as_deref())
         {
+            let mut statement = statement.clone();
+            hide_storage_columns_from_star(&session, &mut statement).await;
             return session
                 .state()
-                .statement_to_plan(DfStatement::Statement(Box::new(statement.clone())))
+                .statement_to_plan(DfStatement::Statement(Box::new(statement)))
                 .await
                 .map_err(Self::datafusion_to_execution_error);
         }
-        let statement = Self::parse_statement_for_datafusion_exec(metadata.sql.as_str())?;
+        let mut statement = Self::parse_statement_for_datafusion_exec(metadata.sql.as_str())?;
+        hide_storage_columns_from_star(&session, &mut statement).await;
+        session
+            .state()
+            .statement_to_plan(DfStatement::Statement(Box::new(statement)))
+            .await
+            .map_err(Self::datafusion_to_execution_error)
+    }
+
+    /// Plan `sql` in the caller's session so search_path matches the wire connection.
+    pub async fn logical_plan_for_session(
+        &self,
+        sql: &str,
+        exec_ctx: &ExecutionContext,
+    ) -> Result<LogicalPlan, KalamDbError> {
+        let session = self.create_session_with_transaction_context(exec_ctx)?;
+        let mut statement = Self::parse_statement_for_datafusion_exec(sql)?;
+        hide_storage_columns_from_star(&session, &mut statement).await;
         session
             .state()
             .statement_to_plan(DfStatement::Statement(Box::new(statement)))

@@ -10,7 +10,7 @@ use std::{
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    models::{SchemaId, PayloadMode, TableName},
+    models::{PayloadMode, SchemaId, TableName},
     StorageKey,
 };
 use kalamdb_store::{

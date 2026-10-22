@@ -16,12 +16,16 @@ use serde::{
 
 use crate::{
     conversions::{
-        with_kalam_column_flags_metadata, with_kalam_data_type_metadata, with_parquet_field_id,
+        with_character_maximum_length, with_kalam_column_flags_metadata,
+        with_kalam_data_type_metadata, with_parquet_field_id,
     },
     ids::VersionDomain,
     models::{
         datatypes::{ArrowConversionError, ToArrowType},
-        schemas::{ColumnDefinition, ScalarIndexDefinition, SchemaField, TableOptions, TableType},
+        schemas::{
+            ColumnDefinition, ForeignKeyDefinition, ScalarIndexDefinition, SchemaField,
+            TableOptions, TableType,
+        },
     },
     SchemaId, TableId, TableName,
 };
@@ -66,6 +70,9 @@ pub struct TableDefinition {
     /// Scalar secondary indexes (non-unique by default). Empty when omitted.
     pub scalar_indexes: Vec<ScalarIndexDefinition>,
 
+    /// Foreign keys. Empty when omitted from older catalog rows.
+    pub foreign_keys: Vec<ForeignKeyDefinition>,
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
@@ -84,6 +91,7 @@ struct TableDefinitionSerializeRepr<'a> {
     table_options:  &'a TableOptions,
     table_comment:  &'a Option<String>,
     scalar_indexes: &'a [ScalarIndexDefinition],
+    foreign_keys:   &'a [ForeignKeyDefinition],
     created_at:     DateTime<Utc>,
     updated_at:     DateTime<Utc>,
 }
@@ -100,6 +108,7 @@ impl<'a> From<&'a TableDefinition> for TableDefinitionSerializeRepr<'a> {
             table_options:  &table.table_options,
             table_comment:  &table.table_comment,
             scalar_indexes: &table.scalar_indexes,
+            foreign_keys:   &table.foreign_keys,
             created_at:     table.created_at,
             updated_at:     table.updated_at,
         }
@@ -118,6 +127,8 @@ struct TableDefinitionRepr {
     table_comment:  Option<String>,
     #[serde(default)]
     scalar_indexes: Vec<ScalarIndexDefinition>,
+    #[serde(default)]
+    foreign_keys:   Vec<ForeignKeyDefinition>,
     created_at:     DateTime<Utc>,
     updated_at:     DateTime<Utc>,
 }
@@ -132,6 +143,7 @@ struct SemanticSchema<'a> {
     table_options:  TableOptions,
     table_comment:  &'a Option<String>,
     scalar_indexes: &'a [ScalarIndexDefinition],
+    foreign_keys:   &'a [ForeignKeyDefinition],
 }
 
 impl From<TableDefinitionRepr> for TableDefinition {
@@ -146,6 +158,7 @@ impl From<TableDefinitionRepr> for TableDefinition {
             table_options:  value.table_options,
             table_comment:  value.table_comment,
             scalar_indexes: value.scalar_indexes,
+            foreign_keys:   value.foreign_keys,
             created_at:     value.created_at,
             updated_at:     value.updated_at,
         }
@@ -181,6 +194,7 @@ impl<'de> Visitor<'de> for BinaryTableDefinitionVisitor {
         let created_at = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(8, &self))?;
         let updated_at = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(9, &self))?;
         let scalar_indexes = seq.next_element()?.unwrap_or_default();
+        let foreign_keys = seq.next_element()?.unwrap_or_default();
         Ok(TableDefinition {
             namespace_id,
             table_name,
@@ -191,6 +205,7 @@ impl<'de> Visitor<'de> for BinaryTableDefinitionVisitor {
             table_options,
             table_comment,
             scalar_indexes,
+            foreign_keys,
             created_at,
             updated_at,
         })
@@ -217,6 +232,7 @@ impl Serialize for TableDefinition {
                 &self.created_at,
                 &self.updated_at,
                 &self.scalar_indexes,
+                &self.foreign_keys,
             )
                 .serialize(serializer)
         }
@@ -289,6 +305,7 @@ impl TableDefinition {
             table_options,
             table_comment,
             scalar_indexes: Vec::new(),
+            foreign_keys: Vec::new(),
             created_at: now,
             updated_at: now,
         })
@@ -379,16 +396,19 @@ impl TableDefinition {
             .columns
             .iter()
             .map(|col| {
-                let arrow_type = if col.logical_type.is_timestamptz() && !col.logical_type.is_array()
-                {
-                    crate::models::datatypes::KalamDataType::DateTime.to_arrow_type()?
-                } else {
-                    col.data_type().to_arrow_type()?
-                };
+                let arrow_type =
+                    if col.logical_type.is_timestamptz() && !col.logical_type.is_array() {
+                        crate::models::datatypes::KalamDataType::DateTime.to_arrow_type()?
+                    } else {
+                        col.data_type().to_arrow_type()?
+                    };
                 let mut field = Field::new(&col.column_name, arrow_type, col.is_nullable);
 
                 // Store KalamDataType in metadata for lossless round-trip conversion
                 field = with_kalam_data_type_metadata(field, &col.data_type());
+                if let Some(max_chars) = col.character_maximum_length {
+                    field = with_character_maximum_length(field, max_chars);
+                }
                 field = crate::conversions::schema_metadata::with_logical_type_modifier(
                     field,
                     &col.logical_type,
@@ -510,6 +530,7 @@ impl TableDefinition {
             table_options,
             table_comment: &self.table_comment,
             scalar_indexes: &self.scalar_indexes,
+            foreign_keys: &self.foreign_keys,
         }
     }
 

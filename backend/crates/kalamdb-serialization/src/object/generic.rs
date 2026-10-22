@@ -37,12 +37,8 @@ pub fn encode_string_list(values: &[String]) -> Result<EncodedObject> {
     let count = u32::try_from(values.len())
         .map_err(|_| SerializationError::Encode("string list exceeds u32 count".to_string()))?;
     let payload_bytes: usize = 4 + values.iter().map(|s| 4 + s.len()).sum::<usize>();
-    let mut buf = begin_envelope(
-        ObjectKind::Generic,
-        STRING_LIST_BINARY_SCHEMA_VERSION,
-        0,
-        payload_bytes,
-    );
+    let mut buf =
+        begin_envelope(ObjectKind::Generic, STRING_LIST_BINARY_SCHEMA_VERSION, 0, payload_bytes);
     buf.extend_from_slice(&count.to_le_bytes());
     for s in values {
         let len = u32::try_from(s.len()).map_err(|_| {
@@ -64,26 +60,24 @@ pub fn decode_string_list(bytes: &[u8]) -> Result<Vec<String>> {
         )));
     }
     if payload.len() < 4 {
-        return Err(SerializationError::Decode(
-            "truncated binary string list count".to_string(),
-        ));
+        return Err(SerializationError::Decode("truncated binary string list count".to_string()));
     }
     let count = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
     let mut cursor = 4usize;
     let mut out = Vec::with_capacity(count.min((payload.len() - 4) / 4));
     for _ in 0..count {
-        let end_len = cursor.checked_add(4).ok_or_else(|| {
-            SerializationError::Decode("string list length overflow".to_string())
-        })?;
+        let end_len = cursor
+            .checked_add(4)
+            .ok_or_else(|| SerializationError::Decode("string list length overflow".to_string()))?;
         let len_slice = payload.get(cursor..end_len).ok_or_else(|| {
             SerializationError::Decode("truncated binary string list entry length".to_string())
         })?;
-        let len = u32::from_le_bytes([len_slice[0], len_slice[1], len_slice[2], len_slice[3]])
-            as usize;
+        let len =
+            u32::from_le_bytes([len_slice[0], len_slice[1], len_slice[2], len_slice[3]]) as usize;
         cursor = end_len;
-        let end_str = cursor.checked_add(len).ok_or_else(|| {
-            SerializationError::Decode("string list entry overflow".to_string())
-        })?;
+        let end_str = cursor
+            .checked_add(len)
+            .ok_or_else(|| SerializationError::Decode("string list entry overflow".to_string()))?;
         let str_bytes = payload.get(cursor..end_str).ok_or_else(|| {
             SerializationError::Decode("truncated binary string list entry".to_string())
         })?;
@@ -94,9 +88,7 @@ pub fn decode_string_list(bytes: &[u8]) -> Result<Vec<String>> {
         cursor = end_str;
     }
     if cursor != payload.len() {
-        return Err(SerializationError::Decode(
-            "trailing bytes in binary string list".to_string(),
-        ));
+        return Err(SerializationError::Decode("trailing bytes in binary string list".to_string()));
     }
     Ok(out)
 }

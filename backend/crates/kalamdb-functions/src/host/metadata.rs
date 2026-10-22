@@ -1,6 +1,6 @@
 //! Immutable, host-authenticated procedure identity.
 
-use kalamdb_commons::{SchemaId, Role, UserId};
+use kalamdb_commons::{Role, SchemaId, UserId};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]

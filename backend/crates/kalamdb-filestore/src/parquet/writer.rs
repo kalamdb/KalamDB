@@ -203,8 +203,11 @@ fn sort_batches_by_version(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>
 }
 
 fn sort_record_batch_by_version(batch: RecordBatch) -> Result<RecordBatch> {
-    let Some(seq_idx) =
-        batch.schema().fields().iter().position(|f| f.name() == SystemColumnNames::VERSION)
+    let Some(seq_idx) = batch
+        .schema()
+        .fields()
+        .iter()
+        .position(|f| f.name() == SystemColumnNames::VERSION)
     else {
         return Ok(batch);
     };

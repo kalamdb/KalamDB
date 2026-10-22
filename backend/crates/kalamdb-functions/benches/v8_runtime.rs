@@ -165,6 +165,7 @@ fn serialized_code_cache(c: &mut Criterion) {
 
 fn read_view_vs_materialize(c: &mut Criterion) {
     use std::sync::Arc;
+
     use arrow::{
         array::{Int64Array, RecordBatch, StringArray},
         datatypes::{DataType, Field, Schema},
@@ -198,11 +199,7 @@ fn read_view_vs_materialize(c: &mut Criterion) {
     c.bench_function("v8/read_view_project_single_row_256", |b| {
         b.iter(|| {
             let value = session
-                .invoke(
-                    black_box(&project_id),
-                    black_box(std::slice::from_ref(&view_arg)),
-                    &cancel,
-                )
+                .invoke(black_box(&project_id), black_box(std::slice::from_ref(&view_arg)), &cancel)
                 .expect("invoke");
             black_box(value);
         });
@@ -211,11 +208,7 @@ fn read_view_vs_materialize(c: &mut Criterion) {
     c.bench_function("v8/read_view_materialize_256_rows", |b| {
         b.iter(|| {
             let value = session
-                .invoke(
-                    black_box(&mat_id),
-                    black_box(std::slice::from_ref(&view_arg)),
-                    &cancel,
-                )
+                .invoke(black_box(&mat_id), black_box(std::slice::from_ref(&view_arg)), &cancel)
                 .expect("invoke");
             black_box(value);
         });

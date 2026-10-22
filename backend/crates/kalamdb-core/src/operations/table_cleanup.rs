@@ -74,9 +74,7 @@ pub fn cleanup_table_partitions_sync(
     );
 
     if table_type == TableType::System {
-        return Err(KalamDbError::InvalidOperation(
-            "Cannot cleanup system table data".to_string(),
-        ));
+        return Err(KalamDbError::InvalidOperation("Cannot cleanup system table data".to_string()));
     }
 
     kalamdb_vector::invalidate_hot_query_cache_for_table(table_id);
@@ -87,8 +85,7 @@ pub fn cleanup_table_partitions_sync(
         expected_table_partition_names(table_id, table_type, &scalar_indexes, &columns);
 
     if let Ok(existing_partitions) = backend.list_partitions() {
-        let live_tables =
-            app_context.system_tables().tables().list_tables().unwrap_or_default();
+        let live_tables = app_context.system_tables().tables().list_tables().unwrap_or_default();
         for existing in existing_partitions {
             let name = existing.name();
             if partition_belongs_to_table(name, table_id, table_type)
@@ -394,8 +391,7 @@ fn other_live_table_owns_partition(
     live_tables: &[TableDefinition],
 ) -> bool {
     live_tables.iter().any(|other_def| {
-        let other_id =
-            TableId::new(other_def.namespace_id.clone(), other_def.table_name.clone());
+        let other_id = TableId::new(other_def.namespace_id.clone(), other_def.table_name.clone());
         &other_id != dropping_table_id
             && partition_belongs_to_live_table_def(partition_name, &other_id, other_def)
     })
@@ -659,9 +655,10 @@ mod tests {
             TableName::new(format!("gone_{}", unique)),
         );
         let orphan_main = StorePartition::new(format!("shared_{}", orphan_table));
-        let orphan_vix = StorePartition::new(
-            kalamdb_vector::shared_vector_ops_partition_name(&orphan_table, "emb"),
-        );
+        let orphan_vix = StorePartition::new(kalamdb_vector::shared_vector_ops_partition_name(
+            &orphan_table,
+            "emb",
+        ));
         backend.create_partition(&orphan_main).expect("create orphan main");
         backend.create_partition(&orphan_vix).expect("create orphan vix");
 

@@ -138,7 +138,10 @@ CREATE USER TABLE okf_sync.notes (
         assert!(!schema.contains("export type KalamFileColumn"), "{schema}");
         assert!(!schema.contains("export interface FileRefData"), "{schema}");
         assert!(schema.contains("export type File = PgCatalogFile;"), "{schema}");
-        assert!(schema.contains("import type { PgCatalogFile } from '@kalamdb/client';"), "{schema}");
+        assert!(
+            schema.contains("import type { PgCatalogFile } from '@kalamdb/client';"),
+            "{schema}"
+        );
         assert!(schema.contains("file_ref: File;"), "{schema}");
         assert!(
             schema.contains("import { text, timestamp } from 'drizzle-orm/pg-core';"),
@@ -148,17 +151,31 @@ CREATE USER TABLE okf_sync.notes (
         assert!(!schema.contains("integer("), "{schema}");
         assert!(!schema.contains("jsonb("), "{schema}");
         assert!(schema.contains("path: text(\"path\").primaryKey()"), "{schema}");
-        assert!(schema.contains("file_ref: file(\"file_ref\").$type<File>().notNull()"), "{schema}");
+        assert!(
+            schema.contains("file_ref: file(\"file_ref\").$type<File>().notNull()"),
+            "{schema}"
+        );
         assert!(!schema.contains("jsonb(\"file_ref\")"), "{schema}");
         assert!(schema.contains("export const okfSyncContextFiles"), "{schema}");
         assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");
 
         let client = generate_client_source(&snapshot, &hash, &names).unwrap();
-        assert!(client.contains("filePut: async (input: FilePutRequest): Promise<FilePutResult>"), "{client}");
+        assert!(
+            client.contains("filePut: async (input: FilePutRequest): Promise<FilePutResult>"),
+            "{client}"
+        );
         assert!(client.contains("SELECT pg_catalog.file_put($1) AS result"), "{client}");
-        assert!(client.contains("fileRead: async (input: FileReadRequest): Promise<FileReadResult>"), "{client}");
+        assert!(
+            client.contains("fileRead: async (input: FileReadRequest): Promise<FileReadResult>"),
+            "{client}"
+        );
         assert!(client.contains("SELECT pg_catalog.file_read($1) AS result"), "{client}");
-        assert!(client.contains("fileDelete: async (input: FileDeleteRequest): Promise<FileDeleteResult>"), "{client}");
+        assert!(
+            client.contains(
+                "fileDelete: async (input: FileDeleteRequest): Promise<FileDeleteResult>"
+            ),
+            "{client}"
+        );
         assert!(client.contains("SELECT pg_catalog.file_delete($1) AS result"), "{client}");
     }
 

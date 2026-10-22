@@ -282,8 +282,7 @@ fn catalog_routine(
         })
         .collect();
     let effective_return_type = statement.return_type.as_ref().or_else(|| {
-        if statement.kind == kalamdb_commons::models::RoutineKind::Function
-            && out_params.len() == 1
+        if statement.kind == kalamdb_commons::models::RoutineKind::Function && out_params.len() == 1
         {
             Some(&out_params[0].type_ref)
         } else {
@@ -318,8 +317,7 @@ fn catalog_routine(
         return_data_type: if multi_out_record {
             Some(kalamdb_commons::KalamDataType::Json)
         } else {
-            effective_return_type
-                .and_then(|ty| ty.function_signature_type().builtin_data_type())
+            effective_return_type.and_then(|ty| ty.function_signature_type().builtin_data_type())
         },
         inline_source_hash: None,
         inline_artifact_id: None,

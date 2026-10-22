@@ -415,6 +415,12 @@ impl SqlStatement {
             ["CREATE", "INDEX", ..] | ["CREATE", "UNIQUE", "INDEX", ..] => Self::wrap(sql, || {
                 parse_create_index_on(sql, default_namespace).map(SqlStatementKind::AlterTable)
             }),
+            ["DROP", "INDEX", ..] => Self::wrap(sql, || {
+                parse_drop_index(sql, default_namespace).map(SqlStatementKind::AlterTable)
+            }),
+            ["ALTER", "INDEX", ..] => Self::wrap(sql, || {
+                parse_alter_index(sql, default_namespace).map(SqlStatementKind::AlterTable)
+            }),
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]
             | ["ALTER", "SHARED", "TABLE", ..]

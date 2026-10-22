@@ -37,6 +37,7 @@ pub fn logical_type_ref_for_field(field: &Field) -> PgWireResult<LogicalTypeRef>
         return Ok(match modifier {
             "jsonb" => LogicalTypeRef::Jsonb,
             "timestamptz" => LogicalTypeRef::TimestampTz,
+            "geometry" => LogicalTypeRef::Geometry,
             _ => LogicalTypeRef::Builtin(KalamDataType::Text),
         });
     }
@@ -46,8 +47,23 @@ pub fn logical_type_ref_for_field(field: &Field) -> PgWireResult<LogicalTypeRef>
         }
         return Ok(LogicalTypeRef::Builtin(kalam_type));
     }
+    // `json_get_json` (`->`) returns JSON text and tags the field with Arrow's
+    // canonical JSON extension. PostgreSQL reports that result as `json` so the
+    // client parses strings, numbers, objects, and arrays.
+    if field_stores_json_text(field) {
+        return Ok(LogicalTypeRef::Builtin(KalamDataType::Json));
+    }
 
     logical_type_ref_for_arrow(field.data_type())
+}
+
+/// True when a physical `Utf8` field holds raw JSON text rather than plain text.
+fn field_stores_json_text(field: &Field) -> bool {
+    field
+        .metadata()
+        .get("ARROW:extension:name")
+        .is_some_and(|name| name == "arrow.json")
+        || field.metadata().get("is_json").is_some_and(|flag| flag == "true")
 }
 
 /// Resolve the canonical [`LogicalTypeRef`] for an unadorned Arrow [`DataType`].
@@ -113,6 +129,7 @@ pub fn pg_type_for_logical_type(type_ref: &LogicalTypeRef) -> PgWireResult<Type>
         },
         LogicalTypeRef::Jsonb => Type::JSONB,
         LogicalTypeRef::TimestampTz => Type::TIMESTAMPTZ,
+        LogicalTypeRef::Geometry => Type::TEXT,
         LogicalTypeRef::Named { type_id } => pg_type_for_type_id(type_id),
         LogicalTypeRef::List { element, .. } => pg_array_type_for_logical_type(element)?,
         LogicalTypeRef::Map { .. } => return Err(unsupported_logical_type_error(type_ref)),
@@ -147,9 +164,10 @@ fn pg_array_type_for_logical_type(element: &LogicalTypeRef) -> PgWireResult<Type
         LogicalTypeRef::Builtin(KalamDataType::Uuid) => Type::UUID_ARRAY,
         LogicalTypeRef::Builtin(KalamDataType::Json) => Type::JSON_ARRAY,
         LogicalTypeRef::Jsonb => Type::JSONB_ARRAY,
+        LogicalTypeRef::Geometry => Type::TEXT_ARRAY,
         LogicalTypeRef::Named { .. } => Type::TEXT_ARRAY,
         other => {
-            return Err(unsupported_logical_type_error(&LogicalTypeRef::list(other.clone(), true)))
+            return Err(unsupported_logical_type_error(&LogicalTypeRef::list(other.clone(), true)));
         },
     })
 }
@@ -180,4 +198,38 @@ pub fn unsupported_logical_type_error(type_ref: &LogicalTypeRef) -> PgWireError 
         "0A000".to_string(),
         format!("unsupported logical type for PostgreSQL wire row encoding: {type_ref:?}"),
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use arrow::datatypes::{DataType, Field};
+    use pgwire::api::Type;
+
+    use super::*;
+
+    #[test]
+    fn arrow_json_text_is_reported_as_json() {
+        let mut metadata = HashMap::new();
+        metadata.insert("ARROW:extension:name".to_string(), "arrow.json".to_string());
+        metadata.insert("ARROW:extension:metadata".to_string(), "{}".to_string());
+        metadata.insert("is_json".to_string(), "true".to_string());
+        let field = Field::new("metadata_color_json", DataType::Utf8, true).with_metadata(metadata);
+
+        assert_eq!(pg_type_for_field(&field).expect("json field"), Type::JSON);
+    }
+
+    #[test]
+    fn plain_text_stays_text() {
+        let field = Field::new("name", DataType::Utf8, true);
+        assert_eq!(pg_type_for_field(&field).expect("text field"), Type::TEXT);
+    }
+
+    #[test]
+    fn legacy_is_json_flag_is_reported_as_json() {
+        let field = Field::new("payload", DataType::Utf8, true)
+            .with_metadata(HashMap::from([("is_json".to_string(), "true".to_string())]));
+        assert_eq!(pg_type_for_field(&field).expect("legacy json field"), Type::JSON);
+    }
 }

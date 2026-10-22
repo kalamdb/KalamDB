@@ -403,7 +403,8 @@ mod tests {
 
     #[test]
     fn replace_leaves_one_user_row_key() {
-        let backend: Arc<dyn StorageBackend> = Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let backend: Arc<dyn StorageBackend> =
+            Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
         let table_id = TableId::new(SchemaId::new("ns"), TableName::new("notes"));
         let schema = crate::row_codec::storage_schema_from_named_fields([(
             "id",
@@ -416,10 +417,10 @@ mod tests {
         let old_version = VersionId::try_from_i64(1).unwrap();
         let old_key = UserTableRowId::new(user_id.clone(), old_version);
         let old_row = UserTableRow {
-            user_id: user_id.clone(),
+            user_id:  user_id.clone(),
             _version: old_version,
             _deleted: false,
-            fields: Row::new(values.clone()),
+            fields:   Row::new(values.clone()),
         };
         store.insert(&old_key, &old_row).unwrap();
 

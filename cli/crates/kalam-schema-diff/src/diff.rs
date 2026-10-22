@@ -101,28 +101,22 @@ pub fn diff_schema_sql_with_options(
             if options.allow_destructive {
                 drop_types.push(stmt);
             } else {
-                drop_types.push(format!(
-                    "-- destructive change skipped: {}",
-                    stmt.trim_end_matches(';')
-                ));
+                drop_types
+                    .push(format!("-- destructive change skipped: {}", stmt.trim_end_matches(';')));
             }
         } else if upper.starts_with("DROP FUNCTION ") || upper.starts_with("DROP PROCEDURE ") {
             if options.allow_destructive {
                 drop_routines.push(stmt);
             } else {
-                drop_routines.push(format!(
-                    "-- destructive change skipped: {}",
-                    stmt.trim_end_matches(';')
-                ));
+                drop_routines
+                    .push(format!("-- destructive change skipped: {}", stmt.trim_end_matches(';')));
             }
         } else if upper.starts_with("ALTER TYPE ") && upper.contains(" DROP ATTRIBUTE ") {
             if options.allow_destructive {
                 pre_table_contract.push(stmt);
             } else {
-                pre_table_contract.push(format!(
-                    "-- destructive change skipped: {}",
-                    stmt.trim_end_matches(';')
-                ));
+                pre_table_contract
+                    .push(format!("-- destructive change skipped: {}", stmt.trim_end_matches(';')));
             }
         } else if upper.starts_with("CREATE TYPE ")
             || upper.starts_with("CREATE DOMAIN ")

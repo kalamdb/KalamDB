@@ -107,12 +107,14 @@ fn table_index_from_operation(
                 metric: format!("{metric:?}").to_ascii_uppercase(),
             },
         }),
-        ColumnOperation::DropIndex { .. } | ColumnOperation::DropVectorIndex { .. } => {
-            Err(index_parse_error(
-                path,
-                "DROP INDEX is not valid in schema.sql; omit the CREATE INDEX instead",
-            ))
-        },
+        ColumnOperation::DropIndex { .. }
+        | ColumnOperation::DropStandaloneIndex { .. }
+        | ColumnOperation::RenameIndex { .. }
+        | ColumnOperation::RenameStandaloneIndex { .. }
+        | ColumnOperation::DropVectorIndex { .. } => Err(index_parse_error(
+            path,
+            "DROP INDEX is not valid in schema.sql; omit the CREATE INDEX instead",
+        )),
         _ => Err(index_parse_error(path, &format!("unsupported index statement:\n{sql}"))),
     }
 }

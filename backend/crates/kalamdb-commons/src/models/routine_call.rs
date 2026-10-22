@@ -5,16 +5,84 @@ use serde::{Deserialize, Serialize};
 
 use super::{call_argument::CallArgument, ids::RoutineId};
 
-/// Built-in DEFAULT functions. These are ScalarUDFs, not catalog procedures.
-const BUILTIN_DEFAULT_NAMES: &[&str] = &[
-    "now",
-    "current_timestamp",
-    "snowflake_id",
-    "auto_increment",
-    "uuid_v7",
-    "ulid",
-    "current_user",
-];
+/// A DEFAULT function KalamDB evaluates itself.
+///
+/// Aliases live only in [`BuiltinDefault::parse`]. PostgreSQL names we already
+/// implement as session functions are included. `clock_timestamp`,
+/// `current_date`, `current_time`, and `gen_random_uuid` are not: they are a
+/// different type or a different clock, and there is no function for them yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinDefault {
+    Now,
+    CurrentUser,
+    CurrentRole,
+    CurrentSchema,
+    CurrentDatabase,
+    SnowflakeId,
+    SerialId,
+    UuidV7,
+    Ulid,
+}
+
+impl BuiltinDefault {
+    /// Resolve an unqualified function name, including PostgreSQL aliases.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name.to_ascii_lowercase().as_str() {
+            "now" | "current_timestamp" | "transaction_timestamp" | "statement_timestamp" => {
+                Self::Now
+            },
+            "current_user" | "session_user" | "current_user_id" | "user" => Self::CurrentUser,
+            "current_role" => Self::CurrentRole,
+            "current_schema" | "current_namespace" => Self::CurrentSchema,
+            "current_database" | "current_catalog" => Self::CurrentDatabase,
+            "snowflake_id" | "auto_increment" => Self::SnowflakeId,
+            "serial_id" => Self::SerialId,
+            "uuid_v7" => Self::UuidV7,
+            "ulid" => Self::Ulid,
+            _ => return None,
+        })
+    }
+
+    /// Name stored on the column and printed in `DEFAULT` SQL.
+    pub fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Now => "now",
+            Self::CurrentUser => "current_user",
+            Self::CurrentRole => "current_role",
+            Self::CurrentSchema => "current_schema",
+            Self::CurrentDatabase => "current_database",
+            Self::SnowflakeId => "snowflake_id",
+            Self::SerialId => "serial_id",
+            Self::UuidV7 => "uuid_v7",
+            Self::Ulid => "ulid",
+        }
+    }
+
+    /// DataFusion function name. Session functions use the `kdb_` implementation.
+    pub fn scalar_udf_name(self) -> &'static str {
+        match self {
+            Self::Now => "now",
+            Self::CurrentUser => "kdb_current_user",
+            Self::CurrentRole => "kdb_current_role",
+            Self::CurrentSchema => "kdb_current_schema",
+            Self::CurrentDatabase => "kdb_current_database",
+            Self::SnowflakeId => "snowflake_id",
+            Self::SerialId => "serial_id",
+            Self::UuidV7 => "uuid_v7",
+            Self::Ulid => "ulid",
+        }
+    }
+
+    /// Primary-key generators. A repeated call is a different id.
+    pub fn is_id_generator(self) -> bool {
+        matches!(self, Self::SnowflakeId | Self::SerialId)
+    }
+
+    /// Each row needs its own value. Session functions stay fixed for the statement.
+    pub fn is_volatile(self) -> bool {
+        matches!(self, Self::SnowflakeId | Self::SerialId | Self::UuidV7 | Self::Ulid)
+    }
+}
 
 /// Same shape as SQL `CALL schema.name(args...)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,13 +132,19 @@ impl RoutineCall {
             .unwrap_or(self.routine_id.as_str())
     }
 
+    pub fn builtin_default(&self) -> Option<BuiltinDefault> {
+        if self.routine_id.as_str().contains('.') {
+            return None;
+        }
+        BuiltinDefault::parse(self.unqualified_name())
+    }
+
     pub fn is_builtin_default(&self) -> bool {
-        !self.routine_id.as_str().contains('.') && is_builtin_default_name(self.unqualified_name())
+        self.builtin_default().is_some()
     }
 
     pub fn is_id_generator_default(&self) -> bool {
-        self.is_builtin_default()
-            && matches!(self.unqualified_name(), "snowflake_id" | "auto_increment")
+        self.builtin_default().is_some_and(BuiltinDefault::is_id_generator)
     }
 
     pub fn has_placeholder(&self) -> bool {
@@ -78,17 +152,7 @@ impl RoutineCall {
     }
 
     pub fn scalar_udf_name(&self) -> Option<&'static str> {
-        if !self.is_builtin_default() {
-            return None;
-        }
-        Some(match self.unqualified_name() {
-            "now" | "current_timestamp" => "now",
-            "snowflake_id" | "auto_increment" => "snowflake_id",
-            "uuid_v7" => "uuid_v7",
-            "ulid" => "ulid",
-            "current_user" => "kdb_current_user",
-            _ => return None,
-        })
+        self.builtin_default().map(BuiltinDefault::scalar_udf_name)
     }
 
     pub fn to_sql(&self) -> String {
@@ -108,19 +172,13 @@ impl RoutineCall {
 }
 
 pub fn is_builtin_default_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    BUILTIN_DEFAULT_NAMES.contains(&lower.as_str())
+    BuiltinDefault::parse(name).is_some()
 }
 
 pub fn normalize_builtin_name(name: &str) -> String {
-    let lower = name.to_ascii_lowercase();
-    if lower == "current_timestamp" || lower == "now" {
-        "now".to_string()
-    } else if lower == "auto_increment" {
-        "snowflake_id".to_string()
-    } else {
-        lower
-    }
+    BuiltinDefault::parse(name)
+        .map(|builtin| builtin.canonical_name().to_string())
+        .unwrap_or_else(|| name.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -154,5 +212,23 @@ mod tests {
         );
         assert!(!call.is_builtin_default());
         assert!(!call.is_id_generator_default());
+    }
+
+    #[test]
+    fn postgresql_aliases_share_one_builtin() {
+        assert_eq!(BuiltinDefault::parse("CURRENT_TIMESTAMP"), Some(BuiltinDefault::Now));
+        assert_eq!(BuiltinDefault::parse("transaction_timestamp"), Some(BuiltinDefault::Now));
+        assert_eq!(BuiltinDefault::parse("session_user"), Some(BuiltinDefault::CurrentUser));
+        assert_eq!(BuiltinDefault::parse("current_catalog"), Some(BuiltinDefault::CurrentDatabase));
+        assert_eq!(normalize_builtin_name("SESSION_USER"), "current_user");
+        assert_eq!(
+            RoutineCall::builtin("current_schema").scalar_udf_name(),
+            Some("kdb_current_schema")
+        );
+        assert!(BuiltinDefault::parse("clock_timestamp").is_none());
+        assert!(BuiltinDefault::parse("gen_random_uuid").is_none());
+        assert!(RoutineCall::builtin("serial_id").is_id_generator_default());
+        assert!(BuiltinDefault::SerialId.is_volatile());
+        assert!(!BuiltinDefault::Now.is_volatile());
     }
 }

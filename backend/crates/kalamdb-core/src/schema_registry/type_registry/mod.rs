@@ -95,6 +95,21 @@ impl TypeRegistry {
         self.load_current(stores, type_id)
     }
 
+    /// Drop cached Arrow layouts for one table.
+    ///
+    /// Layouts are keyed only by schema version. Dropping or replacing a table
+    /// reuses those version numbers, so the previous physical schema must not
+    /// survive.
+    pub fn forget_table_layouts(&self, namespace_id: &SchemaId, table_name: &TableName) {
+        self.table_layouts
+            .retain(|key, _| &key.namespace_id != namespace_id || &key.table_name != table_name);
+        for mut entry in self.table_deps.iter_mut() {
+            entry
+                .value_mut()
+                .retain(|key| &key.namespace_id != namespace_id || &key.table_name != table_name);
+        }
+    }
+
     /// Drop current pointer and reverse dependents.
     /// Historical revisions stay pinned by `(TypeId, revision)` and in-flight Arcs stay valid.
     pub fn invalidate(&self, type_id: &TypeId) {
@@ -275,7 +290,7 @@ mod tests {
     #[test]
     fn modifiers_resolve_onto_the_schema_revision_cache() {
         use kalamdb_commons::{
-            conversions::read_logical_type_modifier,
+            conversions::{read_character_maximum_length, read_logical_type_modifier},
             schemas::{ColumnDefault, ColumnDefinition, TableDefinition, TableOptions, TableType},
             KalamDataType, LogicalTypeRef, TableName,
         };
@@ -306,11 +321,23 @@ mod tests {
             None,
         );
         charged_at.logical_type = LogicalTypeRef::timestamptz();
+        let mut name = ColumnDefinition::new(
+            3,
+            "name",
+            3,
+            KalamDataType::Text,
+            true,
+            false,
+            false,
+            ColumnDefault::None,
+            None,
+        );
+        name.character_maximum_length = Some(255);
         let mut table = TableDefinition::new(
             ns,
             TableName::new("invoices"),
             TableType::Shared,
-            vec![payload, charged_at],
+            vec![payload, charged_at, name],
             TableOptions::shared(),
             None,
         )
@@ -326,6 +353,10 @@ mod tests {
         assert_eq!(
             read_logical_type_modifier(first.field_with_name("charged_at").unwrap()),
             Some("timestamptz")
+        );
+        assert_eq!(
+            read_character_maximum_length(first.field_with_name("name").unwrap()),
+            Some(255)
         );
 
         table.schema_version = table.schema_version.saturating_add(1);

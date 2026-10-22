@@ -35,7 +35,8 @@ use crate::sql::{
         CurrentSettingFunction, CurrentUserFunction, FileStorageFunction, FormatTypeFunction,
         ObjDescriptionFunction, PgBackendPidFunction, PgGetExprFunction,
         PgGetFunctionResultFunction, PgGetFunctionTextFunction, PgGetIndexdefFunction,
-        SetConfigFunction, SnowflakeIdFunction, UlidFunction, UuidV7Function, VersionFunction,
+        PgGetSerialSequenceFunction, SetConfigFunction, SetvalFunction, SnowflakeIdFunction,
+        UlidFunction, UuidV7Function, VersionFunction,
     },
     table_functions::VectorSearchTableFunction,
 };
@@ -222,6 +223,8 @@ impl DataFusionSessionFactory {
         ctx.register_udf(ScalarUDF::from(FormatTypeFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetExprFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetIndexdefFunction::new()));
+        ctx.register_udf(ScalarUDF::from(PgGetSerialSequenceFunction::new()));
+        ctx.register_udf(ScalarUDF::from(SetvalFunction::new()));
         ctx.register_udf(ScalarUDF::from(PgGetFunctionResultFunction::new()));
         ctx.register_udf(ScalarUDF::from(ObjDescriptionFunction::new()));
         ctx.register_udf(ScalarUDF::from(AlwaysTruePrivilegeFunction::has_function_privilege()));

@@ -190,11 +190,9 @@ pub fn decode_packed_insert(tag: u8, bytes: &[u8]) -> Result<PackedInsert> {
     let required_meta_index = read_u64(bytes, &mut pos)?;
     let flags = read_u8(bytes, &mut pos)?;
     let transaction_id = if flags & FLAG_HAS_TX != 0 {
-        Some(
-            TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
-                SerializationError::Decode(format!("packed insert transaction id: {e}"))
-            })?,
-        )
+        Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
+            SerializationError::Decode(format!("packed insert transaction id: {e}"))
+        })?)
     } else {
         None
     };
@@ -291,11 +289,9 @@ pub fn decode_packed_delete(tag: u8, bytes: &[u8]) -> Result<PackedDelete> {
     let required_meta_index = read_u64(bytes, &mut pos)?;
     let flags = read_u8(bytes, &mut pos)?;
     let transaction_id = if flags & FLAG_HAS_TX != 0 {
-        Some(
-            TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
-                SerializationError::Decode(format!("packed delete transaction id: {e}"))
-            })?,
-        )
+        Some(TransactionId::try_new(read_u16_str(bytes, &mut pos)?).map_err(|e| {
+            SerializationError::Decode(format!("packed delete transaction id: {e}"))
+        })?)
     } else {
         None
     };

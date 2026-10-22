@@ -11,7 +11,7 @@ use kalamdb_commons::{
         rows::Row,
         OperationKind, ReadContext, Role, TransactionId, TransactionOrigin, UserId,
     },
-    SchemaId, PolicyCommand, TableId, TableType,
+    PolicyCommand, SchemaId, TableId, TableType,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -24,7 +24,8 @@ use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::{install_extension, SessionUserContext};
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
-    build_insert_staged_mutations, TransactionQueryContext, TransactionQueryExtension,
+    build_insert_staged_mutations, primary_key_claims, TransactionQueryContext,
+    TransactionQueryExtension,
 };
 use tonic::Status;
 
@@ -305,13 +306,21 @@ impl OperationService {
         }
 
         let coordinator = self.app_context.transaction_coordinator();
-        Ok(Some(TransactionQueryContext::new(
-            transaction_id.clone(),
-            Arc::clone(&handle.snapshot_log_index),
-            Arc::new(CoordinatorOverlayView::new(Arc::clone(&coordinator), transaction_id.clone())),
-            Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
-            Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),
-        )))
+        Ok(Some(
+            TransactionQueryContext::new(
+                transaction_id.clone(),
+                Arc::clone(&handle.snapshot_log_index),
+                Arc::new(CoordinatorOverlayView::new(
+                    Arc::clone(&coordinator),
+                    transaction_id.clone(),
+                )),
+                Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
+                Arc::new(CoordinatorAccessValidator::new(
+                    self.app_context.transaction_coordinator(),
+                )),
+            )
+            .with_pk_claims(primary_key_claims()),
+        ))
     }
 
     async fn stage_insert(
@@ -647,7 +656,8 @@ impl OperationExecutor for OperationService {
             Role::Dba,
             SchemaId::new("default"),
             base,
-        );
+        )
+        .with_postgres_star();
 
         let sql_executor = self.app_context.sql_executor();
         let result = sql_executor
@@ -669,7 +679,8 @@ impl OperationExecutor for OperationService {
             Role::Dba,
             SchemaId::new("default"),
             base,
-        );
+        )
+        .with_postgres_star();
 
         let sql_executor = self.app_context.sql_executor();
         let result = sql_executor
