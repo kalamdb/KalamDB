@@ -26,10 +26,9 @@ impl BufferAllocator {
         let Ok(layout) = Layout::from_size_align(len.max(1), 16) else {
             return ptr::null_mut();
         };
-        // `try_update` is still unstable; keep `fetch_update` for MSRV 1.94.
         if self
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(len).filter(|next| *next <= self.limit)
             })
             .is_err()

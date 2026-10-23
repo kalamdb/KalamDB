@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kalamdb_backend::manager::{BackendSessionError, BackendSessionManager};
 use kalamdb_core::{
     app_context::AppContext,
-    sql::{ExecutionContext, ScalarValue, SqlExecutor, executor::PreparedExecutionStatement},
+    sql::{executor::PreparedExecutionStatement, ExecutionContext, ScalarValue, SqlExecutor},
 };
 use kalamdb_sql::classifier::SqlStatementKind;
 use pgwire::{
@@ -17,7 +17,7 @@ use pgwire::{
 use crate::{
     connection::WireConnectionState,
     row_encoder::execution_result_to_responses_with_format,
-    tx_control::{WireTransactionControl, WireTransactionOutcome, execute_transaction_control},
+    tx_control::{execute_transaction_control, WireTransactionControl, WireTransactionOutcome},
 };
 
 const IN_FAILED_SQLSTATE: &str = "25P02";

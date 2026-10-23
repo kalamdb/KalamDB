@@ -4,19 +4,19 @@ use async_trait::async_trait;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{
-        ExecutionContext,
         executor::{
-            PreparedExecutionStatement, SqlExecutor, parameter_binding::max_placeholder_index,
+            parameter_binding::max_placeholder_index, PreparedExecutionStatement, SqlExecutor,
         },
         functions::classify_postgres_show,
+        ExecutionContext,
     },
 };
 use pgwire::{
     api::{
-        ClientInfo, Type,
         portal::Format,
         results::{FieldFormat, FieldInfo},
         stmt::QueryParser,
+        ClientInfo, Type,
     },
     error::{ErrorInfo, PgWireError, PgWireResult},
 };

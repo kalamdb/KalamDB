@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use datafusion::prelude::SessionContext;
-use kalamdb_commons::{Role, SchemaId, TransactionId, UserId, models::ReadContext};
+use kalamdb_commons::{models::ReadContext, Role, SchemaId, TransactionId, UserId};
 use kalamdb_session::AuthSession;
 use kalamdb_session_datafusion::{
-    PostgresStar, SessionConfigValues, SessionUserContext, install_extension,
+    install_extension, PostgresStar, SessionConfigValues, SessionUserContext,
 };
 use once_cell::sync::OnceCell;
 
