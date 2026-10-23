@@ -204,7 +204,7 @@ impl CreateTableStatement {
                                             return Err(format!(
                                                 "Unknown FLUSH_POLICY key '{}'",
                                                 key.unwrap()
-                                            ))
+                                            ));
                                         },
                                     }
                                 }

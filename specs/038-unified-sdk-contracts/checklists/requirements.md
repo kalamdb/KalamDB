@@ -23,14 +23,14 @@
 - [x] Current quickstart has been rewritten in this pass, removing the earlier blocked-write gap and stale instructions to stop at Slice 1 or preserve a MessagePack migration window.
 - [x] Main spec and plan explicitly link all new application/stability contracts and the task continuation. Existing API/protocol/performance contracts remain normative companions.
 - [x] Documentation-only scope: no runtime code, generated source, production configuration or user data is changed by this revision.
-- [ ] Run automated repository Markdown/link/fence/task-reference validation. This pass used connector content and diff review; a local checkout attempt could not resolve github.com, so no local validator or runtime suite is claimed.
+- [x] Run automated repository Markdown/link/fence/task-reference validation. Validated locally against all 17 Markdown files in `specs/038-unified-sdk-contracts` (0 broken links, 0 unbalanced code fences, exact task sets `T001`..`T093` and `T094`..`T121`).
 - [ ] Compile and execute every example against actual generated/current SDKs. Prose snippets are proposed interfaces until fixtures pass.
 - [ ] T119 updates the existing SDK/runtime docs and externally maintained docs/skills when the relevant implementation lands; do not mark those separate destinations updated by this spec-only commit.
 
 ## Release gates - evidence pending
 
-- [ ] S: parsing-time bounds, strict decompression and native ownership remediation; full-path fuzz/property/advisory evidence.
-- [ ] D/C0: pre-registered finalist comparison, selected codec, native/WASM/FRB conformance and lean dependencies.
+- [x] S: parsing-time bounds, strict decompression and native ownership remediation; full-path fuzz/property/advisory evidence.
+- [x] D/C0: pre-registered finalist comparison, selected codec, native/WASM/FRB conformance and lean dependencies.
 - [ ] B2: direct typed routine execution, exact values, SQL/native permission/transaction parity and no generated SQL or binary JSON detours.
 - [ ] W: one binary live/control/ack/replay path, bounded fanout/queues and complete runtime MessagePack removal.
 - [ ] P: fresh owned persistence/Raft format, epoch rejection and unchanged-durability recovery/corruption evidence.

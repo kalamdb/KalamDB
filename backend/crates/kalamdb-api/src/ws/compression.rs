@@ -62,20 +62,35 @@ pub fn maybe_compress(data: Vec<u8>) -> (Vec<u8>, bool) {
     (data, false)
 }
 
+/// Maximum compressed input payload size (16 MiB).
+pub const MAX_COMPRESSED_INPUT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Maximum decompressed output payload size (64 MiB).
+pub const MAX_DECOMPRESSED_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+
 /// Gzip-decode `data`, refusing to expand past `limit` bytes.
 pub fn decompress_gzip_limited(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    if data.len() > MAX_COMPRESSED_INPUT_BYTES {
+        return Err(format!(
+            "Compressed message exceeds maximum input size of {MAX_COMPRESSED_INPUT_BYTES} bytes"
+        ));
+    }
+    if data.len() < 18 || !is_gzip(data) || data[2] != 0x08 || (data[3] & 0xe0) != 0 {
+        return Err("Invalid gzip frame header".to_string());
+    }
+    let effective_limit = limit.min(MAX_DECOMPRESSED_OUTPUT_BYTES);
     let mut decoder = GzDecoder::new(data);
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {
         let read = decoder
             .read(&mut chunk)
-            .map_err(|_| "Failed to decompress binary msgpack".to_string())?;
+            .map_err(|_| "Failed to decompress binary payload".to_string())?;
         if read == 0 {
             break;
         }
-        if buf.len().saturating_add(read) > limit {
-            return Err(format!("Message exceeds maximum size of {limit} bytes"));
+        if buf.len().saturating_add(read) > effective_limit {
+            return Err(format!("Message exceeds maximum size of {effective_limit} bytes"));
         }
         buf.extend_from_slice(&chunk[..read]);
     }

@@ -183,6 +183,7 @@ impl V8Session {
     ) -> Result<RoutineValue> {
         self.attach();
         self.isolate.remove_slot::<Operations>();
+        self.isolate.set_slot(crate::convert::ReadViewRegistry::default());
         self.isolate.set_slot(Rejections::default());
         self.isolate.set_slot(ActiveHost { host: Some(host) });
         self.isolate.remove_slot::<HostFrames>();
@@ -203,6 +204,7 @@ impl V8Session {
         });
         self.attach();
         self.isolate.remove_slot::<Operations>();
+        self.isolate.remove_slot::<crate::convert::ReadViewRegistry>();
         self.isolate.remove_slot::<Rejections>();
         self.isolate.set_slot(ActiveHost { host: None });
         self.isolate.remove_slot::<HostFrames>();

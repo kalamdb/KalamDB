@@ -16,6 +16,15 @@ pub enum SerializationError {
     /// Envelope protocol version is newer than this crate understands.
     #[error("unsupported protocol version {found} (supported {supported})")]
     UnsupportedProtocolVersion { found: u16, supported: u16 },
+    /// Frame or store epoch does not match the current fresh-start cohort (`FR-029`, `FR-061`).
+    #[error("epoch mismatch: expected epoch {expected}, found epoch {found}")]
+    EpochMismatch { expected: u16, found: u16 },
+    /// Legacy or unsupported wire format (such as MessagePack) rejected before effects (`FR-052`).
+    #[error("unsupported wire format: {0}")]
+    UnsupportedFormat(String),
+    /// Valid internal message kind received on a public endpoint surface (`FR-051`).
+    #[error("message kind 0x{kind:02x} is forbidden on endpoint surface {surface}")]
+    ForbiddenMessageKind { kind: u8, surface: String },
     /// Caller asked for a different semantic object kind than the envelope.
     #[error("wrong object kind: expected {expected:?}, found {found:?}")]
     WrongObjectKind {

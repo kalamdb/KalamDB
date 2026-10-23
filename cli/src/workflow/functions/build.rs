@@ -228,17 +228,12 @@ mod tests {
         snapshot.routines.insert(
             "api.health".into(),
             kalamdb_sql::contracts::ContractRoutine {
-                routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
-                schema:      "api".into(),
-                name:        "health".into(),
-                kind:        kalamdb_commons::models::RoutineKind::Procedure,
-                parameters:  Vec::new(),
-                return_type: None,
-                language:    None,
-                security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                body:        None,
-                grants:      Default::default(),
-                comment:     None,
+                routine_id: kalamdb_commons::models::RoutineId::new("api.health"),
+                schema: "api".into(),
+                name: "health".into(),
+                kind: kalamdb_commons::models::RoutineKind::Procedure,
+                security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                ..Default::default()
             },
         );
         validate_registry_exports(root, &snapshot).unwrap();
@@ -259,17 +254,12 @@ mod tests {
         snapshot.routines.insert(
             "api.health".into(),
             kalamdb_sql::contracts::ContractRoutine {
-                routine_id:  kalamdb_commons::models::RoutineId::new("api.health"),
-                schema:      "api".into(),
-                name:        "health".into(),
-                kind:        kalamdb_commons::models::RoutineKind::Procedure,
-                parameters:  Vec::new(),
-                return_type: None,
-                language:    None,
-                security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                body:        None,
-                grants:      Default::default(),
-                comment:     None,
+                routine_id: kalamdb_commons::models::RoutineId::new("api.health"),
+                schema: "api".into(),
+                name: "health".into(),
+                kind: kalamdb_commons::models::RoutineKind::Procedure,
+                security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                ..Default::default()
             },
         );
         let err = validate_registry_exports(root, &snapshot).unwrap_err();

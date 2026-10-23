@@ -632,7 +632,7 @@ async fn apply_confirmed_schema_draft(
     }
 
     if config.dev.generate_types {
-        generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
+        generate_schema_artifacts(ctx, &GenerateOptions::default(), output)?;
     }
 
     if !config.dev.apply_schema {

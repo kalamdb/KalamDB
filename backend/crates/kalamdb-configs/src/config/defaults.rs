@@ -285,9 +285,9 @@ pub fn default_enable_connection_protection() -> bool {
 
 pub fn default_rate_limit_cache_max_entries() -> u64 {
     1_000 // Maximum 1k cached rate limit entries
-    // MEMORY OPTIMIZATION: reduced from 10k. Moka internal bookkeeping
-    // scales with max_capacity. 5 caches × 10k was over-provisioned.
-    // 1k handles typical mobile-app deployments without waste.
+          // MEMORY OPTIMIZATION: reduced from 10k. Moka internal bookkeeping
+          // scales with max_capacity. 5 caches × 10k was over-provisioned.
+          // 1k handles typical mobile-app deployments without waste.
 }
 
 pub fn default_rate_limit_cache_ttl_seconds() -> u64 {

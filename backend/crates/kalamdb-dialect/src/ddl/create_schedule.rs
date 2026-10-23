@@ -62,7 +62,7 @@ impl CreateScheduleStatement {
                     "principal" if !value.is_empty() => principal = value,
                     "overlap" | "misfire" if value == "skip" => {},
                     "overlap" | "misfire" => {
-                        return Err(format!("V1 supports only {key} = 'skip'"))
+                        return Err(format!("V1 supports only {key} = 'skip'"));
                     },
                     _ => return Err(format!("Unknown or invalid schedule option '{key}'")),
                 }

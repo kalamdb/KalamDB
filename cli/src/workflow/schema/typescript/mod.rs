@@ -72,7 +72,7 @@ mod tests {
         assert!(source.contains("createMessage:"));
         assert!(schema.contains("export type ChatCreateMessageRequest"));
         assert!(schema.contains("export type ChatCreateMessageResult"));
-        assert!(source.contains("createMessage: async (input: ChatCreateMessageRequest)"));
+        assert!(source.contains("createMessage: async (input: ChatCreateMessageRequest"));
         assert!(!source.contains("kalam.chat.createMessage"));
         assert!(source.contains("rows?: unknown;"));
         assert!(source.contains("response.status === \"error\""));
@@ -160,22 +160,11 @@ CREATE USER TABLE okf_sync.notes (
         assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");
 
         let client = generate_client_source(&snapshot, &hash, &names).unwrap();
-        assert!(
-            client.contains("filePut: async (input: FilePutRequest): Promise<FilePutResult>"),
-            "{client}"
-        );
+        assert!(client.contains("filePut: async (input: FilePutRequest"), "{client}");
         assert!(client.contains("SELECT pg_catalog.file_put($1) AS result"), "{client}");
-        assert!(
-            client.contains("fileRead: async (input: FileReadRequest): Promise<FileReadResult>"),
-            "{client}"
-        );
+        assert!(client.contains("fileRead: async (input: FileReadRequest"), "{client}");
         assert!(client.contains("SELECT pg_catalog.file_read($1) AS result"), "{client}");
-        assert!(
-            client.contains(
-                "fileDelete: async (input: FileDeleteRequest): Promise<FileDeleteResult>"
-            ),
-            "{client}"
-        );
+        assert!(client.contains("fileDelete: async (input: FileDeleteRequest"), "{client}");
         assert!(client.contains("SELECT pg_catalog.file_delete($1) AS result"), "{client}");
     }
 

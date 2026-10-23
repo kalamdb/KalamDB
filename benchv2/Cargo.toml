@@ -15,6 +15,7 @@ path = "src/bin/soak.rs"
 
 [dependencies]
 kalam-client = { path = "../link/sdks/rust", default-features = false, features = ["native-bench"] }
+kalamdb-serialization = { path = "../backend/crates/kalamdb-serialization", default-features = false }
 # benchv2 is excluded from the root workspace, so this must stay aligned with
 # the Tokio version inherited by linked workspace crates like `link-common`.
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time"] }

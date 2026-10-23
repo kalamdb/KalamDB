@@ -88,6 +88,7 @@ impl V8Session {
         isolate.add_near_heap_limit_callback(near_heap_limit, heap_watch.cast());
 
         isolate.set_slot(ActiveHost { host: None });
+        isolate.set_slot(crate::convert::ReadViewRegistry::default());
 
         let deadline = DeadlineGuard::new(
             isolate.thread_safe_handle(),
@@ -190,6 +191,7 @@ impl V8Session {
             return Err(FunctionsError::Cancelled);
         }
         self.isolate.remove_slot::<Operations>();
+        self.isolate.set_slot(crate::convert::ReadViewRegistry::default());
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = host;
         }
@@ -205,6 +207,7 @@ impl V8Session {
         })();
         self.isolate.perform_microtask_checkpoint();
         self.isolate.remove_slot::<Operations>();
+        self.isolate.remove_slot::<crate::convert::ReadViewRegistry>();
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = None;
         }

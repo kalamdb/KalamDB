@@ -16,28 +16,28 @@ These seven markers are carried forward as historical records, not a claim of re
 
 ## Baseline and canonical semantics - Gate A
 
-- [ ] T002 Establish shared schema/type/routine/live/adversarial fixtures and native/TS/Dart harness entry points under `link/tests/sdk-contracts`. Capture pre-change measurements and workload manifest before choosing a codec. FR-032/062.
-- [ ] T003 Extend catalog/contract metadata for real ordered keys, defaults/identity/generated fields, recursive types, routine modes/overloads/cardinality and relevant entity revisions. FR-002/004/010/011.
-- [ ] T004 Implement deterministic names, exact SQL/public-name mapping, scoped hashes, current-epoch manifest and collision tests. FR-002/007.
-- [ ] T005 Define exact checked scalar/value/error mappings: wide integers/decimals, precision-preserving temporal values, bytes/files, SQL NULL/JSON null/missing and nested errors. Replace lossy accessors in new APIs. FR-005/006/040.
-- [ ] T051 Inventory PR #402 execution/binder/serialization/Link/WASM/FRB paths and Spec 037 dependencies; separate inspected code from runtime evidence. Include existing tonic/Raft and external format boundaries. FR-047/048.
+- [X] T002 Establish shared schema/type/routine/live/adversarial fixtures and native/TS/Dart harness entry points under `link/tests/sdk-contracts`. Capture pre-change measurements and workload manifest before choosing a codec. FR-032/062.
+- [X] T003 Extend catalog/contract metadata for real ordered keys, defaults/identity/generated fields, recursive types, routine modes/overloads/cardinality and relevant entity revisions. FR-002/004/010/011.
+- [X] T004 Implement deterministic names, exact SQL/public-name mapping, scoped hashes, current-epoch manifest and collision tests. FR-002/007.
+- [X] T005 Define exact checked scalar/value/error mappings: wide integers/decimals, precision-preserving temporal values, bytes/files, SQL NULL/JSON null/missing and nested errors. Replace lossy accessors in new APIs. FR-005/006/040.
+- [X] T051 Inventory PR #402 execution/binder/serialization/Link/WASM/FRB paths and Spec 037 dependencies; separate inspected code from runtime evidence. Include existing tonic/Raft and external format boundaries. FR-047/048.
 
 Gate A: one semantic owner and fixtures; neither emitter invents key, type or nullability rules.
 
 ## Stage 1: harden before exposure - Gate S
 
-- [ ] T064 [P0] Fix untrusted preallocation in `row/value.rs`, bound recursive `skip_value`, validate embedding dimensions and checked offset/count arithmetic. Replace `row/batch.rs::assert_nesting` with parsing-time depth/work/element/allocation budgets; outer ListArray length is not its child element count. Cover null-heavy and zero-sized logical elements. FR-049/058.
-- [ ] T065 [P0] Replace unbounded or permissive decompression helpers across server/native/WASM/FRB; finite compressed/output/work/window limits, explicit format selection, no failed-decode fallback. Ordinary small calls start uncompressed. FR-057.
-- [ ] T066 [P0] Audit existing native V8 read handles and buffer allocators for ownership, cleanup, generation, aliasing, projection, cancellation and actual pinned bytes. Fix or disable unsafe/leaking paths. Do not depend on optional new views. FR-046/054/058.
-- [ ] T067 [P0] Add fuzz/property/negative tests for frame -> decode -> validate -> field access -> Arrow/V8/SDK conversion -> encode -> cleanup. Exercise arithmetic, truncation, nested/skipped values, type mismatch, compression, concurrent cancellation and per-tenant memory limits. FR-032/049/058.
-- [ ] T068 [P0] Gate S: record bounded streaming bodies independent of Content-Length, preallocation/depth/work tests, actual lockfile/advisory review, suitable sanitizer/Miri or equivalent evidence and no known unresolved decoder/handle safety defect. Depends T064-T067. FR-049/057/058.
+- [X] T064 [P0] Fix untrusted preallocation in `row/value.rs`, bound recursive `skip_value`, validate embedding dimensions and checked offset/count arithmetic. Replace `row/batch.rs::assert_nesting` with parsing-time depth/work/element/allocation budgets; outer ListArray length is not its child element count. Cover null-heavy and zero-sized logical elements. FR-049/058.
+- [X] T065 [P0] Replace unbounded or permissive decompression helpers across server/native/WASM/FRB; finite compressed/output/work/window limits, explicit format selection, no failed-decode fallback. Ordinary small calls start uncompressed. FR-057.
+- [X] T066 [P0] Audit existing native V8 read handles and buffer allocators for ownership, cleanup, generation, aliasing, projection, cancellation and actual pinned bytes. Fix or disable unsafe/leaking paths. Do not depend on optional new views. FR-046/054/058.
+- [X] T067 [P0] Add fuzz/property/negative tests for frame -> decode -> validate -> field access -> Arrow/V8/SDK conversion -> encode -> cleanup. Exercise arithmetic, truncation, nested/skipped values, type mismatch, compression, concurrent cancellation and per-tenant memory limits. FR-032/049/058.
+- [X] T068 [P0] Gate S: record bounded streaming bodies independent of Content-Length, preallocation/depth/work tests, actual lockfile/advisory review, suitable sanitizer/Miri or equivalent evidence and no known unresolved decoder/handle safety defect. Depends T064-T067. FR-049/057/058.
 
 ## Stage 2: lean core and measured decision - Gates C0/D
 
-- [ ] T069 Extract/refactor one `kalamdb-serialization`-owned lean core callable by backend and Link/native/WASM/FRB without mandatory Arrow/DataFusion/RocksDB/V8/server dependencies. Optional physical adapters derive from canonical logical types; no circular dependency or duplicated type authority. FR-048/050.
-- [ ] T082 Pre-register workload/SLO/metric matrix, then compare hardened Kalam schema-directed encoding, Postcard and Prost with identical dynamic SQL contracts, validation and materialization. Pin versions and include failed cases, CPU/memory/latency and WASM footprint. Select one provisional production winner at Gate D; no codec menu. Depends T002-T005/T068/T069. FR-055/059/062.
-- [ ] T070 Implement the selected common value/framing codec with explicit widths/endian, presence/null semantics, descriptor identity, bounded grammar, endpoint message-kind separation, canonical digest policy and byte-level golden vectors. Do not freeze KOBJ/protobuf/custom byte layout merely because it was proposed earlier. Depends T082. FR-048/051/059.
-- [ ] T071 Gate C0: native/WASM/FRB conformance, dependency-size check and repository-wide codec-ownership CI. Cover API/commons/Link/WASM/FRB; narrowly list current external JSON/PGWire/Parquet/Arrow/tonic transport exceptions. No old-reader exemptions. Depends T070/T068. FR-048/050/056.
+- [X] T069 Extract/refactor one `kalamdb-serialization`-owned lean core callable by backend and Link/native/WASM/FRB without mandatory Arrow/DataFusion/RocksDB/V8/server dependencies. Optional physical adapters derive from canonical logical types; no circular dependency or duplicated type authority. FR-048/050.
+- [X] T082 Pre-register workload/SLO/metric matrix, then compare hardened Kalam schema-directed encoding, Postcard and Prost with identical dynamic SQL contracts, validation and materialization. Pin versions and include failed cases, CPU/memory/latency and WASM footprint. Select one provisional production winner at Gate D; no codec menu. Depends T002-T005/T068/T069. FR-055/059/062.
+- [X] T070 Implement the selected common value/framing codec with explicit widths/endian, presence/null semantics, descriptor identity, bounded grammar, endpoint message-kind separation, canonical digest policy and byte-level golden vectors. Do not freeze KOBJ/protobuf/custom byte layout merely because it was proposed earlier. Depends T082. FR-048/051/059.
+- [X] T071 Gate C0: native/WASM/FRB conformance, dependency-size check and repository-wide codec-ownership CI. Cover API/commons/Link/WASM/FRB; narrowly list current external JSON/PGWire/Parquet/Arrow/tonic transport exceptions. No old-reader exemptions. Depends T070/T068. FR-048/050/056.
 
 ## Generated current API and server contracts
 
@@ -67,9 +67,9 @@ Gate A: one semantic owner and fixtures; neither emitter invents key, type or nu
 
 ## Typed table and query track
 
-- [ ] T015 Define immutable typed query plans, predicates, cardinality, cancellation and feature checking. FR-008/010/011.
-- [ ] T016 Analyze named SQL queries with canonical AST/planner to generate input/result/key/live metadata. FR-010/011.
-- [ ] T017 Emit catalog-derived row/key/insert/patch/column models; reject guessed keys and forbidden writes. FR-004/007/008.
+- [X] T015 Define immutable typed query plans, predicates, cardinality, cancellation and feature checking. FR-008/010/011.
+- [X] T016 Analyze named SQL queries with canonical AST/planner to generate input/result/key/live metadata. FR-010/011.
+- [X] T017 Emit catalog-derived row/key/insert/patch/column models; reject guessed keys and forbidden writes. FR-004/007/008.
 - [ ] T020 Generate current-epoch Drift mirror tables for the one session database; no second remote/local ORM or duplicated domain models. FR-009/019/035.
 - [ ] T021 Run paired real-server CRUD/default/key/quoting and Drizzle/Drift/model agreement tests. FR-004/005/008/011/032.
 - [ ] T022 Remove redundant quote/default/file SQL rewrites only when authoritative binding behavior is proved; keep current typed upload semantics. FR-011.

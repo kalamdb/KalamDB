@@ -6,6 +6,29 @@ export * from './schema.js';
 import type { {{type_imports}} } from './schema.js';
 {{/if}}
 
+export const KALAM_CONTRACT_EPOCH = 1 as const;
+
+export interface OperationDescriptor<TInput = unknown, TOutput = unknown> {
+  readonly epoch: number;
+  readonly routineId: string;
+  readonly schema: string;
+  readonly name: string;
+  readonly __input?: TInput;
+  readonly __output?: TOutput;
+}
+
+export interface KalamCall<TOutput = unknown> {
+  readonly operation: OperationDescriptor<unknown, TOutput>;
+  readonly arguments: unknown;
+}
+
+export interface InvocationOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly idempotencyKey?: string;
+  readonly format?: 'binary' | 'json';
+}
+
 export type KalamQueryClient = {
   query: (sql: string, params?: unknown[]) => Promise<{
     status?: string;
@@ -15,6 +38,11 @@ export type KalamQueryClient = {
       named_rows?: Array<Record<string, unknown>>;
     }>;
   }>;
+  invokeRoutine?: <I, O>(
+    descriptor: OperationDescriptor<I, O>,
+    input: I,
+    options?: InvocationOptions,
+  ) => Promise<O>;
 };
 
 {{#if has_calls}}
@@ -46,11 +74,18 @@ function kalamCallResult(response: Awaited<ReturnType<KalamQueryClient["query"]>
 
 {{/if}}
 export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_client?: KalamQueryClient{{/if}}) {
-  return {
+  const functions = {
 {{#each namespaces}}
     {{object_ident}}: {
 {{#each procedures}}
-{{{jsdoc}}}      {{method_ident}}: async ({{#if has_params}}input: {{request_ident}}{{/if}}): Promise<{{result_ident}}> => {
+{{{jsdoc}}}      {{method_ident}}: async ({{#if has_params}}input: {{request_ident}}{{#if has_params}}, {{/if}}{{else}}{{/if}}_options?: InvocationOptions): Promise<{{result_ident}}> => {
+        if (typeof client.invokeRoutine === "function") {
+          return client.invokeRoutine(
+            { epoch: KALAM_CONTRACT_EPOCH, routineId: "{{routine_id}}", schema: "{{schema}}", name: "{{name}}" },
+            {{#if has_params}}input{{else}}undefined{{/if}},
+            _options,
+          );
+        }
         const response = await client.query("{{call_sql}}"{{#if has_params}}, [{{params_list}}]{{/if}});
         return kalamCallResult(response) as {{result_ident}};
       },
@@ -58,4 +93,29 @@ export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_cl
     },
 {{/each}}
   };
+  const operations = {
+{{#each namespaces}}
+    {{object_ident}}: {
+{{#each procedures}}
+      {{method_ident}}: ({{#if has_params}}input: {{request_ident}}{{/if}}): KalamCall<{{result_ident}}> => ({
+        operation: { epoch: KALAM_CONTRACT_EPOCH, routineId: "{{routine_id}}", schema: "{{schema}}", name: "{{name}}" },
+        arguments: {{#if has_params}}structuredClone(input){{else}}undefined{{/if}},
+      }),
+{{/each}}
+    },
+{{/each}}
+  };
+  return {
+    contract: {
+      epoch: KALAM_CONTRACT_EPOCH,
+      contractHash: "{{contract_hash_line}}".replace(/^contract_hash:\s*/, ""),
+    } as const,
+    functions,
+    operations,
+    ...functions,
+  };
+}
+
+export function createKalamFunctions({{#if has_calls}}client: KalamQueryClient{{else}}_client?: KalamQueryClient{{/if}}) {
+  return createKalam({{#if has_calls}}client{{else}}_client{{/if}}).functions;
 }

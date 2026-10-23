@@ -1,16 +1,231 @@
 //! Contract argument and return validation for procedure CALL.
 
+use std::sync::Arc;
+
+use dashmap::DashMap;
 use kalamdb_commons::{
     models::{CatalogTypeKind, RoutineCall, RoutineId, RoutineKind, RoutineParameterMode, TypeId},
     KalamDataType,
 };
 use kalamdb_functions::{FunctionsError, RoutineValue};
+use kalamdb_serialization::{digest_to_hex, sha256_digest, DomainValue, DOMAIN_EPOCH};
 use kalamdb_sql::ddl::column_default::parse_call_argument_sql;
 use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, CatalogStores};
+use once_cell::sync::Lazy;
 use serde_json::Value as JsonValue;
 
-use super::convert::{bind_call_arguments, json_to_routine_value, routine_value_as_json};
+use super::convert::{
+    bind_call_arguments, domain_value_to_routine_value, json_to_routine_value,
+    routine_value_as_json,
+};
 use crate::{error::KalamDbError, schema_registry::TypeRegistry};
+
+const MAX_PINNED_DESCRIPTOR_CACHE: usize = 1_024;
+
+/// Immutable revision-pinned routine descriptor resolved from authoritative metadata (`T052`,
+/// `FR-042`).
+///
+/// Caches signature, parameter modes, and revision digest, but never caches evaluated runtime
+/// parameter default values.
+#[derive(Debug, Clone)]
+pub struct PinnedRoutineDescriptor {
+    pub epoch:            u16,
+    pub routine_id:       RoutineId,
+    pub revision_hash:    [u8; 32],
+    pub revision_hex:     String,
+    pub routine:          CatalogRoutine,
+    pub parameters:       Arc<[CatalogRoutineParameter]>,
+    pub input_parameters: Arc<[CatalogRoutineParameter]>,
+    pub out_parameters:   Arc<[CatalogRoutineParameter]>,
+}
+
+static PINNED_DESCRIPTOR_CACHE: Lazy<DashMap<RoutineId, PinnedRoutineDescriptor>> =
+    Lazy::new(DashMap::new);
+
+/// Resolve and cache an immutable [`PinnedRoutineDescriptor`] from authoritative catalog metadata
+/// (`T052`).
+pub fn resolve_pinned_descriptor(
+    stores: &CatalogStores,
+    routine_id: &RoutineId,
+    module_generation: u64,
+) -> Result<PinnedRoutineDescriptor, KalamDbError> {
+    let Some(routine) = stores.get_routine(routine_id).map_err(|error| {
+        KalamDbError::CatalogError(format!("failed to load routine {routine_id}: {error}"))
+    })?
+    else {
+        PINNED_DESCRIPTOR_CACHE.remove(routine_id);
+        return Err(FunctionsError::UnknownProcedure(routine_id.to_string()).into());
+    };
+    let parameters = stores.list_parameters(routine_id).map_err(|error| {
+        KalamDbError::CatalogError(format!(
+            "failed to load parameters for routine {routine_id}: {error}"
+        ))
+    })?;
+    let rev_hash = compute_descriptor_revision(&routine, &parameters, module_generation);
+    if let Some(cached) = PINNED_DESCRIPTOR_CACHE.get(routine_id) {
+        if cached.revision_hash == rev_hash {
+            return Ok(cached.clone());
+        }
+    }
+    let input_params: Vec<CatalogRoutineParameter> = parameters
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.mode,
+                RoutineParameterMode::In
+                    | RoutineParameterMode::InOut
+                    | RoutineParameterMode::Variadic
+            )
+        })
+        .cloned()
+        .collect();
+    let out_params: Vec<CatalogRoutineParameter> = parameters
+        .iter()
+        .filter(|param| {
+            matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
+        })
+        .cloned()
+        .collect();
+    let rev_hex = digest_to_hex(&rev_hash);
+    let descriptor = PinnedRoutineDescriptor {
+        epoch: DOMAIN_EPOCH,
+        routine_id: routine_id.clone(),
+        revision_hash: rev_hash,
+        revision_hex: rev_hex,
+        routine,
+        parameters: Arc::from(parameters),
+        input_parameters: Arc::from(input_params),
+        out_parameters: Arc::from(out_params),
+    };
+    if PINNED_DESCRIPTOR_CACHE.len() >= MAX_PINNED_DESCRIPTOR_CACHE {
+        PINNED_DESCRIPTOR_CACHE.clear();
+    }
+    PINNED_DESCRIPTOR_CACHE.insert(routine_id.clone(), descriptor.clone());
+    Ok(descriptor)
+}
+
+fn compute_descriptor_revision(
+    routine: &CatalogRoutine,
+    parameters: &[CatalogRoutineParameter],
+    module_generation: u64,
+) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(256);
+    buf.extend_from_slice(b"KALAM_ROUTINE_DESCRIPTOR_V1");
+    buf.extend_from_slice(&DOMAIN_EPOCH.to_le_bytes());
+    buf.extend_from_slice(&module_generation.to_le_bytes());
+    buf.extend_from_slice(routine.routine_id.as_str().as_bytes());
+    buf.extend_from_slice(routine.kind.as_str().as_bytes());
+    buf.extend_from_slice(routine.security.as_str().as_bytes());
+    buf.extend_from_slice(routine.volatility.as_str().as_bytes());
+    buf.extend_from_slice(routine.null_safety.as_str().as_bytes());
+    if let Some(lang) = &routine.language {
+        buf.extend_from_slice(lang.as_bytes());
+    }
+    if let Some(src_hash) = &routine.inline_source_hash {
+        buf.extend_from_slice(src_hash.as_bytes());
+    }
+    if let Some(ret_ty) = &routine.return_type_name {
+        buf.extend_from_slice(ret_ty.as_bytes());
+    }
+    for param in parameters {
+        buf.extend_from_slice(&param.ordinal.to_le_bytes());
+        buf.extend_from_slice(param.name.as_bytes());
+        buf.extend_from_slice(param.type_name.as_bytes());
+        buf.extend_from_slice(&[u8::from(param.is_array), u8::from(param.not_null)]);
+        buf.extend_from_slice(param.mode.as_str().as_bytes());
+        if let Some(def) = &param.default_expr {
+            buf.extend_from_slice(def.as_bytes());
+        }
+    }
+    sha256_digest(&buf)
+}
+
+/// Bind a binary [`DomainValue`] request payload directly against a [`PinnedRoutineDescriptor`],
+/// evaluating default expressions freshly on omitted slots (`T052`, `T056`).
+pub fn bind_domain_call_arguments(
+    payload: &DomainValue,
+    descriptor: &PinnedRoutineDescriptor,
+) -> Result<Vec<RoutineValue>, KalamDbError> {
+    let input_params = &descriptor.input_parameters;
+    if input_params.is_empty() {
+        return match payload {
+            DomainValue::Void | DomainValue::Omitted => Ok(Vec::new()),
+            DomainValue::Composite(fields) if fields.is_empty() => Ok(Vec::new()),
+            DomainValue::Array(items) if items.is_empty() => Ok(Vec::new()),
+            other => Err(invalid_args(format!(
+                "procedure {} expected 0 arguments, got {other:?}",
+                descriptor.routine_id
+            ))),
+        };
+    }
+
+    match payload {
+        DomainValue::Composite(fields) => {
+            let mut out = Vec::with_capacity(input_params.len());
+            for (idx, param) in input_params.iter().enumerate() {
+                let slot = (idx + 1) as u16;
+                let found = fields.iter().find(|(s, _)| *s == slot).map(|(_, v)| v);
+                match found {
+                    None | Some(DomainValue::Omitted) => {
+                        if let Some(default_expr) = param.default_expr.as_deref() {
+                            out.push(evaluate_parameter_default(param, default_expr)?);
+                        } else if !param.not_null {
+                            out.push(RoutineValue::new(datafusion::scalar::ScalarValue::Null));
+                        } else {
+                            return Err(invalid_args(format!(
+                                "missing required argument '{}' (slot {slot}) for {}",
+                                param.name, descriptor.routine_id
+                            )));
+                        }
+                    },
+                    Some(val) => {
+                        out.push(domain_value_to_routine_value(
+                            val,
+                            param.builtin_data_type().as_ref(),
+                        )?);
+                    },
+                }
+            }
+            Ok(out)
+        },
+        DomainValue::Array(items) => {
+            if items.len() > input_params.len() {
+                return Err(invalid_args(format!(
+                    "procedure {} expected {} argument(s), got {}",
+                    descriptor.routine_id,
+                    input_params.len(),
+                    items.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(input_params.len());
+            for (idx, param) in input_params.iter().enumerate() {
+                match items.get(idx) {
+                    None | Some(DomainValue::Omitted) => {
+                        if let Some(default_expr) = param.default_expr.as_deref() {
+                            out.push(evaluate_parameter_default(param, default_expr)?);
+                        } else {
+                            return Err(invalid_args(format!(
+                                "missing required argument '{}' for {}",
+                                param.name, descriptor.routine_id
+                            )));
+                        }
+                    },
+                    Some(val) => {
+                        out.push(domain_value_to_routine_value(
+                            val,
+                            param.builtin_data_type().as_ref(),
+                        )?);
+                    },
+                }
+            }
+            Ok(out)
+        },
+        other => Err(invalid_args(format!(
+            "expected composite or array domain arguments for {}, got {other:?}",
+            descriptor.routine_id
+        ))),
+    }
+}
 
 struct TypeSpec {
     display:   String,

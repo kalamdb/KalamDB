@@ -359,17 +359,12 @@ mod tests {
             snapshot.routines.insert(
                 routine_id.clone(),
                 ContractRoutine {
-                    routine_id:  RoutineId::new(&routine_id),
-                    schema:      (*schema).into(),
-                    name:        (*name).into(),
-                    kind:        kalamdb_commons::models::RoutineKind::Procedure,
-                    parameters:  Vec::new(),
-                    return_type: None,
-                    language:    None,
-                    security:    kalamdb_commons::RoutineSecurityMode::Invoker,
-                    body:        None,
-                    grants:      Default::default(),
-                    comment:     None,
+                    routine_id: RoutineId::new(&routine_id),
+                    schema: (*schema).into(),
+                    name: (*name).into(),
+                    kind: kalamdb_commons::models::RoutineKind::Procedure,
+                    security: kalamdb_commons::RoutineSecurityMode::Invoker,
+                    ..Default::default()
                 },
             );
         }

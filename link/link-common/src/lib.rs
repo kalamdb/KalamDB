@@ -54,6 +54,12 @@ pub use kalamdb_commons::ids::{VersionDomain, VersionId};
 #[cfg(feature = "client-core")]
 pub use kalamdb_commons::Role;
 pub use kalamdb_commons::{TableId, UserId};
+pub use kalamdb_serialization::{
+    canonical_invocation_digest, decode_domain_frame_for_surface, decode_domain_value,
+    domain as domain_codec, encode_domain_frame, encode_domain_value, DomainDecodeBudget,
+    DomainFileRef, DomainFrame, DomainMessageKind, DomainValue, EndpointSurface,
+    DOMAIN_CODEC_VERSION, DOMAIN_EPOCH, DOMAIN_MAGIC,
+};
 pub use models::{
     parse_i64, BoundFileRef, FieldFlag, FieldFlags, FileDownload, FileRef, FileRefContext,
     FileUpload, KalamCellValue, KalamDataType, RowData, SchemaField,

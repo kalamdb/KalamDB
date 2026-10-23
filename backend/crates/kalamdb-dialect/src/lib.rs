@@ -25,9 +25,11 @@ pub use batch_execution::{
 pub use classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
 pub use compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference};
 pub use contracts::{
-    apply_identity_manifest, canonical_contract_hash, compile_contract, compile_contract_sql,
-    diff_contracts, ContractDiff, ContractError, ContractSnapshot, ContractSource,
-    TypeIdentityEntry, TypeIdentityManifest,
+    analyze_named_query, apply_identity_manifest, canonical_contract_hash, compile_contract,
+    compile_contract_sql, diff_contracts, reject_forbidden_write, scoped_contract_hashes,
+    table_row_contract, ContractDiff, ContractError, ContractSnapshot, ContractSource,
+    QueryPlanError, RoutineCardinality, ScopedContractHashes, TableRowContract, TypeIdentityEntry,
+    TypeIdentityManifest, TypedQueryPlan, WriteShape, CURRENT_CONTRACT_EPOCH,
 };
 pub use ddl::{
     parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement,

@@ -87,7 +87,7 @@ impl<'a> RowView<'a> {
         }
 
         let bitmap = if (row_flags & V2_ROW_FLAG_NULL_BITMAP) != 0 {
-            let bitmap_len = (slot_span + 7) / 8;
+            let bitmap_len = slot_span.checked_add(7).ok_or(SerializationError::Truncated)? / 8;
             Some(reader.take(bitmap_len)?)
         } else {
             None
@@ -660,7 +660,11 @@ fn decode_selected_indexed(
             );
             continue;
         }
-        let slot = ordinal * 4;
+        let slot = ordinal.checked_mul(4).ok_or(SerializationError::Truncated)?;
+        let slot_end = slot.checked_add(4).ok_or(SerializationError::Truncated)?;
+        if slot_end > offset_table.len() {
+            return Err(SerializationError::Truncated);
+        }
         let offset = u32::from_le_bytes([
             offset_table[slot],
             offset_table[slot + 1],

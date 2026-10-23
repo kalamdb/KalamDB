@@ -37,6 +37,9 @@ struct NamespaceContext<'a> {
 #[derive(Serialize)]
 struct ProcedureContext {
     jsdoc:         String,
+    routine_id:    String,
+    schema:        String,
+    name:          String,
     method_ident:  String,
     has_params:    bool,
     request_ident: String,
@@ -84,6 +87,9 @@ pub(super) fn render_client_source(
 fn procedure_context(spec: &ProcedureSpec<'_>) -> ProcedureContext {
     ProcedureContext {
         jsdoc:         jsdoc(spec.comment(), "      "),
+        routine_id:    escape_double_quoted_string(spec.routine.routine_id.as_str()),
+        schema:        escape_double_quoted_string(&spec.routine.schema),
+        name:          escape_double_quoted_string(&spec.routine.name),
         method_ident:  spec.method_ident.clone(),
         has_params:    spec.has_params(),
         request_ident: spec.request_ident(),

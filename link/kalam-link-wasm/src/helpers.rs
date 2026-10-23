@@ -270,7 +270,13 @@ pub(crate) fn decode_ws_message(e: &MessageEvent) -> Option<String> {
         let uint8_array = js_sys::Uint8Array::new(&array_buffer);
         let raw = uint8_array.to_vec();
 
-        let decompressed = compression::decompress_if_gzip(&raw);
+        let Ok(decompressed) = compression::decompress_frame_checked(
+            &raw,
+            compression::DEFAULT_MAX_DECOMPRESSED_BYTES,
+        ) else {
+            wasm_debug_log!("KalamClient: Rejected invalid or oversized compressed binary frame");
+            return None;
+        };
         return match std::str::from_utf8(&decompressed) {
             Ok(s) => Some(s.to_owned()),
             Err(_e) => {
@@ -320,7 +326,11 @@ pub(crate) fn decode_ws_binary_payload(e: &MessageEvent) -> Option<Vec<u8>> {
     if let Ok(array_buffer) = data.dyn_into::<js_sys::ArrayBuffer>() {
         let uint8_array = js_sys::Uint8Array::new(&array_buffer);
         let raw = uint8_array.to_vec();
-        let decompressed = compression::decompress_if_gzip(&raw);
+        let decompressed = compression::decompress_frame_checked(
+            &raw,
+            compression::DEFAULT_MAX_DECOMPRESSED_BYTES,
+        )
+        .ok()?;
         Some(decompressed.into_owned())
     } else {
         None

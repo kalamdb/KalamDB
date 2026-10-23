@@ -1,6 +1,6 @@
 use std::env;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
 use super::{
     cluster::{ClusterConfig, PeerConfig},

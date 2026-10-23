@@ -1,6 +1,6 @@
 //! Compile the project schema contract from local SQL files.
 
-use std::{collections::BTreeSet, path::Path};
+use std::path::Path;
 
 use kalamdb_commons::{
     datatypes::ToArrowType,
@@ -165,11 +165,13 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
         .routines
         .entry("pg_catalog.file_put".to_string())
         .or_insert_with(|| ContractRoutine {
-            routine_id:  RoutineId::new("pg_catalog.file_put"),
-            schema:      "pg_catalog".to_string(),
-            name:        "file_put".to_string(),
-            kind:        kalamdb_commons::models::RoutineKind::Function,
-            parameters:  vec![builtin_field(
+            routine_id: RoutineId::new("pg_catalog.file_put"),
+            signature: "pg_catalog.file_put(text)".to_string(),
+            schema: "pg_catalog".to_string(),
+            name: "file_put".to_string(),
+            kind: kalamdb_commons::models::RoutineKind::Function,
+            cardinality: kalamdb_sql::contracts::RoutineCardinality::Scalar,
+            parameters: vec![builtin_field(
                 "upload_key",
                 "TEXT",
                 KalamDataType::Text,
@@ -177,50 +179,41 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
                 1,
             )],
             return_type: Some(ContractField {
-                name:        "returns".to_string(),
-                type_name:   "pg_catalog.file".to_string(),
-                type_id:     Some(file_type_id.clone()),
-                data_type:   Some(KalamDataType::File),
-                is_array:    false,
-                not_null:    true,
-                nonempty:    false,
-                primary_key: false,
-                has_default: false,
-                slot:        0,
-                dropped:     false,
+                name: "returns".to_string(),
+                type_name: "pg_catalog.file".to_string(),
+                type_id: Some(file_type_id.clone()),
+                data_type: Some(KalamDataType::File),
+                not_null: true,
+                ..Default::default()
             }),
-            language:    Some("INTERNAL".to_string()),
-            security:    RoutineSecurityMode::Invoker,
-            body:        None,
-            grants:      BTreeSet::new(),
-            comment:     None,
+            language: Some("INTERNAL".to_string()),
+            security: RoutineSecurityMode::Invoker,
+            is_internal: true,
+            ..Default::default()
         });
 
     snapshot.routines.entry("pg_catalog.file_read".to_string()).or_insert_with(|| {
         ContractRoutine {
-            routine_id:  RoutineId::new("pg_catalog.file_read"),
-            schema:      "pg_catalog".to_string(),
-            name:        "file_read".to_string(),
-            kind:        kalamdb_commons::models::RoutineKind::Function,
-            parameters:  vec![ContractField {
-                name:        "file".to_string(),
-                type_name:   "pg_catalog.file".to_string(),
-                type_id:     Some(file_type_id.clone()),
-                data_type:   Some(KalamDataType::File),
-                is_array:    false,
-                not_null:    true,
-                nonempty:    false,
-                primary_key: false,
-                has_default: false,
-                slot:        1,
-                dropped:     false,
+            routine_id: RoutineId::new("pg_catalog.file_read"),
+            signature: "pg_catalog.file_read(pg_catalog.file)".to_string(),
+            schema: "pg_catalog".to_string(),
+            name: "file_read".to_string(),
+            kind: kalamdb_commons::models::RoutineKind::Function,
+            cardinality: kalamdb_sql::contracts::RoutineCardinality::Scalar,
+            parameters: vec![ContractField {
+                name: "file".to_string(),
+                type_name: "pg_catalog.file".to_string(),
+                type_id: Some(file_type_id.clone()),
+                data_type: Some(KalamDataType::File),
+                not_null: true,
+                slot: 1,
+                ..Default::default()
             }],
             return_type: Some(builtin_field("returns", "BYTES", KalamDataType::Bytes, true, 0)),
-            language:    Some("INTERNAL".to_string()),
-            security:    RoutineSecurityMode::Invoker,
-            body:        None,
-            grants:      BTreeSet::new(),
-            comment:     None,
+            language: Some("INTERNAL".to_string()),
+            security: RoutineSecurityMode::Invoker,
+            is_internal: true,
+            ..Default::default()
         }
     });
 
@@ -228,29 +221,26 @@ pub fn merge_builtin_file_extension(snapshot: &mut ContractSnapshot) {
         .routines
         .entry("pg_catalog.file_delete".to_string())
         .or_insert_with(|| ContractRoutine {
-            routine_id:  RoutineId::new("pg_catalog.file_delete"),
-            schema:      "pg_catalog".to_string(),
-            name:        "file_delete".to_string(),
-            kind:        kalamdb_commons::models::RoutineKind::Function,
-            parameters:  vec![ContractField {
-                name:        "file".to_string(),
-                type_name:   "pg_catalog.file".to_string(),
-                type_id:     Some(file_type_id.clone()),
-                data_type:   Some(KalamDataType::File),
-                is_array:    false,
-                not_null:    true,
-                nonempty:    false,
-                primary_key: false,
-                has_default: false,
-                slot:        1,
-                dropped:     false,
+            routine_id: RoutineId::new("pg_catalog.file_delete"),
+            signature: "pg_catalog.file_delete(pg_catalog.file)".to_string(),
+            schema: "pg_catalog".to_string(),
+            name: "file_delete".to_string(),
+            kind: kalamdb_commons::models::RoutineKind::Function,
+            cardinality: kalamdb_sql::contracts::RoutineCardinality::Void,
+            parameters: vec![ContractField {
+                name: "file".to_string(),
+                type_name: "pg_catalog.file".to_string(),
+                type_id: Some(file_type_id.clone()),
+                data_type: Some(KalamDataType::File),
+                not_null: true,
+                slot: 1,
+                ..Default::default()
             }],
             return_type: None,
-            language:    Some("INTERNAL".to_string()),
-            security:    RoutineSecurityMode::Invoker,
-            body:        None,
-            grants:      BTreeSet::new(),
-            comment:     None,
+            language: Some("INTERNAL".to_string()),
+            security: RoutineSecurityMode::Invoker,
+            is_internal: true,
+            ..Default::default()
         });
 }
 
@@ -266,13 +256,9 @@ fn builtin_field(
         type_name: type_name.to_string(),
         type_id: None,
         data_type: Some(data_type),
-        is_array: false,
         not_null,
-        nonempty: false,
-        primary_key: false,
-        has_default: false,
         slot,
-        dropped: false,
+        ..Default::default()
     }
 }
 

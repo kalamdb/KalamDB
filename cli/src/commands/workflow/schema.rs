@@ -7,7 +7,11 @@ pub(super) fn handle_schema(cli: &Cli, args: &SchemaArgs) -> Result<()> {
     match &args.command {
         SchemaCommand::Gen(gen_args) => {
             let ctx = workflow_context(cli, args.project_dir.as_deref(), None)?;
-            schema::generate_schema(&ctx, gen_args.languages.clone())
+            if gen_args.check {
+                schema::check_schema(&ctx, gen_args.languages.clone())
+            } else {
+                schema::generate_schema(&ctx, gen_args.languages.clone())
+            }
         },
     }
 }

@@ -93,10 +93,86 @@ fn batch_row_to_v8_object<'s>(
     Ok(object)
 }
 
+const MAX_READ_VIEW_HANDLES: usize = 4_096;
+const MAX_READ_VIEW_PINNED_BYTES: usize = 16 * 1024 * 1024;
+
+static NEXT_READ_VIEW_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone)]
 struct NativeReadViewHandle {
     batches:   Arc<[arrow::array::RecordBatch]>,
     row_index: Option<usize>,
+}
+
+/// Isolate-scoped registry owning `NativeReadViewHandle`s for the active invocation (`T066`).
+///
+/// Replaces `Box::into_raw` + `v8::External` (which leaked `Arc<[RecordBatch]>` on every view
+/// creation and `.at(i)` access) with a generation-fenced, byte-budgeted slot that is dropped
+/// deterministically when the invocation finishes or cancels.
+pub(crate) struct ReadViewRegistry {
+    inner:      std::cell::RefCell<ReadViewRegistryInner>,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct ReadViewRegistryInner {
+    entries:         Vec<NativeReadViewHandle>,
+    seen_batch_ptrs: Vec<usize>,
+    pinned_bytes:    usize,
+}
+
+impl Default for ReadViewRegistry {
+    fn default() -> Self {
+        Self {
+            inner:      std::cell::RefCell::new(ReadViewRegistryInner::default()),
+            generation: NEXT_READ_VIEW_GENERATION
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+impl ReadViewRegistry {
+    fn register(&self, handle: NativeReadViewHandle) -> Result<(usize, u64)> {
+        let mut inner = self.inner.borrow_mut();
+        if inner.entries.len() >= MAX_READ_VIEW_HANDLES {
+            return Err(FunctionsError::ResourceLimit("read view handles".into()));
+        }
+        let batch_ptr = Arc::as_ptr(&handle.batches) as *const () as usize;
+        if !inner.seen_batch_ptrs.contains(&batch_ptr) {
+            let batch_bytes: usize = handle
+                .batches
+                .iter()
+                .map(arrow::array::RecordBatch::get_array_memory_size)
+                .fold(0usize, usize::saturating_add);
+            let next_bytes = inner
+                .pinned_bytes
+                .checked_add(batch_bytes)
+                .ok_or_else(|| FunctionsError::ResourceLimit("read view pinned bytes".into()))?;
+            if next_bytes > MAX_READ_VIEW_PINNED_BYTES {
+                return Err(FunctionsError::ResourceLimit("read view pinned bytes".into()));
+            }
+            inner.pinned_bytes = next_bytes;
+            inner.seen_batch_ptrs.push(batch_ptr);
+        }
+        let idx = inner.entries.len();
+        inner.entries.push(handle);
+        Ok((idx, self.generation))
+    }
+
+    fn get(&self, index: usize) -> Option<NativeReadViewHandle> {
+        self.inner.borrow().entries.get(index).cloned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pinned_bytes(&self) -> usize {
+        self.inner.borrow().pinned_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handle_count(&self) -> usize {
+        self.inner.borrow().entries.len()
+    }
 }
 
 fn read_view_batches_to_v8<'s>(
@@ -184,11 +260,23 @@ fn attach_read_view_handle<'s>(
     object: Local<'s, v8::Object>,
     handle: NativeReadViewHandle,
 ) -> Result<()> {
+    if scope.is_execution_terminating() {
+        return Err(FunctionsError::Cancelled);
+    }
+    let (index, generation) = {
+        let registry = scope
+            .get_slot::<ReadViewRegistry>()
+            .ok_or_else(|| FunctionsError::Invalid("read view registry missing".into()))?;
+        registry.register(handle)?
+    };
     let key_name = string_to_v8(scope, "__kalam_read_view_handle")?;
     let key = v8::Private::for_api(scope, Some(key_name));
-    let boxed = Box::into_raw(Box::new(handle)).cast::<std::ffi::c_void>();
-    let external = v8::External::new(scope, boxed);
-    object.set_private(scope, key, external.into());
+    let payload = v8::Array::new(scope, 2);
+    let idx_val = v8::Number::new(scope, index as f64);
+    let gen_val = v8::Number::new(scope, generation as f64);
+    payload.set_index(scope, 0, idx_val.into());
+    payload.set_index(scope, 1, gen_val.into());
+    object.set_private(scope, key, payload.into());
     Ok(())
 }
 
@@ -196,19 +284,21 @@ fn extract_read_view_handle<'s>(
     scope: &PinScope<'s, '_>,
     value: Local<'s, v8::Value>,
 ) -> Option<NativeReadViewHandle> {
+    if scope.is_execution_terminating() {
+        return None;
+    }
     let object = v8::Local::<v8::Object>::try_from(value).ok()?;
     let key_name = string_to_v8(scope, "__kalam_read_view_handle").ok()?;
     let key = v8::Private::for_api(scope, Some(key_name));
     let prop = object.get_private(scope, key)?;
-    let external = v8::Local::<v8::External>::try_from(prop).ok()?;
-    let ptr = external.value().cast::<NativeReadViewHandle>();
-    if ptr.is_null() {
+    let payload = v8::Local::<v8::Array>::try_from(prop).ok()?;
+    let index = payload.get_index(scope, 0)?.number_value(scope)? as usize;
+    let generation = payload.get_index(scope, 1)?.number_value(scope)? as u64;
+    let registry = scope.get_slot::<ReadViewRegistry>()?;
+    if registry.generation != generation {
         return None;
     }
-    // SAFETY: created in `attach_read_view_handle` with
-    // `Box::into_raw(Box::new(NativeReadViewHandle))` and only ever read on the isolate thread
-    // while the isolate is alive.
-    Some(unsafe { (*ptr).clone() })
+    registry.get(index)
 }
 
 pub(crate) fn try_extract_read_view_routine_value<'s>(
@@ -1069,5 +1159,51 @@ mod tests {
             super::parse_decimal128("-0.75", 10, 2).unwrap(),
             ScalarValue::Decimal128(Some(-75), 10, 2)
         );
+    }
+
+    #[test]
+    fn t066_read_view_registry_releases_pinned_batches_and_fences_generations() {
+        use arrow::{
+            array::Int64Array,
+            datatypes::{Field, Schema},
+            record_batch::RecordBatch,
+        };
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(vec![10, 20, 30]))])
+                .unwrap();
+        let batches: Arc<[RecordBatch]> = Arc::from(vec![batch]);
+        assert_eq!(Arc::strong_count(&batches), 1);
+
+        let reg1 = super::ReadViewRegistry::default();
+        let gen1 = reg1.generation;
+        let (idx0, g0) = reg1
+            .register(super::NativeReadViewHandle {
+                batches:   Arc::clone(&batches),
+                row_index: None,
+            })
+            .unwrap();
+        let (idx1, g1) = reg1
+            .register(super::NativeReadViewHandle {
+                batches:   Arc::clone(&batches),
+                row_index: Some(0),
+            })
+            .unwrap();
+        assert_eq!(idx0, 0);
+        assert_eq!(idx1, 1);
+        assert_eq!(g0, gen1);
+        assert_eq!(g1, gen1);
+        assert_eq!(reg1.handle_count(), 2);
+        assert!(reg1.pinned_bytes() > 0);
+        assert_eq!(Arc::strong_count(&batches), 3);
+
+        // Dropping the registry at invocation end releases all cloned Arcs immediately.
+        drop(reg1);
+        assert_eq!(Arc::strong_count(&batches), 1);
+
+        // Next invocation gets a strictly newer generation.
+        let reg2 = super::ReadViewRegistry::default();
+        assert!(reg2.generation > gen1);
     }
 }

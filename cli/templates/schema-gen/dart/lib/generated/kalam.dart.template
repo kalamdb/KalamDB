@@ -70,6 +70,8 @@ abstract final class KalamTables {
 }
 {{#if has_functions}}
 
+const int kalamContractEpoch = 1;
+
 final class KalamFunctions {
   KalamFunctions(this._client);
 
@@ -78,6 +80,8 @@ final class KalamFunctions {
   late final {{object_ident}} = {{class_name}}(_client);
 {{/each}}
 }
+
+KalamFunctions createKalamFunctions(KalamClient client) => KalamFunctions(client);
 {{#each namespaces}}
 
 final class {{class_name}} {

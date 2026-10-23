@@ -89,33 +89,91 @@ pub fn decode_payloads_to_arrow_batch(
 }
 
 fn assert_nesting(value: &ScalarValue, depth: usize) -> Result<()> {
+    let mut work = 0usize;
+    validate_scalar_bounds_recursive(value, depth, &mut work)
+}
+
+fn validate_scalar_bounds_recursive(
+    value: &ScalarValue,
+    depth: usize,
+    work: &mut usize,
+) -> Result<()> {
     if depth > MAX_NESTING {
         return Err(SerializationError::Decode("decoded value exceeds max nesting".to_string()));
+    }
+    *work = work
+        .checked_add(1)
+        .ok_or_else(|| SerializationError::Decode("decoded work budget overflow".to_string()))?;
+    if *work > super::value::MAX_DECODE_WORK {
+        return Err(SerializationError::Decode("decoded value exceeds work budget".to_string()));
     }
     match value {
         ScalarValue::Struct(array) => {
             for child in array.columns() {
-                if child.len() > MAX_LIST_LEN {
-                    return Err(SerializationError::Decode(
-                        "decoded struct child exceeds max length".to_string(),
-                    ));
-                }
+                validate_arrow_array_bounds(child.as_ref(), depth + 1, work)?;
             }
             Ok(())
         },
         ScalarValue::List(array) => {
-            if array.as_ref().len() > MAX_LIST_LEN {
+            let values = array.values();
+            if values.len() > MAX_LIST_LEN {
                 return Err(SerializationError::Decode(
-                    "decoded list exceeds max length".to_string(),
+                    "decoded list child values exceed max length".to_string(),
                 ));
             }
-            Ok(())
+            validate_arrow_array_bounds(values.as_ref(), depth + 1, work)
         },
-        _ => {
-            let _ = depth;
-            Ok(())
+        ScalarValue::LargeList(array) => {
+            let values = array.values();
+            if values.len() > MAX_LIST_LEN {
+                return Err(SerializationError::Decode(
+                    "decoded large list child values exceed max length".to_string(),
+                ));
+            }
+            validate_arrow_array_bounds(values.as_ref(), depth + 1, work)
         },
+        ScalarValue::FixedSizeList(array) => {
+            let values = array.values();
+            if values.len() > MAX_LIST_LEN {
+                return Err(SerializationError::Decode(
+                    "decoded fixed-size list child values exceed max length".to_string(),
+                ));
+            }
+            validate_arrow_array_bounds(values.as_ref(), depth + 1, work)
+        },
+        _ => Ok(()),
     }
+}
+
+fn validate_arrow_array_bounds(array: &dyn Array, depth: usize, work: &mut usize) -> Result<()> {
+    if depth > MAX_NESTING {
+        return Err(SerializationError::Decode("decoded value exceeds max nesting".to_string()));
+    }
+    if array.len() > MAX_LIST_LEN {
+        return Err(SerializationError::Decode(
+            "decoded child array exceeds max length".to_string(),
+        ));
+    }
+    *work = work
+        .checked_add(array.len().max(1))
+        .ok_or_else(|| SerializationError::Decode("decoded work budget overflow".to_string()))?;
+    if *work > super::value::MAX_DECODE_WORK {
+        return Err(SerializationError::Decode("decoded value exceeds work budget".to_string()));
+    }
+    if let Some(struct_arr) = array.as_any().downcast_ref::<arrow::array::StructArray>() {
+        for col in struct_arr.columns() {
+            validate_arrow_array_bounds(col.as_ref(), depth + 1, work)?;
+        }
+    } else if let Some(list_arr) = array.as_any().downcast_ref::<arrow::array::ListArray>() {
+        validate_arrow_array_bounds(list_arr.values().as_ref(), depth + 1, work)?;
+    } else if let Some(large_list) = array.as_any().downcast_ref::<arrow::array::LargeListArray>() {
+        validate_arrow_array_bounds(large_list.values().as_ref(), depth + 1, work)?;
+    } else if let Some(fixed_list) =
+        array.as_any().downcast_ref::<arrow::array::FixedSizeListArray>()
+    {
+        validate_arrow_array_bounds(fixed_list.values().as_ref(), depth + 1, work)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -285,5 +343,76 @@ mod tests {
         .unwrap();
         assert_eq!(projected_v1.fields.values.get("quantity"), Some(&ScalarValue::Int64(Some(3))));
         assert_eq!(projected_v1.fields.values.get("score"), Some(&ScalarValue::Int64(None)));
+    }
+
+    #[test]
+    fn t064_t067_rejects_huge_list_preallocation_deep_skip_and_bad_embedding_dims() {
+        use crate::row::{
+            decode::decode_row_fields,
+            scalar::{TAG_EMBEDDING, TAG_LIST, TAG_NULL},
+            value::{decode_value, skip_value, Reader, MAX_LIST_LEN, MAX_NESTING},
+        };
+
+        // 1. Huge declared list length (u32::MAX) with tiny 5-byte payload must fail before
+        //    prealloc
+        let mut huge_list = vec![TAG_LIST];
+        huge_list.extend_from_slice(&u32::MAX.to_le_bytes());
+        let mut reader = Reader::new(&huge_list);
+        let list_ty = StorageDataType::List(Box::new(StorageDataType::Int32));
+        let err = decode_value(&mut reader, &list_ty).unwrap_err();
+        assert!(err.to_string().contains("exceeds max"), "{err}");
+
+        // 2. Declared list length within MAX_LIST_LEN (e.g. 50,000) but only 2 bytes remaining
+        let mut truncated_list = vec![TAG_LIST];
+        truncated_list.extend_from_slice(&50_000u32.to_le_bytes());
+        truncated_list.push(TAG_NULL);
+        let mut reader = Reader::new(&truncated_list);
+        let err = decode_value(&mut reader, &list_ty).unwrap_err();
+        assert!(matches!(err, SerializationError::Truncated), "{err}");
+
+        // 3. Negative and oversized embedding dimension in both decode_value and skip_value
+        let mut neg_emb = vec![TAG_EMBEDDING];
+        neg_emb.extend_from_slice(&(-1i32).to_le_bytes());
+        let mut reader = Reader::new(&neg_emb);
+        assert!(decode_value(&mut reader, &StorageDataType::Embedding { dimension: 4 }).is_err());
+        let mut reader = Reader::new(&neg_emb);
+        assert!(skip_value(&mut reader).is_err());
+
+        let mut huge_emb = vec![TAG_EMBEDDING];
+        huge_emb.extend_from_slice(&(100_000i32).to_le_bytes());
+        let mut reader = Reader::new(&huge_emb);
+        assert!(skip_value(&mut reader).is_err());
+
+        // 4. Deeply nested TAG_LIST in skip_value (dropped column) must fail MAX_NESTING
+        let depth = MAX_NESTING + 4;
+        let mut deep_bytes = Vec::new();
+        for _ in 0..depth {
+            deep_bytes.push(TAG_LIST);
+            deep_bytes.extend_from_slice(&1u32.to_le_bytes());
+        }
+        deep_bytes.push(TAG_NULL);
+        let mut reader = Reader::new(&deep_bytes);
+        let err = skip_value(&mut reader).unwrap_err();
+        assert!(err.to_string().contains("nesting depth"), "{err}");
+
+        // 5. Dropped ordinal in decode_row_fields also enforces skip_value nesting bound
+        let mut dropped_field = StorageField::new("dropped_nested", StorageDataType::Utf8);
+        dropped_field.dropped = true;
+        let schema = StorageSchema::new(1, vec![dropped_field]);
+        let mut row_fields_payload = Vec::new();
+        row_fields_payload.extend_from_slice(&1u16.to_le_bytes());
+        row_fields_payload.extend_from_slice(&deep_bytes);
+        let err = decode_row_fields(&row_fields_payload, &schema).unwrap_err();
+        assert!(err.to_string().contains("nesting depth"), "{err}");
+
+        // 6. Post-decode assert_nesting checks child ListArray values length, not outer length 1
+        let oversized_items = vec![ScalarValue::Int32(Some(1)); MAX_LIST_LEN + 1];
+        let oversized_list = ScalarValue::List(ScalarValue::new_list(
+            &oversized_items,
+            &arrow::datatypes::DataType::Int32,
+            true,
+        ));
+        let err = super::assert_nesting(&oversized_list, 0).unwrap_err();
+        assert!(err.to_string().contains("exceed"), "{err}");
     }
 }

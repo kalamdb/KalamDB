@@ -4,18 +4,30 @@
 //! schema-guided catalog/system model). They never choose FlatBuffers,
 //! FlexBuffers, JSON, or MessagePack for RocksDB payloads.
 
+pub mod domain;
 mod error;
 mod function_value;
+#[cfg(feature = "backend-adapters")]
 mod model;
 mod object;
 mod protocol;
+#[cfg(feature = "backend-adapters")]
 pub mod row;
 mod stream_frame;
 mod version;
 mod vix_snapshot;
 
+pub use domain::{
+    canonical_invocation_digest, decode_domain_frame_for_surface, decode_domain_value,
+    digest_to_hex, encode_domain_frame, encode_domain_value, sha256_digest, sha256_hex,
+    DomainDecodeBudget, DomainFileRef, DomainFrame, DomainMessageKind, DomainValue,
+    EndpointSurface, DEFAULT_MAX_DOMAIN_DECODED_BYTES, DEFAULT_MAX_DOMAIN_DEPTH,
+    DEFAULT_MAX_DOMAIN_ELEMENTS, DEFAULT_MAX_DOMAIN_WORK, DEFAULT_MAX_FRAME_WIRE_BYTES,
+    DOMAIN_CODEC_VERSION, DOMAIN_EPOCH, DOMAIN_FRAME_HEADER_LEN, DOMAIN_MAGIC,
+};
 pub use error::{Result, SerializationError};
 pub use function_value::{decode_function_value, encode_function_value, FunctionValueEncoder};
+#[cfg(feature = "backend-adapters")]
 pub use model::{model_ms_to_row, model_to_row, row_to_model, row_to_model_ms};
 pub use object::{
     decode_object, decode_string_list, encode_object, encode_object_versioned, encode_string_list,
@@ -32,6 +44,7 @@ pub use protocol::{
     RAFT_LOG_PAYLOAD_BLANK, RAFT_LOG_PAYLOAD_MEMBERSHIP, RAFT_LOG_PAYLOAD_NORMAL,
     RAFT_LOG_RECORD_HEADER_LEN, RAFT_LOG_RECORD_VERSION,
 };
+#[cfg(feature = "backend-adapters")]
 pub use row::{
     decode_payloads_to_arrow_batch, decode_row_fields, decode_row_metadata, decode_shared_row,
     decode_shared_row_selected, decode_stream_row, decode_user_row, decode_user_row_selected,

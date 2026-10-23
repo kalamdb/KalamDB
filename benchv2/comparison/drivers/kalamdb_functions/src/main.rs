@@ -24,10 +24,37 @@ use comparison_common::{
     LATENCY_INSERTS, LATENCY_READS, LIMIT, N,
 };
 use crossbeam_queue::SegQueue;
+use kalamdb_serialization::{
+    encode_domain_frame, DomainMessageKind, DomainValue, DOMAIN_EPOCH,
+};
 use lazy_static::lazy_static;
 use reqwest::{Client, Version};
 use serde_json::json;
 use tokio::sync::Semaphore;
+
+const DOMAIN_CONTENT_TYPE: &str = "application/x-kalam-domain";
+
+fn use_domain_codec() -> bool {
+    match env::var("KALAMDB_FUNCTION_CODEC") {
+        Ok(value) => !value.eq_ignore_ascii_case("json"),
+        Err(_) => true,
+    }
+}
+
+fn insert_frame(id: i64) -> Vec<u8> {
+    let payload = DomainValue::Composite(vec![
+        (1, DomainValue::Int32(id as i32)),
+        (2, DomainValue::Utf8("user1".to_string())),
+        (3, DomainValue::Utf8("room0".to_string())),
+        (4, DomainValue::Utf8(message_data(id))),
+    ]);
+    encode_domain_frame(DomainMessageKind::RpcRequest, 0, 0, &payload).expect("encode insert")
+}
+
+fn read_frame(id: i64) -> Vec<u8> {
+    let payload = DomainValue::Composite(vec![(1, DomainValue::Int32(id as i32))]);
+    encode_domain_frame(DomainMessageKind::RpcRequest, 0, 0, &payload).expect("encode read")
+}
 
 fn base_url() -> String {
     env::var("KALAMDB_URL").unwrap_or_else(|_| "http://127.0.0.1:2900".to_string())
@@ -163,17 +190,21 @@ async fn sql_ok(
 }
 
 async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyhow::Result<()> {
-    let resp = http
-        .post(insert_url(base))
-        .bearer_auth(token)
-        .json(&json!({
+    let request = http.post(insert_url(base)).bearer_auth(token);
+    let request = if use_domain_codec() {
+        request
+            .header("content-type", DOMAIN_CONTENT_TYPE)
+            .header("x-kalam-epoch", DOMAIN_EPOCH.to_string())
+            .body(insert_frame(i))
+    } else {
+        request.json(&json!({
             "id": i,
             "owner": "user1",
             "room": "room0",
             "data": message_data(i),
         }))
-        .send()
-        .await?;
+    };
+    let resp = request.send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
     if !status.is_success() {
@@ -186,12 +217,16 @@ async fn create_message(http: &Client, base: &str, token: &str, i: i64) -> anyho
 }
 
 async fn read_message(http: &Client, base: &str, token: &str, id: i64) -> anyhow::Result<()> {
-    let resp = http
-        .post(get_url(base))
-        .bearer_auth(token)
-        .json(&json!({ "id": id }))
-        .send()
-        .await?;
+    let request = http.post(get_url(base)).bearer_auth(token);
+    let request = if use_domain_codec() {
+        request
+            .header("content-type", DOMAIN_CONTENT_TYPE)
+            .header("x-kalam-epoch", DOMAIN_EPOCH.to_string())
+            .body(read_frame(id))
+    } else {
+        request.json(&json!({ "id": id }))
+    };
+    let resp = request.send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
     if !status.is_success() {
@@ -340,7 +375,10 @@ async fn main() -> anyhow::Result<()> {
     let token = setup_and_login(&http, &base, use_http2).await?;
     println!("logged in to {base}");
     println!("mode=hot-only (no FLUSH_POLICY, flush scheduler disabled)");
-    println!("timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}}");
+    println!(
+        "timed_path=POST /v1/functions/{KALAMDB_NAMESPACE}/{{insert_message,get_message}} codec={}",
+        if use_domain_codec() { "kalam-packed" } else { "json" }
+    );
     println!("nested_sql=ABI v2 ctx.db.execute/query($n, named input) (plan-cache binds)");
     println!("timed_read_response=bytes (HTTP status validation only; matches TB/PB)");
 
@@ -364,6 +402,27 @@ mod tests {
     fn benchmark_requires_http2() {
         assert!(require_http2(reqwest::Version::HTTP_2).is_ok());
         assert!(require_http2(reqwest::Version::HTTP_11).is_err());
+    }
+
+    #[test]
+    fn domain_insert_frame_is_a_current_epoch_rpc_request() {
+        use kalamdb_serialization::{
+            decode_domain_frame_for_surface, DomainDecodeBudget, DomainMessageKind, DomainValue,
+            EndpointSurface,
+        };
+
+        let frame = insert_frame(42);
+        let decoded = decode_domain_frame_for_surface(
+            &frame,
+            EndpointSurface::PublicRpc,
+            DomainDecodeBudget::default(),
+        )
+        .expect("insert frame");
+        assert_eq!(decoded.kind, DomainMessageKind::RpcRequest);
+        let DomainValue::Composite(fields) = decoded.payload else {
+            panic!("insert payload must be a composite");
+        };
+        assert_eq!(fields[0], (1, DomainValue::Int32(42)));
     }
 
     #[test]

@@ -23,7 +23,29 @@ pub fn generate_schema(ctx: &WorkflowContext, languages: Option<Vec<String>>) ->
     if let Some(requested) = languages.as_ref() {
         gen::validate_language_filter(requested, &ctx.config.schema.languages)?;
     }
-    generate_schema_artifacts(ctx, &GenerateOptions { languages }, &output)
+    generate_schema_artifacts(
+        ctx,
+        &GenerateOptions {
+            languages,
+            check: false,
+        },
+        &output,
+    )
+}
+
+pub fn check_schema(ctx: &WorkflowContext, languages: Option<Vec<String>>) -> Result<()> {
+    let output = ctx.output();
+    if let Some(requested) = languages.as_ref() {
+        gen::validate_language_filter(requested, &ctx.config.schema.languages)?;
+    }
+    generate_schema_artifacts(
+        ctx,
+        &GenerateOptions {
+            languages,
+            check: true,
+        },
+        &output,
+    )
 }
 
 #[cfg(test)]

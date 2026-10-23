@@ -17,7 +17,7 @@ use super::{
     arrow::resolve_arrow_type,
     snapshot::{
         ContractField, ContractRoutine, ContractSnapshot, ContractTable, ContractTableKind,
-        ContractTrigger, ContractType, ContractTypeKind,
+        ContractTrigger, ContractType, ContractTypeKind, RoutineCardinality,
     },
     ContractError,
 };
@@ -454,38 +454,118 @@ fn ingest_procedure(
     let schema = fold_ident(stmt.namespace_id.as_str());
     let name = fold_ident(&stmt.name);
     let routine_id = RoutineId::from_parts(Some(&stmt.namespace_id), &name);
-    let key = routine_id.as_str().to_string();
-    if routines.contains_key(&key) && !stmt.or_replace {
-        return Err(ContractError::new(format!("duplicate procedure '{key}'")));
-    }
-    let parameters = stmt
+    let base_key = routine_id.as_str().to_string();
+    let parameters: Vec<ContractField> = stmt
         .parameters
         .into_iter()
-        .map(|param| field_from_ref(param.name, param.type_ref, current_schema))
+        .enumerate()
+        .map(|(idx, param)| {
+            let mut field = field_from_ref(param.name, param.type_ref, current_schema);
+            field.param_mode = param.mode;
+            field.has_default = param.default_expr.is_some();
+            field.default_expr = param.default_expr;
+            field.slot = (idx + 1) as i32;
+            field
+        })
+        .collect();
+    let returns_table: Vec<ContractField> = stmt
+        .returns_table
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (col_name, col_ty))| {
+            let mut field = field_from_ref(col_name, col_ty, current_schema);
+            field.slot = (idx + 1) as i32;
+            field
+        })
         .collect();
     let return_type = stmt
         .return_type
         .map(|ty| field_from_ref("returns".to_string(), ty, current_schema));
+    let cardinality = if !returns_table.is_empty() {
+        RoutineCardinality::Table
+    } else if stmt.returns_setof {
+        RoutineCardinality::SetOf
+    } else if stmt.kind == kalamdb_commons::models::RoutineKind::Procedure
+        && !parameters.iter().any(|p| p.param_mode.is_output())
+    {
+        RoutineCardinality::Void
+    } else if return_type.as_ref().is_none_or(|ret| {
+        ret.type_id.is_none() && ret.type_name.eq_ignore_ascii_case("void") && !ret.is_array
+    }) {
+        RoutineCardinality::Void
+    } else {
+        RoutineCardinality::Scalar
+    };
+    let signature = canonical_routine_signature(&schema, &name, &parameters);
+    let insert_key = if let Some(existing) = routines.get(&base_key) {
+        if existing.signature == signature {
+            if !stmt.or_replace {
+                return Err(ContractError::new(format!("duplicate procedure '{base_key}'")));
+            }
+            base_key.clone()
+        } else {
+            if routines.contains_key(&signature) && !stmt.or_replace {
+                return Err(ContractError::new(format!(
+                    "duplicate overloaded procedure '{signature}'"
+                )));
+            }
+            signature.clone()
+        }
+    } else {
+        base_key.clone()
+    };
+    let is_internal = stmt
+        .language
+        .as_deref()
+        .is_some_and(|lang| lang.eq_ignore_ascii_case("INTERNAL"))
+        || schema.eq_ignore_ascii_case("pg_catalog")
+        || schema.eq_ignore_ascii_case("system");
     let comment = stmt
         .comment
-        .or_else(|| routines.get(&key).and_then(|prev| prev.comment.clone()));
+        .or_else(|| routines.get(&insert_key).and_then(|prev| prev.comment.clone()));
     routines.insert(
-        key,
+        insert_key,
         ContractRoutine {
             routine_id,
+            signature,
             schema,
             name,
             kind: stmt.kind,
+            cardinality,
             parameters,
             return_type,
+            returns_table,
             language: stmt.language,
             security: stmt.security,
+            volatility: stmt.volatility,
+            null_safety: stmt.null_safety,
+            parallel_safety: stmt.parallel_safety,
+            is_internal,
             body: stmt.body,
             grants: BTreeSet::new(),
             comment,
         },
     );
     Ok(())
+}
+
+fn canonical_routine_signature(schema: &str, name: &str, parameters: &[ContractField]) -> String {
+    let mut param_types = Vec::new();
+    for param in parameters {
+        if !param.param_mode.is_input() {
+            continue;
+        }
+        let mut ty = param
+            .type_id
+            .as_ref()
+            .map(|id| id.as_str().to_ascii_lowercase())
+            .unwrap_or_else(|| param.type_name.to_ascii_lowercase());
+        if param.is_array {
+            ty.push_str("[]");
+        }
+        param_types.push(ty);
+    }
+    format!("{schema}.{name}({})", param_types.join(","))
 }
 
 fn ingest_table(
@@ -665,6 +745,7 @@ fn parse_contract_table(
             ContractError::new(format!("PRIMARY KEY references unknown column '{key}'"))
         })?;
         field.primary_key = true;
+        field.primary_key_ordinal = Some(1);
         field.not_null = true;
     }
     if fields.iter().filter(|field| field.primary_key).count() > 1 {
@@ -699,21 +780,75 @@ fn parse_contract_table(
 }
 
 fn parse_table_column(input: &str, schema: &str) -> Result<ContractField, ContractError> {
+    let (raw_type_token, _) = take_ident(input)
+        .ok()
+        .and_then(|(_, rest)| take_ident(rest.trim_start()).ok())
+        .unwrap_or_default();
+    let is_serial = raw_type_token.eq_ignore_ascii_case("SERIAL")
+        || raw_type_token.eq_ignore_ascii_case("BIGSERIAL")
+        || raw_type_token.eq_ignore_ascii_case("SMALLSERIAL");
     let (name, rest) = take_ident(input).map_err(ContractError::new)?;
     let (mut type_ref, rest) =
         parse_type_reference(rest.trim_start()).map_err(ContractError::new)?;
-    let leftover = rest.to_ascii_uppercase();
+    let leftover_trimmed = rest.trim();
+    let leftover = leftover_trimmed.to_ascii_uppercase();
     let primary_key = leftover.contains("PRIMARY KEY");
-    if leftover.contains("NOT NULL") || primary_key {
+    let is_identity_always = leftover.contains("GENERATED ALWAYS AS IDENTITY");
+    let is_identity_by_default = leftover.contains("GENERATED BY DEFAULT AS IDENTITY");
+    let is_identity = is_serial || is_identity_always || is_identity_by_default;
+    let is_generated = !is_identity && leftover.contains("GENERATED ALWAYS AS");
+    let is_read_only = is_generated || is_identity_always;
+    if leftover.contains("NOT NULL") || primary_key || is_identity {
         type_ref.not_null = true;
     }
     if leftover.contains("NONEMPTY") {
         type_ref.nonempty = true;
     }
+    let default_expr = extract_column_default_expr(leftover_trimmed);
     let mut field = field_from_ref(name, type_ref, schema);
     field.primary_key = primary_key;
-    field.has_default = leftover.contains("DEFAULT");
+    field.primary_key_ordinal = primary_key.then_some(1);
+    field.has_default = default_expr.is_some() || is_identity;
+    field.default_expr = default_expr;
+    field.is_identity = is_identity;
+    field.is_generated = is_generated;
+    field.is_read_only = is_read_only;
     Ok(field)
+}
+
+fn extract_column_default_expr(leftover: &str) -> Option<String> {
+    let upper = leftover.to_ascii_uppercase();
+    let mut search_from = 0usize;
+    while let Some(rel) = upper[search_from..].find("DEFAULT") {
+        let idx = search_from + rel;
+        let before_ok = idx == 0 || !upper.as_bytes()[idx - 1].is_ascii_alphanumeric();
+        let after_idx = idx + "DEFAULT".len();
+        let after_ok = after_idx < upper.len() && upper.as_bytes()[after_idx].is_ascii_whitespace();
+        let preceded_by_by = idx >= 3 && upper[..idx].trim_end().ends_with("BY");
+        if before_ok && after_ok && !preceded_by_by {
+            let tail = leftover[after_idx..].trim_start();
+            let tail_upper = tail.to_ascii_uppercase();
+            let mut end = tail.len();
+            for kw in [
+                " NOT NULL",
+                " NULL",
+                " PRIMARY KEY",
+                " UNIQUE",
+                " CHECK",
+                " REFERENCES",
+            ] {
+                if let Some(pos) = tail_upper.find(kw) {
+                    end = end.min(pos);
+                }
+            }
+            let expr = tail[..end].trim();
+            if !expr.is_empty() {
+                return Some(expr.to_string());
+            }
+        }
+        search_from = after_idx;
+    }
+    None
 }
 
 fn strip_create_table_prefix(sql: &str) -> Option<&str> {
@@ -1120,7 +1255,13 @@ fn field_from_ref(name: String, type_ref: TypeReference, current_schema: &str) -
         not_null: type_ref.not_null,
         nonempty: type_ref.nonempty,
         primary_key: false,
+        primary_key_ordinal: None,
         has_default: false,
+        default_expr: None,
+        is_identity: false,
+        is_generated: false,
+        is_read_only: false,
+        param_mode: kalamdb_commons::models::RoutineParameterMode::In,
         slot: 0,
         dropped: false,
     }
@@ -1210,16 +1351,21 @@ fn resolve_snapshot(
     let mut type_comments: HashMap<String, Option<String>> = HashMap::new();
 
     for (table_id, table) in &tables {
+        let mut pk_fields: Vec<&ContractField> =
+            table.fields.iter().filter(|f| !f.dropped && f.primary_key).collect();
+        pk_fields.sort_by_key(|f| f.primary_key_ordinal.unwrap_or(u16::MAX));
+        let primary_key: Vec<String> = pk_fields.into_iter().map(|f| f.name.clone()).collect();
         snapshot_tables.insert(
             table_id.clone(),
             ContractTable {
-                table_id:     table_id.clone(),
-                schema:       table.schema.clone(),
-                name:         table.name.clone(),
-                kind:         table.kind,
-                row_type_id:  TypeId::new(table_id.clone()),
+                table_id: table_id.clone(),
+                schema: table.schema.clone(),
+                name: table.name.clone(),
+                kind: table.kind,
+                row_type_id: TypeId::new(table_id.clone()),
                 row_alias_id: table_alias.get(table_id).cloned(),
-                fields:       table.fields.clone(),
+                primary_key,
+                fields: table.fields.clone(),
             },
         );
         kind_map.insert(
@@ -1330,7 +1476,12 @@ fn resolve_snapshot(
     }
 
     for routine in routines.values() {
-        for field in routine.parameters.iter().chain(routine.return_type.iter()) {
+        for field in routine
+            .parameters
+            .iter()
+            .chain(routine.return_type.iter())
+            .chain(routine.returns_table.iter())
+        {
             if let Some(type_id) = &field.type_id {
                 if !kind_map.contains_key(type_id.as_str()) {
                     return Err(ContractError::new(format!(
@@ -1791,5 +1942,87 @@ mod tests {
             "{joined}"
         );
         assert!(!joined.contains("DROP TYPE"), "{joined}");
+    }
+
+    #[test]
+    fn t003_t004_extended_metadata_overloads_cardinality_and_scoped_hashes() {
+        use crate::contracts::{scoped_contract_hashes, RoutineCardinality};
+
+        let sql_v1 = r#"
+CREATE SCHEMA school;
+CREATE TYPE school.role_kind AS ENUM ('owner', 'teacher', 'parent', 'student');
+CREATE DOMAIN school.non_empty_code AS TEXT NOT NULL CHECK (VALUE <> '');
+CREATE TABLE school.enrollments (
+  enrollment_id TEXT PRIMARY KEY,
+  seq_no BIGINT GENERATED ALWAYS AS IDENTITY,
+  display_code TEXT GENERATED ALWAYS AS (enrollment_id) STORED,
+  role school.role_kind NOT NULL DEFAULT 'student',
+  tuition NUMERIC(12, 2) NOT NULL DEFAULT 0.00
+) WITH (TYPE = 'SHARED');
+CREATE PROCEDURE school.ping();
+CREATE FUNCTION school.book_slot(
+  IN lesson_id BIGINT NOT NULL,
+  IN note TEXT DEFAULT 'standard',
+  VARIADIC tags TEXT[]
+) RETURNS BOOLEAN;
+CREATE FUNCTION school.book_slot(
+  IN lesson_code TEXT NOT NULL
+) RETURNS BOOLEAN;
+CREATE FUNCTION school.list_enrollments(IN school_id TEXT NOT NULL)
+RETURNS SETOF school.enrollments;
+CREATE FUNCTION school.summary(IN school_id TEXT NOT NULL)
+RETURNS TABLE (enrollment_id TEXT, tuition NUMERIC(12, 2));
+"#;
+        let snap1 = compile_contract_sql(sql_v1, "public").unwrap();
+        let table = &snap1.tables["school.enrollments"];
+        assert_eq!(table.primary_key, vec!["enrollment_id"]);
+        assert_eq!(
+            table.ordered_key_fields().iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+            vec!["enrollment_id"]
+        );
+        let seq_field = table.fields.iter().find(|f| f.name == "seq_no").unwrap();
+        assert!(seq_field.is_identity && seq_field.is_read_only && seq_field.has_default);
+        let gen_field = table.fields.iter().find(|f| f.name == "display_code").unwrap();
+        assert!(gen_field.is_generated && gen_field.is_read_only);
+        let role_field = table.fields.iter().find(|f| f.name == "role").unwrap();
+        assert!(role_field.has_default);
+        assert_eq!(role_field.default_expr.as_deref(), Some("'student'"));
+
+        // Required insert fields exclude defaults, identity, and generated columns
+        let required: Vec<&str> =
+            table.required_insert_fields().iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(required, vec!["enrollment_id"]);
+
+        // Patchable fields exclude primary key and read-only columns
+        let patchable: Vec<&str> =
+            table.patchable_fields().iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(patchable, vec!["role", "tuition"]);
+
+        // Routine cardinalities and overloads
+        assert_eq!(snap1.routines["school.ping"].cardinality, RoutineCardinality::Void);
+        assert_eq!(snap1.routines["school.book_slot"].cardinality, RoutineCardinality::Scalar);
+        assert!(
+            snap1.routines.contains_key("school.book_slot(text)"),
+            "overloaded signature must coexist"
+        );
+        assert_eq!(
+            snap1.routines["school.list_enrollments"].cardinality,
+            RoutineCardinality::SetOf
+        );
+        assert_eq!(snap1.routines["school.summary"].cardinality, RoutineCardinality::Table);
+        assert_eq!(snap1.routines["school.summary"].returns_table.len(), 2);
+
+        // Scoped hashes: adding an unrelated table/routine does not invalidate existing scoped
+        // hashes
+        let hashes_v1 = scoped_contract_hashes(&snap1);
+        let sql_v2 = format!(
+            "{sql_v1}\nCREATE TABLE school.audit_logs (id TEXT PRIMARY KEY);\nCREATE PROCEDURE \
+             school.noop();"
+        );
+        let snap2 = compile_contract_sql(&sql_v2, "public").unwrap();
+        let hashes_v2 = scoped_contract_hashes(&snap2);
+        assert_ne!(hashes_v1.contract_hash, hashes_v2.contract_hash);
+        assert_eq!(hashes_v1.tables["school.enrollments"], hashes_v2.tables["school.enrollments"]);
+        assert_eq!(hashes_v1.routines["school.book_slot"], hashes_v2.routines["school.book_slot"]);
     }
 }
