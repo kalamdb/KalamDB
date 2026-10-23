@@ -2,8 +2,10 @@
 
 #[cfg(feature = "arrow-utils")]
 pub mod arrow_utils;
+pub mod catalog_oid;
 pub mod naming;
 pub mod process_shutdown;
 pub mod security;
 #[cfg(feature = "storage")]
 pub mod string_interner;
+pub mod time;

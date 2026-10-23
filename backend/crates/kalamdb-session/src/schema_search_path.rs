@@ -6,6 +6,8 @@
 
 use std::fmt;
 
+use kalamdb_commons::{constants::PG_CATALOG_NAMESPACE, SchemaId};
+
 /// What kind of object a lookup is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObjectClass {
@@ -111,7 +113,7 @@ impl SearchPath {
             let name = match token {
                 PathToken::User => user,
                 PathToken::Temp => continue,
-                PathToken::Catalog => "pg_catalog",
+                PathToken::Catalog => PG_CATALOG_NAMESPACE,
                 PathToken::Schema(name) => name.as_str(),
             };
             if exists(name) {
@@ -208,7 +210,7 @@ impl SearchPath {
                         names.push(temp.to_string());
                     }
                 },
-                PathToken::Catalog => names.push("pg_catalog".to_string()),
+                PathToken::Catalog => names.push(PG_CATALOG_NAMESPACE.to_string()),
                 PathToken::Schema(name) => names.push(name.clone()),
             }
         }
@@ -227,7 +229,7 @@ impl SearchPath {
             }
         }
         if !lists_catalog {
-            names.push("pg_catalog".to_string());
+            names.push(PG_CATALOG_NAMESPACE.to_string());
         }
         for name in explicit {
             if !sees_temp && catalog.temp_schema == Some(name.as_str()) {
@@ -417,7 +419,7 @@ fn parse_token(token: &str) -> Result<PathToken, PathError> {
         if inner == "$user" {
             return Ok(PathToken::User);
         }
-        if inner == "pg_catalog" {
+        if SchemaId::is_pg_catalog_name(&inner) {
             return Ok(PathToken::Catalog);
         }
         if is_temp_name(&inner) {
@@ -429,7 +431,7 @@ fn parse_token(token: &str) -> Result<PathToken, PathError> {
         return Ok(PathToken::User);
     }
     let folded = fold_ascii(token);
-    if folded == "pg_catalog" {
+    if SchemaId::is_pg_catalog_name(&folded) {
         return Ok(PathToken::Catalog);
     }
     if is_temp_name(&folded) {
@@ -578,13 +580,13 @@ mod tests {
     fn current_schema_is_not_the_schema_that_held_the_object() {
         let path = SearchPath::parse("public").unwrap();
         let schemas = vec![
-            entry("pg_catalog", true, &[(ObjectClass::Relation, "pg_type")]),
+            entry(PG_CATALOG_NAMESPACE, true, &[(ObjectClass::Relation, "pg_type")]),
             entry("public", true, &[(ObjectClass::Relation, "items")]),
         ];
         let view = catalog("alice", None, &schemas);
         assert_eq!(
             path.resolve(ObjectClass::Relation, "pg_type", &view).map(|hit| hit.schema),
-            Some("pg_catalog")
+            Some(PG_CATALOG_NAMESPACE)
         );
         assert_eq!(path.current_schema(&view), Some("public"));
     }
@@ -593,13 +595,13 @@ mod tests {
     fn implicit_pg_catalog_precedes_the_explicit_path() {
         let path = SearchPath::parse("public").unwrap();
         let schemas = vec![
-            entry("pg_catalog", true, &[(ObjectClass::Relation, "shared")]),
+            entry(PG_CATALOG_NAMESPACE, true, &[(ObjectClass::Relation, "shared")]),
             entry("public", true, &[(ObjectClass::Relation, "shared")]),
         ];
         let view = catalog("alice", None, &schemas);
         assert_eq!(
             path.resolve(ObjectClass::Relation, "shared", &view).map(|hit| hit.schema),
-            Some("pg_catalog")
+            Some(PG_CATALOG_NAMESPACE)
         );
     }
 
@@ -607,7 +609,7 @@ mod tests {
     fn explicit_pg_catalog_keeps_its_position() {
         let path = SearchPath::parse("public, pg_catalog").unwrap();
         let schemas = vec![
-            entry("pg_catalog", true, &[(ObjectClass::Relation, "shared")]),
+            entry(PG_CATALOG_NAMESPACE, true, &[(ObjectClass::Relation, "shared")]),
             entry("public", true, &[(ObjectClass::Relation, "shared")]),
         ];
         let view = catalog("alice", None, &schemas);
@@ -693,7 +695,7 @@ mod tests {
         let path = SearchPath::parse("").unwrap();
         let schemas = vec![
             entry("pg_temp_1", true, &[(ObjectClass::Relation, "scratch")]),
-            entry("pg_catalog", true, &[(ObjectClass::Routine, "now")]),
+            entry(PG_CATALOG_NAMESPACE, true, &[(ObjectClass::Routine, "now")]),
         ];
         let view = catalog("alice", Some("pg_temp_1"), &schemas);
         assert_eq!(path.current_schema(&view), None);
@@ -703,7 +705,7 @@ mod tests {
         );
         assert_eq!(
             path.resolve(ObjectClass::Routine, "now", &view).map(|hit| hit.schema),
-            Some("pg_catalog")
+            Some(PG_CATALOG_NAMESPACE)
         );
         assert_eq!(path.resolve(ObjectClass::Routine, "scratch", &view), None);
     }

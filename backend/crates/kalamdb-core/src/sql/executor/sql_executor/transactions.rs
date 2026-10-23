@@ -254,7 +254,9 @@ impl SqlExecutor {
                     return None;
                 }
                 if schema.is_default_namespace()
-                    || matches!(schema.as_str(), "pg_catalog" | "information_schema" | "system")
+                    || schema.is_system_schema()
+                    || schema.is_pg_catalog()
+                    || schema.is_information_schema()
                 {
                     return Some(schema.clone());
                 }

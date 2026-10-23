@@ -598,8 +598,8 @@ fn parse_routine_language(input: &str) -> DdlResult<(String, &str)> {
 }
 
 fn validate_routine_type_ref(type_ref: &TypeReference, is_param: bool) -> DdlResult<()> {
-    let is_unqualified_or_pg_catalog = type_ref.namespace_id.is_none()
-        || type_ref.namespace_id.as_ref().map(SchemaId::as_str) == Some("pg_catalog");
+    let is_unqualified_or_pg_catalog =
+        type_ref.namespace_id.as_ref().is_none_or(SchemaId::is_pg_catalog);
     if !is_unqualified_or_pg_catalog {
         return Ok(());
     }

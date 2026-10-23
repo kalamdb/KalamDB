@@ -14,35 +14,11 @@ use kalamdb_system::SystemTablesRegistry;
 use crate::{
     error::RegistryError,
     pg_catalog::{
-        stable_oid,
-        type_mapping::{pg_type_name, pg_type_oid},
+        catalog_type_oid, namespace_oid, oid_for_qualified_type_id,
+        type_mapping::{builtin_typlen, pg_type_name, pg_type_oid, BUILTIN_PG_TYPES},
         visible_table_definitions, PgCatalogView,
     },
 };
-
-/// Built-in PostgreSQL types registered in `pg_catalog` so JDBC can join
-/// `pg_attribute.atttypid` and resolve `typname = 'name'` (max identifier length).
-const PG_CATALOG_TYPES: &[(&str, i64, i64)] = &[
-    ("bool", 16, 1),
-    ("bytea", 17, -1),
-    ("name", 19, 64),
-    ("int8", 20, 8),
-    ("int2", 21, 2),
-    ("int4", 23, 4),
-    ("text", 25, -1),
-    ("bpchar", 1042, -1),
-    ("varchar", 1043, -1),
-    ("oid", 26, 4),
-    ("json", 114, -1),
-    ("float4", 700, 4),
-    ("float8", 701, 8),
-    ("date", 1082, 4),
-    ("time", 1083, 8),
-    ("timestamp", 1114, 8),
-    ("numeric", 1700, -1),
-    ("uuid", 2950, 16),
-    ("void", 2278, 4),
-];
 
 fn schema() -> SchemaRef {
     static SCHEMA: OnceLock<SchemaRef> = OnceLock::new();
@@ -145,15 +121,7 @@ impl TypeRowBuilders {
 }
 
 fn listing_type_oid(namespace: &str, typname: &str) -> i64 {
-    stable_oid(&["type", namespace, typname]) | 0x4000_0000
-}
-
-fn typlen_for_oid(oid: i64) -> i64 {
-    PG_CATALOG_TYPES
-        .iter()
-        .find(|(_, catalog_oid, _)| *catalog_oid == oid)
-        .map(|(_, _, typlen)| *typlen)
-        .unwrap_or(-1)
+    catalog_type_oid(namespace, typname) | 0x4000_0000
 }
 
 impl PgCatalogView for PgTypeView {
@@ -167,14 +135,14 @@ impl PgCatalogView for PgTypeView {
 
     fn compute_batch(&self, role: Role) -> Result<RecordBatch, RegistryError> {
         let mut builders = TypeRowBuilders::new();
-        let pg_catalog_oid = stable_oid(&["namespace", "pg_catalog"]);
+        let pg_catalog_oid = namespace_oid(kalamdb_commons::constants::PG_CATALOG_NAMESPACE);
         let mut seen_listing = BTreeSet::<(i64, &'static str)>::new();
 
-        for (typname, oid, typlen) in PG_CATALOG_TYPES {
-            builders.push(*oid, typname, pg_catalog_oid, *typlen);
+        for builtin in BUILTIN_PG_TYPES {
+            builders.push(builtin.oid, builtin.typname, pg_catalog_oid, builtin.typlen);
         }
         builders.push(
-            stable_oid(&["type", "pg_catalog", "geometry"]),
+            catalog_type_oid(kalamdb_commons::constants::PG_CATALOG_NAMESPACE, "geometry"),
             "geometry",
             pg_catalog_oid,
             -1,
@@ -210,8 +178,7 @@ impl PgCatalogView for PgTypeView {
                         fields.into_iter().find_map(|field| {
                             field.data_type.as_ref().map(pg_type_oid).or_else(|| {
                                 field.field_type_id.as_ref().and_then(|source_id| {
-                                    let (ns, name) = source_id.as_str().split_once('.')?;
-                                    Some(stable_oid(&["type", ns, name]))
+                                    oid_for_qualified_type_id(source_id.as_str())
                                 })
                             })
                         })
@@ -221,9 +188,9 @@ impl PgCatalogView for PgTypeView {
                 0
             };
             builders.push_full(
-                stable_oid(&["type", namespace, &catalog_type.name]),
+                catalog_type_oid(namespace, &catalog_type.name),
                 &catalog_type.name,
-                stable_oid(&["namespace", namespace]),
+                namespace_oid(namespace),
                 typtype,
                 typbasetype,
                 -1,
@@ -231,11 +198,11 @@ impl PgCatalogView for PgTypeView {
         }
 
         for table in visible_table_definitions(&self.system_registry, role)? {
-            let namespace = table.namespace_id.as_str();
-            if namespace == "pg_catalog" {
+            if table.namespace_id.is_pg_catalog() {
                 continue;
             }
-            let namespace_oid = stable_oid(&["namespace", namespace]);
+            let namespace = table.namespace_id.as_str();
+            let namespace_oid = namespace_oid(namespace);
 
             for column in &table.columns {
                 let typname = pg_type_name(&column.data_type());
@@ -250,7 +217,7 @@ impl PgCatalogView for PgTypeView {
                     listing_type_oid(namespace, typname),
                     typname,
                     namespace_oid,
-                    typlen_for_oid(pg_type_oid(&column.data_type())),
+                    builtin_typlen(pg_type_oid(&column.data_type())),
                 );
             }
         }

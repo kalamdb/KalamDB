@@ -208,9 +208,9 @@ impl CatalogStores {
                 return Ok(Some(catalog_type.clone()));
             }
         }
-        if namespace_id.as_str() != "pg_catalog" {
+        if !namespace_id.is_pg_catalog() {
             for catalog_type in types {
-                if catalog_type.namespace_id.as_str() == "pg_catalog" && catalog_type.name == name {
+                if catalog_type.namespace_id.is_pg_catalog() && catalog_type.name == name {
                     return Ok(Some(catalog_type));
                 }
             }
@@ -791,7 +791,7 @@ impl CatalogStores {
     /// and internal file functions (`file_put`, `file_read`, `file_delete`) are persisted once
     /// in the catalog so they survive restart with the same `TypeId`, `RoutineId`, and OID.
     pub fn ensure_builtin_extension_catalog(&self) -> Result<(), SystemError> {
-        let pg_catalog_ns = SchemaId::new("pg_catalog");
+        let pg_catalog_ns = SchemaId::pg_catalog();
         let file_type_id = TypeId::new("pg_catalog.file");
         if self.get_type(&file_type_id)?.is_none() {
             let mut file_type = CatalogType::named(

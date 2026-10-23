@@ -151,7 +151,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Cannot alter"));
 
-        let info_schema = SchemaId::from("information_schema");
+        let info_schema = SchemaId::information_schema();
         let result = block_system_namespace_modification(&info_schema, "DROP", "TABLE", None);
         assert!(result.is_err());
 

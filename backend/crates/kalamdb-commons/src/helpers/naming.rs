@@ -1,8 +1,8 @@
 //! SQL identifier naming rules shared across KalamDB crates.
 
 use crate::constants::{
-    BUILTIN_NAMESPACE_ALIASES, CRITICAL_RESERVED_SQL_KEYWORDS, RESERVED_NAMESPACE_NAMES,
-    SYSTEM_NAMESPACE,
+    BUILTIN_NAMESPACE_ALIASES, CRITICAL_RESERVED_SQL_KEYWORDS, DATAFUSION_NAMESPACE,
+    INFORMATION_SCHEMA_NAMESPACE, PG_CATALOG_NAMESPACE, RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE,
 };
 
 pub const MAX_SQL_IDENTIFIER_LENGTH: usize = 64;
@@ -183,7 +183,10 @@ pub fn validate_namespace_reference(name: &str) -> Result<(), SqlIdentifierError
     let lowered = name.to_ascii_lowercase();
     if matches!(
         lowered.as_str(),
-        SYSTEM_NAMESPACE | "information_schema" | "pg_catalog" | "datafusion"
+        SYSTEM_NAMESPACE
+            | INFORMATION_SCHEMA_NAMESPACE
+            | PG_CATALOG_NAMESPACE
+            | DATAFUSION_NAMESPACE
     ) {
         return Err(SqlIdentifierError::ReservedNamespace(name.to_string()));
     }

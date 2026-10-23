@@ -5,13 +5,12 @@ use std::collections::HashMap;
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableOptions},
-    SystemTable,
 };
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{
-    pg_catalog::type_mapping::{info_schema_data_type, info_schema_numeric_metadata, pg_type_name},
-    system::system_view_table_definition,
+use crate::pg_catalog::{
+    supplemental_catalog_definitions,
+    type_mapping::{info_schema_data_type, info_schema_numeric_metadata, pg_type_name},
 };
 
 pub(crate) type TableKey = (String, String);
@@ -61,12 +60,8 @@ impl CatalogMetadataIndex {
             }
         }
 
-        for table in registry.expected_system_table_definitions() {
-            index.insert_table(table.as_ref());
-        }
-
-        for system_table in SystemTable::all_views() {
-            index.insert_table(&system_view_table_definition(*system_table));
+        for table in supplemental_catalog_definitions(registry) {
+            index.insert_table(&table);
         }
 
         index

@@ -178,7 +178,7 @@ fn expect_system_migrations_object(name: &ObjectName) -> Result<(), KalamDbError
         KalamDbError::InvalidSql("Invalid system.migrations table name".to_string())
     })?;
     if parts.len() == 2
-        && parts[0].eq_ignore_ascii_case("system")
+        && kalamdb_commons::SchemaId::is_system_schema_name(parts[0])
         && parts[1].eq_ignore_ascii_case("migrations")
     {
         return Ok(());

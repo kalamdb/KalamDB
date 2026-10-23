@@ -10,7 +10,7 @@ use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    pg_catalog::{stable_oid, PgCatalogView},
+    pg_catalog::{catalog_type_oid, stable_oid, PgCatalogView},
 };
 
 fn schema() -> SchemaRef {
@@ -66,7 +66,7 @@ impl PgCatalogView for PgEnumView {
             if namespace.is_empty() || catalog_type.name.is_empty() {
                 continue;
             }
-            let enumtypid = stable_oid(&["type", namespace, &catalog_type.name]);
+            let enumtypid = catalog_type_oid(namespace, &catalog_type.name);
             let mut fields =
                 catalog_stores.list_type_fields(&catalog_type.type_id).map_err(|error| {
                     RegistryError::Other(format!("failed to list enum fields: {error}"))

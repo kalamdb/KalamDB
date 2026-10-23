@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "storage")]
 use crate::StorageKey;
 use crate::{
-    constants::{RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE},
+    constants::{
+        DATAFUSION_NAMESPACE, INFORMATION_SCHEMA_NAMESPACE, PG_CATALOG_NAMESPACE,
+        RESERVED_NAMESPACE_NAMES, SYSTEM_NAMESPACE,
+    },
     helpers::naming::{
         validate_namespace_reference, validate_user_namespace_name, SqlIdentifierError,
     },
@@ -60,6 +63,9 @@ impl From<SqlIdentifierError> for NamespaceIdValidationError {
 /// Statics for cheap singleton construction.
 static SYSTEM_NS: OnceLock<Arc<str>> = OnceLock::new();
 static DEFAULT_NS: OnceLock<Arc<str>> = OnceLock::new();
+static PG_CATALOG_NS: OnceLock<Arc<str>> = OnceLock::new();
+static INFORMATION_SCHEMA_NS: OnceLock<Arc<str>> = OnceLock::new();
+static DATAFUSION_NS: OnceLock<Arc<str>> = OnceLock::new();
 
 /// Type-safe wrapper for namespace identifiers.
 ///
@@ -177,6 +183,76 @@ impl SchemaId {
         Self(DEFAULT_NS.get_or_init(|| Arc::from("default")).clone())
     }
 
+    /// PostgreSQL catalog schema. Cached singleton.
+    #[inline]
+    pub fn pg_catalog() -> Self {
+        Self(PG_CATALOG_NS.get_or_init(|| Arc::from(PG_CATALOG_NAMESPACE)).clone())
+    }
+
+    /// SQL `information_schema`. Cached singleton.
+    #[inline]
+    pub fn information_schema() -> Self {
+        Self(
+            INFORMATION_SCHEMA_NS
+                .get_or_init(|| Arc::from(INFORMATION_SCHEMA_NAMESPACE))
+                .clone(),
+        )
+    }
+
+    /// DataFusion internal schema. Cached singleton.
+    #[inline]
+    pub fn datafusion() -> Self {
+        Self(DATAFUSION_NS.get_or_init(|| Arc::from(DATAFUSION_NAMESPACE)).clone())
+    }
+
+    /// KalamDB `system` schema. Stored names are already lowercase.
+    #[inline]
+    pub fn is_system_schema(&self) -> bool {
+        self.as_str() == SYSTEM_NAMESPACE
+    }
+
+    /// PostgreSQL `pg_catalog` schema.
+    #[inline]
+    pub fn is_pg_catalog(&self) -> bool {
+        self.as_str() == PG_CATALOG_NAMESPACE
+    }
+
+    /// SQL `information_schema`.
+    #[inline]
+    pub fn is_information_schema(&self) -> bool {
+        self.as_str() == INFORMATION_SCHEMA_NAMESPACE
+    }
+
+    /// DataFusion internal schema.
+    #[inline]
+    pub fn is_datafusion_schema(&self) -> bool {
+        self.as_str() == DATAFUSION_NAMESPACE
+    }
+
+    /// Case-insensitive `pg_catalog` check for a name that is not yet a [`SchemaId`].
+    #[inline]
+    pub fn is_pg_catalog_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(PG_CATALOG_NAMESPACE)
+    }
+
+    /// Case-insensitive `information_schema` check for an unparsed schema name.
+    #[inline]
+    pub fn is_information_schema_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(INFORMATION_SCHEMA_NAMESPACE)
+    }
+
+    /// Case-insensitive `system` check for an unparsed schema name.
+    #[inline]
+    pub fn is_system_schema_name(name: &str) -> bool {
+        name.eq_ignore_ascii_case(SYSTEM_NAMESPACE)
+    }
+
+    /// `pg_catalog` or `information_schema`. PostgreSQL clients read both.
+    #[inline]
+    pub fn is_client_catalog_name(name: &str) -> bool {
+        Self::is_pg_catalog_name(name) || Self::is_information_schema_name(name)
+    }
+
     /// Reuse a typed namespace when it already matches a session schema string.
     ///
     /// Avoids re-validation and a new `Arc<str>` on the common path where
@@ -192,8 +268,17 @@ impl SchemaId {
         if schema.eq_ignore_ascii_case("default") {
             return Self::default_ns();
         }
-        if schema.eq_ignore_ascii_case(SYSTEM_NAMESPACE) {
+        if Self::is_system_schema_name(schema) {
             return Self::system();
+        }
+        if Self::is_pg_catalog_name(schema) {
+            return Self::pg_catalog();
+        }
+        if Self::is_information_schema_name(schema) {
+            return Self::information_schema();
+        }
+        if schema.eq_ignore_ascii_case(DATAFUSION_NAMESPACE) {
+            return Self::datafusion();
         }
         Self::new(schema)
     }
@@ -207,10 +292,10 @@ impl SchemaId {
     /// - `datafusion`: DataFusion internal catalog
     #[inline]
     pub fn is_system_namespace(&self) -> bool {
-        matches!(
-            self.as_str(),
-            SYSTEM_NAMESPACE | "information_schema" | "pg_catalog" | "datafusion"
-        )
+        self.is_system_schema()
+            || self.is_information_schema()
+            || self.is_pg_catalog()
+            || self.is_datafusion_schema()
     }
 
     /// If default namespace
@@ -343,8 +428,20 @@ mod tests {
     fn test_system_constructor() {
         let ns = SchemaId::system();
         assert_eq!(ns.as_str(), "system");
+        assert!(ns.is_system_schema());
         assert!(ns.is_system_namespace());
         assert!(ns.is_reserved());
+    }
+
+    #[test]
+    fn builtin_catalog_schemas_are_identified_on_the_id() {
+        assert!(SchemaId::pg_catalog().is_pg_catalog());
+        assert!(SchemaId::information_schema().is_information_schema());
+        assert!(SchemaId::datafusion().is_datafusion_schema());
+        assert!(SchemaId::is_pg_catalog_name("PG_CATALOG"));
+        assert!(SchemaId::is_client_catalog_name("Information_Schema"));
+        assert!(!SchemaId::pg_catalog().is_system_schema());
+        assert!(!SchemaId::default_ns().is_pg_catalog());
     }
 
     #[test]

@@ -92,7 +92,7 @@ fn table_reference_from_object_name(name: &ObjectName) -> Option<TableReference>
 }
 
 fn table_ref_is_client_catalog(table: &TableReference) -> bool {
-    matches!(table.schema(), Some("pg_catalog") | Some("information_schema"))
+    table.schema().is_some_and(kalamdb_commons::SchemaId::is_client_catalog_name)
 }
 
 impl SqlExecutor {

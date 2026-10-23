@@ -18,7 +18,7 @@ use kalamdb_system::{CatalogRoutine, CatalogRoutineParameter, SystemTablesRegist
 use crate::{
     error::RegistryError,
     pg_catalog::{
-        namespace_oid, proc_oid, stable_oid,
+        namespace_oid, oid_for_qualified_type_id, proc_oid,
         type_mapping::{pg_type_oid, PG_VOID_OID},
         PgCatalogView,
     },
@@ -175,8 +175,8 @@ impl PgCatalogView for PgProcView {
 
 pub(crate) fn routine_prorettype(routine: &CatalogRoutine) -> i64 {
     if let Some(type_id) = routine.return_type_id.as_ref() {
-        if let Some((ns, name)) = type_id.as_str().split_once('.') {
-            return stable_oid(&["type", ns, name]);
+        if let Some(oid) = oid_for_qualified_type_id(type_id.as_str()) {
+            return oid;
         }
     }
     if let Some(data_type) = routine.return_data_type {
@@ -201,8 +201,8 @@ fn proargtypes_text(parameters: &[CatalogRoutineParameter]) -> String {
 
 fn parameter_type_oid(parameter: &CatalogRoutineParameter) -> i64 {
     if let Some(type_id) = parameter.type_id.as_ref() {
-        if let Some((ns, name)) = type_id.as_str().split_once('.') {
-            return stable_oid(&["type", ns, name]);
+        if let Some(oid) = oid_for_qualified_type_id(type_id.as_str()) {
+            return oid;
         }
     }
     parameter
@@ -211,7 +211,7 @@ fn parameter_type_oid(parameter: &CatalogRoutineParameter) -> i64 {
         .unwrap_or(25)
 }
 
-fn parameter_sql_type(parameter: &CatalogRoutineParameter) -> String {
+pub(crate) fn parameter_sql_type(parameter: &CatalogRoutineParameter) -> String {
     let mut sql_type = parameter
         .builtin_data_type()
         .map(|data_type| {

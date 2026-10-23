@@ -494,8 +494,8 @@ pub(crate) fn parse_type_reference(input: &str) -> DdlResult<(TypeReference, &st
     let (mut qual, mut rest) = split_qualified_ident(input)?;
     rest = rest.trim_start();
 
-    let is_unqualified_or_pg_catalog = qual.namespace_id.is_none()
-        || qual.namespace_id.as_ref().map(SchemaId::as_str) == Some("pg_catalog");
+    let is_unqualified_or_pg_catalog =
+        qual.namespace_id.as_ref().is_none_or(SchemaId::is_pg_catalog);
     let has_quoted_upper = qual.name_quoted && qual.name.bytes().any(|b| b.is_ascii_uppercase());
 
     if is_unqualified_or_pg_catalog && !qual.name_quoted {

@@ -1,10 +1,6 @@
 //! Minimal pg_catalog compatibility views for PostgreSQL wire clients.
 
-use std::{
-    collections::BTreeMap,
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use datafusion::{
@@ -17,23 +13,15 @@ use datafusion::{
     physical_expr::PhysicalExpr,
     physical_plan::ExecutionPlan,
 };
-use kalamdb_commons::{
-    constants::SystemColumnNames,
-    schemas::{ScalarIndexDefinition, TableDefinition, TableType as KalamTableType},
-    Role, SystemTable,
-};
+use kalamdb_commons::{constants::LOGICAL_DATABASE_NAME, Role, SystemTable};
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::{combined_filter, pushdown_results_for_filters, FilterCapability},
 };
-use kalamdb_session::{can_access_system_table, can_access_user_table, is_admin_role};
 use kalamdb_session_datafusion::{extract_user_role, PermissionChecker, SessionConfigValues};
 use kalamdb_system::SystemTablesRegistry;
 
-use crate::{
-    error::RegistryError,
-    system::{sessions::SessionsSnapshotCallback, system_view_table_definition},
-};
+use crate::{error::RegistryError, system::sessions::SessionsSnapshotCallback};
 
 pub mod attrdef;
 pub mod attribute;
@@ -57,6 +45,20 @@ pub mod tables;
 pub mod r#type;
 pub mod type_mapping;
 pub mod views;
+
+mod oid;
+mod relations;
+
+pub use oid::proc_oid;
+pub(crate) use oid::{
+    catalog_type_oid, class_oid, named_column_attnums, namespace_oid, oid_for_qualified_type_id,
+    primary_constraint_oid, primary_index_oid, primary_index_relname, primary_key_attnums,
+    scalar_index_attnums, scalar_index_oid, stable_oid,
+};
+pub(crate) use relations::{
+    include_explicit_namespaces, pg_relkind, relation_is_view, supplemental_catalog_definitions,
+    visible_table_definitions,
+};
 
 pub trait PgCatalogView: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &'static str;
@@ -230,7 +232,7 @@ impl PgCatalogSchemaProvider {
         providers.insert(
             "pg_database".to_string(),
             Arc::new(PgCatalogViewTableProvider::new(Arc::new(database::PgDatabaseView::new(
-                "kalam",
+                LOGICAL_DATABASE_NAME,
             )))),
         );
         providers.insert(
@@ -347,167 +349,5 @@ impl SchemaProvider for PgCatalogSchemaProvider {
 
     async fn table_type(&self, name: &str) -> DataFusionResult<Option<TableType>> {
         Ok(self.providers.get(name).map(|provider| provider.table_type()))
-    }
-}
-
-pub(crate) fn stable_oid(parts: &[&str]) -> i64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for part in parts {
-        part.hash(&mut hasher);
-    }
-    (hasher.finish() & 0x7fff_ffff) as i64
-}
-
-pub(crate) fn class_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["class", namespace, table])
-}
-
-pub(crate) fn namespace_oid(namespace: &str) -> i64 {
-    stable_oid(&["namespace", namespace])
-}
-
-pub fn proc_oid(namespace: &str, name: &str) -> i64 {
-    stable_oid(&["proc", namespace, name])
-}
-
-pub(crate) fn primary_index_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["class", namespace, table, "pkey"])
-}
-
-pub(crate) fn primary_constraint_oid(namespace: &str, table: &str) -> i64 {
-    stable_oid(&["constraint", namespace, table, "pkey"])
-}
-
-pub(crate) fn primary_index_relname(table: &str) -> String {
-    format!("{table}_pkey")
-}
-
-pub(crate) fn scalar_index_oid(namespace: &str, table: &str, index: &str) -> i64 {
-    stable_oid(&["class", namespace, table, "index", index])
-}
-
-/// Attribute numbers for a secondary index, in key order.
-///
-/// Numbers match `pg_attribute.attnum` (`ordinal_position`). Missing or storage
-/// columns make the index invisible so `pg_index` and `pg_class` stay aligned.
-pub(crate) fn scalar_index_attnums(
-    table: &TableDefinition,
-    index: &ScalarIndexDefinition,
-) -> Option<Vec<i64>> {
-    if index.columns.is_empty() {
-        return None;
-    }
-    let mut attnums = Vec::with_capacity(index.columns.len());
-    for column_id in &index.columns {
-        let column = table.columns.iter().find(|column| column.column_id == column_id.as_u64())?;
-        if SystemColumnNames::is_system_column(column.column_name.as_str()) {
-            return None;
-        }
-        attnums.push(i64::from(column.ordinal_position));
-    }
-    Some(attnums)
-}
-
-pub(crate) fn named_column_attnums(table: &TableDefinition, names: &[String]) -> Option<Vec<i64>> {
-    if names.is_empty() {
-        return None;
-    }
-    let mut attnums = Vec::with_capacity(names.len());
-    for name in names {
-        let column = table
-            .columns
-            .iter()
-            .find(|column| column.column_name.eq_ignore_ascii_case(name))?;
-        if SystemColumnNames::is_system_column(column.column_name.as_str()) {
-            return None;
-        }
-        attnums.push(i64::from(column.ordinal_position));
-    }
-    Some(attnums)
-}
-
-pub(crate) fn primary_key_attnums(table: &TableDefinition) -> Vec<i64> {
-    let mut columns: Vec<_> = table.columns.iter().filter(|column| column.is_primary_key).collect();
-    columns.sort_by_key(|column| column.ordinal_position);
-    columns.into_iter().map(|column| column.ordinal_position as i64).collect()
-}
-
-pub(crate) fn visible_table_definitions(
-    system_registry: &SystemTablesRegistry,
-    role: Role,
-) -> Result<Vec<TableDefinition>, RegistryError> {
-    let mut definitions = BTreeMap::<(String, String), TableDefinition>::new();
-
-    let tables = system_registry
-        .tables()
-        .list_tables()
-        .map_err(|error| RegistryError::Other(format!("failed to list tables: {error}")))?;
-    for table in tables {
-        insert_catalog_definition(&mut definitions, table);
-    }
-
-    for table in supplemental_catalog_definitions(system_registry) {
-        insert_catalog_definition(&mut definitions, table);
-    }
-
-    Ok(definitions
-        .into_values()
-        .filter(|table| table_visible_to_role(table, role))
-        .collect())
-}
-
-fn insert_catalog_definition(
-    definitions: &mut BTreeMap<(String, String), TableDefinition>,
-    table: TableDefinition,
-) {
-    let key = (table.namespace_id.as_str().to_string(), table.table_name.as_str().to_string());
-    definitions.entry(key).or_insert(table);
-}
-
-fn supplemental_catalog_definitions(
-    system_registry: &SystemTablesRegistry,
-) -> Vec<TableDefinition> {
-    let mut definitions = system_registry
-        .expected_system_table_definitions()
-        .into_iter()
-        .map(|definition| definition.as_ref().clone())
-        .collect::<Vec<_>>();
-
-    for system_table in SystemTable::all_views() {
-        definitions.push(system_view_table_definition(*system_table));
-    }
-
-    definitions
-}
-
-pub(crate) fn include_explicit_namespaces(role: Role) -> bool {
-    is_admin_role(role)
-}
-
-fn table_visible_to_role(table: &TableDefinition, role: Role) -> bool {
-    match table.table_type {
-        KalamTableType::System => can_access_system_table(role),
-        KalamTableType::Shared => !matches!(role, Role::Anonymous),
-        KalamTableType::User | KalamTableType::Stream => can_access_user_table(role),
-    }
-}
-
-/// Whether a visible relation should be classified as a PostgreSQL view.
-pub(crate) fn relation_is_view(table: &TableDefinition) -> bool {
-    if table.namespace_id.as_str() != "system" {
-        return false;
-    }
-
-    SystemTable::from_name(table.table_name.as_str())
-        .map(|system_table| system_table.is_view())
-        .unwrap_or(false)
-}
-
-/// PostgreSQL `pg_class.relkind` for a visible relation.
-pub(crate) fn pg_relkind(table: &TableDefinition) -> &'static str {
-    if relation_is_view(table) {
-        "v"
-    } else {
-        "r"
     }
 }

@@ -304,9 +304,10 @@ fn normalize_columns_batch(
     for field in output_schema.fields().iter().skip(normalized_batch.num_columns()) {
         let array: ArrayRef = match field.name().as_str() {
             UDT_NAME => Arc::new(udt_names.finish()),
-            UDT_SCHEMA => {
-                Arc::new(constant_string_array(normalized_batch.num_rows(), "pg_catalog"))
-            },
+            UDT_SCHEMA => Arc::new(constant_string_array(
+                normalized_batch.num_rows(),
+                kalamdb_commons::constants::PG_CATALOG_NAMESPACE,
+            )),
             IS_GENERATED => Arc::new(constant_string_array(normalized_batch.num_rows(), "NEVER")),
             IS_IDENTITY => Arc::new(constant_string_array(normalized_batch.num_rows(), "NO")),
             KDB_DATA_TYPE => Arc::new(kdb_types.finish()),

@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -25,8 +26,6 @@ use crate::{
 };
 
 static RE_STORAGE_ID: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap());
-static RE_CURRENT_USER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)CURRENT_USER\s*\(\s*\)").unwrap());
 static CREATE_USER_TABLE_PREFIX_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)^\s*CREATE\s+USER\s+TABLE\b").unwrap());
 static CREATE_TYPED_PREFIX_RE: Lazy<Regex> =
@@ -53,18 +52,10 @@ impl CreateTableStatement {
                         WITH (TYPE = 'USER')"
                 .to_string());
         }
-        let (mut normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
+        let (normalized_sql, create_prefix_table_type) = normalize_create_table_sql(sql);
 
-        // Rewrite MySQL-style AUTO_INCREMENT into an explicit DEFAULT expression
-        // so the parser consistently assigns SNOWFLAKE_ID() as the default value.
-        // This makes AUTO_INCREMENT work even when the dialect treats it as
-        // dialect-specific tokens or splits it into separate words.
-        normalized_sql = normalized_sql.replace("AUTO_INCREMENT", "DEFAULT SNOWFLAKE_ID()");
-        normalized_sql = normalized_sql.replace("auto_increment", "DEFAULT SNOWFLAKE_ID()");
-        normalized_sql = normalized_sql.replace("AUTO INCREMENT", "DEFAULT SNOWFLAKE_ID()");
-        normalized_sql = normalized_sql.replace("auto increment", "DEFAULT SNOWFLAKE_ID()");
-
-        let mut statements = KalamParser::parse(&normalized_sql).map_err(|e| e.to_string())?;
+        let mut statements =
+            KalamParser::parse(normalized_sql.as_ref()).map_err(|e| e.to_string())?;
         if statements.len() != 1 {
             return Err("Expected exactly one statement".to_string());
         }
@@ -518,25 +509,93 @@ fn parse_eviction_strategy_option(value: &str) -> Result<String, String> {
     }
 }
 
-fn normalize_create_table_sql(sql: &str) -> (String, Option<TableType>) {
-    // Replace CURRENT_USER() with CURRENT_USER to satisfy sqlparser GenericDialect
-    // which doesn't support function calls for this keyword in DEFAULT clause
-    let mut normalized = RE_CURRENT_USER.replace_all(sql, "CURRENT_USER").into_owned();
+fn normalize_create_table_sql(sql: &str) -> (Cow<'_, str>, Option<TableType>) {
+    // `CURRENT_USER()` is a zero-argument function in `KalamDbDialect::parse_prefix`.
+    // The statement is parsed as written.
+    let with_defaults = rewrite_auto_increment(sql);
+    let without_using = if find_ci(with_defaults.as_ref(), "using") {
+        let replaced = USING_ACCESS_METHOD_RE.replace(with_defaults.as_ref(), ") ").into_owned();
+        if replaced == with_defaults.as_ref() {
+            with_defaults
+        } else {
+            Cow::Owned(replaced)
+        }
+    } else {
+        with_defaults
+    };
 
-    // Strip `USING <access_method>` clause (PostgreSQL table access method syntax).
-    // e.g. `CREATE TABLE t (...) USING kalamdb WITH (...)` → `CREATE TABLE t (...) WITH (...)`
-    // We accept the access method for compatibility but KalamDB always uses its own engine.
-    normalized = USING_ACCESS_METHOD_RE.replace(&normalized, ") ").into_owned();
-
-    if let Some(caps) = CREATE_TYPED_PREFIX_RE.captures(&normalized) {
+    if let Some(caps) = CREATE_TYPED_PREFIX_RE.captures(without_using.as_ref()) {
         let requested_type = caps[1].to_ascii_uppercase();
         let table_type = TableType::from_str_opt(&requested_type).unwrap_or(TableType::User);
-        let normalized_sql =
-            CREATE_TYPED_PREFIX_RE.replace(&normalized, "CREATE TABLE").into_owned();
-        (normalized_sql, Some(table_type))
+        let normalized_sql = CREATE_TYPED_PREFIX_RE
+            .replace(without_using.as_ref(), "CREATE TABLE")
+            .into_owned();
+        (Cow::Owned(normalized_sql), Some(table_type))
     } else {
-        (normalized, None)
+        (without_using, None)
     }
+}
+
+/// MySQL `AUTO_INCREMENT` becomes `DEFAULT SNOWFLAKE_ID()` in one scan.
+///
+/// SQL keywords are case-insensitive. A space or an underscore both count.
+fn rewrite_auto_increment(sql: &str) -> Cow<'_, str> {
+    let bytes = sql.as_bytes();
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut index = 0;
+    let mut changed = false;
+    while index < bytes.len() {
+        if let Some(len) = auto_increment_len(bytes, index) {
+            if !changed {
+                out.reserve(sql.len() + 8);
+            }
+            out.push_str(&sql[copied..index]);
+            out.push_str("DEFAULT SNOWFLAKE_ID()");
+            index += len;
+            copied = index;
+            changed = true;
+            continue;
+        }
+        index += 1;
+    }
+    if !changed {
+        Cow::Borrowed(sql)
+    } else {
+        out.push_str(&sql[copied..]);
+        Cow::Owned(out)
+    }
+}
+
+fn auto_increment_len(bytes: &[u8], index: usize) -> Option<usize> {
+    const UNDERSCORE: &[u8] = b"auto_increment";
+    const SPACED: &[u8] = b"auto increment";
+    if bytes[index..].len() >= UNDERSCORE.len()
+        && bytes[index..index + UNDERSCORE.len()].eq_ignore_ascii_case(UNDERSCORE)
+    {
+        return Some(UNDERSCORE.len());
+    }
+    if bytes[index..].len() >= SPACED.len()
+        && bytes[index..index + SPACED.len()].eq_ignore_ascii_case(SPACED)
+    {
+        return Some(SPACED.len());
+    }
+    None
+}
+
+fn find_ci(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() || bytes.len() < needle.len() {
+        return false;
+    }
+    let last = bytes.len() - needle.len();
+    for index in 0..=last {
+        if bytes[index..index + needle.len()].eq_ignore_ascii_case(needle) {
+            return true;
+        }
+    }
+    false
 }
 
 /// int4 and int2 identity columns use a process-local int4 counter. bigint

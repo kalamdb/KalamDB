@@ -227,7 +227,7 @@ fn is_file_put_function_name(name: &ObjectName) -> bool {
     match name.0.as_slice() {
         [ObjectNamePart::Identifier(ident)] => ident.value.eq_ignore_ascii_case("file_put"),
         [ObjectNamePart::Identifier(schema), ObjectNamePart::Identifier(ident)] => {
-            schema.value.eq_ignore_ascii_case("pg_catalog")
+            kalamdb_commons::SchemaId::is_pg_catalog_name(&schema.value)
                 && ident.value.eq_ignore_ascii_case("file_put")
         },
         _ => false,

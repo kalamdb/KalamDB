@@ -1,23 +1,20 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use kalamdb_backend::{
     manager::{BackendSessionError, BackendSessionManager},
     session::{BackendAuth, BackendSessionSnapshot},
 };
-use kalamdb_commons::models::{Role, SessionOrigin, UserId};
+use kalamdb_commons::{
+    models::{Role, SessionOrigin, UserId},
+    unix_time_millis,
+};
 
 /// Default session lease duration: 30 minutes.
 pub(crate) const DEFAULT_SESSION_LEASE_MS: i64 = 30 * 60 * 1_000;
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn normalize_optional(value: Option<&str>) -> Option<String> {

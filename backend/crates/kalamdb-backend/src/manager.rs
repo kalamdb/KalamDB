@@ -1,15 +1,15 @@
 //! Shared backend session registry.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::{SystemTime, UNIX_EPOCH},
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use dashmap::{mapref::entry::Entry, DashMap};
-use kalamdb_commons::models::{SessionOrigin, TransactionId, TransactionOrigin};
+use kalamdb_commons::{
+    models::{SessionOrigin, TransactionId, TransactionOrigin},
+    unix_time_millis,
+};
 use kalamdb_transactions::{ExecutionOwnerKey, TransactionEngine, TransactionEngineError};
 
 use crate::session::{BackendAuth, BackendSession, BackendSessionSnapshot, BackendSessionState};
@@ -484,10 +484,7 @@ pub struct BackendSessionCleanupCounters {
 }
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn transaction_origin(origin: SessionOrigin) -> TransactionOrigin {

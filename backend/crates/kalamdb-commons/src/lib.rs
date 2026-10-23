@@ -92,6 +92,7 @@ pub use helpers::arrow_utils;
 #[cfg(feature = "storage")]
 pub use helpers::string_interner;
 pub use helpers::{
+    catalog_oid::stable_catalog_oid,
     naming,
     naming::{
         normalize_sql_identifier, quote_sql_identifier, validate_namespace_reference,
@@ -99,6 +100,7 @@ pub use helpers::{
         MAX_SQL_IDENTIFIER_LENGTH,
     },
     process_shutdown, security,
+    time::unix_time_millis,
 };
 pub use models::{
     assert_finite_type_graph,
