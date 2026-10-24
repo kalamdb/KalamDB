@@ -1,4 +1,4 @@
-//! Frontend `createKalam` CALL client generated from [`ProcedureCatalog`].
+//! Frontend `createKalam` client. Generated routines call `invokeRoutine`.
 
 use kalamdb_sql::contracts::ContractSnapshot;
 use serde::Serialize;
@@ -38,14 +38,14 @@ struct NamespaceContext<'a> {
 struct ProcedureContext {
     jsdoc:         String,
     routine_id:    String,
+    signature:     String,
     schema:        String,
     name:          String,
     method_ident:  String,
     has_params:    bool,
     request_ident: String,
     result_ident:  String,
-    call_sql:      String,
-    params_list:   String,
+    cardinality:   String,
 }
 
 pub fn generate_client_source(
@@ -88,18 +88,13 @@ fn procedure_context(spec: &ProcedureSpec<'_>) -> ProcedureContext {
     ProcedureContext {
         jsdoc:         jsdoc(spec.comment(), "      "),
         routine_id:    escape_double_quoted_string(spec.routine.routine_id.as_str()),
+        signature:     escape_double_quoted_string(&spec.routine.signature),
         schema:        escape_double_quoted_string(&spec.routine.schema),
         name:          escape_double_quoted_string(&spec.routine.name),
         method_ident:  spec.method_ident.clone(),
         has_params:    spec.has_params(),
         request_ident: spec.request_ident(),
         result_ident:  spec.result_ident(),
-        call_sql:      escape_double_quoted_string(&spec.call_sql),
-        params_list:   spec
-            .parameters()
-            .iter()
-            .map(|param| format!("input.{}", param.name))
-            .collect::<Vec<_>>()
-            .join(", "),
+        cardinality:   spec.routine.cardinality.as_str().to_string(),
     }
 }

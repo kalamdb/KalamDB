@@ -11,7 +11,7 @@ keywords = ["kalamdb", "serialization", "storage"]
 categories = ["database", "encoding"]
 
 [dependencies]
-kalamdb-commons = { path = "../kalamdb-commons", default-features = false, features = ["serde"] }
+kalamdb-commons = { path = "../kalamdb-commons", default-features = false, features = ["serde", "websocket-auth"] }
 arrow = { workspace = true, optional = true }
 datafusion-common = { workspace = true, default-features = false, optional = true }
 flexbuffers = { workspace = true }

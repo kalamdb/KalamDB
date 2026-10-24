@@ -23,3 +23,9 @@ All earlier product decisions remain: fresh start, no old-format adapters, no Me
 See [implementation audit](../../../specs/038-unified-sdk-contracts/implementation-audit-2026-10-24.md), [plan](../../../specs/038-unified-sdk-contracts/plan.md), [core tasks](../../../specs/038-unified-sdk-contracts/tasks.md) and [app/stability tasks](../../../specs/038-unified-sdk-contracts/tasks-app-stability.md).
 
 Twelve historical/narrow-supported records remain checked; 109 task acceptances reopen, including two optional P2 tasks. Reclosure requires pinned implementation, actual callers, executed tests, raw results, platforms/configuration, negative controls and limitations. Production code, generated runtime artifacts, configuration and user data are unchanged by this commit. No runtime/fuzz/performance test was run by this correction.
+
+## Subsequent implementation
+
+The live WebSocket binary path now uses the shared `KDOM` codec in `kalamdb-serialization::ws_domain`. Server, native Link, WASM, and the Dart bridge encode and decode those frames. `serialization=msgpack` is rejected. JSON text remains the explicit external representation. `WS_CONTRACT_DESCRIPTOR_ID` is the message-layout revision and is checked before a live handler runs. It is not the SQL catalog descriptor pin.
+
+Still open, and still not claimed here: generated Dart routines call SQL, owned FlexBuffers and Raft MessagePack writers remain, live delivery cursors are not the row-version checkpoint, and Gates D, P, APP, STABLE, and R do not have acceptance evidence.

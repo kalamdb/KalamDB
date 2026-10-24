@@ -2,34 +2,42 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use actix_web::{HttpRequest, HttpResponse, Responder, web};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use bytes::Bytes;
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_commons::{
-    KalamDataType,
     conversions::arrow_json_conversion::scalar_value_to_json,
     models::{RoutineId, SchemaId},
+    KalamDataType,
 };
 use kalamdb_core::{
     app_context::AppContext,
     functions::{
-        FunctionCallOrigin, FunctionService, HttpResponseOverrides, RoutineValue,
         bind_domain_call_arguments, json_to_routine_value, resolve_pinned_descriptor,
-        routine_value_as_json, routine_value_to_domain_value,
+        routine_value_as_json, routine_value_to_domain_value, FunctionCallOrigin, FunctionService,
+        HttpResponseOverrides, RoutineValue,
     },
     sql::context::ExecutionContext,
 };
 use kalamdb_serialization::{
-    DOMAIN_EPOCH, DOMAIN_MAGIC, DomainDecodeBudget, DomainMessageKind, EndpointSurface,
-    SerializationError, decode_domain_frame_for_surface, encode_domain_frame,
+    decode_domain_frame_for_surface, encode_domain_frame, DomainDecodeBudget, DomainMessageKind,
+    EndpointSurface, SerializationError, DOMAIN_EPOCH, DOMAIN_MAGIC,
 };
 use kalamdb_session::AuthSession;
 use parking_lot::Mutex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
 const REJECTED_CONTEXT_KEYS: &[&str] = &["context", "ctx", "source", "actor", "tx"];
 pub const CONTENT_TYPE_KALAM_DOMAIN: &str = "application/x-kalam-domain";
+
+fn error_response(
+    status: actix_web::http::StatusCode,
+    code: &str,
+    message: impl std::fmt::Display,
+) -> HttpResponse {
+    super::error::function_error_response(status, code, message)
+}
 
 pub async fn invoke_function_v1(
     extractor: AuthSessionExtractor,
@@ -67,50 +75,46 @@ pub async fn invoke_function_v1(
         ) {
             Ok(frame) => frame,
             Err(SerializationError::EpochMismatch { expected, found }) => {
-                return HttpResponse::Conflict().json(json!({
-                    "status": "error",
-                    "code": "EPOCH_MISMATCH",
-                    "message": format!("unsupported protocol epoch {found}; server epoch is {expected}"),
-                }));
+                return error_response(
+                    actix_web::http::StatusCode::CONFLICT,
+                    "EPOCH_MISMATCH",
+                    format!("unsupported protocol epoch {found}; server epoch is {expected}"),
+                );
             },
             Err(SerializationError::UnsupportedFormat(msg)) => {
-                return HttpResponse::BadRequest().json(json!({
-                    "status": "error",
-                    "code": "UNSUPPORTED_FORMAT",
-                    "message": msg,
-                }));
+                return error_response(
+                    actix_web::http::StatusCode::BAD_REQUEST,
+                    "UNSUPPORTED_FORMAT",
+                    msg,
+                );
             },
             Err(SerializationError::ForbiddenMessageKind { kind, surface }) => {
-                return HttpResponse::Forbidden().json(json!({
-                    "status": "error",
-                    "code": "FORBIDDEN_MESSAGE_KIND",
-                    "message": format!("message kind 0x{kind:02x} is forbidden on {surface}"),
-                }));
+                return error_response(
+                    actix_web::http::StatusCode::FORBIDDEN,
+                    "FORBIDDEN_MESSAGE_KIND",
+                    format!("message kind 0x{kind:02x} is forbidden on {surface}"),
+                );
             },
             Err(err) => {
-                return HttpResponse::BadRequest().json(json!({
-                    "status": "error",
-                    "code": "INVALID_ARGUMENTS",
-                    "message": err.to_string(),
-                }));
+                return error_response(
+                    actix_web::http::StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENTS",
+                    err,
+                );
             },
         };
         if frame.kind != DomainMessageKind::RpcRequest {
-            return HttpResponse::BadRequest().json(json!({
-                "status": "error",
-                "code": "INVALID_ARGUMENTS",
-                "message": format!("expected RpcRequest frame kind, got {:?}", frame.kind),
-            }));
+            return error_response(
+                actix_web::http::StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENTS",
+                format!("expected RpcRequest frame kind, got {:?}", frame.kind),
+            );
         }
         let descriptor = match resolve_pinned_descriptor(&stores, &routine_id, module_gen) {
             Ok(desc) => desc,
             Err(error) => {
                 let (status, code) = super::error::function_http_status(&error);
-                return HttpResponse::build(status).json(json!({
-                    "status": "error",
-                    "code": code,
-                    "message": error.user_message(),
-                }));
+                return error_response(status, code, error.user_message());
             },
         };
         if let Some(expected_rev) = http_req
@@ -120,25 +124,21 @@ pub async fn invoke_function_v1(
             .filter(|v| !v.is_empty())
         {
             if expected_rev != descriptor.revision_hex {
-                return HttpResponse::Conflict().json(json!({
-                    "status": "error",
-                    "code": "STALE_REVISION",
-                    "message": format!(
+                return error_response(
+                    actix_web::http::StatusCode::CONFLICT,
+                    "STALE_REVISION",
+                    format!(
                         "descriptor revision mismatch for {}: client {}, server {}",
                         routine_id, expected_rev, descriptor.revision_hex
                     ),
-                }));
+                );
             }
         }
         let bound = match bind_domain_call_arguments(&frame.payload, &descriptor) {
             Ok(args) => args,
             Err(error) => {
                 let (status, code) = super::error::function_http_status(&error);
-                return HttpResponse::build(status).json(json!({
-                    "status": "error",
-                    "code": code,
-                    "message": error.user_message(),
-                }));
+                return error_response(status, code, error.user_message());
             },
         };
         (bound, descriptor.routine.return_data_type)
@@ -146,11 +146,11 @@ pub async fn invoke_function_v1(
         let json_body: Value = match serde_json::from_slice(&body) {
             Ok(val) => val,
             Err(err) => {
-                return HttpResponse::BadRequest().json(json!({
-                    "status": "error",
-                    "code": "INVALID_ARGUMENTS",
-                    "message": format!("invalid JSON request body: {err}"),
-                }));
+                return error_response(
+                    actix_web::http::StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENTS",
+                    format!("invalid JSON request body: {err}"),
+                );
             },
         };
         let unwrapped_body =
@@ -163,11 +163,11 @@ pub async fn invoke_function_v1(
             match stores.list_parameters(&routine_id) {
                 Ok(parameters) => parameters,
                 Err(error) => {
-                    return HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "code": "INTERNAL_RUNTIME_ERROR",
-                        "message": error.to_string(),
-                    }));
+                    return error_response(
+                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_RUNTIME_ERROR",
+                        error,
+                    );
                 },
             }
         };
@@ -176,11 +176,11 @@ pub async fn invoke_function_v1(
             match bind_json_args(&unwrapped_body, &parameters) {
                 Ok(args) => args,
                 Err(message) => {
-                    return HttpResponse::BadRequest().json(json!({
-                        "status": "error",
-                        "code": "INVALID_ARGUMENTS",
-                        "message": message,
-                    }));
+                    return error_response(
+                        actix_web::http::StatusCode::BAD_REQUEST,
+                        "INVALID_ARGUMENTS",
+                        message,
+                    );
                 },
             }
         };
@@ -244,22 +244,22 @@ pub async fn invoke_function_v1(
                     match routine_value_to_domain_value(&result.value, return_data_type.as_ref()) {
                         Ok(v) => v,
                         Err(err) => {
-                            return HttpResponse::InternalServerError().json(json!({
-                                "status": "error",
-                                "code": "INTERNAL_RUNTIME_ERROR",
-                                "message": err.to_string(),
-                            }));
+                            return error_response(
+                                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "INTERNAL_RUNTIME_ERROR",
+                                err,
+                            );
                         },
                     };
                 let frame_bytes =
                     match encode_domain_frame(DomainMessageKind::RpcResult, 0, 0, &domain_val) {
                         Ok(b) => b,
                         Err(err) => {
-                            return HttpResponse::InternalServerError().json(json!({
-                                "status": "error",
-                                "code": "INTERNAL_RUNTIME_ERROR",
-                                "message": err.to_string(),
-                            }));
+                            return error_response(
+                                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "INTERNAL_RUNTIME_ERROR",
+                                err,
+                            );
                         },
                     };
                 let status_code =
@@ -278,24 +278,28 @@ pub async fn invoke_function_v1(
             let payload = match function_http_payload(&result.value) {
                 Ok(value) => value,
                 Err(error) => {
-                    return HttpResponse::InternalServerError().json(json!({
-                        "status": "error",
-                        "code": "INTERNAL_RUNTIME_ERROR",
-                        "message": error,
-                    }));
+                    return error_response(
+                        actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL_RUNTIME_ERROR",
+                        error,
+                    );
                 },
             };
             function_success_response(payload, result.http_status, result.http_headers)
         },
         Err(error) => {
             let (status, code) = super::error::function_http_status(&error);
-            HttpResponse::build(status).json(json!({
-                "status": "error",
-                "code": code,
-                "message": error.user_message(),
-            }))
+            error_response(status, code, error.user_message())
         },
     }
+}
+
+fn rejected_context_response(key: &str) -> HttpResponse {
+    error_response(
+        actix_web::http::StatusCode::BAD_REQUEST,
+        "INVALID_ARGUMENTS",
+        format!("client-supplied context field '{key}' is not allowed"),
+    )
 }
 
 fn rejected_context_key(body: &Value) -> Option<&str> {
@@ -315,36 +319,33 @@ fn unwrap_typed_json_envelope(
         if map.contains_key("epoch") && map.contains_key("arguments") {
             let epoch = map.get("epoch").and_then(Value::as_u64);
             if epoch != Some(u64::from(DOMAIN_EPOCH)) {
-                return Err(HttpResponse::Conflict().json(json!({
-                    "status": "error",
-                    "code": "EPOCH_MISMATCH",
-                    "message": format!(
+                return Err(error_response(
+                    actix_web::http::StatusCode::CONFLICT,
+                    "EPOCH_MISMATCH",
+                    format!(
                         "unsupported envelope epoch {:?}; current server epoch is {DOMAIN_EPOCH}",
                         map.get("epoch")
                     ),
-                })));
+                ));
             }
             if let Some(key) =
                 REJECTED_CONTEXT_KEYS.iter().copied().find(|key| map.contains_key(*key))
             {
-                return Err(HttpResponse::BadRequest().json(json!({
-                    "status": "error",
-                    "code": "INVALID_ARGUMENTS",
-                    "message": format!("client-supplied context field '{key}' is not allowed"),
-                })));
+                return Err(rejected_context_response(key));
             }
             if let Some(rev) = map.get("revision").and_then(Value::as_str).filter(|s| !s.is_empty())
             {
                 if let Ok(desc) = resolve_pinned_descriptor(stores, routine_id, module_gen) {
                     if desc.revision_hex != rev {
-                        return Err(HttpResponse::Conflict().json(json!({
-                            "status": "error",
-                            "code": "STALE_REVISION",
-                            "message": format!(
-                                "descriptor revision mismatch for {routine_id}: client {rev}, server {}",
+                        return Err(error_response(
+                            actix_web::http::StatusCode::CONFLICT,
+                            "STALE_REVISION",
+                            format!(
+                                "descriptor revision mismatch for {routine_id}: client {rev}, \
+                                 server {}",
                                 desc.revision_hex
                             ),
-                        })));
+                        ));
                     }
                 }
             }
@@ -352,11 +353,7 @@ fn unwrap_typed_json_envelope(
         }
     }
     if let Some(key) = rejected_context_key(body) {
-        return Err(HttpResponse::BadRequest().json(json!({
-            "status": "error",
-            "code": "INVALID_ARGUMENTS",
-            "message": format!("client-supplied context field '{key}' is not allowed"),
-        })));
+        return Err(rejected_context_response(key));
     }
     Ok(body.clone())
 }
@@ -414,11 +411,11 @@ fn function_success_response(
     let body = match serde_json::to_vec(&payload) {
         Ok(bytes) => bytes,
         Err(error) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "code": "INTERNAL_RUNTIME_ERROR",
-                "message": error.to_string(),
-            }));
+            return error_response(
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_RUNTIME_ERROR",
+                error,
+            );
         },
     };
     let status_code = actix_web::http::StatusCode::from_u16(status.unwrap_or(200))
@@ -477,8 +474,8 @@ mod tests {
     use std::collections::HashMap;
 
     use kalamdb_commons::{
-        KalamDataType,
         models::{RoutineId, RoutineParameterId, SchemaId},
+        KalamDataType,
     };
     use kalamdb_core::functions::routine_value_as_json;
     use kalamdb_system::CatalogRoutineParameter;

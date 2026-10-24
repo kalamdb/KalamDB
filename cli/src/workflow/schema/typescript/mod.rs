@@ -66,18 +66,17 @@ mod tests {
         assert!(schema.contains("export type ChatUsers = ChatUser"));
         assert!(schema.contains("export type ChatStatus = \"active\" | \"blocked\""));
         assert!(source.contains("createKalam"));
-        assert!(source.contains("SELECT chat.create_message($1, $2) AS result"));
-        assert!(!source.contains("procedure client has no local runtime"));
+        assert!(source.contains("client.invokeRoutine("));
+        assert!(source.contains("cardinality: \"scalar\"") || source.contains("\"scalar\""));
+        assert!(!source.contains("SELECT chat.create_message"));
+        assert!(!source.contains("CALL chat."));
         assert!(source.contains("chat: {"));
         assert!(source.contains("createMessage:"));
         assert!(schema.contains("export type ChatCreateMessageRequest"));
         assert!(schema.contains("export type ChatCreateMessageResult"));
-        assert!(source.contains("createMessage: async (input: ChatCreateMessageRequest"));
+        assert!(source.contains("createMessage: (input: ChatCreateMessageRequest"));
         assert!(!source.contains("kalam.chat.createMessage"));
-        assert!(source.contains("rows?: unknown;"));
-        assert!(source.contains("response.status === \"error\""));
-        assert!(source.contains("throw new Error(kalamCallErrorMessage(response.error))"));
-        assert!(source.contains("Array.isArray(first) ? first[0] : first"));
+        assert!(source.contains("invokeRoutine:"));
     }
 
     #[test]
@@ -100,8 +99,7 @@ mod tests {
             source.contains("export function createKalam(_client?: KalamQueryClient)"),
             "{source}"
         );
-        assert!(!source.contains("kalamCallErrorMessage"), "{source}");
-        assert!(!source.contains("kalamCallResult"), "{source}");
+        assert!(!source.contains("invokeRoutine("), "{source}");
     }
 
     #[test]
@@ -160,12 +158,12 @@ CREATE USER TABLE okf_sync.notes (
         assert!(schema.contains("id: text(\"id\").primaryKey()"), "{schema}");
 
         let client = generate_client_source(&snapshot, &hash, &names).unwrap();
-        assert!(client.contains("filePut: async (input: FilePutRequest"), "{client}");
-        assert!(client.contains("SELECT pg_catalog.file_put($1) AS result"), "{client}");
-        assert!(client.contains("fileRead: async (input: FileReadRequest"), "{client}");
-        assert!(client.contains("SELECT pg_catalog.file_read($1) AS result"), "{client}");
-        assert!(client.contains("fileDelete: async (input: FileDeleteRequest"), "{client}");
-        assert!(client.contains("SELECT pg_catalog.file_delete($1) AS result"), "{client}");
+        assert!(client.contains("filePut: (input: FilePutRequest"), "{client}");
+        assert!(client.contains("routineDescriptor(\"pg_catalog.file_put\","), "{client}");
+        assert!(client.contains("codecVersion: KALAM_CODEC_VERSION"), "{client}");
+        assert!(!client.contains("SELECT pg_catalog.file_put"), "{client}");
+        assert!(client.contains("fileRead: (input: FileReadRequest"), "{client}");
+        assert!(client.contains("fileDelete: (input: FileDeleteRequest"), "{client}");
     }
 
     #[test]

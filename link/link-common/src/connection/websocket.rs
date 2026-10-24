@@ -496,7 +496,29 @@ async fn await_auth_response(
             Ok(Some(Ok(Message::Ping(payload)))) => {
                 let _ = ws_stream.send(Message::Pong(payload)).await;
             },
-            Ok(Some(Ok(Message::Pong(_) | Message::Binary(_) | Message::Frame(_)))) => {
+            Ok(Some(Ok(Message::Binary(bytes)))) => {
+                match crate::ws_domain::decode_server_message(&bytes) {
+                    Ok(ServerMessage::AuthSuccess {
+                        protocol: negotiated,
+                        ..
+                    }) => {
+                        return Ok(negotiated.serialization);
+                    },
+                    Ok(ServerMessage::AuthError { message }) => {
+                        return Err(KalamLinkError::AuthenticationError(format!(
+                            "WebSocket authentication failed: {}",
+                            message
+                        )));
+                    },
+                    Ok(_) => continue,
+                    Err(error) => {
+                        return Err(KalamLinkError::WebSocketError(format!(
+                            "Failed to parse auth response: {error}"
+                        )));
+                    },
+                }
+            },
+            Ok(Some(Ok(Message::Pong(_) | Message::Frame(_)))) => {
                 continue;
             },
             Ok(Some(Ok(Message::Close(_)))) => {
@@ -542,15 +564,9 @@ pub(crate) fn parse_message(text: &str) -> Result<Option<ChangeEvent>> {
     Ok(ChangeEvent::from_server_message(msg))
 }
 
-/// Parse a binary MessagePack payload into a `ChangeEvent`.
-pub(crate) fn parse_message_msgpack(data: &[u8]) -> Result<Option<ChangeEvent>> {
-    let msg: ServerMessage = rmp_serde::from_slice(data).map_err(|e| {
-        KalamLinkError::SerializationError(format!(
-            "Failed to parse msgpack as ServerMessage: {}",
-            e
-        ))
-    })?;
-
+/// Parse a binary domain frame into a `ChangeEvent`.
+pub(crate) fn parse_message_domain(data: &[u8]) -> Result<Option<ChangeEvent>> {
+    let msg = crate::ws_domain::decode_server_message(data)?;
     Ok(ChangeEvent::from_server_message(msg))
 }
 
@@ -634,9 +650,9 @@ pub(crate) async fn send_client_message(
                 KalamLinkError::WebSocketError(format!("Failed to send message: {}", e))
             })
         },
-        crate::models::SerializationType::MessagePack => {
-            let payload = rmp_serde::to_vec_named(msg).map_err(|e| {
-                KalamLinkError::WebSocketError(format!("Failed to serialize msgpack: {}", e))
+        crate::models::SerializationType::Domain => {
+            let payload = kalamdb_serialization::encode_client_message(msg).map_err(|e| {
+                KalamLinkError::WebSocketError(format!("Failed to serialize domain frame: {e}"))
             })?;
             ws_stream.send(Message::Binary(payload.into())).await.map_err(|e| {
                 KalamLinkError::WebSocketError(format!("Failed to send binary message: {}", e))
@@ -800,28 +816,29 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_message_msgpack_server_message() {
+    fn test_parse_message_domain_server_message() {
+        use kalamdb_commons::websocket_messages::ServerMessage as CommonsServerMessage;
         use kalamdb_commons::{Role, UserId};
 
-        use crate::models::{ProtocolOptions, SerializationType, ServerMessage};
+        use crate::models::{CompressionType, ProtocolOptions, SerializationType};
 
-        let msg = ServerMessage::AuthSuccess {
+        let msg = CommonsServerMessage::AuthSuccess {
             user:     UserId::from("user-1"),
             role:     Role::Dba,
             protocol: ProtocolOptions {
-                serialization: SerializationType::MessagePack,
-                compression:   crate::models::CompressionType::Gzip,
+                serialization: SerializationType::Domain,
+                compression:   CompressionType::Gzip,
             },
         };
-        let bytes = rmp_serde::to_vec_named(&msg).unwrap();
-        let result = parse_message_msgpack(&bytes).unwrap();
-        // AuthSuccess is not a ChangeEvent, so parse_message_msgpack should return None
+        let bytes = kalamdb_serialization::encode_server_message(&msg).unwrap();
+        let result = parse_message_domain(&bytes).unwrap();
+        // AuthSuccess is not a ChangeEvent, so parse_message_domain should return None
         // (it only handles subscription events)
         assert!(result.is_none());
     }
 
     #[test]
-    fn test_msgpack_client_message_roundtrip() {
+    fn test_domain_client_message_roundtrip() {
         use crate::models::{ClientMessage, SubscriptionOptions, SubscriptionRequest};
 
         let msg = ClientMessage::Subscribe {
@@ -831,14 +848,8 @@ mod tests {
                 options: Some(SubscriptionOptions::default()),
             },
         };
-        let bytes = rmp_serde::to_vec_named(&msg).unwrap();
-        let parsed: ClientMessage = rmp_serde::from_slice(&bytes).unwrap();
-        match parsed {
-            ClientMessage::Subscribe { subscription } => {
-                assert_eq!(subscription.id, "sub-1");
-                assert_eq!(subscription.sql, "SELECT * FROM test");
-            },
-            _ => panic!("Expected Subscribe"),
-        }
+        let bytes = kalamdb_serialization::encode_client_message(&msg).unwrap();
+        let parsed = kalamdb_serialization::decode_client_message(&bytes).unwrap();
+        assert_eq!(parsed, msg);
     }
 }

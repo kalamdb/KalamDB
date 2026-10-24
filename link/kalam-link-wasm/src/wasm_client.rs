@@ -1110,9 +1110,9 @@ fn install_runtime_message_handler(
                     let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
                 }
                 serde_json::from_str::<ServerMessage>(&text).ok()
-            } else if negotiated_ser.get() == SerializationType::MessagePack {
+            } else if negotiated_ser.get() == SerializationType::Domain {
                 let raw = decode_ws_binary_payload(&e)?;
-                rmp_serde::from_slice::<ServerMessage>(&raw).ok()
+                link_common::ws_domain::decode_server_message(&raw).ok()
             } else {
                 let message = decode_ws_message(&e)?;
                 if let Some(cb) = on_receive_cb.borrow().as_ref() {
@@ -1737,10 +1737,9 @@ impl KalamClient {
                         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&text));
                     }
                     serde_json::from_str::<ServerMessage>(&text).ok()
-                } else if negotiated_ser_for_msg.get() == SerializationType::MessagePack {
-                    // Binary frame with msgpack negotiated
+                } else if negotiated_ser_for_msg.get() == SerializationType::Domain {
                     let raw = decode_ws_binary_payload(&e)?;
-                    rmp_serde::from_slice::<ServerMessage>(&raw).ok()
+                    link_common::ws_domain::decode_server_message(&raw).ok()
                 } else {
                     // Binary frame with JSON (gzip-compressed JSON)
                     let message = decode_ws_message(&e)?;

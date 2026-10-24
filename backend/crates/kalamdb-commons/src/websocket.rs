@@ -398,6 +398,64 @@ impl WebSocketMessage {
             batch_control,
         }
     }
+
+    /// Map this server frame onto the SDK message encoded by the domain codec.
+    pub fn to_server_message(&self) -> ServerMessage {
+        match self {
+            Self::AuthSuccess {
+                user,
+                role,
+                protocol,
+            } => ServerMessage::AuthSuccess {
+                user:     user.clone(),
+                role:     *role,
+                protocol: *protocol,
+            },
+            Self::AuthError { message } => ServerMessage::AuthError {
+                message: message.clone(),
+            },
+            Self::SubscriptionAck {
+                subscription_id,
+                total_rows,
+                batch_control,
+                schema,
+            } => ServerMessage::SubscriptionAck {
+                subscription_id: subscription_id.clone(),
+                total_rows:      *total_rows,
+                batch_control:   batch_control.clone(),
+                schema:          schema.clone(),
+            },
+            Self::InitialDataBatch {
+                subscription_id,
+                rows,
+                batch_control,
+            } => ServerMessage::InitialDataBatch {
+                subscription_id: subscription_id.clone(),
+                rows:            rows.clone(),
+                batch_control:   batch_control.clone(),
+            },
+            Self::Notification(Notification::Change {
+                subscription_id,
+                change_type,
+                rows,
+                old_values,
+            }) => ServerMessage::Change {
+                subscription_id: subscription_id.clone(),
+                change_type:     change_type.clone(),
+                rows:            rows.clone(),
+                old_values:      old_values.clone(),
+            },
+            Self::Notification(Notification::Error {
+                subscription_id,
+                code,
+                message,
+            }) => ServerMessage::Error {
+                subscription_id: subscription_id.clone(),
+                code:            code.clone(),
+                message:         message.clone(),
+            },
+        }
+    }
 }
 
 impl Notification {
@@ -467,6 +525,9 @@ pub struct SharedChangePayload {
     /// Cached JSON bytes: `(rows_bytes, old_values_bytes)`.
     #[cfg(feature = "serde")]
     json_cache:      std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
+    /// Cached domain-value bytes for the shared row arrays. The per-subscriber frame
+    /// splices these bytes instead of walking the cells again.
+    domain_row_cache: std::sync::OnceLock<(Option<Vec<u8>>, Option<Vec<u8>>)>,
 }
 
 impl SharedChangePayload {
@@ -485,7 +546,26 @@ impl SharedChangePayload {
             msgpack_cache: std::sync::OnceLock::new(),
             #[cfg(feature = "serde")]
             json_cache: std::sync::OnceLock::new(),
+            domain_row_cache: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Encode the shared row arrays once and reuse those bytes for every subscriber.
+    pub fn domain_row_bytes<E, F>(
+        &self,
+        encode: F,
+    ) -> std::result::Result<&(Option<Vec<u8>>, Option<Vec<u8>>), E>
+    where
+        F: FnOnce(
+            Option<&Vec<RowData>>,
+            Option<&Vec<RowData>>,
+        ) -> std::result::Result<(Option<Vec<u8>>, Option<Vec<u8>>), E>,
+    {
+        if self.domain_row_cache.get().is_none() {
+            let encoded = encode(self.rows.as_ref(), self.old_values.as_ref())?;
+            let _ = self.domain_row_cache.set(encoded);
+        }
+        Ok(self.domain_row_cache.get().expect("domain row cache is set after encode"))
     }
 
     /// Returns `(rows_msgpack, old_values_msgpack)`.
@@ -892,14 +972,14 @@ mod tests {
     #[test]
     fn test_protocol_options_json_roundtrip() {
         let opts = ProtocolOptions {
-            serialization: SerializationType::MessagePack,
+            serialization: SerializationType::Domain,
             compression:   CompressionType::None,
         };
         let json = serde_json::to_string(&opts).unwrap();
-        assert!(json.contains("\"msgpack\""));
+        assert!(json.contains("\"domain\""));
         assert!(json.contains("\"none\""));
         let parsed: ProtocolOptions = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.serialization, SerializationType::MessagePack);
+        assert_eq!(parsed.serialization, SerializationType::Domain);
         assert_eq!(parsed.compression, CompressionType::None);
     }
 
@@ -919,17 +999,17 @@ mod tests {
                 token: "test_token".to_string(),
             },
             protocol:    ProtocolOptions {
-                serialization: SerializationType::MessagePack,
+                serialization: SerializationType::Domain,
                 compression:   CompressionType::Gzip,
             },
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"protocol\""));
-        assert!(json.contains("\"msgpack\""));
+        assert!(json.contains("\"domain\""));
         let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
         match parsed {
             ClientMessage::Authenticate { protocol, .. } => {
-                assert_eq!(protocol.serialization, SerializationType::MessagePack);
+                assert_eq!(protocol.serialization, SerializationType::Domain);
             },
             _ => panic!("Expected Authenticate"),
         }
@@ -961,7 +1041,7 @@ mod tests {
             user:     UserId::from("user-1"),
             role:     crate::models::Role::Dba,
             protocol: ProtocolOptions {
-                serialization: SerializationType::MessagePack,
+                serialization: SerializationType::Domain,
                 compression:   CompressionType::Gzip,
             },
         };
@@ -970,7 +1050,7 @@ mod tests {
         let parsed: WebSocketMessage = serde_json::from_str(&json).unwrap();
         match parsed {
             WebSocketMessage::AuthSuccess { protocol, .. } => {
-                assert_eq!(protocol.serialization, SerializationType::MessagePack);
+                assert_eq!(protocol.serialization, SerializationType::Domain);
             },
             _ => panic!("Expected AuthSuccess"),
         }
@@ -1002,7 +1082,7 @@ mod tests {
             user:     UserId::from("user-1"),
             role:     crate::models::Role::Dba,
             protocol: ProtocolOptions {
-                serialization: SerializationType::MessagePack,
+                serialization: SerializationType::Domain,
                 compression:   CompressionType::None,
             },
         };
@@ -1016,7 +1096,7 @@ mod tests {
             } => {
                 assert_eq!(user, UserId::from("user-1"));
                 assert_eq!(role, crate::models::Role::Dba);
-                assert_eq!(protocol.serialization, SerializationType::MessagePack);
+                assert_eq!(protocol.serialization, SerializationType::Domain);
             },
             _ => panic!("Expected AuthSuccess"),
         }

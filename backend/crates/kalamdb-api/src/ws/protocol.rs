@@ -7,14 +7,20 @@ use kalamdb_commons::websocket::{
 
 use super::context::UpgradeAuth;
 
-pub(super) fn parse_protocol_from_query(query: &str) -> ProtocolOptions {
+pub(super) fn parse_protocol_from_query(query: &str) -> Result<ProtocolOptions, &'static str> {
     let mut protocol = ProtocolOptions::default();
     for kv in query.split('&') {
         if let Some((key, value)) = kv.split_once('=') {
             match key {
                 "serialization" => {
-                    if value.eq_ignore_ascii_case("msgpack") {
-                        protocol.serialization = SerializationType::MessagePack;
+                    if value.eq_ignore_ascii_case("domain") {
+                        protocol.serialization = SerializationType::Domain;
+                    } else if value.eq_ignore_ascii_case("json") {
+                        protocol.serialization = SerializationType::Json;
+                    } else if value.eq_ignore_ascii_case("msgpack") {
+                        return Err("legacy MessagePack WebSocket serialization is not supported");
+                    } else {
+                        return Err("unsupported WebSocket serialization");
                     }
                 },
                 "compression" => {
@@ -26,7 +32,7 @@ pub(super) fn parse_protocol_from_query(query: &str) -> ProtocolOptions {
             }
         }
     }
-    protocol
+    Ok(protocol)
 }
 
 pub(super) fn compression_enabled_from_query(req: &HttpRequest) -> bool {
@@ -64,21 +70,23 @@ pub(super) fn validate_origin(
     Ok(())
 }
 
-pub(super) fn parse_upgrade_auth(req: &HttpRequest) -> Option<UpgradeAuth> {
-    let protocol = parse_protocol_from_query(req.query_string());
+pub(super) fn parse_upgrade_auth(
+    req: &HttpRequest,
+) -> Result<Option<UpgradeAuth>, &'static str> {
+    let protocol = parse_protocol_from_query(req.query_string())?;
     if let Some(token) = bearer_from_authorization(req) {
-        return Some(UpgradeAuth {
+        return Ok(Some(UpgradeAuth {
             auth_request: AuthRequest::Jwt { token },
             protocol,
             echo_subprotocol: None,
-        });
+        }));
     }
 
-    jwt_from_sec_websocket_protocol(req).map(|(token, offered)| UpgradeAuth {
-        auth_request: AuthRequest::Jwt { token },
+    Ok(jwt_from_sec_websocket_protocol(req).map(|(token, offered)| UpgradeAuth {
+        auth_request:     AuthRequest::Jwt { token },
         protocol,
         echo_subprotocol: Some(offered),
-    })
+    }))
 }
 
 fn bearer_from_authorization(req: &HttpRequest) -> Option<String> {
@@ -172,51 +180,60 @@ mod tests {
 
     #[test]
     fn parse_protocol_defaults_when_empty() {
-        let proto = parse_protocol_from_query("");
+        let proto = parse_protocol_from_query("").expect("empty query");
         assert_eq!(proto.serialization, SerializationType::Json);
         assert_eq!(proto.compression, CompressionType::Gzip);
     }
 
     #[test]
-    fn parse_protocol_msgpack_serialization() {
-        let proto = parse_protocol_from_query("serialization=msgpack");
-        assert_eq!(proto.serialization, SerializationType::MessagePack);
+    fn parse_protocol_domain_serialization() {
+        let proto = parse_protocol_from_query("serialization=domain").expect("domain");
+        assert_eq!(proto.serialization, SerializationType::Domain);
         assert_eq!(proto.compression, CompressionType::Gzip);
     }
 
     #[test]
+    fn parse_protocol_rejects_messagepack() {
+        let error = parse_protocol_from_query("serialization=msgpack").expect_err("msgpack");
+        assert!(error.contains("MessagePack"));
+    }
+
+    #[test]
     fn parse_protocol_compression_none() {
-        let proto = parse_protocol_from_query("compression=none");
+        let proto = parse_protocol_from_query("compression=none").expect("compression");
         assert_eq!(proto.serialization, SerializationType::Json);
         assert_eq!(proto.compression, CompressionType::None);
     }
 
     #[test]
     fn parse_protocol_both_options() {
-        let proto = parse_protocol_from_query("serialization=msgpack&compression=none");
-        assert_eq!(proto.serialization, SerializationType::MessagePack);
+        let proto =
+            parse_protocol_from_query("serialization=domain&compression=none").expect("both");
+        assert_eq!(proto.serialization, SerializationType::Domain);
         assert_eq!(proto.compression, CompressionType::None);
     }
 
     #[test]
     fn parse_protocol_mixed_with_compress_false() {
-        let proto = parse_protocol_from_query("compress=false&serialization=msgpack");
-        assert_eq!(proto.serialization, SerializationType::MessagePack);
+        let proto =
+            parse_protocol_from_query("compress=false&serialization=domain").expect("mixed");
+        assert_eq!(proto.serialization, SerializationType::Domain);
         assert_eq!(proto.compression, CompressionType::Gzip);
     }
 
     #[test]
     fn parse_protocol_case_insensitive() {
-        let proto = parse_protocol_from_query("serialization=MSGPACK&compression=NONE");
-        assert_eq!(proto.serialization, SerializationType::MessagePack);
+        let proto =
+            parse_protocol_from_query("serialization=DOMAIN&compression=NONE").expect("case");
+        assert_eq!(proto.serialization, SerializationType::Domain);
         assert_eq!(proto.compression, CompressionType::None);
     }
 
     #[test]
-    fn parse_protocol_unknown_values_keep_defaults() {
-        let proto = parse_protocol_from_query("serialization=avro&compression=lz4");
-        assert_eq!(proto.serialization, SerializationType::Json);
-        assert_eq!(proto.compression, CompressionType::Gzip);
+    fn parse_protocol_unknown_serialization_is_rejected() {
+        let error = parse_protocol_from_query("serialization=avro&compression=lz4")
+            .expect_err("unknown serialization");
+        assert!(error.contains("unsupported"));
     }
 
     #[test]
@@ -224,7 +241,9 @@ mod tests {
         let request = TestRequest::default()
             .insert_header(("Authorization", "Bearer header-token"))
             .to_http_request();
-        let auth = parse_upgrade_auth(&request).expect("bearer header should authenticate");
+        let auth = parse_upgrade_auth(&request)
+            .expect("protocol")
+            .expect("bearer header should authenticate");
         match auth.auth_request {
             AuthRequest::Jwt { token } => assert_eq!(token, "header-token"),
             other => panic!("expected jwt, got {other:?}"),
@@ -238,7 +257,9 @@ mod tests {
         let request = TestRequest::default()
             .insert_header((header::SEC_WEBSOCKET_PROTOCOL, protocol.as_str()))
             .to_http_request();
-        let auth = parse_upgrade_auth(&request).expect("jwt subprotocol should authenticate");
+        let auth = parse_upgrade_auth(&request)
+            .expect("protocol")
+            .expect("jwt subprotocol should authenticate");
         match auth.auth_request {
             AuthRequest::Jwt { token } => assert_eq!(token, "ws-token"),
             other => panic!("expected jwt, got {other:?}"),
@@ -253,7 +274,9 @@ mod tests {
             .insert_header(("Authorization", "Bearer header-token"))
             .insert_header((header::SEC_WEBSOCKET_PROTOCOL, protocol.as_str()))
             .to_http_request();
-        let auth = parse_upgrade_auth(&request).expect("authorization should win");
+        let auth = parse_upgrade_auth(&request)
+            .expect("protocol")
+            .expect("authorization should win");
         match auth.auth_request {
             AuthRequest::Jwt { token } => assert_eq!(token, "header-token"),
             other => panic!("expected jwt, got {other:?}"),

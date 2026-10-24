@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use actix_web::{HttpRequest, HttpResponse, web};
+use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_core::app_context::AppContext;
 use kalamdb_serialization::{DOMAIN_CODEC_VERSION, DOMAIN_EPOCH};
 use kalamdb_session::AuthSession;
 use serde_json::json;
 
-use super::error::check_epoch_header;
+use super::error::{check_epoch_header, function_error_response, private_cached_json};
 
 /// Authorized current-epoch capability endpoint.
 pub async fn capabilities_v1(
@@ -24,13 +24,14 @@ pub async fn capabilities_v1(
     for pair in http_req.query_string().split('&') {
         if let Some((key, value)) = pair.split_once('=') {
             if key == "epoch" && value.parse::<u16>().ok() != Some(DOMAIN_EPOCH) {
-                return HttpResponse::Conflict().json(json!({
-                    "status": "error",
-                    "code": "EPOCH_MISMATCH",
-                    "message": format!(
-                        "unsupported requested epoch '{value}'; current server epoch is {DOMAIN_EPOCH}"
+                return function_error_response(
+                    actix_web::http::StatusCode::CONFLICT,
+                    "EPOCH_MISMATCH",
+                    format!(
+                        "unsupported requested epoch '{value}'; current server epoch is \
+                         {DOMAIN_EPOCH}"
                     ),
-                }));
+                );
             }
         }
     }
@@ -55,21 +56,5 @@ pub async fn capabilities_v1(
         }
     });
     let etag = format!("\"cap-epoch{DOMAIN_EPOCH}-gen{active_gen}\"");
-    if http_req
-        .headers()
-        .get(actix_web::http::header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        == Some(etag.as_str())
-    {
-        return HttpResponse::NotModified()
-            .insert_header((actix_web::http::header::ETAG, etag))
-            .finish();
-    }
-    HttpResponse::Ok()
-        .insert_header((actix_web::http::header::ETAG, etag))
-        .insert_header((
-            actix_web::http::header::CACHE_CONTROL,
-            "private, max-age=0, must-revalidate",
-        ))
-        .json(payload)
+    private_cached_json(&http_req, etag, payload)
 }

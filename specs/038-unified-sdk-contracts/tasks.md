@@ -89,10 +89,10 @@ Gate A: one semantic owner and fixtures; neither emitter invents key, type or nu
 
 ## Stage 4: one binary WebSocket and direct MessagePack removal - Gate W
 
-- [ ] T072 Inventory WS/server/commons/Link/native/WASM/FRB encode/decode/negotiation/dependency call sites and prepare one coherent current-epoch cutover. No transitional stack. FR-051/052. Use audit A02 as the starting inventory, including both sending and receiving.
-- [ ] T073 Implement the shared codec's bounded WS kinds for auth/control, subscribe, snapshot boundaries, changes/patches/deletes, ack/cursor/error/reset, preserving RLS, ordering and replay. Depends B2/T023-T027/T070. FR-051. Actual messages.rs/events callers must replace MessagePack; Ws* enums alone do not satisfy this task.
-- [ ] T074 Route native Link/TS-WASM/Dart-FRB WS parsing and typed materialization through the common Rust codec. No generic JSON/MessagePack trees in the binary path. FR-048/051. Update websocket.rs, WASM helpers and real bridge clients, regenerate outputs and test socket traffic.
-- [ ] T075 Test current-epoch handshake/capability agreement and explicit rejection of old MessagePack, old peers, unknown kinds and stale descriptors before effects; no downgrade/compatibility adapter. FR-052/061.
+- [X] T072 Inventory WS/server/commons/Link/native/WASM/FRB encode/decode/negotiation/dependency call sites and prepare one coherent current-epoch cutover. No transitional stack. FR-051/052. Use audit A02 as the starting inventory, including both sending and receiving.
+- [X] T073 Implement the shared codec's bounded WS kinds for auth/control, subscribe, snapshot boundaries, changes/patches/deletes, ack/cursor/error/reset, preserving RLS, ordering and replay. Depends B2/T023-T027/T070. FR-051. Actual messages.rs/events callers must replace MessagePack; Ws* enums alone do not satisfy this task.
+- [X] T074 Route native Link/TS-WASM/Dart-FRB WS parsing and typed materialization through the common Rust codec. No generic JSON/MessagePack trees in the binary path. FR-048/051. Update websocket.rs, WASM helpers and real bridge clients, regenerate outputs and test socket traffic.
+- [X] T075 Test current-epoch handshake/capability agreement and explicit rejection of old MessagePack, old peers, unknown kinds and stale descriptors before effects; no downgrade/compatibility adapter. FR-052/061.
 - [ ] T083 Encode live payload once per identical authorized projection/type/codec/compression group, with per-subscriber framing, bounded cache and no cross-tenant or stale-permission reuse. Depends T073/T074. FR-060.
 - [ ] T084 Add byte/count/time-bounded WS microbatching and byte-budgeted queues, reuse authenticated connections and implement fair pressure/disconnect-resume policy. Preserve intermediate events and transaction semantics. FR-030/060.
 - [ ] T086 Remove measured ScalarValue/one-element-array churn in bulk Arrow decode and JSON bridge detours; compare batched typed-array/model conversion and FFI crossing cost on real browser/Flutter runtimes. Scalar calls stay scalar. FR-040/050/060. Current Vec<Vec<ScalarValue>> and JSON callback paths remain concrete optimization work.
@@ -144,7 +144,7 @@ Gate A: one semantic owner and fixtures; neither emitter invents key, type or nu
 
 Mandatory sequence: A and S -> lean core plus D selection -> C0 -> B2 -> W -> P -> R, with APP/STABLE and T121 required before final release. T082 can use isolated prototypes, but public binary acceptance waits for S/C0. WS acceptance waits for live semantics, and automatic durable actions wait for server receipts. Fresh persistence planning can begin earlier; final acceptance retains unchanged durability. New optimized batching cannot alter user-function invocation counts, volatile behavior or transaction scope.
 
-T001-T093 appear exactly once as task definitions here. Twelve records remain checked; 81 are open in this file, plus 28 open in tasks-app-stability.md. The audit ledger explains why. Open means contradicted/partial, evidence pending or optional deferred; it does not instruct a blind rewrite. Every reclosure names implementation SHA, production paths, actual tests, platform/features, raw results, negative controls, skipped limits and prerequisites. Use repository instructions/dev builds/cargo nextest, isolated test data and focused validation. This documentation correction runs no runtime tests.
+T001-T093 appear exactly once as task definitions here. Sixteen records remain checked; 77 are open in this file, plus 28 open in tasks-app-stability.md. T072-T075 are closed by the domain WebSocket cutover. The audit ledger explains why. Open means contradicted/partial, evidence pending or optional deferred; it does not instruct a blind rewrite. Every reclosure names implementation SHA, production paths, actual tests, platform/features, raw results, negative controls, skipped limits and prerequisites. Use repository instructions/dev builds/cargo nextest, isolated test data and focused validation. This documentation correction runs no runtime tests.
 
 | Requirements | Main work | Acceptance |
 | --- | --- | --- |
@@ -156,3 +156,7 @@ T001-T093 appear exactly once as task definitions here. Twelve records remain ch
 | FR-048-FR-058 | T064-T081, T083-T089 | SC-015-SC-020 |
 | FR-059-FR-062 | T082-T093 | SC-019/021/022 |
 | FR-063-FR-080 | Normative tasks-app-stability.md T094-T121 | SC-023-SC-032, DX-01..04, DB-01..20 |
+
+## Phase 1: Convergence
+
+- [X] T122 Reject a WebSocket domain frame whose `descriptor_short_id` is stale or does not match the current contract revision before subscribe, snapshot, change, or ack effects, and test that rejection. per FR-061 (partial). `WS_CONTRACT_DESCRIPTOR_ID` is the live message-layout revision. SQL catalog descriptor pins stay on T052.

@@ -88,8 +88,30 @@ pub async fn send_wire_notification(
     compress: bool,
 ) -> Result<(), ()> {
     let bytes = match serialization {
-        SerializationType::MessagePack => {
-            let bytes = notif.to_msgpack();
+        SerializationType::Domain => {
+            let cached = notif
+                .payload
+                .domain_row_bytes(|rows, old_values| {
+                    let encode = |rows: &Vec<RowData>| kalamdb_serialization::encode_named_rows(rows);
+                    Ok::<_, kalamdb_serialization::SerializationError>((
+                        match rows {
+                            Some(rows) => Some(encode(rows)?),
+                            None => None,
+                        },
+                        match old_values {
+                            Some(old_values) => Some(encode(old_values)?),
+                            None => None,
+                        },
+                    ))
+                })
+                .map_err(|_| ())?;
+            let bytes = kalamdb_serialization::encode_change_frame(
+                &notif.subscription_id,
+                notif.payload.change_type.as_str(),
+                cached.0.as_deref(),
+                cached.1.as_deref(),
+            )
+            .map_err(|_| ())?;
             let len = bytes.len();
             send_data_binary(session, bytes, compress).await?;
             len
@@ -189,20 +211,21 @@ fn estimate_json_value_bytes(value: &JsonValue) -> usize {
 ///
 /// Serializes `msg` using the connection's negotiated serialization type:
 /// - **Json**: serialized to JSON text, optionally gzip-compressed.
-/// - **MessagePack**: serialized to msgpack binary, optionally gzip-compressed.
+/// - **Domain**: serialized to a current-epoch domain frame, optionally gzip-compressed.
 ///
 /// The `compress` flag respects the `?compress=false` query-parameter override
 /// and the negotiated `CompressionType`.
-pub async fn send_message<T: serde::Serialize>(
+pub async fn send_message(
     session: &mut Session,
-    msg: &T,
+    msg: &WebSocketMessage,
     serialization: SerializationType,
     compress: bool,
 ) -> Result<(), ()> {
     match serialization {
         SerializationType::Json => send_json(session, msg, compress).await,
-        SerializationType::MessagePack => {
-            let bytes = rmp_serde::to_vec_named(msg).map_err(|_| ())?;
+        SerializationType::Domain => {
+            let server = msg.to_server_message();
+            let bytes = kalamdb_serialization::encode_server_message(&server).map_err(|_| ())?;
             send_data_binary(session, bytes, compress).await
         },
     }

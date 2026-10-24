@@ -29,7 +29,7 @@ use crate::{
     auth::{AuthProvider, ResolvedAuth},
     connection::{
         apply_ws_auth_headers, authenticate_ws, connect_with_optional_local_bind,
-        decode_ws_payload, jitter_keepalive_interval, parse_message, parse_message_msgpack,
+        decode_ws_payload, jitter_keepalive_interval, parse_message, parse_message_domain,
         resolve_ws_url, send_client_message, WebSocketStream, FAR_FUTURE,
     },
     error::{KalamLinkError, Result},
@@ -135,7 +135,7 @@ async fn establish_ws(
         let protocol = connection_options.protocol;
         if protocol.serialization != SerializationType::Json {
             let separator = if request_url.contains('?') { "&" } else { "?" };
-            request_url.push_str(&format!("{}serialization=msgpack", separator));
+            request_url.push_str(&format!("{}serialization=domain", separator));
         }
         if protocol.compression == CompressionType::None {
             let separator = if request_url.contains('?') { "&" } else { "?" };
@@ -629,7 +629,7 @@ pub(super) async fn connection_task(
                         },
                         Some(Ok(Message::Binary(data))) => {
                             match negotiated_ser {
-                                SerializationType::MessagePack => {
+                                SerializationType::Domain => {
                                     let raw = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
                                         match crate::compression::decompress_gzip_with_limit(
                                             &data,
@@ -637,14 +637,14 @@ pub(super) async fn connection_task(
                                         ) {
                                             Ok(decoded) => Cow::Owned(decoded),
                                             Err(error) => {
-                                                log::warn!("Failed to decompress msgpack: {}", error);
+                                                log::warn!("Failed to decompress domain frame: {}", error);
                                                 continue;
                                             },
                                         }
                                     } else {
                                         Cow::Borrowed(data.as_ref())
                                     };
-                                    match parse_message_msgpack(raw.as_ref()) {
+                                    match parse_message_domain(raw.as_ref()) {
                                         Ok(Some(event)) => {
                                             route_event_and_refresh_connection(
                                                 event,
@@ -659,7 +659,7 @@ pub(super) async fn connection_task(
                                             .await;
                                         },
                                         Ok(None) => {},
-                                        Err(error) => log::warn!("Failed to parse msgpack message: {}", error),
+                                        Err(error) => log::warn!("Failed to parse domain frame: {}", error),
                                     }
                                 },
                                 SerializationType::Json => {

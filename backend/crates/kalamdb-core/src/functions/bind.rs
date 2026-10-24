@@ -39,16 +39,19 @@ pub struct PinnedRoutineDescriptor {
     pub out_parameters:   Arc<[CatalogRoutineParameter]>,
 }
 
-static PINNED_DESCRIPTOR_CACHE: Lazy<DashMap<RoutineId, PinnedRoutineDescriptor>> =
+static PINNED_DESCRIPTOR_CACHE: Lazy<DashMap<RoutineId, Arc<PinnedRoutineDescriptor>>> =
     Lazy::new(DashMap::new);
 
 /// Resolve and cache an immutable [`PinnedRoutineDescriptor`] from authoritative catalog metadata
 /// (`T052`).
+///
+/// The cached value is shared. A hit does not clone the catalog row. Procedure source is not
+/// retained here; execution loads that separately.
 pub fn resolve_pinned_descriptor(
     stores: &CatalogStores,
     routine_id: &RoutineId,
     module_generation: u64,
-) -> Result<PinnedRoutineDescriptor, KalamDbError> {
+) -> Result<Arc<PinnedRoutineDescriptor>, KalamDbError> {
     let Some(routine) = stores.get_routine(routine_id).map_err(|error| {
         KalamDbError::CatalogError(format!("failed to load routine {routine_id}: {error}"))
     })?
@@ -64,30 +67,14 @@ pub fn resolve_pinned_descriptor(
     let rev_hash = compute_descriptor_revision(&routine, &parameters, module_generation);
     if let Some(cached) = PINNED_DESCRIPTOR_CACHE.get(routine_id) {
         if cached.revision_hash == rev_hash {
-            return Ok(cached.clone());
+            return Ok(Arc::clone(cached.value()));
         }
     }
-    let input_params: Vec<CatalogRoutineParameter> = parameters
-        .iter()
-        .filter(|param| {
-            matches!(
-                param.mode,
-                RoutineParameterMode::In
-                    | RoutineParameterMode::InOut
-                    | RoutineParameterMode::Variadic
-            )
-        })
-        .cloned()
-        .collect();
-    let out_params: Vec<CatalogRoutineParameter> = parameters
-        .iter()
-        .filter(|param| {
-            matches!(param.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut)
-        })
-        .cloned()
-        .collect();
+    let (input_params, out_params) = split_parameter_directions(&parameters);
     let rev_hex = digest_to_hex(&rev_hash);
-    let descriptor = PinnedRoutineDescriptor {
+    let mut routine = routine;
+    routine.body = None;
+    let descriptor = Arc::new(PinnedRoutineDescriptor {
         epoch: DOMAIN_EPOCH,
         routine_id: routine_id.clone(),
         revision_hash: rev_hash,
@@ -96,12 +83,36 @@ pub fn resolve_pinned_descriptor(
         parameters: Arc::from(parameters),
         input_parameters: Arc::from(input_params),
         out_parameters: Arc::from(out_params),
-    };
+    });
     if PINNED_DESCRIPTOR_CACHE.len() >= MAX_PINNED_DESCRIPTOR_CACHE {
         PINNED_DESCRIPTOR_CACHE.clear();
     }
-    PINNED_DESCRIPTOR_CACHE.insert(routine_id.clone(), descriptor.clone());
+    PINNED_DESCRIPTOR_CACHE.insert(routine_id.clone(), Arc::clone(&descriptor));
     Ok(descriptor)
+}
+
+fn split_parameter_directions(
+    parameters: &[CatalogRoutineParameter],
+) -> (Vec<CatalogRoutineParameter>, Vec<CatalogRoutineParameter>) {
+    let mut input_params = Vec::new();
+    let mut out_params = Vec::new();
+    for parameter in parameters {
+        let is_input = matches!(
+            parameter.mode,
+            RoutineParameterMode::In | RoutineParameterMode::InOut | RoutineParameterMode::Variadic
+        );
+        let is_output =
+            matches!(parameter.mode, RoutineParameterMode::Out | RoutineParameterMode::InOut);
+        if is_input && is_output {
+            input_params.push(parameter.clone());
+            out_params.push(parameter.clone());
+        } else if is_input {
+            input_params.push(parameter.clone());
+        } else if is_output {
+            out_params.push(parameter.clone());
+        }
+    }
+    (input_params, out_params)
 }
 
 fn compute_descriptor_revision(

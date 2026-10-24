@@ -39,9 +39,9 @@ pub(crate) fn ws_url_from_http_opts(
 }
 
 fn append_protocol_query(url: &mut String, protocol: ProtocolOptions) {
-    if protocol.serialization == SerializationType::MessagePack {
+    if protocol.serialization == SerializationType::Domain {
         url.push_str(if url.contains('?') { "&" } else { "?" });
-        url.push_str("serialization=msgpack");
+        url.push_str("serialization=domain");
     }
     if protocol.compression == CompressionType::None {
         url.push_str(if url.contains('?') { "&" } else { "?" });
@@ -339,7 +339,7 @@ pub(crate) fn decode_ws_binary_payload(e: &MessageEvent) -> Option<Vec<u8>> {
 
 /// Send a `ClientMessage` using the negotiated serialization format.
 ///
-/// JSON messages are sent as text frames; MessagePack messages as binary frames.
+/// JSON messages are sent as text frames; domain messages as binary frames.
 pub(crate) fn send_ws_message(
     ws: &web_sys::WebSocket,
     msg: &link_common::models::ClientMessage,
@@ -351,9 +351,9 @@ pub(crate) fn send_ws_message(
                 .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))?;
             ws.send_with_str(&json)
         },
-        SerializationType::MessagePack => {
-            let bytes = rmp_serde::to_vec_named(msg).map_err(|e| {
-                JsValue::from_str(&format!("MessagePack serialization error: {}", e))
+        SerializationType::Domain => {
+            let bytes = link_common::encode_client_message(msg).map_err(|e| {
+                JsValue::from_str(&format!("domain serialization error: {e}"))
             })?;
             ws.send_with_u8_array(&bytes)
         },
@@ -370,12 +370,12 @@ mod tests {
             "https://db.example.com/",
             false,
             ProtocolOptions {
-                serialization: SerializationType::MessagePack,
+                serialization: SerializationType::Domain,
                 compression:   CompressionType::None,
             },
         )
         .expect("url");
-        assert_eq!(url, "wss://db.example.com/v1/ws?serialization=msgpack&compression=none");
+        assert_eq!(url, "wss://db.example.com/v1/ws?serialization=domain&compression=none");
     }
 
     #[test]
@@ -384,12 +384,12 @@ mod tests {
             "http://localhost:3000",
             true,
             ProtocolOptions {
-                serialization: SerializationType::MessagePack,
+                serialization: SerializationType::Domain,
                 compression:   CompressionType::Gzip,
             },
         )
         .expect("url");
-        assert_eq!(url, "ws://localhost:3000/v1/ws?compress=false&serialization=msgpack");
+        assert_eq!(url, "ws://localhost:3000/v1/ws?compress=false&serialization=domain");
     }
 
     #[test]

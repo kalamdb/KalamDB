@@ -1,10 +1,48 @@
-//! Shared HTTP status mapping for routine endpoints.
+//! Shared HTTP responses for routine endpoints.
 
-use actix_web::{HttpRequest, HttpResponse, http::StatusCode};
+use actix_web::{http::StatusCode, HttpRequest, HttpResponse};
 use kalamdb_core::error::KalamDbError;
 use kalamdb_functions::FunctionErrorCode;
 use kalamdb_serialization::DOMAIN_EPOCH;
+use serde::Serialize;
 use serde_json::json;
+
+pub(super) fn function_error_response(
+    status: StatusCode,
+    code: &str,
+    message: impl std::fmt::Display,
+) -> HttpResponse {
+    HttpResponse::build(status).json(json!({
+        "status": "error",
+        "code": code,
+        "message": message.to_string(),
+    }))
+}
+
+/// Private, revalidated JSON. A matching `If-None-Match` returns 304 without a body.
+pub(super) fn private_cached_json(
+    http_req: &HttpRequest,
+    etag: String,
+    payload: impl Serialize,
+) -> HttpResponse {
+    if http_req
+        .headers()
+        .get(actix_web::http::header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        == Some(etag.as_str())
+    {
+        return HttpResponse::NotModified()
+            .insert_header((actix_web::http::header::ETAG, etag))
+            .finish();
+    }
+    HttpResponse::Ok()
+        .insert_header((actix_web::http::header::ETAG, etag))
+        .insert_header((
+            actix_web::http::header::CACHE_CONTROL,
+            "private, max-age=0, must-revalidate",
+        ))
+        .json(payload)
+}
 
 pub(super) fn function_http_status(error: &KalamDbError) -> (StatusCode, &'static str) {
     if let KalamDbError::Coded(coded) = error {
@@ -48,13 +86,11 @@ pub(super) fn check_epoch_header(http_req: &HttpRequest) -> Option<HttpResponse>
     if raw_epoch.parse::<u16>().ok() == Some(DOMAIN_EPOCH) {
         return None;
     }
-    Some(HttpResponse::Conflict().json(json!({
-        "status": "error",
-        "code": "EPOCH_MISMATCH",
-        "message": format!(
-            "unsupported protocol epoch '{raw_epoch}'; current server epoch is {DOMAIN_EPOCH}"
-        ),
-    })))
+    Some(function_error_response(
+        StatusCode::CONFLICT,
+        "EPOCH_MISMATCH",
+        format!("unsupported protocol epoch '{raw_epoch}'; current server epoch is {DOMAIN_EPOCH}"),
+    ))
 }
 
 #[cfg(test)]

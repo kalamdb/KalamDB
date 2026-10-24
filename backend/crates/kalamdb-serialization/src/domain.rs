@@ -63,7 +63,7 @@ const DTAG_BYTES: u8 = 0x16;
 const DTAG_JSON: u8 = 0x17;
 const DTAG_FILE_REF: u8 = 0x18;
 const DTAG_ENUM: u8 = 0x19;
-const DTAG_COMPOSITE: u8 = 0x1A;
+pub(crate) const DTAG_COMPOSITE: u8 = 0x1A;
 const DTAG_ARRAY: u8 = 0x1B;
 const DTAG_ROW_SET: u8 = 0x1C;
 
@@ -325,6 +325,35 @@ pub fn encode_domain_frame(
     Ok(buf)
 }
 
+/// Encode a frame whose payload bytes are already a complete [`DomainValue`].
+///
+/// Callers splice a cached row value into a per-subscriber frame without walking the row again.
+pub fn encode_domain_frame_from_payload(
+    kind: DomainMessageKind,
+    descriptor_short_id: u16,
+    flags: u8,
+    payload: &[u8],
+) -> Result<Vec<u8>> {
+    if flags != 0 {
+        return Err(SerializationError::Encode(format!(
+            "unsupported domain frame flags 0x{flags:02x}"
+        )));
+    }
+    let payload_len = u32::try_from(payload.len()).map_err(|_| {
+        SerializationError::Encode("domain frame payload exceeds u32".to_string())
+    })?;
+    let mut buf = Vec::with_capacity(DOMAIN_FRAME_HEADER_LEN + payload.len());
+    buf.extend_from_slice(&DOMAIN_MAGIC);
+    buf.extend_from_slice(&DOMAIN_EPOCH.to_le_bytes());
+    buf.extend_from_slice(&DOMAIN_CODEC_VERSION.to_le_bytes());
+    buf.push(kind as u8);
+    buf.push(flags);
+    buf.extend_from_slice(&descriptor_short_id.to_le_bytes());
+    buf.extend_from_slice(&payload_len.to_le_bytes());
+    buf.extend_from_slice(payload);
+    Ok(buf)
+}
+
 /// Decode a [`DomainFrame`] and enforce current-epoch, unsupported-format, and surface allowlist
 /// rules.
 pub fn decode_domain_frame_for_surface(
@@ -465,7 +494,7 @@ pub fn canonical_invocation_digest(
     Ok(hasher.finalize().into())
 }
 
-fn write_domain_value(buf: &mut Vec<u8>, value: &DomainValue) -> Result<()> {
+pub(crate) fn write_domain_value(buf: &mut Vec<u8>, value: &DomainValue) -> Result<()> {
     match value {
         DomainValue::Omitted => buf.push(DTAG_OMITTED),
         DomainValue::SqlNull => buf.push(DTAG_SQL_NULL),

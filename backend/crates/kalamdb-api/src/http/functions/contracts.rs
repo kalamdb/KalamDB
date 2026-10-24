@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use actix_web::{HttpRequest, HttpResponse, web};
+use actix_web::{web, HttpRequest, HttpResponse};
 use kalamdb_auth::AuthSessionExtractor;
 use kalamdb_core::{app_context::AppContext, functions::resolve_pinned_descriptor};
-use kalamdb_serialization::{DOMAIN_CODEC_VERSION, DOMAIN_EPOCH, sha256_hex};
+use kalamdb_serialization::{sha256_hex, DOMAIN_CODEC_VERSION, DOMAIN_EPOCH};
 use kalamdb_session::AuthSession;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::error::check_epoch_header;
+use super::error::{check_epoch_header, function_error_response, private_cached_json};
 
 /// Authorized current-epoch contract manifest.
 ///
@@ -29,11 +29,11 @@ pub async fn contracts_manifest_v1(
     let routines = match stores.list_routines() {
         Ok(routines) => routines,
         Err(err) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "status": "error",
-                "code": "INTERNAL_RUNTIME_ERROR",
-                "message": err.to_string(),
-            }));
+            return function_error_response(
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_RUNTIME_ERROR",
+                err,
+            );
         },
     };
     let mut operations = Vec::new();
@@ -77,26 +77,14 @@ pub async fn contracts_manifest_v1(
     }
     let digest = sha256_hex(&etag_buf);
     let etag = format!("\"contracts-epoch{DOMAIN_EPOCH}-{}\"", &digest[..16]);
-    if http_req
-        .headers()
-        .get(actix_web::http::header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok())
-        == Some(etag.as_str())
-    {
-        return HttpResponse::NotModified()
-            .insert_header((actix_web::http::header::ETAG, etag))
-            .finish();
-    }
-    HttpResponse::Ok()
-        .insert_header((actix_web::http::header::ETAG, etag))
-        .insert_header((
-            actix_web::http::header::CACHE_CONTROL,
-            "private, max-age=0, must-revalidate",
-        ))
-        .json(json!({
+    private_cached_json(
+        &http_req,
+        etag,
+        json!({
             "epoch": DOMAIN_EPOCH,
             "codecVersion": DOMAIN_CODEC_VERSION,
             "contractDigest": digest,
             "operations": operations,
-        }))
+        }),
+    )
 }

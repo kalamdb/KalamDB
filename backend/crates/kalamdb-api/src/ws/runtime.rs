@@ -245,8 +245,8 @@ pub(super) async fn run_websocket(
                             )
                             .await
                             {
-                                if connection_state.serialization_type() == SerializationType::MessagePack {
-                                    warn!("Invalid msgpack from {}: {}", connection_id, err);
+                                if connection_state.serialization_type() == SerializationType::Domain {
+                                    warn!("Invalid domain frame from {}: {}", connection_id, err);
                                     let _ = send_error(
                                         &mut session,
                                         "protocol",

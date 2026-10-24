@@ -65,7 +65,7 @@ pub(super) async fn handle_binary_message(
     max_message_size: usize,
 ) -> Result<(), String> {
     match connection_state.serialization_type() {
-        SerializationType::MessagePack => {
+        SerializationType::Domain => {
             let owned;
             let raw: &[u8] = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
                 owned = decompress_gzip_limited(&data, max_message_size)?;
@@ -74,8 +74,8 @@ pub(super) async fn handle_binary_message(
                 data.as_ref()
             };
 
-            let client_msg = rmp_serde::from_slice::<ClientMessage>(raw)
-                .map_err(|e| format!("Invalid MessagePack: {}", e))?;
+            let client_msg = kalamdb_serialization::decode_client_message(raw)
+                .map_err(|e| format!("Invalid domain frame: {e}"))?;
 
             handle_client_message(
                 client_msg,

@@ -12,7 +12,7 @@ use kalamdb_serialization::DOMAIN_EPOCH;
 use kalamdb_session::AuthSession;
 use serde::Serialize;
 
-use super::error::check_epoch_header;
+use super::error::{check_epoch_header, function_error_response};
 
 const STRUCTURED_ERROR_REF: &str = "#/components/responses/StructuredError";
 const JSON_VALUE_TYPES: &[&str] = &["object", "array", "string", "number", "boolean", "null"];
@@ -406,35 +406,50 @@ pub async fn openapi_v1(
         return err_resp;
     }
     let stores = app_context.system_tables().catalog_stores();
-    let routines = stores.list_routines().unwrap_or_default();
-    let specs = routines
-        .iter()
-        .map(|routine| {
-            let inputs = stores
-                .list_parameters(&routine.routine_id)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|parameter| parameter.mode.is_input())
-                .map(|parameter| OpenApiInput {
-                    name:         parameter.name,
-                    sql_type:     parameter.type_name,
-                    is_array:     parameter.is_array,
-                    not_null:     parameter.not_null,
-                    default_expr: parameter.default_expr,
-                })
-                .collect();
-            OpenApiRoutineSpec {
-                routine_id: routine.routine_id.as_str().to_string(),
-                namespace: routine.namespace_id.as_str().to_string(),
-                name: routine.name.clone(),
-                summary: routine
-                    .comment
-                    .clone()
-                    .unwrap_or_else(|| routine.routine_id.as_str().to_string()),
-                inputs,
-            }
-        })
-        .collect::<Vec<_>>();
+    let routines = match stores.list_routines() {
+        Ok(routines) => routines,
+        Err(err) => {
+            return function_error_response(
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_RUNTIME_ERROR",
+                err,
+            );
+        },
+    };
+    let mut specs = Vec::with_capacity(routines.len());
+    for routine in &routines {
+        let parameters = match stores.list_parameters(&routine.routine_id) {
+            Ok(parameters) => parameters,
+            Err(err) => {
+                return function_error_response(
+                    actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_RUNTIME_ERROR",
+                    err,
+                );
+            },
+        };
+        let inputs = parameters
+            .into_iter()
+            .filter(|parameter| parameter.mode.is_input())
+            .map(|parameter| OpenApiInput {
+                name:         parameter.name,
+                sql_type:     parameter.type_name,
+                is_array:     parameter.is_array,
+                not_null:     parameter.not_null,
+                default_expr: parameter.default_expr,
+            })
+            .collect();
+        specs.push(OpenApiRoutineSpec {
+            routine_id: routine.routine_id.as_str().to_string(),
+            namespace: routine.namespace_id.as_str().to_string(),
+            name: routine.name.clone(),
+            summary: routine
+                .comment
+                .clone()
+                .unwrap_or_else(|| routine.routine_id.as_str().to_string()),
+            inputs,
+        });
+    }
     HttpResponse::Ok().json(OpenApiDocument::from_routines(&specs))
 }
 
