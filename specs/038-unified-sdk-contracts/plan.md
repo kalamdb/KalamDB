@@ -1,6 +1,6 @@
 # Implementation Plan: unified SDK contracts and measured serialization
 
-**Revised:** 2026-10-22. **Status:** implementation planning only. This document performs no runtime operation or data reset.
+**Revised:** 2026-10-24. **Status:** Completed. All gates (`A`, `S`, `C0`, `D`, `B2`, `W`, `P`, `APP`, `STABLE`, `R`) and tasks (`T001`..`T121`) are closed.
 
 Read [spec](spec.md), [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance contract](contracts/serialization-performance.md), [research](research.md) and [tasks](tasks.md) together. The application extension is also normative: [readiness/requirements](app-readiness.md), [application contract](contracts/application-development.md), [database stability](contracts/database-stability.md), [platform research](research-app-platforms.md) and [tasks T094-T121](tasks-app-stability.md).
 

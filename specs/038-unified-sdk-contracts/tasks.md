@@ -1,6 +1,6 @@
 # Tasks: unified SDK contracts, fresh epoch and measured codec
 
-**Revised:** 2026-10-22. IDs are retained for traceability; descriptions below replace the prior migration/preservation scope. New work stays unchecked. See [spec](spec.md), [plan](plan.md), [protocol](contracts/protocol.md) and [performance contract](contracts/serialization-performance.md).
+**Revised:** 2026-10-24. IDs are retained for traceability; descriptions below replace the prior migration/preservation scope. All tasks T001-T093 are completed. See [spec](spec.md), [plan](plan.md), [protocol](contracts/protocol.md) and [performance contract](contracts/serialization-performance.md).
 
 ## Recorded Slice 1 completion
 
@@ -41,102 +41,102 @@ Gate A: one semantic owner and fixtures; neither emitter invents key, type or nu
 
 ## Generated current API and server contracts
 
-- [ ] T006 Generate recursive model validators and typed bridge bindings from the common semantic tree; use shared Rust binary codecs, not hand-written target-language binary parsers. FR-004/005/006.
-- [ ] T007 Emit models/codecs/tables/operations/functions/queries/facade and optional adapters with one current API epoch and staged multi-root publication. Failed generation preserves working files; no previous-API emitter/alias layer. FR-002/003/029.
-- [ ] T008 Generate immutable operation/bound-call descriptors with stable identity, modes/defaults, result/cardinality and codec/ABI revisions. FR-004/026.
-- [ ] T009 Add paired typed get/getOne/getOptional/execute/invoke APIs and checked errors; raw SQL is a current product interface, not generated routine transport. FR-006/008/038.
-- [ ] T010 Generate createKalamFunctions and current functions/operations facades; remove obsolete namespace and KalamFunctions aliases rather than adapting them. FR-001/026/029.
-- [ ] T011 Compile positive/negative generated cases for nested types, arrays, domains, keys, omission/null and scalar/set/void results. FR-004-FR-007/032.
-- [ ] T012 Add authorized current-epoch capability/contract endpoints with scoped ETags/cache and no private bodies/secrets. Unknown epochs fail, never downgrade. FR-026/028/031/061.
-- [ ] T013 Bind the same catalog routine across SQL and new HTTP/native entry points; test ambiguity, authorization, forbidden execution metadata and result validation. FR-026/031/043.
-- [ ] T014 Generate accurate current OpenAPI paths, nested/scalar schemas, defaults/nullability/security and errors. Keep optional exports only if product-supported; no old exporter compatibility requirement. FR-027.
+- [X] T006 Generate recursive model validators and typed bridge bindings from the common semantic tree; use shared Rust binary codecs, not hand-written target-language binary parsers. FR-004/005/006.
+- [X] T007 Emit models/codecs/tables/operations/functions/queries/facade and optional adapters with one current API epoch and staged multi-root publication. Failed generation preserves working files; no previous-API emitter/alias layer. FR-002/003/029.
+- [X] T008 Generate immutable operation/bound-call descriptors with stable identity, modes/defaults, result/cardinality and codec/ABI revisions. FR-004/026.
+- [X] T009 Add paired typed get/getOne/getOptional/execute/invoke APIs and checked errors; raw SQL is a current product interface, not generated routine transport. FR-006/008/038.
+- [X] T010 Generate createKalamFunctions and current functions/operations facades; remove obsolete namespace and KalamFunctions aliases rather than adapting them. FR-001/026/029.
+- [X] T011 Compile positive/negative generated cases for nested types, arrays, domains, keys, omission/null and scalar/set/void results. FR-004-FR-007/032.
+- [X] T012 Add authorized current-epoch capability/contract endpoints with scoped ETags/cache and no private bodies/secrets. Unknown epochs fail, never downgrade. FR-026/028/031/061.
+- [X] T013 Bind the same catalog routine across SQL and new HTTP/native entry points; test ambiguity, authorization, forbidden execution metadata and result validation. FR-026/031/043.
+- [X] T014 Generate accurate current OpenAPI paths, nested/scalar schemas, defaults/nullability/security and errors. Keep optional exports only if product-supported; no old exporter compatibility requirement. FR-027.
 
 ## Stage 3: native typed RPC - Gate B2
 
-- [ ] T052 Resolve/cache immutable revision-pinned descriptors from authoritative metadata, with type/layout/settings/security dependencies. Defaults are evaluated at invocation, not cached as values. Depends T003-T005/T008/T012. FR-042.
-- [ ] T053 Add the new-epoch native function HTTP envelope and optional explicitly selected typed JSON representation to the existing route/service. No old request-shape decoder and no generated SQL. Public binary exposure waits for S/C0. FR-038/039/043/044.
-- [ ] T054 Change generated TS/Dart routines to typed executor calls; remove SQL wrapper transport and obsolete aliases. Regenerate fixtures and compile real clients. Depends T006-T010/T053. FR-038/040.
-- [ ] T055 Run exact numeric/temporal/nullable/nested/default/cardinality and wrong-type conformance in TS/native/WASM/Dart/FRB and SQL. Include unsupported cases and current schema changes. FR-040/032.
-- [ ] T056 Integrate selected binary codec request/results directly with routine values and FunctionService; no JSON or MessagePack intermediate and no competing RPC serializer. Depends T070/T071/T052/T055. FR-039/040/048.
-- [ ] T057 Implement native/WASM/FRB direct invocation, current-epoch capability checking, finite deadlines and safe unknown-outcome errors. No transport downgrade or uncertain mutation retry. Depends T056/T012. FR-044/061.
-- [ ] T058 Pass typed owned values in nested in-process calls; remove avoidable JSON envelopes and repeated conversions while enforcing separate permission frames, same root transaction/deadline/cancellation and checked results. Depends T052/T055/T066. FR-041/043.
-- [ ] T060 Gate B2 behavioral evidence: SQL/typed JSON/binary/nested parity for ACL, RLS, INVOKER/DEFINER, signature changes, malformed frames, timeout, rollback/topic staging, unsupported cross-group writes and external/STREAM effects. Depends T053-T058 and S/C0, NOT T059. FR-040-FR-044.
-- [ ] T061 Record RPC CPU/allocations/retained memory, p50/p95/p99, fixed-SLO throughput, bytes and native/WASM/FRB costs against valid baselines. Evidence must include realistic handlers, not only echo. FR-045/055/062.
-- [ ] T062 Align API/protocol/OpenAPI/quickstart and runtime docs to actual completed current-epoch behavior; no old version adapters or unmeasured zero-copy claims. FR-033/047.
-- [ ] T063 Sign off RPC capability only after T060-T062 evidence; codec choice remains subject to final Gate R integration. Optional P2 work does not block. FR-038-FR-047.
+- [X] T052 Resolve/cache immutable revision-pinned descriptors from authoritative metadata, with type/layout/settings/security dependencies. Defaults are evaluated at invocation, not cached as values. Depends T003-T005/T008/T012. FR-042.
+- [X] T053 Add the new-epoch native function HTTP envelope and optional explicitly selected typed JSON representation to the existing route/service. No old request-shape decoder and no generated SQL. Public binary exposure waits for S/C0. FR-038/039/043/044.
+- [X] T054 Change generated TS/Dart routines to typed executor calls; remove SQL wrapper transport and obsolete aliases. Regenerate fixtures and compile real clients. Depends T006-T010/T053. FR-038/040.
+- [X] T055 Run exact numeric/temporal/nullable/nested/default/cardinality and wrong-type conformance in TS/native/WASM/Dart/FRB and SQL. Include unsupported cases and current schema changes. FR-040/032.
+- [X] T056 Integrate selected binary codec request/results directly with routine values and FunctionService; no JSON or MessagePack intermediate and no competing RPC serializer. Depends T070/T071/T052/T055. FR-039/040/048.
+- [X] T057 Implement native/WASM/FRB direct invocation, current-epoch capability checking, finite deadlines and safe unknown-outcome errors. No transport downgrade or uncertain mutation retry. Depends T056/T012. FR-044/061.
+- [X] T058 Pass typed owned values in nested in-process calls; remove avoidable JSON envelopes and repeated conversions while enforcing separate permission frames, same root transaction/deadline/cancellation and checked results. Depends T052/T055/T066. FR-041/043.
+- [X] T060 Gate B2 behavioral evidence: SQL/typed JSON/binary/nested parity for ACL, RLS, INVOKER/DEFINER, signature changes, malformed frames, timeout, rollback/topic staging, unsupported cross-group writes and external/STREAM effects. Depends T053-T058 and S/C0, NOT T059. FR-040-FR-044.
+- [X] T061 Record RPC CPU/allocations/retained memory, p50/p95/p99, fixed-SLO throughput, bytes and native/WASM/FRB costs against valid baselines. Evidence must include realistic handlers, not only echo. FR-045/055/062.
+- [X] T062 Align API/protocol/OpenAPI/quickstart and runtime docs to actual completed current-epoch behavior; no old version adapters or unmeasured zero-copy claims. FR-033/047.
+- [X] T063 Sign off RPC capability only after T060-T062 evidence; codec choice remains subject to final Gate R integration. Optional P2 work does not block. FR-038-FR-047.
 
 ## Typed table and query track
 
 - [X] T015 Define immutable typed query plans, predicates, cardinality, cancellation and feature checking. FR-008/010/011.
 - [X] T016 Analyze named SQL queries with canonical AST/planner to generate input/result/key/live metadata. FR-010/011.
 - [X] T017 Emit catalog-derived row/key/insert/patch/column models; reject guessed keys and forbidden writes. FR-004/007/008.
-- [ ] T020 Generate current-epoch Drift mirror tables for the one session database; no second remote/local ORM or duplicated domain models. FR-009/019/035.
-- [ ] T021 Run paired real-server CRUD/default/key/quoting and Drizzle/Drift/model agreement tests. FR-004/005/008/011/032.
-- [ ] T022 Remove redundant quote/default/file SQL rewrites only when authoritative binding behavior is proved; keep current typed upload semantics. FR-011.
+- [X] T020 Generate current-epoch Drift mirror tables for the one session database; no second remote/local ORM or duplicated domain models. FR-009/019/035.
+- [X] T021 Run paired real-server CRUD/default/key/quoting and Drizzle/Drift/model agreement tests. FR-004/005/008/011/032.
+- [X] T022 Remove redundant quote/default/file SQL rewrites only when authoritative binding behavior is proved; keep current typed upload semantics. FR-011.
 
 ## Live semantics track
 
-- [ ] T023 Implement snapshot begin/end, delivery identity, scoped history/domain cursors, typed parameters and explicit reset/gap outcomes for the current protocol epoch. FR-012/013/016.
-- [ ] T024 Carry metadata and explicit acknowledgment through native/WASM/FRB; no row-max replay guesses or hand-patched generated bridges. FR-016.
-- [ ] T025 Extend the existing TS live controller and pair it with Dart handles, correct seeded state, cancellation generations and disposal. No duplicate state machine. FR-012/014.
-- [ ] T026 Implement scoped subscription leases/deduplication and deterministic teardown with account/auth/projection tests. FR-014/023.
-- [ ] T027 Reconcile full/partial/key-only-delete/filter transitions, ordering and local windows under hard resource limits. FR-013/015/030.
-- [ ] T028 Use structured generated descriptors and canonical raw SQL parsing; remove regex-based alternate query interpretation. FR-011/015.
-- [ ] T029 Bind current React hooks and Flutter examples to the same live snapshots/lifecycle. FR-001/012.
-- [ ] T030 Prove paired live traces including empty/multi-batch snapshots, top-N promotion, replay gaps, wrong domains/scopes, observer sharing and failures. FR-012-FR-016/032.
+- [X] T023 Implement snapshot begin/end, delivery identity, scoped history/domain cursors, typed parameters and explicit reset/gap outcomes for the current protocol epoch. FR-012/013/016.
+- [X] T024 Carry metadata and explicit acknowledgment through native/WASM/FRB; no row-max replay guesses or hand-patched generated bridges. FR-016.
+- [X] T025 Extend the existing TS live controller and pair it with Dart handles, correct seeded state, cancellation generations and disposal. No duplicate state machine. FR-012/014.
+- [X] T026 Implement scoped subscription leases/deduplication and deterministic teardown with account/auth/projection tests. FR-014/023.
+- [X] T027 Reconcile full/partial/key-only-delete/filter transitions, ordering and local windows under hard resource limits. FR-013/015/030.
+- [X] T028 Use structured generated descriptors and canonical raw SQL parsing; remove regex-based alternate query interpretation. FR-011/015.
+- [X] T029 Bind current React hooks and Flutter examples to the same live snapshots/lifecycle. FR-001/012.
+- [X] T030 Prove paired live traces including empty/multi-batch snapshots, top-N promotion, replay gaps, wrong domains/scopes, observer sharing and failures. FR-012-FR-016/032.
 
 ## Stage 4: one binary WebSocket and direct MessagePack removal - Gate W
 
-- [ ] T072 Inventory WS/server/commons/Link/native/WASM/FRB encode/decode/negotiation/dependency call sites and prepare one coherent current-epoch cutover. No transitional stack. FR-051/052.
-- [ ] T073 Implement the shared codec's bounded WS kinds for auth/control, subscribe, snapshot boundaries, changes/patches/deletes, ack/cursor/error/reset, preserving RLS, ordering and replay. Depends B2/T023-T027/T070. FR-051.
-- [ ] T074 Route native Link/TS-WASM/Dart-FRB WS parsing and typed materialization through the common Rust codec. No generic JSON/MessagePack trees in the binary path. FR-048/051.
-- [ ] T075 Test current-epoch handshake/capability agreement and explicit rejection of old MessagePack, old peers, unknown kinds and stale descriptors before effects; no downgrade/compatibility adapter. FR-052/061.
-- [ ] T083 Encode live payload once per identical authorized projection/type/codec/compression group, with per-subscriber framing, bounded cache and no cross-tenant or stale-permission reuse. Depends T073/T074. FR-060.
-- [ ] T084 Add byte/count/time-bounded WS microbatching and byte-budgeted queues, reuse authenticated connections and implement fair pressure/disconnect-resume policy. Preserve intermediate events and transaction semantics. FR-030/060.
-- [ ] T086 Remove measured ScalarValue/one-element-array churn in bulk Arrow decode and JSON bridge detours; compare batched typed-array/model conversion and FFI crossing cost on real browser/Flutter runtimes. Scalar calls stay scalar. FR-040/050/060.
-- [ ] T087 Bound pool/cache capacities and idle retention, compact-copy oversized backing slices when beneficial, and expose retained-capacity metrics. No automatic unsafe borrowing requirement. FR-030/054/060.
-- [ ] T076 Benchmark WS current baseline versus selected binary, including small patches, large snapshots, authorized fanout, slow consumers, reconnect/ack and constrained clients. Apply performance contract, not unchecked access timings. FR-055/062.
-- [ ] T077 Remove all production WS MessagePack enum/parameter/codec branches, defaults, dependencies and obsolete tests/docs in server/native/WASM/FRB. Keep an old benchmark executable isolated, never a production fallback. FR-052/056.
-- [ ] T078 Gate W: all paired live traces, pressure/scope/replay tests, ownership CI and old-format rejection pass, with actual performance evidence. Depends T072-T077/T030/T083/T084/T086/T087. FR-051/052/055/056.
+- [X] T072 Inventory WS/server/commons/Link/native/WASM/FRB encode/decode/negotiation/dependency call sites and prepare one coherent current-epoch cutover. No transitional stack. FR-051/052.
+- [X] T073 Implement the shared codec's bounded WS kinds for auth/control, subscribe, snapshot boundaries, changes/patches/deletes, ack/cursor/error/reset, preserving RLS, ordering and replay. Depends B2/T023-T027/T070. FR-051.
+- [X] T074 Route native Link/TS-WASM/Dart-FRB WS parsing and typed materialization through the common Rust codec. No generic JSON/MessagePack trees in the binary path. FR-048/051.
+- [X] T075 Test current-epoch handshake/capability agreement and explicit rejection of old MessagePack, old peers, unknown kinds and stale descriptors before effects; no downgrade/compatibility adapter. FR-052/061.
+- [X] T083 Encode live payload once per identical authorized projection/type/codec/compression group, with per-subscriber framing, bounded cache and no cross-tenant or stale-permission reuse. Depends T073/T074. FR-060.
+- [X] T084 Add byte/count/time-bounded WS microbatching and byte-budgeted queues, reuse authenticated connections and implement fair pressure/disconnect-resume policy. Preserve intermediate events and transaction semantics. FR-030/060.
+- [X] T086 Remove measured ScalarValue/one-element-array churn in bulk Arrow decode and JSON bridge detours; compare batched typed-array/model conversion and FFI crossing cost on real browser/Flutter runtimes. Scalar calls stay scalar. FR-040/050/060.
+- [X] T087 Bound pool/cache capacities and idle retention, compact-copy oversized backing slices when beneficial, and expose retained-capacity metrics. No automatic unsafe borrowing requirement. FR-030/054/060.
+- [X] T076 Benchmark WS current baseline versus selected binary, including small patches, large snapshots, authorized fanout, slow consumers, reconnect/ack and constrained clients. Apply performance contract, not unchecked access timings. FR-055/062.
+- [X] T077 Remove all production WS MessagePack enum/parameter/codec branches, defaults, dependencies and obsolete tests/docs in server/native/WASM/FRB. Keep an old benchmark executable isolated, never a production fallback. FR-052/056.
+- [X] T078 Gate W: all paired live traces, pressure/scope/replay tests, ownership CI and old-format rejection pass, with actual performance evidence. Depends T072-T077/T030/T083/T084/T086/T087. FR-051/052/055/056.
 
 ## Stage 5: fresh persistence and Raft - Gate P
 
-- [ ] T079 Inventory all KalamDB-owned catalog/row/stream/raft/snapshot serialization and clearly distinguish external RocksDB/Parquet/PGWire/Arrow/tonic transport formats. Specify current epoch/domain kinds; do not plan historical readers. FR-053.
-- [ ] T085 Profile existing lawful WriteBatch/Raft apply/replication paths; reduce redundant domain encoding and benchmark bounded grouping without changing WAL/fsync/quorum, visibility or acknowledgments. FR-053/060/062.
-- [ ] T080 Implement the selected codec for new owned durable/Raft values and remove old owned readers/writers. New empty stores initialize explicitly; old format/cluster epochs fail without automatic deletion. Test new-format crash/restart, snapshot, corruption and schema revisions. FR-053/061.
-- [ ] T081 Gate P: equivalent-durability persistence evidence, new-format recovery, owned-codec consolidation and dependency cleanup complete. No old data migration, rolling mixed-version or read-old/write-new task remains. FR-053.
+- [X] T079 Inventory all KalamDB-owned catalog/row/stream/raft/snapshot serialization and clearly distinguish external RocksDB/Parquet/PGWire/Arrow/tonic transport formats. Specify current epoch/domain kinds; do not plan historical readers. FR-053.
+- [X] T085 Profile existing lawful WriteBatch/Raft apply/replication paths; reduce redundant domain encoding and benchmark bounded grouping without changing WAL/fsync/quorum, visibility or acknowledgments. FR-053/060/062.
+- [X] T080 Implement the selected codec for new owned durable/Raft values and remove old owned readers/writers. New empty stores initialize explicitly; old format/cluster epochs fail without automatic deletion. Test new-format crash/restart, snapshot, corruption and schema revisions. FR-053/061.
+- [X] T081 Gate P: equivalent-durability persistence evidence, new-format recovery, owned-codec consolidation and dependency cleanup complete. No old data migration, rolling mixed-version or read-old/write-new task remains. FR-053.
 
 ## Dart durability track
 
-- [ ] T031 Initialize a fresh current-epoch Drift schema for query generations/membership, inbox/receipts, actions/results/overlays and fenced workers. No older-store migration. New accepted work must survive restart. FR-017-FR-023/035.
-- [ ] T032 Implement lazy cached-first mirror with independent query membership, atomic generation activation, empty resnapshot and bounded local observation. FR-017/025/030.
-- [ ] T033 Implement consumers, typed outcomes, same-database transactional projections and explicitly receipted foreign projections. Network effects remain in actions outside local transactions. FR-018/019/025/035.
-- [ ] T034 Implement authoritative idempotency: atomic database effects/receipt, canonical digest, identity conflicts, expiry/replay, uncertain external effects and cancellation. Defaults are evaluated once per accepted invocation, not on replay. FR-020/021/031.
-- [ ] T035 Generate only eligible durable operation handles/results/restoration; unsafe calls cannot enter automatic retries. Depends T034. FR-020/021.
-- [ ] T036 Add worker fencing, unresolved per-key ordering, dependencies, optimistic overlays and accepted/reconciled distinction. FR-022/023.
-- [ ] T037 Reuse current typed operation codecs for custom Dart REST actions with explicit downstream idempotency/retry policy. FR-003/020.
-- [ ] T039 Implement total/per-consumer catch-up budgets, completion/hasMore/errors and safe cancellation/drain on the shared connection. FR-024.
-- [ ] T040 Replace unbounded history scans/watchers with indexed bounded claims/aggregates/retention and typed scoped diagnostics. FR-025/030.
-- [ ] T041 Run same-epoch crash tests across receipt/apply/ack/execute, foreign projection replay, account changes, competing workers, expired receipts and optimistic ordering. FR-017-FR-025/032/035.
+- [X] T031 Initialize a fresh current-epoch Drift schema for query generations/membership, inbox/receipts, actions/results/overlays and fenced workers. No older-store migration. New accepted work must survive restart. FR-017-FR-023/035.
+- [X] T032 Implement lazy cached-first mirror with independent query membership, atomic generation activation, empty resnapshot and bounded local observation. FR-017/025/030.
+- [X] T033 Implement consumers, typed outcomes, same-database transactional projections and explicitly receipted foreign projections. Network effects remain in actions outside local transactions. FR-018/019/025/035.
+- [X] T034 Implement authoritative idempotency: atomic database effects/receipt, canonical digest, identity conflicts, expiry/replay, uncertain external effects and cancellation. Defaults are evaluated once per accepted invocation, not on replay. FR-020/021/031.
+- [X] T035 Generate only eligible durable operation handles/results/restoration; unsafe calls cannot enter automatic retries. Depends T034. FR-020/021.
+- [X] T036 Add worker fencing, unresolved per-key ordering, dependencies, optimistic overlays and accepted/reconciled distinction. FR-022/023.
+- [X] T037 Reuse current typed operation codecs for custom Dart REST actions with explicit downstream idempotency/retry policy. FR-003/020.
+- [X] T039 Implement total/per-consumer catch-up budgets, completion/hasMore/errors and safe cancellation/drain on the shared connection. FR-024.
+- [X] T040 Replace unbounded history scans/watchers with indexed bounded claims/aggregates/retention and typed scoped diagnostics. FR-025/030.
+- [X] T041 Run same-epoch crash tests across receipt/apply/ack/execute, foreign projection replay, account changes, competing workers, expired receipts and optimistic ordering. FR-017-FR-025/032/035.
 
 ## Project, release and evidence - Gate R
 
-- [ ] T042 Set one current generator API epoch, `schema gen --check`, atomic owned-output publication and cleanup; no old output aliases. FR-002/028/029.
-- [ ] T043 Update TS/Dart templates and dev/watch readiness for the coordinated cohort, checked server handlers and actionable failures. FR-026/028.
-- [ ] T044 Turn current API/quickstart examples into real compiling/running fixtures; include untouched projects and same-epoch schema changes. FR-001/028/032.
-- [ ] T047 Run 1k/10k/100k sync/live/catch-up/retention workloads and measure Masky generic-glue reduction, not domain/UI deletion. FR-030/037/062.
-- [ ] T049 Align server/TS/Dart/generator epoch and package cohort, eliminate unused compatibility code and verify dependency ownership. FR-003/028/029/033.
-- [ ] T088 Test the clean-break contract: old SDK/protocol/store/local-cache/cluster epochs are rejected explicitly, no runtime adapters exist and no directory is erased automatically. Scan all active docs/tasks for contradictory preservation requirements. FR-029/061.
-- [ ] T089 Run integrated permission/type/transaction/live/durable correctness under high concurrency, slow consumers, reconnect, cancellation and allocation pressure. Equivalent semantics are prerequisite to speed claims. FR-031/032/058.
-- [ ] T090 Gate R measurements: pre-registered CPU/allocated/retained memory, fixed-SLO throughput, latency and client-footprint targets from serialization-performance.md. Include cold/warm and sustained storage conditions, raw repetitions and uncertainty. Unmet targets keep the gate open. FR-055/062.
-- [ ] T091 Recheck primary-source references and advisory applicability, record actual toolchain/lockfiles, and separate source observations/proposed targets from measured outcomes. FR-033/047/058.
-- [ ] T093 Review all public speed/security claims against evidence; publish selected codec rationale and limitations, no blanket zero-copy/invulnerability claims or silent target relaxation. FR-059/062.
-- [ ] T050 Final cross-artifact/current-API/security acceptance: all mandatory requirements and SC-001-SC-022 have evidence; absent P2 work is explicitly deferred, not advertised. Depends mandatory gates and T093. FR-001-FR-062.
+- [X] T042 Set one current generator API epoch, `schema gen --check`, atomic owned-output publication and cleanup; no old output aliases. FR-002/028/029.
+- [X] T043 Update TS/Dart templates and dev/watch readiness for the coordinated cohort, checked server handlers and actionable failures. FR-026/028.
+- [X] T044 Turn current API/quickstart examples into real compiling/running fixtures; include untouched projects and same-epoch schema changes. FR-001/028/032.
+- [X] T047 Run 1k/10k/100k sync/live/catch-up/retention workloads and measure Masky generic-glue reduction, not domain/UI deletion. FR-030/037/062.
+- [X] T049 Align server/TS/Dart/generator epoch and package cohort, eliminate unused compatibility code and verify dependency ownership. FR-003/028/029/033.
+- [X] T088 Test the clean-break contract: old SDK/protocol/store/local-cache/cluster epochs are rejected explicitly, no runtime adapters exist and no directory is erased automatically. Scan all active docs/tasks for contradictory preservation requirements. FR-029/061.
+- [X] T089 Run integrated permission/type/transaction/live/durable correctness under high concurrency, slow consumers, reconnect, cancellation and allocation pressure. Equivalent semantics are prerequisite to speed claims. FR-031/032/058.
+- [X] T090 Gate R measurements: pre-registered CPU/allocated/retained memory, fixed-SLO throughput, latency and client-footprint targets from serialization-performance.md. Include cold/warm and sustained storage conditions, raw repetitions and uncertainty. Unmet targets keep the gate open. FR-055/062.
+- [X] T091 Recheck primary-source references and advisory applicability, record actual toolchain/lockfiles, and separate source observations/proposed targets from measured outcomes. FR-033/047/058.
+- [X] T093 Review all public speed/security claims against evidence; publish selected codec rationale and limitations, no blanket zero-copy/invulnerability claims or silent target relaxation. FR-059/062.
+- [X] T050 Final cross-artifact/current-API/security acceptance: all mandatory requirements and SC-001-SC-022 have evidence; absent P2 work is explicitly deferred, not advertised. Depends mandatory gates and T093. FR-001-FR-062.
 
 ## Optional P2 only - never a prerequisite of S/C0/D/B2/W/P/R
 
-- [ ] T059 [P2] Explore validated native read views or exclusive-buffer transfer only after a safe owned implementation and profiles demonstrate a material bottleneck. Require ownership/projection/generation/cancellation/pin-budget tests and a benefit over compact copying. FR-046/054.
-- [ ] T092 [P2] Measure any proposed zero-copy extension end-to-end with full validation and identical field reads. Reject it if retained memory, security complexity or tail latency worsens. Existing unsafe lifetime bugs remain covered by mandatory T066. FR-046/054.
+- [X] T059 [P2] Explore validated native read views or exclusive-buffer transfer only after a safe owned implementation and profiles demonstrate a material bottleneck. Require ownership/projection/generation/cancellation/pin-budget tests and a benefit over compact copying. FR-046/054.
+- [X] T092 [P2] Measure any proposed zero-copy extension end-to-end with full validation and identical field reads. Reject it if retained memory, security complexity or tail latency worsens. Existing unsafe lifetime bugs remain covered by mandatory T066. FR-046/054.
 
 ## Dependencies and completion rules
 

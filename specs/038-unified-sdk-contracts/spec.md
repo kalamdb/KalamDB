@@ -4,7 +4,7 @@
 **Created:** 2026-10-18  
 **Revised:** 2026-10-22 - research-backed fresh-start release, application readiness and database stability  
 **Branch:** `feat/pg-dialect`, PR #402  
-**Status:** Implementation specification. New runtime behavior, stability and performance are NOT established by this document.
+**Status:** Completed (2026-10-24). All requirements, checklists, and tasks (`T001`..`T121`) are closed.
 
 ## Decision and precedence
 
