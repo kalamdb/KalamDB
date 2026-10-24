@@ -786,6 +786,76 @@ export class KalamDBClient {
     return JSON.parse(resultStr) as QueryResponse;
   }
 
+  /**
+   * Invoke a generated routine through the function HTTP route.
+   *
+   * JSON is the explicit external representation. The descriptor names the
+   * routine; this method does not build SQL.
+   */
+  async invokeRoutine<I, O>(
+    descriptor: {
+      readonly epoch: number;
+      readonly schema: string;
+      readonly name: string;
+    },
+    input: I,
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly timeoutMs?: number;
+      readonly idempotencyKey?: string;
+      readonly format?: 'binary' | 'json';
+    },
+  ): Promise<O> {
+    await this.initialize();
+    await this.ensureJwtForBasicAuth();
+    if (options?.format === 'binary') {
+      throw new Error('binary function invocation is not implemented in the TypeScript client');
+    }
+
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-kalam-epoch': String(descriptor.epoch),
+    };
+    const authHeader = buildAuthHeader(this.auth);
+    if (authHeader) headers.Authorization = authHeader;
+    if (options?.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+
+    const controller = new AbortController();
+    if (options?.signal) {
+      if (options.signal.aborted) controller.abort();
+      else options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+    const timer = options?.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), options.timeoutMs);
+
+    try {
+      const response = await fetch(
+        `${this.url}/v1/functions/${encodeURIComponent(descriptor.schema)}/${encodeURIComponent(descriptor.name)}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            epoch: descriptor.epoch,
+            arguments: input ?? null,
+          }),
+          signal: controller.signal,
+        },
+      );
+      const text = await response.text();
+      const payload: unknown = text.length === 0 ? null : JSON.parse(text);
+      if (!response.ok) {
+        const message = payload && typeof payload === 'object' && 'message' in payload
+          ? String((payload as { message?: unknown }).message)
+          : `function invoke failed: ${response.status}`;
+        throw new Error(message);
+      }
+      return payload as O;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   private static escapeSqlStringLiteral(value: string): string {
     return value.replace(/'/g, "''");
   }
