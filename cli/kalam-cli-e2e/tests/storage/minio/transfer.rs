@@ -20,7 +20,7 @@ fn test_minio_shared_table_export_import_roundtrip() {
     let target_full = format!("{}.{}", namespace, target_table);
 
     setup_minio_storage(&storage_id, "MinIO Transfer Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
 
     execute_sql_as_root_via_cli(&format!(

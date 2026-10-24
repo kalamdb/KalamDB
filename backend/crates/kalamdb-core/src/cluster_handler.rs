@@ -9,7 +9,7 @@ use kalamdb_commons::{
     conversions::{
         mask_sensitive_rows_for_role, record_batch_to_json_arrays, schema_fields_from_arrow_schema,
     },
-    models::{ConnectionInfo, KalamCellValue, NamespaceId, UserId},
+    models::{ConnectionInfo, KalamCellValue, SchemaId, UserId},
     schemas::SchemaField,
     Role,
 };
@@ -232,7 +232,7 @@ impl CoreClusterHandler {
     fn prepare_forwarded_statement(
         &self,
         statement: &str,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
         actor_role: Role,
     ) -> Result<(PreparedExecutionStatement, Option<String>), String> {
         let trimmed = statement.trim().trim_end_matches(';').trim();
@@ -320,7 +320,7 @@ impl ClusterMessageHandler for CoreClusterHandler {
         let mut exec_ctx = ExecutionContext::from_session(session, base_session);
         if let Some(namespace_id) = req.namespace_id.as_deref() {
             let namespace_id =
-                NamespaceId::try_parse_reference(namespace_id).map_err(|e| e.to_string());
+                SchemaId::try_parse_reference(namespace_id).map_err(|e| e.to_string());
             let namespace_id = match namespace_id {
                 Ok(ns) => ns,
                 Err(e) => {

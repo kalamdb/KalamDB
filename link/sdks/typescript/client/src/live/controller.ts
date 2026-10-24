@@ -31,6 +31,7 @@ export class LiveQueryController<TRow = RowData> {
   private readonly listeners = new Set<LiveQueryControllerListener<TRow>>();
   private unsubscribe?: Unsubscribe;
   private startToken = 0;
+  private disposed = false;
   private snapshot: LiveQueryControllerSnapshot<TRow> = {
     rows: [],
     loading: false,
@@ -53,6 +54,7 @@ export class LiveQueryController<TRow = RowData> {
   }
 
   subscribe(listener: LiveQueryControllerListener<TRow>): Unsubscribe {
+    if (this.disposed) throw new Error('Live query controller is disposed');
     this.listeners.add(listener);
     return async () => {
       this.listeners.delete(listener);
@@ -60,10 +62,12 @@ export class LiveQueryController<TRow = RowData> {
   }
 
   async start(): Promise<void> {
+    if (this.disposed) throw new Error('Live query controller is disposed');
     const token = this.startToken + 1;
     this.startToken = token;
 
     await this.stopActiveSubscription();
+    if (this.startToken !== token) return;
     this.setSnapshot({
       loading: true,
       connected: false,
@@ -87,7 +91,7 @@ export class LiveQueryController<TRow = RowData> {
             error: undefined,
           });
         },
-        this.liveOptions(),
+        this.liveOptions(token),
       );
 
       if (this.startToken !== token) {
@@ -115,17 +119,18 @@ export class LiveQueryController<TRow = RowData> {
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
     this.startToken += 1;
-    await this.stopActiveSubscription();
-    this.setSnapshot({
-      loading: false,
-      connected: false,
-      status: 'disposed',
-    });
-    this.listeners.clear();
+    try {
+      await this.stopActiveSubscription();
+    } finally {
+      this.setSnapshot({ loading: false, connected: false, status: 'disposed' });
+      this.listeners.clear();
+    }
   }
 
-  private liveOptions(): LiveOptions<TRow> {
+  private liveOptions(token: number): LiveOptions<TRow> {
     return {
       mapRow: this.descriptor.mapRow ?? ((row: RowData) => row as unknown as TRow),
       ...(this.descriptor.getKey ? { getKey: this.descriptor.getKey } : {}),
@@ -135,6 +140,7 @@ export class LiveQueryController<TRow = RowData> {
       ...(this.options.from !== undefined ? { from: this.options.from } : {}),
       ...(this.options.autoFetchBatches !== undefined ? { autoFetchBatches: this.options.autoFetchBatches } : {}),
       onError: (event) => {
+        if (this.startToken !== token) return;
         this.setSnapshot({
           loading: false,
           connected: false,
@@ -144,6 +150,7 @@ export class LiveQueryController<TRow = RowData> {
         this.options.onError?.(event);
       },
       onCheckpoint: (checkpoint) => {
+        if (this.startToken !== token) return;
         this.setSnapshot({ lastVersionId: checkpoint.lastVersionId });
         this.options.onCheckpoint?.(checkpoint);
       },

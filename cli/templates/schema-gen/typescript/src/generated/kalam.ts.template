@@ -6,6 +6,33 @@ export * from './schema.js';
 import type { {{type_imports}} } from './schema.js';
 {{/if}}
 
+export const KALAM_CONTRACT_EPOCH = 1 as const;
+export const KALAM_CODEC_VERSION = 1 as const;
+
+export interface OperationDescriptor<TInput = unknown, TOutput = unknown> {
+  readonly epoch: typeof KALAM_CONTRACT_EPOCH;
+  readonly codecVersion: typeof KALAM_CODEC_VERSION;
+  readonly routineId: string;
+  readonly signature: string;
+  readonly schema: string;
+  readonly name: string;
+  readonly cardinality: "void" | "scalar" | "setof" | "table";
+  readonly __input?: TInput;
+  readonly __output?: TOutput;
+}
+
+export interface KalamCall<TOutput = unknown> {
+  readonly operation: OperationDescriptor<unknown, TOutput>;
+  readonly arguments: unknown;
+}
+
+export interface InvocationOptions {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly idempotencyKey?: string;
+  readonly format?: 'binary' | 'json';
+}
+
 export type KalamQueryClient = {
   query: (sql: string, params?: unknown[]) => Promise<{
     status?: string;
@@ -15,47 +42,57 @@ export type KalamQueryClient = {
       named_rows?: Array<Record<string, unknown>>;
     }>;
   }>;
+  invokeRoutine: <I, O>(
+    descriptor: OperationDescriptor<I, O>,
+    input: I,
+    options?: InvocationOptions,
+  ) => Promise<O>;
 };
 
 {{#if has_calls}}
-function kalamCallErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.length > 0) {
-      return message;
-    }
-  }
-  return "CALL failed";
-}
-
-function kalamCallResult(response: Awaited<ReturnType<KalamQueryClient["query"]>>): unknown {
-  if (response.status === "error") {
-    throw new Error(kalamCallErrorMessage(response.error));
-  }
-  const result = response.results?.[0];
-  if (result?.named_rows?.[0] && "result" in result.named_rows[0]) {
-    return result.named_rows[0].result;
-  }
-  const rows = result?.rows;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return undefined;
-  }
-  const first = rows[0];
-  return Array.isArray(first) ? first[0] : first;
+function routineDescriptor(routineId: string, signature: string, schema: string, name: string, cardinality: OperationDescriptor["cardinality"]) {
+  return { epoch: KALAM_CONTRACT_EPOCH, codecVersion: KALAM_CODEC_VERSION, routineId, signature, schema, name, cardinality } as const;
 }
 
 {{/if}}
 export function createKalam({{#if has_calls}}client: KalamQueryClient{{else}}_client?: KalamQueryClient{{/if}}) {
-  return {
+  const functions = {
 {{#each namespaces}}
     {{object_ident}}: {
 {{#each procedures}}
-{{{jsdoc}}}      {{method_ident}}: async ({{#if has_params}}input: {{request_ident}}{{/if}}): Promise<{{result_ident}}> => {
-        const response = await client.query("{{call_sql}}"{{#if has_params}}, [{{params_list}}]{{/if}});
-        return kalamCallResult(response) as {{result_ident}};
-      },
+{{{jsdoc}}}      {{method_ident}}: ({{#if has_params}}input: {{request_ident}}, {{/if}}options?: InvocationOptions): Promise<{{result_ident}}> =>
+        client.invokeRoutine(
+          routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}"),
+          {{#if has_params}}input{{else}}undefined{{/if}},
+          options,
+        ),
 {{/each}}
     },
 {{/each}}
   };
+  const operations = {
+{{#each namespaces}}
+    {{object_ident}}: {
+{{#each procedures}}
+      {{method_ident}}: ({{#if has_params}}input: {{request_ident}}{{/if}}): KalamCall<{{result_ident}}> => ({
+        operation: routineDescriptor("{{routine_id}}", "{{signature}}", "{{schema}}", "{{name}}", "{{cardinality}}"),
+        arguments: {{#if has_params}}input{{else}}undefined{{/if}},
+      }),
+{{/each}}
+    },
+{{/each}}
+  };
+  return {
+    contract: {
+      epoch: KALAM_CONTRACT_EPOCH,
+      contractHash: "{{contract_hash_line}}".replace(/^contract_hash:\s*/, ""),
+    } as const,
+    functions,
+    operations,
+    ...functions,
+  };
+}
+
+export function createKalamFunctions({{#if has_calls}}client: KalamQueryClient{{else}}_client?: KalamQueryClient{{/if}}) {
+  return createKalam({{#if has_calls}}client{{else}}_client{{/if}}).functions;
 }

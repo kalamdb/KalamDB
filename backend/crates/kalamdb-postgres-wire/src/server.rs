@@ -139,6 +139,7 @@ where
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
+            _ = tasks.join_next(), if !tasks.is_empty() => {},
             result = listener.accept() => {
                 let (socket, _addr): (_, SocketAddr) = result?;
                 let handlers = handlers.clone();

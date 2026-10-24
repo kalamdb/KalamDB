@@ -210,7 +210,7 @@ mod tests {
     use std::sync::Arc;
 
     use kalamdb_commons::{
-        models::{ids::NamespaceId, TableId, TableName, UserId},
+        models::{ids::SchemaId, TableId, TableName, UserId},
         Role, StorageId,
     };
     use kalamdb_core::test_helpers::{create_test_session_simple, test_app_context_simple};
@@ -259,10 +259,8 @@ mod tests {
         };
 
         let cached = StorageCached::with_default_timeouts(storage);
-        let table_id = TableId::new(
-            NamespaceId::new("sql_file_case_28_a"),
-            TableName::new("case28_wide_user"),
-        );
+        let table_id =
+            TableId::new(SchemaId::new("sql_file_case_28_a"), TableName::new("case28_wide_user"));
         let user_id = UserId::new("case28_user");
 
         let result = cached.get_relative_path(

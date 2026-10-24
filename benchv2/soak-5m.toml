@@ -1,0 +1,150 @@
+[server]
+host = "127.0.0.1"
+port = 2900
+workers = 0
+enable_http2 = true
+
+[storage]
+data_path = "./soak-5m/data"
+shared_tables_template = "{namespace}/{tableName}"
+user_tables_template = "{namespace}/{tableName}/{userId}"
+
+[storage.rocksdb]
+# auto caps the shared block cache at 256MB and the hot memtable at 64MB on this
+# host, so process memory does not grow with RAM. Three memtables leave one free
+# to flush without stacking a large write buffer.
+memory_mode = "auto"
+max_background_jobs = 6
+
+[storage.rocksdb.cf_profiles.hot_data]
+write_buffer_size = 67108864
+max_write_buffers = 3
+
+[storage.rocksdb.cf_profiles.hot_index]
+write_buffer_size = 33554432
+max_write_buffers = 3
+
+[datafusion]
+memory_limit = 268435456
+query_parallelism = 4
+max_partitions = 4
+batch_size = 1024
+
+[flush]
+flush_batch_size = 10000
+check_interval_seconds = 30
+retain_latest_hot = true
+
+[flush.compaction]
+enabled = true
+
+[topics]
+default_retention_seconds = 60
+default_retention_max_bytes = 33554432
+retention_check_interval_seconds = 5
+retention_batch_size = 20000
+
+[stream]
+eviction_interval_seconds = 60
+
+[manifest_cache]
+eviction_interval_seconds = 300
+max_entries = 500
+eviction_ttl_days = 7
+
+[limits]
+max_query_limit = 1000
+default_query_limit = 50
+
+[logging]
+level = "info"
+logs_path = "./logs"
+log_to_console = false
+format = "json"
+slow_query_threshold_ms = 1000
+
+[logging.otlp]
+enabled = false
+endpoint = "http://127.0.0.1:4317"
+protocol = "grpc"
+service_name = "kalamdb-server"
+timeout_ms = 3000
+
+[performance]
+keepalive_timeout = 75
+max_connections = 20000000
+backlog = 4096
+worker_max_blocking_threads = 4000
+client_request_timeout = 10
+client_disconnect_timeout = 5
+
+[rate_limit]
+max_queries_per_sec = 100000
+max_messages_per_sec = 10000
+max_subscriptions_per_user = 500000
+max_auth_requests_per_ip_per_sec = 200000
+max_connections_per_ip = 200000
+max_requests_per_ip_per_sec = 200000
+request_body_limit_bytes = 104857600
+ban_duration_seconds = 300
+enable_connection_protection = false
+cache_max_entries = 1000
+cache_ttl_seconds = 600
+
+[security]
+max_ws_message_size = 1048576
+strict_ws_origin_check = false
+
+[security.cors]
+allowed_origins = []
+allowed_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+allowed_headers = ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"]
+expose_headers = []
+allow_credentials = true
+max_age = 3600
+
+[websocket]
+client_timeout_secs = 120
+auth_timeout_secs = 15
+heartbeat_interval_secs = 30
+
+[auth]
+jwt_secret = "kalamdb-bench-local-2026-04-03-jwt-secret-32-plus"
+jwt_trusted_issuers = ""
+
+[auth.local]
+enabled = true
+bcrypt_cost = 4
+min_password_length = 8
+max_password_length = 72
+
+[auth.oidc]
+enabled = false
+auto_provision = false
+default_role = "user"
+
+[shutdown.flush]
+timeout = 300
+
+[jobs]
+max_concurrent = 10
+wal_cleanup_interval_seconds = 300
+history_cleanup_interval_seconds = 3600
+history_retention_days = 7
+
+[functions.runtime]
+workers = 8
+max_active = 16
+max_queued = 256
+max_memory_mb = 768
+heap_soft_mb = 8
+heap_hard_mb = 32
+
+[cluster]
+node_id = 1
+rpc_addr = "127.0.0.1:2910"
+api_addr = "127.0.0.1:2900"
+user_shards = 8
+shared_shards = 1
+max_snapshots_to_keep = 1
+replication_timeout_ms = 5000

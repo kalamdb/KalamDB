@@ -1,14 +1,14 @@
-use std::{
-    fmt::Debug,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use futures_util::{Sink, SinkExt};
 use kalamdb_auth::{repository::user_repo::UserRepository, WirePasswordAuthRequest};
 use kalamdb_backend::manager::BackendSessionManager;
-use kalamdb_commons::models::{NamespaceId, Role, SessionOrigin};
+use kalamdb_commons::{
+    constants::LOGICAL_DATABASE_NAME,
+    models::{Role, SchemaId, SessionOrigin},
+    unix_time_millis,
+};
 use pgwire::{
     api::{
         auth::{
@@ -33,19 +33,19 @@ const CONNECTION_FAILURE_CODE: &str = "08006";
 
 /// Logical database name advertised in `pg_catalog.pg_database` and
 /// `CURRENT_DATABASE()`. Clients use this when picking a database from a list.
-pub const WIRE_LOGICAL_DATABASE: &str = "kalam";
+pub const WIRE_LOGICAL_DATABASE: &str = LOGICAL_DATABASE_NAME;
 
 /// Resolve the PostgreSQL startup `database` parameter to a KalamDB namespace.
 ///
 /// KalamDB is a single logical database. Catalog aliases (`kalam`, `postgres`,
 /// empty) open the default namespace so GUI "Load Databases" / reconnect flows
 /// work. Any other non-empty name is treated as the initial schema/namespace.
-pub fn resolve_wire_startup_schema(database: Option<&str>) -> NamespaceId {
+pub fn resolve_wire_startup_schema(database: Option<&str>) -> SchemaId {
     let trimmed = database.map(str::trim).unwrap_or("");
     if is_wire_catalog_database(trimmed) {
-        NamespaceId::default_ns()
+        SchemaId::default_ns()
     } else {
-        NamespaceId::new(trimmed)
+        SchemaId::new(trimmed)
     }
 }
 
@@ -245,10 +245,7 @@ pub async fn close_wire_session(
 }
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn pg_error(

@@ -123,10 +123,10 @@ pub fn assert_finite_type_graph_with_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::NamespaceId;
+    use crate::models::SchemaId;
 
     fn id(name: &str) -> TypeId {
-        TypeId::from_parts(Some(&NamespaceId::new("chat")), name)
+        TypeId::from_parts(Some(&SchemaId::new("chat")), name)
     }
 
     #[test]

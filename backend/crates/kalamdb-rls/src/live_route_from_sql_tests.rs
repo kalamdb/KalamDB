@@ -3,8 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    NamespaceId, PolicyCommand, PolicyId, PolicyTarget, Role, TableId, TableName, TablePolicy,
-    UserId,
+    PolicyCommand, PolicyId, PolicyTarget, Role, SchemaId, TableId, TableName, TablePolicy, UserId,
 };
 
 use crate::{
@@ -41,7 +40,7 @@ fn shared_table(name: &str, columns: &[(&str, bool)]) -> Arc<TableDefinition> {
         .collect();
     Arc::new(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new(name),
             TableType::Shared,
             columns,

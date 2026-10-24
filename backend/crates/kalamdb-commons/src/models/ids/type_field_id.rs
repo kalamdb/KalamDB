@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn type_field_id_splits_schema_qualified_type() {
         let id = TypeFieldId::new(
-            &TypeId::from_parts(Some(&crate::models::NamespaceId::new("chat")), "message"),
+            &TypeId::from_parts(Some(&crate::models::SchemaId::new("chat")), "message"),
             "body",
         )
         .unwrap();

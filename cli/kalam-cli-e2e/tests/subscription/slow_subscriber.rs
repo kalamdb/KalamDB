@@ -143,7 +143,7 @@ fn subscription_slow_consumer_initial_data() {
     let tbl = generate_unique_table("slow_init");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -201,7 +201,7 @@ fn subscription_slow_consumer_initial_data() {
         total_rows
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] slow_consumer_initial_data passed ({} rows received)", found);
 }
 
@@ -212,8 +212,9 @@ fn subscription_slow_consumer_initial_data() {
 // very large `initial_data_timeout` and `receive_timeout` values. Verifies
 // the subscription still works correctly end-to-end.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈14.5s in cluster mode after idle-aware draining; allow 30s on slower machines
-#[ntest::timeout(30000)]
+// Isolated runs finish in about 15s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the high-latency subscribe plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_3g_like_high_latency() {
     if !require_server_running() {
@@ -224,7 +225,7 @@ fn subscription_3g_like_high_latency() {
     let tbl = generate_unique_table("latency_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -281,7 +282,7 @@ fn subscription_3g_like_high_latency() {
         marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] 3g_like_high_latency passed");
 }
 
@@ -304,7 +305,7 @@ fn subscription_slow_consumer_concurrent_writes() {
     let tbl = generate_unique_table("backpressure");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -367,7 +368,7 @@ fn subscription_slow_consumer_concurrent_writes() {
         insert_count
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] slow_consumer_concurrent_writes passed ({} insert events)", insert_count);
 }
 
@@ -390,7 +391,7 @@ fn subscription_reconnect_after_drop() {
     let tbl = generate_unique_table("reconnect");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 8);
@@ -443,7 +444,7 @@ fn subscription_reconnect_after_drop() {
     println!("[TEST] reconnect_after_drop: first={}, second={}", first_count, second_count);
     assert!(second_count > 0, "Second connection must receive events");
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] reconnect_after_drop passed");
 }
 
@@ -468,7 +469,7 @@ fn subscription_timeout_graceful_then_reconnect() {
     let tbl = generate_unique_table("tmo_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     // Insert enough rows to make initial snapshot delivery take some time
@@ -560,7 +561,7 @@ fn subscription_timeout_graceful_then_reconnect() {
     // does not report a process-level resource leak.
     rt.shutdown_timeout(Duration::from_secs(2));
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] timeout_graceful_then_reconnect passed");
 }
 
@@ -571,8 +572,9 @@ fn subscription_timeout_graceful_then_reconnect() {
 // processes events slowly. Verifies the server correctly fans out to all of
 // them without errors or missing data.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈10.7s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 11s. A full parallel nextest pass against a
+// loaded server needs the longer budget for fan-out plus schema cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_multiple_concurrent_slow_subscribers() {
     if !require_server_running() {
@@ -583,7 +585,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
     let tbl = generate_unique_table("fanout_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, val VARCHAR) WITH (TYPE = 'SHARED')",
@@ -700,7 +702,7 @@ fn subscription_multiple_concurrent_slow_subscribers() {
         );
     }
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!(
         "[TEST] multiple_concurrent_slow_subscribers passed: {:?}",
         results.iter().map(|(c, _, _)| c).collect::<Vec<_>>()
@@ -714,8 +716,9 @@ fn subscription_multiple_concurrent_slow_subscribers() {
 // multi-batch initial delivery, and consume each batch slowly. Verifies that
 // all batches are flushed and no data is lost even with a slow consumer.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈8.1s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 8s. A full parallel nextest pass against a
+// loaded server needs the longer budget for multi-batch delivery plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_large_initial_data_slow_batch_consumer() {
     if !require_server_running() {
@@ -726,7 +729,7 @@ fn subscription_large_initial_data_slow_batch_consumer() {
     let tbl = generate_unique_table("large_batch");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -786,7 +789,7 @@ fn subscription_large_initial_data_slow_batch_consumer() {
         total
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!(
         "[TEST] large_initial_data_slow_batch_consumer passed ({} / {} rows)",
         found, total
@@ -814,7 +817,7 @@ fn subscription_repeated_reconnect_loop() {
     let tbl = generate_unique_table("loop_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 5);
@@ -860,7 +863,7 @@ fn subscription_repeated_reconnect_loop() {
         }
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] repeated_reconnect_loop passed ({} rounds)", RECONNECT_ROUNDS);
 }
 
@@ -872,8 +875,9 @@ fn subscription_repeated_reconnect_loop() {
 // Inserts a new row during the pause. Verifies the event arrives after the
 // pause ends (i.e. the server keeps the connection alive and buffers the event).
 // ─────────────────────────────────────────────────────────────────────────────
-// actual ≈15s after optimization; allow 30s on slower machines
-#[ntest::timeout(30000)]
+// Isolated runs finish in about 15s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the idle pause plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_stable_after_idle_pause() {
     if !require_server_running() {
@@ -884,7 +888,7 @@ fn subscription_stable_after_idle_pause() {
     let tbl = generate_unique_table("idle_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
     insert_rows(&full, 1, 3);
@@ -930,7 +934,7 @@ fn subscription_stable_after_idle_pause() {
         wake_marker
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] stable_after_idle_pause passed");
 }
 
@@ -941,8 +945,9 @@ fn subscription_stable_after_idle_pause() {
 // followed by slow consumption. Verifies the subscription never errors and
 // the consumer eventually catches up.
 // ─────────────────────────────────────────────────────────────────────────────
-// observed ≈8.1s in cluster mode after idle-aware draining; allow 20s on slower machines
-#[ntest::timeout(20000)]
+// Isolated runs finish in about 8s. A full parallel nextest pass against a
+// loaded server needs the longer budget for the burst catch-up plus cleanup.
+#[ntest::timeout(90000)]
 #[test]
 fn subscription_burst_then_slow_catchup() {
     if !require_server_running() {
@@ -953,7 +958,7 @@ fn subscription_burst_then_slow_catchup() {
     let tbl = generate_unique_table("burst_tbl");
     let full = format!("{}.{}", ns, tbl);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     create_user_table(&full);
 
@@ -1009,6 +1014,6 @@ fn subscription_burst_then_slow_catchup() {
         burst_size
     );
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
     println!("[TEST] burst_then_slow_catchup passed ({} burst events caught)", received_burst);
 }

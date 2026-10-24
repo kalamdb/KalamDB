@@ -8,6 +8,13 @@ fn scoped_table_key(user_id: Option<&UserId>, primary_key: &str) -> ScopedPkKey 
     ScopedPkKey::new(user_id, primary_key)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavepointEntry {
+    pub name:           String,
+    pub mutation_count: usize,
+    pub next_order:     u64,
+}
+
 /// Cold staged-write state allocated lazily on the first transaction write.
 #[derive(Debug, Clone)]
 pub struct TransactionWriteSet {
@@ -18,6 +25,7 @@ pub struct TransactionWriteSet {
     pub overlay_cache:       HashMap<TableId, TransactionOverlay>,
     pub buffer_bytes:        usize,
     pub savepoint_marks:     Vec<u64>,
+    pub savepoints:          Vec<SavepointEntry>,
 }
 
 impl TransactionWriteSet {
@@ -30,6 +38,7 @@ impl TransactionWriteSet {
             overlay_cache: HashMap::new(),
             buffer_bytes: 0,
             savepoint_marks: Vec::new(),
+            savepoints: Vec::new(),
         }
     }
 
@@ -106,6 +115,62 @@ impl TransactionWriteSet {
         }
         overlay
     }
+
+    pub fn push_savepoint(&mut self, name: &str) {
+        let normalized = name.trim().to_ascii_lowercase();
+        let entry = SavepointEntry {
+            name:           normalized,
+            mutation_count: self.ordered_mutations.len(),
+            next_order:     self.next_mutation_order,
+        };
+        self.savepoint_marks.push(entry.next_order);
+        self.savepoints.push(entry);
+    }
+
+    pub fn release_savepoint(&mut self, name: &str) -> bool {
+        let normalized = name.trim().to_ascii_lowercase();
+        let Some(pos) = self.savepoints.iter().rposition(|sp| sp.name == normalized) else {
+            return false;
+        };
+        self.savepoints.truncate(pos);
+        self.savepoint_marks.truncate(pos);
+        true
+    }
+
+    pub fn rollback_to_savepoint(&mut self, name: &str) -> Option<(usize, usize)> {
+        let normalized = name.trim().to_ascii_lowercase();
+        let pos = self.savepoints.iter().rposition(|sp| sp.name == normalized)?;
+        let target = self.savepoints[pos].clone();
+        // Keep the savepoint itself active per PostgreSQL semantics; discard inner savepoints.
+        self.savepoints.truncate(pos + 1);
+        self.savepoint_marks.truncate(pos + 1);
+        self.truncate_mutations(target.mutation_count, target.next_order);
+        Some((self.ordered_mutations.len(), self.buffer_bytes))
+    }
+
+    fn truncate_mutations(&mut self, target_len: usize, next_order: u64) {
+        self.ordered_mutations.truncate(target_len);
+        self.next_mutation_order = next_order;
+        self.latest_by_table_key.clear();
+        self.overlay_cache.clear();
+        self.buffer_bytes = 0;
+
+        for (index, mutation) in self.ordered_mutations.iter().enumerate() {
+            let estimated_bytes = mutation.approximate_size_bytes();
+            self.buffer_bytes += estimated_bytes;
+            let table_id = mutation.table_id.clone();
+            let table_key =
+                scoped_table_key(mutation.user_id.as_ref(), mutation.primary_key.as_str());
+            self.latest_by_table_key
+                .entry(table_id.clone())
+                .or_default()
+                .insert(table_key, index);
+            self.overlay_cache
+                .entry(table_id)
+                .or_insert_with(|| TransactionOverlay::new(self.transaction_id.clone()))
+                .apply_entry(mutation.overlay_entry());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -114,7 +179,7 @@ mod tests {
 
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
-        models::{rows::Row, NamespaceId, OperationKind, TableId, TableName},
+        models::{rows::Row, OperationKind, SchemaId, TableId, TableName},
         TableType,
     };
 
@@ -131,7 +196,7 @@ mod tests {
     #[test]
     fn merged_overlay_keeps_latest_state_per_primary_key() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut write_set = TransactionWriteSet::new(transaction_id.clone());
 
         let mut first_values = BTreeMap::new();
@@ -175,7 +240,7 @@ mod tests {
     #[test]
     fn stage_updates_overlay_incrementally() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut write_set = TransactionWriteSet::new(transaction_id.clone());
 
         let mut inserted_values = BTreeMap::new();
@@ -223,7 +288,7 @@ mod tests {
     #[test]
     fn merged_overlay_preserves_distinct_user_scope_for_same_primary_key() {
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let first_user = UserId::new("user-a");
         let second_user = UserId::new("user-b");
         let mut write_set = TransactionWriteSet::new(transaction_id.clone());

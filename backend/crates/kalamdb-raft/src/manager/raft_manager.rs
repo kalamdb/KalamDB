@@ -1567,6 +1567,36 @@ impl RaftManager {
         );
     }
 
+    /// Applied log index for each group that has persisted Raft progress.
+    ///
+    /// Transaction snapshots pin to the commit-sequence frontier. That frontier
+    /// starts at zero, which hides every committed row. Seeding it from these
+    /// indexes lets a restarted node read data that was committed before the
+    /// restart.
+    pub fn applied_log_frontiers(&self) -> Vec<(GroupId, u64)> {
+        let mut frontiers = Vec::new();
+        Self::push_applied_frontier(&mut frontiers, &self.meta);
+        for shard in &self.user_data_shards {
+            Self::push_applied_frontier(&mut frontiers, shard);
+        }
+        for shard in &self.shared_data_shards {
+            Self::push_applied_frontier(&mut frontiers, shard);
+        }
+        frontiers
+    }
+
+    fn push_applied_frontier<SM>(frontiers: &mut Vec<(GroupId, u64)>, group: &RaftGroup<SM>)
+    where
+        SM: KalamStateMachine + Send + Sync + 'static,
+    {
+        let Some(log_id) = group.get_last_applied() else {
+            return;
+        };
+        if log_id.index > 0 {
+            frontiers.push((group.group_id(), log_id.index));
+        }
+    }
+
     /// Restore all state machines from their persisted snapshots and progress metadata.
     ///
     /// This should be called AFTER all appliers are set. It restores the state machines'
@@ -2090,7 +2120,7 @@ impl RaftManager {
 mod tests {
     use std::collections::BTreeMap;
 
-    use kalamdb_commons::models::{rows::Row, NamespaceId, OperationKind, TableName, UserId};
+    use kalamdb_commons::models::{rows::Row, OperationKind, SchemaId, TableName, UserId};
 
     use super::*;
 
@@ -2133,9 +2163,9 @@ mod tests {
     fn test_shard_computation() {
         let manager = RaftManager::new(test_config());
 
-        let table1 = TableId::new(NamespaceId::from("ns1"), TableName::from("table1"));
-        let table2 = TableId::new(NamespaceId::from("ns1"), TableName::from("table2"));
-        let table3 = TableId::new(NamespaceId::from("ns2"), TableName::from("table1"));
+        let table1 = TableId::new(SchemaId::from("ns1"), TableName::from("table1"));
+        let table2 = TableId::new(SchemaId::from("ns1"), TableName::from("table2"));
+        let table3 = TableId::new(SchemaId::from("ns2"), TableName::from("table1"));
 
         let shard1 = manager.compute_shard(&table1);
         let shard2 = manager.compute_shard(&table2);
@@ -2160,7 +2190,7 @@ mod tests {
     ) -> StagedMutation {
         StagedMutation::new(
             transaction_id,
-            TableId::new(NamespaceId::default(), TableName::from(table_name)),
+            TableId::new(SchemaId::default(), TableName::from(table_name)),
             TableType::User,
             Some(user_id),
             OperationKind::Insert,

@@ -60,6 +60,21 @@ impl SystemColumnNames {
 // /// Reserved namespace name for system tables.
 pub const SYSTEM_NAMESPACE: &str = "system";
 
+/// PostgreSQL compatibility catalog.
+pub const PG_CATALOG_NAMESPACE: &str = "pg_catalog";
+
+/// SQL standard metadata schema.
+pub const INFORMATION_SCHEMA_NAMESPACE: &str = "information_schema";
+
+/// DataFusion's internal catalog schema.
+pub const DATAFUSION_NAMESPACE: &str = "datafusion";
+
+/// Logical database name shown to PostgreSQL clients.
+///
+/// `current_database()`, `pg_database`, `information_schema`, and the wire
+/// startup database all use this name. KalamDB is one database.
+pub const LOGICAL_DATABASE_NAME: &str = "kalam";
+
 // /// Default namespace name for user tables when not specified.
 // pub const DEFAULT_NAMESPACE: &str = "default";
 
@@ -110,7 +125,7 @@ pub const AUTH: AuthConstants = AuthConstants;
 pub const BUILTIN_NAMESPACE_ALIASES: &[&str] = &["default", "main"];
 
 pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
-    "system",
+    SYSTEM_NAMESPACE,
     "sys",
     "root",
     "kalamdb",
@@ -120,9 +135,9 @@ pub const RESERVED_NAMESPACE_NAMES: &[&str] = &[
     "sql",
     "admin",
     "internal",
-    "information_schema",
-    "pg_catalog",
-    "datafusion",
+    INFORMATION_SCHEMA_NAMESPACE,
+    PG_CATALOG_NAMESPACE,
+    DATAFUSION_NAMESPACE,
 ];
 
 /// SQL keywords that must never be used as namespace, table, or column identifiers.

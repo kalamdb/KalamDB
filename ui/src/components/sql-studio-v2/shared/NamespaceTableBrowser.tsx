@@ -155,13 +155,13 @@ export function NamespaceSearchControls({
   return (
     <div className="shrink-0 space-y-2 border-b border-border px-2 py-2">
       <div className="flex items-center justify-between">
-        <StudioChromeLabel>Namespace</StudioChromeLabel>
+        <StudioChromeLabel>Schema</StudioChromeLabel>
         {actions ? <div className="flex items-center gap-0.5">{actions}</div> : null}
       </div>
       {namespaces.length > 0 ? (
         <Select value={activeNamespace} onValueChange={onNamespaceChange}>
           <SelectTrigger className="h-8 w-full text-xs">
-            <SelectValue placeholder="Select namespace" />
+            <SelectValue placeholder="Select schema" />
           </SelectTrigger>
           <SelectContent>
             {namespaces.map((namespace) => (
@@ -295,7 +295,7 @@ export function TableColumnTree({
                 Loading schema...
               </span>
             ) : (
-              readOnlyEmptyState ?? "No tables in this namespace."
+              readOnlyEmptyState ?? "No tables in this schema."
             )}
           </div>
         )}

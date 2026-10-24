@@ -116,6 +116,7 @@ fn rewrite_type_id_refs(snapshot: &mut ContractSnapshot) {
         if let Some(ret) = &mut routine.return_type {
             rewrite(ret);
         }
+        routine.returns_table.iter_mut().for_each(&rewrite);
     }
 }
 

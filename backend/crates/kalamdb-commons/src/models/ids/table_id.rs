@@ -1,11 +1,12 @@
 // File: backend/crates/kalamdb-commons/src/models/table_id.rs
-// Composite key for system.tables entries
+// Composite key for system.tables entries.
+// The folded `namespace.table` key stays. Stable identity lives in `schema_identity`.
 
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::namespace_id::NamespaceId;
+use super::namespace_id::SchemaId;
 use crate::models::schemas::TableName;
 #[cfg(feature = "storage")]
 use crate::{
@@ -24,14 +25,14 @@ use crate::{
 /// For example: `"flush_test_ns_mkav1q2g_3.metrics"`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableId {
-    namespace_id: NamespaceId,
+    namespace_id: SchemaId,
     table_name:   TableName,
 }
 
 impl TableId {
     /// Create a new TableId from namespace ID and table name
     #[inline]
-    pub fn new(namespace_id: NamespaceId, table_name: TableName) -> Self {
+    pub fn new(namespace_id: SchemaId, table_name: TableName) -> Self {
         Self {
             namespace_id,
             table_name,
@@ -40,7 +41,7 @@ impl TableId {
 
     /// Clone already-typed components without re-validating or reallocating strings.
     #[inline]
-    pub fn from_ref(namespace_id: &NamespaceId, table_name: &TableName) -> Self {
+    pub fn from_ref(namespace_id: &SchemaId, table_name: &TableName) -> Self {
         Self {
             namespace_id: namespace_id.clone(),
             table_name:   table_name.clone(),
@@ -49,7 +50,7 @@ impl TableId {
 
     /// Combine a typed namespace with a table name parsed from SQL or a scan.
     #[inline]
-    pub fn from_namespace(namespace_id: NamespaceId, table_name: &str) -> Self {
+    pub fn from_namespace(namespace_id: SchemaId, table_name: &str) -> Self {
         Self {
             namespace_id,
             table_name: TableName::new(table_name),
@@ -58,7 +59,7 @@ impl TableId {
 
     /// Fallible version of [`from_namespace`].
     #[inline]
-    pub fn try_from_namespace(namespace_id: NamespaceId, table_name: &str) -> Result<Self, String> {
+    pub fn try_from_namespace(namespace_id: SchemaId, table_name: &str) -> Result<Self, String> {
         let parsed = TableName::try_new(table_name)
             .map_err(|e| format!("invalid table_name '{}': {}", table_name, e))?;
         Ok(Self {
@@ -69,7 +70,7 @@ impl TableId {
 
     /// Get the namespace ID component
     #[inline]
-    pub fn namespace_id(&self) -> &NamespaceId {
+    pub fn namespace_id(&self) -> &SchemaId {
         &self.namespace_id
     }
 
@@ -83,7 +84,7 @@ impl TableId {
     #[inline]
     pub fn from_strings(namespace_id: &str, table_name: &str) -> Self {
         Self {
-            namespace_id: NamespaceId::new(namespace_id),
+            namespace_id: SchemaId::new(namespace_id),
             table_name:   TableName::new(table_name),
         }
     }
@@ -91,7 +92,7 @@ impl TableId {
     /// Create from string components with validation errors instead of panics.
     #[inline]
     pub fn try_from_strings(namespace_id: &str, table_name: &str) -> Result<Self, String> {
-        let namespace_id = NamespaceId::try_parse_reference(namespace_id)
+        let namespace_id = SchemaId::try_parse_reference(namespace_id)
             .map_err(|e| format!("invalid namespace_id '{}': {}", namespace_id, e))?;
         let table_name = TableName::try_new(table_name)
             .map_err(|e| format!("invalid table_name '{}': {}", table_name, e))?;
@@ -105,7 +106,7 @@ impl TableId {
     /// Create a prefix for scanning all tables in a namespace.
     #[inline]
     #[cfg(feature = "storage")]
-    pub fn namespace_prefix(namespace_id: &NamespaceId) -> Vec<u8> {
+    pub fn namespace_prefix(namespace_id: &SchemaId) -> Vec<u8> {
         encode_prefix(&(namespace_id.as_str(),))
     }
 
@@ -121,7 +122,7 @@ impl TableId {
     pub fn from_storage_key(key: &[u8]) -> Option<Self> {
         if let Ok((namespace_id, table_name)) = decode_key::<(String, String)>(key) {
             return Some(Self {
-                namespace_id: NamespaceId::new(namespace_id),
+                namespace_id: SchemaId::new(namespace_id),
                 table_name:   TableName::new(table_name),
             });
         }
@@ -130,7 +131,7 @@ impl TableId {
     }
 
     /// Consume and return inner components
-    pub fn into_parts(self) -> (NamespaceId, TableName) {
+    pub fn into_parts(self) -> (SchemaId, TableName) {
         (self.namespace_id, self.table_name)
     }
 
@@ -183,7 +184,7 @@ impl<'de> Deserialize<'de> for TableId {
                 let table = parts.next();
                 match (namespace, table) {
                     (Some(namespace), Some(table)) => Ok(TableId {
-                        namespace_id: NamespaceId::new(namespace),
+                        namespace_id: SchemaId::new(namespace),
                         table_name:   TableName::new(table),
                     }),
                     _ => Err(E::custom(format!("Invalid table_id format: {}", value))),
@@ -249,7 +250,7 @@ mod tests {
 
     #[test]
     fn test_table_id_new() {
-        let namespace_id = NamespaceId::new("ns1");
+        let namespace_id = SchemaId::new("ns1");
         let table_name = TableName::new("users");
         let table_id = TableId::new(namespace_id.clone(), table_name.clone());
 
@@ -342,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_table_id_from_typed_components_skips_string_roundtrip() {
-        let namespace_id = NamespaceId::new("ns1");
+        let namespace_id = SchemaId::new("ns1");
         let table_name = TableName::new("users");
         let from_ref = TableId::from_ref(&namespace_id, &table_name);
         let from_namespace = TableId::from_namespace(namespace_id.clone(), "users");
@@ -360,5 +361,41 @@ mod tests {
         let parsed = TableId::from_storage_key(&key).unwrap();
 
         assert_eq!(table_id, parsed);
+    }
+
+    #[test]
+    fn table_id_json_stays_folded_namespace_dot_table() {
+        let table_id = TableId::from_strings("Default", "Items");
+        assert_eq!(table_id.full_name(), "default.items");
+        let json = serde_json::to_string(&table_id).unwrap();
+        assert_eq!(json, "\"default.items\"");
+    }
+
+    #[test]
+    fn table_record_keeps_identity_across_rename_move_and_restart() {
+        use crate::models::ids::schema_identity::{
+            IdentitySource, SchemaRecord, SqlIdent, TableKind, TableRecord,
+        };
+
+        let mut source = IdentitySource::new();
+        let origin = SchemaRecord::create(&mut source, SqlIdent::unquoted("app").unwrap());
+        let destination = SchemaRecord::create(&mut source, SqlIdent::unquoted("other").unwrap());
+        let mut table = TableRecord::ordinary(
+            &mut source,
+            origin.identity().clone(),
+            SqlIdent::unquoted("items").unwrap(),
+        );
+        assert_eq!(table.kind(), TableKind::Shared);
+        let identity = table.identity().clone();
+        let encoded = table.encoded_identity();
+        table.rename(SqlIdent::quoted("Items").unwrap());
+        table.set_schema(destination.identity().clone());
+        assert_eq!(table.identity(), &identity);
+        assert_eq!(table.encoded_identity(), encoded);
+        assert_eq!(TableRecord::from_bytes(&table.to_bytes().unwrap()).unwrap(), table);
+
+        let legacy = TableRecord::legacy("default", "items", TableKind::Shared).unwrap();
+        assert_eq!(legacy.kind(), TableKind::Shared);
+        assert!(!legacy.encoded_identity().contains("items"));
     }
 }

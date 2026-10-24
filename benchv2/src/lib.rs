@@ -7,6 +7,7 @@ pub mod metrics;
 pub mod preflight;
 pub mod reporter;
 pub mod runner;
+pub mod soak;
 pub mod system_info;
 pub mod verdict;
 

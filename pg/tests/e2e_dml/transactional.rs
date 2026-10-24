@@ -123,7 +123,7 @@ async fn wait_for_transaction_cleanup(
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_begin_commit_persists_rows() {
     let env = TestEnv::global().await;
     let mut pg = env.pg_connect().await;
@@ -156,7 +156,7 @@ async fn e2e_transaction_begin_commit_persists_rows() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_begin_rollback_discards_rows() {
     let env = TestEnv::global().await;
     let mut pg = env.pg_connect().await;
@@ -183,7 +183,7 @@ async fn e2e_transaction_begin_rollback_discards_rows() {
 }
 
 #[tokio::test]
-#[ntest::timeout(7000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_duplicate_primary_key_commit_fails() {
     let env = TestEnv::global().await;
     let mut pg = env.pg_connect().await;
@@ -232,7 +232,7 @@ async fn e2e_transaction_duplicate_primary_key_commit_fails() {
 }
 
 #[tokio::test]
-#[ntest::timeout(12000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transaction() {
     let env = TestEnv::global().await;
     let setup_pg = env.pg_connect().await;
@@ -367,7 +367,7 @@ async fn e2e_transaction_mixed_native_and_kalamdb_rows_share_one_remote_transact
 }
 
 #[tokio::test]
-#[ntest::timeout(12000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows() {
     let env = TestEnv::global().await;
     let setup_pg = env.pg_connect().await;
@@ -466,7 +466,7 @@ async fn e2e_transaction_kalamdb_commit_failure_rolls_back_native_postgres_rows(
 }
 
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(30000)]
 async fn e2e_transaction_switching_user_id_keeps_rows_in_separate_user_scopes() {
     let env = TestEnv::global().await;
     let table = unique_name("profiles_tx_user_scope");

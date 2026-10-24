@@ -146,7 +146,7 @@ mod tests {
         Arc,
     };
 
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -231,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_data_applier_insert() {
         let applier = MockUserDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         let result = applier.insert(&table_id, &user_id, &[], &[], &[]).await;
@@ -242,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_data_applier_update() {
         let applier = MockUserDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         let result = applier.update(&table_id, &user_id, &[], None, &[]).await;
@@ -253,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_data_applier_delete() {
         let applier = MockUserDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         let result = applier.delete(&table_id, &user_id, None, &[]).await;
@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_user_applier_returns_zero() {
         let applier = NoOpUserDataApplier;
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         assert_eq!(applier.insert(&table_id, &user_id, &[], &[], &[]).await.unwrap(), 0);
@@ -276,7 +276,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_applier_with_filter() {
         let applier = MockUserDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         // Update with filter
@@ -293,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_operations_sequential() {
         let applier = MockUserDataApplier::new();
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
         let user_id = UserId::from("user_123");
 
         applier.insert(&table_id, &user_id, &[], &[], &[]).await.unwrap();

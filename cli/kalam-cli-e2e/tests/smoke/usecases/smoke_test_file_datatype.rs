@@ -31,7 +31,7 @@ async fn test_file_datatype_upload_and_download() {
         .expect("Failed to get access token");
 
     // 1. Create namespace
-    let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
+    let create_ns_sql = format!("CREATE SCHEMA {}", ns);
     let ns_result =
         execute_sql_via_http_as_for_url(&client, &base_url, &token, &create_ns_sql).await;
     assert!(ns_result.is_ok(), "Failed to create namespace: {:?}", ns_result);
@@ -215,10 +215,134 @@ async fn test_file_datatype_upload_and_download() {
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql_via_http_as_for_url(&client, &base_url, &token, &drop_ns_sql).await;
 
     println!("✅ FILE datatype smoke test passed!");
+}
+
+#[tokio::test]
+#[ntest::timeout(90000)]
+async fn test_shared_file_download_follows_conversation_membership() {
+    let ctx = test_context();
+    let client = shared_http_client();
+    let base_url = force_auto_test_server_url_async().await;
+    let ns = generate_unique_namespace("file_member");
+    let messages = "messages";
+    let members = "members";
+    let password = "smoke_pass_123";
+    let alice = format!("{ns}_alice");
+    let bob = format!("{ns}_bob");
+    let root = get_access_token_for_url(&base_url, &ctx.username, &ctx.password)
+        .await
+        .expect("root token");
+
+    for sql in [
+        format!("CREATE SCHEMA {ns}"),
+        format!(
+            "CREATE TABLE {ns}.{messages} (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, \
+             attachment FILE) WITH (TYPE='SHARED')"
+        ),
+        format!(
+            "CREATE TABLE {ns}.{members} (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, \
+             conversation_id TEXT NOT NULL) WITH (TYPE='SHARED')"
+        ),
+        format!("CREATE USER {alice} WITH PASSWORD '{password}' ROLE 'user'"),
+        format!("CREATE USER {bob} WITH PASSWORD '{password}' ROLE 'user'"),
+        format!(
+            "INSERT INTO {ns}.{members} (id, user_id, conversation_id) VALUES ('m-alice', \
+             '{alice}', 'conv-a'), ('m-bob', '{bob}', 'conv-b')"
+        ),
+        format!(
+            "CREATE POLICY conversation_member_read ON {ns}.{messages} FOR SELECT TO user USING \
+             (conversation_id IN (SELECT conversation_id FROM {ns}.{members} WHERE user_id = \
+             CURRENT_USER))"
+        ),
+    ] {
+        execute_sql_via_http_as_for_url(&client, &base_url, &root, &sql)
+            .await
+            .unwrap_or_else(|error| panic!("{sql} failed: {error}"));
+    }
+
+    let expected = b"conversation-bytes";
+    let sql = format!(
+        "INSERT INTO {ns}.{messages} (id, conversation_id, attachment) VALUES ('msg-a', 'conv-a', \
+         FILE(\"attachment\"))"
+    );
+    let form = reqwest::multipart::Form::new().text("sql", sql).part(
+        "file:attachment",
+        reqwest::multipart::Part::bytes(expected.to_vec())
+            .file_name("note.txt")
+            .mime_str("text/plain")
+            .expect("mime"),
+    );
+    let upload = client
+        .post(format!("{base_url}/v1/api/sql"))
+        .bearer_auth(&root)
+        .multipart(form)
+        .send()
+        .await
+        .expect("upload")
+        .json::<Value>()
+        .await
+        .expect("upload json");
+    assert_eq!(upload["status"], "success", "upload failed: {upload}");
+
+    let selected = execute_sql_via_http_as_for_url(
+        &client,
+        &base_url,
+        &root,
+        &format!("SELECT attachment FROM {ns}.{messages} WHERE id = 'msg-a'"),
+    )
+    .await
+    .expect("select attachment");
+    let attachment = &selected["results"][0]["rows"][0][0];
+    let file_ref: Value = match attachment.as_str() {
+        Some(raw) => serde_json::from_str(raw).expect("file ref json"),
+        None => attachment.clone(),
+    };
+    let download_url = format!(
+        "{base_url}/v1/files/{ns}/{messages}/{}/{}",
+        file_ref["sub"].as_str().expect("sub"),
+        stored_filename_from_file_ref(&file_ref)
+    );
+
+    let alice_token = get_access_token_for_url(&base_url, &alice, password)
+        .await
+        .expect("alice token");
+    let alice_download = client
+        .get(&download_url)
+        .bearer_auth(alice_token)
+        .send()
+        .await
+        .expect("alice download");
+    assert_eq!(alice_download.status(), reqwest::StatusCode::OK);
+    assert_eq!(alice_download.bytes().await.expect("alice bytes").as_ref(), expected);
+
+    let bob_token = get_access_token_for_url(&base_url, &bob, password).await.expect("bob token");
+    let bob_download = client
+        .get(&download_url)
+        .bearer_auth(bob_token)
+        .send()
+        .await
+        .expect("bob download");
+    assert_eq!(bob_download.status(), reqwest::StatusCode::NOT_FOUND);
+    let bob_body: Value = bob_download.json().await.expect("bob body");
+    assert_eq!(bob_body["error"], "File not found");
+    assert_eq!(bob_body["code"], "FILE_NOT_FOUND");
+
+    let _ =
+        execute_sql_via_http_as_for_url(&client, &base_url, &root, &format!("DROP USER {alice}"))
+            .await;
+    let _ = execute_sql_via_http_as_for_url(&client, &base_url, &root, &format!("DROP USER {bob}"))
+        .await;
+    let _ = execute_sql_via_http_as_for_url(
+        &client,
+        &base_url,
+        &root,
+        &format!("DROP SCHEMA IF EXISTS {ns} CASCADE"),
+    )
+    .await;
 }
 
 async fn execute_sql_via_http_as_for_url(

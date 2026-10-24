@@ -19,8 +19,10 @@ use crate::{
     },
 };
 
+#[derive(Default)]
 pub struct GenerateOptions {
     pub languages: Option<Vec<String>>,
+    pub check:     bool,
 }
 
 pub fn generate_schema_artifacts(
@@ -29,7 +31,61 @@ pub fn generate_schema_artifacts(
     output: &WorkflowOutput,
 ) -> Result<()> {
     let languages = resolve_languages(&ctx.config, options.languages.as_ref())?;
-    generate_languages(&ctx.project_root, &ctx.config, &languages, Some(output))
+    if options.check {
+        check_languages(&ctx.project_root, &ctx.config, &languages, Some(output))
+    } else {
+        generate_languages(&ctx.project_root, &ctx.config, &languages, Some(output))
+    }
+}
+
+pub fn check_languages(
+    project_root: &Path,
+    config: &KalamProjectConfig,
+    languages: &[LanguageTarget],
+    output: Option<&WorkflowOutput>,
+) -> Result<()> {
+    let temp = tempfile::TempDir::new().map_err(|err| {
+        CLIError::FileError(format!("failed to create staging directory for --check: {err}"))
+    })?;
+    let staged_root = temp.path();
+    if let Some(schema_rel) = &config.schema.path {
+        let src_schema = project_root.join(schema_rel);
+        let dst_schema = staged_root.join(schema_rel);
+        if src_schema.is_file() {
+            if let Some(parent) = dst_schema.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::copy(&src_schema, &dst_schema).ok();
+        }
+    }
+    generate_languages(staged_root, config, languages, None)?;
+    for language in languages {
+        let key = language.as_str();
+        let Some(target) = config.schema.targets.get(key) else {
+            continue;
+        };
+        let staged_file = staged_root.join(&target.output);
+        let actual_file = project_root.join(&target.output);
+        let expected = std::fs::read(&staged_file).map_err(|err| {
+            CLIError::FileError(format!("failed to read staged '{}': {err}", target.output))
+        })?;
+        let actual = std::fs::read(&actual_file).map_err(|_| {
+            CLIError::ConfigurationError(format!(
+                "schema gen --check failed: missing generated artifact '{}'",
+                target.output
+            ))
+        })?;
+        if actual != expected {
+            return Err(CLIError::ConfigurationError(format!(
+                "schema gen --check failed: '{}' is out of date with current schema contract",
+                target.output
+            )));
+        }
+    }
+    if let Some(out) = output {
+        out.status("schema gen --check passed: generated artifacts match current contract");
+    }
+    Ok(())
 }
 
 pub fn generate_languages(
@@ -45,9 +101,13 @@ pub fn generate_languages(
     }
 
     let (snapshot, hash) = load::compile_project_contract(project_root, config)?;
+    for table in snapshot.tables.values() {
+        kalamdb_sql::contracts::table_row_contract(table).map_err(|err| {
+            CLIError::ConfigurationError(format!("{} row contract: {err}", table.table_id))
+        })?;
+    }
     let home_schema = load::project_contract_namespace(config);
 
-    let mut wrote_exports = false;
     for language in languages {
         let key = language.as_str();
         let Some(target) = config.schema.targets.get(key) else {
@@ -76,10 +136,6 @@ pub fn generate_languages(
             let _spinner = output
                 .map(|out| out.status_spinner(format!("generating {} -> {}", key, target.output)));
             write_language(*language, &input)?;
-            if !wrote_exports {
-                super::api_exports::write_api_exports(&input)?;
-                wrote_exports = true;
-            }
         }
         if let Some(out) = output {
             out.status(format!("generated {} -> {}", key, target.output));

@@ -15,18 +15,19 @@ pub use batch::{
 };
 pub use decode::{
     decode_row_fields, decode_shared_row, decode_shared_row_selected, decode_stream_row,
-    decode_user_row, decode_user_row_selected,
+    decode_user_row, decode_user_row_selected, RowView,
 };
 pub use encode::{
     encode_row_envelope, encode_row_fields, encode_row_fields_from_columns, encode_shared_row,
-    encode_stream_row, encode_user_row, encode_user_row_from_columns,
+    encode_shared_row_v2, encode_stream_row, encode_tombstone_row_v2, encode_user_row,
+    encode_user_row_from_columns, encode_user_row_v2,
 };
 pub use from_table::{
     storage_data_type_from_arrow, storage_data_type_from_kalam, storage_schema_from_table,
     storage_schema_from_table_with_arrow,
 };
 pub use metadata::{decode_row_metadata, RowMetadata};
-pub use schema::{StorageDataType, StorageField, StorageSchema};
+pub use schema::{StorageDataType, StorageField, StorageSchema, StorageVersionLayout};
 
 #[cfg(test)]
 mod tests {
@@ -41,7 +42,7 @@ mod tests {
     use kalamdb_commons::{
         ids::VersionId,
         models::{
-            rows::{Row, StreamTableRow, UserTableRow},
+            rows::{Row, SharedTableRow, StreamTableRow, UserTableRow},
             UserId,
         },
     };
@@ -253,18 +254,22 @@ mod tests {
         let fields = Row { values };
 
         let version = VersionId::try_from_i64(77).unwrap();
-        let encoded = encode_shared_row(true, &fields, &schema).unwrap();
-        let (decoded_version, deleted, decoded_fields) =
-            decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
-        assert_eq!(decoded_version, version);
-        assert!(deleted);
-        assert_eq!(decoded_fields.values.get("id"), fields.values.get("id"));
+        let shared = SharedTableRow {
+            _version: version,
+            _deleted: true,
+            fields:   fields.clone(),
+        };
+        let encoded = encode_shared_row(&shared, &schema).unwrap();
+        let decoded = decode_shared_row(encoded.as_slice(), &schema, version).unwrap();
+        assert_eq!(decoded._version, version);
+        assert!(decoded._deleted);
+        assert_eq!(decoded.fields.values.get("id"), fields.values.get("id"));
 
         let selected =
             decode_shared_row_selected(encoded.as_slice(), &schema, version, &[0]).unwrap();
-        assert_eq!(selected.0, version);
-        assert!(selected.1);
-        assert_eq!(selected.2.values.get("id"), fields.values.get("id"));
+        assert_eq!(selected._version, version);
+        assert!(selected._deleted);
+        assert_eq!(selected.fields.values.get("id"), fields.values.get("id"));
 
         let stream = StreamTableRow {
             user_id:    UserId::new("owner"),
@@ -414,5 +419,238 @@ mod tests {
         let envelope = kalamdb_commons::models::rows::RowEnvelope::new(columns);
         let from_envelope = encode_row_envelope(row._deleted, &envelope, &schema).unwrap();
         assert_eq!(from_map.as_slice(), from_envelope.as_slice());
+    }
+
+    #[test]
+    fn row_body_v2_round_trips_and_zero_copy_view_accesses_fields() {
+        let schema = StorageSchema::new(
+            1,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("flag", StorageDataType::Boolean),
+                StorageField::new("note", StorageDataType::Utf8),
+                StorageField::new("customer", customer_type()),
+            ],
+        );
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(42)));
+        values.insert("flag".to_string(), ScalarValue::Boolean(Some(true)));
+        values.insert("note".to_string(), ScalarValue::Utf8(Some("hello v2".to_string())));
+        values.insert("customer".to_string(), struct_scalar(99, "Ada"));
+        let row = UserTableRow {
+            user_id:  UserId::new("u1"),
+            _version: VersionId::try_from_i64(7).unwrap(),
+            _deleted: false,
+            fields:   Row { values },
+        };
+
+        let encoded = encode_user_row_v2(&row, &schema).unwrap();
+        let (header, payload) =
+            crate::object::decode_envelope(encoded.as_slice(), crate::object::ObjectKind::Row)
+                .unwrap();
+        assert_ne!(header.flags & crate::object::FLAG_ROW_BODY_V2, 0);
+
+        let view = RowView::parse(payload, &schema, header.flags).unwrap();
+        assert!(!view.is_deleted());
+        assert!(!view.is_null(0));
+        assert_eq!(view.fixed_bytes(0, &schema).unwrap(), Some(42i64.to_le_bytes().as_slice()));
+        assert_eq!(view.fixed_bytes(1, &schema).unwrap(), Some(&[1u8][..]));
+        assert_eq!(
+            view.decode_field(2, &schema).unwrap(),
+            ScalarValue::Utf8(Some("hello v2".to_string()))
+        );
+
+        let decoded =
+            decode_user_row(encoded.as_slice(), &schema, row.user_id.clone(), row._version)
+                .unwrap();
+        assert_eq!(decoded, row);
+
+        let selected = decode_user_row_selected(
+            encoded.as_slice(),
+            &schema,
+            row.user_id.clone(),
+            row._version,
+            &[0, 2],
+        )
+        .unwrap();
+        assert_eq!(selected.fields.values.get("id"), Some(&ScalarValue::Int64(Some(42))));
+        assert_eq!(
+            selected.fields.values.get("note"),
+            Some(&ScalarValue::Utf8(Some("hello v2".to_string())))
+        );
+        assert!(!selected.fields.values.contains_key("customer"));
+    }
+
+    #[test]
+    fn row_body_v2_tombstone_only_and_mixed_v1_v2_batch_decode() {
+        let v1_schema = StorageSchema::new(
+            1,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("name", StorageDataType::Utf8),
+            ],
+        );
+        let mut v2_schema = StorageSchema::new(
+            2,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("name", StorageDataType::Utf8),
+                StorageField::new("score", StorageDataType::Int64)
+                    .with_missing_default(Some(ScalarValue::Int64(Some(100)))),
+            ],
+        );
+        v2_schema.register_historical_version(1, &v1_schema.fields);
+
+        let mut v1_values = std::collections::BTreeMap::new();
+        v1_values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
+        v1_values.insert("name".to_string(), ScalarValue::Utf8(Some("legacy".to_string())));
+        let v1_row = UserTableRow {
+            user_id:  UserId::new("u1"),
+            _version: VersionId::try_from_i64(1).unwrap(),
+            _deleted: false,
+            fields:   Row { values: v1_values },
+        };
+        let encoded_v1 = encode_user_row(&v1_row, &v1_schema).unwrap();
+
+        let mut v2_values = std::collections::BTreeMap::new();
+        v2_values.insert("id".to_string(), ScalarValue::Int64(Some(2)));
+        v2_values.insert("name".to_string(), ScalarValue::Utf8(Some("modern".to_string())));
+        v2_values.insert("score".to_string(), ScalarValue::Int64(Some(250)));
+        let v2_row = UserTableRow {
+            user_id:  UserId::new("u1"),
+            _version: VersionId::try_from_i64(2).unwrap(),
+            _deleted: false,
+            fields:   Row { values: v2_values },
+        };
+        let encoded_v2 = encode_user_row_v2(&v2_row, &v2_schema).unwrap();
+
+        let tombstone = encode_tombstone_row_v2(v2_schema.version).unwrap();
+        assert!(decode_row_metadata(tombstone.as_slice()).unwrap().deleted);
+        let decoded_tombstone = decode_user_row(
+            tombstone.as_slice(),
+            &v2_schema,
+            UserId::new("u1"),
+            VersionId::try_from_i64(3).unwrap(),
+        )
+        .unwrap();
+        assert!(decoded_tombstone._deleted);
+        assert_eq!(decoded_tombstone.fields.values.get("id"), Some(&ScalarValue::Int64(None)));
+
+        let arrow_schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            Field::new("id", DataType::Int64, true),
+            Field::new("name", DataType::Utf8, true),
+            Field::new("score", DataType::Int64, true),
+        ]));
+        let batch = decode_payloads_to_arrow_batch(
+            &v2_schema,
+            arrow_schema,
+            &[encoded_v1.as_slice(), encoded_v2.as_slice()],
+        )
+        .unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        let scores = batch.column(2).as_any().downcast_ref::<Int64Array>().unwrap();
+        assert_eq!(scores.value(0), 100);
+        assert_eq!(scores.value(1), 250);
+    }
+
+    #[test]
+    fn unknown_row_envelope_flag_is_rejected() {
+        let schema = orders_schema();
+        let row = sample_row();
+        let mut encoded = encode_user_row(&row, &schema).unwrap().into_bytes();
+        // Set an unknown flag bit (0x8000) in the envelope flags at bytes 9..11.
+        let flags = u16::from_le_bytes([encoded[9], encoded[10]]) | 0x8000;
+        encoded[9..11].copy_from_slice(&flags.to_le_bytes());
+        let err = decode_user_row(&encoded, &schema, row.user_id, row._version).unwrap_err();
+        assert!(err.to_string().contains("unsupported envelope flags"));
+    }
+
+    #[test]
+    fn row_body_v2_rejects_non_monotonic_offsets_and_trailing_bytes() {
+        let schema = StorageSchema::new(
+            1,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::new("a", StorageDataType::Utf8),
+                StorageField::new("b", StorageDataType::Utf8),
+            ],
+        );
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(1)));
+        values.insert("a".to_string(), ScalarValue::Utf8(Some("hello".to_string())));
+        values.insert("b".to_string(), ScalarValue::Utf8(Some("world".to_string())));
+        let row = UserTableRow {
+            user_id:  UserId::new("u1"),
+            _version: VersionId::try_from_i64(1).unwrap(),
+            _deleted: false,
+            fields:   Row { values },
+        };
+        let encoded = encode_user_row_v2(&row, &schema).unwrap();
+        let (header, payload) =
+            crate::object::decode_envelope(encoded.as_slice(), crate::object::ObjectKind::Row)
+                .unwrap();
+
+        // Corrupt the first variable end offset so end0 > end1 (non-monotonic).
+        let mut bad_offsets = payload.to_vec();
+        // Layout: schema_version(2) + row_flags(1) + slot_span(2) + fixed(8) = 13; offsets start at
+        // 13.
+        bad_offsets[13] = 10;
+        bad_offsets[14] = 5;
+        let err = RowView::parse(&bad_offsets, &schema, header.flags).unwrap_err();
+        assert!(err.to_string().contains("invalid v2 variable offset"));
+
+        // Corrupt the final variable end offset so it under-reads var_data (trailing bytes).
+        let mut trailing = payload.to_vec();
+        trailing[14] = 8;
+        let err = RowView::parse(&trailing, &schema, header.flags).unwrap_err();
+        assert!(err.to_string().contains("trailing bytes after v2 variable data"));
+    }
+
+    #[test]
+    fn two_column_row_decodes_after_add_drop_rename_and_alter_type() {
+        let v1 = StorageSchema::new(
+            1,
+            vec![
+                StorageField::new("id", StorageDataType::Int32),
+                StorageField::new("legacy_name", StorageDataType::Utf8),
+            ],
+        );
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int32(Some(77)));
+        values.insert("legacy_name".to_string(), ScalarValue::Utf8(Some("drop-me".to_string())));
+        let row = UserTableRow {
+            user_id:  UserId::new("u1"),
+            _version: VersionId::try_from_i64(1).unwrap(),
+            _deleted: false,
+            fields:   Row { values },
+        };
+        let encoded_v1 = encode_user_row(&row, &v1).unwrap();
+
+        // v4 after: ALTER id TYPE BIGINT, DROP legacy_name (slot 1 hole), ADD title WITH DEFAULT,
+        // RENAME title -> label
+        let mut v4 = StorageSchema::new(
+            4,
+            vec![
+                StorageField::new("id", StorageDataType::Int64),
+                StorageField::dropped_slot(),
+                StorageField::new("label", StorageDataType::Utf8)
+                    .with_missing_default(Some(ScalarValue::Utf8(Some("backfilled".to_string())))),
+            ],
+        );
+        v4.register_historical_version(1, &v1.fields);
+
+        let decoded = decode_user_row(
+            encoded_v1.as_slice(),
+            &v4,
+            UserId::new("u1"),
+            VersionId::try_from_i64(1).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decoded.fields.values.get("id"), Some(&ScalarValue::Int64(Some(77))));
+        assert!(!decoded.fields.values.contains_key("legacy_name"));
+        assert_eq!(
+            decoded.fields.values.get("label"),
+            Some(&ScalarValue::Utf8(Some("backfilled".to_string())))
+        );
     }
 }

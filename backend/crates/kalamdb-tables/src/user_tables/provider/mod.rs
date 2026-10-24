@@ -27,10 +27,7 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::{
-        arrow_json_conversion::{coerce_rows, coerce_updates},
-        parse_string_as_scalar,
-    },
+    conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::{SeqId, UserTableRowId, VersionId},
     models::{rows::Row, OperationKind, UserId},
     websocket::ChangeNotification,
@@ -51,7 +48,9 @@ use kalamdb_session_datafusion::{
     check_user_table_access, check_user_table_write_access, session_error_to_datafusion,
 };
 use kalamdb_store::EntityStore;
-use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
+use kalamdb_transactions::{
+    build_insert_staged_mutations, extract_transaction_query_context, StagedMutation,
+};
 use kalamdb_vector::{new_indexed_user_vector_hot_store, UserVectorHotOpId, UserVectorHotStore};
 use tracing::Instrument;
 

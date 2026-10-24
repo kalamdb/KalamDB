@@ -5,7 +5,7 @@
 use kalamdb_commons::models::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableType},
-    NamespaceId, TableId, TableName,
+    SchemaId, TableId, TableName,
 };
 
 use super::test_support::TestServer;
@@ -25,7 +25,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
 
     // Create a table with columns defined out of order
     let namespace = unique_namespace("test_ns");
-    let test_namespace = NamespaceId::from(namespace.as_str());
+    let test_namespace = SchemaId::from(namespace.as_str());
     let table_name = TableName::new("test_table");
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
@@ -46,7 +46,7 @@ async fn test_select_star_returns_columns_in_ordinal_order() {
     .expect("Failed to create table definition");
 
     // Create namespace first
-    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
 
     // Store the table definition using system tables provider
     server
@@ -93,12 +93,12 @@ async fn test_alter_table_add_column_assigns_next_ordinal() {
     let server = TestServer::new_shared().await;
 
     let namespace = unique_namespace("test_ns");
-    let test_namespace = NamespaceId::from(namespace.as_str());
+    let test_namespace = SchemaId::from(namespace.as_str());
     let table_name = TableName::new("test_table");
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
 
     // Create initial table with 2 columns
     let initial_columns = vec![
@@ -155,12 +155,12 @@ async fn test_alter_table_drop_column_preserves_ordinals() {
     let server = TestServer::new_shared().await;
 
     let namespace = unique_namespace("test_ns");
-    let test_namespace = NamespaceId::from(namespace.as_str());
+    let test_namespace = SchemaId::from(namespace.as_str());
     let table_name = TableName::new("test_table");
     let table_id = TableId::new(test_namespace.clone(), table_name.clone());
 
     // Create namespace first
-    server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await;
+    server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await;
 
     // Create table with 4 columns
     let initial_columns = vec![

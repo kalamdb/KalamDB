@@ -138,6 +138,6 @@ mod tests {
             .find(|column| column.column_name == "node_id")
             .expect("node_id column must exist");
 
-        assert_eq!(node_id_column.data_type, KalamDataType::BigInt);
+        assert_eq!(node_id_column.data_type(), KalamDataType::BigInt);
     }
 }

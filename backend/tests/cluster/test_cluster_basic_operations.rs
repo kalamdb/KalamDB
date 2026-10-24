@@ -12,7 +12,7 @@ async fn test_cluster_basic_crud_operations() {
     let table = "messages";
 
     let response = cluster
-        .execute_sql_on_random(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql_on_random(&format!("CREATE SCHEMA {}", namespace))
         .await
         .expect("Failed to create namespace");
     assert_eq!(

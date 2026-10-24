@@ -11,6 +11,7 @@ use kalamdb_commons::{
 };
 use kalamdb_raft::RaftExecutor;
 use kalamdb_sharding::{GroupId, ShardRouter};
+use kalamdb_transactions::primary_key_claims;
 use tokio::{runtime::Handle, time::MissedTickBehavior};
 use uuid::Uuid;
 
@@ -98,6 +99,7 @@ impl TransactionCoordinator {
                     )));
                 }
 
+                self.release_primary_key_claims(&existing_transaction_id);
                 self.active_by_id.remove(&existing_transaction_id);
                 self.write_sets.remove(&existing_transaction_id);
                 self.active_by_id.insert(transaction_id.clone(), handle);
@@ -166,6 +168,7 @@ impl TransactionCoordinator {
             handle.mark_state(TransactionState::Aborted);
             drop(handle);
             self.write_sets.remove(transaction_id);
+            self.release_primary_key_claims(transaction_id);
 
             tracing::warn!(
                 transaction_id = %transaction_id,
@@ -260,6 +263,7 @@ impl TransactionCoordinator {
             handle.mark_state(TransactionState::Aborted);
             drop(handle);
             self.write_sets.remove(transaction_id);
+            self.release_primary_key_claims(transaction_id);
 
             tracing::warn!(
                 transaction_id = %transaction_id,
@@ -317,7 +321,7 @@ impl TransactionCoordinator {
 
         let write_set = self.write_sets.remove(transaction_id).map(|(_, write_set)| write_set);
 
-        let Some(write_set) = write_set else {
+        let Some(write_set) = write_set.filter(|ws| !ws.ordered_mutations.is_empty()) else {
             self.active_by_owner.remove(&owner_key);
 
             let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
@@ -328,6 +332,7 @@ impl TransactionCoordinator {
                 )));
             };
             sealed_handle.mark_state(TransactionState::Committed);
+            self.release_primary_key_claims(transaction_id);
             crate::functions::flush_staged_publishes(self.app_context.as_ref(), transaction_id)?;
 
             return Ok(TransactionCommitResult::committed(
@@ -347,12 +352,16 @@ impl TransactionCoordinator {
             .commit_transaction(transaction_id.clone(), mutations)
             .await
         {
-            Ok(response) => response,
+            Ok(response) => {
+                self.release_primary_key_claims(transaction_id);
+                response
+            },
             Err(error) => {
                 self.active_by_owner.remove(&owner_key);
                 if let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) {
                     sealed_handle.mark_state(TransactionState::Aborted);
                 }
+                self.release_primary_key_claims(transaction_id);
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
                 let source = error.into_coded();
                 return Err(KalamDbError::Coded(source.with_context(
@@ -412,6 +421,7 @@ impl TransactionCoordinator {
                 let owner_key = handle.owner_key;
                 drop(handle);
                 self.write_sets.remove(transaction_id);
+                self.release_primary_key_claims(transaction_id);
                 crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
                 self.active_by_owner.remove(&owner_key);
                 self.active_by_id.remove(transaction_id);
@@ -427,6 +437,7 @@ impl TransactionCoordinator {
         };
 
         self.write_sets.remove(transaction_id);
+        self.release_primary_key_claims(transaction_id);
         crate::functions::drop_staged_publishes(self.app_context.as_ref(), transaction_id);
         self.active_by_owner.remove(&owner_key);
         let Some((_, mut sealed_handle)) = self.active_by_id.remove(transaction_id) else {
@@ -593,11 +604,102 @@ impl TransactionCoordinator {
         Duration::from_secs((timeout_secs / 2).clamp(1, 5))
     }
 
-    fn mark_transaction_aborted(&self, transaction_id: &TransactionId) {
-        self.write_sets.remove(transaction_id);
+    pub fn mark_transaction_aborted(&self, transaction_id: &TransactionId) {
         if let Some(mut handle) = self.active_by_id.get_mut(transaction_id) {
             handle.mark_state(TransactionState::Aborted);
         }
+    }
+
+    pub fn savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !handle.state.is_open() {
+            return Err(Self::state_error(transaction_id, handle.state, "savepoint"));
+        }
+
+        handle.touch();
+        drop(handle);
+
+        let mut write_set = self
+            .write_sets
+            .entry(transaction_id.clone())
+            .or_insert_with(|| TransactionWriteSet::new(transaction_id.clone()));
+        write_set.push_savepoint(name);
+        Ok(())
+    }
+
+    pub fn release_savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !handle.state.is_open() {
+            return Err(Self::state_error(transaction_id, handle.state, "release savepoint"));
+        }
+
+        handle.touch();
+        drop(handle);
+
+        let released = self
+            .write_sets
+            .get_mut(transaction_id)
+            .map(|mut write_set| write_set.release_savepoint(name))
+            .unwrap_or(false);
+        if !released {
+            return Err(KalamDbError::NotFound(format!(
+                "savepoint \"{}\" does not exist",
+                name.trim()
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn rollback_to_savepoint(
+        &self,
+        transaction_id: &TransactionId,
+        name: &str,
+    ) -> Result<(), KalamDbError> {
+        let mut handle = self.active_by_id.get_mut(transaction_id).ok_or_else(|| {
+            KalamDbError::NotFound(format!("transaction '{}' not found", transaction_id))
+        })?;
+
+        if !matches!(
+            handle.state,
+            TransactionState::OpenRead | TransactionState::OpenWrite | TransactionState::Aborted
+        ) {
+            return Err(Self::state_error(transaction_id, handle.state, "rollback to savepoint"));
+        }
+
+        let Some((write_count, write_bytes)) = self
+            .write_sets
+            .get_mut(transaction_id)
+            .and_then(|mut write_set| write_set.rollback_to_savepoint(name))
+        else {
+            return Err(KalamDbError::NotFound(format!(
+                "savepoint \"{}\" does not exist",
+                name.trim()
+            )));
+        };
+
+        handle.write_count = write_count;
+        handle.write_bytes = write_bytes;
+        handle.has_write_set = write_count > 0;
+        handle.mark_state(if write_count > 0 {
+            TransactionState::OpenWrite
+        } else {
+            TransactionState::OpenRead
+        });
+        Ok(())
     }
 
     async fn run_timeout_sweeper(coordinator: Weak<Self>, sweep_interval: Duration) {
@@ -653,6 +755,7 @@ impl TransactionCoordinator {
         handle.mark_state(TransactionState::TimedOut);
         drop(handle);
         self.write_sets.remove(transaction_id);
+        self.release_primary_key_claims(transaction_id);
 
         tracing::warn!(
             transaction_id = %transaction_id,
@@ -660,6 +763,10 @@ impl TransactionCoordinator {
             idle_ms = idle.as_millis() as u64,
             "transaction timed out"
         );
+    }
+
+    fn release_primary_key_claims(&self, transaction_id: &TransactionId) {
+        primary_key_claims().release_owner(transaction_id);
     }
 
     fn state_error(

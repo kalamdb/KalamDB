@@ -82,7 +82,7 @@ Use `live_events()` only when you need the raw event protocol.
 Start with a USER table. The SQL stays simple, and KalamDB scopes the data per authenticated user.
 
 ```sql
-CREATE NAMESPACE IF NOT EXISTS support;
+CREATE SCHEMA IF NOT EXISTS support;
 
 CREATE TABLE support.inbox (
   id         BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),

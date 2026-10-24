@@ -18,7 +18,7 @@ fn test_minio_file_datatype_roundtrip() {
     let full_table = format!("{}.{}", namespace, table);
 
     setup_minio_storage(&storage_id, "MinIO File Storage");
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace))
         .expect("namespace creation");
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id TEXT PRIMARY KEY, name TEXT, attachment FILE) WITH (TYPE='SHARED', \

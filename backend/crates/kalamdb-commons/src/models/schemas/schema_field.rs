@@ -68,7 +68,7 @@ impl SchemaField {
     pub fn from_column_definition(column: &ColumnDefinition, index: usize) -> Self {
         Self {
             name: column.column_name.clone(),
-            data_type: column.data_type.clone(),
+            data_type: column.data_type(),
             index,
             flags: Self::flags_for_column(column.is_primary_key, column.is_nullable),
         }

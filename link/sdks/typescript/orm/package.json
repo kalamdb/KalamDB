@@ -1,7 +1,7 @@
 {
   "name": "@kalamdb/orm",
   "type": "module",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Drizzle ORM driver and schema generator for KalamDB",
   "license": "Apache-2.0",
   "author": "KalamDB Team",
@@ -47,14 +47,14 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@kalamdb/client": ">=0.7.1 <0.8.0",
-    "drizzle-orm": ">=0.45.2"
+    "@kalamdb/client": ">=0.8.0 <0.9.0",
+    "drizzle-orm": ">=0.45.4"
   },
   "devDependencies": {
     "@kalamdb/client": "file:../client",
     "@kalamdb/consumer": "file:../consumer",
-    "@types/node": "^25.9.1",
-    "drizzle-orm": "^0.45.2",
+    "@types/node": "^26.6.5",
+    "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.3"
   },
   "keywords": [

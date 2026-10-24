@@ -34,8 +34,9 @@ serde_json = { workspace = true }
 parking_lot = { workspace = true }
 
 [dev-dependencies]
+kalamdb-store = { path = "../kalamdb-store" }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [lib]
 doctest = false

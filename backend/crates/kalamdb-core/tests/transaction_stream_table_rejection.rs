@@ -22,7 +22,7 @@ use support::{
 
 async fn create_stream_table(
     app_ctx: &Arc<kalamdb_core::app_context::AppContext>,
-    namespace: &kalamdb_commons::models::NamespaceId,
+    namespace: &kalamdb_commons::models::SchemaId,
     table_name: &str,
 ) -> TableId {
     let table_id = TableId::new(namespace.clone(), TableName::new(table_name));

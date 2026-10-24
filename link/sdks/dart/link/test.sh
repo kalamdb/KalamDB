@@ -236,7 +236,10 @@ if curl -sf "$KALAMDB_URL/health" > /dev/null 2>&1 \
   echo ""
   echo "🧪 Running e2e tests..."
   export KALAM_INTEGRATION_TEST=1
-  run_flutter_test "$DART_SDK_E2E_MACHINE_OUTPUT" test/e2e
+  # One debug server. Uncapped flutter concurrency (one test per core)
+  # makes DDL exceed the client timeout.
+  e2e_concurrency="${KALAMDB_DART_E2E_CONCURRENCY:-4}"
+  run_flutter_test "$DART_SDK_E2E_MACHINE_OUTPUT" --concurrency="$e2e_concurrency" test/e2e
   echo ""
   echo "✅ All Dart SDK tests passed!"
 else

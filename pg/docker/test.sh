@@ -126,7 +126,7 @@ fi
 curl -s "$KALAMDB_API_URL/v1/api/sql" \
     -H "Authorization: Bearer $BEARER_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"sql\": \"CREATE NAMESPACE IF NOT EXISTS $TEST_NAMESPACE\"}" > /dev/null
+    -d "{\"sql\": \"CREATE SCHEMA IF NOT EXISTS $TEST_NAMESPACE\"}" > /dev/null
 
 for table in profiles shared_items using_items; do
     curl -s "$KALAMDB_API_URL/v1/api/sql" \

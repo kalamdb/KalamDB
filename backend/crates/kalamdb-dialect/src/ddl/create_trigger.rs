@@ -1,13 +1,13 @@
 //! CREATE / DROP / ALTER TRIGGER parsers for durable topic delivery.
 
-use kalamdb_commons::models::{NamespaceId, RoutineId, TopicId, TriggerId};
+use kalamdb_commons::models::{RoutineId, SchemaId, TopicId, TriggerId};
 
 use crate::ddl::{create_type::split_qualified_ident, DdlResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTriggerStatement {
     pub trigger_id:       TriggerId,
-    pub namespace_id:     NamespaceId,
+    pub namespace_id:     SchemaId,
     pub name:             String,
     pub topic_id:         TopicId,
     pub routine_id:       RoutineId,
@@ -31,7 +31,7 @@ pub struct AlterTriggerStatement {
 }
 
 impl CreateTriggerStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let trimmed = sql.trim().trim_end_matches(';');
         let upper = trimmed.to_ascii_uppercase();
         if !upper.starts_with("CREATE TRIGGER") {
@@ -117,7 +117,7 @@ impl CreateTriggerStatement {
 }
 
 impl DropTriggerStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let trimmed = sql.trim().trim_end_matches(';');
         let upper = trimmed.to_ascii_uppercase();
         if !upper.starts_with("DROP TRIGGER") {
@@ -138,7 +138,7 @@ impl DropTriggerStatement {
 }
 
 impl AlterTriggerStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let trimmed = sql.trim().trim_end_matches(';');
         let upper = trimmed.to_ascii_uppercase();
         if !upper.starts_with("ALTER TRIGGER") {
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn parse_create_trigger_with_options() {
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let stmt = CreateTriggerStatement::parse(
             "CREATE TRIGGER chat.process_message ON TOPIC chat.message_created EXECUTE PROCEDURE \
              chat.on_message_created(PAYLOAD) WITH (principal = 'function-worker', start = \
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn parse_create_trigger_defaults_principal_to_session() {
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let stmt = CreateTriggerStatement::parse(
             "CREATE TRIGGER chat.process_message ON TOPIC chat.message_created EXECUTE PROCEDURE \
              chat.on_message_created(PAYLOAD)",
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn parse_alter_and_drop_trigger() {
-        let ns = NamespaceId::new("chat");
+        let ns = SchemaId::new("chat");
         let disable =
             AlterTriggerStatement::parse("ALTER TRIGGER chat.process_message DISABLE", &ns)
                 .unwrap();

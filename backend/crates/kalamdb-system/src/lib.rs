@@ -51,7 +51,7 @@ pub use initialization::initialize_system_tables;
 // Re-export from kalamdb-commons for convenience
 pub use kalamdb_commons::models::{AuthType, Role};
 // Re-export SystemTable and StoragePartition from kalamdb_commons for consistent usage
-pub use kalamdb_commons::{schemas, NamespaceId, StoragePartition, SystemTable, TableName};
+pub use kalamdb_commons::{schemas, SchemaId, StoragePartition, SystemTable, TableName};
 // Re-export DataFusion session security adapters for convenience
 pub use kalamdb_session_datafusion::{
     check_system_table_access, secure_provider, SecuredSystemTableProvider, SessionUserContext,
@@ -78,7 +78,7 @@ pub use providers::{
         VectorMetric,
     },
     migrations::models::Migration,
-    namespaces::models::Namespace,
+    schemas::models::Namespace,
     storages::models::{Storage, StorageType},
     users::models::{
         AuthData, User, DEFAULT_LOCKOUT_DURATION_MINUTES, DEFAULT_MAX_FAILED_ATTEMPTS,

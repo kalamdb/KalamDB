@@ -345,7 +345,10 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                StreamLogRecord::Delete {
+                    row_id: _,
+                    timestamp: _,
+                } => {
                     let version = Self::version_from_key(seq_bytes);
                     deleted.insert(version);
                     // Remove from results if already added
@@ -387,7 +390,10 @@ impl MemoryStreamLogStore {
                         break;
                     }
                 },
-                StreamLogRecord::Delete { row_id: _, timestamp: _ } => {
+                StreamLogRecord::Delete {
+                    row_id: _,
+                    timestamp: _,
+                } => {
                     let version = Self::version_from_key(seq_bytes);
                     deleted.insert(version);
                 },
@@ -446,7 +452,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{rows::Row, NamespaceId, TableName},
+        models::{rows::Row, SchemaId, TableName},
     };
 
     use super::*;
@@ -466,7 +472,7 @@ mod tests {
     }
 
     fn create_test_store() -> MemoryStreamLogStore {
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         MemoryStreamLogStore::with_table_id_and_limit(table_id, 1024)
     }
 
@@ -610,7 +616,7 @@ mod tests {
 
     #[test]
     fn test_memory_store_evicts_oldest_rows_per_user() {
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = MemoryStreamLogStore::with_table_id_and_limit(table_id.clone(), 2);
         let user_id = UserId::new("user-1");
 
@@ -639,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_memory_store_evicts_per_user_independently() {
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("events"));
         let store = MemoryStreamLogStore::with_table_id_and_limit(table_id.clone(), 2);
         let user1 = UserId::new("user-1");
         let user2 = UserId::new("user-2");

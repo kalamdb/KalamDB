@@ -34,7 +34,7 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            workers: std::thread::available_parallelism().map_or(1, |n| n.get().min(4)),
+            workers: std::thread::available_parallelism().map_or(1, |n| n.get().min(8)),
             max_active: 16,
             nested_reserve: 0,
             max_queued: 128,

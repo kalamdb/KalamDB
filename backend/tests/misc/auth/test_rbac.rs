@@ -19,7 +19,7 @@ async fn test_user_role_own_tables_access_and_isolation() {
     let u2 = insert_user(&server, "bob", Role::User).await;
 
     // Create namespace and table
-    let ns_resp = server.execute_sql("CREATE NAMESPACE rbac_user").await;
+    let ns_resp = server.execute_sql("CREATE SCHEMA rbac_user").await;
     if ns_resp.status != ResponseStatus::Success {
         eprintln!("Create namespace error: {:?}", ns_resp.error);
     }
@@ -166,8 +166,8 @@ async fn test_system_role_all_access_smoke() {
     let sys = insert_user(&server, "sys", Role::System).await;
 
     // System can perform namespace admin operations
-    let resp = server.execute_sql_as_user("CREATE NAMESPACE rbac_sys_ns", sys.as_str()).await;
-    eprintln!("System CREATE NAMESPACE resp: status={} error={:?}", resp.status, resp.error);
+    let resp = server.execute_sql_as_user("CREATE SCHEMA rbac_sys_ns", sys.as_str()).await;
+    eprintln!("System CREATE SCHEMA resp: status={} error={:?}", resp.status, resp.error);
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // CREATE USER should work

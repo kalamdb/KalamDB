@@ -110,14 +110,14 @@ fn py_version_id(value: Option<Bound<'_, PyAny>>) -> PyResult<Option<VersionId>>
         return Ok(None);
     }
     if let Ok(raw) = value.extract::<i64>() {
-        return VersionId::try_from_i64(raw).map(Some).map_err(|error| {
-            KalamConfigError::new_err(error.to_string())
-        });
+        return VersionId::try_from_i64(raw)
+            .map(Some)
+            .map_err(|error| KalamConfigError::new_err(error.to_string()));
     }
     let raw: String = value.extract()?;
-    VersionId::from_decimal_str(&raw).map(Some).map_err(|error| {
-        KalamConfigError::new_err(error.to_string())
-    })
+    VersionId::from_decimal_str(&raw)
+        .map(Some)
+        .map_err(|error| KalamConfigError::new_err(error.to_string()))
 }
 
 fn live_subscription_config(
@@ -158,7 +158,11 @@ fn table_live_sql(table: &str) -> PyResult<String> {
     Ok(format!("SELECT * FROM {table}"))
 }
 
-fn checkpoint_dict(py: Python<'_>, subscription_id: &str, seq_id: VersionId) -> PyResult<Py<PyAny>> {
+fn checkpoint_dict(
+    py: Python<'_>,
+    subscription_id: &str,
+    seq_id: VersionId,
+) -> PyResult<Py<PyAny>> {
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("subscription_id", subscription_id)?;
     dict.set_item("last_version_id", seq_id.as_i64().to_string())?;

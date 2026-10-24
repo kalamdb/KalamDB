@@ -628,6 +628,48 @@ impl BackupError {
 }
 
 impl KalamDbError {
+    pub fn sqlstate(&self) -> &'static str {
+        if let KalamDbError::Coded(coded) = self {
+            if let Some(code) = coded.leaf_code().sqlstate() {
+                return code;
+            }
+        }
+        match self {
+            KalamDbError::PermissionDenied(_) | KalamDbError::Unauthorized(_) => "42501",
+            KalamDbError::TableNotFound(_) => "42P01",
+            KalamDbError::NamespaceNotFound(_) => "3F000",
+            KalamDbError::Conflict(_) | KalamDbError::IdempotentConflict(_) => "40001",
+            KalamDbError::InvalidSql(msg) => classify_message_sqlstate(msg, "42601"),
+            KalamDbError::AlreadyExists(msg) => {
+                let lower = msg.to_ascii_lowercase();
+                if lower.contains("unique")
+                    || lower.contains("primary key")
+                    || lower.contains("duplicate key")
+                {
+                    "23505"
+                } else {
+                    "42710"
+                }
+            },
+            KalamDbError::NotFound(msg) => classify_message_sqlstate(msg, "42704"),
+            KalamDbError::Storage(storage_err) => {
+                classify_message_sqlstate(&storage_err.to_string(), "XX000")
+            },
+            KalamDbError::ParameterBindingError { message } => {
+                classify_message_sqlstate(message, "22P02")
+            },
+            KalamDbError::InvalidOperation(msg)
+            | KalamDbError::ExecutionError(msg)
+            | KalamDbError::SchemaError(msg)
+            | KalamDbError::CatalogError(msg)
+            | KalamDbError::SerializationError(msg)
+            | KalamDbError::InvalidSchemaEvolution(msg)
+            | KalamDbError::Other(msg) => classify_message_sqlstate(msg, "XX000"),
+            KalamDbError::Function { message, .. } => classify_message_sqlstate(message, "XX000"),
+            other => classify_message_sqlstate(&other.to_string(), "XX000"),
+        }
+    }
+
     pub fn user_message(&self) -> Cow<'_, str> {
         match self {
             KalamDbError::ConfigError(message)
@@ -719,6 +761,79 @@ impl KalamDbError {
     }
 }
 
+fn classify_message_sqlstate(msg: &str, default_code: &'static str) -> &'static str {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("sqlstate 25p02")
+        || lower.contains("current transaction is aborted")
+        || lower.contains("because it was aborted")
+    {
+        return "25P02";
+    }
+    if lower.contains("sqlstate 3b001")
+        || (lower.contains("savepoint") && lower.contains("does not exist"))
+    {
+        return "3B001";
+    }
+    if lower.contains("sqlstate 0a000")
+        || (lower.contains("isolation level") && lower.contains("not supported"))
+    {
+        return "0A000";
+    }
+    if lower.contains("violates not-null constraint")
+        || lower.contains("not null constraint")
+        || lower.contains("cannot be null")
+        || lower.contains("non-nullable")
+        || lower.contains("not nullable")
+    {
+        return "23502";
+    }
+    if lower.contains("violates check constraint") || lower.contains("domain check") {
+        return "23514";
+    }
+    if lower.contains("foreign key violation") {
+        return "23503";
+    }
+    if lower.contains("unique constraint")
+        || lower.contains("duplicate key")
+        || lower.contains("primary key violation")
+    {
+        return "23505";
+    }
+    if lower.contains("division by zero") || lower.contains("divide by zero") {
+        return "22012";
+    }
+    if lower.contains("value too long") {
+        return "22001";
+    }
+    if lower.contains("numeric field overflow")
+        || lower.contains("out of range")
+        || lower.contains("overflow")
+    {
+        return "22003";
+    }
+    if lower.contains("invalid input syntax") || lower.contains("cannot parse") {
+        return "22P02";
+    }
+    if lower.contains("table") && (lower.contains("not found") || lower.contains("does not exist"))
+    {
+        return "42P01";
+    }
+    if lower.contains("column") && (lower.contains("not found") || lower.contains("does not exist"))
+        || lower.contains("no field named")
+    {
+        return "42703";
+    }
+    if (lower.contains("function") || lower.contains("procedure") || lower.contains("routine"))
+        && (lower.contains("not found") || lower.contains("does not exist"))
+    {
+        return "42883";
+    }
+    if lower.contains("unrecognized configuration parameter") {
+        return "42704";
+    }
+    default_code
+}
+
 // Conversion from StorageError validation to string
 impl From<String> for CoreStorageError {
     fn from(msg: String) -> Self {
@@ -802,6 +917,14 @@ mod tests {
     }
 
     #[test]
+    fn unrecognized_configuration_parameter_is_undefined_object() {
+        let err = KalamDbError::InvalidOperation(
+            "unrecognized configuration parameter \"kalam_missing_setting\"".into(),
+        );
+        assert_eq!(err.sqlstate(), "42704");
+    }
+
+    #[test]
     fn test_table_not_found_error() {
         let err = KalamDbError::table_not_found("messages");
         assert_eq!(err.to_string(), "Table not found: messages");
@@ -880,5 +1003,24 @@ mod tests {
     fn coded_user_message_is_the_rendered_template() {
         let err = KalamDbError::Coded(kalamdb_commons::CodedError::not_null("id", 1));
         assert_eq!(err.user_message(), "column 'id' cannot be NULL (row 1)");
+    }
+
+    #[test]
+    fn foreign_key_violation_is_sqlstate_23503_not_unique() {
+        let message = "foreign key violation on table \"posts\" detail Key (author)=(999) is not \
+                       present in table \"authors\".";
+        let error = KalamDbError::InvalidOperation(message.to_string());
+        assert_eq!(error.sqlstate(), "23503");
+
+        let unique = KalamDbError::InvalidOperation("duplicate key value violates unique".into());
+        assert_eq!(unique.sqlstate(), "23505");
+    }
+
+    #[test]
+    fn value_too_long_is_sqlstate_22001() {
+        let error = KalamDbError::InvalidOperation(
+            "Schema coercion failed: value too long for type character varying(255)".into(),
+        );
+        assert_eq!(error.sqlstate(), "22001");
     }
 }

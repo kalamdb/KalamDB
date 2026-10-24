@@ -24,12 +24,9 @@ use datafusion::{
     scalar::ScalarValue,
 };
 use kalamdb_commons::{
-    conversions::{
-        arrow_json_conversion::{coerce_rows, coerce_updates},
-        parse_string_as_scalar,
-    },
+    conversions::arrow_json_conversion::{coerce_rows, coerce_updates},
     ids::{SeqId, SharedTableRowId, VersionId},
-    models::{rows::Row, OperationKind, UserId},
+    models::{rows::Row, OperationKind, Role, UserId},
     websocket::ChangeNotification,
     NotLeaderError, PolicyCommand, TableId, TableType,
 };
@@ -46,7 +43,9 @@ use kalamdb_session_datafusion::{
     RlsCommandContext,
 };
 use kalamdb_store::EntityStore;
-use kalamdb_transactions::{extract_transaction_query_context, StagedMutation};
+use kalamdb_transactions::{
+    build_insert_staged_mutations, extract_transaction_query_context, StagedMutation,
+};
 use kalamdb_vector::{
     new_indexed_shared_vector_hot_store, SharedVectorHotOpId, SharedVectorHotStore,
 };

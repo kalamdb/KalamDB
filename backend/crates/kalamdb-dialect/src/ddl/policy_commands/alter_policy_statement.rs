@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::SchemaId, TableId};
 use sqlparser::ast::{AlterPolicy, AlterPolicyOperation as SqlAlterPolicyOperation, Statement};
 
 use super::{parse_one, parse_targets, resolve_table_id, AlterPolicyOperation};
@@ -13,7 +13,7 @@ pub struct AlterPolicyStatement {
 }
 
 impl AlterPolicyStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let Statement::AlterPolicy(AlterPolicy {
             name,
             table_name,

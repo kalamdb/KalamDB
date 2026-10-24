@@ -82,6 +82,7 @@ parking_lot = { workspace = true }
 [features]
 default = []
 embedded-ui = ["rust-embed"]
+traceability = ["kalamdb-observability/traceability"]
 
 [build-dependencies]
 chrono = { workspace = true }

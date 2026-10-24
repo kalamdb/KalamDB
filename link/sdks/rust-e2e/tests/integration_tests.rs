@@ -69,21 +69,19 @@ async fn setup_namespace(ns: &str) {
     let client = create_client().unwrap();
     // First drop the namespace to ensure clean state
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     // Wait for drop to complete (cleanup is async)
     sleep(Duration::from_millis(50)).await;
     // Create the namespace
-    let _ = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
-        .await;
+    let _ = client.execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None).await;
     sleep(Duration::from_millis(20)).await;
 }
 
 async fn cleanup_namespace(ns: &str) {
     let client = create_client().unwrap();
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA {} CASCADE", ns), None, None, None)
         .await;
 }
 
@@ -463,15 +461,13 @@ async fn test_create_namespace() {
 
     // Cleanup first
     let _ = client
-        .execute_query(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", ns), None, None, None)
+        .execute_query(&format!("DROP SCHEMA IF EXISTS {} CASCADE", ns), None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
     // Create
-    let result = client
-        .execute_query(&format!("CREATE NAMESPACE {}", ns), None, None, None)
-        .await;
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
+    let result = client.execute_query(&format!("CREATE SCHEMA {}", ns), None, None, None).await;
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed");
 
     // Cleanup
     cleanup_namespace(&ns).await;

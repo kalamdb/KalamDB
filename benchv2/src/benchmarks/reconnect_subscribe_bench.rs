@@ -1,12 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
 use kalam_client::{ChangeEvent, SubscriptionConfig};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures a full graceful WebSocket disconnect, reconnect, authentication,
 /// subscription registration, and initial result delivery cycle.
@@ -115,7 +111,8 @@ impl Benchmark for ReconnectSubscribeBench {
 
                 if !got_ack || result_rows == 0 {
                     return Err(format!(
-                        "Reconnect did not return the expected first result set (ack={got_ack}, rows={result_rows})"
+                        "Reconnect did not return the expected first result set (ack={got_ack}, \
+                         rows={result_rows})"
                     ));
                 }
             }

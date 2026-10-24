@@ -345,7 +345,7 @@ export function JobList({ initialFilters, compact = false, onJobClick }: JobList
                 {([
                   ["status", "Status"],
                   ["job_type", "Job Type"],
-                  [null, "Namespace / Table"],
+                  [null, "Schema / Table"],
                   ["created_at", "Created"],
                   [null, "Duration"],
                 ] as [JobSortKey | null, string][]).map(([key, label], i) => (

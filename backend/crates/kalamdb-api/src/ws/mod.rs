@@ -224,25 +224,44 @@ mod tests {
     }
 
     #[actix_rt::test]
-    async fn websocket_handler_sends_binary_notification_frames_for_msgpack_connections() {
+    async fn websocket_handler_sends_binary_notification_frames_for_domain_connections() {
         let ctx = start_ws_test_server().await;
         let mut stream =
-            connect(&ctx.base_url, &ctx.token, "?serialization=msgpack&compress=false").await;
+            connect(&ctx.base_url, &ctx.token, "?serialization=domain&compress=false").await;
 
-        expect_auth_success(&mut stream).await;
+        let auth = stream.next().await.unwrap().unwrap();
+        let Message::Binary(auth_bytes) = auth else {
+            panic!("expected domain auth frame, got {auth:?}");
+        };
+        let auth_message = kalamdb_serialization::decode_server_message(&auth_bytes).unwrap();
+        assert!(matches!(
+            auth_message,
+            kalamdb_commons::websocket_messages::ServerMessage::AuthSuccess { .. }
+        ));
         assert!(ctx
             .registry
-            .notify_connections_for_user(&ctx.user_id, make_notification("sub-msgpack")));
+            .notify_connections_for_user(&ctx.user_id, make_notification("sub-domain")));
 
         let frame = stream.next().await.unwrap().unwrap();
         let Message::Binary(bytes) = frame else {
-            panic!("expected MessagePack binary frame, got {frame:?}");
+            panic!("expected domain binary frame, got {frame:?}");
         };
-        let value: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
-        assert_eq!(value["type"], "change");
-        assert_eq!(value["subscription_id"], "sub-msgpack");
-        assert_eq!(value["change_type"], "insert");
-        assert_eq!(value["rows"][0]["body"], "hello");
+        let message = kalamdb_serialization::decode_server_message(&bytes).unwrap();
+        match message {
+            kalamdb_commons::websocket_messages::ServerMessage::Change {
+                subscription_id,
+                change_type,
+                rows,
+                ..
+            } => {
+                assert_eq!(subscription_id, "sub-domain");
+                assert_eq!(change_type, kalamdb_commons::ChangeTypeRaw::Insert);
+                let rows = rows.unwrap();
+                let body = rows[0].get("body").unwrap();
+                assert_eq!(body.as_str(), Some("hello"));
+            },
+            other => panic!("expected change, got {other:?}"),
+        }
 
         let _ = stream.close(None).await;
         ctx.server.stop(true).await;

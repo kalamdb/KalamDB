@@ -518,7 +518,7 @@ function toSdkLiveRowsOptions<T>(options?: LiveRowsOptions<T>): LiveOptions<T> {
  * Returns an unsubscribe function (Firebase/Supabase style)
  * 
  * Accepts either:
- * - A table name: "chat.messages" or "namespace.table"
+ * - A table name: "chat.messages" or "schema.table"
  * - A SQL query: "SELECT * FROM chat.messages WHERE ..."
  * - A SQL query with OPTIONS: "SELECT * FROM chat.messages OPTIONS (last_rows=20);"
  */

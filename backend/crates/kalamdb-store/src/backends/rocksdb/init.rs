@@ -7,11 +7,14 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use kalamdb_configs::RocksDbSettings;
-use rocksdb::{BlockBasedOptions, Cache, ColumnFamilyDescriptor, DataBlockIndexType, Options, DB};
+use rocksdb::{
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DataBlockIndexType, Options,
+    WriteBufferManager, DB,
+};
 use sysinfo::{MemoryRefreshKind, System};
 
 use super::{
-    cf_tuning::{apply_cf_settings, apply_db_settings},
+    cf_tuning::{apply_cf_settings, apply_db_settings, install_write_buffer_manager},
     keyspace::fixed_column_families,
     restore::apply_pending_rocksdb_restore,
 };
@@ -51,17 +54,19 @@ impl RocksDbInit {
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
-        let (db, _) = self.open_internal(&db_opts, &cache)?;
+        let (db, _, _) = self.open_internal(&mut db_opts, &cache)?;
         Ok(db)
     }
 
     /// Open and return both the DB and the list of column family names.
     pub fn open_with_cf_names(&self) -> Result<(Arc<DB>, Vec<String>)> {
-        let (db, cf_names, _) = self.open_with_cf_names_and_cache()?;
+        let (db, cf_names, _, _) = self.open_with_cf_names_and_cache()?;
         Ok((db, cf_names))
     }
 
-    pub(crate) fn open_with_cf_names_and_cache(&self) -> Result<(Arc<DB>, Vec<String>, Cache)> {
+    pub(crate) fn open_with_cf_names_and_cache(
+        &self,
+    ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -71,14 +76,20 @@ impl RocksDbInit {
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
-        let (db, cf_names) = self.open_internal(&db_opts, &cache)?;
-        Ok((db, cf_names, cache))
+        let (db, cf_names, write_buffer_manager) = self.open_internal(&mut db_opts, &cache)?;
+        Ok((db, cf_names, cache, write_buffer_manager))
     }
 
-    fn open_internal(&self, db_opts: &Options, cache: &Cache) -> Result<(Arc<DB>, Vec<String>)> {
+    fn open_internal(
+        &self,
+        db_opts: &mut Options,
+        cache: &Cache,
+    ) -> Result<(Arc<DB>, Vec<String>, WriteBufferManager)> {
         let path = Path::new(&self.db_path);
         apply_pending_rocksdb_restore(path)?;
         let cf_names = self.collect_column_family_names(db_opts, path);
+        let write_buffer_manager =
+            install_write_buffer_manager(db_opts, &self.settings, cf_names.len());
 
         let cf_descriptors: Vec<_> = cf_names
             .iter()
@@ -98,13 +109,25 @@ impl RocksDbInit {
             let start = std::time::Instant::now();
             for cf_name in &cf_names {
                 if let Some(cf) = db.cf_handle(cf_name) {
-                    db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+                    let sst_bytes = db
+                        .property_int_value_cf(&cf, "rocksdb.total-sst-files-size")
+                        .ok()
+                        .flatten()
+                        .unwrap_or(1);
+                    let mem_entries = db
+                        .property_int_value_cf(&cf, "rocksdb.num-entries-active-mem-table")
+                        .ok()
+                        .flatten()
+                        .unwrap_or(1);
+                    if sst_bytes > 0 || mem_entries > 0 {
+                        db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+                    }
                 }
             }
             log::info!("Startup compaction completed in {:?}", start.elapsed());
         }
 
-        Ok((db, cf_names))
+        Ok((db, cf_names, write_buffer_manager))
     }
 
     fn collect_column_family_names(&self, db_opts: &Options, path: &Path) -> Vec<String> {
@@ -141,7 +164,7 @@ pub(crate) fn create_block_options_with_cache(cache: &Cache) -> BlockBasedOption
     block_opts.set_data_block_hash_ratio(0.75);
     block_opts.set_cache_index_and_filter_blocks(true);
     block_opts.set_cache_index_and_filter_blocks_with_high_priority(true);
-    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+    block_opts.set_pin_l0_filter_and_index_blocks_in_cache(false);
     block_opts.set_pin_top_level_index_and_filter(true);
     block_opts.set_whole_key_filtering(true);
     block_opts

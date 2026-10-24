@@ -306,7 +306,7 @@ fn test_cli_export_import_shared_table_with_args_binary_style() {
     let source = format!("{}.{}", namespace, source_table);
     let target = format!("{}.{}", namespace, target_table);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, note VARCHAR) WITH (TYPE='SHARED')",
@@ -386,7 +386,7 @@ fn test_cli_export_import_shared_table_with_args_binary_style() {
 
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn test_cli_export_import_user_table_with_all_args_binary_style() {
     let user_id = generate_unique_namespace("xfer_actor");
     let password = "CliXferUser123!";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE USER {} WITH PASSWORD '{}' ROLE user",
@@ -498,5 +498,5 @@ fn test_cli_export_import_user_table_with_all_args_binary_style() {
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_id));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

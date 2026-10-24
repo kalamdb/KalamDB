@@ -35,7 +35,7 @@ fn smoke_test_concurrent_subscription_fanout() {
     let full_table_name = format!("{}.{}", namespace, table);
     let subscription_prefix = format!("smoke_concurrent_{}_", namespace);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, value TEXT NOT NULL) WITH (TYPE='USER')",
@@ -181,7 +181,7 @@ fn smoke_test_concurrent_subscription_fanout() {
         full_table_name_for_cleanup
     ));
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_for_cleanup
     ));
 }

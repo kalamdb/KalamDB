@@ -5,12 +5,12 @@ use kalam_pg_fdw::{
     DeleteInput, InsertInput, RequestPlanner, ScanInput, UpdateInput, VirtualColumn,
 };
 use kalamdb_commons::{
-    models::{rows::Row, NamespaceId, TableName, UserId},
+    models::{rows::Row, SchemaId, TableName, UserId},
     TableId, TableType,
 };
 
 fn table_id() -> TableId {
-    TableId::new(NamespaceId::new("pg_fdw"), TableName::new("messages"))
+    TableId::new(SchemaId::new("pg_fdw"), TableName::new("messages"))
 }
 
 #[test]

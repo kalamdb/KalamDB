@@ -1,15 +1,15 @@
 //! Shared backend session registry.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::{SystemTime, UNIX_EPOCH},
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use dashmap::{mapref::entry::Entry, DashMap};
-use kalamdb_commons::models::{SessionOrigin, TransactionId, TransactionOrigin};
+use kalamdb_commons::{
+    models::{SessionOrigin, TransactionId, TransactionOrigin},
+    unix_time_millis,
+};
 use kalamdb_transactions::{ExecutionOwnerKey, TransactionEngine, TransactionEngineError};
 
 use crate::session::{BackendAuth, BackendSession, BackendSessionSnapshot, BackendSessionState};
@@ -260,6 +260,24 @@ impl BackendSessionManager {
         Ok(())
     }
 
+    pub fn recover_failed_transaction(&self, session_id: &str) -> BackendSessionResult<()> {
+        let mut session = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        session.recover_failed_transaction();
+        session.touch("ROLLBACK TO SAVEPOINT", None, current_timestamp_ms());
+        Ok(())
+    }
+
+    pub fn block_state(&self, session_id: &str) -> BackendSessionResult<BackendSessionState> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| BackendSessionError::SessionNotFound(session_id.to_string()))?;
+        Ok(session.block_state())
+    }
+
     pub fn ensure_block_allows_work(&self, session_id: &str) -> BackendSessionResult<()> {
         let session = self
             .sessions
@@ -466,10 +484,7 @@ pub struct BackendSessionCleanupCounters {
 }
 
 fn current_timestamp_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or_default()
+    unix_time_millis()
 }
 
 fn transaction_origin(origin: SessionOrigin) -> TransactionOrigin {

@@ -219,8 +219,7 @@ fn test_cli_live_query_with_filter() {
     let table_name = generate_unique_table("live_query_filter");
     let table = format!("{}.{}", namespace_name, table_name);
 
-    let _ =
-        execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace_name));
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, content VARCHAR NOT NULL, created_at TIMESTAMP \
          DEFAULT CURRENT_TIMESTAMP) WITH (TYPE='USER', FLUSH_POLICY='rows:10')",
@@ -298,12 +297,10 @@ fn test_cli_subscription_with_initial_data() {
     let table_name = format!("{}.events", namespace_name);
 
     // Setup: Create namespace and table, insert data via CLI
-    let _ = execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace_name
-    ));
+    let _ =
+        execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace_name));
 
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace_name));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, timestamp BIGINT) WITH \
@@ -348,7 +345,7 @@ fn test_cli_subscription_with_initial_data() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace_name));
 }
 
 #[test]
@@ -370,10 +367,10 @@ fn test_cli_binary_projected_subscription_receives_live_changes() {
     let live_content = "live-row";
 
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace_name))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace_name))
         .expect("namespace should be created");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT PRIMARY KEY, role TEXT NOT NULL, author TEXT NOT NULL, \
@@ -422,7 +419,7 @@ fn test_cli_binary_projected_subscription_receives_live_changes() {
     );
 
     let _ = execute_sql_as_root_via_client(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace_name
     ));
 }
@@ -440,12 +437,10 @@ fn test_cli_subscription_comprehensive_crud() {
     let table_name = format!("{}.events", namespace_name);
 
     // Setup: Create namespace and table via CLI
-    let _ = execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
-        namespace_name
-    ));
+    let _ =
+        execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace_name));
 
-    let _ = execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace_name));
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, event_type VARCHAR, data VARCHAR, timestamp BIGINT) \
@@ -579,5 +574,5 @@ fn test_cli_subscription_comprehensive_crud() {
     );
 
     // Cleanup
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE {} CASCADE", namespace_name));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA {} CASCADE", namespace_name));
 }

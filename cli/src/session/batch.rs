@@ -85,9 +85,8 @@ mod tests {
     fn split_batch_statements_preserves_inline_procedure_bodies() {
         for delimiter in ["$$", "$body$"] {
             let procedure = format!(
-                "CREATE PROCEDURE api.greet(msg TEXT) RETURNS TEXT LANGUAGE JAVASCRIPT AS \
-                 {delimiter} const suffix = ';'; // comment\nreturn input.msg + suffix; \
-                 {delimiter}"
+                "CREATE PROCEDURE api.greet(msg TEXT) LANGUAGE JAVASCRIPT AS {delimiter} const \
+                 suffix = ';'; // comment\nreturn input.msg + suffix; {delimiter}"
             );
             let statements =
                 CLISession::split_batch_statements(&format!("{procedure}; CALL api.greet('Ada');"));

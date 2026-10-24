@@ -28,7 +28,7 @@ async fn test_system_live_metadata() {
     // Authenticate the connection
     connection_state.mark_authenticated(user_id.clone(), Role::User);
 
-    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let create_ns = format!("CREATE SCHEMA IF NOT EXISTS {}", ns);
     let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
     assert_eq!(
         ns_resp.status,
@@ -144,7 +144,7 @@ async fn test_cleanup_connection_removes_live_rows_and_registry_state() {
 
     connection_state.mark_authenticated(user_id.clone(), Role::User);
 
-    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let create_ns = format!("CREATE SCHEMA IF NOT EXISTS {}", ns);
     let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
     assert_eq!(
         ns_resp.status,

@@ -15,21 +15,3 @@ pub(crate) enum StreamLogRecord {
         timestamp: i64,
     },
 }
-
-/// On-disk stream log record. Put payloads are ordinal KOBJ row bytes.
-///
-/// `timestamp` is the row's `_timestamp` (UTC epoch millis). It is stored on
-/// the frame because KOBJ stream payloads do not embed system identity fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum PersistedStreamLogRecord {
-    Put {
-        row_id:    StreamTableRowId,
-        timestamp: i64,
-        payload:   Vec<u8>,
-    },
-    /// Soft-delete. `timestamp` is the original put's ingestion time.
-    Delete {
-        row_id:    StreamTableRowId,
-        timestamp: i64,
-    },
-}

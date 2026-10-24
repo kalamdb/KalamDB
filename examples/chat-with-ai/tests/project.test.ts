@@ -42,14 +42,14 @@ test('chat-with-ai is a kalam CLI project with generated TypeScript in src/gener
   assert.equal(existsSync(resolve(exampleRoot, 'src/schema.generated.ts')), false);
 
   assert.match(schemaSql, /CREATE SHARED TABLE IF NOT EXISTS chat_demo\.room_members/);
-  assert.match(schemaSql, /CREATE USER TABLE IF NOT EXISTS chat_demo\.direct_messages/);
+  assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS chat_demo\.direct_messages/);
   assert.match(schemaSql, /id TEXT PRIMARY KEY/);
   assert.doesNotMatch(schemaSql, /PRIMARY KEY \(user_id, room_id\)/);
   assert.match(schemaSql, /CREATE POLICY rooms_visible/);
   assert.match(schemaSql, /CREATE POLICY messages_member_select/);
   assert.doesNotMatch(schemaSql, /CREATE POLICY rooms_member_select/);
   assert.match(schemaSql, /CREATE STREAM TABLE IF NOT EXISTS chat_demo\.agent_events/);
-  assert.match(schemaSql, /CREATE PROCEDURE chat_demo\.send_message/);
+  assert.match(schemaSql, /CREATE FUNCTION chat_demo\.send_message/);
   assert.match(schemaSql, /RETURNS chat_demo\.ai_inbox/);
   assert.match(schemaSql, /payload chat_demo\.ai_inbox NOT NULL/);
   assert.match(schemaSql, /CREATE TRIGGER chat_demo\.process_user_message/);
@@ -97,11 +97,11 @@ test('app joins through the procedure instead of inserting membership rows', asy
   assert.doesNotMatch(app, /db\.insert\(roomMembers\)/);
 });
 
-test('playwright helpers send room messages with CALL send_message', async () => {
+test('playwright helpers send room messages with SELECT send_message', async () => {
   const spec = await readExample('tests/chat.spec.mjs');
   const insertUser = sliceBetween(spec, 'async function insertUserMessage', 'function sqlLiteral');
 
-  assert.match(insertUser, /CALL chat_demo\.send_message/);
+  assert.match(insertUser, /SELECT chat_demo\.send_message/);
   assert.doesNotMatch(insertUser, /EXECUTE AS USER \$\{/);
 });
 

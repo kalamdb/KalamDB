@@ -22,6 +22,7 @@ use datafusion::{
     physical_plan::ExecutionPlan,
 };
 use futures_util::StreamExt;
+use kalamdb_commons::constants::SystemColumnNames;
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::combined_filter,
@@ -176,10 +177,12 @@ fn normalize_columns_batch(
     let numeric_precision_idx = batch.schema().index_of("numeric_precision").ok();
     let numeric_scale_idx = batch.schema().index_of("numeric_scale").ok();
     let datetime_precision_idx = batch.schema().index_of("datetime_precision").ok();
+    let character_maximum_length_idx = batch.schema().index_of("character_maximum_length").ok();
 
     let mut numeric_precisions = numeric_precision_idx.map(|_| UInt64Builder::new());
     let mut numeric_scales = numeric_scale_idx.map(|_| UInt64Builder::new());
     let mut datetime_precisions = datetime_precision_idx.map(|_| UInt64Builder::new());
+    let mut character_maximum_lengths = character_maximum_length_idx.map(|_| UInt64Builder::new());
 
     for row in 0..batch.num_rows() {
         let schema = table_schemas.value(row);
@@ -189,8 +192,17 @@ fn normalize_columns_batch(
 
         if let Some(meta) = metadata_index.column(schema, table, column) {
             let normalized = normalize_column_types(&meta.data_type);
-            data_types.append_value(normalized.data_type);
-            udt_names.append_value(normalized.udt_name);
+            let (info_data_type, info_udt_name) =
+                if meta.logical_modifier.as_deref() == Some("geometry") {
+                    ("geometry", "geometry")
+                } else {
+                    match meta.character_maximum_length {
+                        Some(_) => ("character varying", "varchar"),
+                        None => (normalized.data_type, normalized.udt_name),
+                    }
+                };
+            data_types.append_value(info_data_type);
+            udt_names.append_value(info_udt_name);
             kdb_types.append_value(&normalized.kdb_data_type);
             kdb_namespace_ids.append_value(&meta.namespace_id);
             kdb_versions.append_value(meta.version);
@@ -220,6 +232,12 @@ fn normalize_columns_batch(
             }
             if let Some(builder) = datetime_precisions.as_mut() {
                 append_optional_u64(builder, normalized.datetime_precision);
+            }
+            if let Some(builder) = character_maximum_lengths.as_mut() {
+                match meta.character_maximum_length {
+                    Some(max_chars) => builder.append_value(u64::from(max_chars)),
+                    None => builder.append_null(),
+                }
             }
         } else {
             let udt = arrow_info_type_to_udt_name(arrow_type);
@@ -254,6 +272,9 @@ fn normalize_columns_batch(
                     datetime_precisions.as_mut().unwrap(),
                 );
             }
+            if let Some(builder) = character_maximum_lengths.as_mut() {
+                copy_optional_u64(batch, row, character_maximum_length_idx, builder);
+            }
         }
     }
 
@@ -269,17 +290,24 @@ fn normalize_columns_batch(
     if let (Some(idx), Some(mut builder)) = (datetime_precision_idx, datetime_precisions) {
         columns[idx] = Arc::new(builder.finish()) as ArrayRef;
     }
+    if let (Some(idx), Some(mut builder)) =
+        (character_maximum_length_idx, character_maximum_lengths)
+    {
+        columns[idx] = Arc::new(builder.finish()) as ArrayRef;
+    }
 
     let normalized_batch = RecordBatch::try_new(batch.schema(), columns)
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
 
+    let kdb_default_array = kdb_default_values.finish();
     let mut extension_columns = normalized_batch.columns().to_vec();
     for field in output_schema.fields().iter().skip(normalized_batch.num_columns()) {
         let array: ArrayRef = match field.name().as_str() {
             UDT_NAME => Arc::new(udt_names.finish()),
-            UDT_SCHEMA => {
-                Arc::new(constant_string_array(normalized_batch.num_rows(), "pg_catalog"))
-            },
+            UDT_SCHEMA => Arc::new(constant_string_array(
+                normalized_batch.num_rows(),
+                kalamdb_commons::constants::PG_CATALOG_NAMESPACE,
+            )),
             IS_GENERATED => Arc::new(constant_string_array(normalized_batch.num_rows(), "NEVER")),
             IS_IDENTITY => Arc::new(constant_string_array(normalized_batch.num_rows(), "NO")),
             KDB_DATA_TYPE => Arc::new(kdb_types.finish()),
@@ -287,7 +315,7 @@ fn normalize_columns_batch(
             KDB_VERSION => Arc::new(kdb_versions.finish()),
             KDB_COLUMN_ID => Arc::new(kdb_column_ids.finish()),
             KDB_COMMENT => Arc::new(kdb_comments.finish()),
-            KDB_DEFAULT_VALUE => Arc::new(kdb_default_values.finish()),
+            KDB_DEFAULT_VALUE => Arc::new(kdb_default_array.clone()),
             KDB_PRIMARY_KEY => Arc::new(kdb_primary_keys.finish()),
             KDB_PRIMARY_KEY_POS => Arc::new(kdb_primary_key_positions.finish()),
             name => {
@@ -299,7 +327,49 @@ fn normalize_columns_batch(
         extension_columns.push(array);
     }
 
-    RecordBatch::try_new(Arc::clone(output_schema), extension_columns)
+    let extended = RecordBatch::try_new(Arc::clone(output_schema), extension_columns)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))?;
+    let with_defaults = overlay_column_defaults(extended, &kdb_default_array)?;
+    without_system_columns(with_defaults)
+}
+
+/// PostgreSQL clients read `column_default`. Stored defaults live on the table
+/// definition and were only exposed as `kdb_default_value`.
+fn overlay_column_defaults(
+    batch: RecordBatch,
+    defaults: &StringArray,
+) -> DataFusionResult<RecordBatch> {
+    let Ok(index) = batch.schema().index_of("column_default") else {
+        return Ok(batch);
+    };
+    let existing = string_column(&batch, index, "column_default")?;
+    let mut merged = StringBuilder::with_capacity(batch.num_rows(), 32);
+    for row in 0..batch.num_rows() {
+        if !defaults.is_null(row) {
+            merged.append_value(defaults.value(row));
+        } else if existing.is_null(row) {
+            merged.append_null();
+        } else {
+            merged.append_value(existing.value(row));
+        }
+    }
+    let mut columns = batch.columns().to_vec();
+    columns[index] = Arc::new(merged.finish()) as ArrayRef;
+    RecordBatch::try_new(batch.schema(), columns)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
+}
+
+/// `_version` and `_deleted` are storage columns. Catalog clients such as
+/// Directus treat every non-null column without a default as required input.
+fn without_system_columns(batch: RecordBatch) -> DataFusionResult<RecordBatch> {
+    let index = batch.schema().index_of("column_name").map_err(plan_err)?;
+    let names = string_column(&batch, index, "column_name")?;
+    let mut keep = BooleanBuilder::with_capacity(batch.num_rows());
+    for row in 0..batch.num_rows() {
+        let hidden = !names.is_null(row) && SystemColumnNames::is_system_column(names.value(row));
+        keep.append_value(!hidden);
+    }
+    datafusion::arrow::compute::filter_record_batch(&batch, &keep.finish())
         .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
 

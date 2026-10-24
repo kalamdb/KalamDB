@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kalamdb_commons::{NamespaceId, TableId};
+use kalamdb_commons::{SchemaId, TableId};
 use kalamdb_core::{
     app_context::AppContext,
     error::KalamDbError,
@@ -23,8 +23,8 @@ impl AddTopicSourceHandler {
         Self { app_context }
     }
 
-    fn namespace_from_topic_name(topic_name: &str) -> Option<NamespaceId> {
-        topic_name.split_once('.').map(|(namespace, _)| NamespaceId::new(namespace))
+    fn namespace_from_topic_name(topic_name: &str) -> Option<SchemaId> {
+        topic_name.split_once('.').map(|(namespace, _)| SchemaId::new(namespace))
     }
 
     fn route_matches_statement(existing: &TopicRoute, route: &TopicRoute, qualified: bool) -> bool {
@@ -123,7 +123,7 @@ impl TypedStatementHandler<AddTopicSourceStatement> for AddTopicSourceHandler {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::models::{NamespaceId, PayloadMode, TableId, TopicOp};
+    use kalamdb_commons::models::{PayloadMode, SchemaId, TableId, TopicOp};
     use kalamdb_system::providers::topics::models::TopicRoute;
 
     use super::AddTopicSourceHandler;
@@ -153,7 +153,7 @@ mod tests {
     fn namespace_from_topic_name_extracts_prefix() {
         assert_eq!(
             AddTopicSourceHandler::namespace_from_topic_name("app.topic"),
-            Some(NamespaceId::new("app"))
+            Some(SchemaId::new("app"))
         );
         assert_eq!(AddTopicSourceHandler::namespace_from_topic_name("topic"), None);
     }

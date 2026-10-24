@@ -51,17 +51,16 @@ pub struct SqlStatement {
 /// Statement type variants (internal to SqlStatement)
 #[derive(Debug, Clone)]
 pub enum SqlStatementKind {
-    // ===== Namespace Operations =====
-    /// CREATE NAMESPACE <name>
-    CreateNamespace(CreateNamespaceStatement),
-    /// ALTER NAMESPACE <name> ...
-    AlterNamespace(AlterNamespaceStatement),
-    /// DROP NAMESPACE <name> [CASCADE]
-    DropNamespace(DropNamespaceStatement),
-    /// SHOW NAMESPACES
-    ShowNamespaces(ShowNamespacesStatement),
-    /// USE NAMESPACE <name> / USE <name> / SET NAMESPACE <name>
-    UseNamespace(UseNamespaceStatement),
+    PostgresSetting(crate::PostgresSetting),
+    // ===== Schema operations =====
+    /// ALTER SCHEMA <name> ...
+    AlterSchema(AlterSchemaStatement),
+    /// DROP SCHEMA <name> [CASCADE]. Historical `DROP NAMESPACE` uses the same tree.
+    DropSchema(DropSchemaStatement),
+    /// SHOW SCHEMAS
+    ShowSchemas(ShowSchemasStatement),
+    /// SET SCHEMA <name> / USE <name>
+    UseSchema(UseSchemaStatement),
 
     // ===== Storage Operations =====
     /// CREATE STORAGE <name> ...
@@ -78,7 +77,7 @@ pub enum SqlStatementKind {
     // ===== Table Operations =====
     /// CREATE [USER|SHARED|STREAM] TABLE ...
     CreateTable(CreateTableStatement),
-    /// CREATE SCHEMA ... (PostgreSQL alias of CREATE NAMESPACE)
+    /// CREATE SCHEMA ...
     CreateSchema(CreateSchemaStatement),
     /// SET search_path TO ...
     SetSearchPath(SetSearchPathStatement),
@@ -88,9 +87,17 @@ pub enum SqlStatementKind {
     AlterType(AlterTypeStatement),
     /// DROP TYPE ...
     DropType(DropTypeStatement),
-    /// CREATE PROCEDURE ...
+    /// CREATE DOMAIN ...
+    CreateDomain(CreateDomainStatement),
+    /// ALTER DOMAIN ...
+    AlterDomain(AlterDomainStatement),
+    /// DROP DOMAIN ...
+    DropDomain(DropDomainStatement),
+    /// CREATE FUNCTION / CREATE PROCEDURE ...
     CreateProcedure(CreateProcedureStatement),
-    /// DROP PROCEDURE ...
+    /// ALTER FUNCTION / ALTER PROCEDURE ...
+    AlterRoutine(AlterRoutineStatement),
+    /// DROP FUNCTION / DROP PROCEDURE ...
     DropProcedure(DropProcedureStatement),
     /// COMMENT ON TYPE|PROCEDURE ...
     CommentOn(CommentOnStatement),
@@ -227,6 +234,14 @@ pub enum SqlStatementKind {
     CommitTransaction,
     /// ROLLBACK [WORK]
     RollbackTransaction,
+    /// SAVEPOINT <name>
+    Savepoint(String),
+    /// RELEASE [SAVEPOINT] <name>
+    ReleaseSavepoint(String),
+    /// ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] <name>
+    RollbackToSavepoint(String),
+    /// SET [SESSION CHARACTERISTICS AS] TRANSACTION ...
+    SetTransaction,
 
     // ===== DataFusion Meta Commands (Admin Only) =====
     /// DataFusion built-in commands (EXPLAIN, SET, SHOW COLUMNS, etc.)
@@ -237,6 +252,30 @@ pub enum SqlStatementKind {
     // ===== Unknown/Unsupported =====
     /// Unrecognized statement
     Unknown,
+}
+
+impl SqlStatementKind {
+    /// Statements that can share one implicit transaction inside a multi-statement batch.
+    ///
+    /// `BEGIN`, `COMMIT`, and `ROLLBACK` stay outside the batch: they own the
+    /// transaction. HTTP SQL and pgwire both use this list.
+    pub fn joins_implicit_transaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Select
+                | Self::Insert(_)
+                | Self::Update(_)
+                | Self::Delete(_)
+                | Self::SetSearchPath(_)
+                | Self::PostgresSetting(_)
+                | Self::Savepoint(_)
+                | Self::ReleaseSavepoint(_)
+                | Self::RollbackToSavepoint(_)
+                | Self::SetTransaction
+                | Self::Call(_)
+                | Self::DataFusionMetaCommand
+        )
+    }
 }
 
 impl SqlStatement {
@@ -281,7 +320,7 @@ impl SqlStatement {
         match &self.kind {
             // Read-only operations - can be served by any node
             SqlStatementKind::Select
-            | SqlStatementKind::ShowNamespaces(_)
+            | SqlStatementKind::ShowSchemas(_)
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowTables(_)
@@ -294,16 +333,21 @@ impl SqlStatement {
             | SqlStatementKind::DataFusionMetaCommand
             | SqlStatementKind::Unknown => false,
 
-            // USE NAMESPACE / SET search_path only affect session state, not cluster state
-            SqlStatementKind::UseNamespace(_) | SqlStatementKind::SetSearchPath(_) => false,
+            // SET SCHEMA / SET search_path only affect session state, not cluster state
+            SqlStatementKind::UseSchema(_)
+            | SqlStatementKind::SetSearchPath(_)
+            | SqlStatementKind::PostgresSetting(_) => false,
 
             // All other operations modify data or schema - must go to leader
-            SqlStatementKind::CreateNamespace(_)
-            | SqlStatementKind::CreateSchema(_)
+            SqlStatementKind::CreateSchema(_)
             | SqlStatementKind::CreateType(_)
             | SqlStatementKind::AlterType(_)
             | SqlStatementKind::DropType(_)
+            | SqlStatementKind::CreateDomain(_)
+            | SqlStatementKind::AlterDomain(_)
+            | SqlStatementKind::DropDomain(_)
             | SqlStatementKind::CreateProcedure(_)
+            | SqlStatementKind::AlterRoutine(_)
             | SqlStatementKind::DropProcedure(_)
             | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::GrantExecute(_)
@@ -315,8 +359,8 @@ impl SqlStatement {
             | SqlStatementKind::DropSchedule(_)
             | SqlStatementKind::AlterTrigger(_)
             | SqlStatementKind::AlterSchedule(_)
-            | SqlStatementKind::AlterNamespace(_)
-            | SqlStatementKind::DropNamespace(_)
+            | SqlStatementKind::AlterSchema(_)
+            | SqlStatementKind::DropSchema(_)
             | SqlStatementKind::CreateStorage(_)
             | SqlStatementKind::AlterStorage(_)
             | SqlStatementKind::DropStorage(_)
@@ -353,6 +397,10 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
+            | SqlStatementKind::Savepoint(_)
+            | SqlStatementKind::ReleaseSavepoint(_)
+            | SqlStatementKind::RollbackToSavepoint(_)
+            | SqlStatementKind::SetTransaction
             | SqlStatementKind::ClusterSnapshot
             | SqlStatementKind::ClusterPurge(_)
             | SqlStatementKind::ClusterTriggerElection
@@ -367,18 +415,35 @@ impl SqlStatement {
     /// Get a human-readable name for this statement type
     pub fn name(&self) -> &'static str {
         match &self.kind {
-            SqlStatementKind::CreateNamespace(_) => "CREATE NAMESPACE",
-            SqlStatementKind::AlterNamespace(_) => "ALTER NAMESPACE",
-            SqlStatementKind::DropNamespace(_) => "DROP NAMESPACE",
-            SqlStatementKind::ShowNamespaces(_) => "SHOW NAMESPACES",
-            SqlStatementKind::UseNamespace(_) => "USE NAMESPACE",
+            SqlStatementKind::AlterSchema(_) => "ALTER SCHEMA",
+            SqlStatementKind::DropSchema(_) => "DROP SCHEMA",
+            SqlStatementKind::ShowSchemas(_) => "SHOW SCHEMAS",
+            SqlStatementKind::UseSchema(_) => "SET SCHEMA",
             SqlStatementKind::CreateSchema(_) => "CREATE SCHEMA",
             SqlStatementKind::SetSearchPath(_) => "SET SEARCH_PATH",
+            SqlStatementKind::PostgresSetting(setting) => match setting {
+                crate::PostgresSetting::Show { .. } => "SHOW",
+                crate::PostgresSetting::ResetAll => "RESET",
+                crate::PostgresSetting::Set { .. } => "SET",
+            },
             SqlStatementKind::CreateType(_) => "CREATE TYPE",
             SqlStatementKind::AlterType(_) => "ALTER TYPE",
             SqlStatementKind::DropType(_) => "DROP TYPE",
-            SqlStatementKind::CreateProcedure(_) => "CREATE PROCEDURE",
-            SqlStatementKind::DropProcedure(_) => "DROP PROCEDURE",
+            SqlStatementKind::CreateDomain(_) => "CREATE DOMAIN",
+            SqlStatementKind::AlterDomain(_) => "ALTER DOMAIN",
+            SqlStatementKind::DropDomain(_) => "DROP DOMAIN",
+            SqlStatementKind::CreateProcedure(stmt) => match stmt.kind {
+                kalamdb_commons::models::RoutineKind::Function => "CREATE FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "CREATE PROCEDURE",
+            },
+            SqlStatementKind::AlterRoutine(stmt) => match stmt.expected_kind {
+                kalamdb_commons::models::RoutineKind::Function => "ALTER FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "ALTER PROCEDURE",
+            },
+            SqlStatementKind::DropProcedure(stmt) => match stmt.expected_kind {
+                kalamdb_commons::models::RoutineKind::Function => "DROP FUNCTION",
+                kalamdb_commons::models::RoutineKind::Procedure => "DROP PROCEDURE",
+            },
             SqlStatementKind::CommentOn(_) => "COMMENT ON",
             SqlStatementKind::GrantExecute(_) => "GRANT EXECUTE",
             SqlStatementKind::RevokeExecute(_) => "REVOKE EXECUTE",
@@ -422,6 +487,10 @@ impl SqlStatement {
             SqlStatementKind::BeginTransaction => "BEGIN",
             SqlStatementKind::CommitTransaction => "COMMIT",
             SqlStatementKind::RollbackTransaction => "ROLLBACK",
+            SqlStatementKind::Savepoint(_) => "SAVEPOINT",
+            SqlStatementKind::ReleaseSavepoint(_) => "RELEASE SAVEPOINT",
+            SqlStatementKind::RollbackToSavepoint(_) => "ROLLBACK TO SAVEPOINT",
+            SqlStatementKind::SetTransaction => "SET TRANSACTION",
             SqlStatementKind::Subscribe(_) => "SUBSCRIBE TO",
             SqlStatementKind::CreateTopic(_) => "CREATE TOPIC",
             SqlStatementKind::DropTopic(_) => "DROP TOPIC",

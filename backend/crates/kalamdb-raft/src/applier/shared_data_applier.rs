@@ -144,7 +144,7 @@ mod tests {
         Arc,
     };
 
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -216,8 +216,7 @@ mod tests {
     #[tokio::test]
     async fn test_shared_data_applier_insert() {
         let applier = MockSharedDataApplier::new();
-        let table_id =
-            TableId::new(NamespaceId::from("shared_ns"), TableName::from("shared_table"));
+        let table_id = TableId::new(SchemaId::from("shared_ns"), TableName::from("shared_table"));
 
         let result = applier.insert(&table_id, None, &[], &[], &[]).await;
         assert!(result.is_ok());
@@ -227,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn test_noop_shared_applier_returns_zero() {
         let applier = NoOpSharedDataApplier;
-        let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+        let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
 
         assert_eq!(applier.insert(&table_id, None, &[], &[], &[]).await.unwrap(), 0);
         assert_eq!(applier.update(&table_id, None, &[], None, None, &[]).await.unwrap(), 0);

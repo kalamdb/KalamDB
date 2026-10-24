@@ -34,6 +34,26 @@ backend/crates/kalamdb-tables/src/user_tables/user_table_store.rs
 
 Same MVCC model, but without a user prefix. One RocksDB partition covers the entire table.
 
+### Incremental hot retention
+
+An update or delete allocates a new version key and, in the same RocksDB write
+batch, deletes the previous hot key and its index entries. After the batch there
+is one hot key per primary key, and that key is the new version. A delete keeps
+the new `_deleted = true` tombstone so a `since_seq` replay can see it. Re-inserting
+that primary key replaces the tombstone in the same batch.
+
+With `flush.retain_latest_hot`, a shared flush only resets the scheduling clock.
+It does not scan historical versions, because the write already removed the
+predecessor. A retain flush that does run keeps the latest hot key, including a
+delete tombstone, and drops only keys that lost the version comparison.
+
+New hot data and index partitions have independent RocksDB column families, so
+background compaction of one partition does not rewrite another table's SSTs.
+Existing prefix-based partitions stay in their original column families; opening
+an existing database does not silently migrate its data. The database shares the
+original aggregate profile memtable budget across column families. No synchronous
+manual compaction is added.
+
 ### Write-path side effect
 
 On every INSERT, UPDATE, or DELETE, providers call `manifest_service.mark_pending_write(table_id, user_id?)` to signal that hot storage has unflushed data. Normal DML does not rewrite `manifest.json`; see [manifest.md](manifest.md) for sync states.

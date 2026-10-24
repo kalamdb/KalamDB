@@ -28,7 +28,7 @@ use std::{future::Future, sync::Arc, time::Instant};
 
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
 use kalamdb_auth::AuthSessionExtractor;
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{
     app_context::AppContext,
     sql::{context::ExecutionContext, executor::SqlExecutor, SqlImpersonationService},
@@ -94,6 +94,48 @@ fn reject_unauthorized_prepared_statements(
     None
 }
 
+fn is_system_catalog_read(sql: &str) -> bool {
+    // Fast zero-allocation guard: skip heap work unless this short query mentions `system`.
+    if sql.len() > 512 || !sql.as_bytes().windows(6).any(|w| w.eq_ignore_ascii_case(b"system")) {
+        return false;
+    }
+    let compact: String = sql
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '"')
+        .flat_map(|ch| ch.to_lowercase())
+        .collect();
+    let starts_read = compact.starts_with("select") || compact.starts_with("with");
+    if !starts_read || compact.contains("join") {
+        return false;
+    }
+    // Column names such as created_at and updated_at must not look like DDL.
+    if [
+        "insert", "delete", "truncate", "alter", "drop", "call", "grant", "copy",
+    ]
+    .iter()
+    .any(|word| compact.contains(word))
+    {
+        return false;
+    }
+    // Dashboard polls read system.* on their own. Those must not keep idle trim from
+    // returning the heap. A join into another schema still counts as real work.
+    compact.contains("fromsystem.")
+}
+
+#[inline]
+fn batch_is_pure_select(prepared_statements: &[PreparedApiExecutionStatement]) -> bool {
+    !prepared_statements.is_empty()
+        && prepared_statements.iter().all(|statement| {
+            statement
+                .prepared_statement
+                .classified_statement
+                .as_ref()
+                .is_some_and(|classified| {
+                    matches!(classified.kind(), &kalamdb_sql::classifier::SqlStatementKind::Select)
+                })
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -121,7 +163,6 @@ pub async fn execute_sql_v1(
     sql_executor: web::Data<Arc<SqlExecutor>>,
     rate_limiter: Option<web::Data<Arc<RateLimiter>>>,
 ) -> impl Responder {
-    record_activity_now();
     let start_time = Instant::now();
     let session: AuthSession = extractor.into();
 
@@ -160,7 +201,7 @@ pub async fn execute_sql_v1(
     }
 
     // 4. Build execution context
-    let default_namespace = namespace_id.clone().unwrap_or_else(|| NamespaceId::new("default"));
+    let default_namespace = namespace_id.clone().unwrap_or_else(|| SchemaId::new("default"));
     let base_session = app_context.base_session_context();
     let mut exec_ctx = ExecutionContext::from_session(session, Arc::clone(&base_session))
         .with_namespace_id(default_namespace);
@@ -185,6 +226,15 @@ pub async fn execute_sql_v1(
             Err(resp) => return resp,
         }
     };
+
+    // Dashboard polls of system.stats must not keep the process "busy", or idle
+    // trim never returns the heap after a load burst.
+    if file_upload_request
+        || !batch_is_pure_select(&prepared_statements)
+        || !is_system_catalog_read(&sql)
+    {
+        record_activity_now();
+    }
 
     if let Some(resp) =
         reject_unauthorized_prepared_statements(&prepared_statements, &exec_ctx, start_time)
@@ -354,4 +404,22 @@ fn client_disconnected_response() -> HttpResponse {
         actix_web::http::StatusCode::from_u16(499).expect("499 is a valid status code"),
     )
     .body("client disconnected")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_system_catalog_read;
+
+    #[test]
+    fn dashboard_system_reads_do_not_count_as_activity() {
+        assert!(is_system_catalog_read(
+            "select metric_name, metric_value from system.stats limit $1"
+        ));
+        assert!(is_system_catalog_read(
+            "select job_id, updated_at, created_at from \"system\".\"jobs\" where status = $1"
+        ));
+        assert!(!is_system_catalog_read("select id from app.orders"));
+        assert!(!is_system_catalog_read("select * from system.jobs join app.orders on true"));
+        assert!(!is_system_catalog_read("insert into system.jobs (job_id) values (1)"));
+    }
 }

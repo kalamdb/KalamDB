@@ -1,10 +1,6 @@
 use std::collections::BTreeMap;
 
-use sqlparser::{
-    ast::{CreatePolicy, CreatePolicyCommand, CreatePolicyType, Owner, Statement},
-    dialect::PostgreSqlDialect,
-    parser::Parser,
-};
+use sqlparser::ast::{CreatePolicy, CreatePolicyCommand, CreatePolicyType, Owner, Statement};
 
 use crate::{
     diff::SchemaDiffError,
@@ -19,8 +15,7 @@ pub(super) fn is_create_policy(sql: &str) -> bool {
 }
 
 pub(super) fn parse_create_policy(path: &str, sql: &str) -> Result<Policy, SchemaDiffError> {
-    let dialect = PostgreSqlDialect {};
-    let parsed = Parser::parse_sql(&dialect, sql).map_err(|source| {
+    let parsed = kalamdb_sql::parser::KalamParser::parse(sql).map_err(|source| {
         policy_parse_error(
             path,
             &format!("failed to parse CREATE POLICY:\n{sql}\nparser error: {source}"),

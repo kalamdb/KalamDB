@@ -172,7 +172,7 @@ impl SubscriptionOptions {
 }
 
 /// Subscription request details.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubscriptionRequest {
     /// Unique subscription identifier (client-generated).
     pub id:      String,
@@ -184,7 +184,7 @@ pub struct SubscriptionRequest {
 }
 
 /// WebSocket message types sent from server to client for the SDK transport.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Authentication successful response (browser clients only).
@@ -227,7 +227,7 @@ pub enum ServerMessage {
 
 /// Client-to-server live query request messages.
 #[cfg(feature = "websocket-auth")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     /// Authenticate WebSocket connection.

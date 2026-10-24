@@ -1,10 +1,7 @@
-use kalamdb_commons::{models::NamespaceId, Role, TableId};
-use sqlparser::{
-    ast::{ObjectName, Owner, Statement},
-    dialect::PostgreSqlDialect,
-};
+use kalamdb_commons::{models::SchemaId, Role, TableId};
+use sqlparser::ast::{ObjectName, Owner, Statement};
 
-use crate::{ddl::DdlResult, parser::utils::parse_sql_statements};
+use crate::{ddl::DdlResult, parser::KalamParser};
 
 mod alter_policy_operation;
 mod alter_policy_statement;
@@ -18,8 +15,7 @@ pub use drop_policy_statement::DropPolicyStatement;
 pub use kalamdb_commons::{PolicyCommand, PolicyTarget};
 
 fn parse_one(sql: &str) -> DdlResult<Statement> {
-    let dialect = PostgreSqlDialect {};
-    let mut statements = parse_sql_statements(sql, &dialect)
+    let mut statements = KalamParser::parse(sql)
         .map_err(|error| format!("failed to parse policy statement: {error}"))?;
     if statements.len() != 1 {
         return Err("policy DDL requires exactly one statement".to_string());
@@ -27,7 +23,7 @@ fn parse_one(sql: &str) -> DdlResult<Statement> {
     Ok(statements.remove(0))
 }
 
-fn resolve_table_id(name: &ObjectName, default_namespace: &NamespaceId) -> DdlResult<TableId> {
+fn resolve_table_id(name: &ObjectName, default_namespace: &SchemaId) -> DdlResult<TableId> {
     let identifiers = name
         .0
         .iter()

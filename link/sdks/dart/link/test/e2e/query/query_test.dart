@@ -140,13 +140,13 @@ void main() {
     );
 
     // ─────────────────────────────────────────────────────────────────
-    // CREATE NAMESPACE
+    // CREATE SCHEMA
     // ─────────────────────────────────────────────────────────────────
     test(
-      'CREATE NAMESPACE IF NOT EXISTS succeeds',
+      'CREATE SCHEMA IF NOT EXISTS succeeds',
       () async {
         final res = await client.query(
-          'CREATE NAMESPACE IF NOT EXISTS ${uniqueName('ns_test')}',
+          'CREATE SCHEMA IF NOT EXISTS ${uniqueName('ns_test')}',
         );
         expect(res.success, isTrue);
       },

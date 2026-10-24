@@ -929,13 +929,17 @@ fn spawn_stdout_reader<R: Read + Send + 'static>(
         let mut reader = BufReader::new(reader);
         let mut output = Vec::new();
         let mut sent_url = false;
+        let mut prompt_seen = false;
         loop {
             let mut line = String::new();
             let read = reader.read_line(&mut line).context("failed to read CLI stdout")?;
             if read == 0 {
                 break;
             }
-            if !sent_url {
+            if line.contains("Open this URL") {
+                prompt_seen = true;
+            }
+            if prompt_seen && !sent_url {
                 if let Some(url) = extract_first_url(&line) {
                     let _ = auth_url_sender.send(url);
                     sent_url = true;

@@ -187,6 +187,12 @@ pub async fn prepare_components(
         raft_restore_start.elapsed().as_secs_f64() * 1000.0
     );
 
+    if let Err(e) =
+        kalamdb_core::operations::table_cleanup::sweep_orphaned_table_partitions(&app_context)
+    {
+        warn!("Startup: orphaned partition sweep encountered an error: {}", e);
+    }
+
     // Initialize job system (executors, manager, waker) — extracted to kalamdb-jobs crate
     kalamdb_jobs::init_job_manager(&app_context);
 

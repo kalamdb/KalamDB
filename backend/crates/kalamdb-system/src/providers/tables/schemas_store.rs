@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use kalamdb_commons::{
-    models::{NamespaceId, TableId, TableVersionId},
+    models::{SchemaId, TableId, TableVersionId},
     schemas::TableDefinition,
     storage::Partition,
 };
@@ -183,7 +183,7 @@ impl SchemasStore {
     /// Uses a prefix scan on the namespace portion of the key for O(tables-in-ns) lookup.
     pub fn scan_namespace(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::namespace_scan_prefix(namespace_id);
         let entries: Vec<(TableVersionId, TableDefinition)> =
@@ -207,7 +207,7 @@ impl SchemasStore {
     /// Scan all versioned table definitions in a specific namespace.
     pub fn scan_namespace_with_versions(
         &self,
-        namespace_id: &NamespaceId,
+        namespace_id: &SchemaId,
     ) -> Result<Vec<(TableId, TableDefinition)>, kalamdb_store::StorageError> {
         let prefix = TableVersionId::namespace_scan_prefix(namespace_id);
         let entries: Vec<(TableVersionId, TableDefinition)> =
@@ -314,7 +314,7 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        NamespaceId, Role, TableId, TableName,
+        Role, SchemaId, TableId, TableName,
     };
     use kalamdb_store::{test_utils::InMemoryBackend, CrossUserTableStore};
 
@@ -330,7 +330,7 @@ mod tests {
         table_name: &str,
         version: u32,
     ) -> (TableId, TableDefinition) {
-        let namespace_id = NamespaceId::new(namespace);
+        let namespace_id = SchemaId::new(namespace);
         let table_name_id = TableName::new(table_name);
         let table_id = TableId::new(namespace_id.clone(), table_name_id.clone());
 
@@ -551,11 +551,11 @@ mod tests {
         store.put_version(&table3_id, &table3_def).unwrap();
 
         // Scan default namespace (latest only)
-        let default_tables = store.scan_namespace(&NamespaceId::default()).unwrap();
+        let default_tables = store.scan_namespace(&SchemaId::default()).unwrap();
         assert_eq!(default_tables.len(), 2);
 
         // Scan test namespace
-        let test_tables = store.scan_namespace(&NamespaceId::new("test")).unwrap();
+        let test_tables = store.scan_namespace(&SchemaId::new("test")).unwrap();
         assert_eq!(test_tables.len(), 1);
     }
 

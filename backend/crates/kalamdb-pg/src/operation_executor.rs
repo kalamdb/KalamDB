@@ -72,17 +72,14 @@ pub fn parse_table_type(s: &str) -> Result<TableType, Status> {
 }
 
 pub fn parse_table_id(namespace: &str, table_name: &str) -> Result<TableId, Status> {
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
     if namespace.trim().is_empty() {
         return Err(Status::invalid_argument("namespace must not be empty"));
     }
     if table_name.trim().is_empty() {
         return Err(Status::invalid_argument("table_name must not be empty"));
     }
-    Ok(TableId::new(
-        NamespaceId::new(namespace.trim()),
-        TableName::new(table_name.trim()),
-    ))
+    Ok(TableId::new(SchemaId::new(namespace.trim()), TableName::new(table_name.trim())))
 }
 
 pub fn parse_user_id(raw: Option<&str>) -> Option<UserId> {

@@ -6,7 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -103,7 +103,7 @@ impl EnvironmentPurpose {
 pub struct ConnectionEnv {
     pub url:       String,
     #[serde(with = "serde_namespace")]
-    pub namespace: NamespaceId,
+    pub namespace: SchemaId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purpose:   Option<EnvironmentPurpose>,
 }
@@ -487,7 +487,7 @@ pub use super::identifiers::{
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::NamespaceId;
+    use kalamdb_commons::SchemaId;
     use tempfile::TempDir;
 
     use super::*;
@@ -755,7 +755,7 @@ output = "src/generated/kalam.ts"
                 "dev".into(),
                 ConnectionEnv {
                     url:       "http://localhost:2900".into(),
-                    namespace: NamespaceId::new("app"),
+                    namespace: SchemaId::new("app"),
                     purpose:   None,
                 },
             )]),

@@ -177,6 +177,12 @@ impl BackendSession {
         }
     }
 
+    pub fn recover_failed_transaction(&mut self) {
+        if matches!(self.block_state, BackendSessionState::InFailedTransaction) {
+            self.block_state = BackendSessionState::InTransaction { read_only: false };
+        }
+    }
+
     pub fn touch(&mut self, method: impl Into<String>, client_addr: Option<String>, now_ms: i64) {
         self.record_activity(None, method, client_addr, now_ms);
     }

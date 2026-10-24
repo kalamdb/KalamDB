@@ -88,8 +88,30 @@ pub async fn send_wire_notification(
     compress: bool,
 ) -> Result<(), ()> {
     let bytes = match serialization {
-        SerializationType::MessagePack => {
-            let bytes = notif.to_msgpack();
+        SerializationType::Domain => {
+            let cached = notif
+                .payload
+                .domain_row_bytes(|rows, old_values| {
+                    let encode = |rows: &Vec<RowData>| kalamdb_serialization::encode_named_rows(rows);
+                    Ok::<_, kalamdb_serialization::SerializationError>((
+                        match rows {
+                            Some(rows) => Some(encode(rows)?),
+                            None => None,
+                        },
+                        match old_values {
+                            Some(old_values) => Some(encode(old_values)?),
+                            None => None,
+                        },
+                    ))
+                })
+                .map_err(|_| ())?;
+            let bytes = kalamdb_serialization::encode_change_frame(
+                &notif.subscription_id,
+                notif.payload.change_type.as_str(),
+                cached.0.as_deref(),
+                cached.1.as_deref(),
+            )
+            .map_err(|_| ())?;
             let len = bytes.len();
             send_data_binary(session, bytes, compress).await?;
             len
@@ -135,12 +157,29 @@ fn estimate_row_payload_bytes(row: &RowData) -> usize {
     total
 }
 
+fn json_number_len(number: &serde_json::Number) -> usize {
+    use std::fmt::{self, Write};
+
+    struct Counter(usize);
+
+    impl Write for Counter {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            self.0 = self.0.saturating_add(text.len());
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter(0);
+    write!(counter, "{number}").expect("counting formatter does not fail");
+    counter.0
+}
+
 fn estimate_json_value_bytes(value: &JsonValue) -> usize {
     match value {
         JsonValue::Null => 4,
         JsonValue::Bool(true) => 4,
         JsonValue::Bool(false) => 5,
-        JsonValue::Number(number) => number.to_string().len(),
+        JsonValue::Number(number) => json_number_len(number),
         JsonValue::String(text) => text.len().saturating_add(2),
         JsonValue::Array(values) => {
             let mut total = 2usize;
@@ -172,20 +211,21 @@ fn estimate_json_value_bytes(value: &JsonValue) -> usize {
 ///
 /// Serializes `msg` using the connection's negotiated serialization type:
 /// - **Json**: serialized to JSON text, optionally gzip-compressed.
-/// - **MessagePack**: serialized to msgpack binary, optionally gzip-compressed.
+/// - **Domain**: serialized to a current-epoch domain frame, optionally gzip-compressed.
 ///
 /// The `compress` flag respects the `?compress=false` query-parameter override
 /// and the negotiated `CompressionType`.
-pub async fn send_message<T: serde::Serialize>(
+pub async fn send_message(
     session: &mut Session,
-    msg: &T,
+    msg: &WebSocketMessage,
     serialization: SerializationType,
     compress: bool,
 ) -> Result<(), ()> {
     match serialization {
         SerializationType::Json => send_json(session, msg, compress).await,
-        SerializationType::MessagePack => {
-            let bytes = rmp_serde::to_vec_named(msg).map_err(|_| ())?;
+        SerializationType::Domain => {
+            let server = msg.to_server_message();
+            let bytes = kalamdb_serialization::encode_server_message(&server).map_err(|_| ())?;
             send_data_binary(session, bytes, compress).await
         },
     }
@@ -207,7 +247,7 @@ async fn send_data(session: &mut Session, data: Vec<u8>, compress: bool) -> Resu
         return session.text(owned).await.map_err(|_| ());
     }
 
-    let (payload, compressed) = maybe_compress(&data);
+    let (payload, compressed) = maybe_compress(data);
 
     if compressed && is_gzip(&payload) {
         // Send compressed data as binary frame
@@ -229,6 +269,6 @@ async fn send_data_binary(session: &mut Session, data: Vec<u8>, compress: bool) 
         return session.binary(data).await.map_err(|_| ());
     }
 
-    let (payload, _compressed) = maybe_compress(&data);
+    let (payload, _compressed) = maybe_compress(data);
     session.binary(payload).await.map_err(|_| ())
 }

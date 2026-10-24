@@ -5,7 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
     },
 };
 
@@ -32,6 +32,7 @@ use crate::{
     error::KalamDbError,
     error_extensions::KalamDbResultExt,
     schema_registry::{cached_table_data::CachedTableData, type_registry::TypeRegistry},
+    sql::serial_sequence::{forget_serial_columns, remember_serial_columns},
 };
 
 #[derive(Debug, Default)]
@@ -77,6 +78,13 @@ pub struct SchemaRegistry {
 
     /// DataFusion base session context for table registration (set once during init)
     base_session_context: OnceLock<Arc<datafusion::prelude::SessionContext>>,
+
+    /// Serializes DataFusion catalog register/deregister.
+    ///
+    /// `MemorySchemaProvider::register_table` checks existence and inserts as two
+    /// steps. Concurrent ALTER and provider reloads otherwise fail with
+    /// "table already exists" and abort the Raft apply.
+    catalog_registration: Mutex<()>,
 }
 
 impl std::fmt::Debug for SchemaRegistry {
@@ -112,6 +120,7 @@ impl SchemaRegistry {
             version_cache_counter:   AtomicU64::new(0),
             type_registry:           TypeRegistry::new(),
             base_session_context:    OnceLock::new(),
+            catalog_registration:    Mutex::new(()),
         }
     }
 
@@ -489,10 +498,13 @@ impl SchemaRegistry {
                 )));
             }
 
-            if !Self::is_safe_type_widening(&old_col.data_type, &new_col.data_type) {
+            if !Self::is_safe_type_widening(&old_col.data_type(), &new_col.data_type()) {
                 return Err(KalamDbError::invalid_schema_evolution(format!(
                     "incompatible type change for column '{}' (id={}): {} -> {}",
-                    old_col.column_name, old_col.column_id, old_col.data_type, new_col.data_type
+                    old_col.column_name,
+                    old_col.column_id,
+                    old_col.data_type(),
+                    new_col.data_type()
                 )));
             }
         }
@@ -546,7 +558,7 @@ impl SchemaRegistry {
         cached.touch(self.version_cache_counter.fetch_add(1, Ordering::Relaxed));
     }
 
-    fn maybe_evict_table_cache_lru(&self) {
+    fn maybe_evict_table_cache_lru(&self, protect: Option<&TableId>) {
         if self.table_cache.len() <= self.table_cache_max_entries {
             return;
         }
@@ -561,6 +573,9 @@ impl SchemaRegistry {
             .table_cache
             .iter()
             .filter_map(|entry| {
+                if protect.is_some_and(|table_id| table_id == entry.key()) {
+                    return None;
+                }
                 let cached = entry.value();
                 cached
                     .get_provider()
@@ -678,12 +693,18 @@ impl SchemaRegistry {
         let table_id = table_def.table_id();
         let app_ctx = self.app_context();
 
+        // A replaced table reuses schema version numbers. Drop stale layouts
+        // before the overlay lookup so the new definition is compiled.
+        self.type_registry()
+            .forget_table_layouts(table_id.namespace_id(), table_id.table_name());
+
         // 1. Create CachedTableData with named-type Arrow overlay
         let cached_data = Arc::new(CachedTableData::from_table_definition(
             app_ctx.as_ref(),
             &table_id,
             Arc::new(table_def.clone()),
         )?);
+        let arrow_schema = cached_data.arrow_schema()?;
         let previous_entry = self.table_cache.insert(table_id.clone(), Arc::clone(&cached_data));
         self.touch_cached(&cached_data);
 
@@ -703,7 +724,7 @@ impl SchemaRegistry {
                     }
                 }
             },
-            _ => match self.create_table_provider(&table_def) {
+            _ => match self.create_table_provider(&table_def, arrow_schema) {
                 Ok(kalam_provider) => {
                     let table_provider =
                         Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
@@ -732,7 +753,8 @@ impl SchemaRegistry {
             },
         }
 
-        self.maybe_evict_table_cache_lru();
+        self.maybe_evict_table_cache_lru(Some(&table_id));
+        remember_serial_columns(&table_def);
 
         Ok(())
     }
@@ -793,22 +815,30 @@ impl SchemaRegistry {
         if cached.get_provider().is_some() || cached.table.table_type == TableType::System {
             return Ok(());
         }
-        let kalam_provider = self.create_table_provider(cached.table.as_ref())?;
+        let arrow_schema = cached.arrow_schema()?;
+        let kalam_provider = self.create_table_provider(cached.table.as_ref(), arrow_schema)?;
         let table_provider = Arc::clone(&kalam_provider) as Arc<dyn TableProvider + Send + Sync>;
         cached.set_provider(Arc::clone(&table_provider));
         self.register_with_datafusion(table_id, table_provider)
     }
 
-    /// Internal helper to create a KalamTableProvider based on table definition
+    /// Internal helper to create a KalamTableProvider based on table definition.
+    ///
+    /// `arrow_schema` must already be resolved. Looking it up through
+    /// [`Self::get_arrow_schema`] re-enters [`Self::load_cached_table`] for this
+    /// same table. Under the 256-entry cache, LRU eviction drops the in-flight
+    /// entry (it has no provider yet), the lookup misses, and the worker recurses
+    /// until the stack overflows.
     fn create_table_provider(
         &self,
         table_def: &TableDefinition,
+        arrow_schema: SchemaRef,
     ) -> Result<Arc<dyn kalamdb_tables::KalamTableProvider>, KalamDbError> {
         use kalamdb_commons::schemas::TableOptions;
         use kalamdb_sharding::ShardRouter;
         use kalamdb_tables::{
             new_indexed_shared_table_store, new_indexed_user_table_store, new_stream_table_store,
-            storage_schema_for_table, storage_schema_for_table_with_arrow, StreamTableStoreConfig,
+            StreamTableStoreConfig,
         };
 
         use crate::{
@@ -862,28 +892,19 @@ impl SchemaRegistry {
             .with_table_policies(app_ctx.system_tables().table_policies()),
         );
 
-        // Get Arrow schema from registry (cached at core level)
-        let arrow_schema = tables_schema_registry.get_arrow_schema(&table_id).map_err(|e| {
-            KalamDbError::InvalidOperation(format!(
-                "Failed to get Arrow schema for {}: {}",
-                table_id, e
-            ))
-        })?;
-
         // Wrap table_def in Arc for sharing across core (avoids cloning TableDefinition)
         let table_def_arc = Arc::new(table_def.clone());
+        let core = Arc::new(TableProviderCore::new(
+            table_def_arc,
+            services,
+            pk_field.clone(),
+            arrow_schema,
+            column_defaults,
+        ));
+        let storage_schema = Arc::clone(core.storage_schema());
 
         match table_def.table_type {
             TableType::User => {
-                let storage_schema =
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?;
                 let user_table_store = Arc::new(new_indexed_user_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -893,27 +914,10 @@ impl SchemaRegistry {
                     &table_def.columns,
                 ));
 
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
-                ));
-
                 let provider = Arc::new(UserTableProvider::new(core, user_table_store));
                 Ok(provider as Arc<dyn kalamdb_tables::KalamTableProvider>)
             },
             TableType::Shared => {
-                let storage_schema =
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?;
                 let shared_store = Arc::new(new_indexed_shared_table_store(
                     app_ctx.storage_backend(),
                     &table_id,
@@ -921,14 +925,6 @@ impl SchemaRegistry {
                     storage_schema,
                     &table_def.scalar_indexes,
                     &table_def.columns,
-                ));
-
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
                 ));
 
                 let provider = Arc::new(SharedTableProvider::new(core, shared_store));
@@ -955,22 +951,7 @@ impl SchemaRegistry {
                         ttl_seconds: Some(ttl_seconds),
                         storage_mode: kalamdb_tables::StreamTableStorageMode::File,
                     },
-                    storage_schema_for_table_with_arrow(&table_def, arrow_schema.as_ref())
-                        .or_else(|_| storage_schema_for_table(&table_def))
-                        .map_err(|e| {
-                            KalamDbError::InvalidOperation(format!(
-                                "Failed to build storage schema for {}: {}",
-                                table_id, e
-                            ))
-                        })?,
-                ));
-
-                let core = Arc::new(TableProviderCore::new(
-                    table_def_arc,
-                    services,
-                    pk_field,
-                    arrow_schema,
-                    column_defaults,
+                    storage_schema,
                 ));
 
                 let provider =
@@ -987,8 +968,8 @@ impl SchemaRegistry {
     /// Insert fully initialized cached table data into the cache
     pub fn insert_cached(&self, table_id: TableId, data: Arc<CachedTableData>) {
         self.touch_cached(&data);
-        self.table_cache.insert(table_id, data);
-        self.maybe_evict_table_cache_lru();
+        self.table_cache.insert(table_id.clone(), data);
+        self.maybe_evict_table_cache_lru(Some(&table_id));
     }
 
     /// Invalidate (remove) cached table data
@@ -1011,7 +992,7 @@ impl SchemaRegistry {
             .iter()
             .filter_map(|entry| {
                 let uses_type = entry.value().table.columns.iter().any(|column| {
-                    column.named_type_id.as_ref().is_some_and(|type_id| wanted.contains(type_id))
+                    column.named_type_id().is_some_and(|type_id| wanted.contains(type_id))
                 });
                 uses_type.then(|| entry.value().table.as_ref().clone())
             })
@@ -1025,9 +1006,12 @@ impl SchemaRegistry {
 
     /// Invalidate all versions of a table (for DROP TABLE)
     pub fn invalidate_all_versions(&self, table_id: &TableId) {
+        forget_serial_columns(table_id);
         self.table_cache.remove(table_id);
 
         self.version_cache.retain(|key, _| key.table_id() != table_id);
+        self.type_registry()
+            .forget_table_layouts(table_id.namespace_id(), table_id.table_name());
 
         let _ = self.deregister_from_datafusion(table_id);
     }
@@ -1187,6 +1171,10 @@ impl SchemaRegistry {
         table_id: &TableId,
         provider: Arc<dyn TableProvider + Send + Sync>,
     ) -> Result<(), KalamDbError> {
+        let _registration = self
+            .catalog_registration
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(base_session) = self.base_session_context.get() {
             // Use constant catalog name "kalam"
             let catalog = base_session.catalog("kalam").ok_or_else(|| {
@@ -1246,12 +1234,32 @@ impl SchemaRegistry {
                 provider.schema().fields().len()
             );
 
-            schema.register_table(table_name.to_string(), provider).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "Failed to register table {} with DataFusion: {}",
-                    table_id, e
-                ))
-            })?;
+            let replacement_provider = Arc::clone(&provider);
+            if let Err(error) = schema.register_table(table_name.to_string(), provider) {
+                let message = error.to_string();
+                if !message.contains("already exists") {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "Failed to register table {} with DataFusion: {}",
+                        table_id, message
+                    )));
+                }
+                // Lost a race with a registration that bypassed this lock, or the
+                // existence check observed a stale entry. Replace and retry once.
+                schema.deregister_table(table_name).map_err(|deregister_error| {
+                    KalamDbError::InvalidOperation(format!(
+                        "Failed to deregister existing table {} from DataFusion: {}",
+                        table_id, deregister_error
+                    ))
+                })?;
+                schema.register_table(table_name.to_string(), replacement_provider).map_err(
+                    |retry_error| {
+                        KalamDbError::InvalidOperation(format!(
+                            "Failed to register table {} with DataFusion: {}",
+                            table_id, retry_error
+                        ))
+                    },
+                )?;
+            }
 
             log::debug!("[SchemaRegistry] Registered table {} with DataFusion catalog", table_id);
         }
@@ -1261,6 +1269,10 @@ impl SchemaRegistry {
 
     /// Deregister a table from DataFusion's catalog
     fn deregister_from_datafusion(&self, table_id: &TableId) -> Result<(), KalamDbError> {
+        let _registration = self
+            .catalog_registration
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(base_session) = self.base_session_context.get() {
             let catalog_name =
                 base_session.state().config().options().catalog.default_catalog.clone();
@@ -1304,7 +1316,8 @@ impl SchemaRegistry {
         let tables_provider = self.app_context().system_tables().tables();
 
         // Scan all tables from storage
-        let all_entries = tables_provider.scan_all().into_kalamdb_error("Failed to scan tables")?;
+        let all_entries =
+            tables_provider.list_tables().into_kalamdb_error("Failed to scan tables")?;
         Ok(all_entries)
     }
 
@@ -1512,6 +1525,13 @@ impl SchemaRegistryTrait for SchemaRegistry {
     fn get_storage_id(&self, table_id: &TableId) -> Result<StorageId, Self::Error> {
         self.get_storage_id(table_id)
     }
+
+    fn get_table_provider(
+        &self,
+        table_id: &TableId,
+    ) -> Option<Arc<dyn TableProvider + Send + Sync>> {
+        self.get_provider(table_id)
+    }
 }
 
 impl Default for SchemaRegistry {
@@ -1527,14 +1547,14 @@ mod tests {
         datatypes::KalamDataType,
         models::schemas::{ColumnDefinition, TableDefinition},
         schemas::{ColumnDefault, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
 
     use super::SchemaRegistry;
 
     fn base_table_definition() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("reconcile_test"),
             TableType::System,
             vec![
@@ -1627,7 +1647,7 @@ mod tests {
     fn test_validate_schema_evolution_rejects_incompatible_type_change() {
         let current = base_table_definition();
         let mut expected = current.clone();
-        expected.columns[1].data_type = KalamDataType::Int;
+        expected.columns[1].set_data_type(KalamDataType::Int);
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
         assert!(validation.is_err());
@@ -1636,9 +1656,9 @@ mod tests {
     #[test]
     fn test_validate_schema_evolution_accepts_safe_numeric_widening() {
         let mut current = base_table_definition();
-        current.columns[1].data_type = KalamDataType::Int;
+        current.columns[1].set_data_type(KalamDataType::Int);
         let mut expected = current.clone();
-        expected.columns[1].data_type = KalamDataType::BigInt;
+        expected.columns[1].set_data_type(KalamDataType::BigInt);
 
         let validation = SchemaRegistry::validate_schema_evolution(&current, &expected);
         assert!(validation.is_ok(), "{validation:?}");

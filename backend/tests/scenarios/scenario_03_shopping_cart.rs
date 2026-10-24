@@ -38,8 +38,8 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     // =========================================================
     // Step 1: Create namespace and tables
     // =========================================================
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     // Carts table (USER)
     let resp = server
@@ -294,7 +294,7 @@ async fn test_scenario_03_shopping_cart_parallel() -> anyhow::Result<()> {
     assert!(overlap.is_empty(), "User isolation violated: overlap = {:?}", overlap);
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -305,8 +305,8 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     let ns = unique_ns("shop_sub");
 
     // Create namespace and tables
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -402,7 +402,7 @@ async fn test_scenario_03_filtered_subscription() -> anyhow::Result<()> {
     subscription.close().await?;
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }
 
@@ -413,8 +413,8 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
     let ns = unique_ns("shop_flush");
 
     // Create namespace and table
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    assert_success(&resp, "CREATE NAMESPACE");
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    assert_success(&resp, "CREATE SCHEMA");
 
     let resp = server
         .execute_sql(&format!(
@@ -497,6 +497,6 @@ async fn test_scenario_03_partial_flush() -> anyhow::Result<()> {
     assert_eq!(u2_count, 20, "u2 should see 20 items post-flush");
 
     // Cleanup
-    let _ = server.execute_sql(&format!("DROP NAMESPACE {} CASCADE", ns)).await;
+    let _ = server.execute_sql(&format!("DROP SCHEMA {} CASCADE", ns)).await;
     Ok(())
 }

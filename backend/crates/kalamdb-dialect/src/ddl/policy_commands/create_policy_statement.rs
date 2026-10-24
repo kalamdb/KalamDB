@@ -1,4 +1,4 @@
-use kalamdb_commons::{models::NamespaceId, TableId};
+use kalamdb_commons::{models::SchemaId, TableId};
 use sqlparser::ast::{CreatePolicy, CreatePolicyCommand, CreatePolicyType, Statement};
 
 use super::{parse_one, parse_targets, resolve_table_id, PolicyCommand, PolicyTarget};
@@ -17,7 +17,7 @@ pub struct CreatePolicyStatement {
 }
 
 impl CreatePolicyStatement {
-    pub fn parse(sql: &str, default_namespace: &NamespaceId) -> DdlResult<Self> {
+    pub fn parse(sql: &str, default_namespace: &SchemaId) -> DdlResult<Self> {
         let Statement::CreatePolicy(CreatePolicy {
             name,
             table_name,

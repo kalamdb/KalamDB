@@ -13,7 +13,7 @@ use actix_web::{web, Either};
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use kalamdb_commons::{
-    models::{ids::StorageId, NamespaceId, TableId, UserId},
+    models::{ids::StorageId, SchemaId, TableId, UserId},
     schemas::TableType,
 };
 use kalamdb_configs::FileUploadSettings;
@@ -21,9 +21,10 @@ use kalamdb_filestore::FileStorageService;
 use kalamdb_system::{FileRef, FileSubfolderState};
 
 use super::models::{ErrorCode, FileError, ParsedMultipartRequest, ParsedSqlPayload, QueryRequest};
+use crate::http::HTTP_PAYLOAD_BODY_LIMIT;
 
-const MAX_MULTIPART_BUFFERED_BYTES: usize = 100 * 1024 * 1024; // cap chunked multipart memory use
-const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = 1024 * 1024; // SQL and params fields
+const MAX_MULTIPART_BUFFERED_BYTES: usize = HTTP_PAYLOAD_BODY_LIMIT;
+const MAX_MULTIPART_TEXT_FIELD_SIZE: usize = kalamdb_commons::constants::MAX_SQL_QUERY_LENGTH;
 const MAX_NAMESPACE_FIELD_SIZE: usize = 4096;
 
 fn account_multipart_bytes(
@@ -84,11 +85,11 @@ pub async fn parse_multipart_request(
 ) -> Result<ParsedMultipartRequest, FileError> {
     let max_file_size = config.max_size_bytes;
     let max_files = config.max_files_per_request;
-    const MAX_FILE_PART_SIZE: usize = 100 * 1024 * 1024; // 100MB absolute max
+    const MAX_FILE_PART_SIZE: usize = HTTP_PAYLOAD_BODY_LIMIT;
 
     let mut sql: Option<String> = None;
     let mut params_json: Option<String> = None;
-    let mut namespace_id: Option<NamespaceId> = None;
+    let mut namespace_id: Option<SchemaId> = None;
     let mut files: HashMap<String, (String, Bytes, Option<String>)> = HashMap::new();
     let mut file_count = 0;
     let mut total_buffered_bytes = 0usize;
@@ -169,7 +170,7 @@ pub async fn parse_multipart_request(
                     },
                 }
             }
-            namespace_id = Some(NamespaceId::new(String::from_utf8_lossy(&data).as_ref()));
+            namespace_id = Some(SchemaId::new(String::from_utf8_lossy(&data).as_ref()));
         } else if field_name.starts_with("file:") {
             if file_count >= max_files {
                 return Err(FileError::new(
@@ -293,79 +294,80 @@ pub async fn parse_sql_payload(
     }
 }
 
-/// Cheap guard before the full FILE("name") scan.
+/// Cheap guard before the full FILE("name") / file_put("name") scan.
 #[inline]
 pub fn sql_may_contain_file_placeholder(sql: &str) -> bool {
-    sql.as_bytes().windows(5).any(|window| window.eq_ignore_ascii_case(b"file("))
+    let bytes = sql.as_bytes();
+    bytes.windows(5).any(|window| window.eq_ignore_ascii_case(b"file("))
+        || bytes.windows(9).any(|window| window.eq_ignore_ascii_case(b"file_put("))
 }
 
-/// Extract FILE("name") placeholders from SQL string.
+/// Extract FILE("name") or file_put("name") placeholders from SQL string.
 ///
 /// Matches patterns like:
 /// - FILE("avatar")
 /// - FILE('invoice_pdf')
-/// - FILE("my-file")
+/// - file_put("my-file")
+/// - pg_catalog.file_put('avatar')
 pub fn extract_file_placeholders(sql: &str) -> Vec<String> {
     let mut placeholders = Vec::new();
-    let mut chars = sql.chars().peekable();
+    let bytes = sql.as_bytes();
+    let mut idx = 0;
 
-    while let Some(c) = chars.next() {
-        if c == 'F' || c == 'f' {
-            let mut matched = String::from(c);
-            for expected in ['I', 'L', 'E', '('] {
-                if let Some(&next) = chars.peek() {
-                    if next.to_ascii_uppercase() == expected {
-                        if let Some(consumed) = chars.next() {
-                            matched.push(consumed);
-                        } else {
-                            break;
-                        }
-                    } else {
+    while idx < bytes.len() {
+        let matched_len = if bytes[idx..].len() >= 9
+            && bytes[idx..idx + 9].eq_ignore_ascii_case(b"file_put(")
+        {
+            Some(9)
+        } else if bytes[idx..].len() >= 5 && bytes[idx..idx + 5].eq_ignore_ascii_case(b"file(") {
+            Some(5)
+        } else {
+            None
+        };
+
+        if let Some(prefix_len) = matched_len {
+            idx += prefix_len;
+            let rest = &sql[idx..];
+            let trimmed = rest.trim_start();
+            idx += rest.len() - trimmed.len();
+            let mut chars = sql[idx..].chars();
+            if let Some(quote @ ('"' | '\'')) = chars.next() {
+                let mut name = String::new();
+                let mut closed = false;
+                for c in chars.by_ref() {
+                    if c == quote {
+                        closed = true;
                         break;
                     }
+                    name.push(c);
+                }
+                if closed && !name.is_empty() {
+                    placeholders.push(name);
                 }
             }
-
-            if matched.eq_ignore_ascii_case("FILE(") {
-                // Skip whitespace
-                while let Some(&c) = chars.peek() {
-                    if c.is_whitespace() {
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                // Read quote character
-                if let Some(&quote) = chars.peek() {
-                    if quote == '"' || quote == '\'' {
-                        chars.next();
-                        let mut name = String::new();
-                        for c in chars.by_ref() {
-                            if c == quote {
-                                break;
-                            }
-                            name.push(c);
-                        }
-                        if !name.is_empty() {
-                            placeholders.push(name);
-                        }
-                    }
-                }
-            }
+        } else {
+            idx += 1;
         }
     }
 
     placeholders
 }
 
-/// Replace FILE("name") placeholders in SQL with FileRef JSON strings
+/// Replace FILE("name") / file_put("name") placeholders in SQL with FileRef JSON strings
 pub fn substitute_file_placeholders(sql: &str, file_refs: &HashMap<String, FileRef>) -> String {
     let mut result = sql.to_string();
 
     for (name, file_ref) in file_refs {
-        // Build patterns to match: FILE("name"), FILE('name'), file("name"), etc.
+        // Build patterns to match: FILE("name"), FILE('name'), file_put("name"), etc.
         let patterns = [
+            format!(r#"pg_catalog.file_put("{}")"#, name),
+            format!(r#"pg_catalog.file_put('{}')"#, name),
+            format!(r#"PG_CATALOG.FILE_PUT("{}")"#, name),
+            format!(r#"PG_CATALOG.FILE_PUT('{}')"#, name),
+            format!(r#"FILE_PUT("{}")"#, name),
+            format!(r#"FILE_PUT('{}')"#, name),
+            format!(r#"file_put("{}")"#, name),
+            format!(r#"file_put('{}')"#, name),
             format!(r#"FILE("{}")"#, name),
             format!(r#"FILE('{}')"#, name),
             format!(r#"file("{}")"#, name),
@@ -451,7 +453,7 @@ pub async fn stage_and_finalize_files(
 /// Parse table name from INSERT/UPDATE SQL to determine target table
 /// Returns TableId or None if cannot parse
 #[cfg(test)]
-pub fn extract_table_from_sql(sql: &str, default_namespace: &NamespaceId) -> Option<TableId> {
+pub fn extract_table_from_sql(sql: &str, default_namespace: &SchemaId) -> Option<TableId> {
     kalamdb_sql::extract_dml_table_id(sql, default_namespace)
 }
 
@@ -548,7 +550,7 @@ mod tests {
     #[test]
     fn test_extract_table_from_insert() {
         let sql = "INSERT INTO myapp.users (name) VALUES ('Alice')";
-        let table_id = extract_table_from_sql(sql, &NamespaceId::default_ns());
+        let table_id = extract_table_from_sql(sql, &SchemaId::default_ns());
         assert!(table_id.is_some());
         let tid = table_id.unwrap();
         assert_eq!(tid.namespace_id().as_str(), "myapp");
@@ -558,7 +560,7 @@ mod tests {
     #[test]
     fn test_extract_table_from_insert_no_namespace() {
         let sql = "INSERT INTO users (name) VALUES ('Alice')";
-        let table_id = extract_table_from_sql(sql, &NamespaceId::default_ns());
+        let table_id = extract_table_from_sql(sql, &SchemaId::default_ns());
         assert!(table_id.is_some());
         let tid = table_id.unwrap();
         assert_eq!(tid.namespace_id().as_str(), "default");

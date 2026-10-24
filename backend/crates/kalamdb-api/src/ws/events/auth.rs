@@ -21,7 +21,7 @@ use kalamdb_live::SharedConnectionState;
 use log::debug;
 use tracing::Instrument;
 
-use super::{send_auth_error, send_json};
+use super::send_auth_error;
 use crate::{
     limiter::RateLimiter,
     ws::context::{PendingAuthError, PendingUpgradeAuth, UpgradeAuth},
@@ -155,7 +155,7 @@ pub async fn complete_ws_auth(
         role,
         protocol,
     };
-    let _ = send_json(session, &msg, compression).await;
+    let _ = super::send_message(session, &msg, protocol.serialization, compression).await;
 
     debug!(
         "WebSocket authenticated: {} as {} ({:?})",
@@ -179,12 +179,13 @@ pub async fn send_current_auth_success(
 ) -> Result<(), String> {
     if let (Some(user_id), Some(role)) = (connection_state.user_id(), connection_state.user_role())
     {
+        let protocol = connection_state.protocol();
         let msg = WebSocketMessage::AuthSuccess {
             user: user_id.clone(),
             role,
-            protocol: connection_state.protocol(),
+            protocol,
         };
-        let _ = send_json(session, &msg, compression).await;
+        let _ = super::send_message(session, &msg, protocol.serialization, compression).await;
     }
     Ok(())
 }

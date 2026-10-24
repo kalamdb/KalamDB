@@ -202,7 +202,7 @@ mod tests {
     use async_trait::async_trait;
     use datafusion_common::ScalarValue;
     use kalam_pg_api::{DeleteRequest, MutationResponse, ScanRequest, ScanResponse, UpdateRequest};
-    use kalamdb_commons::models::{NamespaceId, TableName};
+    use kalamdb_commons::models::{SchemaId, TableName};
 
     use super::*;
 
@@ -251,7 +251,7 @@ mod tests {
     }
 
     fn test_table_id() -> TableId {
-        TableId::new(NamespaceId::new("app"), TableName::new("profiles"))
+        TableId::new(SchemaId::new("app"), TableName::new("profiles"))
     }
 
     fn test_row(id: &str) -> Row {

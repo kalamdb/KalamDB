@@ -13,12 +13,12 @@ readme = "README.md"
 
 [dependencies]
 kalamdb-commons = { workspace = true, default-features = false, features = ["serde"] }
+kalamdb-serialization = { path = "../../backend/crates/kalamdb-serialization", default-features = false }
 tokio = { version = "1.52.3", optional = true, features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls-native-roots"], optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-rmp-serde = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 http-body = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
@@ -39,7 +39,6 @@ client-core = [
 	"dep:futures-util",
 	"dep:log",
 	"dep:miniz_oxide",
-	"dep:rmp-serde",
 ]
 tokio-runtime = ["client-core", "tokio", "reqwest", "tokio-tungstenite", "bytes", "dep:rustls", "dep:rustls-native-certs"]
 auth-flows = []

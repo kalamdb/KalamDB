@@ -23,7 +23,7 @@ fn smoke_insert_returning_version_single_row() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + table
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -55,7 +55,7 @@ fn smoke_insert_returning_version_single_row() {
     println!("  ✅ INSERT ... RETURNING _version (single row) verified");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -70,7 +70,7 @@ fn smoke_insert_returning_version_multi_row() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + table
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -104,7 +104,7 @@ fn smoke_insert_returning_version_multi_row() {
     println!("  ✅ INSERT ... RETURNING _version (multi row) verified");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -119,7 +119,7 @@ fn smoke_insert_returning_star() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + table
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -150,7 +150,7 @@ fn smoke_insert_returning_star() {
     println!("  ✅ INSERT ... RETURNING * verified");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }
 
 #[ntest::timeout(120000)]
@@ -165,7 +165,7 @@ fn smoke_insert_returning_version_on_user_table() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + user table
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -196,5 +196,5 @@ fn smoke_insert_returning_version_on_user_table() {
     println!("  ✅ INSERT ... RETURNING _version on USER table verified");
 
     // Cleanup
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

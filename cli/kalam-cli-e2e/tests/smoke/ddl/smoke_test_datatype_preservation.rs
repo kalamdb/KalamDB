@@ -31,7 +31,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
         .expect("Failed to get access token");
 
     // 1. Create namespace
-    let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
+    let create_ns_sql = format!("CREATE SCHEMA {}", ns);
     let result = execute_sql(&client, &base_url, &token, &create_ns_sql).await;
     assert!(result.is_ok(), "Failed to create namespace: {:?}", result);
 
@@ -152,7 +152,7 @@ async fn test_all_kalam_datatypes_are_preserved() {
     // 9. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 
@@ -170,7 +170,7 @@ async fn test_system_tables_shows_correct_datatypes() {
         .expect("Failed to get access token");
 
     // 1. Create namespace
-    let create_ns_sql = format!("CREATE NAMESPACE {}", ns);
+    let create_ns_sql = format!("CREATE SCHEMA {}", ns);
     let _ = execute_sql(&client, &base_url, &token, &create_ns_sql).await;
 
     // 2. Create table with specific types we want to verify
@@ -209,7 +209,11 @@ async fn test_system_tables_shows_correct_datatypes() {
     let mut type_map = std::collections::HashMap::new();
     for col in &columns {
         let name = col["column_name"].as_str().expect("column_name should be string");
-        let data_type_val = &col["data_type"];
+        let data_type_val = col
+            .get("logical_type")
+            .and_then(|lt| lt.get("Builtin").or(Some(lt)))
+            .or_else(|| col.get("data_type"))
+            .unwrap_or(&Value::Null);
 
         // Handle both String (simple types) and Object (complex types)
         let data_type_str = match data_type_val {
@@ -259,7 +263,7 @@ async fn test_system_tables_shows_correct_datatypes() {
     // 7. Cleanup
     let drop_sql = format!("DROP TABLE {}.{}", ns, table);
     let _ = execute_sql(&client, &base_url, &token, &drop_sql).await;
-    let drop_ns_sql = format!("DROP NAMESPACE {}", ns);
+    let drop_ns_sql = format!("DROP SCHEMA {}", ns);
     let _ = execute_sql(&client, &base_url, &token, &drop_ns_sql).await;
 }
 

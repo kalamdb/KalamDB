@@ -76,6 +76,8 @@ struct Work {
     _active:    Option<OwnedSemaphorePermit>,
     _root:      Option<OwnedSemaphorePermit>,
     _lane:      Option<LaneCharge>,
+    #[cfg(feature = "traceability")]
+    span:       tracing::Span,
 }
 
 /// A reservation for the lifetime of a V8 isolate, including while it is warm/idle.
@@ -149,12 +151,21 @@ impl MemoryCharge {
             }
         }
     }
+
+    /// Return the reservation immediately. Later `Drop` subtracts nothing.
+    fn release(&mut self) {
+        if self.amount == 0 {
+            return;
+        }
+        self.used.fetch_sub(self.amount, Ordering::AcqRel);
+        self.amount = 0;
+        self.freed.notify_waiters();
+    }
 }
 
 impl Drop for MemoryCharge {
     fn drop(&mut self) {
-        self.used.fetch_sub(self.amount, Ordering::AcqRel);
-        self.freed.notify_waiters();
+        self.release();
     }
 }
 
@@ -312,6 +323,10 @@ impl SessionInstance {
 
 impl Drop for SessionInstance {
     fn drop(&mut self) {
+        // The reservation must be gone before the instance disappears from the
+        // census. Field drops run after this, and V8 teardown can outlast the
+        // caller that is waiting for the row to leave the map.
+        self._memory.release();
         self.emit(FunctionLifecycleKind::Dropped, self.drop_reason);
         self.instances.remove(&self.id);
     }
@@ -506,12 +521,15 @@ impl FunctionEngine {
                                     }
                                 },
                                 maybe_work = receiver.recv() => {
-                                    let Some(work) = maybe_work else {
+                                    #[allow(unused_mut)]
+                                    let Some(mut work) = maybe_work else {
                                         break;
                                     };
+                                    #[cfg(feature = "traceability")]
+                                    let span = std::mem::replace(&mut work.span, tracing::Span::none());
                                     let idle = Rc::clone(&idle);
                                     let runtime = runtime.clone();
-                                    tokio::task::spawn_local(async move {
+                                    let task = async move {
                                         let max_value_bytes = runtime.config.max_value_bytes;
                                         let (result, recyclable) = run_v8(&work, &runtime, &idle).await;
                                         let result = result.and_then(|value| {
@@ -523,12 +541,22 @@ impl FunctionEngine {
                                                 Ok(value)
                                             }
                                         });
-                                        let Work { reply, invocation, host, _active, _root, _lane } = work;
+                                        let Work {
+                                            reply,
+                                            invocation,
+                                            host,
+                                            _active,
+                                            _root,
+                                            _lane,
+                                            #[cfg(feature = "traceability")]
+                                            span: _,
+                                        } = work;
                                         drop((invocation, host, _active, _root, _lane));
                                         let _ = reply.send(result);
                                         // Re-running the module for the next call happens after the
                                         // caller has its answer, not on its critical path.
                                         if let Some(mut instance) = recyclable {
+                                            let _reuse_span = kalamdb_observability::kdb_info_span_entered!("func.v8.prepare_reuse");
                                             let completed_at = Instant::now();
                                             // Measure after the reset: re-running the module allocates,
                                             // and the idle charge must describe the heap that stays.
@@ -548,7 +576,10 @@ impl FunctionEngine {
                                                 instance.drop_reason = "reset_failed";
                                             }
                                         }
-                                    });
+                                    };
+                                    #[cfg(feature = "traceability")]
+                                    let task = tracing::Instrument::instrument(task, span);
+                                    tokio::task::spawn_local(task);
                                 },
                                 _ = sweep.tick() => {
                                     idle.borrow_mut().prune(Instant::now(), &runtime.config);
@@ -722,6 +753,8 @@ impl FunctionEngine {
             _active: admission.active,
             _root: admission.root,
             _lane: None,
+            #[cfg(feature = "traceability")]
+            span: tracing::Span::current(),
         };
         let mut sent = false;
         for offset in 0..self.workers.len() {
@@ -846,65 +879,85 @@ async fn run_v8(
     let revision_id = work.invocation.revision.revision_id.clone();
     let artifact = work.invocation.revision.byte_len();
     let hard = runtime.config.active_session_bytes(artifact);
-    let mut instance = loop {
-        if let Err(error) = work.invocation.scope.check() {
-            return (Err(error), None);
-        }
-        let now = Instant::now();
-        // Bind `take` in its own statement so the `RefMut` drops before the resize loop.
-        // Edition 2021 `if let` keeps scrutinee temporaries alive for the whole body, which
-        // panics with `RefCell already borrowed` when we `evict_lru` under memory pressure.
-        let taken = idle.borrow_mut().take(
-            &revision_id,
-            work.invocation.routine_id.as_str(),
-            now,
-            &runtime.config,
-        );
-        if let Some(mut instance) = taken {
-            instance.session.limits = limits;
-            // The warm match is the most valuable isolate here; shed other idle entries before
-            // giving it up.
+    let instance = kalamdb_observability::kdb_await_in_info_span!(
+        async {
             loop {
-                if instance.try_resize_charge(hard, runtime.config.max_memory_bytes) {
-                    break;
+                if let Err(error) = work.invocation.scope.check() {
+                    return Err(error);
                 }
-                if !idle.borrow_mut().evict_lru() {
-                    break;
+                let now = Instant::now();
+                // Bind `take` in its own statement so the `RefMut` drops before the resize loop.
+                // Edition 2021 `if let` keeps scrutinee temporaries alive for the whole body, which
+                // panics with `RefCell already borrowed` when we `evict_lru` under memory pressure.
+                let taken = idle.borrow_mut().take(
+                    &revision_id,
+                    work.invocation.routine_id.as_str(),
+                    now,
+                    &runtime.config,
+                );
+                if let Some(mut instance) = taken {
+                    instance.session.limits = limits;
+                    // The warm match is the most valuable isolate here; shed other idle entries
+                    // before giving it up.
+                    loop {
+                        if instance.try_resize_charge(hard, runtime.config.max_memory_bytes) {
+                            break;
+                        }
+                        if !idle.borrow_mut().evict_lru() {
+                            break;
+                        }
+                    }
+                    if instance.try_resize_charge(hard, runtime.config.max_memory_bytes) {
+                        break Ok(instance);
+                    }
+                    drop(instance);
+                    continue;
                 }
+                let memory_charge =
+                    match reserve_session_memory(runtime, hard, idle, &work.invocation.scope).await
+                    {
+                        Ok(charge) => charge,
+                        Err(error) => return Err(error),
+                    };
+                let session = {
+                    let _load_span =
+                        kalamdb_observability::kdb_info_span_entered!("func.v8.cold_load");
+                    match V8Session::load((*work.invocation.revision).clone(), limits) {
+                        Ok(session) => session,
+                        Err(error) => return Err(error),
+                    }
+                };
+                break Ok(SessionInstance::new(
+                    session,
+                    memory_charge,
+                    Instant::now(),
+                    runtime,
+                    Some(work.invocation.routine_id.to_string()),
+                ));
             }
-            if instance.try_resize_charge(hard, runtime.config.max_memory_bytes) {
-                break instance;
-            }
-            drop(instance);
-            continue;
-        }
-        let memory_charge =
-            match reserve_session_memory(runtime, hard, idle, &work.invocation.scope).await {
-                Ok(charge) => charge,
-                Err(error) => return (Err(error), None),
-            };
-        let session = match V8Session::load((*work.invocation.revision).clone(), limits) {
-            Ok(session) => session,
-            Err(error) => return (Err(error), None),
-        };
-        break SessionInstance::new(
-            session,
-            memory_charge,
-            Instant::now(),
-            runtime,
-            Some(work.invocation.routine_id.to_string()),
-        );
+        },
+        "func.v8.take_or_load"
+    );
+    let mut instance = match instance {
+        Ok(instance) => instance,
+        Err(error) => return (Err(error), None),
     };
 
     instance
         .session
         .isolate
         .set_slot(ConversionLimit(runtime.config.max_value_bytes));
-    let result = instance.session.invoke_async(&work.invocation, Arc::clone(&work.host)).await;
+    let result = kalamdb_observability::kdb_await_in_info_span!(
+        instance.session.invoke_async(&work.invocation, Arc::clone(&work.host)),
+        "func.v8.invoke_async"
+    );
     instance.invocations = instance.invocations.saturating_add(1);
 
     let completed_at = Instant::now();
-    let used_heap = instance.session.used_heap_bytes();
+    let used_heap = {
+        let _span = kalamdb_observability::kdb_info_span_entered!("func.v8.heap_stats");
+        instance.session.used_heap_bytes()
+    };
     instance.publish("active", used_heap);
     let recycle = result.is_ok()
         && !instance.session.heap_limit_hit()

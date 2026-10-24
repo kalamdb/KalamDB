@@ -81,7 +81,7 @@ test('integration: file roundtrip and isolation', { skip: !RUN_INTEGRATION }, as
   const hash = sha256Hex(bytes);
 
   try {
-    await upsertSyncFile(aliceDb, {
+    await upsertSyncFile(alice.client, aliceDb, {
       path,
       mimeType: 'text/markdown',
       fileBytes: bytes,
@@ -175,7 +175,7 @@ test('integration: delete local folder and restore from database', { skip: !RUN_
 
 test('schema.sql is the declared source of truth', async () => {
   const schema = await readSchema(resolve('kalam/schema.sql'), 'utf8');
-  assert.match(schema, /CREATE USER TABLE okf_sync\.context_files/);
+  assert.match(schema, /CREATE TABLE okf_sync\.context_files/);
   assert.match(schema, /file_ref FILE NOT NULL/);
   assert.doesNotMatch(schema, /sha256 TEXT/);
   assert.doesNotMatch(schema, /schema\.ts/);

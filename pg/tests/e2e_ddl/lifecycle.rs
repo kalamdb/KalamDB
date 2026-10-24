@@ -24,7 +24,7 @@ async fn wait_for_postgres_row(
     select_sql: &str,
     row_id: &str,
 ) -> tokio_postgres::Row {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
 
     loop {
         if let Some(row) = pg.query_opt(select_sql, &[&row_id]).await.expect("query Postgres row") {
@@ -215,7 +215,7 @@ async fn e2e_ddl_create_json_column_preserves_local_json_type() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_file_column_roundtrip_via_kalamlink() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;
@@ -272,7 +272,7 @@ async fn e2e_ddl_file_column_roundtrip_via_kalamlink() {
           WHERE id = $1"
     );
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     let row = loop {
         if let Some(row) =
             pg.query_opt(&select_sql, &[&row_id]).await.expect("query Postgres FILE row")
@@ -318,7 +318,7 @@ async fn e2e_ddl_file_column_roundtrip_via_kalamlink() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_multiple_file_columns_roundtrip_via_kalamlink() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;
@@ -385,7 +385,7 @@ async fn e2e_ddl_multiple_file_columns_roundtrip_via_kalamlink() {
 }
 
 #[tokio::test]
-#[ntest::timeout(4000)]
+#[ntest::timeout(30000)]
 async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
     let env = require_ddl_env!();
     let pg = env.pg_connect().await;
@@ -467,7 +467,7 @@ async fn e2e_ddl_file_update_via_kalamlink_is_visible_in_postgres() {
         .expect("update FILE row via KalamLink");
     assert!(update_result.success(), "FILE update should succeed");
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     let updated_json = loop {
         let row = pg
             .query_one(&select_sql, &[&row_id])

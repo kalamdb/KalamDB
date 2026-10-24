@@ -1,4 +1,4 @@
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_sql::ddl::{parse_create_index_on, AlterTableStatement, ColumnOperation};
 
 use crate::{
@@ -23,7 +23,7 @@ pub(super) fn is_index_ddl(sql: &str) -> bool {
 }
 
 pub(super) fn parse_index_ddl(path: &str, sql: &str) -> Result<PendingIndex, SchemaDiffError> {
-    let namespace = NamespaceId::new("public");
+    let namespace = SchemaId::new("public");
     let upper = sql.trim_start().to_ascii_uppercase();
     let stmt = if upper.starts_with("CREATE") {
         parse_create_index_on(sql, &namespace).map_err(|err| index_parse_error(path, &err))?
@@ -107,12 +107,14 @@ fn table_index_from_operation(
                 metric: format!("{metric:?}").to_ascii_uppercase(),
             },
         }),
-        ColumnOperation::DropIndex { .. } | ColumnOperation::DropVectorIndex { .. } => {
-            Err(index_parse_error(
-                path,
-                "DROP INDEX is not valid in schema.sql; omit the CREATE INDEX instead",
-            ))
-        },
+        ColumnOperation::DropIndex { .. }
+        | ColumnOperation::DropStandaloneIndex { .. }
+        | ColumnOperation::RenameIndex { .. }
+        | ColumnOperation::RenameStandaloneIndex { .. }
+        | ColumnOperation::DropVectorIndex { .. } => Err(index_parse_error(
+            path,
+            "DROP INDEX is not valid in schema.sql; omit the CREATE INDEX instead",
+        )),
         _ => Err(index_parse_error(path, &format!("unsupported index statement:\n{sql}"))),
     }
 }

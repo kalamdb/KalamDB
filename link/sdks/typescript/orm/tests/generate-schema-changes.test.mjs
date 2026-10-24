@@ -27,12 +27,12 @@ let client;
 before(async () => {
   client = createTestClient();
   await client.initialize();
-  await client.query(`CREATE NAMESPACE IF NOT EXISTS ${NS}`);
+  await client.query(`CREATE SCHEMA IF NOT EXISTS ${NS}`);
 });
 
 after(async () => {
   // Best-effort cleanup — individual tests clean up their own tables.
-  await client?.query(`DROP NAMESPACE IF EXISTS ${NS}`).catch(() => {});
+  await client?.query(`DROP SCHEMA IF EXISTS ${NS}`).catch(() => {});
   await client?.disconnect();
 });
 

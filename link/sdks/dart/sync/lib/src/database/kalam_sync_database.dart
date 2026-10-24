@@ -8,6 +8,46 @@ import 'tables/kalam_row_states.dart';
 
 part 'kalam_sync_database.g.dart';
 
+/// Sync tables an application database must expose on its one Drift connection.
+abstract interface class KalamSyncTables {
+  $KalamActionsTable get kalamActions;
+  $KalamCachedRowsTable get kalamCachedRows;
+  $KalamActionStepsTable get kalamActionSteps;
+  $KalamCheckpointsTable get kalamCheckpoints;
+  $KalamRowStatesTable get kalamRowStates;
+}
+
+/// Adds the sync tables to an application [GeneratedDatabase].
+///
+/// Include [kalamSyncSchema] in that database's `allSchemaEntities` and create
+/// the tables from its migration. Kalam then uses the same connection.
+mixin KalamSyncTablesMixin on GeneratedDatabase implements KalamSyncTables {
+  @override
+  late final $KalamActionsTable kalamActions = $KalamActionsTable(this);
+  @override
+  late final $KalamCachedRowsTable kalamCachedRows = $KalamCachedRowsTable(
+    this,
+  );
+  @override
+  late final $KalamActionStepsTable kalamActionSteps = $KalamActionStepsTable(
+    this,
+  );
+  @override
+  late final $KalamCheckpointsTable kalamCheckpoints = $KalamCheckpointsTable(
+    this,
+  );
+  @override
+  late final $KalamRowStatesTable kalamRowStates = $KalamRowStatesTable(this);
+
+  List<DatabaseSchemaEntity> get kalamSyncSchema => [
+    kalamActions,
+    kalamCachedRows,
+    kalamActionSteps,
+    kalamCheckpoints,
+    kalamRowStates,
+  ];
+}
+
 @DriftDatabase(
   tables: [
     KalamActions,
@@ -17,7 +57,7 @@ part 'kalam_sync_database.g.dart';
     KalamRowStates,
   ],
 )
-class KalamSyncDatabase extends _$KalamSyncDatabase {
+class KalamSyncDatabase extends _$KalamSyncDatabase implements KalamSyncTables {
   KalamSyncDatabase(super.executor);
 
   @override

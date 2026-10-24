@@ -146,6 +146,20 @@ pub fn build_table_definition(
         }
     }
 
+    if let Some(existing_type) = app_context
+        .system_tables()
+        .catalog_stores()
+        .find_type(&stmt.namespace_id, stmt.table_name.as_str())
+        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+    {
+        if existing_type.kind != kalamdb_commons::models::CatalogTypeKind::ImplicitTableRow {
+            return Err(KalamDbError::AlreadyExists(format!(
+                "type {}.{} already exists",
+                existing_type.namespace_id, existing_type.name
+            )));
+        }
+    }
+
     // Resolve storage
     let (storage_id, _storage_type) = resolve_storage_info(&app_context, stmt.storage_id.as_ref())?;
 
@@ -188,8 +202,15 @@ pub fn build_table_definition(
                 default_val,
                 None,
             );
+            column.character_maximum_length =
+                kalamdb_commons::conversions::read_character_maximum_length(field);
             if let Some(type_ref) = stmt.column_type_refs.get(field.name()) {
-                apply_column_type_ref(app_context.as_ref(), &stmt.namespace_id, &mut column, type_ref)?;
+                apply_column_type_ref(
+                    app_context.as_ref(),
+                    &stmt.namespace_id,
+                    &mut column,
+                    type_ref,
+                )?;
             }
             Ok(column)
         })
@@ -320,25 +341,40 @@ pub fn validate_column_default(
 
 pub fn apply_column_type_ref(
     app_context: &AppContext,
-    current_schema: &kalamdb_commons::models::NamespaceId,
+    current_schema: &kalamdb_commons::models::SchemaId,
     column: &mut kalamdb_commons::models::schemas::ColumnDefinition,
     type_ref: &TypeReference,
 ) -> Result<(), KalamDbError> {
-    column.is_array = type_ref.is_array;
-    column.element_nullable = !type_ref.not_null || type_ref.is_array;
-    let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) else {
-        return Ok(());
+    let element_nullable = !type_ref.not_null || type_ref.is_array;
+    let base_type = if let Some((namespace_id, name)) = type_ref.resolved_name(current_schema) {
+        let stores = app_context.system_tables().catalog_stores();
+        let catalog = stores
+            .find_type(&namespace_id, &name)
+            .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+            .ok_or_else(|| {
+                KalamDbError::NotFound(format!("type {namespace_id}.{name} not found"))
+            })?;
+        if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
+            return Err(KalamDbError::InvalidSql(format!(
+                "topic payload type {namespace_id}.{name} cannot be stored as a column"
+            )));
+        }
+        kalamdb_commons::LogicalTypeRef::named(catalog.type_id)
+    } else if type_ref.name.eq_ignore_ascii_case("jsonb") {
+        kalamdb_commons::LogicalTypeRef::jsonb()
+    } else if type_ref.name.eq_ignore_ascii_case("timestamptz") {
+        kalamdb_commons::LogicalTypeRef::timestamptz()
+    } else if type_ref.name.eq_ignore_ascii_case("geometry") {
+        kalamdb_commons::LogicalTypeRef::geometry()
+    } else {
+        kalamdb_commons::LogicalTypeRef::from_builtin(
+            type_ref.builtin_data_type().unwrap_or_else(|| column.data_type()),
+        )
     };
-    let stores = app_context.system_tables().catalog_stores();
-    let catalog = stores
-        .find_type(&namespace_id, &name)
-        .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
-        .ok_or_else(|| KalamDbError::NotFound(format!("type {namespace_id}.{name} not found")))?;
-    if catalog.kind == kalamdb_commons::models::CatalogTypeKind::TopicPayload {
-        return Err(KalamDbError::InvalidSql(format!(
-            "topic payload type {namespace_id}.{name} cannot be stored as a column"
-        )));
-    }
-    column.named_type_id = Some(catalog.type_id);
+    column.logical_type = if type_ref.is_array {
+        kalamdb_commons::LogicalTypeRef::array(base_type, element_nullable)
+    } else {
+        base_type
+    };
     Ok(())
 }

@@ -1,19 +1,22 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::process::Command;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    future::Future,
+    pin::Pin,
+    process::Command,
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use kalam_client::{ChangeEvent, KalamLinkClient, SubscriptionConfig};
 use serde_json::Value;
-use tokio::sync::{watch, Mutex, Semaphore};
-use tokio::task::JoinSet;
+use tokio::{
+    sync::{watch, Mutex, Semaphore},
+    task::JoinSet,
+};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
-use crate::metrics::BenchmarkDetail;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config, metrics::BenchmarkDetail};
 
 /// Progressive subscriber scale test.
 ///
@@ -26,8 +29,8 @@ pub struct SubscriberScaleBench {
 }
 
 struct SubscriberScaleCleanup {
-    stop_tx: watch::Sender<bool>,
-    handles: Vec<tokio::task::JoinHandle<()>>,
+    stop_tx:      watch::Sender<bool>,
+    handles:      Vec<tokio::task::JoinHandle<()>>,
     pooled_links: Arc<Vec<Vec<KalamLinkClient>>>,
 }
 
@@ -168,7 +171,12 @@ impl Benchmark for SubscriberScaleBench {
             pooled_ws_connection_count(config.max_subscribers, targets.len(), subscriptions_per_ws);
 
         format!(
-            "Progressively ramps cumulative live-query subscribers across tiers {} to verify connection establishment, subscription completion, and INSERT fanout delivery. Delivery probes run at {}. This run is configured with connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, {} shared WebSocket target{}, {} subscriptions per shared WebSocket connection, and a pooled shared-connection budget of {}.",
+            "Progressively ramps cumulative live-query subscribers across tiers {} to verify \
+             connection establishment, subscription completion, and INSERT fanout delivery. \
+             Delivery probes run at {}. This run is configured with connect_batch={}, \
+             wave_size={}, wave_pause={}ms, connect_timeout={}, {} shared WebSocket target{}, {} \
+             subscriptions per shared WebSocket connection, and a pooled shared-connection budget \
+             of {}.",
             format_tier_list(&tiers),
             delivery_probe_tier_list(&tiers, config.max_subscribers),
             format_count(connect_batch_limit()),
@@ -294,12 +302,9 @@ impl Benchmark for SubscriberScaleBench {
             )?);
             let pooled_ws_connections = pooled_links.iter().map(Vec::len).sum::<usize>();
             let preconnect_batch = preconnect_batch_limit();
-            let (preconnected, preconnect_time) = preconnect_pooled_links(
-                pooled_links.as_ref(),
-                connect_timeout,
-                preconnect_batch,
-            )
-            .await?;
+            let (preconnected, preconnect_time) =
+                preconnect_pooled_links(pooled_links.as_ref(), connect_timeout, preconnect_batch)
+                    .await?;
             let single_target_ws_limit = detected_single_target_ws_limit().unwrap_or(32_000);
             let single_target_ws_limit_label = format_num(single_target_ws_limit as u32);
             if ws_targets.len() == 1
@@ -323,7 +328,8 @@ impl Benchmark for SubscriberScaleBench {
                 "  ┌─────────────┬───────────┬──────────┬──────────────┬──────────────┬──────────────┬───────────────┬──────────────┐"
             );
             println!(
-                "  │ Target Subs │ Connected │  Failed  │ Connect Time │ Avg Sub Time │  Subscribed  │ Chg Received  │ Deliver Time │"
+                "  │ Target Subs │ Connected │  Failed  │ Connect Time │ Avg Sub Time │  \
+                 Subscribed  │ Chg Received  │ Deliver Time │"
             );
             println!(
                 "  ├─────────────┼───────────┼──────────┼──────────────┼──────────────┼──────────────┼───────────────┼──────────────┤"
@@ -343,7 +349,8 @@ impl Benchmark for SubscriberScaleBench {
             let semaphore = Arc::new(Semaphore::new(connect_batch));
 
             println!(
-                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, base_delivery_window={}s, ws_targets={}, subs_per_ws={}, pooled_ws_connections={}",
+                "  Settings: connect_batch={}, wave_size={}, wave_pause={}ms, connect_timeout={}, \
+                 base_delivery_window={}s, ws_targets={}, subs_per_ws={}, pooled_ws_connections={}",
                 connect_batch,
                 connect_wave_size,
                 connect_wave_pause.as_millis(),
@@ -362,7 +369,8 @@ impl Benchmark for SubscriberScaleBench {
             println!("  WebSocket target validation: {} endpoint(s) reachable", ws_targets.len());
             if !client.ws_local_bind_addresses().is_empty() {
                 println!(
-                    "  WS local bind pool: {} address(es) [{}] | effective single-target ceiling ~{}",
+                    "  WS local bind pool: {} address(es) [{}] | effective single-target ceiling \
+                     ~{}",
                     client.ws_local_bind_addresses().len(),
                     summarize_bind_pool(client.ws_local_bind_addresses()),
                     single_target_ws_limit_label,
@@ -372,10 +380,9 @@ impl Benchmark for SubscriberScaleBench {
                 println!(
                     "  │ {:^91} │",
                     format!(
-                        "⚠ Single WS target likely capped by local ephemeral ports on this host near {} (target: {}, estimated ws_connections={})",
-                        single_target_ws_limit_label,
-                        ws_targets[0],
-                        required_ws_connections
+                        "⚠ Single WS target likely capped by local ephemeral ports on this host \
+                         near {} (target: {}, estimated ws_connections={})",
+                        single_target_ws_limit_label, ws_targets[0], required_ws_connections
                     )
                 );
                 println!(
@@ -687,7 +694,8 @@ impl Benchmark for SubscriberScaleBench {
             let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(45);
             loop {
                 let count_sql = format!(
-                    "SELECT COUNT(*) AS c FROM system.live WHERE namespace_id = '{}' AND table_name = 'scale_sub'",
+                    "SELECT COUNT(*) AS c FROM system.live WHERE namespace_id = '{}' AND \
+                     table_name = 'scale_sub'",
                     config.namespace
                 );
 
@@ -702,7 +710,8 @@ impl Benchmark for SubscriberScaleBench {
 
                 if tokio::time::Instant::now() >= drain_deadline {
                     println!(
-                        "  ⚠ teardown: {} live queries still active; skipping table drop to avoid late subscribe race",
+                        "  ⚠ teardown: {} live queries still active; skipping table drop to avoid \
+                         late subscribe race",
                         active
                     );
                     return Ok(());
@@ -1189,7 +1198,8 @@ async fn validate_ws_targets(
             message.push_str(&failure);
         }
         message.push_str(
-            "\nHint: bind server to 0.0.0.0 (or all listed target IPs) and verify each URL can authenticate and run SELECT 1.",
+            "\nHint: bind server to 0.0.0.0 (or all listed target IPs) and verify each URL can \
+             authenticate and run SELECT 1.",
         );
         Err(message)
     }

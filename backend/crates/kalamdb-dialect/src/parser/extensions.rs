@@ -485,7 +485,7 @@ impl ExtensionStatement {
                         return Err("Unknown CLUSTER subcommand. Supported: SNAPSHOT, PURGE, \
                                     TRIGGER ELECTION, TRANSFER-LEADER, JOIN, REBALANCE, \
                                     STEPDOWN, CLEAR"
-                            .to_string())
+                            .to_string());
                     },
                 }
             }

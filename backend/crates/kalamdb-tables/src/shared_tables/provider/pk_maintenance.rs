@@ -1,13 +1,16 @@
 fn scan_hot_pk_insert(
     store: &SharedTableIndexedStore,
     pk_prefixes: &[(String, Vec<u8>)],
-) -> Result<(Option<String>, HashSet<String>), KalamDbError> {
-    crate::versioned::first_live_pk(pk_prefixes, |prefix| {
-        Ok(store
-            .get_latest_by_index_prefix(0, prefix)
-            .map_err(|e| KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e)))?
-            .map(|(_, row)| row._deleted))
-    })
+) -> Result<crate::versioned::HotInsertScan<SharedTableRowId, SharedTableRow>, KalamDbError> {
+    crate::versioned::scan_hot_inserts(
+        pk_prefixes,
+        |prefix| {
+            store.get_latest_by_index_prefix(0, prefix).map_err(|e| {
+                KalamDbError::InvalidOperation(format!("PK index scan failed: {}", e))
+            })
+        },
+        |row| row._deleted,
+    )
 }
 
 fn collect_live_string_primary_keys_before_from_store(
@@ -107,7 +110,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{NamespaceId, TableId, TableName},
+        models::{SchemaId, TableId, TableName},
     };
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
 
@@ -116,7 +119,7 @@ mod tests {
 
     fn create_store(pk_field_name: &str) -> Arc<SharedTableIndexedStore> {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::new());
-        let table_id = TableId::new(NamespaceId::new("dba"), TableName::new("stats"));
+        let table_id = TableId::new(SchemaId::new("dba"), TableName::new("stats"));
         let schema = Arc::new(kalamdb_serialization::StorageSchema::new(
             1,
             vec![kalamdb_serialization::StorageField::new(
@@ -187,7 +190,7 @@ mod tests {
     fn hard_delete_string_primary_keys_removes_all_versions_for_pk() {
         let store = create_store("id");
         let pk_index = SharedTablePkIndex::new(
-            &TableId::new(NamespaceId::new("dba"), TableName::new("stats")),
+            &TableId::new(SchemaId::new("dba"), TableName::new("stats")),
             "id",
         );
 

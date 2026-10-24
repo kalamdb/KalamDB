@@ -25,14 +25,15 @@ use crate::{error::FlushResultExt, FlushError, FlushManifestHelper, ManifestServ
 /// Flushes shared table data to Parquet files. All rows are written to a single
 /// Parquet file per flush operation (no user partitioning like user tables).
 pub struct SharedTableFlushJob {
-    store:           Arc<SharedTableIndexedStore>,
-    table_id:        Arc<TableId>,
-    schema:          SchemaRef,
-    storage_cached:  Arc<StorageCached>,
-    manifest_helper: FlushManifestHelper,
-    metadata:        FlushTableMetadata,
-    scan_batch_size: usize,
-    scope_hook:      Arc<dyn FlushScopeHook>,
+    store:             Arc<SharedTableIndexedStore>,
+    table_id:          Arc<TableId>,
+    schema:            SchemaRef,
+    storage_cached:    Arc<StorageCached>,
+    manifest_helper:   FlushManifestHelper,
+    metadata:          FlushTableMetadata,
+    scan_batch_size:   usize,
+    scope_hook:        Arc<dyn FlushScopeHook>,
+    retain_latest_hot: bool,
 }
 
 impl SharedTableFlushJob {
@@ -64,7 +65,14 @@ impl SharedTableFlushJob {
             metadata,
             scan_batch_size: helpers::normalize_scan_batch_size(scan_batch_size),
             scope_hook,
+            retain_latest_hot: false,
         }
+    }
+
+    /// Keep the current row of each primary key in hot storage.
+    pub fn retain_latest_hot(mut self, retain: bool) -> Self {
+        self.retain_latest_hot = retain;
+        self
     }
 
     fn scope_writer(&self) -> FlushScopeWriter<'_> {
@@ -166,24 +174,52 @@ impl TableFlush for SharedTableFlushJob {
         }
 
         stats.rows_after_dedup = latest_versions.len();
+        let pk_column_id = crate::flush_helper::TombstoneColdMask::pk_column_id(
+            &self.metadata.indexed_columns,
+            &pk_field,
+        );
+        let cold_mask = self.manifest_helper.cold_mask(self.table_id.as_ref(), None, pk_column_id);
+        let live_hot_keys =
+            self.retain_latest_hot.then(|| helpers::live_hot_keys(&latest_versions));
         let (rows, preserved_tombstone_keys) =
-            helpers::rows_and_tombstones_from_versions(latest_versions, &mut stats);
+            helpers::rows_and_tombstones_from_versions(latest_versions, &mut stats, |pk| {
+                cold_mask.preserves(pk)
+            });
 
         // Log dedup statistics
         stats.log_summary(&self.table_id.to_string());
 
-        let keys_to_delete = helpers::cleanup_keys_excluding_preserved(
-            all_keys_to_delete,
-            &preserved_tombstone_keys,
-        );
+        let mut preserved_keys = preserved_tombstone_keys;
+        if let Some(live_keys) = live_hot_keys {
+            preserved_keys.extend(live_keys);
+        }
+        let keys_to_delete =
+            helpers::cleanup_keys_excluding_preserved(all_keys_to_delete, &preserved_keys);
 
-        // If no rows to flush, return early
-        if rows.is_empty() {
+        // Current rows stay hot. Superseded versions are deleted above and are
+        // not copied into the archive.
+        if self.retain_latest_hot || rows.is_empty() {
             self.delete_flushed_rows(&keys_to_delete)?;
-            log::info!(
-                "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
-                self.table_id
-            );
+            if let Err(err) = self.manifest_helper.note_retained_hot(self.table_id.as_ref(), None) {
+                log::warn!(
+                    "Retained hot rows for shared table={} but did not restart the flush \
+                     interval: {}",
+                    self.table_id,
+                    err
+                );
+            }
+            if self.retain_latest_hot {
+                log::debug!(
+                    "Retained current hot rows for shared table={} and dropped {} superseded keys",
+                    self.table_id,
+                    keys_to_delete.len()
+                );
+            } else {
+                log::info!(
+                    "⚠️  No rows to flush for shared table={} (empty table or all deleted)",
+                    self.table_id
+                );
+            }
             return Ok(FlushJobResult {
                 rows_flushed:  0,
                 parquet_files: vec![],

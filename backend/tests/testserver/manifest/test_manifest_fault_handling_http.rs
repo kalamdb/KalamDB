@@ -65,7 +65,7 @@ async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_h
         let namespace = unique_namespace("manifest_missing_fallback");
         let table = "events";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
 
         let resp = server
@@ -128,7 +128,7 @@ async fn test_manifest_missing_or_corrupt_is_handled_without_server_crash_over_h
         let namespace = unique_namespace("manifest_faults");
         let table = "orders";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", namespace)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA {}", namespace)).await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
 
         let resp = server

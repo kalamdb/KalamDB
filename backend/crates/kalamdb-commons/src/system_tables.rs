@@ -809,9 +809,9 @@ impl StoragePartition {
 #[must_use]
 pub fn classify_column_family_name(name: &str) -> ColumnFamilyProfile {
     match name {
-        "system_meta" => return ColumnFamilyProfile::SystemMeta,
+        "system_meta" | "cold_meta" => return ColumnFamilyProfile::SystemMeta,
         "system_index" => return ColumnFamilyProfile::SystemIndex,
-        "hot_data" => return ColumnFamilyProfile::HotData,
+        "hot_data" | "stream_data" => return ColumnFamilyProfile::HotData,
         "hot_index" => return ColumnFamilyProfile::HotIndex,
         "raft_data" => return ColumnFamilyProfile::Raft,
         _ => {},
@@ -839,7 +839,7 @@ pub fn classify_column_family_name(name: &str) -> ColumnFamilyProfile {
         || name.starts_with(ColumnFamilyNames::SHARED_TABLE_PREFIX)
         || name.starts_with(ColumnFamilyNames::STREAM_TABLE_PREFIX)
     {
-        return if name.ends_with("_pk_idx") {
+        return if name.ends_with("_pk_idx") || name.contains("_idx_") {
             ColumnFamilyProfile::HotIndex
         } else {
             ColumnFamilyProfile::HotData
@@ -1084,5 +1084,31 @@ mod tests {
         assert!(SystemTable::Sessions.partition().is_none());
         assert!(SystemTable::Cluster.partition().is_none());
         assert!(SystemTable::ClusterGroups.partition().is_none());
+    }
+
+    #[test]
+    fn test_classify_column_family_name_profiles() {
+        assert_eq!(classify_column_family_name("user_app:orders"), ColumnFamilyProfile::HotData);
+        assert_eq!(
+            classify_column_family_name("user_app:orders_pk_idx"),
+            ColumnFamilyProfile::HotIndex
+        );
+        assert_eq!(
+            classify_column_family_name("user_app:orders_idx_created_at"),
+            ColumnFamilyProfile::HotIndex
+        );
+        assert_eq!(
+            classify_column_family_name("shared_app:orders_idx_status"),
+            ColumnFamilyProfile::HotIndex
+        );
+        assert_eq!(
+            classify_column_family_name("vix_app:orders_embedding_user_ops"),
+            ColumnFamilyProfile::HotData
+        );
+        assert_eq!(
+            classify_column_family_name("vix_app:orders_embedding_user_pk_idx"),
+            ColumnFamilyProfile::HotIndex
+        );
+        assert_eq!(classify_column_family_name("stream_data"), ColumnFamilyProfile::HotData);
     }
 }

@@ -329,7 +329,7 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
                 onChange={(event) => setFormData((prev) => ({ ...prev, shared_tables_template: event.target.value }))}
                 placeholder="{namespace}/{tableName}/"
               />
-              <FieldHelp text="Template for shared table paths. Supports {namespace} and {tableName}." />
+              <FieldHelp text="Template for shared table paths. {namespace} is the schema name; {tableName} is the table." />
             </div>
 
             <div className="space-y-2">
@@ -339,7 +339,7 @@ export function StorageForm({ open, onOpenChange, storage, onSuccess }: StorageF
                 onChange={(event) => setFormData((prev) => ({ ...prev, user_tables_template: event.target.value }))}
                 placeholder="{namespace}/{tableName}/{userId}/"
               />
-              <FieldHelp text="Template for user table paths. Supports {namespace}, {tableName}, and {userId}." />
+              <FieldHelp text="Template for user table paths. {namespace} is the schema name, with {tableName} and {userId}." />
             </div>
 
             {isEditing && storage && (

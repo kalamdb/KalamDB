@@ -1,6 +1,6 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
-    models::{NamespaceId, RoutineId, ScheduleId, UserId},
+    models::{RoutineId, ScheduleId, SchemaId, UserId},
 };
 use kalamdb_macros::table;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ pub struct CatalogSchedule {
         default = "None",
         comment = "namespace id"
     )]
-    pub namespace_id:      NamespaceId,
+    pub namespace_id:      SchemaId,
     #[column(
         id = 3,
         ordinal = 3,

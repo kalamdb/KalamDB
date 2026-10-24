@@ -487,7 +487,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use datafusion::scalar::ScalarValue;
-    use kalamdb_commons::models::{rows::Row, NamespaceId, TableName};
+    use kalamdb_commons::models::{rows::Row, SchemaId, TableName};
     use kalamdb_serialization::{StorageDataType, StorageField, StorageSchema};
     use kalamdb_sharding::ShardRouter;
 
@@ -504,7 +504,7 @@ mod tests {
     }
 
     fn create_test_store(_base_dir: &std::path::Path) -> StreamTableStore {
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
             base_dir:          _base_dir.join("streams").join("test_ns").join("test_stream"),
             max_rows_per_user: MemoryStreamLogStore::DEFAULT_MAX_ROWS_PER_USER,
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn test_stream_table_store_persists_rows_across_reopen() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_stream"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_stream"));
         let config = StreamTableStoreConfig {
             base_dir:          temp_dir.path().join("streams").join("test_ns").join("test_stream"),
             max_rows_per_user: MemoryStreamLogStore::DEFAULT_MAX_ROWS_PER_USER,

@@ -447,6 +447,24 @@ impl ManifestService {
         })
     }
 
+    /// Restart the flush interval after a retain pass that wrote no Parquet.
+    ///
+    /// Pending writes do not bump `last_refreshed`, and a retain pass does not
+    /// call `persist_flushed_segment`. Without this, a due interval stays due
+    /// and the scheduler full-scans the table on every check.
+    pub fn note_retained_hot_window(
+        &self,
+        table_id: &TableId,
+        user_id: Option<&UserId>,
+    ) -> Result<(), StorageError> {
+        self.with_flush_scope_lock(table_id, user_id, || {
+            let now = chrono::Utc::now().timestamp_millis();
+            self.update_cached_entry(table_id, user_id, |entry| {
+                entry.last_refreshed = now;
+            })
+        })
+    }
+
     fn mark_pending_write_in_locked_scope(
         &self,
         table_id: &TableId,
@@ -1425,7 +1443,7 @@ mod tests {
     use datafusion::arrow::datatypes::{Schema, SchemaRef};
     use kalamdb_commons::{
         schemas::{TableDefinition, TableOptions, TableType},
-        NamespaceId, StorageId, TableName,
+        SchemaId, StorageId, TableName,
     };
     use kalamdb_configs::RemoteStorageTimeouts;
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
@@ -1498,7 +1516,7 @@ mod tests {
     }
 
     fn build_table_id(ns: &str, tbl: &str) -> TableId {
-        TableId::new(NamespaceId::new(ns), TableName::new(tbl))
+        TableId::new(SchemaId::new(ns), TableName::new(tbl))
     }
 
     fn test_segment(path: &str, min_seq: i64, max_seq: i64, row_count: u64) -> SegmentMetadata {
@@ -1936,7 +1954,7 @@ mod tests {
     #[test]
     fn test_invalidate() {
         let service = create_test_service();
-        let namespace = NamespaceId::new("ns1");
+        let namespace = SchemaId::new("ns1");
         let table = TableName::new("tbl1");
         let table_id = TableId::new(namespace.clone(), table.clone());
         let manifest = create_test_manifest(&table_id, Some(&UserId::from("u_123")));

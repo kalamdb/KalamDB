@@ -5,9 +5,34 @@ use std::collections::BTreeMap;
 pub use kalamdb_functions_host::{
     camel_case, method_ident, namespace_object_ident, pascal_case, DEFAULT_NAMESPACE,
 };
-use kalamdb_sql::contracts::ContractSnapshot;
+use kalamdb_sql::contracts::{
+    scoped_contract_hashes, ContractRoutine, ContractSnapshot, ScopedContractHashes,
+    CURRENT_CONTRACT_EPOCH,
+};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{CLIError, Result};
+
+/// Current-epoch manifest recording deterministic SQL-to-public name mappings and scoped hashes
+/// (`T004`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentEpochManifest {
+    pub epoch:                  u16,
+    pub scoped_hashes:          ScopedContractHashes,
+    pub sql_to_public_types:    BTreeMap<String, String>,
+    pub sql_to_public_routines: BTreeMap<String, String>,
+}
+
+impl CurrentEpochManifest {
+    pub fn from_snapshot(snapshot: &ContractSnapshot, names: &AssignedNames) -> Self {
+        Self {
+            epoch:                  CURRENT_CONTRACT_EPOCH,
+            scoped_hashes:          scoped_contract_hashes(snapshot),
+            sql_to_public_types:    names.types.clone(),
+            sql_to_public_routines: names.routines.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamingOptions {
@@ -65,14 +90,33 @@ pub fn assign_names_with_home(
         types.insert(ty.type_id.to_string(), ident);
     }
     let mut routines = BTreeMap::new();
+    let mut overload_counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for routine in snapshot.routines.values() {
+        *overload_counts
+            .entry((routine.schema.clone(), routine.name.clone()))
+            .or_insert(0) += 1;
+    }
     for (id, routine) in &snapshot.routines {
-        let ident = generated_type_ident(
+        let is_overloaded = overload_counts
+            .get(&(routine.schema.clone(), routine.name.clone()))
+            .copied()
+            .unwrap_or(0)
+            > 1;
+        let base_ident = generated_type_ident(
             &routine.schema,
             &routine.name,
             options.unqualified_names || schema_is_home(&routine.schema, home_schema),
         );
+        let ident = if is_overloaded {
+            format!("{base_ident}{}", overload_suffix(routine))
+        } else {
+            base_ident
+        };
         claimed.entry(ident.clone()).or_default().push(format!("procedure {id}"));
-        routines.insert(id.clone(), ident);
+        routines.insert(id.clone(), ident.clone());
+        if !routine.signature.is_empty() && routine.signature != *id {
+            routines.insert(routine.signature.clone(), ident);
+        }
     }
 
     let collisions: Vec<String> = claimed
@@ -101,7 +145,10 @@ fn schema_is_home(schema: &str, home_schema: Option<&str>) -> bool {
 
 pub fn generated_type_ident(schema: &str, name: &str, unqualified_names: bool) -> String {
     let local = pascal_case(name);
-    if unqualified_names || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE) {
+    if unqualified_names
+        || schema.eq_ignore_ascii_case(DEFAULT_NAMESPACE)
+        || schema.eq_ignore_ascii_case("pg_catalog")
+    {
         local
     } else {
         format!("{}{local}", pascal_case(schema))
@@ -119,6 +166,27 @@ pub fn value_ident(schema: &str, name: &str, unqualified_names: bool) -> String 
 
 pub fn contract_hash_line(hash: &str) -> String {
     format!("contract_hash: {hash}")
+}
+
+fn overload_suffix(routine: &ContractRoutine) -> String {
+    let mut suffix = String::from("By");
+    let mut any = false;
+    for param in &routine.parameters {
+        if !param.param_mode.is_input() {
+            continue;
+        }
+        any = true;
+        let ty = param.type_id.as_ref().map(|id| id.as_str()).unwrap_or(param.type_name.as_str());
+        let short = ty.rsplit('.').next().unwrap_or(ty);
+        suffix.push_str(&pascal_case(short));
+        if param.is_array {
+            suffix.push_str("List");
+        }
+    }
+    if !any {
+        suffix.push_str("Void");
+    }
+    suffix
 }
 
 #[cfg(test)]

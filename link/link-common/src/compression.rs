@@ -3,6 +3,12 @@
 //! Provides gzip decompression for WebSocket messages received from the server.
 //! The server compresses messages over 512 bytes automatically.
 
+/// Maximum compressed input payload size (16 MiB).
+pub const DEFAULT_MAX_COMPRESSED_BYTES: usize = 16 * 1024 * 1024;
+
+/// Maximum decompressed output payload size (64 MiB).
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+
 /// Check if data is gzip compressed (magic bytes check)
 #[inline]
 pub fn is_gzip(data: &[u8]) -> bool {
@@ -10,10 +16,11 @@ pub fn is_gzip(data: &[u8]) -> bool {
 }
 
 /// Decompress gzip data using miniz_oxide (pure Rust, WASM-compatible)
+/// with the bounded default output limit (`DEFAULT_MAX_DECOMPRESSED_BYTES`).
 ///
 /// Returns the decompressed bytes, or an error if decompression fails.
 pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
-    decompress_gzip_with_limit(data, usize::MAX)
+    decompress_gzip_with_limit(data, DEFAULT_MAX_DECOMPRESSED_BYTES)
 }
 
 /// Decompress gzip data with a maximum output size limit.
@@ -26,34 +33,46 @@ pub fn decompress_gzip_with_limit(
     if data.len() < 18 {
         return Err(DecompressError::TooShort);
     }
+    if data.len() > DEFAULT_MAX_COMPRESSED_BYTES {
+        return Err(DecompressError::InputTooLarge {
+            actual: data.len(),
+            limit:  DEFAULT_MAX_COMPRESSED_BYTES,
+        });
+    }
 
     // Verify gzip magic bytes
     if !is_gzip(data) {
         return Err(DecompressError::NotGzip);
     }
-
-    // Gzip format:
-    // - 10 byte header (magic, method, flags, mtime, xfl, os)
-    // - Optional extra fields based on flags
-    // - Compressed data (DEFLATE)
-    // - 8 byte trailer (CRC32, original size)
-
+    // Compression method 8 = DEFLATE; reject unknown methods or reserved flag bits (0xe0).
+    let method = data[2];
     let flags = data[3];
-    let mut pos = 10;
+    if method != 0x08 || (flags & 0xe0) != 0 {
+        return Err(DecompressError::InvalidHeader);
+    }
+
+    let effective_limit = max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES);
+    let mut pos = 10usize;
 
     // Skip extra field if present (FEXTRA flag = 0x04)
     if flags & 0x04 != 0 {
-        if pos + 2 > data.len() {
+        if pos.checked_add(2).is_none_or(|end| end > data.len()) {
             return Err(DecompressError::InvalidHeader);
         }
         let xlen = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
-        pos += 2 + xlen;
+        pos = pos
+            .checked_add(2)
+            .and_then(|p| p.checked_add(xlen))
+            .ok_or(DecompressError::InvalidHeader)?;
     }
 
     // Skip original filename if present (FNAME flag = 0x08)
     if flags & 0x08 != 0 {
         while pos < data.len() && data[pos] != 0 {
             pos += 1;
+        }
+        if pos >= data.len() {
+            return Err(DecompressError::InvalidHeader);
         }
         pos += 1; // Skip null terminator
     }
@@ -63,12 +82,15 @@ pub fn decompress_gzip_with_limit(
         while pos < data.len() && data[pos] != 0 {
             pos += 1;
         }
+        if pos >= data.len() {
+            return Err(DecompressError::InvalidHeader);
+        }
         pos += 1; // Skip null terminator
     }
 
     // Skip CRC16 if present (FHCRC flag = 0x02)
     if flags & 0x02 != 0 {
-        pos += 2;
+        pos = pos.checked_add(2).ok_or(DecompressError::InvalidHeader)?;
     }
 
     if pos > data.len() - 8 {
@@ -86,34 +108,53 @@ pub fn decompress_gzip_with_limit(
         data[data.len() - 2],
         data[data.len() - 1],
     ]) as usize;
-    if advertised_size > max_output_bytes {
+    if advertised_size > effective_limit {
         return Err(DecompressError::OutputTooLarge {
             advertised: advertised_size,
-            limit:      max_output_bytes,
+            limit:      effective_limit,
         });
     }
 
-    // Decompress using miniz_oxide
-    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(deflate_data, max_output_bytes)
-        .or_else(|_| {
-            // Try raw deflate (without zlib header)
-            miniz_oxide::inflate::decompress_to_vec_with_limit(deflate_data, max_output_bytes)
-        })
-        .map_err(|_| DecompressError::DecompressFailed)
+    // Gzip payloads carry raw RFC 1951 DEFLATE blocks; never fall back between formats.
+    let decompressed =
+        miniz_oxide::inflate::decompress_to_vec_with_limit(deflate_data, effective_limit)
+            .map_err(|_| DecompressError::DecompressFailed)?;
+    if (decompressed.len() as u32) != (advertised_size as u32) {
+        return Err(DecompressError::DecompressFailed);
+    }
+    Ok(decompressed)
 }
 
-/// Decompress gzip data, or return the input unchanged.
+/// Decompress a frame if it carries gzip magic, or return the plain input borrowed.
 ///
-/// Returns `Cow::Borrowed` when no decompression is needed, avoiding an
-/// allocation on the hot path for uncompressed messages.
-pub fn decompress_if_gzip(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+/// Unlike permissive sniffers, if the payload starts with gzip magic (`0x1f 0x8b`)
+/// and decompression fails or exceeds `max_output_bytes`, this returns `Err` rather
+/// than falling back to the raw compressed bytes (`FR-057`, `T065`).
+pub fn decompress_frame_checked(
+    data: &[u8],
+    max_output_bytes: usize,
+) -> Result<std::borrow::Cow<'_, [u8]>, DecompressError> {
     if is_gzip(data) {
-        match decompress_gzip(data) {
-            Ok(decompressed) => std::borrow::Cow::Owned(decompressed),
-            Err(_) => std::borrow::Cow::Borrowed(data),
-        }
+        decompress_gzip_with_limit(data, max_output_bytes).map(std::borrow::Cow::Owned)
     } else {
-        std::borrow::Cow::Borrowed(data)
+        if data.len() > max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES) {
+            return Err(DecompressError::OutputTooLarge {
+                advertised: data.len(),
+                limit:      max_output_bytes.min(DEFAULT_MAX_DECOMPRESSED_BYTES),
+            });
+        }
+        Ok(std::borrow::Cow::Borrowed(data))
+    }
+}
+
+/// Decompress gzip data when valid, or return plain non-gzip input borrowed.
+///
+/// If `data` has gzip magic (`0x1f 0x8b`) and fails bounded decompression, returns an
+/// empty slice rather than passing corrupted compressed bytes as plaintext (`T065`).
+pub fn decompress_if_gzip(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    match decompress_frame_checked(data, DEFAULT_MAX_DECOMPRESSED_BYTES) {
+        Ok(out) => out,
+        Err(_) => std::borrow::Cow::Borrowed(&[]),
     }
 }
 
@@ -128,6 +169,8 @@ pub enum DecompressError {
     InvalidHeader,
     /// Decompression failed
     DecompressFailed,
+    /// Compressed input exceeds configured limit
+    InputTooLarge { actual: usize, limit: usize },
     /// Advertised decompressed payload exceeds configured limit
     OutputTooLarge {
         advertised: usize,
@@ -142,6 +185,9 @@ impl std::fmt::Display for DecompressError {
             Self::NotGzip => write!(f, "Not gzip compressed"),
             Self::InvalidHeader => write!(f, "Invalid gzip header"),
             Self::DecompressFailed => write!(f, "Decompression failed"),
+            Self::InputTooLarge { actual, limit } => {
+                write!(f, "Compressed payload too large ({} bytes > limit {} bytes)", actual, limit)
+            },
             Self::OutputTooLarge { advertised, limit } => {
                 write!(
                     f,
@@ -206,5 +252,21 @@ mod tests {
                 limit:      16,
             }
         ));
+    }
+
+    #[test]
+    fn t065_corrupt_gzip_never_falls_back_to_raw_bytes() {
+        let corrupt_gzip = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03deadbeef_not_deflate";
+        assert!(decompress_frame_checked(corrupt_gzip, 1024).is_err());
+        let fallback = decompress_if_gzip(corrupt_gzip);
+        assert!(fallback.is_empty(), "corrupt gzip frame must never return raw compressed bytes");
+
+        // Reserved flag bits (0xe0) must be rejected
+        let bad_flags =
+            b"\x1f\x8b\x08\x20\x00\x00\x00\x00\x00\x03\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        assert_eq!(
+            decompress_gzip_with_limit(bad_flags, 1024),
+            Err(DecompressError::InvalidHeader)
+        );
     }
 }

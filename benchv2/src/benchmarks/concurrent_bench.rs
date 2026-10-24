@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 // ---------------------------------------------------------------------------
 // Concurrent INSERT: fires `concurrency` inserts in parallel per iteration
@@ -35,7 +32,8 @@ impl Benchmark for ConcurrentInsertBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.conc_insert_bench (id INT PRIMARY KEY, name TEXT, value DOUBLE)",
+                    "CREATE TABLE {}.conc_insert_bench (id INT PRIMARY KEY, name TEXT, value \
+                     DOUBLE)",
                     config.namespace
                 ))
                 .await?;
@@ -58,7 +56,8 @@ impl Benchmark for ConcurrentInsertBench {
                 let id = iteration * conc + i;
                 handles.push(tokio::spawn(async move {
                     c.sql_ok(&format!(
-                        "INSERT INTO {}.conc_insert_bench (id, name, value) VALUES ({}, 'conc_{}', {:.2})",
+                        "INSERT INTO {}.conc_insert_bench (id, name, value) VALUES ({}, \
+                         'conc_{}', {:.2})",
                         ns, id, id, id as f64
                     ))
                     .await
@@ -115,7 +114,8 @@ impl Benchmark for ConcurrentSelectBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.conc_select_bench (id INT PRIMARY KEY, name TEXT, value DOUBLE)",
+                    "CREATE TABLE {}.conc_select_bench (id INT PRIMARY KEY, name TEXT, value \
+                     DOUBLE)",
                     config.namespace
                 ))
                 .await?;

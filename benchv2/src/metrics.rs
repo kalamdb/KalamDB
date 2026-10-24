@@ -25,44 +25,44 @@ impl BenchmarkDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkResult {
     /// Name of the benchmark (e.g. "single_insert", "select_by_pk")
-    pub name: String,
+    pub name:             String,
     /// Category grouping (e.g. "Insert", "Select", "Update", "Delete")
-    pub category: String,
+    pub category:         String,
     /// Human-readable description
-    pub description: String,
+    pub description:      String,
     /// Full description shown in report tooltips.
     #[serde(default)]
     pub full_description: String,
     /// Benchmark-specific details shown alongside the description.
     #[serde(default)]
-    pub details: Vec<BenchmarkDetail>,
+    pub details:          Vec<BenchmarkDetail>,
     /// Number of iterations measured (excluding warmup)
-    pub iterations: u32,
+    pub iterations:       u32,
     /// Individual iteration durations in microseconds
     #[serde(skip)]
     pub raw_durations_us: Vec<u64>,
     /// Total wall-clock time in microseconds
-    pub total_us: u64,
+    pub total_us:         u64,
     /// Mean latency in microseconds
-    pub mean_us: f64,
+    pub mean_us:          f64,
     /// Median (p50) latency in microseconds
-    pub median_us: f64,
+    pub median_us:        f64,
     /// p95 latency in microseconds
-    pub p95_us: f64,
+    pub p95_us:           f64,
     /// p99 latency in microseconds
-    pub p99_us: f64,
+    pub p99_us:           f64,
     /// Minimum latency in microseconds
-    pub min_us: f64,
+    pub min_us:           f64,
     /// Maximum latency in microseconds
-    pub max_us: f64,
+    pub max_us:           f64,
     /// Standard deviation in microseconds
-    pub stddev_us: f64,
+    pub stddev_us:        f64,
     /// Operations per second (throughput)
-    pub ops_per_sec: f64,
+    pub ops_per_sec:      f64,
     /// Whether the benchmark succeeded
-    pub success: bool,
+    pub success:          bool,
     /// Error message if the benchmark failed
-    pub error: Option<String>,
+    pub error:            Option<String>,
 }
 
 impl BenchmarkResult {
@@ -132,24 +132,24 @@ impl BenchmarkResult {
     /// Create a failed result.
     pub fn failed(name: &str, category: &str, description: &str, error: String) -> Self {
         Self {
-            name: name.to_string(),
-            category: category.to_string(),
-            description: description.to_string(),
+            name:             name.to_string(),
+            category:         category.to_string(),
+            description:      description.to_string(),
             full_description: description.to_string(),
-            details: Vec::new(),
-            iterations: 0,
+            details:          Vec::new(),
+            iterations:       0,
             raw_durations_us: vec![],
-            total_us: 0,
-            mean_us: 0.0,
-            median_us: 0.0,
-            p95_us: 0.0,
-            p99_us: 0.0,
-            min_us: 0.0,
-            max_us: 0.0,
-            stddev_us: 0.0,
-            ops_per_sec: 0.0,
-            success: false,
-            error: Some(error),
+            total_us:         0,
+            mean_us:          0.0,
+            median_us:        0.0,
+            p95_us:           0.0,
+            p99_us:           0.0,
+            min_us:           0.0,
+            max_us:           0.0,
+            stddev_us:        0.0,
+            ops_per_sec:      0.0,
+            success:          false,
+            error:            Some(error),
         }
     }
 
@@ -187,50 +187,50 @@ fn percentile(sorted: &[u64], pct: f64) -> f64 {
 /// Full benchmark report containing all results + metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkReport {
-    pub version: String,
+    pub version:    String,
     pub server_url: String,
-    pub timestamp: String,
-    pub config: ReportConfig,
+    pub timestamp:  String,
+    pub config:     ReportConfig,
     #[serde(default)]
-    pub system: SystemInfo,
-    pub results: Vec<BenchmarkResult>,
-    pub summary: ReportSummary,
+    pub system:     SystemInfo,
+    pub results:    Vec<BenchmarkResult>,
+    pub summary:    ReportSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SystemInfo {
-    pub hostname: String,
-    pub machine_model: String,
-    pub os_name: String,
-    pub os_version: String,
-    pub kernel_version: String,
-    pub architecture: String,
-    pub cpu_model: String,
-    pub cpu_logical_cores: usize,
-    pub cpu_physical_cores: usize,
-    pub total_memory_bytes: u64,
+    pub hostname:               String,
+    pub machine_model:          String,
+    pub os_name:                String,
+    pub os_version:             String,
+    pub kernel_version:         String,
+    pub architecture:           String,
+    pub cpu_model:              String,
+    pub cpu_logical_cores:      usize,
+    pub cpu_physical_cores:     usize,
+    pub total_memory_bytes:     u64,
     pub available_memory_bytes: u64,
-    pub used_memory_bytes: u64,
-    pub used_memory_percent: f64,
+    pub used_memory_bytes:      u64,
+    pub used_memory_percent:    f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportConfig {
-    pub iterations: u32,
-    pub warmup: u32,
-    pub concurrency: u32,
-    pub namespace: String,
+    pub iterations:      u32,
+    pub warmup:          u32,
+    pub concurrency:     u32,
+    pub namespace:       String,
     #[serde(default)]
     pub max_subscribers: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportSummary {
-    pub total_benchmarks: u32,
-    pub passed: u32,
-    pub failed: u32,
+    pub total_benchmarks:     u32,
+    pub passed:               u32,
+    pub failed:               u32,
     /// End-to-end wall-clock duration for the report run.
-    pub total_duration_ms: f64,
+    pub total_duration_ms:    f64,
     /// Sum of measured benchmark iteration durations.
     #[serde(default)]
     pub measured_duration_ms: f64,

@@ -16,7 +16,7 @@ async fn test_shared_tables_lifecycle_over_http() -> anyhow::Result<()> {
     let ns = unique_namespace("st");
     let table = "audit";
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
     let _ = server.execute_sql(&format!("DROP TABLE {}.{}", ns, table)).await;

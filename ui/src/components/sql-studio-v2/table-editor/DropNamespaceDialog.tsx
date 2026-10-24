@@ -40,14 +40,14 @@ export function DropNamespaceDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="h-4 w-4" />
-            Drop namespace "{namespace}"
+            Drop schema "{namespace}"
           </DialogTitle>
           <DialogDescription>
             {isEmpty ? (
-              <>This namespace is empty.</>
+              <>This schema is empty.</>
             ) : (
               <>
-                This namespace contains <strong>{tableCount}</strong>{" "}
+                This schema contains <strong>{tableCount}</strong>{" "}
                 {tableCount === 1 ? "table" : "tables"}. Without CASCADE the drop will fail.
               </>
             )}
@@ -64,7 +64,7 @@ export function DropNamespaceDialog({
             />
             <span className="space-y-0.5">
               <span className="block font-medium text-destructive">
-                CASCADE — also delete all {tableCount} {tableCount === 1 ? "table" : "tables"} in this namespace
+                CASCADE — also delete all {tableCount} {tableCount === 1 ? "table" : "tables"} in this schema
               </span>
               <span className="block text-muted-foreground">
                 All data in those tables will be permanently lost.

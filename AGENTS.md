@@ -19,6 +19,7 @@ Keep context small. Read only the files needed for the current task. Do not scan
 10. Keep code organized with minimal duplication and no unrelated refactors.
 11. Use DataFusion for query processing, version resolution, and deletion filtering.
 12. Do not add SQL rewrite passes in hot paths. Prefer typed coercion at parameter binding, scalar coercion, provider write paths, DataFusion casts, or explicit UDFs.
+13. Parse SQL with `KalamParser` and `KalamDbDialect` (PostgreSQL via sqlparser). Do not stitch SQL text, split identifiers on `.`, or scan statements with regular expressions when the parser already returns an AST (`Statement`, `ObjectName`, `Ident`, `TableConstraint`). Identifier characters come from the dialect (`is_identifier_start`, `is_identifier_part`). Keep only Kalam policy outside the parser: length, a leading underscore, and reserved names. A hyphen is not an unquoted identifier character; it is valid only after the parser has accepted a quoted identifier.
 
 ## Storage Boundaries
 

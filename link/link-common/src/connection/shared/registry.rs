@@ -200,6 +200,10 @@ pub(super) fn is_expired_resume(code: &str, message: &str) -> bool {
         || message.to_ascii_lowercase().contains("stale resume cursor")
 }
 
+pub(super) fn is_delivery_gap(code: &str) -> bool {
+    code.eq_ignore_ascii_case("DELIVERY_GAP")
+}
+
 pub(super) fn cache_entry_seq(resume_cache: &ResumeCache, id: &str, entry: &SubEntry) {
     if let Some(seq) = effective_entry_seq(entry) {
         resume_cache.remember_closed(id, &entry.sql, seq, entry.options.version_domain.clone());

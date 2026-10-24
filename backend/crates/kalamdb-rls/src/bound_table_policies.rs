@@ -336,8 +336,8 @@ mod tests {
         datatypes::KalamDataType,
         models::rows::Row,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        AuthorizationRelation, BoundExprShape, InvalidationStrategy, NamespaceId, PolicyCommand,
-        PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr, Role, TableId, TableName,
+        AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+        PolicyProgram, PolicyTarget, PrincipalExpr, Role, SchemaId, TableId, TableName,
         TablePolicy, UserId,
     };
 
@@ -351,7 +351,7 @@ mod tests {
 
     fn table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("documents"),
             TableType::Shared,
             vec![

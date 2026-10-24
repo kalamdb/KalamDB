@@ -101,6 +101,23 @@ impl From<&UserContext> for SessionUserContext {
 
 empty_config_extension!(SessionUserContext, "kalamdb_user");
 
+/// DataFusion adapter for the shared connection/request setting state.
+#[derive(Clone, Debug, Default)]
+pub struct SessionConfigValues(pub kalamdb_session::SessionSettings);
+
+impl SessionConfigValues {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+impl std::ops::Deref for SessionConfigValues {
+    type Target = kalamdb_session::SessionSettings;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+empty_config_extension!(SessionConfigValues, "kalamdb_session_config");
+
 /// Per-operation RLS command used while a provider performs DML visibility scans.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RlsCommandContext {
@@ -136,3 +153,12 @@ impl ScanDiagnosticsContext {
 }
 
 empty_config_extension!(ScanDiagnosticsContext, "kalamdb_scan_diagnostics");
+
+/// Marks a session whose `SELECT *` must omit storage columns.
+///
+/// The PostgreSQL wire and the extension bridge install this. The Kalam SQL
+/// API does not, so `SELECT *` there still returns `_version` and `_deleted`.
+#[derive(Debug, Clone, Default)]
+pub struct PostgresStar;
+
+empty_config_extension!(PostgresStar, "kalamdb_postgres_star");

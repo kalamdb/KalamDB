@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSqlCompletionData, resolveSqlContextualCompletions } from "./sqlCompletionCatalog";
+import {
+  buildSqlCompletionData,
+  collectSqlCompletions,
+  loadStaticSqlCompletions,
+  resolveSqlContextualCompletions,
+} from "./sqlCompletionCatalog";
 import type { StudioNamespace } from "../shared/types";
 
 describe("SQL Studio completion catalog", () => {
@@ -14,7 +19,7 @@ describe("SQL Studio completion catalog", () => {
     );
   });
 
-  it("merges schema tables with static KalamDB and DataFusion completions", () => {
+  it("merges schema tables with static KalamDB and DataFusion completions", async () => {
     const schema: StudioNamespace[] = [
       {
         database: "kalam",
@@ -38,13 +43,62 @@ describe("SQL Studio completion catalog", () => {
 
     expect(data.tablesByNamespace.app).toContain("messages");
     expect(data.columnsByTable["app.messages"]).toEqual(["id", "body"]);
-    expect(data.functions.map((entry) => entry.label)).toEqual(
+
+    const catalog = await loadStaticSqlCompletions();
+    expect(catalog.functions.map((entry) => entry.label)).toEqual(
       expect.arrayContaining(["CURRENT_USER()", "CURRENT_USER_ID()", "CURRENT_ROLE()", "NOW()", "COUNT()", "JSON_GET()"]),
     );
-    expect(data.keywords).toEqual(expect.arrayContaining(["CALL", "SELECT"]));
-    expect(data.snippets.map((entry) => entry.label)).toEqual(
+    expect(catalog.keywords).toEqual(expect.arrayContaining(["CALL", "SELECT", "SCHEMA"]));
+    expect(catalog.types.map((entry) => entry.label)).toEqual(
+      expect.arrayContaining(["TEXT", "JSONB", "TIMESTAMPTZ", "UUID"]),
+    );
+    expect(catalog.snippets.map((entry) => entry.label)).toEqual(
       expect.arrayContaining(["CALL", "EXECUTE AS USER", "EXPLAIN", "DESCRIBE TABLE", "SUBSCRIBE TO", "KILL LIVE QUERY"]),
     );
+
+    const suggestions = collectSqlCompletions({
+      data,
+      catalog,
+      textUntilPosition: "SELECT mess",
+      prefix: "mess",
+      aliasToTable: {},
+    });
+    const labels = suggestions.map((suggestion) => suggestion.label);
+    expect(labels).toEqual(expect.arrayContaining(["messages", "app.messages"]));
+    expect(labels).not.toContain("body");
+    expect(suggestions.some((suggestion) => suggestion.kind === "column")).toBe(false);
+
+    const unscoped = collectSqlCompletions({
+      data,
+      catalog,
+      textUntilPosition: "SELECT ",
+      prefix: "",
+      aliasToTable: {},
+    });
+    const unscopedLabels = unscoped.map((suggestion) => suggestion.label);
+    expect(unscopedLabels).toEqual(expect.arrayContaining(["messages", "SELECT"]));
+    expect(unscopedLabels).not.toContain("COUNT()");
+    expect(unscopedLabels).not.toContain("TEXT");
+    expect(unscoped.some((suggestion) => suggestion.kind === "column")).toBe(false);
+
+    const typed = collectSqlCompletions({
+      data,
+      catalog,
+      textUntilPosition: "CREATE TABLE app.messages (id ",
+      prefix: "tex",
+      aliasToTable: {},
+    });
+    expect(typed.map((suggestion) => suggestion.label)).toContain("TEXT");
+    expect(typed.some((suggestion) => suggestion.kind === "function" && suggestion.label === "COUNT()")).toBe(false);
+
+    const counted = collectSqlCompletions({
+      data,
+      catalog,
+      textUntilPosition: "SELECT cou",
+      prefix: "cou",
+      aliasToTable: {},
+    });
+    expect(counted.map((suggestion) => suggestion.label)).toContain("COUNT()");
   });
 
   it("resolves namespace table completions from the loaded explorer schema", () => {

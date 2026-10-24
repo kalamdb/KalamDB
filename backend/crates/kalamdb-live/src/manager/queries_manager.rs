@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use kalamdb_commons::{
     ids::{VersionDomain, VersionId},
-    models::{ConnectionId, LiveQueryId, NamespaceId, TableId, TableName, UserId},
+    models::{ConnectionId, LiveQueryId, SchemaId, TableId, TableName, UserId},
     schemas::{SchemaField, TableDefinition},
     websocket::SubscriptionRequest,
     NodeId, Role,
@@ -105,7 +105,7 @@ impl LiveQueryManager {
             LiveError::InvalidSql("Query must use namespace.table format".to_string())
         })?;
 
-        Ok(TableId::new(NamespaceId::from(namespace), TableName::from(table)))
+        Ok(TableId::new(SchemaId::from(namespace), TableName::from(table)))
     }
 
     pub(crate) fn build_subscription_schema(
@@ -640,7 +640,7 @@ impl LiveQueryManager {
 #[cfg(test)]
 mod tests {
     use kalamdb_commons::{
-        models::{NamespaceId, TableId, TableName, UserId},
+        models::{SchemaId, TableId, TableName, UserId},
         schemas::{
             table_options::{SharedTableOptions, SystemTableOptions, TableCompression},
             TableDefinition, TableOptions,
@@ -656,7 +656,7 @@ mod tests {
     }
 
     fn table_id() -> TableId {
-        TableId::new(NamespaceId::from("shared"), TableName::from("events"))
+        TableId::new(SchemaId::from("shared"), TableName::from("events"))
     }
 
     #[test]
@@ -684,7 +684,7 @@ mod tests {
 
     fn shared_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id:   NamespaceId::from("shared"),
+            namespace_id:   SchemaId::from("shared"),
             table_name:     TableName::from("events"),
             table_type:     TableType::Shared,
             columns:        vec![],
@@ -700,6 +700,7 @@ mod tests {
             }),
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }
@@ -707,7 +708,7 @@ mod tests {
 
     fn system_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id:   NamespaceId::system(),
+            namespace_id:   SchemaId::system(),
             table_name:     TableName::from("users"),
             table_type:     TableType::System,
             columns:        vec![],
@@ -721,6 +722,7 @@ mod tests {
             }),
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }

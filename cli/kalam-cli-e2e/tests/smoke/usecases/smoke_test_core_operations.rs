@@ -79,10 +79,10 @@ fn test_namespace_operations() {
     // Generate unique namespace name
     let ns_name = generate_unique_namespace("smoke_core_ops");
 
-    // CREATE NAMESPACE
+    // CREATE SCHEMA
     println!("  Creating namespace: {}", ns_name);
-    let create_sql = format!("CREATE NAMESPACE {}", ns_name);
-    execute_sql_as_root_via_client(&create_sql).expect("CREATE NAMESPACE should succeed");
+    let create_sql = format!("CREATE SCHEMA {}", ns_name);
+    execute_sql_as_root_via_client(&create_sql).expect("CREATE SCHEMA should succeed");
     println!("    ✓ Namespace created");
 
     // SELECT from system.namespaces to verify
@@ -100,10 +100,10 @@ fn test_namespace_operations() {
     );
     println!("    ✓ Namespace found in system.namespaces");
 
-    // DROP NAMESPACE
+    // DROP SCHEMA
     println!("  Dropping namespace: {}", ns_name);
-    let drop_sql = format!("DROP NAMESPACE {} CASCADE", ns_name);
-    execute_sql_as_root_via_client(&drop_sql).expect("DROP NAMESPACE should succeed");
+    let drop_sql = format!("DROP SCHEMA {} CASCADE", ns_name);
+    execute_sql_as_root_via_client(&drop_sql).expect("DROP SCHEMA should succeed");
     println!("    ✓ Namespace dropped");
 
     // Verify namespace is removed or marked as deleted
@@ -268,8 +268,8 @@ fn test_flush_operations() {
 
     // Setup: Create namespace and table
     println!("  Setting up test namespace and table");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", ns_name))
-        .expect("CREATE NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", ns_name))
+        .expect("CREATE SCHEMA should succeed");
 
     let create_table_sql = format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, value VARCHAR) WITH (TYPE = 'USER', FLUSH_POLICY = \
@@ -350,8 +350,8 @@ fn test_flush_operations() {
 
     // Cleanup: Drop namespace (cascade will remove tables)
     println!("\n  Cleaning up test namespace");
-    execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns_name))
-        .expect("DROP NAMESPACE should succeed");
+    execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns_name))
+        .expect("DROP SCHEMA should succeed");
     println!("    ✓ Test namespace cleaned up");
 
     println!("  ✅ Flush operations test completed\n");

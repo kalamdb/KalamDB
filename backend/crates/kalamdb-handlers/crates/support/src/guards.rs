@@ -3,7 +3,7 @@
 //! Common authorization and validation guards for DDL operations.
 //! These helpers consolidate repeated validation patterns across handlers.
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use kalamdb_core::{app_context::AppContext, error::KalamDbError, sql::context::ExecutionContext};
 
 /// Block modifications (ALTER, DROP, CREATE) on system namespaces.
@@ -26,7 +26,7 @@ use kalamdb_core::{app_context::AppContext, error::KalamDbError, sql::context::E
 /// block_system_namespace_modification(&namespace_id, "ALTER", "TABLE", Some(&table_name))?;
 /// ```
 pub fn block_system_namespace_modification(
-    namespace_id: &NamespaceId,
+    namespace_id: &SchemaId,
     operation: &str,
     object_type: &str,
     object_name: Option<&str>,
@@ -62,7 +62,7 @@ pub fn block_system_namespace_modification(
 /// namespace that has not been created yet.
 pub fn require_existing_namespace(
     app_context: &AppContext,
-    namespace_id: &NamespaceId,
+    namespace_id: &SchemaId,
 ) -> Result<(), KalamDbError> {
     let namespaces = app_context.system_tables().namespaces();
     if namespaces.get_namespace(namespace_id)?.is_none() {
@@ -145,18 +145,18 @@ mod tests {
     #[test]
     fn test_block_system_namespace_modification() {
         // System namespaces should be blocked
-        let system_ns = NamespaceId::system();
+        let system_ns = SchemaId::system();
         let result =
             block_system_namespace_modification(&system_ns, "ALTER", "TABLE", Some("users"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Cannot alter"));
 
-        let info_schema = NamespaceId::from("information_schema");
+        let info_schema = SchemaId::information_schema();
         let result = block_system_namespace_modification(&info_schema, "DROP", "TABLE", None);
         assert!(result.is_err());
 
         // User namespaces should pass
-        let user_ns = NamespaceId::from("my_namespace");
+        let user_ns = SchemaId::from("my_namespace");
         let result = block_system_namespace_modification(&user_ns, "ALTER", "TABLE", Some("data"));
         assert!(result.is_ok());
     }

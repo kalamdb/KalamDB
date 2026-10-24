@@ -255,8 +255,8 @@ fn smoke_export_user_data_job_completes() {
     ))
     .expect("CREATE USER failed");
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql_as_root_via_client(&format!(
         r#"CREATE TABLE {} (
@@ -304,8 +304,7 @@ fn smoke_export_user_data_job_completes() {
 
     // ── Cleanup ───────────────────────────────────────────────────────────
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -329,8 +328,8 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, val TEXT) WITH (TYPE='USER')",
         full_table
@@ -424,8 +423,7 @@ fn smoke_show_export_returns_completed_status_and_download_url() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -450,8 +448,8 @@ fn smoke_export_download_zip_is_valid() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, data TEXT) WITH (TYPE='USER', \
          FLUSH_POLICY='rows:5')",
@@ -624,8 +622,7 @@ fn smoke_export_download_zip_is_valid() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -662,8 +659,8 @@ fn smoke_export_user_data_download_and_reimport() {
         export_user, export_pass
     ))
     .expect("CREATE USER failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, data TEXT) WITH (TYPE='USER', \
          FLUSH_POLICY='rows:5')",
@@ -936,8 +933,7 @@ fn smoke_export_user_data_download_and_reimport() {
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", source_fqn));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", target_fqn));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", export_user));
 }
 
@@ -968,8 +964,8 @@ fn smoke_export_download_forbidden_for_other_user() {
         user_b, pass_b
     ))
     .expect("CREATE USER B failed");
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
+        .expect("CREATE SCHEMA failed");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE {} (id BIGINT AUTO_INCREMENT PRIMARY KEY, v TEXT) WITH (TYPE='USER')",
         full_table
@@ -1036,8 +1032,7 @@ fn smoke_export_download_forbidden_for_other_user() {
 
     // Cleanup
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_a));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER IF EXISTS {}", user_b));
 }

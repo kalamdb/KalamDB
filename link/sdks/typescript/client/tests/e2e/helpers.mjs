@@ -85,7 +85,7 @@ export async function connectWithAuthProvider() {
  * Ensure a test namespace exists, return its name.
  */
 export async function ensureNamespace(client, name) {
-  await client.query(`CREATE NAMESPACE IF NOT EXISTS ${name}`);
+  await client.query(`CREATE SCHEMA IF NOT EXISTS ${name}`);
   return name;
 }
 

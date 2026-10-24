@@ -54,7 +54,7 @@ Low Priority:
 
 97) [LOW] check if we have duplicates backend/crates/kalamdb-commons/src/constants.rs and backend/crates/kalamdb-commons/src/system_tables.rs both have system table names defined
 
-100) [LOW] JobId need to be shorter its now using timestamp and uuid which is too long, we can use namespace-table-timestamp or even a snowflake id
+100) [LOW] JobId need to be shorter its now using timestamp and uuid which is too long, we can set schema-table-timestamp or even a snowflake id
 
 103) [LOW] Check to see any libraries/dependencies not needed and rmeove them, check each one of the dependencies
 

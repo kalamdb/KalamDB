@@ -108,6 +108,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
                         .route(
                             "/functions/modules/{module}/rollback",
                             web::post().to(http::functions_admin::rollback_function_module_v1),
+                        )
+                        .route(
+                            "/capabilities",
+                            web::get().to(http::functions::capabilities_v1),
+                        )
+                        .route(
+                            "/contracts",
+                            web::get().to(http::functions::contracts_manifest_v1),
+                        )
+                        .route(
+                            "/openapi.json",
+                            web::get().to(http::functions::openapi_v1),
                         ),
                 )
                 // File download endpoint (outside of /api scope for shorter URLs)

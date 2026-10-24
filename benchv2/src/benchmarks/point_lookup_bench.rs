@@ -1,10 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
-use crate::metrics::BenchmarkDetail;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config, metrics::BenchmarkDetail};
 
 /// Point lookup by primary key from a 10K-row table.
 /// Measures the best-case read latency when the key is known.
@@ -28,10 +24,7 @@ impl Benchmark for PointLookupBench {
             BenchmarkDetail::new("Baseline", "phase-0 performance"),
             BenchmarkDetail::new("Query Class", "primary-key lookup"),
             BenchmarkDetail::new("Dataset", format!("{} seeded rows", ROWS)),
-            BenchmarkDetail::new(
-                "Query Shape",
-                "SELECT * FROM <ns>.point_lookup WHERE id = ?",
-            ),
+            BenchmarkDetail::new("Query Shape", "SELECT * FROM <ns>.point_lookup WHERE id = ?"),
         ]
     }
 

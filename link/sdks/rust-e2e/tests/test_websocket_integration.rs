@@ -126,7 +126,7 @@ async fn setup_test_data() -> Result<String, Box<dyn std::error::Error>> {
     let full_table = format!("ws_test.{}", table_name);
 
     // Create namespace if needed
-    execute_sql_checked("CREATE NAMESPACE IF NOT EXISTS ws_test").await?;
+    execute_sql_checked("CREATE SCHEMA IF NOT EXISTS ws_test").await?;
     sleep(Duration::from_millis(50)).await;
 
     // Ensure stale table from prior runs doesn't break setup
@@ -622,15 +622,15 @@ async fn test_sql_create_namespace() {
 
     // Cleanup
     let _ = client
-        .execute_query("DROP NAMESPACE IF EXISTS test_ns CASCADE", None, None, None)
+        .execute_query("DROP SCHEMA IF EXISTS test_ns CASCADE", None, None, None)
         .await;
     sleep(Duration::from_millis(20)).await;
 
-    let result = client.execute_query("CREATE NAMESPACE test_ns", None, None, None).await;
-    assert!(result.is_ok(), "CREATE NAMESPACE should succeed");
+    let result = client.execute_query("CREATE SCHEMA test_ns", None, None, None).await;
+    assert!(result.is_ok(), "CREATE SCHEMA should succeed");
 
     // Cleanup
-    let _ = client.execute_query("DROP NAMESPACE test_ns CASCADE", None, None, None).await;
+    let _ = client.execute_query("DROP SCHEMA test_ns CASCADE", None, None, None).await;
 }
 
 #[tokio::test]

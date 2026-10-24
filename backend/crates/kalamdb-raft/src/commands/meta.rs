@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use kalamdb_commons::{
     models::{
         schemas::{TableDefinition, TableType},
-        FunctionRevisionId, JobId, NamespaceId, NodeId, StorageId, TypeId, UserId,
+        FunctionRevisionId, JobId, NodeId, SchemaId, StorageId, TypeId, UserId,
     },
     TableId,
 };
@@ -37,12 +37,12 @@ pub enum MetaCommand {
     // =========================================================================
     /// Create a new namespace
     CreateNamespace {
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         created_by:   Option<UserId>,
     },
 
     /// Delete a namespace
-    DeleteNamespace { namespace_id: NamespaceId },
+    DeleteNamespace { namespace_id: SchemaId },
 
     // =========================================================================
     // Table Operations (was in SystemCommand)
@@ -189,7 +189,7 @@ pub enum MetaCommand {
     /// Keep this variant at the end so existing bincode-encoded Raft log
     /// discriminants remain stable for older variants.
     CreateNamespaceIfNotExists {
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         created_by:   Option<UserId>,
     },
 
@@ -268,7 +268,7 @@ pub enum MetaResponse {
 
     // === Namespace responses ===
     NamespaceCreated {
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         message:      String,
     },
 
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_meta_command_category() {
         let cmd = MetaCommand::CreateNamespace {
-            namespace_id: NamespaceId::new("test".to_string()),
+            namespace_id: SchemaId::new("test".to_string()),
             created_by:   None,
         };
         assert_eq!(cmd.category(), "namespace");

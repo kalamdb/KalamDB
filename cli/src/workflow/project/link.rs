@@ -160,7 +160,7 @@ mod tests {
         let loaded = KalamProjectConfig::load_from_path(&root.join(KALAM_TOML)).unwrap();
         let prod = loaded.connection.get("prod").expect("prod link");
         assert_eq!(prod.url, "https://db.example.com");
-        assert_eq!(prod.namespace, kalamdb_commons::NamespaceId::new("app"));
+        assert_eq!(prod.namespace, kalamdb_commons::SchemaId::new("app"));
         assert_eq!(loaded.project.default_env, "dev");
         assert_eq!(
             prod.purpose,

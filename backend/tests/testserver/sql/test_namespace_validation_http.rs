@@ -56,7 +56,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
         let initial = server.execute_sql(&create_sql).await?;
         assert_eq!(initial.status, ResponseStatus::Error);
 
-        let ns_response = server.execute_sql(&format!("CREATE NAMESPACE {}", audit_ns)).await?;
+        let ns_response = server.execute_sql(&format!("CREATE SCHEMA {}", audit_ns)).await?;
         assert_eq!(ns_response.status, ResponseStatus::Success);
 
         let retry = server.execute_sql(&create_sql).await?;
@@ -83,7 +83,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
         let response = server.execute_sql_with_auth(&sql, &auth).await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql(&format!("CREATE NAMESPACE {}", workspace_ns)).await?;
+        let ns_resp = server.execute_sql(&format!("CREATE SCHEMA {}", workspace_ns)).await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
         let retry = server.execute_sql_with_auth(&sql, &auth).await?;
@@ -106,7 +106,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
             .await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ops_ns)).await?;
+        let ns_resp = server.execute_sql(&format!("CREATE SCHEMA {}", ops_ns)).await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
         let retry = server
@@ -140,7 +140,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
             .await?;
         assert_eq!(response.status, ResponseStatus::Error);
 
-        let ns_resp = server.execute_sql(&format!("CREATE NAMESPACE {}", telemetry_ns)).await?;
+        let ns_resp = server.execute_sql(&format!("CREATE SCHEMA {}", telemetry_ns)).await?;
         assert_eq!(ns_resp.status, ResponseStatus::Success);
 
         let retry = server
@@ -168,7 +168,7 @@ async fn test_namespace_validation_over_http() -> anyhow::Result<()> {
         let create_table = server.execute_sql(table_sql);
         let create_namespace = async {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            server.execute_sql("CREATE NAMESPACE race_ns").await
+            server.execute_sql("CREATE SCHEMA race_ns").await
         };
 
         let (table_result, namespace_result) = tokio::join!(create_table, create_namespace);

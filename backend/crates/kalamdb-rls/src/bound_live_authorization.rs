@@ -50,8 +50,8 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        AuthorizationRelation, BoundExprShape, InvalidationStrategy, NamespaceId, PolicyCommand,
-        PolicyId, PolicyProgram, PolicyTarget, PrincipalExpr, Role, TableId, TableName,
+        AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyCommand, PolicyId,
+        PolicyProgram, PolicyTarget, PrincipalExpr, Role, SchemaId, TableId, TableName,
         TablePolicy, UserId,
     };
 
@@ -82,7 +82,7 @@ mod tests {
     fn table() -> Arc<TableDefinition> {
         Arc::new(
             TableDefinition::new(
-                NamespaceId::new("app"),
+                SchemaId::new("app"),
                 TableName::new("messages"),
                 TableType::Shared,
                 vec![

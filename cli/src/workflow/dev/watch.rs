@@ -72,7 +72,7 @@ pub async fn run_schema_pipeline(
     }
 
     if config.dev.generate_types {
-        generate_schema_artifacts(ctx, &GenerateOptions { languages: None }, output)?;
+        generate_schema_artifacts(ctx, &GenerateOptions::default(), output)?;
     }
 
     if !baseline_decided {

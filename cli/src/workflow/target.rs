@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use crate::{
     error::{CLIError, Result},
@@ -73,7 +73,7 @@ pub struct ResolvedTarget {
     pub environment_name:    String,
     pub purpose:             EnvironmentPurpose,
     pub url:                 String,
-    pub namespace:           NamespaceId,
+    pub namespace:           SchemaId,
     pub credential_instance: String,
     pub project_root:        Option<PathBuf>,
     pub project_name:        Option<String>,
@@ -440,8 +440,8 @@ fn env_name_from(
 
 fn override_namespace(
     selector: &TargetSelector,
-    configured: Option<&NamespaceId>,
-) -> Result<(NamespaceId, ResolutionSource)> {
+    configured: Option<&SchemaId>,
+) -> Result<(SchemaId, ResolutionSource)> {
     if let Some(namespace) =
         selector.namespace.as_deref().map(str::trim).filter(|value| !value.is_empty())
     {
@@ -484,7 +484,7 @@ fn managed_target_kind(url: &str, auto_start_db: bool) -> TargetKind {
     }
 }
 
-fn namespace_from_dir(path: &Path) -> Result<NamespaceId> {
+fn namespace_from_dir(path: &Path) -> Result<SchemaId> {
     let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("default");
     let normalized = normalize_namespace_name(name);
     parse_namespace_id(&normalized).or_else(|_| parse_namespace_id("app"))

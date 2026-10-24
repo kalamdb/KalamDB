@@ -11,7 +11,7 @@ pub mod type_registry;
 
 pub use cached_table_data::{CachedTableData, TableEntry};
 // Re-export common types from kalamdb_commons for convenience
-pub use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+pub use kalamdb_commons::models::{SchemaId, TableName, UserId};
 pub use kalamdb_commons::{helpers::string_interner::SystemColumns, schemas::TableType};
 pub use kalamdb_system::SystemColumnsService;
 pub use kalamdb_views::error::RegistryError;

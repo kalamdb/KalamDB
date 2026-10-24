@@ -11,7 +11,7 @@ use kalamdb_commons::{
         rows::Row,
         OperationKind, ReadContext, Role, TransactionId, TransactionOrigin, UserId,
     },
-    NamespaceId, PolicyCommand, TableId, TableType,
+    PolicyCommand, SchemaId, TableId, TableType,
 };
 use kalamdb_core::{
     app_context::AppContext,
@@ -24,7 +24,8 @@ use kalamdb_pg::OperationExecutor;
 use kalamdb_session_datafusion::{install_extension, SessionUserContext};
 use kalamdb_tables::SharedTableProvider;
 use kalamdb_transactions::{
-    build_insert_staged_mutations, TransactionQueryContext, TransactionQueryExtension,
+    build_insert_staged_mutations, primary_key_claims, TransactionQueryContext,
+    TransactionQueryExtension,
 };
 use tonic::Status;
 
@@ -305,13 +306,21 @@ impl OperationService {
         }
 
         let coordinator = self.app_context.transaction_coordinator();
-        Ok(Some(TransactionQueryContext::new(
-            transaction_id.clone(),
-            Arc::clone(&handle.snapshot_log_index),
-            Arc::new(CoordinatorOverlayView::new(Arc::clone(&coordinator), transaction_id.clone())),
-            Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
-            Arc::new(CoordinatorAccessValidator::new(self.app_context.transaction_coordinator())),
-        )))
+        Ok(Some(
+            TransactionQueryContext::new(
+                transaction_id.clone(),
+                Arc::clone(&handle.snapshot_log_index),
+                Arc::new(CoordinatorOverlayView::new(
+                    Arc::clone(&coordinator),
+                    transaction_id.clone(),
+                )),
+                Arc::new(kalamdb_core::transactions::CoordinatorMutationSink::new(coordinator)),
+                Arc::new(CoordinatorAccessValidator::new(
+                    self.app_context.transaction_coordinator(),
+                )),
+            )
+            .with_pk_claims(primary_key_claims()),
+        ))
     }
 
     async fn stage_insert(
@@ -645,9 +654,10 @@ impl OperationExecutor for OperationService {
         let exec_ctx = ExecutionContext::with_namespace(
             UserId::new("pg-extension"),
             Role::Dba,
-            NamespaceId::new("default"),
+            SchemaId::new("default"),
             base,
-        );
+        )
+        .with_postgres_star();
 
         let sql_executor = self.app_context.sql_executor();
         let result = sql_executor
@@ -667,9 +677,10 @@ impl OperationExecutor for OperationService {
         let exec_ctx = ExecutionContext::with_namespace(
             UserId::new("pg-extension"),
             Role::Dba,
-            NamespaceId::new("default"),
+            SchemaId::new("default"),
             base,
-        );
+        )
+        .with_postgres_star();
 
         let sql_executor = self.app_context.sql_executor();
         let result = sql_executor
@@ -714,7 +725,7 @@ mod tests {
         models::{
             rows::Row,
             schemas::{ColumnDefinition, TableDefinition, TableOptions},
-            NamespaceId, TableId, TableName,
+            SchemaId, TableId, TableName,
         },
         TableType,
     };
@@ -783,7 +794,7 @@ mod tests {
     async fn scan_nonexistent_table_returns_not_found() {
         let (_app_ctx, svc) = setup();
         let req = ScanRequest {
-            table_id:   TableId::new(NamespaceId::new("no_ns"), TableName::new("no_table")),
+            table_id:   TableId::new(SchemaId::new("no_ns"), TableName::new("no_table")),
             table_type: TableType::Shared,
             session_id: None,
             columns:    vec![],
@@ -798,7 +809,7 @@ mod tests {
     #[tokio::test]
     async fn scan_shared_without_principal_returns_unauthenticated() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("deny_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("deny_tbl"));
         register_mem_table(&app_ctx, &table_id, vec![]);
 
         let err = svc
@@ -819,7 +830,7 @@ mod tests {
     #[tokio::test]
     async fn scan_shared_uses_bridge_session_principal_when_request_user_id_omitted() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("bridge_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("bridge_tbl"));
         register_mem_table(&app_ctx, &table_id, vec![]);
 
         let session_id = "pg-12345-abcdef01";
@@ -858,7 +869,7 @@ mod tests {
     #[tokio::test]
     async fn scan_empty_table_returns_zero_batches() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("empty_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("empty_tbl"));
         register_mem_table(&app_ctx, &table_id, vec![]);
 
         let res = svc
@@ -880,7 +891,7 @@ mod tests {
     #[tokio::test]
     async fn scan_with_data_returns_rows() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("data_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("data_tbl"));
         let schema = register_mem_table(
             &app_ctx,
             &table_id,
@@ -918,7 +929,7 @@ mod tests {
     #[tokio::test]
     async fn scan_with_column_projection() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("proj_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("proj_tbl"));
         register_mem_table(
             &app_ctx,
             &table_id,
@@ -954,7 +965,7 @@ mod tests {
     #[tokio::test]
     async fn scan_with_invalid_column_returns_error() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("badcol_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("badcol_tbl"));
         register_mem_table(&app_ctx, &table_id, vec![]);
 
         let err = svc
@@ -976,7 +987,7 @@ mod tests {
     #[tokio::test]
     async fn scan_with_limit() {
         let (app_ctx, svc) = setup();
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new("limit_tbl"));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new("limit_tbl"));
         register_mem_table(
             &app_ctx,
             &table_id,
@@ -1020,7 +1031,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
                 rows:       vec![empty_row()],
@@ -1036,7 +1047,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
                 updates:    vec![empty_row()],
@@ -1053,7 +1064,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(NamespaceId::new("system"), TableName::new("users")),
+                table_id:   TableId::new(SchemaId::new("system"), TableName::new("users")),
                 table_type: TableType::System,
                 session_id: None,
                 pk_value:   "some_pk".to_string(),
@@ -1073,7 +1084,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
                 rows:       vec![empty_row()],
@@ -1090,7 +1101,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
                 updates:    vec![empty_row()],
@@ -1107,7 +1118,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("tbl")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("tbl")),
                 table_type: TableType::User,
                 session_id: None,
                 pk_value:   "pk".to_string(),
@@ -1123,7 +1134,7 @@ mod tests {
         let (_app_ctx, svc) = setup();
         let err = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("events")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("events")),
                 table_type: TableType::Stream,
                 session_id: None,
                 rows:       vec![empty_row()],
@@ -1155,7 +1166,7 @@ mod tests {
 
         let error = svc
             .execute_insert(InsertRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
                 user_id:    None,
@@ -1177,7 +1188,7 @@ mod tests {
         app_ctx: &AppContext,
         table_name: &str,
     ) -> TableId {
-        let table_id = TableId::new(NamespaceId::new("default"), TableName::new(table_name));
+        let table_id = TableId::new(SchemaId::new("default"), TableName::new(table_name));
         let id_col = ColumnDefinition::new(
             1,
             "id".to_string(),
@@ -1280,7 +1291,7 @@ mod tests {
 
         let error = svc
             .execute_update(UpdateRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
                 user_id:    None,
@@ -1304,7 +1315,7 @@ mod tests {
 
         let error = svc
             .execute_delete(DeleteRequest {
-                table_id:   TableId::new(NamespaceId::new("default"), TableName::new("items")),
+                table_id:   TableId::new(SchemaId::new("default"), TableName::new("items")),
                 table_type: TableType::Shared,
                 session_id: Some(session_id.to_string()),
                 user_id:    None,

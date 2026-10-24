@@ -4,11 +4,11 @@ alwaysApply: true
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read `specs/036-postgresql-sql-dialect/plan.md`
+shell commands, and other important information, read `specs/037-pg18-compatibility/plan.md`
 <!-- SPECKIT END -->
 
 ## Active Technologies
-- Rust 1.94 (workspace edition 2021) for backend crates; Functions V1.1 in `kalamdb-functions` (V8 152.2, ABI v2 async, V8-only) + `kalamdb-core` orchestration (`ActiveFunctionSet`, `FunctionExecutionRoot`); JS-boundary FlatBuffers in `kalamdb-serialization`
+- Rust 1.99.1 (workspace edition 2021) for backend crates; Functions V1.1 in `kalamdb-functions` (V8 152.2, ABI v2 async, V8-only) + `kalamdb-core` orchestration (`ActiveFunctionSet`, `FunctionExecutionRoot`); JS-boundary FlatBuffers in `kalamdb-serialization`
 - SQL language: **PostgreSQL only** on all surfaces (HTTP SQL, wire, CLI, extension bridge). `sqlparser` 0.62 with `KalamDbDialect` wrapping `PostgreSqlDialect`; `Dialect::parse_statement` for Kalam extensions and colliding prefixes (`CREATE USER`, `CREATE PROCEDURE`, topic `CREATE TRIGGER`). Classify from one AST. DataFusion `sql_parser.dialect = postgresql` (not DuckDB)
 - Canonical DDL: `CREATE SCHEMA` (alias `CREATE NAMESPACE`); `CREATE TABLE … WITH (TYPE='USER'|'SHARED'|'STREAM')`; reject `CREATE USER TABLE`; `CREATE USER` is identity
 - Wire txs: **`BackendSessionManager` block API** (same as gRPC `BeginTransaction`/`Commit`); wire SQL data path: **`SqlExecutor`**; HTTP batch txs: **`RequestTransactionBatchGuard`** only
@@ -17,8 +17,10 @@ shell commands, and other important information, read `specs/036-postgresql-sql-
 - Client catalog: **`pg_catalog` shim views** project from `system.*` (US9); not aliases; registered when `postgres_wire.enabled` is true
 - Stability-first migration: preserve 027 behavior; regression gates per `specs/033-unified-backend-pgwire/quickstart.md`
 - Connection sessions expose `origin` in `system.sessions`: `extension_bridge` | `wire_protocol`
+- Rust 1.99.1 (edition 2021) + sqlparser 0.62, DataFusion 55.2, Arrow 59, pgwire (workspace pin, `kalamdb-postgres-wire` only) (feat/pg-dialect)
+- RocksDB entity stores in `kalamdb-store`; Parquet segments in `kalamdb-filestore`. PostgreSQL physical storage is not the target. (feat/pg-dialect)
 
 ## Recent Changes
+- feat/pg-dialect: PostgreSQL 18 compatibility program — one grammar and `statement_to_plan`, `SchemaId` via batched rewrite, one logical type, shared catalogs, cleanup in the same change
 - 036-postgresql-sql-dialect: One public PostgreSQL grammar; homemade standard-SQL parsers go away; DuckDB session dialect and public `x ->` lambdas go away; `CREATE USER TABLE` rejected
 - 034-schema-first-functions: Schema-first Functions V1.1 — one project module, `ActiveFunctionSet`, root runtime lease, shared `runtime.d.ts`, FlatBuffer JS-boundary transfer, V8-only runtime
-- 033-unified-backend-pgwire: Direct `pgwire`; gRPC-style tx control via `BackendSessionManager`; US9 client catalog shims project from `system.*`

@@ -7,10 +7,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use kalamdb_configs::RocksDbSettings;
-use rocksdb::{BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteOptions, DB};
+use rocksdb::{
+    BoundColumnFamily, Cache, IteratorMode, Options, PrefixRange, WriteBufferManager, WriteOptions,
+    DB,
+};
 
 use super::{
-    cf_tuning::apply_cf_settings,
+    cf_tuning::{apply_cf_settings, db_write_buffer_budget},
     group_commit::WalGroupCommit,
     init::{create_block_options_with_cache, new_block_cache},
     keyspace::{
@@ -85,6 +88,7 @@ pub struct RocksDBBackend {
     write_opts: WriteOptions,
     settings: RocksDbSettings,
     block_cache: Cache,
+    write_buffer_manager: Option<WriteBufferManager>,
     wal_group: Option<WalGroupCommit>,
     known_cf_names: std::sync::RwLock<Vec<String>>,
     logical_partition_names: std::sync::RwLock<Vec<String>>,
@@ -97,6 +101,7 @@ impl RocksDBBackend {
         disable_wal: bool,
         settings: RocksDbSettings,
         block_cache: Cache,
+        write_buffer_manager: Option<WriteBufferManager>,
     ) -> Self {
         let group_wal = sync_writes && !disable_wal;
         let mut write_opts = WriteOptions::default();
@@ -107,6 +112,7 @@ impl RocksDBBackend {
             write_opts,
             settings,
             block_cache,
+            write_buffer_manager,
             wal_group: group_wal.then(WalGroupCommit::new),
             known_cf_names: std::sync::RwLock::new(Vec::new()),
             logical_partition_names: std::sync::RwLock::new(Vec::new()),
@@ -119,7 +125,7 @@ impl RocksDBBackend {
     pub fn new(db: Arc<DB>) -> Self {
         let settings = RocksDbSettings::default();
         let block_cache = new_block_cache(settings.block_cache_size);
-        Self::new_internal(db, false, false, settings, block_cache)
+        Self::new_internal(db, false, false, settings, block_cache, None)
     }
 
     /// Creates a new backend with write options and explicit RocksDB tuning settings.
@@ -130,7 +136,7 @@ impl RocksDBBackend {
         settings: RocksDbSettings,
     ) -> Self {
         let block_cache = new_block_cache(settings.block_cache_size);
-        Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
+        Self::new_internal(db, sync_writes, disable_wal, settings, block_cache, None)
     }
 
     /// Creates a new backend using the same block cache used to open existing column families.
@@ -140,16 +146,46 @@ impl RocksDBBackend {
         disable_wal: bool,
         settings: RocksDbSettings,
         block_cache: Cache,
+        write_buffer_manager: WriteBufferManager,
     ) -> Self {
-        Self::new_internal(db, sync_writes, disable_wal, settings, block_cache)
+        Self::new_internal(
+            db,
+            sync_writes,
+            disable_wal,
+            settings,
+            block_cache,
+            Some(write_buffer_manager),
+        )
     }
 
     /// Set the known physical column family names.
     pub fn set_known_cf_names(&self, names: Vec<String>) {
+        for name in &names {
+            if name != "default" && name != physical_cf_for_partition(name) {
+                self.track_logical_partition(name);
+            }
+        }
         *self.known_cf_names.write().unwrap() = names;
+        self.sync_write_buffer_budget();
+    }
+
+    fn sync_write_buffer_budget(&self) {
+        let Some(manager) = &self.write_buffer_manager else {
+            return;
+        };
+        let count = self.known_cf_names.read().map(|names| names.len()).unwrap_or(1);
+        let budget = db_write_buffer_budget(&self.settings, count);
+        if manager.get_buffer_size() != budget {
+            manager.set_buffer_size(budget);
+        }
     }
 
     fn get_cf(&self, partition: &Partition) -> Result<Arc<BoundColumnFamily<'_>>> {
+        // New hot partitions own a CF. Existing prefix-based partitions remain
+        // readable in their original CF without an implicit data migration.
+        if let Some(cf) = self.db.cf_handle(partition.name()) {
+            return Ok(cf);
+        }
         let cf_name = physical_cf_for_partition(partition.name());
         self.db
             .cf_handle(cf_name)
@@ -185,10 +221,18 @@ impl RocksDBBackend {
     }
 
     fn track_physical_cf(&self, cf_name: &str) {
-        if let Ok(mut names) = self.known_cf_names.write() {
-            if !names.iter().any(|name| name == cf_name) {
+        let added = if let Ok(mut names) = self.known_cf_names.write() {
+            if names.iter().any(|name| name == cf_name) {
+                false
+            } else {
                 names.push(cf_name.to_string());
+                true
             }
+        } else {
+            false
+        };
+        if added {
+            self.sync_write_buffer_budget();
         }
     }
 
@@ -276,6 +320,19 @@ impl RocksDBBackend {
             .filter_map(|cf_name| self.db.cf_handle(&cf_name))
             .filter_map(|cf| self.db.property_int_value_cf(&cf, property_name).ok().flatten())
             .sum()
+    }
+
+    fn cf_has_unflushed_entries(&self, cf: &Arc<BoundColumnFamily<'_>>) -> bool {
+        let active = self
+            .db
+            .property_int_value_cf(cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .ok()
+            .flatten();
+        let imm = self.db.property_int_value_cf(cf, IMM_MEMTABLE_ENTRIES_PROPERTY).ok().flatten();
+        match (active, imm) {
+            (Some(a), Some(i)) => a > 0 || i > 0,
+            _ => true,
+        }
     }
 }
 
@@ -575,7 +632,20 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn create_partition(&self, partition: &Partition) -> Result<()> {
-        self.ensure_physical_cf(physical_cf_for_partition(partition.name()))?;
+        let physical = physical_cf_for_partition(partition.name());
+        if self.partition_exists(partition)
+            && (self.db.cf_handle(partition.name()).is_some()
+                || self.db.cf_handle(physical).is_some())
+        {
+            return Ok(());
+        }
+        let isolated_hot =
+            matches!(physical, "hot_data" | "hot_index") && !self.partition_exists(partition);
+        self.ensure_physical_cf(if isolated_hot {
+            partition.name()
+        } else {
+            physical
+        })?;
         self.persist_logical_partition(partition.name())?;
         self.track_logical_partition(partition.name());
         Ok(())
@@ -592,6 +662,32 @@ impl StorageBackend for RocksDBBackend {
     }
 
     fn drop_partition(&self, partition: &Partition) -> Result<()> {
+        let physical = physical_cf_for_partition(partition.name());
+        let has_isolated_cf =
+            self.db.cf_handle(partition.name()).is_some() && partition.name() != physical;
+        let was_tracked = self.partition_exists(partition);
+
+        if has_isolated_cf {
+            self.db
+                .drop_cf(partition.name())
+                .map_err(|e| StorageError::IoError(e.to_string()))?;
+            if let Ok(mut names) = self.known_cf_names.write() {
+                names.retain(|name| name != partition.name());
+            }
+            self.sync_write_buffer_budget();
+            if let Ok(mut names) = self.logical_partition_names.write() {
+                names.retain(|n| n != partition.name());
+            }
+            if was_tracked {
+                self.remove_logical_partition(partition.name())?;
+            }
+            return Ok(());
+        }
+
+        if !was_tracked && matches!(physical, "hot_data" | "hot_index") {
+            return Ok(());
+        }
+
         let cf = self.get_cf(partition)?;
         let start = partition_key_prefix(partition.name());
         if let Some(end) = next_prefix_bound(&start) {
@@ -604,7 +700,9 @@ impl StorageBackend for RocksDBBackend {
         if let Ok(mut names) = self.logical_partition_names.write() {
             names.retain(|n| n != partition.name());
         }
-        self.remove_logical_partition(partition.name())?;
+        if was_tracked {
+            self.remove_logical_partition(partition.name())?;
+        }
 
         Ok(())
     }
@@ -632,16 +730,31 @@ impl StorageBackend for RocksDBBackend {
             .clone();
 
         let flush_opts = flush_options_allow_write_stall();
+        let mut saw_default = false;
 
         for cf_name in &names {
+            if cf_name == "default" {
+                saw_default = true;
+            }
             if let Some(cf) = self.db.cf_handle(cf_name) {
+                if !self.cf_has_unflushed_entries(&cf) {
+                    continue;
+                }
                 if let Err(e) = self.db.flush_cf_opt(&cf, &flush_opts) {
                     log::warn!("flush_all_memtables: failed to flush CF '{}': {}", cf_name, e);
                 }
             }
         }
-        if let Err(e) = self.db.flush_opt(&flush_opts) {
-            log::warn!("flush_all_memtables: failed to flush default CF: {}", e);
+        if !saw_default {
+            if let Some(default_cf) = self.db.cf_handle("default") {
+                if self.cf_has_unflushed_entries(&default_cf) {
+                    if let Err(e) = self.db.flush_cf_opt(&default_cf, &flush_opts) {
+                        log::warn!("flush_all_memtables: failed to flush default CF: {}", e);
+                    }
+                }
+            } else if let Err(e) = self.db.flush_opt(&flush_opts) {
+                log::warn!("flush_all_memtables: failed to flush default CF: {}", e);
+            }
         }
 
         Ok(())
@@ -815,6 +928,38 @@ mod tests {
 
         let db = DB::open(&opts, temp_dir.path()).unwrap();
         (Arc::new(db), temp_dir)
+    }
+
+    #[test]
+    fn hot_partitions_have_independent_column_families() {
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+        let orders = Partition::new("shared_gc:orders");
+        let inbox = Partition::new("shared_gc:inbox");
+        for partition in [&orders, &inbox] {
+            backend.create_partition(partition).unwrap();
+            backend.put(partition, b"key", b"value").unwrap();
+            assert!(db.cf_handle(partition.name()).is_some());
+        }
+        backend.drop_partition(&orders).unwrap();
+        assert_eq!(backend.get(&inbox, b"key").unwrap(), Some(b"value".to_vec()));
+    }
+
+    #[test]
+    fn legacy_hot_partition_stays_in_shared_cf() {
+        let temp = TempDir::new().unwrap();
+        let init = RocksDbInit::with_defaults(temp.path().to_string_lossy());
+        let db = init.open().unwrap();
+        let backend = RocksDBBackend::new(Arc::clone(&db));
+        let partition = Partition::new("shared_gc:legacy");
+        backend.persist_logical_partition(partition.name()).unwrap();
+        backend.track_logical_partition(partition.name());
+        backend.put(&partition, b"key", b"legacy").unwrap();
+        backend.create_partition(&partition).unwrap();
+        assert!(db.cf_handle(partition.name()).is_none());
+        assert_eq!(backend.get(&partition, b"key").unwrap(), Some(b"legacy".to_vec()));
     }
 
     #[test]
@@ -1113,9 +1258,15 @@ mod tests {
         settings.sync_writes = true;
         settings.disable_wal = false;
         let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
-        let (db, cf_names, cache) = init.open_with_cf_names_and_cache().unwrap();
+        let (db, cf_names, cache, write_buffer_manager) =
+            init.open_with_cf_names_and_cache().unwrap();
         let backend = std::sync::Arc::new(RocksDBBackend::with_options_settings_and_cache(
-            db, true, false, settings, cache,
+            db,
+            true,
+            false,
+            settings,
+            cache,
+            write_buffer_manager,
         ));
         backend.set_known_cf_names(cf_names);
 
@@ -1148,9 +1299,15 @@ mod tests {
         let db_path = temp_dir.path().join("rocksdb");
         let settings = RocksDbSettings::default();
         let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
-        let (db, cf_names, cache) = init.open_with_cf_names_and_cache().unwrap();
+        let (db, cf_names, cache, write_buffer_manager) =
+            init.open_with_cf_names_and_cache().unwrap();
         let backend = std::sync::Arc::new(RocksDBBackend::with_options_settings_and_cache(
-            db, false, true, settings, cache,
+            db,
+            false,
+            true,
+            settings,
+            cache,
+            write_buffer_manager,
         ));
         backend.set_known_cf_names(cf_names);
 
@@ -1174,5 +1331,134 @@ mod tests {
         backend.batch(batch.ops).unwrap();
         assert_eq!(backend.get(&hot, b"row").unwrap(), Some(b"table".to_vec()));
         assert_eq!(backend.get(&raft, b"log:1").unwrap(), Some(b"entry".to_vec()));
+    }
+
+    #[test]
+    fn many_column_families_do_not_flush_a_tiny_sst_per_write() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let settings = RocksDbSettings::default();
+        let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
+        let (db, cf_names, cache, write_buffer_manager) =
+            init.open_with_cf_names_and_cache().unwrap();
+        let backend = RocksDBBackend::with_options_settings_and_cache(
+            db,
+            false,
+            false,
+            settings.clone(),
+            cache,
+            write_buffer_manager,
+        );
+        backend.set_known_cf_names(cf_names);
+
+        let families = 80;
+        for index in 0..families {
+            let partition = Partition::new(format!("user_wbm_{index}:rows"));
+            backend.create_partition(&partition).unwrap();
+            for write in 0..4 {
+                backend.put(&partition, format!("k{write}").as_bytes(), b"v").unwrap();
+            }
+        }
+
+        let open_families = backend.known_cf_names.read().unwrap().len();
+        let budget = db_write_buffer_budget(&settings, open_families);
+        let actual = backend.write_buffer_manager.as_ref().unwrap().get_buffer_size();
+        assert_eq!(actual, budget);
+        assert!(actual > 1024 * 1024, "budget {actual} still uses the 1MB profile cap");
+
+        let sst_files = std::fs::read_dir(&db_path)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .ok()
+                    .and_then(|item| {
+                        item.path().extension().and_then(|ext| ext.to_str()).map(|ext| ext == "sst")
+                    })
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(
+            sst_files, 0,
+            "write-buffer pressure flushed {sst_files} SST files while memtables should still fit"
+        );
+    }
+
+    #[test]
+    fn repeated_drop_of_isolated_partition_does_not_pollute_shared_hot_cfs() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let settings = RocksDbSettings::default();
+        let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
+        let (db, cf_names, cache, write_buffer_manager) =
+            init.open_with_cf_names_and_cache().unwrap();
+        let backend = RocksDBBackend::with_options_settings_and_cache(
+            Arc::clone(&db),
+            false,
+            false,
+            settings,
+            cache,
+            write_buffer_manager,
+        );
+        backend.set_known_cf_names(cf_names);
+
+        let partition = Partition::new("user_app:events");
+        backend.create_partition(&partition).unwrap();
+        backend.put(&partition, b"row1", b"val1").unwrap();
+        assert!(db.cf_handle(partition.name()).is_some());
+
+        // First drop removes the physical CF directly.
+        backend.drop_partition(&partition).unwrap();
+        assert!(db.cf_handle(partition.name()).is_none());
+        assert!(!backend.partition_exists(&partition));
+
+        // Second drop (e.g. async cleanup job after synchronous drop) is a no-op
+        // and must not write range tombstones into shared `hot_data`.
+        let hot_data_cf = db.cf_handle("hot_data").unwrap();
+        let entries_before = db
+            .property_int_value_cf(&hot_data_cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .unwrap()
+            .unwrap_or(0);
+        backend.drop_partition(&partition).unwrap();
+        let entries_after = db
+            .property_int_value_cf(&hot_data_cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .unwrap()
+            .unwrap_or(0);
+        assert_eq!(entries_before, entries_after);
+    }
+
+    #[test]
+    fn create_partition_is_idempotent_without_extra_system_meta_writes() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("rocksdb");
+        let settings = RocksDbSettings::default();
+        let init = RocksDbInit::new(db_path.to_string_lossy().into_owned(), settings.clone());
+        let (db, cf_names, cache, write_buffer_manager) =
+            init.open_with_cf_names_and_cache().unwrap();
+        let backend = RocksDBBackend::with_options_settings_and_cache(
+            Arc::clone(&db),
+            false,
+            false,
+            settings,
+            cache,
+            write_buffer_manager,
+        );
+        backend.set_known_cf_names(cf_names);
+
+        let partition = Partition::new("user_app:idempotent");
+        backend.create_partition(&partition).unwrap();
+
+        let system_meta_cf = db.cf_handle(SYSTEM_META_CF).unwrap();
+        let entries_before = db
+            .property_int_value_cf(&system_meta_cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .unwrap()
+            .unwrap_or(0);
+
+        backend.create_partition(&partition).unwrap();
+        let entries_after = db
+            .property_int_value_cf(&system_meta_cf, ACTIVE_MEMTABLE_ENTRIES_PROPERTY)
+            .unwrap()
+            .unwrap_or(0);
+        assert_eq!(entries_before, entries_after);
     }
 }

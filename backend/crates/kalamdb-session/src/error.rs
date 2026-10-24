@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use kalamdb_commons::models::{NamespaceId, Role, TableName};
+use kalamdb_commons::models::{Role, SchemaId, TableName};
 
 /// Result type for session operations
 pub type SessionResult<T> = Result<T, SessionError>;
@@ -12,7 +12,7 @@ pub type SessionResult<T> = Result<T, SessionError>;
 pub enum SessionError {
     /// Access denied to a table
     AccessDenied {
-        namespace_id: NamespaceId,
+        namespace_id: SchemaId,
         table_name:   TableName,
         role:         Role,
         reason:       String,

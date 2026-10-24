@@ -158,14 +158,14 @@ mod tests {
     use kalamdb_commons::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableOptions, TableType},
-        InvalidationStrategy, NamespaceId, PolicyScalar, PrincipalExpr, TableId, TableName,
+        InvalidationStrategy, PolicyScalar, PrincipalExpr, SchemaId, TableId, TableName,
     };
 
     use super::*;
 
     fn membership_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::new("app"),
+            SchemaId::new("app"),
             TableName::new("members"),
             TableType::Shared,
             vec![

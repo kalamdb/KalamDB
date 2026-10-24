@@ -141,7 +141,6 @@ impl TableProvider for StreamTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_user_table_write_access(state, self.core.table_id())
             .map_err(session_error_to_datafusion)?;
-        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         let (user_id, _role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;

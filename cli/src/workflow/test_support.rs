@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::Path};
 
-use kalamdb_commons::NamespaceId;
+use kalamdb_commons::SchemaId;
 
 use crate::{
     config::CLIConfiguration,
@@ -42,7 +42,7 @@ pub fn test_environment(name: &str) -> ResolvedEnvironment {
     ResolvedEnvironment {
         name:             name.into(),
         url:              "http://localhost:2900".into(),
-        namespace:        NamespaceId::new("demo"),
+        namespace:        SchemaId::new("demo"),
         env_source:       ResolutionSource::ProjectConfig,
         url_source:       ResolutionSource::ProjectConfig,
         namespace_source: ResolutionSource::ProjectConfig,
@@ -62,7 +62,7 @@ pub fn minimal_sql_project_config() -> KalamProjectConfig {
             "dev".into(),
             ConnectionEnv {
                 url:       "http://localhost:2900".into(),
-                namespace: NamespaceId::new("demo"),
+                namespace: SchemaId::new("demo"),
                 purpose:   None,
             },
         )]),
@@ -111,7 +111,7 @@ pub fn prod_deploy_test_config() -> KalamProjectConfig {
         "prod".into(),
         ConnectionEnv {
             url:       "https://db.example.com".into(),
-            namespace: NamespaceId::new("app"),
+            namespace: SchemaId::new("app"),
             purpose:   None,
         },
     )]);
@@ -127,7 +127,7 @@ pub fn multi_env_resolve_test_config() -> KalamProjectConfig {
             "dev".into(),
             ConnectionEnv {
                 url:       "http://localhost:2900".into(),
-                namespace: NamespaceId::new("app"),
+                namespace: SchemaId::new("app"),
                 purpose:   None,
             },
         ),
@@ -135,7 +135,7 @@ pub fn multi_env_resolve_test_config() -> KalamProjectConfig {
             "prod".into(),
             ConnectionEnv {
                 url:       "https://db.example.com".into(),
-                namespace: NamespaceId::new("app"),
+                namespace: SchemaId::new("app"),
                 purpose:   None,
             },
         ),

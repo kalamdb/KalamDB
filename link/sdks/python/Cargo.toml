@@ -11,9 +11,9 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-kalam-client = { path = "../../sdks/rust", default-features = false, features = ["native-sdk", "consumer", "file-uploads"] }
-pyo3 = { version = "0.28.3", features = ["extension-module"] }
-pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-serde = "1"
-serde_json = "1"
+kalam-client = { workspace = true, features = ["native-sdk", "consumer", "file-uploads"] }
+pyo3 = { workspace = true, features = ["extension-module"] }
+pyo3-async-runtimes = { workspace = true, features = ["tokio-runtime"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -10,12 +10,10 @@
     "removeComments": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "baseUrl": "."
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*", "wasm/**/*"],
   "exclude": ["node_modules", "dist", "tests"]

@@ -1,12 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{future::Future, pin::Pin, time::Duration};
 
 use kalam_client::AutoOffsetReset;
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures throughput of N concurrent topic CONSUME requests.
 pub struct ConcurrentConsumerBench;

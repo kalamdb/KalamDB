@@ -34,7 +34,7 @@ use std::{
 
 use anyhow::Result;
 use kalam_client::models::{QueryResponse, QueryResult, ResponseStatus};
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 use serde_json::json;
 use tokio::time::sleep;
 
@@ -84,15 +84,15 @@ pub async fn execute_sql(server: &TestServer, sql: &str, user_id: &str) -> Resul
 /// fixtures::create_namespace(&server, "app").await;
 /// ```
 pub async fn create_namespace(server: &TestServer, namespace: &str) -> QueryResponse {
-    let sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     // Perform namespace creation as 'root' admin user for RBAC enforcement
     let resp = server.execute_sql_as_user(&sql, "root").await;
     if resp.status != ResponseStatus::Success {
-        panic!("CREATE NAMESPACE failed: ns={}, error={:?}", namespace, resp.error);
+        panic!("CREATE SCHEMA failed: ns={}, error={:?}", namespace, resp.error);
     }
     // Namespaces are registered asynchronously, so poll until the system catalog observes it.
     let namespaces_provider = server.app_context.system_tables().namespaces();
-    let namespace_id = NamespaceId::new(namespace);
+    let namespace_id = SchemaId::new(namespace);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         match namespaces_provider.get_namespace(&namespace_id) {
@@ -122,7 +122,7 @@ pub async fn create_namespace_with_options(
     namespace: &str,
     options: &str,
 ) -> QueryResponse {
-    let sql = format!("CREATE NAMESPACE {} WITH OPTIONS {}", namespace, options);
+    let sql = format!("CREATE SCHEMA {} WITH OPTIONS {}", namespace, options);
     server.execute_sql(&sql).await
 }
 
@@ -133,7 +133,7 @@ pub async fn create_namespace_with_options(
 /// * `server` - Test server instance
 /// * `namespace` - Name of the namespace to drop
 pub async fn drop_namespace(server: &TestServer, namespace: &str) -> QueryResponse {
-    let sql = format!("DROP NAMESPACE {} CASCADE", namespace);
+    let sql = format!("DROP SCHEMA {} CASCADE", namespace);
     server.execute_sql(&sql).await
 }
 

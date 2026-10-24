@@ -5,7 +5,7 @@
 use kalamdb_commons::{
     datatypes::KalamDataType,
     models::{
-        ids::{JobId, NamespaceId, NodeId},
+        ids::{JobId, NodeId, SchemaId},
         TableName,
     },
     KSerializable,
@@ -330,10 +330,10 @@ impl Job {
     }
 
     /// Extract namespace_id from parameters JSON
-    pub fn namespace_id(&self) -> Option<NamespaceId> {
+    pub fn namespace_id(&self) -> Option<SchemaId> {
         self.parameters
             .as_ref()
-            .and_then(|p| p.get("namespace_id")?.as_str().map(NamespaceId::new))
+            .and_then(|p| p.get("namespace_id")?.as_str().map(SchemaId::new))
     }
 
     /// Extract table_name from parameters JSON

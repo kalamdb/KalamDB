@@ -8,13 +8,13 @@ use crate::ddl::*;
 pub trait DdlAst: core::fmt::Debug + Send + Sync {}
 
 // Implement the marker trait for all exported DDL statement types
-impl DdlAst for AlterNamespaceStatement {}
+impl DdlAst for AlterSchemaStatement {}
 impl DdlAst for AlterTableStatement {}
 impl DdlAst for BackupDatabaseStatement {}
 impl DdlAst for CreateNamespaceStatement {}
 impl DdlAst for CreateTableStatement {}
 impl DdlAst for DescribeTableStatement {}
-impl DdlAst for DropNamespaceStatement {}
+impl DdlAst for DropSchemaStatement {}
 impl DdlAst for DropTableStatement {}
 impl DdlAst for CreatePolicyStatement {}
 impl DdlAst for AlterPolicyStatement {}
@@ -25,7 +25,7 @@ impl DdlAst for FlushAllTablesStatement {}
 impl DdlAst for FlushTableStatement {}
 impl DdlAst for KillLiveQueryStatement {}
 impl DdlAst for RestoreDatabaseStatement {}
-impl DdlAst for ShowNamespacesStatement {}
+impl DdlAst for ShowSchemasStatement {}
 impl DdlAst for ShowTableStatsStatement {}
 impl DdlAst for ShowTablesStatement {}
 impl DdlAst for AlterStorageStatement {}
@@ -43,7 +43,11 @@ impl DdlAst for CreateViewStatement {}
 impl DdlAst for CreateTypeStatement {}
 impl DdlAst for DropTypeStatement {}
 impl DdlAst for AlterTypeStatement {}
+impl DdlAst for CreateDomainStatement {}
+impl DdlAst for AlterDomainStatement {}
+impl DdlAst for DropDomainStatement {}
 impl DdlAst for CreateProcedureStatement {}
+impl DdlAst for AlterRoutineStatement {}
 impl DdlAst for DropProcedureStatement {}
 impl DdlAst for CreateTriggerStatement {}
 impl DdlAst for CreateScheduleStatement {}

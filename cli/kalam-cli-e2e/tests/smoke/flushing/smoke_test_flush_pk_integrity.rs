@@ -30,10 +30,9 @@ fn smoke_test_flush_pk_integrity_user_table() {
     println!("🧪 Testing flush with PK integrity: {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create USER table with explicit PK
@@ -225,7 +224,7 @@ fn smoke_test_flush_pk_integrity_user_table() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ Flush PK integrity smoke test completed successfully!");
 }
@@ -245,10 +244,9 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     println!("🧪 Testing flush with PK integrity (SHARED): {}", full_table_name);
 
     // Cleanup and setup
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create SHARED table with explicit PK
@@ -358,7 +356,7 @@ fn smoke_test_flush_pk_integrity_shared_table() {
     // Cleanup
     println!("🧹 Cleaning up...");
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE {}", full_table_name));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("✅ SHARED table flush PK integrity test completed!");
 }

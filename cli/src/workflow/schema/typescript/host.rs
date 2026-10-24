@@ -112,7 +112,7 @@ pub fn write_procedure_artifacts(
 ) -> Result<()> {
     let generated_dir = project_root.join(FUNCTIONS_DIR).join("src").join("generated");
     remove_stale_inline_shims(&generated_dir, procedures)?;
-    if procedures.is_empty() {
+    if !procedures.procedures().iter().any(|spec| is_typescript_routine(spec.routine)) {
         return Ok(());
     }
     let tsconfig = project_root.join(FUNCTIONS_DIR).join("tsconfig.json");
@@ -252,7 +252,19 @@ fn host_context(
     include_empty_request: bool,
 ) -> HostNamespacesContext {
     let namespaces = host_namespaces(procedures);
-    let type_imports = procedures.schema_type_imports(include_empty_request);
+    let mut type_imports_vec = Vec::new();
+    for spec in procedures.procedures() {
+        if !is_typescript_routine(spec.routine) {
+            continue;
+        }
+        if include_empty_request || spec.has_params() {
+            type_imports_vec.push(spec.request_ident());
+        }
+        type_imports_vec.push(spec.result_ident());
+    }
+    type_imports_vec.sort();
+    type_imports_vec.dedup();
+    let type_imports = type_imports_vec.join(", ");
     HostNamespacesContext {
         header: GENERATED_HEADER,
         has_host: !namespaces.is_empty(),
@@ -268,17 +280,21 @@ fn host_namespaces(procedures: &ProcedureCatalog<'_>) -> Vec<HostNamespace> {
     procedures
         .namespaces()
         .iter()
-        .map(|namespace| HostNamespace {
-            object_ident: namespace.object_ident.clone(),
-            procedures:   namespace
+        .filter_map(|namespace| {
+            let procedures: Vec<HostProcedure> = namespace
                 .procedures
                 .iter()
+                .filter(|spec| is_typescript_routine(spec.routine))
                 .map(|spec| HostProcedure {
                     method_ident: spec.method_ident.clone(),
                     type_ident:   spec.type_ident.to_string(),
                     has_params:   spec.has_params(),
                 })
-                .collect(),
+                .collect();
+            (!procedures.is_empty()).then(|| HostNamespace {
+                object_ident: namespace.object_ident.clone(),
+                procedures,
+            })
         })
         .collect()
 }

@@ -804,7 +804,7 @@ fn insert_oauth_user(
 
 async fn create_user_table(server: &HttpTestServer, namespace: &str, table: &str) -> Result<()> {
     let ns_response = server
-        .execute_sql(&format!("CREATE NAMESPACE {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA {}", namespace))
         .await
         .context("Failed to create namespace")?;
     assert_success(&ns_response, "create namespace");

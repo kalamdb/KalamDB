@@ -167,6 +167,7 @@ export {
 export type {
   FileRefContext,
   FileRefData,
+  PgCatalogFile,
 } from './file_ref.js';
 
 // WASM bindings (re-exported so advanced users can access low-level API)

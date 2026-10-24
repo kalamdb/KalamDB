@@ -16,10 +16,9 @@ pub fn skip_if_no_server() -> bool {
 
 pub fn setup_namespace(prefix: &str) -> String {
     let namespace = generate_unique_namespace(prefix);
-    let _ =
-        execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {namespace} CASCADE"));
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {namespace}"))
-        .unwrap_or_else(|err| panic!("CREATE NAMESPACE {namespace}: {err}"));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {namespace}"))
+        .unwrap_or_else(|err| panic!("CREATE SCHEMA {namespace}: {err}"));
     namespace
 }
 
@@ -43,9 +42,8 @@ impl NamespaceGuard {
 impl Drop for NamespaceGuard {
     fn drop(&mut self) {
         let namespace = &self.namespace;
-        let _ = execute_sql_as_root_via_client(&format!(
-            "DROP NAMESPACE IF EXISTS {namespace} CASCADE"
-        ));
+        let _ =
+            execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {namespace} CASCADE"));
     }
 }
 

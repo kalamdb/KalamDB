@@ -4,7 +4,10 @@ use std::{
 };
 
 use datafusion::{
-    arrow::{datatypes::SchemaRef, record_batch::RecordBatch},
+    arrow::{
+        array::BooleanArray, compute::filter_record_batch, datatypes::SchemaRef,
+        record_batch::RecordBatch,
+    },
     common::{tree_node::TreeNodeRecursion, Result as DataFusionResult},
     error::DataFusionError,
     execution::{SendableRecordBatchStream, TaskContext},
@@ -19,7 +22,7 @@ use futures_util::TryStreamExt;
 use kalamdb_commons::{
     constants::SystemColumnNames,
     conversions::arrow_json_conversion::json_rows_to_arrow_batch,
-    models::{rows::Row, UserId},
+    models::{rows::Row, OperationKind, UserId},
     try_pk_bucket_key, try_pk_bucket_key_from_typed_string, PkBucketKey, TableId,
 };
 use kalamdb_datafusion_sources::{exec::projected_schema, stream::one_shot_batch_stream};
@@ -36,6 +39,11 @@ pub struct TransactionOverlayExec {
     user_scope:         Option<UserId>,
     final_projection:   Option<Vec<usize>>,
     fetch:              Option<usize>,
+    /// Predicates the child scan already applied to committed rows. Overlay
+    /// rows are merged after that scan, so the same predicate has to run on
+    /// the merged batch. Otherwise `NOT IN` and `<>` keep uncommitted rows
+    /// that do not match.
+    residual_filter:    Option<Arc<dyn PhysicalExpr>>,
     cache:              Arc<PlanProperties>,
 }
 
@@ -48,6 +56,7 @@ impl TransactionOverlayExec {
         user_scope: Option<UserId>,
         final_projection: Option<Vec<usize>>,
         fetch: Option<usize>,
+        residual_filter: Option<Arc<dyn PhysicalExpr>>,
     ) -> DataFusionResult<Self> {
         let output_schema = projected_schema(&input.schema(), final_projection.as_deref())?;
         let cache = Arc::new(PlanProperties::new(
@@ -67,6 +76,7 @@ impl TransactionOverlayExec {
             user_scope,
             final_projection,
             fetch,
+            residual_filter,
             cache,
         })
     }
@@ -138,6 +148,7 @@ impl ExecutionPlan for TransactionOverlayExec {
                 self.user_scope.clone(),
                 self.final_projection.clone(),
                 self.fetch,
+                self.residual_filter.clone(),
             )?)),
         }
     }
@@ -171,6 +182,7 @@ impl ExecutionPlan for TransactionOverlayExec {
         let output_schema = self.schema();
         let user_scope = self.user_scope.clone();
         let fetch = self.fetch;
+        let residual_filter = self.residual_filter.clone();
 
         Ok(one_shot_batch_stream(output_schema, async move {
             merge_partitions_with_overlay(
@@ -182,6 +194,7 @@ impl ExecutionPlan for TransactionOverlayExec {
                 user_scope.as_ref(),
                 final_projection.as_ref(),
                 fetch,
+                residual_filter.as_ref(),
             )
             .await
         }))
@@ -197,6 +210,7 @@ async fn merge_partitions_with_overlay(
     overlay_user_scope: Option<&UserId>,
     final_projection: Option<&Vec<usize>>,
     fetch: Option<usize>,
+    residual_filter: Option<&Arc<dyn PhysicalExpr>>,
 ) -> DataFusionResult<RecordBatch> {
     let input_schema = input.schema();
     let mut rows: Vec<Option<Row>> = Vec::new();
@@ -220,6 +234,7 @@ async fn merge_partitions_with_overlay(
         row_index_by_pk,
         final_projection,
         fetch,
+        residual_filter,
     )
 }
 
@@ -251,6 +266,7 @@ fn merge_batches_with_overlay(
         row_index_by_pk,
         final_projection,
         fetch,
+        None,
     )
 }
 
@@ -283,6 +299,7 @@ fn finalize_overlay_rows(
     mut row_index_by_pk: HashMap<PkBucketKey, usize>,
     final_projection: Option<&Vec<usize>>,
     fetch: Option<usize>,
+    residual_filter: Option<&Arc<dyn PhysicalExpr>>,
 ) -> DataFusionResult<RecordBatch> {
     let mut overlay_entries = overlay
         .table_entries(table_id)
@@ -320,7 +337,9 @@ fn finalize_overlay_rows(
             if let Some(existing_row) = rows[existing_index].as_mut() {
                 merge_row(existing_row, &entry.payload);
             }
-        } else {
+        } else if matches!(entry.operation_kind, OperationKind::Insert) {
+            // An update whose base row is outside this scan is a partial patch.
+            // Emitting it as a new row puts nulls in non-nullable columns.
             row_index_by_pk.insert(pk_key, rows.len());
             rows.push(Some(overlay_payload_without_invented_version(&entry.payload)));
         }
@@ -331,8 +350,11 @@ fn finalize_overlay_rows(
         merged_rows.truncate(fetch);
     }
 
-    let full_batch = json_rows_to_arrow_batch(input_schema, merged_rows)
+    let mut full_batch = json_rows_to_arrow_batch(input_schema, merged_rows)
         .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+    if let Some(predicate) = residual_filter {
+        full_batch = apply_residual_filter(full_batch, predicate)?;
+    }
 
     match final_projection {
         Some(indices) => full_batch
@@ -340,6 +362,20 @@ fn finalize_overlay_rows(
             .map_err(|error| DataFusionError::ArrowError(Box::new(error), None)),
         None => Ok(full_batch),
     }
+}
+
+fn apply_residual_filter(
+    batch: RecordBatch,
+    predicate: &Arc<dyn PhysicalExpr>,
+) -> DataFusionResult<RecordBatch> {
+    let evaluated = predicate.evaluate(&batch)?.into_array(batch.num_rows())?;
+    let Some(mask) = evaluated.as_any().downcast_ref::<BooleanArray>() else {
+        return Err(DataFusionError::Execution(
+            "transaction overlay residual filter did not evaluate to a boolean array".to_string(),
+        ));
+    };
+    filter_record_batch(&batch, mask)
+        .map_err(|error| DataFusionError::ArrowError(Box::new(error), None))
 }
 
 fn record_batch_to_rows(batch: &RecordBatch) -> DataFusionResult<Vec<Row>> {
@@ -375,12 +411,24 @@ fn merge_row(base: &mut Row, overlay: &Row) {
         }
         base.values.insert(column_name.clone(), value.clone());
     }
+    fill_missing_deleted_flag(base);
 }
 
 fn overlay_payload_without_invented_version(payload: &Row) -> Row {
     let mut row = payload.clone();
     row.values.remove(SystemColumnNames::VERSION);
+    fill_missing_deleted_flag(&mut row);
     row
+}
+
+/// Insert plans project every schema column. Omitted `_deleted` arrives as
+/// null, and the column is not nullable.
+fn fill_missing_deleted_flag(row: &mut Row) {
+    let missing = row.values.get(SystemColumnNames::DELETED).is_none_or(|value| value.is_null());
+    if missing {
+        row.values
+            .insert(SystemColumnNames::DELETED.to_string(), ScalarValue::Boolean(Some(false)));
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +438,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
     };
     use kalamdb_commons::{
-        models::{NamespaceId, OperationKind, TableName, TransactionId},
+        models::{OperationKind, SchemaId, TableName, TransactionId},
         TableType,
     };
 
@@ -421,7 +469,7 @@ mod tests {
         .expect("base batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
@@ -484,6 +532,53 @@ mod tests {
     }
 
     #[test]
+    fn overlay_update_outside_the_scan_is_not_emitted_as_a_partial_row() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int64, false),
+            Field::new("name", DataType::Utf8, true),
+        ]));
+        let base_batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from(vec![1])),
+                Arc::new(StringArray::from(vec![Some("kept")])),
+            ],
+        )
+        .expect("base batch");
+
+        let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
+        let mut overlay = TransactionOverlay::new(transaction_id.clone());
+        overlay.apply_entry(TransactionOverlayEntry {
+            transaction_id,
+            mutation_order: 0,
+            table_id: table_id.clone(),
+            table_type: TableType::Shared,
+            user_id: None,
+            operation_kind: OperationKind::Update,
+            primary_key: "9".to_string(),
+            payload: row(&[("name", ScalarValue::Utf8(Some("patched".to_string())))]),
+            tombstone: false,
+        });
+
+        let merged = merge_batches_with_overlay(
+            &schema,
+            &table_id,
+            "id",
+            &overlay,
+            None,
+            &[base_batch],
+            None,
+            None,
+        )
+        .expect("merged batch");
+
+        assert_eq!(merged.num_rows(), 1);
+        let rows = record_batch_to_rows(&merged).expect("rows");
+        assert_eq!(rows[0].values.get("id"), Some(&ScalarValue::Int64(Some(1))));
+    }
+
+    #[test]
     fn overlay_update_keeps_base_version_and_insert_omits_invented_version() {
         use kalamdb_commons::constants::SystemColumnNames;
 
@@ -504,7 +599,7 @@ mod tests {
         .expect("base batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id: transaction_id.clone(),
@@ -578,7 +673,7 @@ mod tests {
         .expect("empty batch");
 
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let first_user = UserId::new("user-a");
         let second_user = UserId::new("user-b");
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
@@ -748,7 +843,7 @@ mod tests {
             Field::new("name", DataType::Utf8, true),
         ]));
         let transaction_id = TransactionId::new("01960f7b-3d15-7d6d-b26c-7e4db6f25f8d");
-        let table_id = TableId::new(NamespaceId::new("app"), TableName::new("items"));
+        let table_id = TableId::new(SchemaId::new("app"), TableName::new("items"));
         let mut overlay = TransactionOverlay::new(transaction_id.clone());
         overlay.apply_entry(TransactionOverlayEntry {
             transaction_id,
@@ -771,6 +866,7 @@ mod tests {
                 table_id,
                 "id",
                 overlay,
+                None,
                 None,
                 None,
                 None,

@@ -197,10 +197,12 @@ fn consider_candidate<H, C>(
 /// cold inputs metadata-only until the caller decides which winners to
 /// materialize.
 ///
-/// Snapshot visibility is applied before choosing the winner. Same
-/// [`VersionId`] on hot and cold collapses to one row (first seen wins on
-/// equality, which is hot because hot is scanned first). Greater version wins
-/// regardless of tier. A tombstone winner hides the row unless `keep_deleted`.
+/// Hot storage has one row per primary key. That row and every cold row obey
+/// the snapshot, so a commit newer than an open transaction stays hidden and
+/// the cold row from before that commit can still win. Same [`VersionId`] on
+/// hot and cold collapses to one row (first seen wins on equality, which is
+/// hot because hot is scanned first). Greater version wins regardless of tier.
+/// A tombstone winner hides the row unless `keep_deleted`.
 pub fn select_latest_versions<H, C, HI, CI>(
     hot_candidates: HI,
     cold_candidates: CI,
@@ -336,20 +338,11 @@ pub fn candidate_pk_key<R: VersionedRow>(pk_name: &str, row: &R) -> PkBucketKey 
     row.pk_bucket_key(pk_name)
 }
 
-pub fn version_candidate_from_row<R, P>(
-    pk_name: &str,
-    row: &R,
-    payload: P,
-) -> VersionCandidate<P>
+pub fn version_candidate_from_row<R, P>(pk_name: &str, row: &R, payload: P) -> VersionCandidate<P>
 where
     R: VersionedRow,
 {
-    VersionCandidate::new(
-        candidate_pk_key(pk_name, row),
-        row.version(),
-        row.deleted(),
-        payload,
-    )
+    VersionCandidate::new(candidate_pk_key(pk_name, row), row.version(), row.deleted(), payload)
 }
 
 pub fn count_merged_rows<R, I, J>(
@@ -674,9 +667,12 @@ impl<'a> ParquetBatchDecoder<'a> {
                     PkBucketKey::UInt(u64::from(value))
                 })
             },
-            PkColumn::UInt64(array) => {
-                null_or_key(array.is_null(row_idx), version, array.value(row_idx), PkBucketKey::UInt)
-            },
+            PkColumn::UInt64(array) => null_or_key(
+                array.is_null(row_idx),
+                version,
+                array.value(row_idx),
+                PkBucketKey::UInt,
+            ),
             PkColumn::Utf8(array) => {
                 utf8_pk_bucket(array.is_null(row_idx), array.value(row_idx), version)
             },
@@ -693,7 +689,7 @@ impl<'a> ParquetBatchDecoder<'a> {
         let version = self.version_at(row_idx)?;
         Ok(RowMetadata {
             version,
-            deleted:   self.deleted_at(row_idx),
+            deleted: self.deleted_at(row_idx),
             pk_bucket: self.pk_bucket_at(row_idx, version),
         })
     }

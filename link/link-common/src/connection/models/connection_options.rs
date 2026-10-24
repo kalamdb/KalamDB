@@ -140,7 +140,7 @@ pub struct ConnectionOptions {
 
     /// Protocol options for the WebSocket connection.
     ///
-    /// Controls the serialization format (JSON or MessagePack) and compression
+    /// Controls the serialization format (JSON text or domain frames) and compression
     /// (None or Gzip) used for WebSocket messages after authentication.
     ///
     /// Authentication messages are always sent as JSON text frames regardless

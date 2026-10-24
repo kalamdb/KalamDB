@@ -84,7 +84,7 @@ void main() {
       final setup = await connectJwtClient();
       final namespace = uniqueName('sync_scale');
       final table = '$namespace.items';
-      await setup.query('CREATE NAMESPACE IF NOT EXISTS $namespace');
+      await setup.query('CREATE SCHEMA IF NOT EXISTS $namespace');
       final created = await setup.query(
         'CREATE TABLE $table (id BIGINT PRIMARY KEY, value TEXT NOT NULL)',
       );
@@ -193,7 +193,7 @@ void main() {
         '$namespace.messages',
         '$namespace.notifications',
       ];
-      await setup.query('CREATE NAMESPACE IF NOT EXISTS $namespace');
+      await setup.query('CREATE SCHEMA IF NOT EXISTS $namespace');
       for (final table in tables) {
         final created = await setup.query(
           'CREATE TABLE $table (id BIGINT PRIMARY KEY, value TEXT NOT NULL)',

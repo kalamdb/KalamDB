@@ -26,13 +26,13 @@ fn test_hot_cold_storage_data_integrity() {
 
     let table_name = generate_unique_table("hot_cold_integrity");
     // Use a test-unique namespace so concurrent tests cannot interfere via
-    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    // DROP SCHEMA CASCADE on the shared 'test_storage' namespace.
     let namespace = generate_unique_table("ts_hc");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (
@@ -154,7 +154,7 @@ fn test_hot_cold_storage_data_integrity() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     println!("✅ Hot/cold storage data integrity test passed!");
 }
@@ -169,13 +169,13 @@ fn test_duplicate_primary_key_insert_fails() {
 
     let table_name = generate_unique_table("duplicate_pk");
     // Use a test-unique namespace so concurrent tests cannot interfere via
-    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    // DROP SCHEMA CASCADE on the shared 'test_storage' namespace.
     let namespace = generate_unique_table("ts_dpk");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup: Create namespace and table ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (
@@ -262,7 +262,7 @@ fn test_duplicate_primary_key_insert_fails() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     println!("✅ Duplicate primary key constraint test passed!");
 }
@@ -277,13 +277,13 @@ fn test_update_operations_hot_and_cold() {
 
     let table_name = generate_unique_table("update_hot_cold");
     // Use a test-unique namespace so concurrent tests cannot interfere via
-    // DROP NAMESPACE CASCADE on the shared 'test_storage' namespace.
+    // DROP SCHEMA CASCADE on the shared 'test_storage' namespace.
     let namespace = generate_unique_table("ts_uhc");
     let full_table_name = format!("{}.{}", namespace, table_name);
 
     // === Setup ===
-    execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
-        .expect("CREATE NAMESPACE failed");
+    execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
+        .expect("CREATE SCHEMA failed");
 
     execute_sql(&format!(
         r#"CREATE TABLE {} (
@@ -369,7 +369,7 @@ fn test_update_operations_hot_and_cold() {
 
     // === Cleanup ===
     let _ = execute_sql(&format!("DROP TABLE IF EXISTS {}", full_table_name));
-    let _ = execute_sql(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
     println!("✅ UPDATE operations on hot and cold storage test passed!");
 }

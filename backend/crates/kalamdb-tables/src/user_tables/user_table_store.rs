@@ -122,7 +122,7 @@ mod tests {
     use datafusion::scalar::ScalarValue;
     use kalamdb_commons::{
         ids::VersionId,
-        models::{rows::Row, NamespaceId, TableId, TableName},
+        models::{rows::Row, SchemaId, TableId, TableName},
         StorageKey, UserId,
     };
 
@@ -131,7 +131,7 @@ mod tests {
 
     fn create_test_store() -> UserTableStore {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         new_user_table_store(backend, &table_id)
     }
 
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_scan_with_raw_prefix_uses_backend_prefix() {
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let store = new_user_table_store(backend.clone(), &table_id);
 
         let user_id = UserId::new("user1");
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn indexed_user_store_writes_ordinal_kobj_without_identity() {
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("test_ns"), TableName::new("test_table"));
+        let table_id = TableId::new(SchemaId::new("test_ns"), TableName::new("test_table"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("name", kalamdb_serialization::StorageDataType::Utf8),
@@ -279,7 +279,7 @@ mod tests {
         };
 
         let backend = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages_ai"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages_ai"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("conversation_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -349,7 +349,7 @@ mod tests {
         };
 
         let backend: Arc<dyn StorageBackend> = Arc::new(RecordingBackend::new());
-        let table_id = TableId::new(NamespaceId::new("chat"), TableName::new("messages_bf"));
+        let table_id = TableId::new(SchemaId::new("chat"), TableName::new("messages_bf"));
         let schema = crate::row_codec::storage_schema_from_named_fields([
             ("id", kalamdb_serialization::StorageDataType::Int64),
             ("conversation_id", kalamdb_serialization::StorageDataType::Utf8),
@@ -399,5 +399,41 @@ mod tests {
         let hits = indexed.scan_by_index(1, None, None).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.user_id, user_id);
+    }
+
+    #[test]
+    fn replace_leaves_one_user_row_key() {
+        let backend: Arc<dyn StorageBackend> =
+            Arc::new(kalamdb_store::test_utils::InMemoryBackend::new());
+        let table_id = TableId::new(SchemaId::new("ns"), TableName::new("notes"));
+        let schema = crate::row_codec::storage_schema_from_named_fields([(
+            "id",
+            kalamdb_serialization::StorageDataType::Int64,
+        )]);
+        let store = new_indexed_user_table_store(backend, &table_id, "id", schema, &[], &[]);
+        let user_id = UserId::new("user-1");
+        let mut values = BTreeMap::new();
+        values.insert("id".to_string(), ScalarValue::Int64(Some(7)));
+        let old_version = VersionId::try_from_i64(1).unwrap();
+        let old_key = UserTableRowId::new(user_id.clone(), old_version);
+        let old_row = UserTableRow {
+            user_id:  user_id.clone(),
+            _version: old_version,
+            _deleted: false,
+            fields:   Row::new(values.clone()),
+        };
+        store.insert(&old_key, &old_row).unwrap();
+
+        let new_version = VersionId::try_from_i64(2).unwrap();
+        let new_key = UserTableRowId::new(user_id.clone(), new_version);
+        let new_row = UserTableRow {
+            user_id,
+            _version: new_version,
+            _deleted: false,
+            fields: Row::new(values),
+        };
+        store.replace(Some((&old_key, &old_row)), &new_key, &new_row).unwrap();
+        assert!(store.get(&old_key).unwrap().is_none());
+        assert_eq!(store.get(&new_key).unwrap().unwrap()._version, new_version);
     }
 }

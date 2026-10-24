@@ -9,9 +9,9 @@
 //! unavoidable without a per-connection write pipeline; this keeps it to
 //! exactly one modestly-sized allocation rather than several doublings.
 
-use std::io::Write;
+use std::io::{Read, Write};
 
-use flate2::{write::GzEncoder, Compression};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
 /// Default compression threshold in bytes (512 bytes)
 /// Messages smaller than this are sent uncompressed
@@ -48,18 +48,53 @@ pub fn should_compress(data: &[u8]) -> bool {
     data.len() >= COMPRESSION_THRESHOLD
 }
 
-/// Compress data if it exceeds the threshold
+/// Compress `data` when it exceeds the threshold and gzip actually shrinks it.
 ///
-/// Returns (data, is_compressed) tuple
-pub fn maybe_compress(data: &[u8]) -> (Vec<u8>, bool) {
-    if should_compress(data) {
-        let compressed = compress_gzip(data);
-        // Check if compression was effective
+/// The original buffer is returned unchanged when compression is skipped, so
+/// callers do not allocate a second copy of an already-encoded frame.
+pub fn maybe_compress(data: Vec<u8>) -> (Vec<u8>, bool) {
+    if should_compress(&data) {
+        let compressed = compress_gzip(&data);
         if compressed.len() < data.len() && is_gzip(&compressed) {
             return (compressed, true);
         }
     }
-    (data.to_vec(), false)
+    (data, false)
+}
+
+/// Maximum compressed input payload size (16 MiB).
+pub const MAX_COMPRESSED_INPUT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Maximum decompressed output payload size (64 MiB).
+pub const MAX_DECOMPRESSED_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Gzip-decode `data`, refusing to expand past `limit` bytes.
+pub fn decompress_gzip_limited(data: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    if data.len() > MAX_COMPRESSED_INPUT_BYTES {
+        return Err(format!(
+            "Compressed message exceeds maximum input size of {MAX_COMPRESSED_INPUT_BYTES} bytes"
+        ));
+    }
+    if data.len() < 18 || !is_gzip(data) || data[2] != 0x08 || (data[3] & 0xe0) != 0 {
+        return Err("Invalid gzip frame header".to_string());
+    }
+    let effective_limit = limit.min(MAX_DECOMPRESSED_OUTPUT_BYTES);
+    let mut decoder = GzDecoder::new(data);
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        let read = decoder
+            .read(&mut chunk)
+            .map_err(|_| "Failed to decompress binary payload".to_string())?;
+        if read == 0 {
+            break;
+        }
+        if buf.len().saturating_add(read) > effective_limit {
+            return Err(format!("Message exceeds maximum size of {effective_limit} bytes"));
+        }
+        buf.extend_from_slice(&chunk[..read]);
+    }
+    Ok(buf)
 }
 
 /// Check if data is gzip compressed (magic bytes check)
@@ -92,15 +127,25 @@ mod tests {
 
     #[test]
     fn test_maybe_compress() {
-        let small = b"small";
-        let (data, compressed) = maybe_compress(small);
+        let small = b"small".to_vec();
+        let (data, compressed) = maybe_compress(small.clone());
         assert!(!compressed);
         assert_eq!(data, small);
 
         let large = "x".repeat(1000);
-        let (data, compressed) = maybe_compress(large.as_bytes());
+        let (data, compressed) = maybe_compress(large.into_bytes());
         assert!(compressed);
-        assert!(data.len() < large.len());
+        assert!(data.len() < 1000);
+    }
+
+    #[test]
+    fn decompress_gzip_limited_stops_past_the_limit() {
+        let payload = vec![b'a'; 4096];
+        let compressed = compress_gzip(&payload);
+        let decoded = decompress_gzip_limited(&compressed, payload.len()).expect("within limit");
+        assert_eq!(decoded, payload);
+        let err = decompress_gzip_limited(&compressed, 64).expect_err("over limit");
+        assert!(err.contains("maximum size"));
     }
 
     #[test]

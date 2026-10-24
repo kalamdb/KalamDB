@@ -25,11 +25,11 @@ fn cluster_test_smoke_crud_any_node() {
         let namespace = generate_unique_namespace(&format!("smoke_node{}", node_idx));
 
         // Create namespace
-        match execute_on_node(url, &format!("CREATE NAMESPACE {}", namespace)) {
-            Ok(_) => println!("    ✓ CREATE NAMESPACE succeeded"),
+        match execute_on_node(url, &format!("CREATE SCHEMA {}", namespace)) {
+            Ok(_) => println!("    ✓ CREATE SCHEMA succeeded"),
             Err(e) => {
                 // Might fail on follower if write routing not implemented
-                println!("    ⚠ CREATE NAMESPACE: {}", e);
+                println!("    ⚠ CREATE SCHEMA: {}", e);
                 continue;
             },
         }
@@ -45,7 +45,7 @@ fn cluster_test_smoke_crud_any_node() {
             Ok(_) => println!("    ✓ CREATE TABLE succeeded"),
             Err(e) => {
                 println!("    ⚠ CREATE TABLE: {}", e);
-                let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+                let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
                 continue;
             },
         }
@@ -87,7 +87,7 @@ fn cluster_test_smoke_crud_any_node() {
         }
 
         // Cleanup
-        let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+        let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
         println!("    ✓ Cleanup completed");
     }
 
@@ -143,14 +143,17 @@ fn cluster_test_smoke_table_types_any_node() {
     let namespace = generate_unique_namespace("smoke_types");
 
     // Setup namespace on leader
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create different table types
     execute_on_node(
         &urls[0],
-        &format!("CREATE USER TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING)", namespace),
+        &format!(
+            "CREATE TABLE {}.user_tbl (id BIGINT PRIMARY KEY, data STRING) WITH (TYPE = 'USER')",
+            namespace
+        ),
     )
     .expect("Failed to create user table");
 
@@ -215,7 +218,7 @@ fn cluster_test_smoke_table_types_any_node() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ All table types accessible from all nodes\n");
 }
@@ -233,8 +236,8 @@ fn cluster_test_smoke_auth_any_node() {
     let namespace = generate_unique_namespace("smoke_auth");
 
     // Setup namespace and user on leader
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     // Create user with proper syntax: CREATE USER user WITH PASSWORD 'pass' ROLE 'role'
@@ -273,7 +276,7 @@ fn cluster_test_smoke_auth_any_node() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Authentication tested from all nodes\n");
 }
@@ -291,8 +294,8 @@ fn cluster_test_smoke_complex_queries_any_node() {
     let namespace = generate_unique_namespace("smoke_complex");
 
     // Setup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     execute_on_node(
@@ -373,7 +376,7 @@ fn cluster_test_smoke_complex_queries_any_node() {
     }
 
     // Cleanup
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Complex queries work from all nodes\n");
 }
@@ -424,7 +427,7 @@ fn cluster_test_smoke_write_routing() {
     for (node_idx, url) in urls.iter().enumerate() {
         let ns = format!("{}_{}", namespace, node_idx);
 
-        match execute_on_node(url, &format!("CREATE NAMESPACE {}", ns)) {
+        match execute_on_node(url, &format!("CREATE SCHEMA {}", ns)) {
             Ok(_) => {
                 if let Some(ref leader) = leader_url {
                     if url == leader {
@@ -436,7 +439,7 @@ fn cluster_test_smoke_write_routing() {
                     println!("  ✓ Node {}: write succeeded", node_idx);
                 }
                 // Cleanup
-                let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", ns));
+                let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", ns));
             },
             Err(e) => {
                 if let Some(ref leader) = leader_url {
@@ -472,10 +475,10 @@ fn cluster_test_mixed_statement_batch_routes_per_group() {
     let user = format!("mixed_user_{}", namespace);
     let password = "test_password_123";
 
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
     let _ = execute_on_node(&urls[0], &format!("DROP USER {}", user));
 
-    execute_on_node(&urls[0], &format!("CREATE NAMESPACE {}", namespace))
+    execute_on_node(&urls[0], &format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
     execute_on_node(
         &urls[0],
@@ -518,7 +521,7 @@ fn cluster_test_mixed_statement_batch_routes_per_group() {
     assert_eq!(rows, vec!["1|updated".to_string()]);
 
     let _ = execute_on_node(&urls[0], &format!("DROP USER {}", user));
-    let _ = execute_on_node(&urls[0], &format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_on_node(&urls[0], &format!("DROP SCHEMA {} CASCADE", namespace));
 
     println!("\n  ✅ Mixed statement batch routed per group\n");
 }

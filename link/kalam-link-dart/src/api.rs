@@ -230,7 +230,7 @@ fn build_dart_connection_options(
     let mut conn_opts = kalam_client::ConnectionOptions::default();
 
     // Favor the smaller binary wire format for Dart subscriptions by default.
-    conn_opts.protocol.serialization = kalam_client::models::SerializationType::MessagePack;
+    conn_opts.protocol.serialization = kalam_client::models::SerializationType::Domain;
     // Mobile apps resume and reconnect frequently. Favor a faster first retry
     // than the generic SDK defaults while keeping exponential backoff.
     conn_opts.reconnect_delay_ms = DART_INITIAL_RECONNECT_DELAY_MS;
@@ -288,7 +288,7 @@ mod tests {
     fn dart_connection_options_default_to_msgpack() {
         let options = build_dart_connection_options(None, None);
 
-        assert_eq!(options.protocol.serialization, SerializationType::MessagePack);
+        assert_eq!(options.protocol.serialization, SerializationType::Domain);
         assert!(options.ws_lazy_connect);
         assert!(!options.disable_compression);
         assert_eq!(options.reconnect_delay_ms, DART_INITIAL_RECONNECT_DELAY_MS);
@@ -299,7 +299,7 @@ mod tests {
     fn dart_connection_options_preserve_explicit_flags() {
         let options = build_dart_connection_options(Some(true), Some(false));
 
-        assert_eq!(options.protocol.serialization, SerializationType::MessagePack);
+        assert_eq!(options.protocol.serialization, SerializationType::Domain);
         assert!(!options.ws_lazy_connect);
         assert!(options.disable_compression);
         assert_eq!(options.reconnect_delay_ms, DART_INITIAL_RECONNECT_DELAY_MS);

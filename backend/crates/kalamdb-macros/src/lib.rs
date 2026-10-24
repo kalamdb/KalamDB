@@ -118,9 +118,9 @@ pub fn table(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let namespace_str = namespace.unwrap_or_else(|| "system".to_string());
     let namespace_expr = if namespace_str == "system" {
-        quote!(kalamdb_commons::NamespaceId::system())
+        quote!(kalamdb_commons::SchemaId::system())
     } else {
-        quote!(kalamdb_commons::NamespaceId::new(#namespace_str))
+        quote!(kalamdb_commons::SchemaId::new(#namespace_str))
     };
     let table_name = name.clone();
     let namespace_for_error = namespace_str.clone();

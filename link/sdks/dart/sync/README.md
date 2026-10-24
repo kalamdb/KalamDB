@@ -28,6 +28,8 @@ flutter pub add kalam_sync
 
 ## Get started
 
+One account uses one Drift database. `Kalam.open` creates it, builds it with your database constructor, or adopts a database you already opened. To share the app database, mix `KalamSyncTablesMixin` into that `GeneratedDatabase`, include `kalamSyncSchema` in `allSchemaEntities`, and pass the opened database to `Kalam.open` and `Kalam.catchUp`. An adopted database stays open after `dispose`. `spec.liveSql` is the remote `SELECT`. `decodeChange` separates a full row, a partial patch, and a delete. `seedCheckpointIfAbsent` and `resetProjection` update the existing checkpoint and action tables. `planKalamSession` keeps the session when only the token changes.
+
 Open an account-scoped cache. The WebSocket stays lazy until a consumer or queued action needs it.
 
 ```dart
@@ -113,3 +115,50 @@ Walkthrough: [Offline actions](https://kalamdb.org/docs/dart-sdk/sync-actions).
 - Docs: [https://kalamdb.org/docs/dart-sdk/sync](https://kalamdb.org/docs/dart-sdk/sync)
 - Chat example: [`example/`](example)
 - License: Apache-2.0
+
+## Durable retries and checkpoint initialization
+
+An action ID identifies one request across the shared store. Re-enqueuing it with
+the same account, action key, version, kind, payload JSON, ordering key, and target
+row returns the existing action without repeating optimistic work. Reusing it for
+a different request throws `StateError`. Keep the serialized payload stable on
+retry; the store compares the persisted JSON text. This is local deduplication,
+not a promise of exactly-once remote execution.
+
+`seedCheckpointIfAbsent` checks and inserts inside one transaction. Concurrent
+seeds produce one winner; an existing checkpoint is never advanced by seeding.
+`subscriptionId` names the checkpoint, while `tableId` supplies the quoted table
+in `KalamTableSpec.liveSql`. Delete decoding rejects an event missing its key.
+Generated specs also support `spec.bind(client)` for remote typed queries using
+the same decoder and key metadata.
+
+## Generated typed remote queries
+
+After `kalam schema gen --languages dart`, reuse the generated table codecs and
+primary key directly:
+
+```dart
+final inventory = KalamTables.inventory.bind(client);
+final query = inventory.query()
+    .filter(InventoryColumns.sku.eq('sku-1'))
+    .limit(20);
+final rows = await query.get();
+final updates = query.live();
+```
+
+`InventoryColumns.sku` is `KalamColumn<String>`, so passing a number fails Dart
+analysis. Existing `.where((c) => c.col('sku').eq(value))` remains available for
+dynamic queries. `eq(null)` and `neq(null)` produce `IS NULL` and `IS NOT NULL`
+when the column type permits null. Values use bound parameters.
+
+`orderBy` on a remote live query sorts the matching rows locally before applying
+`limit`. The limit controls the displayed rows, not retained memory. Use a narrow
+filter for large datasets. Scalar string ordering is local and does not promise
+server collation equivalence. Use `kalam_sync` for durable local projections and
+offline actions; `bind(client)` uses remote transport and does not add persistence.
+
+Generated Dart table specs require one declared primary key. Keyless tables still
+get row codecs, but no sync spec or guessed key. Composite primary keys are rejected
+by schema compilation to match current server support. Array codecs preserve null
+arrays and encode/decode each supported scalar, enum, composite, and timestamp
+element; null array elements are not represented by the current contract.

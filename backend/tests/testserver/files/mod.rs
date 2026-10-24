@@ -9,3 +9,4 @@
 pub(super) use super::test_support;
 
 mod test_file_permissions_http;
+mod test_shared_file_rls_http;

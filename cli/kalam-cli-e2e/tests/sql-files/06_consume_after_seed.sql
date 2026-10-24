@@ -1,7 +1,7 @@
 -- Simple consume flow after namespace-local inserts.
 
-DROP NAMESPACE IF EXISTS sql_file_case_06 CASCADE;
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_06;
+DROP SCHEMA IF EXISTS sql_file_case_06 CASCADE;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_06;
 USE sql_file_case_06;
 
 CREATE TABLE IF NOT EXISTS sql_file_case_06.notifications (
@@ -24,4 +24,4 @@ VALUES
 CONSUME FROM notification_stream GROUP 'fixture-consumers-06' FROM EARLIEST LIMIT 10;
 
 DROP TOPIC notification_stream;
-DROP NAMESPACE IF EXISTS sql_file_case_06 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_06 CASCADE;

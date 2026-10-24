@@ -54,13 +54,13 @@ fn is_pre_validation_skip(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{models::TopicId, NamespaceId, TableName};
+    use kalamdb_commons::{models::TopicId, SchemaId, TableName};
 
     use super::*;
 
     #[test]
     fn hourly_table_key_uses_job_prefix() {
-        let table_id = TableId::new(NamespaceId::default(), TableName::new("events"));
+        let table_id = TableId::new(SchemaId::default(), TableName::new("events"));
 
         assert_eq!(
             hourly_table_idempotency_key(JobType::Flush, &table_id, "2026-04-29-10"),

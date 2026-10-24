@@ -14,9 +14,9 @@ async fn test_user_table_insert_select_minimal() {
 
     // Create namespace
     let ns = "test_ns_minimal";
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    println!("CREATE NAMESPACE: status={:?}", resp.status);
-    assert!(resp.success(), "CREATE NAMESPACE failed: {:?}", resp.error);
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    println!("CREATE SCHEMA: status={:?}", resp.status);
+    assert!(resp.success(), "CREATE SCHEMA failed: {:?}", resp.error);
 
     // Create USER table
     let create_sql = format!(
@@ -84,9 +84,9 @@ async fn test_user_table_subscription_debug() {
 
     // Create namespace
     let ns = "test_ns_sub";
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE {}", ns)).await?;
-    println!("CREATE NAMESPACE: status={:?}", resp.status);
-    assert!(resp.success(), "CREATE NAMESPACE failed: {:?}", resp.error);
+    let resp = server.execute_sql(&format!("CREATE SCHEMA {}", ns)).await?;
+    println!("CREATE SCHEMA: status={:?}", resp.status);
+    assert!(resp.success(), "CREATE SCHEMA failed: {:?}", resp.error);
 
     // Create USER table
     let create_sql = format!(

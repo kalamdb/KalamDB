@@ -18,10 +18,8 @@ fn test_datatypes_json_preservation() {
     let namespace = common::generate_unique_namespace("test_datatypes");
 
     // Create namespace first
-    let _ = common::execute_sql_as_root_via_cli(&format!(
-        "CREATE NAMESPACE IF NOT EXISTS {}",
-        namespace
-    ));
+    let _ =
+        common::execute_sql_as_root_via_cli(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace));
 
     // Create test table with multiple datatypes
     let create_sql = format!(
@@ -139,7 +137,7 @@ fn test_datatypes_json_preservation() {
     let drop_sql = format!("DROP TABLE IF EXISTS {}.{}", namespace, table_name);
     let _ = common::execute_sql_as_root_via_cli(&drop_sql);
     let _ = common::execute_sql_as_root_via_cli(&format!(
-        "DROP NAMESPACE IF EXISTS {} CASCADE",
+        "DROP SCHEMA IF EXISTS {} CASCADE",
         namespace
     ));
 }

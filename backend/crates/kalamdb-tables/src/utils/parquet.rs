@@ -301,7 +301,7 @@ fn cold_scan_pruning(
             continue;
         };
         pruning.indexed_equalities.push((column.column_id, value_str.clone()));
-        if column.data_type.supports_equality_bloom() {
+        if column.data_type().supports_equality_bloom() {
             if column.is_primary_key {
                 pk_bloom.get_or_insert((name.to_string(), value_str));
             } else {

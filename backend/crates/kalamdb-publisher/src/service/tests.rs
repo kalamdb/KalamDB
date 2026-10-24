@@ -10,7 +10,7 @@ use std::{
 
 use datafusion_common::ScalarValue;
 use kalamdb_commons::{
-    models::{NamespaceId, PayloadMode, TableName},
+    models::{PayloadMode, SchemaId, TableName},
     StorageKey,
 };
 use kalamdb_store::{
@@ -313,7 +313,7 @@ fn test_has_topics_for_table() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("user_events");
 
@@ -332,7 +332,7 @@ fn test_add_and_remove_topic() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("user_events");
 
@@ -354,7 +354,7 @@ fn test_route_and_publish() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("user_events");
 
@@ -387,7 +387,7 @@ fn test_route_and_publish() {
 fn test_publish_uses_primary_key_as_message_key() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("pk_topic");
 
@@ -411,7 +411,7 @@ fn test_publish_uses_primary_key_as_message_key() {
 fn test_batch_publish_same_primary_key_stays_in_one_partition() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("pk_batch_topic");
     let partitions = 32;
@@ -456,7 +456,7 @@ fn test_batch_publish_same_primary_key_stays_in_one_partition() {
 fn test_batch_publish_preserves_actor_user_id() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("shared_events"));
     let topic_id = TopicId::new("shared_actor_topic");
     let actor_user_id = UserId::from("actor_user_1");
@@ -486,7 +486,7 @@ fn test_batch_publish_preserves_actor_user_id() {
 fn test_publish_message_respects_route_filter_on_insert() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("tasks"));
     let topic_id = TopicId::new("task_cancellation_insert_topic");
 
@@ -530,7 +530,7 @@ fn test_publish_message_respects_route_filter_on_insert() {
 fn test_publish_message_respects_complex_route_filter_on_insert() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("complex_event_insert_topic");
 
@@ -596,7 +596,7 @@ fn test_publish_message_respects_complex_route_filter_on_insert() {
 fn test_publish_batch_respects_route_filter_on_update() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("tasks"));
     let topic_id = TopicId::new("task_cancellation_update_topic");
 
@@ -636,7 +636,7 @@ fn test_no_routes_returns_zero() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("no_routes"));
 
     let row = create_test_row(1, "Test");
@@ -650,7 +650,7 @@ fn test_restore_offset_counters_only_seeds_offsets_without_rebuilding_retention_
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend.clone());
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("restore_retention_topic");
 
@@ -687,7 +687,7 @@ fn test_time_retention_advances_earliest_offset_without_rewriting_latest() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("time_retention_topic");
 
@@ -721,7 +721,7 @@ fn test_byte_retention_prunes_oldest_messages_first() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("byte_retention_topic");
 
@@ -765,7 +765,7 @@ fn test_byte_retention_can_fully_cleanup_partition() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("byte_retention_full_cleanup_topic");
 
@@ -831,7 +831,7 @@ fn test_fetch_messages_for_group_advances_claim_cursor() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("users"));
     let topic_id = TopicId::new("group_claim_topic");
     let group_id = ConsumerGroupId::new("test_group");
@@ -864,7 +864,7 @@ fn test_group_fetch_does_not_hold_claim_state_during_storage_scan() {
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();
     let service = Arc::new(TopicPublisherService::new(storage_backend));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("nonblocking_claim_topic");
     let group_id = ConsumerGroupId::new("nonblocking_claim_group");
@@ -924,7 +924,7 @@ fn test_group_fetch_four_concurrent_consumers_no_overlap() {
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();
     let service = Arc::new(TopicPublisherService::new(storage_backend));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("four_consumer_claim_topic");
     let group_id = ConsumerGroupId::new("four_consumer_claim_group");
@@ -975,7 +975,7 @@ fn test_concurrent_empty_group_polls_do_not_skip_later_messages() {
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();
     let service = Arc::new(TopicPublisherService::new(storage_backend));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("empty_poll_then_publish_topic");
     let group_id = ConsumerGroupId::new("empty_poll_then_publish_group");
@@ -1032,7 +1032,7 @@ fn test_group_fetch_does_not_reclaim_acked_range_after_idle_drop() {
     let storage_backend: Arc<dyn StorageBackend> = backend.clone();
     let service = Arc::new(TopicPublisherService::new(storage_backend));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("ack_during_scan_topic");
     let group_id = ConsumerGroupId::new("ack_during_scan_group");
@@ -1106,7 +1106,7 @@ fn test_concurrent_group_fetch_no_overlap() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("overlap_topic");
     let group_id = ConsumerGroupId::new("overlap_group");
@@ -1158,7 +1158,7 @@ fn test_ack_clears_pending_claims() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("ack_clear_topic");
     let group_id = ConsumerGroupId::new("ack_clear_group");
@@ -1199,7 +1199,7 @@ fn acked_group_keeps_cursor_so_stale_client_start_cannot_replay() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("stale_start_replay_topic");
     let group_id = ConsumerGroupId::new("stale_start_replay_group");
@@ -1241,7 +1241,7 @@ fn two_consumers_concurrent_publish_and_delayed_ack_no_overlap() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = Arc::new(TopicPublisherService::new(backend));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("concurrent_publish_claim_topic");
     let group_id = ConsumerGroupId::new("concurrent_publish_claim_group");
@@ -1324,7 +1324,7 @@ fn test_partial_ack_trims_pending_claim_start() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("partial_ack_topic");
     let group_id = ConsumerGroupId::new("partial_ack_group");
@@ -1361,7 +1361,7 @@ fn test_expired_claim_redelivery_skips_still_pending_ranges() {
     let service =
         TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(80));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("partial_expiry_topic");
     let group_id = ConsumerGroupId::new("partial_expiry_group");
@@ -1402,7 +1402,7 @@ fn test_expired_claim_redelivery_uses_group_cursor_not_client_position() {
     let service =
         TopicPublisherService::with_visibility_timeout(backend, StdDuration::from_millis(120));
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("position_ahead_recovery_topic");
     let group_id = ConsumerGroupId::new("position_ahead_recovery_group");
@@ -1478,7 +1478,7 @@ fn empty_group_poll_does_not_retain_claim_state() {
 fn latest_empty_poll_pins_cursor_so_backlog_is_not_replayed() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("latest_empty_poll_topic");
     let group_id = ConsumerGroupId::new("latest_empty_poll_group");
@@ -1525,7 +1525,7 @@ fn test_group_fetch_then_ack_then_fetch_continues() {
     let backend = Arc::new(InMemoryBackend::new());
     let service = TopicPublisherService::new(backend);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns.clone(), TableName::from("events"));
     let topic_id = TopicId::new("resume_topic");
     let group_id = ConsumerGroupId::new("resume_group");
@@ -1589,7 +1589,7 @@ fn allocated_but_unwritten_offset_is_not_treated_as_retained() {
 fn test_fetch_recent_messages_from_partition_tail() {
     let service = service_with_primary_key(&["id"]);
 
-    let ns = NamespaceId::new("test_ns");
+    let ns = SchemaId::new("test_ns");
     let table_id = TableId::new(ns, TableName::from("events"));
     let topic_id = TopicId::new("tail_cache_topic");
 

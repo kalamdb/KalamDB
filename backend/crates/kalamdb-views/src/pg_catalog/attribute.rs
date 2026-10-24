@@ -5,12 +5,14 @@ use datafusion::arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use kalamdb_commons::Role;
+use kalamdb_commons::{constants::SystemColumnNames, Role};
 use kalamdb_system::SystemTablesRegistry;
 
 use crate::{
     error::RegistryError,
-    pg_catalog::{class_oid, type_mapping::pg_type_oid, visible_table_definitions, PgCatalogView},
+    pg_catalog::{
+        class_oid, type_mapping::pg_attribute_type, visible_table_definitions, PgCatalogView,
+    },
 };
 
 fn schema() -> SchemaRef {
@@ -92,20 +94,28 @@ impl PgCatalogView for PgAttributeView {
             let table_name = table.table_name.as_str();
             let relation_oid = class_oid(namespace, table_name);
             for column in &table.columns {
+                if SystemColumnNames::is_system_column(column.column_name.as_str()) {
+                    continue;
+                }
                 relation_oids.append_value(relation_oid);
                 names.append_value(column.column_name.as_str());
-                type_oids.append_value(pg_type_oid(&column.data_type));
+                let (type_oid, typmod) = pg_attribute_type(
+                    &column.data_type(),
+                    column.character_maximum_length,
+                    column.logical_type.modifier_label(),
+                );
+                type_oids.append_value(type_oid);
                 stat_targets.append_value(-1);
                 lengths.append_value(-1);
                 attnums.append_value(column.ordinal_position as i64);
                 dimensions.append_value(0);
                 cache_offsets.append_value(-1);
-                typmods.append_value(-1);
+                typmods.append_value(typmod);
                 by_values.append_value(false);
                 aligns.append_value("i");
                 storages.append_value("x");
                 not_nulls.append_value(!column.is_nullable);
-                has_defaults.append_value(false);
+                has_defaults.append_value(!column.default_value.is_none());
                 has_missing.append_value(false);
                 identities.append_value("");
                 generated.append_value("");

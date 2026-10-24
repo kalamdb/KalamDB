@@ -114,11 +114,11 @@ describe('Query', { timeout: 30_000 }, () => {
   });
 
   // -----------------------------------------------------------------------
-  // CREATE NAMESPACE
+  // CREATE SCHEMA
   // -----------------------------------------------------------------------
-  test('CREATE NAMESPACE IF NOT EXISTS succeeds', async () => {
+  test('CREATE SCHEMA IF NOT EXISTS succeeds', async () => {
     const res = await client.query(
-      `CREATE NAMESPACE IF NOT EXISTS ${uniqueName('ns_test')}`,
+      `CREATE SCHEMA IF NOT EXISTS ${uniqueName('ns_test')}`,
     );
     assert.ok(res);
   });

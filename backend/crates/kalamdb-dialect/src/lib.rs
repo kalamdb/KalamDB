@@ -2,7 +2,7 @@
 //!
 //! This crate is the extraction point for KalamDB SQL parsing concerns.
 
-use kalamdb_commons::{models::NamespaceId, Role};
+use kalamdb_commons::{models::SchemaId, Role};
 
 pub mod batch_execution;
 pub mod classifier;
@@ -10,6 +10,7 @@ pub mod compatibility;
 pub mod contracts;
 pub mod ddl;
 pub mod ddl_parent;
+#[path = "kalam_dialect.rs"]
 pub mod dialect;
 pub mod execute_as;
 pub mod parser;
@@ -24,9 +25,11 @@ pub use batch_execution::{
 pub use classifier::{SqlStatement, SqlStatementKind, StatementClassificationError};
 pub use compatibility::{map_sql_type_to_kalam, sql_type_to_type_reference};
 pub use contracts::{
-    apply_identity_manifest, canonical_contract_hash, compile_contract, compile_contract_sql,
-    diff_contracts, ContractDiff, ContractError, ContractSnapshot, ContractSource,
-    TypeIdentityEntry, TypeIdentityManifest,
+    analyze_named_query, apply_identity_manifest, canonical_contract_hash, compile_contract,
+    compile_contract_sql, diff_contracts, reject_forbidden_write, scoped_contract_hashes,
+    table_row_contract, ContractDiff, ContractError, ContractSnapshot, ContractSource,
+    QueryPlanError, RoutineCardinality, ScopedContractHashes, TableRowContract, TypeIdentityEntry,
+    TypeIdentityManifest, TypedQueryPlan, WriteShape, CURRENT_CONTRACT_EPOCH,
 };
 pub use ddl::{
     parse_job_command, AlterStorageStatement, CheckStorageStatement, CompactAllTablesStatement,
@@ -38,21 +41,24 @@ pub use ddl_parent::DdlAst;
 pub use dialect::KalamDbDialect;
 pub use execute_as::{extract_inner_sql, parse_execute_as, ExecuteAsEnvelope};
 pub use parser::{
-    build_on_conflict_update_assignments, build_on_conflict_update_assignments_with_params,
-    conflict_target_is_primary_key, expr_to_scalar, expr_to_scalar_with_params,
+    apply_datafusion_ast_rewrites, build_on_conflict_update_assignments,
+    build_on_conflict_update_assignments_with_params, conflict_target_is_primary_key,
+    expand_stars_without_storage_columns, expr_to_scalar, expr_to_scalar_with_params,
     extract_dml_table_id, extract_dml_table_id_fast, extract_dml_table_id_from_statement,
     insert_column_names_from_statement, insert_columns_match, insert_from_statement,
-    insert_has_on_conflict, insert_returning_items, is_default_expr,
-    normalize_context_keyword_calls_for_sqlparser, object_name_to_string,
-    on_conflict_update_should_apply, on_conflict_values_insert, parse_on_conflict_action,
-    parse_on_conflict_action_with_params, parse_single_statement,
+    insert_has_on_conflict, insert_returning_items, is_default_expr, needs_ast_operator_rewrite,
+    object_name_to_string, on_conflict_update_should_apply, on_conflict_values_insert,
+    parse_on_conflict_action, parse_on_conflict_action_with_params, parse_single_statement,
+    parse_statement_for_datafusion,
     query_parser::{QueryParseError, QueryParser, SubscriptionQueryAnalysis},
-    rewrite_context_functions_for_datafusion, rewrite_explain_for_datafusion,
-    single_values_insert_row, sql_value_to_scalar, strip_nested_expr,
-    validate_primary_key_conflict_target, values_insert_view, values_insert_view_from_statement,
-    values_rows_from_insert, values_to_rows, OnConflictUpdateAssignment, OnConflictUpdateValue,
-    ParsedOnConflictAction, PostgresExplainFormat, RewrittenPostgresExplain, SqlParser,
-    ValuesInsertShapeOptions, ValuesInsertView,
+    returning_describe_sql, rewrite_context_functions_for_datafusion,
+    rewrite_explain_for_datafusion, rewrite_wire_catalog_compat_for_datafusion,
+    single_values_insert_row, sql_needs_wire_catalog_text_rewrite, sql_value_to_scalar,
+    storage_star_table_names, strip_nested_expr, validate_primary_key_conflict_target,
+    values_insert_view, values_insert_view_from_statement, values_rows_from_insert, values_to_rows,
+    KalamParser, OnConflictUpdateAssignment, OnConflictUpdateValue, ParsedOnConflictAction,
+    PostgresExplainFormat, RewrittenPostgresExplain, SqlParser, ValuesInsertShapeOptions,
+    ValuesInsertView,
 };
 pub use query_features::{
     supports_general_query_feature, supports_subscription_query_feature, GeneralQueryFeature,
@@ -64,8 +70,11 @@ pub use validation::{
 
 pub fn classify_statement(
     sql: &str,
-    default_namespace: &NamespaceId,
+    default_namespace: &SchemaId,
     role: Role,
 ) -> Result<SqlStatement, StatementClassificationError> {
     SqlStatement::classify_and_parse(sql, default_namespace, role)
 }
+
+pub mod postgres_setting;
+pub use postgres_setting::PostgresSetting;

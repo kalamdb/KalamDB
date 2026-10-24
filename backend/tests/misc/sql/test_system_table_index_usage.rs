@@ -313,7 +313,7 @@ async fn test_system_live_basic() {
     let connection_state = registration.state;
     connection_state.mark_authenticated(user_id.clone(), Role::User);
 
-    let create_ns = format!("CREATE NAMESPACE IF NOT EXISTS {}", ns);
+    let create_ns = format!("CREATE SCHEMA IF NOT EXISTS {}", ns);
     let ns_resp = server.execute_sql_as_user(&create_ns, "root").await;
     assert_eq!(
         ns_resp.status,

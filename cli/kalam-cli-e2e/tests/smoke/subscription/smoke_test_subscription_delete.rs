@@ -21,7 +21,7 @@ fn smoke_subscription_receives_delete_event() {
     let full = format!("{}.{}", namespace, table);
 
     // 1) Create namespace + user table
-    let ns_sql = format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace);
+    let ns_sql = format!("CREATE SCHEMA IF NOT EXISTS {}", namespace);
     execute_sql_as_root_via_client(&ns_sql).expect("create namespace should succeed");
 
     let create_sql = format!(
@@ -117,5 +117,5 @@ fn smoke_subscription_receives_delete_event() {
 
     // Cleanup
     listener.stop().ok();
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", namespace));
 }

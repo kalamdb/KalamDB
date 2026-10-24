@@ -80,6 +80,14 @@ impl TableProvider for SharedTableProvider {
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let rows = crate::utils::datafusion_dml::collect_input_rows(state, input).await?;
+        crate::utils::datafusion_dml::reject_missing_foreign_keys(
+            self.schema_registry().as_ref(),
+            state,
+            self.core.table_id(),
+            &self.core.table_def().foreign_keys,
+            &rows,
+        )
+        .await?;
         let check_policies = self
             .bind_policies(user_id, role, PolicyCommand::Insert, true)
             .map_err(crate::error::into_datafusion)?;
@@ -131,30 +139,45 @@ impl TableProvider for SharedTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_shared_table_write_access(state, self.core.table_def())
             .map_err(session_error_to_datafusion)?;
-        crate::utils::datafusion_dml::validate_where_clause(&filters, "DELETE")?;
 
         self.ensure_shared_write_route(state).await?;
 
-        let (user_id, _role) =
+        let (user_id, role) =
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let pk_column = self.primary_key_field_name().to_string();
-        let schema = self.schema_ref();
-        let projection = crate::utils::datafusion_dml::dml_scan_projection(
-            &schema,
-            &filters,
-            &[],
-            &[&pk_column],
-        )?;
-        let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Delete)?;
-        let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
-            self,
-            &rls_state,
-            &filters,
-            projection.as_ref(),
-        )
-        .await?;
-        if rows.is_empty() {
+        // System and DBA bypass row policies. A pure PK membership list is N point
+        // deletes; scanning the hot table for `id IN (...)` reads every version.
+        let known_pks = if matches!(role, Role::System | Role::Dba) {
+            crate::utils::datafusion_dml::pk_membership_literals(&filters, &pk_column)
+        } else {
+            None
+        };
+        let pk_values = if let Some(pk_values) = known_pks {
+            pk_values
+        } else {
+            let schema = self.schema_ref();
+            let projection = crate::utils::datafusion_dml::dml_scan_projection(
+                &schema,
+                &filters,
+                &[],
+                &[&pk_column],
+            )?;
+            let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Delete)?;
+            let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
+                self,
+                &rls_state,
+                &filters,
+                projection.as_ref(),
+            )
+            .await?;
+            let mut pk_values = Vec::with_capacity(rows.len());
+            for row in rows {
+                pk_values.push(crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?);
+            }
+            pk_values
+        };
+        if pk_values.is_empty() {
             return crate::utils::datafusion_dml::rows_affected_plan(state, 0).await;
         }
 
@@ -163,21 +186,32 @@ impl TableProvider for SharedTableProvider {
         let transaction_query_context = extract_transaction_query_context(state);
         let mut ordinal = 0u32;
         let mut staged_mutations =
-            transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
+            transaction_query_context.map(|_| Vec::with_capacity(pk_values.len()));
         let mut direct_pks = Vec::new();
 
-        for row in rows {
-            let pk_value = crate::utils::datafusion_dml::extract_pk_value(&row, &pk_column)?;
+        for pk_value in pk_values {
             if !seen.insert(pk_value.clone()) {
                 continue;
             }
 
             if let Some(staged_mutations) = staged_mutations.as_mut() {
+                let context = transaction_query_context
+                    .as_ref()
+                    .expect("transaction_query_context must exist when staging DELETE");
+                if let Some(claims) = context.pk_claims() {
+                    claims.acquire(self.core.table_id(), &pk_value, &context.transaction_id).await;
+                    let live = self.committed_primary_key_is_live(&pk_value).await?;
+                    if !live {
+                        claims.release_key(
+                            self.core.table_id(),
+                            &pk_value,
+                            &context.transaction_id,
+                        );
+                        continue;
+                    }
+                }
                 staged_mutations.push(StagedMutation::new(
-                    transaction_query_context
-                        .expect("transaction_query_context must exist when staging DELETE")
-                        .transaction_id
-                        .clone(),
+                    context.transaction_id.clone(),
                     self.core.table_id().clone(),
                     TableType::Shared,
                     Some(user_id.clone()),
@@ -240,7 +274,6 @@ impl TableProvider for SharedTableProvider {
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
         check_shared_table_write_access(state, self.core.table_def())
             .map_err(session_error_to_datafusion)?;
-        crate::utils::datafusion_dml::validate_where_clause(&filters, "UPDATE")?;
 
         self.ensure_shared_write_route(state).await?;
 
@@ -248,7 +281,9 @@ impl TableProvider for SharedTableProvider {
             extract_user_context(state).map_err(|e| DataFusionError::Execution(e.to_string()))?;
 
         let pk_column = self.primary_key_field_name().to_string();
-        crate::utils::datafusion_dml::validate_update_assignments(&assignments, &pk_column)?;
+        crate::utils::datafusion_dml::validate_update_assignments(&assignments)?;
+        let relocates_pk =
+            assignments.iter().any(|(column, _)| column.eq_ignore_ascii_case(&pk_column));
 
         let check_policies = self
             .bind_policies(user_id, role, PolicyCommand::Update, true)
@@ -270,12 +305,16 @@ impl TableProvider for SharedTableProvider {
         let required_column_refs = required_columns.iter().map(String::as_str).collect::<Vec<_>>();
 
         let schema = self.schema_ref();
-        let projection = crate::utils::datafusion_dml::dml_scan_projection(
-            &schema,
-            &filters,
-            &assignments,
-            &required_column_refs,
-        )?;
+        let projection = if relocates_pk {
+            None
+        } else {
+            crate::utils::datafusion_dml::dml_scan_projection(
+                &schema,
+                &filters,
+                &assignments,
+                &required_column_refs,
+            )?
+        };
         let rls_state = Self::session_state_with_rls_command(state, PolicyCommand::Update)?;
         let rows = crate::utils::datafusion_dml::collect_matching_rows_with_projection(
             self,
@@ -302,8 +341,11 @@ impl TableProvider for SharedTableProvider {
         let mut staged_mutations =
             transaction_query_context.map(|_| Vec::with_capacity(rows.len()));
         let mut direct_updates = Vec::new();
+        let mut pk_moves: Vec<(String, Row)> = Vec::new();
 
-        let evaluator = PreparedUpdateAssignments::new(state, &schema, &assignments)?;
+        let eval_schema =
+            crate::utils::datafusion_dml::projected_schema(&schema, projection.as_deref())?;
+        let evaluator = PreparedUpdateAssignments::new(state, &eval_schema, &assignments)?;
         let batch_size = state.config().batch_size().max(1);
         let mut remaining = rows.into_iter();
         loop {
@@ -327,6 +369,58 @@ impl TableProvider for SharedTableProvider {
                         "row-level security WITH CHECK policy denied UPDATE on {}",
                         self.core.table_id()
                     )));
+                }
+                if let Some(_new_pk) = crate::utils::datafusion_dml::relocated_primary_key(
+                    &evaluated_updates,
+                    &pk_column,
+                    &pk_value,
+                )? {
+                    if self.core.is_auto_increment_pk() {
+                        return Err(DataFusionError::Plan(format!(
+                            "Cannot modify auto-increment primary key column '{}'",
+                            pk_column
+                        )));
+                    }
+                    let inserted_row = coerce_updates(
+                        crate::utils::datafusion_dml::row_for_primary_key_move(
+                            &row,
+                            &evaluated_updates,
+                        ),
+                        &schema,
+                    )
+                    .map_err(DataFusionError::Execution)?;
+                    if let Some(staged_mutations) = staged_mutations.as_mut() {
+                        let transaction_id = transaction_query_context
+                            .expect("transaction_query_context must exist when staging UPDATE")
+                            .transaction_id
+                            .clone();
+                        staged_mutations.extend(
+                            build_insert_staged_mutations(
+                                &transaction_id,
+                                self.core.table_id(),
+                                TableType::Shared,
+                                Some(user_id.clone()),
+                                &pk_column,
+                                vec![inserted_row],
+                            )
+                            .map_err(|error| DataFusionError::Execution(error.to_string()))?,
+                        );
+                        staged_mutations.push(StagedMutation::new(
+                            transaction_id,
+                            self.core.table_id().clone(),
+                            TableType::Shared,
+                            Some(user_id.clone()),
+                            OperationKind::Delete,
+                            pk_value,
+                            Row::new(std::collections::BTreeMap::new()),
+                            true,
+                        ));
+                        updated += 1;
+                        continue;
+                    }
+                    pk_moves.push((pk_value, inserted_row));
+                    updated += 1;
+                    continue;
                 }
                 if crate::utils::datafusion_dml::update_assignments_noop(
                     &schema,
@@ -355,6 +449,45 @@ impl TableProvider for SharedTableProvider {
                 }
 
                 direct_updates.push((pk_value, evaluated_updates));
+            }
+        }
+
+        if !pk_moves.is_empty() {
+            if self.core.services.cluster_coordinator.replicates_shared_writes() {
+                let pk_values = pk_moves.iter().map(|(pk, _)| pk.clone()).collect::<Vec<_>>();
+                let rows = pk_moves.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
+                self.core
+                    .services
+                    .cluster_coordinator
+                    .propose_shared_insert(self.core.table_id(), &user_id, rows)
+                    .await
+                    .map_err(DataFusionError::Execution)?;
+                self.core
+                    .services
+                    .cluster_coordinator
+                    .propose_shared_delete(self.core.table_id(), &user_id, pk_values)
+                    .await
+                    .map_err(DataFusionError::Execution)?;
+            } else {
+                let commit_seq = self.core.services.commit_sequence_source.allocate_next();
+                for (pk_value, inserted_row) in pk_moves {
+                    let insert_version = version_from_commit_seq(commit_seq, ordinal)
+                        .map_err(crate::error::into_datafusion)?;
+                    ordinal = ordinal.saturating_add(1);
+                    self.insert_batch_with_versions(
+                        Some(user_id),
+                        vec![inserted_row],
+                        &[insert_version],
+                    )
+                    .await
+                    .map_err(crate::error::into_datafusion)?;
+                    let delete_version = version_from_commit_seq(commit_seq, ordinal)
+                        .map_err(crate::error::into_datafusion)?;
+                    ordinal = ordinal.saturating_add(1);
+                    self.delete_by_pk_value_with_version(user_id, &pk_value, delete_version)
+                        .await
+                        .map_err(crate::error::into_datafusion)?;
+                }
             }
         }
 
@@ -484,45 +617,22 @@ impl SharedTableProvider {
             let _authorization_mutation = self.begin_authorization_mutation();
             // IGNORE user_id parameter - no RLS for shared tables
             let pk_name = self.primary_key_field_name().to_string();
-
-            // Get PK column data type from schema for proper type coercion
-            let schema = self.schema();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-
-            // Convert string PK value to proper ScalarValue based on column type
-            let pk_value_scalar = parse_string_as_scalar(pk_value, pk_column_type)
-                .map_err(|e| KalamDbError::InvalidOperation(e))?;
-
-            // Resolve latest per PK - first try hot storage (O(1) via PK index),
-            // then fall back to cold storage (Parquet scan)
-            let (_latest_key, latest_row) =
-                if let Some(result) = self.find_by_pk(&pk_value_scalar).await? {
-                    result
-                } else if self.pk_tombstoned_in_hot(&pk_value_scalar).await? {
+            let (previous, latest_row) = match self.load_mutation_target(pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned => {
                     return Err(KalamDbError::NotFound(format!(
                         "Row with {}={} was deleted",
                         pk_name, pk_value
                     )));
-                } else {
-                    // Not in hot storage, check cold storage
-                    log::debug!(
-                        "[UPDATE] PK {} not found in hot storage, querying cold storage for pk={}",
-                        pk_name,
-                        pk_value
-                    );
-                    base::find_row_by_pk(self, None, pk_value).await?.ok_or_else(|| {
-                        KalamDbError::NotFound(format!(
-                            "Row with {}={} not found (checked both hot and cold storage)",
-                            pk_name, pk_value
-                        ))
-                    })?
-                };
+                },
+                crate::versioned::MutationTarget::Missing => {
+                    return Err(KalamDbError::NotFound(format!(
+                        "Row with {}={} not found (checked both hot and cold storage)",
+                        pk_name, pk_value
+                    )));
+                },
+            };
 
             // Coerce update values to match schema types (e.g., Utf8 → TimestampMicrosecond).
             // Without this, the no-op comparison would fail for any column where the
@@ -558,10 +668,8 @@ impl SharedTableProvider {
                 fields:   new_fields,
             };
             let row_key = seq_id;
-            // Use insert() to update PK index for the new MVCC version
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to update shared table row: {}", e))
-            })?;
+            self.write_replaced_row(previous, row_key, entity.clone(), "Failed to update shared table row")
+                .await?;
 
             if let Err(e) = self.stage_vector_upsert(seq_id, &entity.fields).await {
                 log::warn!(
@@ -636,38 +744,18 @@ impl SharedTableProvider {
             let _authorization_mutation = self.begin_authorization_mutation();
             // IGNORE user_id parameter - no RLS for shared tables
             let pk_name = self.primary_key_field_name().to_string();
-            let schema = self.schema();
-            let pk_field = schema.field_with_name(&pk_name).map_err(|e| {
-                KalamDbError::InvalidOperation(format!(
-                    "PK column '{}' not found in schema: {}",
-                    pk_name, e
-                ))
-            })?;
-            let pk_column_type = pk_field.data_type();
-            let pk_value_scalar =
-                kalamdb_commons::conversions::parse_string_as_scalar(pk_value, pk_column_type)
-                    .map_err(KalamDbError::InvalidOperation)?;
-
-            // Find latest resolved row for this PK
-            // First try hot storage (O(1) via PK index), then fall back to cold storage (Parquet
-            // scan)
-            let latest_row = if let Some((_key, row)) = self.find_by_pk(&pk_value_scalar).await? {
-                row
-            } else if self.pk_tombstoned_in_hot(&pk_value_scalar).await? {
-                return Ok(false);
-            } else {
-                // Not in hot storage, check cold storage
-                match base::find_row_by_pk(self, None, pk_value).await? {
-                    Some((_key, row)) => row,
-                    None => {
-                        log::trace!(
-                            "[SharedProvider DELETE_BY_PK] Row with {}={} not found",
-                            pk_name,
-                            pk_value
-                        );
-                        return Ok(false);
-                    },
-                }
+            let (previous, latest_row) = match self.load_mutation_target(pk_value).await? {
+                crate::versioned::MutationTarget::Hot(key, row) => (Some((key, row.clone())), row),
+                crate::versioned::MutationTarget::Cold(row) => (None, row),
+                crate::versioned::MutationTarget::Tombstoned
+                | crate::versioned::MutationTarget::Missing => {
+                    log::trace!(
+                        "[SharedProvider DELETE_BY_PK] Row with {}={} not found",
+                        pk_name,
+                        pk_value
+                    );
+                    return Ok(false);
+                },
             };
 
             let seq_id = version;
@@ -686,10 +774,8 @@ impl SharedTableProvider {
                 pk_value,
                 seq_id.as_i64()
             );
-            // Use insert() to update PK index for the tombstone record
-            self.store.insert_async(row_key, entity.clone()).await.map_err(|e| {
-                KalamDbError::InvalidOperation(format!("Failed to delete shared table row: {}", e))
-            })?;
+            self.write_replaced_row(previous, row_key, entity.clone(), "Failed to delete shared table row")
+                .await?;
 
             if let Err(e) = self.stage_vector_delete(seq_id, pk_value).await {
                 log::warn!(
@@ -740,5 +826,22 @@ impl SharedTableProvider {
         }
         .instrument(span)
         .await
+    }
+}
+
+impl SharedTableProvider {
+    /// Latest committed row, ignoring this transaction's snapshot.
+    ///
+    /// A waiting `DELETE` uses this after the other transaction commits. The
+    /// snapshot from `BEGIN` would still show the row PostgreSQL rechecks away.
+    async fn committed_primary_key_is_live(&self, primary_key: &str) -> DataFusionResult<bool> {
+        let target = self
+            .load_mutation_target(primary_key)
+            .await
+            .map_err(|error| DataFusionError::Execution(error.to_string()))?;
+        Ok(matches!(
+            target,
+            crate::versioned::MutationTarget::Hot(_, _) | crate::versioned::MutationTarget::Cold(_)
+        ))
     }
 }

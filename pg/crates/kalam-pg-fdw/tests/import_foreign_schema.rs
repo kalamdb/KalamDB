@@ -4,7 +4,7 @@ use kalamdb_commons::{
     models::{
         datatypes::KalamDataType,
         schemas::{ColumnDefinition, SharedTableOptions, TableDefinition, TableOptions},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     },
     TableType,
 };
@@ -12,7 +12,7 @@ use kalamdb_commons::{
 #[test]
 fn import_sql_includes_virtual_columns_for_user_tables() {
     let table = TableDefinition::new(
-        NamespaceId::new("app"),
+        SchemaId::new("app"),
         TableName::new("messages"),
         TableType::User,
         vec![
@@ -38,7 +38,7 @@ fn import_sql_includes_virtual_columns_for_user_tables() {
 #[test]
 fn import_sql_skips_user_id_for_shared_tables() {
     let table = TableDefinition::new(
-        NamespaceId::new("app"),
+        SchemaId::new("app"),
         TableName::new("shared_docs"),
         TableType::Shared,
         vec![ColumnDefinition::simple(1, "body", 1, KalamDataType::Text)],

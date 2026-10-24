@@ -9,7 +9,7 @@
 //!
 //! The crate provides type-safe wrappers for common identifiers:
 //! - `UserId`: User identifier wrapper
-//! - `NamespaceId`: Namespace identifier wrapper
+//! - `SchemaId`: Schema identifier wrapper
 //! - `TableName`: Table name wrapper
 //! - `TableType`: Enum for USER/SHARED/STREAM tables
 //!
@@ -30,11 +30,11 @@
 //! ## Example Usage
 //!
 //! ```rust
-//! use kalamdb_commons::models::{NamespaceId, TableName, UserId};
+//! use kalamdb_commons::models::{SchemaId, TableName, UserId};
 //! use kalamdb_system::{Job, LiveQuery, User};
 //!
 //! let user_id = UserId::new("user_123");
-//! let namespace_id = NamespaceId::default();
+//! let namespace_id = SchemaId::default();
 //! let table_name = TableName::new("conversations");
 //!
 //! // Convert to string
@@ -92,6 +92,7 @@ pub use helpers::arrow_utils;
 #[cfg(feature = "storage")]
 pub use helpers::string_interner;
 pub use helpers::{
+    catalog_oid::stable_catalog_oid,
     naming,
     naming::{
         normalize_sql_identifier, quote_sql_identifier, validate_namespace_reference,
@@ -99,6 +100,7 @@ pub use helpers::{
         MAX_SQL_IDENTIFIER_LENGTH,
     },
     process_shutdown, security,
+    time::unix_time_millis,
 };
 pub use models::{
     assert_finite_type_graph,
@@ -110,6 +112,7 @@ pub use models::{
     AuthType,
     AuthorizationRelation,
     BoundExprShape,
+    BuiltinDefault,
     CallArgument,
     CatalogTypeKind,
     ColumnId,
@@ -125,7 +128,6 @@ pub use models::{
     LiveQueryId,
     LogicalTypeRef,
     ManifestId,
-    NamespaceId,
     NodeId,
     OperationKind,
     PolicyCommand,
@@ -145,6 +147,7 @@ pub use models::{
     ScalarPredicate,
     ScheduleId,
     SchemaField,
+    SchemaId,
     StorageId,
     TableId,
     TablePolicy,

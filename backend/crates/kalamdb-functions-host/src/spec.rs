@@ -20,7 +20,15 @@ pub struct HostMethod {
 }
 
 /// Async `kalamAsyncOp` kind names the V8 adapter must handle.
-pub const ASYNC_OPS: &[&str] = &["query", "execute", "call", "publish", "sleep"];
+pub const ASYNC_OPS: &[&str] = &[
+    "query",
+    "query_view",
+    "query_batches",
+    "execute",
+    "call",
+    "publish",
+    "sleep",
+];
 
 /// Native functions installed on the isolate (order is documentation only).
 pub const NATIVE_FNS: &[&str] = &[
@@ -50,6 +58,18 @@ pub const HOST_METHODS: &[HostMethod] = &[
         path:     "db.query",
         ts:       "query(sql: string, params?: unknown[]): Promise<unknown>",
         dispatch: HostDispatch::AsyncOp("query"),
+    },
+    HostMethod {
+        path:     "db.queryView",
+        ts:       "queryView<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+                   Promise<ReadView<T>>",
+        dispatch: HostDispatch::AsyncOp("query_view"),
+    },
+    HostMethod {
+        path:     "db.queryBatches",
+        ts:       "queryBatches<T = Record<string, unknown>>(sql: string, params?: unknown[]): \
+                   AsyncIterableIterator<ReadView<T>>",
+        dispatch: HostDispatch::AsyncOp("query_batches"),
     },
     HostMethod {
         path:     "db.execute",

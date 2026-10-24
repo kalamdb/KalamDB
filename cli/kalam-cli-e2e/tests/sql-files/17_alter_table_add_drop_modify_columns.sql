@@ -1,8 +1,8 @@
 -- ALTER TABLE lifecycle: add/modify/alter/drop columns with DML around each step.
 
-DROP NAMESPACE IF EXISTS sql_file_case_17 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_17 CASCADE;
 
-CREATE NAMESPACE IF NOT EXISTS sql_file_case_17;
+CREATE SCHEMA IF NOT EXISTS sql_file_case_17;
 USE sql_file_case_17;
 
 DROP TABLE IF EXISTS case17_users;
@@ -37,4 +37,4 @@ VALUES (1703, 'ravi', 40, 'default score');
 
 ALTER TABLE case17_users DROP COLUMN note;
 
-DROP NAMESPACE IF EXISTS sql_file_case_17 CASCADE;
+DROP SCHEMA IF EXISTS sql_file_case_17 CASCADE;

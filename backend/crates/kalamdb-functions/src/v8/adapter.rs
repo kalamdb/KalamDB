@@ -48,6 +48,8 @@ pub struct V8Session {
     pub(crate) detached:      bool,
     compiled:                 CompiledScripts,
     pub(crate) context_fresh: bool,
+    can_fast_reuse:           bool,
+    baseline_global_props:    u32,
 }
 
 struct HeapWatch {
@@ -86,6 +88,7 @@ impl V8Session {
         isolate.add_near_heap_limit_callback(near_heap_limit, heap_watch.cast());
 
         isolate.set_slot(ActiveHost { host: None });
+        isolate.set_slot(crate::convert::ReadViewRegistry::default());
 
         let deadline = DeadlineGuard::new(
             isolate.thread_safe_handle(),
@@ -104,6 +107,8 @@ impl V8Session {
             crate::v8_async::install(&mut scope)?;
             let module = compile_and_run_cached(&mut scope, &revision.source)?;
             let module = v8::Global::new(&scope, module);
+            bind_ctx(&mut scope)?;
+            let baseline_global_props = global_own_property_count(&mut scope);
             Ok((
                 v8::Global::new(&scope, context),
                 CompiledScripts {
@@ -111,12 +116,14 @@ impl V8Session {
                     bootstrap,
                     module,
                 },
+                baseline_global_props,
             ))
         })();
-        let context_result: Result<(v8::Global<v8::Context>, CompiledScripts)> = context_result;
+        let context_result: Result<(v8::Global<v8::Context>, CompiledScripts, u32)> =
+            context_result;
         let context_result = deadline.check().and(context_result);
         drop(deadline);
-        let (context, compiled) = match context_result {
+        let (context, compiled, baseline_global_props) = match context_result {
             Ok(context) => context,
             Err(error) => {
                 isolate.remove_near_heap_limit_callback(near_heap_limit, 0);
@@ -127,6 +134,7 @@ impl V8Session {
                 return Err(error);
             },
         };
+        let can_fast_reuse = source_supports_fast_reuse(&revision.source);
 
         Ok(Self {
             isolate,
@@ -137,6 +145,8 @@ impl V8Session {
             detached: false,
             compiled,
             context_fresh: true,
+            can_fast_reuse,
+            baseline_global_props,
         })
     }
 
@@ -181,6 +191,7 @@ impl V8Session {
             return Err(FunctionsError::Cancelled);
         }
         self.isolate.remove_slot::<Operations>();
+        self.isolate.set_slot(crate::convert::ReadViewRegistry::default());
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = host;
         }
@@ -196,6 +207,7 @@ impl V8Session {
         })();
         self.isolate.perform_microtask_checkpoint();
         self.isolate.remove_slot::<Operations>();
+        self.isolate.remove_slot::<crate::convert::ReadViewRegistry>();
         if let Some(slot) = self.isolate.get_slot_mut::<ActiveHost>() {
             slot.host = None;
         }
@@ -219,6 +231,8 @@ impl V8Session {
         run_compiled(&mut scope, &self.compiled.bootstrap)?;
         crate::v8_async::install(&mut scope)?;
         run_compiled(&mut scope, &self.compiled.module)?;
+        bind_ctx(&mut scope)?;
+        self.baseline_global_props = global_own_property_count(&mut scope);
         self.context = v8::Global::new(&scope, context);
         Ok(())
     }
@@ -239,6 +253,18 @@ impl V8Session {
 
     /// Rebuild a clean realm after a successful CALL so the next warm take skips reset.
     pub(crate) fn prepare_reuse(&mut self) -> Result<()> {
+        if self.can_fast_reuse {
+            let props = {
+                v8::scope!(let scope, &mut self.isolate);
+                let context = v8::Local::new(scope, &self.context);
+                let mut scope = v8::ContextScope::new(scope, context);
+                global_own_property_count(&mut scope)
+            };
+            if props == self.baseline_global_props {
+                self.context_fresh = true;
+                return Ok(());
+            }
+        }
         self.reset_context()?;
         self.context_fresh = true;
         Ok(())
@@ -345,6 +371,42 @@ fn invoke_in_scope(
     v8_to_routine(try_catch, result, &template)
 }
 
+fn global_own_property_count(scope: &mut v8::PinScope) -> u32 {
+    let global = scope.get_current_context().global(scope);
+    let args = v8::GetPropertyNamesArgsBuilder::new()
+        .property_filter(v8::PropertyFilter::ALL_PROPERTIES)
+        .index_filter(v8::IndexFilter::IncludeIndices)
+        .build();
+    global.get_own_property_names(scope, args).map_or(0, |names| names.length())
+}
+
+fn source_supports_fast_reuse(source: &str) -> bool {
+    let Some(invoke_pos) = source.find("function kalamInvoke") else {
+        return false;
+    };
+    if !source[..invoke_pos].trim().is_empty() {
+        return false;
+    }
+    // The procedure wrapper only reads the host-installed context slot.
+    let scanned = source.replace("globalThis.__kalamCtx", "");
+    for token in [
+        "globalThis.",
+        "globalThis[",
+        "prototype",
+        "__proto__",
+        "defineProperty",
+        "setPrototypeOf",
+        "Reflect",
+        "Proxy",
+        "Object.assign(",
+    ] {
+        if scanned.contains(token) {
+            return false;
+        }
+    }
+    true
+}
+
 pub(crate) fn bind_ctx(scope: &mut v8::PinScope) -> Result<()> {
     v8::tc_scope!(let try_catch, scope);
     let global = try_catch.get_current_context().global(try_catch);
@@ -404,6 +466,17 @@ fn install_host_functions(scope: &mut v8::PinScope) -> Result<()> {
             },
         }
     }
+    bind_native(scope, "__kalamReadViewAt", crate::convert::read_view_batches_at_callback)?;
+    bind_native(
+        scope,
+        "__kalamReadViewMaterialize",
+        crate::convert::read_view_batches_materialize_callback,
+    )?;
+    bind_native(
+        scope,
+        "__kalamReadViewRowMaterialize",
+        crate::convert::read_view_row_materialize_callback,
+    )?;
     Ok(())
 }
 
@@ -1276,7 +1349,7 @@ function kalamInvoke(name, args) {
                     id:   kalamdb_commons::UserId::new("alice"),
                     role: kalamdb_commons::Role::User,
                 },
-                namespace:  kalamdb_commons::NamespaceId::new("api"),
+                namespace:  kalamdb_commons::SchemaId::new("api"),
                 request_id: "req-1".into(),
             })
         }

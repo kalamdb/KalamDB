@@ -199,7 +199,7 @@ async fn test_authorization_header_sql_injection_is_rejected_without_side_effect
     let namespace = unique_namespace("auth_header_injection");
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(create_namespace.status == ResponseStatus::Success);
 
@@ -484,7 +484,7 @@ async fn test_regular_user_execute_as_cross_user_is_denied_without_side_effects(
     let bob_auth = create_user_auth_header(server, &bob, "UserPass123!", &Role::User).await?;
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(create_namespace.status == ResponseStatus::Success);
 
@@ -587,7 +587,7 @@ async fn test_regular_user_sql_policy_allows_only_dml_and_select() -> anyhow::Re
     let user_auth = create_user_auth_header(server, &username, "UserPass123!", &Role::User).await?;
 
     let create_namespace = server
-        .execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", namespace))
+        .execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", namespace))
         .await?;
     anyhow::ensure!(create_namespace.status == ResponseStatus::Success);
 
@@ -634,8 +634,8 @@ async fn test_regular_user_sql_policy_allows_only_dml_and_select() -> anyhow::Re
     anyhow::ensure!(delete.status == ResponseStatus::Success, "DELETE failed: {:?}", delete.error);
 
     let denied_statements = vec![
-        "SHOW NAMESPACES".to_string(),
-        format!("USE NAMESPACE {}", namespace),
+        "SHOW SCHEMAS".to_string(),
+        format!("SET SCHEMA {}", namespace),
         format!("SHOW TABLES IN {}", namespace),
         format!("DESCRIBE TABLE {}.notes", namespace),
         format!("SHOW STATS FOR TABLE {}.notes", namespace),
@@ -651,9 +651,9 @@ async fn test_regular_user_sql_policy_allows_only_dml_and_select() -> anyhow::Re
         format!("DROP TABLE {}.notes", namespace),
         format!("STORAGE FLUSH TABLE {}.notes", namespace),
         format!("STORAGE COMPACT TABLE {}.notes", namespace),
-        format!("CREATE NAMESPACE {}_new", namespace),
-        format!("ALTER NAMESPACE {} SET DESCRIPTION 'x'", namespace),
-        format!("DROP NAMESPACE {}", namespace),
+        format!("CREATE SCHEMA {}_new", namespace),
+        format!("ALTER SCHEMA {} SET DESCRIPTION 'x'", namespace),
+        format!("DROP SCHEMA {}", namespace),
         format!("CREATE USER '{}_new' WITH PASSWORD 'ValidPass123!' ROLE user", username),
         format!("ALTER USER '{}' SET ROLE dba", username),
         format!("DROP USER '{}'", username),

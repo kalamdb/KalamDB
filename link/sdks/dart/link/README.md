@@ -27,6 +27,10 @@ Future<void> main() async {
 }
 ```
 
+`KalamClient.init(timeout: ...)` retries after a failed or timed-out load. `KalamClient.isSupportedPlatform` is true on Android and iOS.
+
+Remote table reads use the same `query` and `live` calls. Bind a `KalamRemoteTable`, then `query().where(...).limit(...).get()`. `live()` sends the filter only. TypeScript table access stays on Drizzle.
+
 Connect after the first frame — not before `runApp()`:
 
 ```dart
@@ -114,3 +118,34 @@ New Flutter apps: `kalam init --languages dart`. See [`example/README.md`](examp
 ## License
 
 Apache-2.0. See [LICENSE.txt](LICENSE.txt).
+
+## Generated typed remote queries
+
+After `kalam schema gen --languages dart`, reuse the generated table codecs and
+primary key directly:
+
+```dart
+final inventory = KalamTables.inventory.bind(client);
+final query = inventory.query()
+    .filter(InventoryColumns.sku.eq('sku-1'))
+    .limit(20);
+final rows = await query.get();
+final updates = query.live();
+```
+
+`InventoryColumns.sku` is `KalamColumn<String>`, so passing a number fails Dart
+analysis. Existing `.where((c) => c.col('sku').eq(value))` remains available for
+dynamic queries. `eq(null)` and `neq(null)` produce `IS NULL` and `IS NOT NULL`
+when the column type permits null. Values use bound parameters.
+
+`orderBy` on a remote live query sorts the matching rows locally before applying
+`limit`. The limit controls the displayed rows, not retained memory. Use a narrow
+filter for large datasets. Scalar string ordering is local and does not promise
+server collation equivalence. Use `kalam_sync` for durable local projections and
+offline actions; `bind(client)` uses remote transport and does not add persistence.
+
+Generated Dart table specs require one declared primary key. Keyless tables still
+get row codecs, but no sync spec or guessed key. Composite primary keys are rejected
+by schema compilation to match current server support. Array codecs preserve null
+arrays and encode/decode each supported scalar, enum, composite, and timestamp
+element; null array elements are not represented by the current contract.

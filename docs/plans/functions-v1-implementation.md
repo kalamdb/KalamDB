@@ -208,8 +208,8 @@ KalamDB may continue accepting the existing convenience aliases:
 
 ```sql
 USE chat;
-USE NAMESPACE chat;
-SET NAMESPACE chat;
+SET SCHEMA chat;
+SET SCHEMA chat;
 ```
 
 but `SET search_path TO ...` is the preferred PostgreSQL-compatible spelling for SQL tooling and documentation.
@@ -520,7 +520,7 @@ Directory rules:
 - Recursively discover `.sql` files inside the configured directory.
 - Reject symlinks and paths outside the project.
 - Sort normalized relative paths for deterministic diagnostics only.
-- Apply PostgreSQL `SET search_path TO ...` sequentially within a file. Continue accepting `USE`, `USE NAMESPACE`, and `SET NAMESPACE` as KalamDB aliases. Each file starts from the project-configured search path; local changes do not leak across files.
+- Apply PostgreSQL `SET search_path TO ...` sequentially within a file. Continue accepting `USE`, `SET SCHEMA`, and `SET SCHEMA` as KalamDB aliases. Each file starts from the project-configured search path; local changes do not leak across files.
 - Unqualified types, tables, procedures, topics, triggers, `RETURNS`, `FROM TABLE`, `ROW TYPE`, parameters, and composite field types resolve against the active search path. Qualified names always win.
 - Canonicalize to `schema.name` before hashing and generation.
   `SET search_path TO chat; CREATE PROCEDURE list_users() RETURNS SETOF user` is

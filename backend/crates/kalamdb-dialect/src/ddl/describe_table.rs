@@ -6,7 +6,7 @@
 //! - DESC TABLE table_name
 //! - DESCRIBE TABLE table_name HISTORY (show schema versions)
 
-use kalamdb_commons::models::{NamespaceId, TableName};
+use kalamdb_commons::models::{SchemaId, TableName};
 
 use crate::ddl::DdlResult;
 
@@ -14,7 +14,7 @@ use crate::ddl::DdlResult;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DescribeTableStatement {
     /// Optional namespace (if qualified name used)
-    pub namespace_id: Option<NamespaceId>,
+    pub namespace_id: Option<SchemaId>,
 
     /// Table name to describe
     pub table_name: TableName,
@@ -75,7 +75,7 @@ impl DescribeTableStatement {
         let (namespace, table) = parsing::parse_table_reference(table_ref)?;
 
         Ok(Self {
-            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
+            namespace_id: namespace.map(|ns| SchemaId::new(&ns)),
             table_name: TableName::new(&table),
             show_history,
         })
@@ -110,7 +110,7 @@ impl DescribeTableStatement {
         let (namespace, table) = parsing::parse_table_reference(table_ref)?;
 
         Ok(Self {
-            namespace_id: namespace.map(|ns| NamespaceId::new(&ns)),
+            namespace_id: namespace.map(|ns| SchemaId::new(&ns)),
             table_name: TableName::new(&table),
             show_history,
         })

@@ -1,11 +1,34 @@
-use kalamdb_commons::{models::NamespaceId, Role};
+use kalamdb_commons::{models::SchemaId, Role};
 use kalamdb_session::is_admin_role;
 
 use crate::{
     classifier::types::{SqlStatement, SqlStatementKind, StatementClassificationError},
     ddl::*,
-    parser::utils::{collect_non_whitespace_tokens, parse_sql_statements, tokens_to_words},
+    parser::{utils::tokens_to_words, KalamParser},
 };
+
+fn is_topic_trigger(words: &[&str]) -> bool {
+    words.windows(2).any(|window| window == ["ON", "TOPIC"])
+}
+
+#[inline]
+fn leading_ascii_keyword(sql: &str) -> Option<&str> {
+    let trimmed = crate::ddl::parsing::skip_ws_and_comments(sql);
+    let bytes = trimmed.as_bytes();
+    let mut end = 0;
+    while end < bytes.len()
+        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_' || bytes[end] == b'$')
+    {
+        end += 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        return None;
+    }
+    Some(&trimmed[..end])
+}
 
 impl SqlStatement {
     /// Wrap a parsed statement into SqlStatement with sql_text
@@ -42,12 +65,37 @@ impl SqlStatement {
     /// * `Err(String)` if authorization failed
     pub fn classify_and_parse(
         sql: &str,
-        default_namespace: &NamespaceId,
+        default_namespace: &SchemaId,
         role: Role,
     ) -> Result<Self, StatementClassificationError> {
-        // Use sqlparser's parser lookahead to tokenize without full parsing
-        let dialect = sqlparser::dialect::GenericDialect {};
-        let tokens = collect_non_whitespace_tokens(sql, &dialect).unwrap_or_default();
+        // Hot path: Check SELECT/WITH/INSERT/UPDATE/DELETE first (99% of queries)
+        // before tokenizing the entire SQL string or allocating word vectors.
+        if let Some(first_word) = leading_ascii_keyword(sql) {
+            if first_word.eq_ignore_ascii_case("SELECT") || first_word.eq_ignore_ascii_case("WITH")
+            {
+                return Ok(Self::new(sql.to_string(), SqlStatementKind::Select));
+            }
+            if first_word.eq_ignore_ascii_case("INSERT") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Insert(crate::ddl::InsertStatement),
+                ));
+            }
+            if first_word.eq_ignore_ascii_case("DELETE") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Delete(crate::ddl::DeleteStatement),
+                ));
+            }
+            if first_word.eq_ignore_ascii_case("UPDATE") {
+                return Ok(Self::new(
+                    sql.to_string(),
+                    SqlStatementKind::Update(crate::ddl::UpdateStatement),
+                ));
+            }
+        }
+
+        let tokens = KalamParser::tokenize(sql).unwrap_or_default();
 
         // Build words list from tokens for pattern matching
         let mut words: Vec<String> = if !tokens.is_empty() {
@@ -57,7 +105,7 @@ impl SqlStatement {
         };
 
         if words.is_empty() {
-            let mut sql_upper = sql.trim().to_string();
+            let mut sql_upper = crate::ddl::parsing::skip_ws_and_comments(sql).to_string();
             sql_upper.make_ascii_uppercase();
             words = sql_upper.split_whitespace().map(|s| s.to_string()).collect();
         }
@@ -143,18 +191,10 @@ impl SqlStatement {
                         .map(SqlStatementKind::DropPolicy)
                 })
             },
-            // Namespace operations - require admin
-            ["CREATE", "NAMESPACE", ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for namespace operations"
-                            .to_string(),
-                    ));
-                }
-                Self::wrap(sql, || {
-                    CreateNamespaceStatement::parse(sql).map(SqlStatementKind::CreateNamespace)
-                })
-            },
+            ["CREATE", "NAMESPACE", ..] => Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "CREATE NAMESPACE is not valid PostgreSQL; use CREATE SCHEMA".to_string(),
+            }),
             ["CREATE", "SCHEMA", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
@@ -166,22 +206,43 @@ impl SqlStatement {
                     CreateSchemaStatement::parse(sql).map(SqlStatementKind::CreateSchema)
                 })
             },
-            ["CREATE", "TYPE", ..] => Self::wrap(sql, || {
-                CreateTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::CreateType)
-            }),
+            ["CREATE", "TYPE", ..] | ["CREATE", "OR", "REPLACE", "TYPE", ..] => {
+                Self::wrap(sql, || {
+                    CreateTypeStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::CreateType)
+                })
+            },
             ["ALTER", "TYPE", ..] => Self::wrap(sql, || {
                 AlterTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::AlterType)
             }),
             ["DROP", "TYPE", ..] => Self::wrap(sql, || {
                 DropTypeStatement::parse(sql, default_namespace).map(SqlStatementKind::DropType)
             }),
-            ["CREATE", "PROCEDURE", ..] | ["CREATE", "OR", "REPLACE", "PROCEDURE", ..] => {
+            ["CREATE", "DOMAIN", ..] | ["CREATE", "OR", "REPLACE", "DOMAIN", ..] => {
                 Self::wrap(sql, || {
-                    CreateProcedureStatement::parse(sql, default_namespace)
-                        .map(SqlStatementKind::CreateProcedure)
+                    CreateDomainStatement::parse(sql, default_namespace)
+                        .map(SqlStatementKind::CreateDomain)
                 })
             },
-            ["DROP", "PROCEDURE", ..] => Self::wrap(sql, || {
+            ["ALTER", "DOMAIN", ..] => Self::wrap(sql, || {
+                AlterDomainStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::AlterDomain)
+            }),
+            ["DROP", "DOMAIN", ..] => Self::wrap(sql, || {
+                DropDomainStatement::parse(sql, default_namespace).map(SqlStatementKind::DropDomain)
+            }),
+            ["CREATE", "PROCEDURE", ..]
+            | ["CREATE", "OR", "REPLACE", "PROCEDURE", ..]
+            | ["CREATE", "FUNCTION", ..]
+            | ["CREATE", "OR", "REPLACE", "FUNCTION", ..] => Self::wrap(sql, || {
+                CreateProcedureStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::CreateProcedure)
+            }),
+            ["ALTER", "PROCEDURE", ..] | ["ALTER", "FUNCTION", ..] => Self::wrap(sql, || {
+                AlterRoutineStatement::parse(sql, default_namespace)
+                    .map(SqlStatementKind::AlterRoutine)
+            }),
+            ["DROP", "PROCEDURE", ..] | ["DROP", "FUNCTION", ..] => Self::wrap(sql, || {
                 DropProcedureStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::DropProcedure)
             }),
@@ -199,7 +260,7 @@ impl SqlStatement {
             ["CALL", ..] => Self::wrap(sql, || {
                 CallStatement::parse(sql, default_namespace).map(SqlStatementKind::Call)
             }),
-            ["CREATE", "TRIGGER", ..] => Self::wrap(sql, || {
+            ["CREATE", "TRIGGER", ..] if is_topic_trigger(&word_refs) => Self::wrap(sql, || {
                 CreateTriggerStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::CreateTrigger)
             }),
@@ -223,7 +284,7 @@ impl SqlStatement {
                 AlterScheduleStatement::parse(sql, default_namespace)
                     .map(SqlStatementKind::AlterSchedule)
             }),
-            ["ALTER", "NAMESPACE", ..] => {
+            ["ALTER", "SCHEMA", ..] | ["ALTER", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
@@ -231,10 +292,10 @@ impl SqlStatement {
                     ));
                 }
                 Self::wrap(sql, || {
-                    AlterNamespaceStatement::parse(sql).map(SqlStatementKind::AlterNamespace)
+                    AlterSchemaStatement::parse(sql).map(SqlStatementKind::AlterSchema)
                 })
             },
-            ["DROP", "NAMESPACE", ..] => {
+            ["DROP", "SCHEMA", ..] | ["DROP", "NAMESPACE", ..] => {
                 if !is_admin {
                     return Err(StatementClassificationError::Unauthorized(
                         "Admin privileges (DBA or System role) required for namespace operations"
@@ -242,28 +303,24 @@ impl SqlStatement {
                     ));
                 }
                 Self::wrap(sql, || {
-                    DropNamespaceStatement::parse(sql).map(SqlStatementKind::DropNamespace)
+                    DropSchemaStatement::parse(sql).map(SqlStatementKind::DropSchema)
                 })
             },
-            ["SHOW", "NAMESPACES", ..] => {
+            ["SHOW", "SCHEMAS", ..] | ["SHOW", "NAMESPACES", ..] => {
                 // Read-only, allowed for all users
                 Self::wrap(sql, || {
-                    ShowNamespacesStatement::parse(sql).map(SqlStatementKind::ShowNamespaces)
+                    ShowSchemasStatement::parse(sql).map(SqlStatementKind::ShowSchemas)
                 })
             },
 
-            // USE NAMESPACE / USE / SET NAMESPACE - switch default schema
-            ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
+            // SET SCHEMA / USE <name> - switch default schema
+            ["SET", "SCHEMA", ..] | ["USE", "NAMESPACE", ..] | ["SET", "NAMESPACE", ..] => {
                 // Allowed for all users (actual table access is checked per-query)
-                Self::wrap(sql, || {
-                    UseNamespaceStatement::parse(sql).map(SqlStatementKind::UseNamespace)
-                })
+                Self::wrap(sql, || UseSchemaStatement::parse(sql).map(SqlStatementKind::UseSchema))
             },
             ["USE", ..] => {
-                // USE <name> shorthand (USE NAMESPACE is handled above)
-                Self::wrap(sql, || {
-                    UseNamespaceStatement::parse(sql).map(SqlStatementKind::UseNamespace)
-                })
+                // USE <name> shorthand (SET SCHEMA is handled above)
+                Self::wrap(sql, || UseSchemaStatement::parse(sql).map(SqlStatementKind::UseSchema))
             },
 
             // Storage operations - require admin
@@ -326,9 +383,15 @@ impl SqlStatement {
                 }
             },
 
+            ["CREATE", "USER", "TABLE", ..] => Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "CREATE USER TABLE is not valid PostgreSQL; use CREATE TABLE ... WITH \
+                          (TYPE = 'USER')"
+                    .to_string(),
+            }),
+
             // Table operations - authorization deferred to table ownership checks
-            ["CREATE", "USER", "TABLE", ..]
-            | ["CREATE", "SHARED", "TABLE", ..]
+            ["CREATE", "SHARED", "TABLE", ..]
             | ["CREATE", "STREAM", "TABLE", ..]
             | ["CREATE", "TABLE", ..] => {
                 // Parse CREATE TABLE statement with detailed error logging
@@ -351,6 +414,12 @@ impl SqlStatement {
             },
             ["CREATE", "INDEX", ..] | ["CREATE", "UNIQUE", "INDEX", ..] => Self::wrap(sql, || {
                 parse_create_index_on(sql, default_namespace).map(SqlStatementKind::AlterTable)
+            }),
+            ["DROP", "INDEX", ..] => Self::wrap(sql, || {
+                parse_drop_index(sql, default_namespace).map(SqlStatementKind::AlterTable)
+            }),
+            ["ALTER", "INDEX", ..] => Self::wrap(sql, || {
+                parse_alter_index(sql, default_namespace).map(SqlStatementKind::AlterTable)
             }),
             ["ALTER", "TABLE", ..]
             | ["ALTER", "USER", "TABLE", ..]
@@ -627,19 +696,34 @@ impl SqlStatement {
                 message: "CLUSTER LEAVE is not supported yet".to_string(),
             }),
 
-            // Transaction control (no parsing needed - just markers)
+            // Transaction control
             ["BEGIN", ..] | ["START", "TRANSACTION", ..] => {
+                Self::validate_isolation_level_clause(sql)?;
                 Ok(Self::new(sql.to_string(), SqlStatementKind::BeginTransaction))
             },
             ["COMMIT", ..] => Ok(Self::new(sql.to_string(), SqlStatementKind::CommitTransaction)),
+            ["SAVEPOINT", ..] => {
+                let name = Self::parse_savepoint_name(sql, "SAVEPOINT")?;
+                Ok(Self::new(sql.to_string(), SqlStatementKind::Savepoint(name)))
+            },
+            ["RELEASE", ..] => {
+                let name = Self::parse_savepoint_name(sql, "RELEASE")?;
+                Ok(Self::new(sql.to_string(), SqlStatementKind::ReleaseSavepoint(name)))
+            },
             ["ROLLBACK", ..] => {
-                Ok(Self::new(sql.to_string(), SqlStatementKind::RollbackTransaction))
+                if word_refs.contains(&"TO") {
+                    let name = Self::parse_savepoint_name(sql, "ROLLBACK TO")?;
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::RollbackToSavepoint(name)))
+                } else {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::RollbackTransaction))
+                }
             },
 
             // Live query subscriptions - allowed for all users
-            ["SUBSCRIBE", "TO", ..] => {
-                Self::wrap(sql, || SubscribeStatement::parse(sql).map(SqlStatementKind::Subscribe))
-            },
+            ["SUBSCRIBE", "TO", ..] => Self::wrap(sql, || {
+                SubscribeStatement::parse_with_default_namespace(sql, default_namespace)
+                    .map(SqlStatementKind::Subscribe)
+            }),
 
             // Topic pub/sub commands
             ["CREATE", "TOPIC", ..] => {
@@ -730,7 +814,9 @@ impl SqlStatement {
                 })
             },
             ["RESET", "SEARCH_PATH", ..] => Self::wrap(sql, || {
-                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
+                crate::PostgresSetting::parse(sql)
+                    .and_then(|c| c.ok_or_else(|| "expected setting".into()))
+                    .map(SqlStatementKind::PostgresSetting)
             }),
 
             // Backup and restore operations - require admin
@@ -802,19 +888,27 @@ impl SqlStatement {
                 }
                 Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
-            ["SET", "SEARCH_PATH", ..]
-            | ["SET", "SESSION", "SEARCH_PATH", ..]
-            | ["SET", "LOCAL", "SEARCH_PATH", ..] => Self::wrap(sql, || {
-                SetSearchPathStatement::parse(sql).map(SqlStatementKind::SetSearchPath)
-            }),
-            ["SET", ..] => {
-                if !is_admin {
-                    return Err(StatementClassificationError::Unauthorized(
-                        "Admin privileges (DBA or System role) required for SET commands"
-                            .to_string(),
-                    ));
+            ["SET", "TRANSACTION", ..]
+            | ["SET", "SESSION", "CHARACTERISTICS", "AS", "TRANSACTION", ..] => {
+                Self::validate_isolation_level_clause(sql)?;
+                Ok(Self::new(sql.to_string(), SqlStatementKind::SetTransaction))
+            },
+            ["SET", ..] | ["RESET", ..] => {
+                let command = crate::PostgresSetting::parse(sql).map_err(|message| {
+                    StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message,
+                    }
+                })?;
+                if let Some(command) = command {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::PostgresSetting(command)))
+                } else if is_admin {
+                    Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
+                } else {
+                    Err(StatementClassificationError::Unauthorized(
+                        "Admin privileges required for engine settings".into(),
+                    ))
                 }
-                Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand))
             },
             ["SHOW", "COLUMNS", ..] => {
                 if !is_admin {
@@ -835,7 +929,20 @@ impl SqlStatement {
             },
             // PostgreSQL SHOW <guc> / SHOW TRANSACTION ISOLATION LEVEL (JDBC, HikariCP).
             // Specific SHOW TABLES/NAMESPACES/ALL/COLUMNS arms above take precedence.
-            ["SHOW", ..] => Ok(Self::new(sql.to_string(), SqlStatementKind::DataFusionMetaCommand)),
+            ["SHOW", ..] => {
+                let command = crate::PostgresSetting::parse(sql).map_err(|message| {
+                    StatementClassificationError::InvalidSql {
+                        sql: sql.to_string(),
+                        message,
+                    }
+                })?;
+                Ok(Self::new(
+                    sql.to_string(),
+                    command
+                        .map(SqlStatementKind::PostgresSetting)
+                        .unwrap_or(SqlStatementKind::DataFusionMetaCommand),
+                ))
+            },
             // DESCRIBE <table> or DESC <table> (without TABLE keyword) - DataFusion style
             // Note: DESCRIBE TABLE is handled above as KalamDB custom command.
             // execute_meta_command rewrites these to information_schema with Kalam types.
@@ -857,26 +964,101 @@ impl SqlStatement {
             },
 
             // Unknown
-            _ => {
-                let dialect = sqlparser::dialect::PostgreSqlDialect {};
-                match parse_sql_statements(sql, &dialect) {
-                    Ok(statements) => {
-                        if let Some(statement) = statements.first() {
-                            Err(StatementClassificationError::InvalidSql {
-                                sql:     sql.to_string(),
-                                message: format!("Unsupported statement type: {}", statement),
-                            })
-                        } else {
-                            Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
-                        }
-                    },
-                    Err(err) => Err(StatementClassificationError::InvalidSql {
-                        sql:     sql.to_string(),
-                        message: err.to_string(),
-                    }),
-                }
+            _ => match KalamParser::parse(sql) {
+                Ok(statements) => {
+                    if let Some(statement) = statements.first() {
+                        Err(StatementClassificationError::InvalidSql {
+                            sql:     sql.to_string(),
+                            message: format!("Unsupported statement type: {}", statement),
+                        })
+                    } else {
+                        Ok(Self::new(sql.to_string(), SqlStatementKind::Unknown))
+                    }
+                },
+                Err(err) => Err(StatementClassificationError::InvalidSql {
+                    sql:     sql.to_string(),
+                    message: err.to_string(),
+                }),
             },
         }
+    }
+
+    fn parse_savepoint_name(
+        sql: &str,
+        keyword: &str,
+    ) -> Result<String, StatementClassificationError> {
+        let trimmed = sql.trim().trim_end_matches(';').trim();
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        let name = match keyword {
+            "SAVEPOINT" => tokens.get(1).copied(),
+            "RELEASE" => {
+                if tokens.get(1).map(|t| t.eq_ignore_ascii_case("SAVEPOINT")).unwrap_or(false) {
+                    tokens.get(2).copied()
+                } else {
+                    tokens.get(1).copied()
+                }
+            },
+            "ROLLBACK TO" => {
+                let to_pos = tokens.iter().position(|t| t.eq_ignore_ascii_case("TO"));
+                match to_pos {
+                    Some(idx) => {
+                        if tokens
+                            .get(idx + 1)
+                            .map(|t| t.eq_ignore_ascii_case("SAVEPOINT"))
+                            .unwrap_or(false)
+                        {
+                            tokens.get(idx + 2).copied()
+                        } else {
+                            tokens.get(idx + 1).copied()
+                        }
+                    },
+                    None => None,
+                }
+            },
+            _ => None,
+        };
+        let Some(raw_name) = name else {
+            return Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: format!("Missing savepoint name in {} statement", keyword),
+            });
+        };
+        let clean = raw_name.trim_matches('"').trim();
+        if clean.is_empty() {
+            return Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: format!("Empty savepoint name in {} statement", keyword),
+            });
+        }
+        Ok(clean.to_string())
+    }
+
+    fn validate_isolation_level_clause(sql: &str) -> Result<(), StatementClassificationError> {
+        let upper = sql
+            .trim()
+            .trim_end_matches(';')
+            .split_whitespace()
+            .map(|t| t.trim_matches(',').to_ascii_uppercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if upper.contains("ISOLATION LEVEL SERIALIZABLE") {
+            return Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "SQLSTATE 0A000: transaction isolation level SERIALIZABLE is not \
+                          supported; KalamDB supports SNAPSHOT / REPEATABLE READ / READ COMMITTED"
+                    .to_string(),
+            });
+        }
+        if upper.contains("ISOLATION LEVEL READ UNCOMMITTED") {
+            return Err(StatementClassificationError::InvalidSql {
+                sql:     sql.to_string(),
+                message: "SQLSTATE 0A000: transaction isolation level READ UNCOMMITTED is not \
+                          supported; KalamDB supports SNAPSHOT / REPEATABLE READ / READ COMMITTED"
+                    .to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Check if the given role is authorized to execute this statement
@@ -917,6 +1099,7 @@ impl SqlStatement {
                     | SqlStatementKind::Delete(_)
                     | SqlStatementKind::Call(_)
                     | SqlStatementKind::SetSearchPath(_)
+                    | SqlStatementKind::PostgresSetting(_)
             )
         {
             return Err(format!(
@@ -955,29 +1138,33 @@ impl SqlStatement {
             SqlStatementKind::AlterUser(_) => Ok(()),
 
             // Namespace DDL requires admin privileges
-            SqlStatementKind::CreateNamespace(_)
-            | SqlStatementKind::CreateSchema(_)
-            | SqlStatementKind::AlterNamespace(_)
-            | SqlStatementKind::DropNamespace(_) => Err("Admin privileges (DBA or System role) \
-                                                         required for namespace operations"
+            SqlStatementKind::CreateSchema(_)
+            | SqlStatementKind::AlterSchema(_)
+            | SqlStatementKind::DropSchema(_) => Err("Admin privileges (DBA or System role) \
+                                                      required for namespace operations"
                 .to_string()),
 
-            SqlStatementKind::ShowNamespaces(_)
+            SqlStatementKind::ShowSchemas(_)
             | SqlStatementKind::ShowTables(_)
             | SqlStatementKind::ShowStorages(_)
             | SqlStatementKind::CheckStorage(_)
             | SqlStatementKind::ShowStats(_)
             | SqlStatementKind::ShowManifest(_)
             | SqlStatementKind::DescribeTable(_)
-            | SqlStatementKind::UseNamespace(_)
-            | SqlStatementKind::SetSearchPath(_) => Ok(()),
+            | SqlStatementKind::UseSchema(_)
+            | SqlStatementKind::SetSearchPath(_)
+            | SqlStatementKind::PostgresSetting(_) => Ok(()),
 
             SqlStatementKind::CreateTable(_)
             | SqlStatementKind::CreateView(_)
             | SqlStatementKind::CreateType(_)
             | SqlStatementKind::AlterType(_)
             | SqlStatementKind::DropType(_)
+            | SqlStatementKind::CreateDomain(_)
+            | SqlStatementKind::AlterDomain(_)
+            | SqlStatementKind::DropDomain(_)
             | SqlStatementKind::CreateProcedure(_)
+            | SqlStatementKind::AlterRoutine(_)
             | SqlStatementKind::DropProcedure(_)
             | SqlStatementKind::CommentOn(_)
             | SqlStatementKind::CreateTrigger(_)
@@ -1031,6 +1218,10 @@ impl SqlStatement {
             | SqlStatementKind::BeginTransaction
             | SqlStatementKind::CommitTransaction
             | SqlStatementKind::RollbackTransaction
+            | SqlStatementKind::Savepoint(_)
+            | SqlStatementKind::ReleaseSavepoint(_)
+            | SqlStatementKind::RollbackToSavepoint(_)
+            | SqlStatementKind::SetTransaction
             | SqlStatementKind::Call(_) => Ok(()),
 
             // Topic management requires admin
@@ -1084,7 +1275,7 @@ mod tests {
     #[test]
     fn classify_select_keeps_original_sql() {
         let sql = "SELECT * FROM default.tasks WHERE id = 1";
-        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+        let stmt = SqlStatement::classify_and_parse(sql, &SchemaId::new("default"), Role::User)
             .expect("SELECT should classify");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
@@ -1094,7 +1285,7 @@ mod tests {
     #[test]
     fn classify_select_with_current_user_call_defers_to_datafusion() {
         let sql = "SELECT current_user()";
-        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+        let stmt = SqlStatement::classify_and_parse(sql, &SchemaId::new("default"), Role::User)
             .expect("SELECT should classify without custom parser rejection");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
@@ -1104,7 +1295,7 @@ mod tests {
     #[test]
     fn classify_select_with_custom_udf_call_defers_to_datafusion() {
         let sql = "SELECT SNOWFLAKE_ID()";
-        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+        let stmt = SqlStatement::classify_and_parse(sql, &SchemaId::new("default"), Role::User)
             .expect("SELECT should classify without custom parser rejection");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Select));
@@ -1114,7 +1305,7 @@ mod tests {
     #[test]
     fn classify_dml_defers_parse_errors_to_datafusion() {
         let sql = "UPDATE default.tasks SET value = WHERE id = 1";
-        let stmt = SqlStatement::classify_and_parse(sql, &NamespaceId::new("default"), Role::User)
+        let stmt = SqlStatement::classify_and_parse(sql, &SchemaId::new("default"), Role::User)
             .expect("UPDATE should classify and let DataFusion own parse/plan errors");
 
         assert!(matches!(stmt.kind(), SqlStatementKind::Update(_)));
@@ -1123,7 +1314,7 @@ mod tests {
 
     #[test]
     fn regular_user_authorization_allows_only_select_and_dml() {
-        let namespace = NamespaceId::new("default");
+        let namespace = SchemaId::new("default");
 
         for sql in [
             "SELECT 1",
@@ -1138,7 +1329,7 @@ mod tests {
         }
 
         for sql in [
-            "SHOW NAMESPACES",
+            "SHOW SCHEMAS",
             "CREATE TABLE default.tasks (id BIGINT PRIMARY KEY) WITH (TYPE='USER')",
             "BEGIN",
             "EXPORT USER DATA",
@@ -1151,10 +1342,9 @@ mod tests {
 
     #[test]
     fn classify_create_type_composite_and_reserved() {
-        let ns = NamespaceId::new("app");
+        let ns = SchemaId::new("app");
         let stmt = SqlStatement::classify_and_parse(
-            "CREATE TYPE chat.recipient_result AS (user_id TEXT NOT NULL, delivered BOOLEAN NOT \
-             NULL)",
+            "CREATE TYPE chat.recipient_result AS (user_id TEXT, delivered BOOLEAN)",
             &ns,
             Role::Dba,
         )
@@ -1169,27 +1359,50 @@ mod tests {
 
     #[test]
     fn classify_from_table_and_search_path() {
-        let ns = NamespaceId::new("app");
-        let from_table = SqlStatement::classify_and_parse(
+        let ns = SchemaId::new("app");
+        let from_table_err = SqlStatement::classify_and_parse(
             "CREATE TYPE chat.user FROM TABLE chat.users",
             &ns,
             Role::Dba,
         )
-        .expect("FROM TABLE should classify");
-        assert!(matches!(from_table.kind(), SqlStatementKind::CreateType(_)));
+        .expect_err("FROM TABLE must be rejected in PostgreSQL 18");
+        assert!(from_table_err.to_string().contains("FROM TABLE"));
+
+        let domain = SqlStatement::classify_and_parse(
+            "CREATE DOMAIN chat.positive_int AS INT NOT NULL CHECK (VALUE > 0)",
+            &ns,
+            Role::Dba,
+        )
+        .expect("CREATE DOMAIN should classify");
+        assert!(matches!(domain.kind(), SqlStatementKind::CreateDomain(_)));
 
         let search = SqlStatement::classify_and_parse("SET search_path TO chat", &ns, Role::Dba)
             .expect("SET search_path should classify");
-        assert!(matches!(search.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            search.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set { name, .. })
+                if name == "search_path"
+        ));
 
         let session =
             SqlStatement::classify_and_parse("SET SESSION search_path TO chat", &ns, Role::User)
                 .expect("SET SESSION search_path should classify for any role");
-        assert!(matches!(session.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            session.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set { name, .. })
+                if name == "search_path"
+        ));
 
         let reset = SqlStatement::classify_and_parse("RESET search_path", &ns, Role::Dba)
             .expect("RESET search_path should classify");
-        assert!(matches!(reset.kind(), SqlStatementKind::SetSearchPath(_)));
+        assert!(matches!(
+            reset.kind(),
+            SqlStatementKind::PostgresSetting(crate::PostgresSetting::Set {
+                name,
+                value: None,
+                ..
+            }) if name == "search_path"
+        ));
 
         let schema = SqlStatement::classify_and_parse("CREATE SCHEMA chat", &ns, Role::Dba)
             .expect("CREATE SCHEMA should classify");

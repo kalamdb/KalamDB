@@ -756,7 +756,8 @@ mod tests {
         let batch = create_simple_batch(150_000);
         let (store, path) = write_test_parquet(&temp_dir, "seq_pruned.parquet", vec![batch]);
 
-        let options = ParquetReadOptions::new().with_version_range("_version", 132_000_000, 132_010_000);
+        let options =
+            ParquetReadOptions::new().with_version_range("_version", 132_000_000, 132_010_000);
         let stream = parse_parquet_stream_with_options(store, &path, &options).await.unwrap();
         let batches: Vec<RecordBatch> = stream.try_collect().await.unwrap();
 
@@ -864,21 +865,12 @@ mod tests {
             with_parquet_field_id(Field::new("_version", DataType::Int64, false), 2),
         ]));
         let nested = StructArray::from(vec![
-            (
-                Arc::new(postal),
-                Arc::new(StringArray::from(vec!["02139"])) as Arc<dyn Array>,
-            ),
-            (
-                Arc::new(line1),
-                Arc::new(StringArray::from(vec!["Main"])) as Arc<dyn Array>,
-            ),
+            (Arc::new(postal), Arc::new(StringArray::from(vec!["02139"])) as Arc<dyn Array>),
+            (Arc::new(line1), Arc::new(StringArray::from(vec!["Main"])) as Arc<dyn Array>),
         ]);
         let batch = RecordBatch::try_new(
             schema,
-            vec![
-                Arc::new(nested),
-                Arc::new(Int64Array::from(vec![1_i64])),
-            ],
+            vec![Arc::new(nested), Arc::new(Int64Array::from(vec![1_i64]))],
         )
         .unwrap();
         let (store, path) = write_test_parquet(&temp_dir, "nested_field_id.parquet", vec![batch]);

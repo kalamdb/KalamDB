@@ -98,7 +98,7 @@ rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR/data" "$WORK_DIR/logs" "$(dirname "$SERVER_LOG")"
 cp "$SERVER_TEMPLATE" "$WORK_DIR/server.toml"
 
-perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g; s|port = [0-9]+|port = '"$(server_port)"'|g' "$WORK_DIR/server.toml"
+perl -0pi -e 's|data_path = "\./data"|data_path = "'"$WORK_DIR"'/data"|g; s|logs_path = "\./logs"|logs_path = "'"$WORK_DIR"'/logs"|g; s|jwt_secret = ".*"|jwt_secret = "'"$JWT_SECRET"'"|g; s|bcrypt_cost = [0-9]+|bcrypt_cost = 4|g; s|port = [0-9]+|port = '"$(server_port)"'|g' "$WORK_DIR/server.toml"
 
 if [[ "${KALAMDB_ENABLE_PGWIRE:-false}" == "true" ]]; then
     PGWIRE_HOST="${KALAMDB_PGWIRE_HOST:-127.0.0.1}"
@@ -121,7 +121,9 @@ EOF
 fi
 
 if [[ -n "$SERVER_BIN" ]]; then
-    SERVER_CMD=("$SERVER_BIN" "$WORK_DIR/server.toml")
+    cp -f "$SERVER_BIN" "$WORK_DIR/kalamdb-server"
+    chmod +x "$WORK_DIR/kalamdb-server"
+    SERVER_CMD=("$WORK_DIR/kalamdb-server" "$WORK_DIR/server.toml")
 else
     SERVER_CMD=(
         cargo run

@@ -105,7 +105,7 @@ async fn test_flush_policy_and_parquet_output_over_http() {
         let server = super::test_support::http_server::get_global_server().await;
         let ns = unique_namespace("flush_policy");
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+        let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
         anyhow::ensure!(resp.status == ResponseStatus::Success);
 
         let user_a = unique_table("alice");
@@ -368,8 +368,8 @@ async fn test_automatic_flush_waits_for_row_limit_before_writing_parquet_over_ht
         let ns = unique_namespace("flush_row_limit");
         let table = "threshold_guard";
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+        let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
         let resp = server
             .execute_sql(&format!(
@@ -486,8 +486,8 @@ async fn test_automatic_user_flush_waits_for_row_limit_and_writes_only_user_file
         let user_a = unique_table("threshold_alice");
         let user_b = unique_table("threshold_bob");
 
-        let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
-        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE NAMESPACE failed");
+        let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
+        anyhow::ensure!(resp.status == ResponseStatus::Success, "CREATE SCHEMA failed");
 
         let (auth_a, user_a_id) =
             create_user_auth_header_with_id(server, &user_a, "UserPass123!", &Role::User).await?;

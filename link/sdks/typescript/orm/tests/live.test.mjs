@@ -14,7 +14,7 @@ before(async () => {
   await client.initialize();
   await client.login();
 
-  await client.query('CREATE NAMESPACE IF NOT EXISTS test_live');
+  await client.query('CREATE SCHEMA IF NOT EXISTS test_live');
   await client.query('DROP TABLE IF EXISTS test_live.items');
   await client.query('DROP TABLE IF EXISTS test_live.timeline');
   await client.query(`
@@ -37,7 +37,7 @@ before(async () => {
 after(async () => {
   await client.query('DROP TABLE IF EXISTS test_live.items');
   await client.query('DROP TABLE IF EXISTS test_live.timeline');
-  await client.query('DROP NAMESPACE IF EXISTS test_live');
+  await client.query('DROP SCHEMA IF EXISTS test_live');
   await client?.disconnect();
 });
 
@@ -226,11 +226,11 @@ describe('liveTable', () => {
         attachment FILE
       )
     `);
-    const fakeFile = JSON.stringify({
-      id: '88888', sub: 'f0002', name: 'live-doc.pdf',
-      size: 1024, mime: 'application/pdf', sha256: 'abc123',
-    });
-    await client.query(`INSERT INTO test_live.docs (title, attachment) VALUES ('live-test', '${fakeFile}')`);
+    const pdfBytes = new Uint8Array(1024);
+    await client.queryWithFiles(
+      "INSERT INTO test_live.docs (title, attachment) VALUES ('live-test', FILE('doc'))",
+      { doc: new File([pdfBytes], 'live-doc.pdf', { type: 'application/pdf' }) },
+    );
 
     const test_live_docs = kTable('test_live.docs', {
       id: bigint('id', { mode: 'number' }),

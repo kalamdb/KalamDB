@@ -36,6 +36,8 @@ pub enum WsErrorCode {
     Protocol,
     /// Resume cursor skipped changes. Client must subscribe again without it.
     CursorExpired,
+    /// The connection buffer dropped a live change. The cursor is still valid.
+    DeliveryGap,
 }
 
 impl WsErrorCode {
@@ -57,6 +59,7 @@ impl WsErrorCode {
             WsErrorCode::UnsupportedData => "UNSUPPORTED_DATA",
             WsErrorCode::Protocol => "PROTOCOL",
             WsErrorCode::CursorExpired => "CURSOR_EXPIRED",
+            WsErrorCode::DeliveryGap => "DELIVERY_GAP",
         }
     }
 }

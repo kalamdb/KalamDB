@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kalamdb_commons::{
     models::{
-        rows::Row, schemas::TableType, JobId, NamespaceId, NodeId, StorageId, TableName, UserId,
+        rows::Row, schemas::TableType, JobId, NodeId, SchemaId, StorageId, TableName, UserId,
     },
     TableId,
 };
@@ -479,7 +479,7 @@ async fn test_command_proposal_to_leader() {
 
     // Propose a meta command
     let command = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("test_ns"),
+        namespace_id: SchemaId::from("test_ns"),
         created_by:   Some(UserId::from("tester")),
     };
 
@@ -517,7 +517,7 @@ async fn test_proposal_forwarding_to_leader() {
 
     // Propose a command to follower - should be automatically forwarded to leader
     let command = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("forwarded_ns"),
+        namespace_id: SchemaId::from("forwarded_ns"),
         created_by:   None,
     };
 
@@ -549,7 +549,7 @@ async fn test_all_groups_accept_proposals() {
 
         // Test namespace creation
         let cmd = MetaCommand::CreateNamespace {
-            namespace_id: NamespaceId::from("ns1"),
+            namespace_id: SchemaId::from("ns1"),
             created_by:   Some(UserId::from("admin")),
         };
         let result = leader.manager.propose_meta(cmd).await;
@@ -594,7 +594,7 @@ async fn test_all_groups_accept_proposals() {
             required_meta_index: 0,
             transaction_id:      None,
             table_id:            TableId::new(
-                NamespaceId::from("ns1"),
+                SchemaId::from("ns1"),
                 TableName::from(format!("table{}", shard)),
             ),
             user_id:             UserId::from(format!("user_{}", shard)),
@@ -612,7 +612,7 @@ async fn test_all_groups_accept_proposals() {
             required_meta_index: 0,
             transaction_id:      None,
             actor_user_id:       None,
-            table_id:            TableId::new(NamespaceId::from("shared"), TableName::from("data")),
+            table_id:            TableId::new(SchemaId::from("shared"), TableName::from("data")),
             rows:                vec![make_test_row()],
             encoded_fields:      Vec::new(),
         };
@@ -675,7 +675,7 @@ async fn test_data_consistency_after_network_delay() {
     let mut successful_proposals = 0;
     for i in 0..10 {
         let cmd = MetaCommand::CreateNamespace {
-            namespace_id: NamespaceId::from(format!("consistency_ns_{}", i)),
+            namespace_id: SchemaId::from(format!("consistency_ns_{}", i)),
             created_by:   None,
         };
         if leader.manager.propose_meta(cmd).await.is_ok() {
@@ -715,16 +715,16 @@ async fn test_meta_group_operations() {
 
     // Test CreateNamespace
     let cmd = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("test_ns"),
+        namespace_id: SchemaId::from("test_ns"),
         created_by:   Some(UserId::from("tester")),
     };
     let result = leader.manager.propose_meta(cmd).await;
     assert!(result.is_ok(), "CreateNamespace should succeed");
 
     // Test CreateTable
-    let table_id = TableId::new(NamespaceId::from("test_ns"), TableName::from("test_table"));
+    let table_id = TableId::new(SchemaId::from("test_ns"), TableName::from("test_table"));
     let table_def = kalamdb_commons::models::schemas::TableDefinition::new_with_defaults(
-        NamespaceId::from("test_ns"),
+        SchemaId::from("test_ns"),
         TableName::from("test_table"),
         TableType::User,
         vec![],
@@ -824,10 +824,8 @@ async fn test_user_data_shard_operations() {
     // Test all 4 user data shards
     for shard in 0..4 {
         let leader = cluster.get_leader_node(GroupId::DataUserShard(shard)).unwrap();
-        let table_id = TableId::new(
-            NamespaceId::from("ns1"),
-            TableName::from(format!("user_table_{}", shard)),
-        );
+        let table_id =
+            TableId::new(SchemaId::from("ns1"), TableName::from(format!("user_table_{}", shard)));
         let user_id = UserId::from(format!("user_{}", shard));
 
         // Test Insert
@@ -882,7 +880,7 @@ async fn test_shared_data_shard_operations() {
     sleep(Duration::from_millis(200)).await;
 
     let leader = cluster.get_leader_node(GroupId::DataSharedShard(0)).unwrap();
-    let table_id = TableId::new(NamespaceId::from("shared"), TableName::from("global_config"));
+    let table_id = TableId::new(SchemaId::from("shared"), TableName::from("global_config"));
 
     // Test Insert
     let cmd = SharedDataCommand::Insert {
@@ -947,7 +945,7 @@ async fn test_proposal_throughput() {
         let cmd = UserDataCommand::Insert {
             required_meta_index: 0,
             transaction_id:      None,
-            table_id:            TableId::new(NamespaceId::from("perf"), TableName::from("test")),
+            table_id:            TableId::new(SchemaId::from("perf"), TableName::from("test")),
             user_id:             UserId::from(format!("user_{}", i)),
             rows:                vec![make_test_row()],
             encoded_fields:      Vec::new(),
@@ -998,7 +996,7 @@ async fn test_concurrent_multi_group_proposals() {
                         required_meta_index: 0,
                         transaction_id:      None,
                         table_id:            TableId::new(
-                            NamespaceId::from("concurrent"),
+                            SchemaId::from("concurrent"),
                             TableName::from(format!("shard{}", shard)),
                         ),
                         user_id:             UserId::from(format!("user_{}_{}", shard, i)),
@@ -1054,7 +1052,7 @@ async fn test_shard_routing_consistency() {
     ];
 
     for (ns, table) in test_tables {
-        let table_id = TableId::new(NamespaceId::from(ns), TableName::from(table));
+        let table_id = TableId::new(SchemaId::from(ns), TableName::from(table));
 
         // Compute shard multiple times
         let shard1 = shard_router.table_shard_id(&table_id);
@@ -1123,7 +1121,7 @@ async fn test_invalid_shard_error() {
 
     // Try to propose to invalid shard
     let cmd = UserDataCommand::Insert {
-        table_id:            TableId::new(NamespaceId::from("test"), TableName::from("table")),
+        table_id:            TableId::new(SchemaId::from("test"), TableName::from("table")),
         user_id:             UserId::from("user1"),
         rows:                vec![make_test_row()],
         encoded_fields:      Vec::new(),
@@ -1154,7 +1152,7 @@ async fn test_proposal_before_start_error() {
 
     // Try to propose before starting
     let cmd = MetaCommand::CreateNamespace {
-        namespace_id: NamespaceId::from("ns1"),
+        namespace_id: SchemaId::from("ns1"),
         created_by:   None,
     };
     let result = manager.propose_meta(cmd).await;

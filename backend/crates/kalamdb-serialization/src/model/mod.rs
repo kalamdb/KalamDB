@@ -5,22 +5,32 @@
 
 mod decode;
 mod encode;
-mod timestamp;
 
 use kalamdb_commons::{models::rows::Row, schemas::TableDefinition};
 use serde::{de::DeserializeOwned, Serialize};
-pub use timestamp::{model_ms_to_storage_micros, storage_micros_to_model_ms};
 
 use crate::error::{Result, SerializationError};
 
-/// Serialize a typed model into a schema-aligned row.
+/// Serialize a typed model into a schema-aligned row without timestamp scaling.
 pub fn model_to_row<T: Serialize>(model: &T, table_def: &TableDefinition) -> Result<Row> {
-    encode::serialize_model(model, table_def)
+    encode::serialize_model(model, table_def, false)
 }
 
 /// Inverse of [`model_to_row`].
 pub fn row_to_model<T: DeserializeOwned>(row: &Row, table_def: &TableDefinition) -> Result<T> {
-    decode::deserialize_model(row, table_def)
+    decode::deserialize_model(row, table_def, false)
+}
+
+/// Serialize a typed model whose `Timestamp` / `DateTime` fields are Unix milliseconds
+/// into a schema-aligned row with microsecond `TimestampMicrosecond` storage scalars.
+pub fn model_ms_to_row<T: Serialize>(model: &T, table_def: &TableDefinition) -> Result<Row> {
+    encode::serialize_model(model, table_def, true)
+}
+
+/// Inverse of [`model_ms_to_row`] — scales microsecond storage timestamps back to
+/// millisecond `i64` model fields inline without cloning [`Row`].
+pub fn row_to_model_ms<T: DeserializeOwned>(row: &Row, table_def: &TableDefinition) -> Result<T> {
+    decode::deserialize_model(row, table_def, true)
 }
 
 fn map_ser(message: String) -> SerializationError {
@@ -37,7 +47,7 @@ mod tests {
     use kalamdb_commons::{
         models::datatypes::KalamDataType,
         schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-        NamespaceId, TableName,
+        SchemaId, TableName,
     };
     use serde::{Deserialize, Serialize};
 
@@ -55,7 +65,7 @@ mod tests {
 
     fn sample_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("samples"),
             TableType::System,
             vec![
@@ -116,7 +126,7 @@ mod tests {
 
     fn enum_table() -> TableDefinition {
         TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("sample_enums"),
             TableType::System,
             vec![
@@ -157,7 +167,7 @@ mod tests {
     #[test]
     fn json_column_tagged_enum_roundtrips() {
         let table = TableDefinition::new(
-            NamespaceId::system(),
+            SchemaId::system(),
             TableName::new("sample_programs"),
             TableType::System,
             vec![
@@ -176,6 +186,26 @@ mod tests {
         };
         let row = model_to_row(&model, &table).expect("encode");
         let decoded: SampleProgramRow = row_to_model(&row, &table).expect("decode");
+        assert_eq!(decoded, model);
+    }
+
+    #[test]
+    fn millisecond_model_scales_inline_to_microsecond_storage_row() {
+        let model = Sample {
+            id:         "a2".to_string(),
+            count:      3,
+            flag:       false,
+            created_at: 1_700_000_000_123,
+            note:       Some("hello".to_string()),
+            tags:       vec!["t".to_string()],
+        };
+        let table = sample_table();
+        let row = super::model_ms_to_row(&model, &table).expect("encode ms");
+        assert!(matches!(
+            row.values.get("created_at"),
+            Some(ScalarValue::TimestampMicrosecond(Some(1_700_000_000_123_000), None))
+        ));
+        let decoded: Sample = super::row_to_model_ms(&row, &table).expect("decode ms");
         assert_eq!(decoded, model);
     }
 }

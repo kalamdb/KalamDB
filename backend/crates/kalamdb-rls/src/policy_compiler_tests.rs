@@ -3,8 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use kalamdb_commons::{
     datatypes::KalamDataType,
     schemas::{ColumnDefinition, TableDefinition, TableOptions, TableType},
-    AuthorizationRelation, BoundExprShape, InvalidationStrategy, NamespaceId, PolicyProgram,
-    PrincipalExpr, TableId, TableName,
+    AuthorizationRelation, BoundExprShape, InvalidationStrategy, PolicyProgram, PrincipalExpr,
+    SchemaId, TableId, TableName,
 };
 
 use super::{PolicyCompiler, PolicyTableResolver};
@@ -39,7 +39,7 @@ fn shared_table(name: &str, columns: &[(&str, bool)]) -> Arc<TableDefinition> {
         .collect();
     Arc::new(
         TableDefinition::new(
-            NamespaceId::new("chat"),
+            SchemaId::new("chat"),
             TableName::new(name),
             TableType::Shared,
             columns,

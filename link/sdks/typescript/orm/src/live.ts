@@ -7,7 +7,7 @@ import type {
   RowData,
   Unsubscribe,
 } from '@kalamdb/client';
-import { createLiveQueryDescriptor, parseLiveOrderBy } from '@kalamdb/client';
+import { createLiveQueryDescriptor, parseLiveOrderBy, projectLiveRows } from '@kalamdb/client';
 import { normalizeDateValue, normalizeTemporalValue, normalizeTimeValue } from './driver.js';
 import { compileInlineQuery } from './sql.js';
 import { getKalamTableConfig } from './ktable.js';
@@ -52,31 +52,34 @@ function normalizerForColumn(column: { dataType?: unknown; columnType?: unknown 
   return undefined;
 }
 
-function mapTableRow<TTable extends Table>(table: TTable, row: RowData): InferSelectModel<TTable> {
-  const columns = getTableColumns(table);
-  const mapped: Record<string, unknown> = {};
+function createTableRowMapper<TTable extends Table>(table: TTable) {
+  const columns = Object.entries(getTableColumns(table)).map(([key, column]) => ({
+    key, column, normalize: normalizerForColumn(column),
+  }));
+  return (row: RowData): InferSelectModel<TTable> => {
+    const mapped: Record<string, unknown> = {};
 
-  for (const [key, col] of Object.entries(columns)) {
-    const raw = unwrapCellValue(row[col.name]);
-    const normalizer = normalizerForColumn(col);
-    const driverValue = raw !== undefined && normalizer ? normalizer(raw) : raw;
+    for (const {key, column: col, normalize: normalizer} of columns) {
+      const raw = unwrapCellValue(row[col.name]);
+      const driverValue = raw !== undefined && normalizer ? normalizer(raw) : raw;
 
-    if (raw == null) {
-      mapped[key] = null;
-      continue;
+      if (raw == null) {
+        mapped[key] = null;
+        continue;
+      }
+
+      if ('mapFromDriverValue' in col) {
+        mapped[key] =
+          driverValue == null
+            ? null
+            : (col as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue(driverValue);
+      } else {
+        mapped[key] = driverValue ?? null;
+      }
     }
 
-    if ('mapFromDriverValue' in col) {
-      mapped[key] =
-        driverValue == null
-          ? null
-          : (col as { mapFromDriverValue: (v: unknown) => unknown }).mapFromDriverValue(driverValue);
-    } else {
-      mapped[key] = driverValue ?? null;
-    }
-  }
-
-  return mapped as InferSelectModel<TTable>;
+    return mapped as InferSelectModel<TTable>;
+  };
 }
 
 function compileOrderBy(orderBy?: SQLWrapper | SQLWrapper[]) {
@@ -107,9 +110,15 @@ export function compileLiveTableDescriptor<TTable extends Table>(
   options: LiveTableOptions<InferSelectModel<TTable>> = {},
 ): LiveQueryDescriptor<InferSelectModel<TTable>> {
   const { where, orderBy, ...liveOptions } = options;
-  const mapRow = (row: RowData): InferSelectModel<TTable> => mapTableRow(table, row);
+  const mapRow = createTableRowMapper(table);
   const subscriptionSql = buildTableQuery(table, where);
-  const compiledOrderBy = compileOrderBy(orderBy);
+  const columns = getTableColumns(table);
+  const propertyByColumn = new Map(Object.entries(columns).map(([property, column]) => [column.name, property]));
+  const compiledOrderBy = compileOrderBy(orderBy)?.map(order => {
+    const property = propertyByColumn.get(order.column);
+    if (!property) throw new Error(`Live ordering column does not belong to this table: ${order.column}`);
+    return {...order, column: property};
+  });
 
   return createLiveQueryDescriptor<InferSelectModel<TTable>>({
     mode: 'drizzle',
@@ -131,12 +140,12 @@ export function liveTable<TTable extends Table>(
   callback: (rows: InferSelectModel<TTable>[]) => void,
   options: LiveTableOptions<InferSelectModel<TTable>> = {},
 ): Promise<Unsubscribe> {
-  const { where, orderBy: _orderBy, ...liveOptions } = options;
+  const { where: _where, orderBy: _orderBy, limit: _limit, ...liveOptions } = options;
   const descriptor = compileLiveTableDescriptor(table, options);
 
   return client.connect().then(() => client.live<InferSelectModel<TTable>>(
-    buildTableQuery(table, where),
-    callback,
+    descriptor.subscriptionSql,
+    rows => callback(projectLiveRows(rows, descriptor.projection)),
     {
       ...liveOptions,
       mapRow: descriptor.mapRow,

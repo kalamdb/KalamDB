@@ -16,6 +16,7 @@ use datafusion::{
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_plan::ExecutionPlan,
 };
+use kalamdb_commons::constants::LOGICAL_DATABASE_NAME;
 use kalamdb_datafusion_sources::{
     exec::{finalize_deferred_batch, DeferredBatchExec, DeferredBatchSource},
     provider::combined_filter,
@@ -25,8 +26,6 @@ use kalamdb_system::SystemTablesRegistry;
 use crate::information_schema::extend::{
     cast_batch_to_schema, collect_inner_batch, concat_or_either, load_inner_table,
 };
-
-const CATALOG_NAME: &str = "kalam";
 
 /// Wraps DataFusion's `information_schema.routines` and appends Kalam procedures.
 #[derive(Debug)]
@@ -177,17 +176,22 @@ fn kalam_procedure_batch(
     let mut syntax_example = StringBuilder::new();
 
     for routine in routines {
+        if routine.language.as_deref() == Some("INTERNAL") {
+            continue;
+        }
         let return_type = routine.return_type_name.as_deref().unwrap_or("void");
-        specific_catalog.append_value(CATALOG_NAME);
+        specific_catalog.append_value(LOGICAL_DATABASE_NAME);
         specific_schema.append_value(routine.namespace_id.as_str());
         specific_name.append_value(routine.routine_id.as_str());
-        routine_catalog.append_value(CATALOG_NAME);
+        routine_catalog.append_value(LOGICAL_DATABASE_NAME);
         routine_schema.append_value(routine.namespace_id.as_str());
         routine_name.append_value(&routine.name);
-        routine_type.append_value("PROCEDURE");
-        is_deterministic.append_value(false);
+        routine_type.append_value(routine.kind.as_str());
+        is_deterministic.append_value(
+            routine.volatility == kalamdb_commons::models::RoutineVolatility::Immutable,
+        );
         data_type.append_value(return_type);
-        function_type.append_value("SQL");
+        function_type.append_value(routine.language.as_deref().unwrap_or("SQL"));
         description.append_option(routine.comment.as_deref());
         syntax_example.append_value(routine.routine_id.as_str());
     }

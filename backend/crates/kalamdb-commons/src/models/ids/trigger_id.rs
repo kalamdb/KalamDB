@@ -5,7 +5,7 @@ use std::fmt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use super::namespace_id::NamespaceId;
+use super::namespace_id::SchemaId;
 #[cfg(feature = "storage")]
 use crate::StorageKey;
 
@@ -30,7 +30,7 @@ impl TriggerId {
         self.0
     }
 
-    pub fn from_parts(namespace: Option<&NamespaceId>, name: &str) -> Self {
+    pub fn from_parts(namespace: Option<&SchemaId>, name: &str) -> Self {
         let name = name.trim().to_ascii_lowercase();
         assert!(!name.is_empty(), "TriggerId cannot be empty");
         match namespace {
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn trigger_id_from_parts() {
-        let id = TriggerId::from_parts(Some(&NamespaceId::new("chat")), "process_message");
+        let id = TriggerId::from_parts(Some(&SchemaId::new("chat")), "process_message");
         assert_eq!(id.as_str(), "chat.process_message");
     }
 }

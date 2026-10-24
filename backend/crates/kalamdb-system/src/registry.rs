@@ -32,7 +32,7 @@ use super::providers::{
     jobs::models::Job,
     manifest::manifest_table_definition,
     migrations::{models::Migration, MigrationsTableProvider},
-    namespaces::models::Namespace,
+    schemas::models::Namespace,
     storages::models::Storage,
     table_policies::{TablePoliciesTableProvider, TablePolicyRecord},
     tables::schemas_table_definition,

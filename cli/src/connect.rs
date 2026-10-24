@@ -115,10 +115,7 @@ fn root_password_for_url(cli: &Cli, server_url: &str) -> Option<String> {
     project_local_root_password()
 }
 
-fn session_namespace(
-    cli: &Cli,
-    store: &FileCredentialStore,
-) -> Option<kalamdb_commons::NamespaceId> {
+fn session_namespace(cli: &Cli, store: &FileCredentialStore) -> Option<kalamdb_commons::SchemaId> {
     if cli.global {
         return None;
     }

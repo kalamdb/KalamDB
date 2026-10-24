@@ -11,9 +11,9 @@ pub mod on_conflict;
 
 pub use insert_shape::{
     insert_from_statement, insert_has_on_conflict, insert_returning_items,
-    on_conflict_values_insert, single_values_insert_row, values_insert_view,
-    values_insert_view_from_statement, values_rows_from_insert, values_rows_from_query,
-    ValuesInsertShapeOptions, ValuesInsertView,
+    on_conflict_values_insert, returning_describe_sql, single_values_insert_row,
+    values_insert_view, values_insert_view_from_statement, values_rows_from_insert,
+    values_rows_from_query, ValuesInsertShapeOptions, ValuesInsertView,
 };
 pub use insert_values::values_to_rows;
 pub use literals::{

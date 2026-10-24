@@ -40,60 +40,114 @@ impl TypedStatementHandler<DropTypeStatement> for DropTypeHandler {
             ));
         }
         let app = Arc::clone(&self.app_context);
-        let (result, dropped_id) = run_blocking(move || {
+        let (result, dropped_ids) = run_blocking(move || {
             let stores = app.system_tables().catalog_stores();
-            let existing = stores
-                .find_type(&statement.namespace_id, &statement.name)
-                .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
-            let Some(catalog_type) = existing else {
-                if statement.if_exists {
-                    return Ok((
-                        ExecutionResult::Success {
-                            message: format!(
-                                "Type {}.{} does not exist, skipping",
-                                statement.namespace_id, statement.name
-                            ),
-                        },
-                        None,
-                    ));
+            let targets: Vec<(kalamdb_commons::models::SchemaId, String)> =
+                if statement.targets.is_empty() {
+                    vec![(statement.namespace_id.clone(), statement.name.clone())]
+                } else {
+                    statement.targets.clone()
+                };
+            let mut to_drop = Vec::new();
+            for (namespace_id, name) in &targets {
+                let existing = stores
+                    .find_type(namespace_id, name)
+                    .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+                let Some(catalog_type) = existing else {
+                    if statement.if_exists {
+                        continue;
+                    }
+                    return Err(KalamDbError::NotFound(format!(
+                        "type {namespace_id}.{name} not found"
+                    )));
+                };
+                if catalog_type.namespace_id.is_system_namespace() {
+                    return Err(KalamDbError::InvalidSql(format!(
+                        "cannot drop built-in system type {}.{}",
+                        catalog_type.namespace_id, catalog_type.name
+                    )));
                 }
-                return Err(KalamDbError::NotFound(format!(
-                    "type {}.{} not found",
-                    statement.namespace_id, statement.name
-                )));
-            };
-            match catalog_type.kind {
-                CatalogTypeKind::ImplicitTableRow => {
-                    return Err(KalamDbError::InvalidSql(format!(
-                        "cannot drop implicit table row type {}; drop the table instead",
-                        crate::catalog_type::type_alias(&catalog_type)
-                    )));
-                },
-                CatalogTypeKind::TopicPayload => {
-                    return Err(KalamDbError::InvalidSql(format!(
-                        "cannot drop implicit topic payload type {}; drop the topic instead",
-                        crate::catalog_type::type_alias(&catalog_type)
-                    )));
-                },
-                CatalogTypeKind::RowAlias | CatalogTypeKind::Composite | CatalogTypeKind::Enum => {
-                },
+                match catalog_type.kind {
+                    CatalogTypeKind::ImplicitTableRow => {
+                        return Err(KalamDbError::InvalidSql(format!(
+                            "cannot drop implicit table row type {}; drop the table instead",
+                            crate::catalog_type::type_alias(&catalog_type)
+                        )));
+                    },
+                    CatalogTypeKind::TopicPayload => {
+                        return Err(KalamDbError::InvalidSql(format!(
+                            "cannot drop implicit topic payload type {}; drop the topic instead",
+                            crate::catalog_type::type_alias(&catalog_type)
+                        )));
+                    },
+                    CatalogTypeKind::RowAlias
+                    | CatalogTypeKind::Composite
+                    | CatalogTypeKind::Enum
+                    | CatalogTypeKind::Domain => {},
+                }
+                to_drop.push(catalog_type);
             }
-            let type_id = catalog_type.type_id.clone();
-            stores
-                .drop_type(&type_id)
+            if to_drop.is_empty() {
+                return Ok((
+                    ExecutionResult::Success {
+                        message: format!(
+                            "Type {}.{} does not exist, skipping",
+                            statement.namespace_id, statement.name
+                        ),
+                    },
+                    Vec::new(),
+                ));
+            }
+            let tables = app
+                .system_tables()
+                .tables()
+                .list_tables()
                 .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+            for catalog_type in &to_drop {
+                if let Some(dependent) = stores
+                    .type_is_referenced(&catalog_type.type_id)
+                    .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?
+                {
+                    return Err(KalamDbError::InvalidOperation(format!(
+                        "cannot drop type {}: referenced by {dependent}",
+                        crate::catalog_type::type_alias(catalog_type)
+                    )));
+                }
+                for table_def in &tables {
+                    for col in &table_def.columns {
+                        if col.named_type_id() == Some(&catalog_type.type_id) {
+                            return Err(KalamDbError::InvalidOperation(format!(
+                                "cannot drop type {}: referenced by column {}.{}.{}",
+                                crate::catalog_type::type_alias(catalog_type),
+                                table_def.namespace_id,
+                                table_def.table_name,
+                                col.column_name
+                            )));
+                        }
+                    }
+                }
+            }
+            let mut dropped_ids = Vec::with_capacity(to_drop.len());
+            let mut dropped_names = Vec::with_capacity(to_drop.len());
+            for catalog_type in to_drop {
+                let alias = crate::catalog_type::type_alias(&catalog_type);
+                let type_id = catalog_type.type_id.clone();
+                stores
+                    .drop_type(&type_id)
+                    .map_err(|error| KalamDbError::ExecutionError(error.to_string()))?;
+                app.schema_registry().type_registry().invalidate(&type_id);
+                dropped_ids.push(type_id);
+                dropped_names.push(alias);
+            }
             Ok((
                 ExecutionResult::Success {
-                    message: format!(
-                        "Type {} dropped",
-                        crate::catalog_type::type_alias(&catalog_type)
-                    ),
+                    message: format!("Type {} dropped", dropped_names.join(", ")),
                 },
-                Some(type_id),
+                dropped_ids,
             ))
         })
         .await?;
-        if let Some(type_id) = dropped_id {
+        for type_id in dropped_ids {
             super::replicate_dropped_type(&self.app_context, type_id).await?;
         }
         Ok(result)
@@ -105,7 +159,7 @@ mod tests {
     use std::sync::Arc;
 
     use kalamdb_commons::{
-        models::{NamespaceId, TopicId, UserId},
+        models::{SchemaId, TopicId, UserId},
         Role,
     };
     use kalamdb_core::{
@@ -123,7 +177,7 @@ mod tests {
     #[tokio::test]
     async fn drop_type_rejects_implicit_topic_payload() {
         let app = test_app_context_simple();
-        let namespace_id = NamespaceId::new("app");
+        let namespace_id = SchemaId::new("app");
         if app.system_tables().namespaces().get_namespace(&namespace_id).unwrap().is_none() {
             app.system_tables()
                 .namespaces()

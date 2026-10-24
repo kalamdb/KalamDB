@@ -1,9 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
-use crate::benchmarks::Benchmark;
-use crate::client::KalamClient;
-use crate::config::Config;
+use crate::{benchmarks::Benchmark, client::KalamClient, config::Config};
 
 /// Measures query performance when joining/subquerying across two tables.
 /// Uses a correlated subquery pattern: SELECT from orders WHERE customer_id IN (SELECT ...).
@@ -47,7 +44,8 @@ impl Benchmark for MultiTableJoinBench {
                 .await;
             client
                 .sql_ok(&format!(
-                    "CREATE TABLE {}.join_orders (id INT PRIMARY KEY, customer_id INT, amount INT, status TEXT)",
+                    "CREATE TABLE {}.join_orders (id INT PRIMARY KEY, customer_id INT, amount \
+                     INT, status TEXT)",
                     config.namespace
                 ))
                 .await?;
@@ -118,9 +116,9 @@ impl Benchmark for MultiTableJoinBench {
                     // Subquery: orders from gold-tier customers
                     client
                         .sql_ok(&format!(
-                            "SELECT o.id, o.amount, o.status \
-                             FROM {ns}.join_orders o \
-                             WHERE o.customer_id IN (SELECT c.id FROM {ns}.join_customers c WHERE c.tier = 'gold')",
+                            "SELECT o.id, o.amount, o.status FROM {ns}.join_orders o WHERE \
+                             o.customer_id IN (SELECT c.id FROM {ns}.join_customers c WHERE \
+                             c.tier = 'gold')",
                             ns = config.namespace
                         ))
                         .await?;
@@ -129,10 +127,9 @@ impl Benchmark for MultiTableJoinBench {
                     // Aggregation across join: total spent per tier
                     client
                         .sql_ok(&format!(
-                            "SELECT c.tier, SUM(o.amount) as total_spent \
-                             FROM {ns}.join_orders o \
-                             JOIN {ns}.join_customers c ON o.customer_id = c.id \
-                             GROUP BY c.tier ORDER BY total_spent DESC",
+                            "SELECT c.tier, SUM(o.amount) as total_spent FROM {ns}.join_orders o \
+                             JOIN {ns}.join_customers c ON o.customer_id = c.id GROUP BY c.tier \
+                             ORDER BY total_spent DESC",
                             ns = config.namespace
                         ))
                         .await?;
@@ -141,11 +138,9 @@ impl Benchmark for MultiTableJoinBench {
                     // Filtered join with LIMIT
                     client
                         .sql_ok(&format!(
-                            "SELECT c.name, o.amount, o.status \
-                             FROM {ns}.join_orders o \
-                             JOIN {ns}.join_customers c ON o.customer_id = c.id \
-                             WHERE o.status = 'shipped' \
-                             ORDER BY o.amount DESC LIMIT 20",
+                            "SELECT c.name, o.amount, o.status FROM {ns}.join_orders o JOIN \
+                             {ns}.join_customers c ON o.customer_id = c.id WHERE o.status = \
+                             'shipped' ORDER BY o.amount DESC LIMIT 20",
                             ns = config.namespace
                         ))
                         .await?;

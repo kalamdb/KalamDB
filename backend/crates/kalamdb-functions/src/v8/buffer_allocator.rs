@@ -9,6 +9,7 @@ use std::{
 
 pub(crate) struct BufferAllocator {
     used:  AtomicUsize,
+    peak:  AtomicUsize,
     limit: usize,
 }
 
@@ -16,6 +17,7 @@ impl BufferAllocator {
     pub(crate) fn create(limit: usize) -> v8::UniqueRef<v8::Allocator> {
         let state = Box::into_raw(Box::new(Self {
             used: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
             limit,
         }));
         // SAFETY: V8 owns this allocation and calls the matching destructor exactly once.
@@ -26,16 +28,16 @@ impl BufferAllocator {
         let Ok(layout) = Layout::from_size_align(len.max(1), 16) else {
             return ptr::null_mut();
         };
-        // `try_update` is still unstable; keep `fetch_update` for MSRV 1.94.
-        if self
+        let Ok(next_used) = self
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(len).filter(|next| *next <= self.limit)
             })
-            .is_err()
-        {
+            .map(|prev| prev + len)
+        else {
             return ptr::null_mut();
-        }
+        };
+        let _ = self.peak.fetch_max(next_used, Ordering::Relaxed);
         // SAFETY: layout has nonzero size and valid alignment; free uses the same layout.
         let data = unsafe {
             if zeroed {

@@ -42,7 +42,7 @@
  * @module
  */
 
-import { FileRef } from './file_ref.js';
+import { BoundFileRef, FileRef } from './file_ref.js';
 import { decodeBase64ToBytes } from './helpers/base64.js';
 import { VersionId } from './version_id.js';
 import type { JsonValue } from './types.js';
@@ -514,7 +514,7 @@ export class KalamCellValue {
   asFileUrl(baseUrl: string, namespace: string, table: string): string | null {
     const ref = this.asFile();
     if (!ref) return null;
-    return ref.getDownloadUrl(baseUrl, namespace, table);
+    return new BoundFileRef(ref.toObject(), { baseUrl, namespace, table }).downloadUrl();
   }
 
   /* ------------------------------------------------------------------ */

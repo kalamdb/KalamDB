@@ -61,9 +61,9 @@ impl Benchmark for ChatRealtimeBench {
              minute(s): {} personal AI chats on USER tables (conversations_ai/messages_ai) with a \
              topic-consuming agent, plus {} 2-user and {} 3-user rooms on SHARED \
              conversations/messages with CREATE POLICY membership RLS and scalar indexes on \
-             conversation_id/created_at_ms and membership user_id. Each conversation paces at \
-             {}. Workers {}, load historic messages before a cutoff, disconnect and reconnect \
-             with snapshot replay, and reopen a conversation with SELECT.",
+             conversation_id/created_at_ms and membership user_id. Each conversation paces at {}. \
+             Workers {}, load historic messages before a cutoff, disconnect and reconnect with \
+             snapshot replay, and reopen a conversation with SELECT.",
             settings.user_count,
             settings.realtime_conversations,
             settings.minutes,

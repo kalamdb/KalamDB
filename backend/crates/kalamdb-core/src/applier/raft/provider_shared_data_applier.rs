@@ -75,7 +75,7 @@ impl SharedDataApplier for ProviderSharedDataApplier {
 
         self.executor
             .dml()
-            .insert_shared_data_with_versions(table_id, actor_user_id, &rows, versions)
+            .insert_shared_data_with_versions(table_id, actor_user_id, rows, versions)
             .await
             .map_err(ApplierError::into_raft)
     }

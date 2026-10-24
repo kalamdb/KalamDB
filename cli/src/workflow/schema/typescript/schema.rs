@@ -27,6 +27,7 @@ struct SchemaContext {
     file:            GeneratedHeader,
     needs_orm:       bool,
     needs_file:      bool,
+    needs_file_type: bool,
     needs_sql:       bool,
     drizzle_imports: String,
     decls:           Vec<SchemaDecl>,
@@ -100,6 +101,7 @@ pub(super) fn render_schema_source(
             file:            GeneratedHeader::from_hash(hash),
             needs_orm:       !snapshot.tables.is_empty(),
             needs_file:      snapshot_has_file_column(snapshot),
+            needs_file_type: snapshot.types.contains_key("pg_catalog.file"),
             needs_sql:       snapshot_has_default_column(snapshot),
             drizzle_imports: drizzle_imports(snapshot),
             decls:           schema_decls(snapshot, names, procedures),
@@ -115,6 +117,15 @@ fn schema_decls(
 ) -> Vec<SchemaDecl> {
     let mut decls = Vec::new();
     for (id, ty) in &snapshot.types {
+        if id == "pg_catalog.file" {
+            decls.push(SchemaDecl {
+                ident: names.type_ident(id).to_string(),
+                is_alias: true,
+                alias_of: "PgCatalogFile".to_string(),
+                ..SchemaDecl::default()
+            });
+            continue;
+        }
         match &ty.kind {
             ContractTypeKind::Enum { labels } => {
                 decls.push(SchemaDecl {
@@ -131,6 +142,15 @@ fn schema_decls(
             },
             ContractTypeKind::Composite { fields } => {
                 decls.push(object_decl(names.type_ident(id), fields, names, ty.comment.as_deref()));
+            },
+            ContractTypeKind::Domain { base_type, .. } => {
+                decls.push(SchemaDecl {
+                    jsdoc: jsdoc(ty.comment.as_deref(), ""),
+                    ident: names.type_ident(id).to_string(),
+                    is_alias: true,
+                    alias_of: render_field_type(base_type, names, TargetLang::TypeScript),
+                    ..SchemaDecl::default()
+                });
             },
             ContractTypeKind::TopicPayload { .. }
             | ContractTypeKind::ImplicitTableRow { .. }
@@ -314,7 +334,12 @@ fn snapshot_has_default_column(snapshot: &ContractSnapshot) -> bool {
 }
 
 fn is_file_column(field: &ContractField) -> bool {
-    field.type_id.is_none() && field.type_name.eq_ignore_ascii_case("FILE")
+    field.type_name.eq_ignore_ascii_case("FILE")
+        || field.type_name.eq_ignore_ascii_case("pg_catalog.file")
+        || field
+            .type_id
+            .as_ref()
+            .is_some_and(|id| id.as_str().eq_ignore_ascii_case("pg_catalog.file"))
 }
 
 fn drizzle_imports(snapshot: &ContractSnapshot) -> String {
@@ -356,7 +381,7 @@ fn drizzle_column(field: &ContractField, names: &AssignedNames) -> String {
     let name = escape_double_quoted_string(&field.name);
     let helper = drizzle_column_helper(field);
     let mut expr = match helper {
-        "file" => format!("file(\"{name}\")"),
+        "file" => format!("file(\"{name}\").$type<File>()"),
         "bigint" => format!("bigint(\"{name}\", {{ mode: \"bigint\" }})"),
         "timestamp" => format!("timestamp(\"{name}\", {{ mode: \"date\" }})"),
         "customType" => {
@@ -369,12 +394,15 @@ fn drizzle_column(field: &ContractField, names: &AssignedNames) -> String {
         },
         _ => format!("{helper}(\"{name}\")"),
     };
+    if field.is_array {
+        expr.push_str(".array()");
+    }
     if field.has_default {
         expr.push_str(".default(sql``)");
     }
-    if field.primary_key || field.name == "id" {
+    if field.primary_key {
         expr.push_str(".primaryKey()");
-    } else if field.not_null {
+    } else if field.not_null || field.primary_key {
         expr.push_str(".notNull()");
     }
     expr

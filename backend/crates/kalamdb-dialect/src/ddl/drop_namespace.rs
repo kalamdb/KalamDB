@@ -1,20 +1,23 @@
-//! DROP NAMESPACE statement parser
+//! DROP SCHEMA statement parser.
+//!
+//! `DROP SCHEMA` is the public form. `DROP NAMESPACE` still parses so older
+//! fixtures keep working.
 //!
 //! Parses SQL statements like:
-//! - DROP NAMESPACE app
-//! - DROP NAMESPACE IF EXISTS app
-//! - DROP NAMESPACE app CASCADE
-//! - DROP NAMESPACE IF EXISTS app CASCADE
+//! - DROP SCHEMA app
+//! - DROP SCHEMA IF EXISTS app
+//! - DROP SCHEMA app CASCADE
+//! - DROP SCHEMA IF EXISTS app CASCADE
 
-use kalamdb_commons::models::NamespaceId;
+use kalamdb_commons::models::SchemaId;
 
 use crate::ddl::{parsing, DdlResult};
 
-/// DROP NAMESPACE statement
+/// `DROP SCHEMA` or historical `DROP NAMESPACE`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DropNamespaceStatement {
+pub struct DropSchemaStatement {
     /// Namespace name to drop
-    pub name: NamespaceId,
+    pub name: SchemaId,
 
     /// If true, don't error if namespace doesn't exist
     pub if_exists: bool,
@@ -23,14 +26,14 @@ pub struct DropNamespaceStatement {
     pub cascade: bool,
 }
 
-impl DropNamespaceStatement {
-    /// Parse a DROP NAMESPACE statement from SQL
+impl DropSchemaStatement {
+    /// Parse `DROP SCHEMA` or historical `DROP NAMESPACE`.
     ///
     /// Supports syntax:
-    /// - DROP NAMESPACE name
-    /// - DROP NAMESPACE IF EXISTS name
-    /// - DROP NAMESPACE name CASCADE
-    /// - DROP NAMESPACE IF EXISTS name CASCADE
+    /// - DROP SCHEMA name
+    /// - DROP SCHEMA IF EXISTS name
+    /// - DROP SCHEMA name CASCADE
+    /// - DROP SCHEMA IF EXISTS name CASCADE
     pub fn parse(sql: &str) -> DdlResult<Self> {
         let trimmed = sql.trim().trim_end_matches(';');
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
@@ -45,17 +48,26 @@ impl DropNamespaceStatement {
             trimmed.to_string()
         };
 
-        let (name, if_exists) = parsing::parse_create_drop_statement(
-            &sql_without_cascade,
-            "DROP NAMESPACE",
-            "IF EXISTS",
-        )?;
+        let command = drop_schema_command(&sql_without_cascade);
+        let (name, if_exists) =
+            parsing::parse_create_drop_statement(&sql_without_cascade, command, "IF EXISTS")?;
 
         Ok(Self {
-            name: NamespaceId::new(name),
+            name: SchemaId::new(name),
             if_exists,
             cascade,
         })
+    }
+}
+
+fn drop_schema_command(sql: &str) -> &'static str {
+    let mut parts = sql.split_whitespace();
+    let first = parts.next().unwrap_or("");
+    let second = parts.next().unwrap_or("");
+    if first.eq_ignore_ascii_case("DROP") && second.eq_ignore_ascii_case("SCHEMA") {
+        "DROP SCHEMA"
+    } else {
+        "DROP NAMESPACE"
     }
 }
 
@@ -65,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_parse_drop_namespace() {
-        let stmt = DropNamespaceStatement::parse("DROP NAMESPACE app").unwrap();
+        let stmt = DropSchemaStatement::parse("DROP NAMESPACE app").unwrap();
         assert_eq!(stmt.name.as_str(), "app");
         assert!(!stmt.if_exists);
         assert!(!stmt.cascade);
@@ -73,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_parse_drop_namespace_if_exists() {
-        let stmt = DropNamespaceStatement::parse("DROP NAMESPACE IF EXISTS app").unwrap();
+        let stmt = DropSchemaStatement::parse("DROP NAMESPACE IF EXISTS app").unwrap();
         assert_eq!(stmt.name.as_str(), "app");
         assert!(stmt.if_exists);
         assert!(!stmt.cascade);
@@ -81,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_parse_drop_namespace_cascade() {
-        let stmt = DropNamespaceStatement::parse("DROP NAMESPACE app CASCADE").unwrap();
+        let stmt = DropSchemaStatement::parse("DROP NAMESPACE app CASCADE").unwrap();
         assert_eq!(stmt.name.as_str(), "app");
         assert!(!stmt.if_exists);
         assert!(stmt.cascade);
@@ -89,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_parse_drop_namespace_if_exists_cascade() {
-        let stmt = DropNamespaceStatement::parse("DROP NAMESPACE IF EXISTS app CASCADE").unwrap();
+        let stmt = DropSchemaStatement::parse("DROP NAMESPACE IF EXISTS app CASCADE").unwrap();
         assert_eq!(stmt.name.as_str(), "app");
         assert!(stmt.if_exists);
         assert!(stmt.cascade);
@@ -97,21 +109,44 @@ mod tests {
 
     #[test]
     fn test_parse_drop_namespace_cascade_lowercase() {
-        let stmt = DropNamespaceStatement::parse("drop namespace myapp cascade").unwrap();
+        let stmt = DropSchemaStatement::parse("drop namespace myapp cascade").unwrap();
         assert_eq!(stmt.name.as_str(), "myapp");
         assert!(stmt.cascade);
     }
 
     #[test]
     fn test_parse_drop_namespace_lowercase() {
-        let stmt = DropNamespaceStatement::parse("drop namespace myapp").unwrap();
+        let stmt = DropSchemaStatement::parse("drop namespace myapp").unwrap();
         assert_eq!(stmt.name.as_str(), "myapp");
         assert!(!stmt.cascade);
     }
 
     #[test]
     fn test_parse_drop_namespace_missing_name() {
-        let result = DropNamespaceStatement::parse("DROP NAMESPACE");
+        let result = DropSchemaStatement::parse("DROP NAMESPACE");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_drop_schema() {
+        let stmt = DropSchemaStatement::parse("DROP SCHEMA app").unwrap();
+        assert_eq!(stmt.name.as_str(), "app");
+        assert!(!stmt.if_exists);
+        assert!(!stmt.cascade);
+    }
+
+    #[test]
+    fn test_parse_drop_schema_if_exists_cascade() {
+        let stmt = DropSchemaStatement::parse("DROP SCHEMA IF EXISTS app CASCADE").unwrap();
+        assert_eq!(stmt.name.as_str(), "app");
+        assert!(stmt.if_exists);
+        assert!(stmt.cascade);
+    }
+
+    #[test]
+    fn test_parse_drop_schema_lowercase() {
+        let stmt = DropSchemaStatement::parse("drop schema myapp cascade").unwrap();
+        assert_eq!(stmt.name.as_str(), "myapp");
+        assert!(stmt.cascade);
     }
 }

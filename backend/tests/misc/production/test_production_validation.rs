@@ -67,7 +67,7 @@ async fn invalid_namespace_name_rejected() {
     ];
 
     for name in invalid_names {
-        let sql = format!("CREATE NAMESPACE {}", name);
+        let sql = format!("CREATE SCHEMA {}", name);
         let resp = server.execute_sql(&sql).await;
 
         // Should either fail with validation error or succeed if name is actually valid
@@ -91,9 +91,7 @@ async fn invalid_namespace_name_rejected() {
 async fn table_without_primary_key_rejected() {
     let server = TestServer::new_shared().await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_nopk", "root")
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_nopk", "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     // Try to create table without PRIMARY KEY
@@ -123,9 +121,7 @@ async fn table_without_primary_key_rejected() {
 async fn null_constraint_violation_detected() {
     let server = TestServer::new_shared().await;
 
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_null", "root")
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_null", "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = r#"
@@ -169,7 +165,7 @@ async fn flush_on_stream_table_rejected() {
     let server = TestServer::new_shared().await;
 
     let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_stream", "root")
+        .execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_stream", "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -205,7 +201,7 @@ async fn user_isolation_in_user_tables() {
     let ns = consolidated_helpers::unique_namespace("app_isolation");
 
     let resp = server
-        .execute_sql_as_user(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns), "root")
+        .execute_sql_as_user(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns), "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -260,7 +256,7 @@ async fn duplicate_primary_key_rejected() {
     let server = TestServer::new_shared().await;
     let ns = consolidated_helpers::unique_namespace("app_dupkey");
 
-    let resp = server.execute_sql_as_user(&format!("CREATE NAMESPACE {}", ns), "root").await;
+    let resp = server.execute_sql_as_user(&format!("CREATE SCHEMA {}", ns), "root").await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
     let create_table = format!(
@@ -338,7 +334,7 @@ async fn invalid_data_type_in_insert_rejected() {
     let server = TestServer::new_shared().await;
 
     let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_datatype", "root")
+        .execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_datatype", "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -377,7 +373,7 @@ async fn select_invalid_column_error_is_clear() {
     let server = TestServer::new_shared().await;
 
     let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE IF NOT EXISTS app_selcol", "root")
+        .execute_sql_as_user("CREATE SCHEMA IF NOT EXISTS app_selcol", "root")
         .await;
     assert_eq!(resp.status, ResponseStatus::Success);
 
@@ -424,9 +420,7 @@ async fn permission_denied_error_is_clear() {
     let user_id = server.create_user("regularuser", "Pass123!", Role::User).await;
 
     // Try to create namespace as regular user (requires DBA or System role)
-    let resp = server
-        .execute_sql_as_user("CREATE NAMESPACE restricted", user_id.as_str())
-        .await;
+    let resp = server.execute_sql_as_user("CREATE SCHEMA restricted", user_id.as_str()).await;
 
     // Should fail with permission error
     assert_eq!(resp.status, ResponseStatus::Error);

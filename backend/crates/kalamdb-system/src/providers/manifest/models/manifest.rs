@@ -407,15 +407,7 @@ impl SegmentMetadata {
     }
 }
 
-/// Similarity metric used by vector indexes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VectorMetric {
-    #[default]
-    Cosine,
-    L2,
-    Dot,
-}
+pub use kalamdb_commons::models::VectorMetric;
 
 /// Vector index engine used for a column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -632,7 +624,7 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use kalamdb_commons::{NamespaceId, TableName};
+    use kalamdb_commons::{SchemaId, TableName};
 
     use super::*;
 
@@ -640,7 +632,7 @@ mod tests {
     fn test_manifest_cache_entry_json_roundtrip() {
         // This test ensures ManifestCacheEntry can be serialized/deserialized
         // via serde for API/cache round-trips.
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
         // Add segment with column stats using StoredScalarValue
@@ -721,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_is_stale() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         // Use actual millisecond timestamps
         let base_time_ms = 1_700_000_000_000_i64; // Nov 2023
@@ -742,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_manifest_cache_entry_state_transitions() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         // Use actual millisecond timestamps
         let initial_time_ms = 1_700_000_000_000_i64; // Nov 2023
@@ -763,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_sync_state_syncing_transition() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::PendingWrite);
 
@@ -779,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_sync_state_syncing_to_error() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let manifest = Manifest::new(table_id, None);
         let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
@@ -828,7 +820,7 @@ mod tests {
     #[test]
     fn test_sync_state_full_flush_lifecycle() {
         // Simulate the complete flush lifecycle with the new Syncing state
-        let table_id = TableId::new(NamespaceId::new("myns"), TableName::new("mytable"));
+        let table_id = TableId::new(SchemaId::new("myns"), TableName::new("mytable"));
         let manifest = Manifest::new(table_id, None);
         let mut entry = ManifestCacheEntry::new(manifest, None, 1000, SyncState::InSync);
 
@@ -852,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_manifest_add_segment() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
         assert_eq!(manifest.segments.len(), 0);
@@ -874,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_manifest_update_sequence_number() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
         assert_eq!(manifest.last_sequence_number, 0);
@@ -889,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_manifest_tracks_batch_numbers() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
         assert_eq!(manifest.last_sequence_number, 0);
@@ -952,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_manifest_prevent_duplicate_segments() {
-        let table_id = TableId::new(NamespaceId::new("test"), TableName::new("table"));
+        let table_id = TableId::new(SchemaId::new("test"), TableName::new("table"));
         let mut manifest = Manifest::new(table_id, None);
 
         // Add first version of segment
@@ -1081,7 +1073,7 @@ mod tests {
 
     #[test]
     fn test_manifest_vector_index_roundtrip() {
-        let table_id = TableId::new(NamespaceId::new("vec_ns"), TableName::new("emb"));
+        let table_id = TableId::new(SchemaId::new("vec_ns"), TableName::new("emb"));
         let mut manifest = Manifest::new(table_id, Some(UserId::new("u1")));
 
         manifest.record_vector_snapshot(

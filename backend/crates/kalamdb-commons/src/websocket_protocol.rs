@@ -56,12 +56,11 @@ fn is_http_token(value: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SerializationType {
-    /// JSON text frames (default, backward-compatible).
+    /// JSON text frames. Explicit external representation, not the binary socket path.
     #[default]
     Json,
-    /// MessagePack binary frames.
-    #[serde(rename = "msgpack")]
-    MessagePack,
+    /// Current-epoch domain frames on binary WebSocket messages.
+    Domain,
 }
 
 /// Wire-format compression negotiated during authentication.
@@ -107,12 +106,12 @@ mod tests {
     }
 
     #[test]
-    fn test_serialization_type_msgpack_roundtrip() {
-        let ser = SerializationType::MessagePack;
+    fn test_serialization_type_domain_roundtrip() {
+        let ser = SerializationType::Domain;
         let json = serde_json::to_string(&ser).unwrap();
-        assert_eq!(json, "\"msgpack\"");
+        assert_eq!(json, "\"domain\"");
         let parsed: SerializationType = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, SerializationType::MessagePack);
+        assert_eq!(parsed, SerializationType::Domain);
     }
 
     #[test]
@@ -125,7 +124,7 @@ mod tests {
     #[test]
     fn test_protocol_options_roundtrip() {
         let opts = ProtocolOptions {
-            serialization: SerializationType::MessagePack,
+            serialization: SerializationType::Domain,
             compression:   CompressionType::None,
         };
         let json = serde_json::to_string(&opts).unwrap();

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 pub use kalamdb_system::SystemTable;
 use sqlparser::ast::Statement;
 
-use crate::{dialect::KalamDbDialect, parser::utils::parse_sql_statements};
+use crate::parser::KalamParser;
 
 /// SQL statement types supported for system tables
 #[derive(Debug, Clone)]
@@ -33,20 +33,16 @@ pub enum SystemStatement {
 }
 
 /// SQL parser for system tables
-pub struct SqlParser {
-    dialect: KalamDbDialect,
-}
+pub struct SqlParser;
 
 impl SqlParser {
     pub fn new() -> Self {
-        Self {
-            dialect: KalamDbDialect::default(),
-        }
+        Self
     }
 
     /// Parse a SQL statement
     pub fn parse(&self, sql: &str) -> Result<SystemStatement> {
-        let statements = parse_sql_statements(sql, &self.dialect)?;
+        let statements = KalamParser::parse(sql)?;
 
         if statements.is_empty() {
             return Err(anyhow!("No SQL statement found"));

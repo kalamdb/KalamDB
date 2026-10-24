@@ -229,12 +229,16 @@ export async function fetchStreamingTopicPartitionCursors(
   }));
 }
 
+/** Matches `limits.max_query_limit`. An unbounded scan is capped at `default_query_limit` (50). */
+const TOPIC_INVENTORY_LIMIT = 1000;
+
 export async function fetchStreamingTopics(): Promise<StreamingTopic[]> {
   const db = getDb();
   const rows = await db
     .select()
     .from(system_topics)
-    .orderBy(asc(system_topics.topic_id));
+    .orderBy(asc(system_topics.topic_id))
+    .limit(TOPIC_INVENTORY_LIMIT);
 
   return mapTopicRows(rows);
 }

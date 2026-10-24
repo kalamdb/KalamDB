@@ -62,14 +62,14 @@ impl Verdict {
 /// - mean_us <= acceptable_ceil →  Acceptable
 /// - mean_us >  acceptable_ceil →  Slow
 struct Threshold {
-    excellent_us: f64,
+    excellent_us:  f64,
     acceptable_us: f64,
 }
 
 impl Threshold {
     const fn new(excellent_ms: f64, acceptable_ms: f64) -> Self {
         Self {
-            excellent_us: excellent_ms * 1000.0,
+            excellent_us:  excellent_ms * 1000.0,
             acceptable_us: acceptable_ms * 1000.0,
         }
     }

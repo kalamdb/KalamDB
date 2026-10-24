@@ -63,10 +63,9 @@ fn smoke_cleanup_job_completes() {
     let full_table = format!("{}.{}", namespace, table);
 
     let _ = execute_sql_as_root_via_cli(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 
-    execute_sql_as_root_via_cli(&format!("CREATE NAMESPACE {}", namespace))
-        .expect("create namespace");
+    execute_sql_as_root_via_cli(&format!("CREATE SCHEMA {}", namespace)).expect("create namespace");
 
     execute_sql_as_root_via_cli(&format!(
         "CREATE TABLE {} (id INT PRIMARY KEY, value TEXT) WITH (TYPE = 'SHARED')",
@@ -98,5 +97,5 @@ fn smoke_cleanup_job_completes() {
         },
     }
 
-    let _ = execute_sql_as_root_via_cli(&format!("DROP NAMESPACE IF EXISTS {} CASCADE", namespace));
+    let _ = execute_sql_as_root_via_cli(&format!("DROP SCHEMA IF EXISTS {} CASCADE", namespace));
 }

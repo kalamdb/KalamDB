@@ -11,74 +11,38 @@
 //! UUIDv7 provides time-ordered UUIDs suitable for PRIMARY KEY columns
 //! while maintaining global uniqueness.
 
-use std::sync::Arc;
-
-use datafusion::{
-    arrow::array::{ArrayRef, StringArray},
-    error::{DataFusionError, Result as DataFusionResult},
-    logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility},
-};
-use kalamdb_commons::arrow_utils::{arrow_utf8, ArrowDataType};
 use uuid::Uuid;
 
-/// UUID_V7() scalar function implementation
-///
-/// Generates a 128-bit globally unique identifier following RFC 9562 UUIDv7 specification.
-/// The UUID includes a 48-bit timestamp for time-based ordering.
-///
-/// # Returns
-/// - STRING (Utf8) - A UUIDv7 in standard hyphenated format (8-4-4-4-12)
-///
-/// # Properties
-/// - VOLATILE: Generates a new UUID on each invocation
-/// - Time-ordered: UUIDs increase monotonically with time
-/// - RFC 9562 compliant: Follows UUIDv7 specification
-/// - Globally unique: Extremely low collision probability
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UuidV7Function;
+use super::scalar::{arity, scalar_udf, utf8_scalar, zero_arg_volatile};
+
+scalar_udf! {
+    /// UUID_V7() scalar function.
+    ///
+    /// Generates a 128-bit globally unique identifier following RFC 9562 UUIDv7.
+    /// The UUID includes a 48-bit timestamp for time-based ordering.
+    ///
+    /// # Returns
+    /// - STRING (Utf8) - A UUIDv7 in standard hyphenated format (8-4-4-4-12)
+    ///
+    /// # Properties
+    /// - VOLATILE: Generates a new UUID on each invocation
+    /// - Time-ordered: UUIDs increase monotonically with time
+    /// - RFC 9562 compliant: Follows UUIDv7 specification
+    /// - Globally unique: Extremely low collision probability
+    pub struct UuidV7Function;
+    name = "uuid_v7";
+    signature = zero_arg_volatile();
+    returns utf8;
+    invoke(self = this, args) {
+        arity(&args, |len| len == 0, "UUID_V7() takes no arguments")?;
+        Ok(utf8_scalar(&this.generate_uuid()))
+    }
+}
 
 impl UuidV7Function {
-    /// Create a new UUID_V7 function
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Generate a single UUIDv7
     fn generate_uuid(&self) -> String {
-        // Use the uuid crate's v7 implementation
-        let uuid = Uuid::now_v7();
-        uuid.to_string()
-    }
-}
-
-impl Default for UuidV7Function {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ScalarUDFImpl for UuidV7Function {
-    fn name(&self) -> &str {
-        "uuid_v7"
-    }
-
-    fn signature(&self) -> &Signature {
-        // Static signature with no arguments
-        static SIGNATURE: std::sync::OnceLock<Signature> = std::sync::OnceLock::new();
-        SIGNATURE.get_or_init(|| Signature::exact(vec![], Volatility::Volatile))
-    }
-
-    fn return_type(&self, _args: &[ArrowDataType]) -> DataFusionResult<ArrowDataType> {
-        Ok(arrow_utf8())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DataFusionResult<ColumnarValue> {
-        if !args.args.is_empty() {
-            return Err(DataFusionError::Plan("UUID_V7() takes no arguments".to_string()));
-        }
-        let uuid_str = self.generate_uuid();
-        let array = StringArray::from(vec![uuid_str.as_str()]);
-        Ok(ColumnarValue::Array(Arc::new(array) as ArrayRef))
+        Uuid::now_v7().to_string()
     }
 }
 
@@ -86,7 +50,8 @@ impl ScalarUDFImpl for UuidV7Function {
 mod tests {
     use std::collections::HashSet;
 
-    use datafusion::logical_expr::ScalarUDF;
+    use datafusion::logical_expr::{ScalarUDF, ScalarUDFImpl};
+    use kalamdb_commons::arrow_utils::ArrowDataType;
 
     use super::*;
 

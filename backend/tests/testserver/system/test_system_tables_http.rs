@@ -15,7 +15,7 @@ async fn test_system_tables_queryable_over_http() -> anyhow::Result<()> {
     let table_user = "ut";
     let table_shared = "st";
 
-    let resp = server.execute_sql(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns)).await?;
+    let resp = server.execute_sql(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns)).await?;
     anyhow::ensure!(resp.status == ResponseStatus::Success);
 
     let user = unique_table("sys_user");

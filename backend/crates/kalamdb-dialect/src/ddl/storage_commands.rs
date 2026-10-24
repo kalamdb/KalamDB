@@ -94,7 +94,7 @@ impl CreateStorageStatement {
                 return Err(format!(
                     "Invalid storage type '{}'. Must be 'filesystem', 's3', 'gcs', or 'azure'",
                     other
-                ))
+                ));
             },
         }
 

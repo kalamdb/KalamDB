@@ -55,7 +55,7 @@ fn smoke_security_disallowed_roles_cannot_impersonate_in_batch() {
     let dba_user = generate_unique_namespace("smoke_dba");
     let password = "smoke_pass_123";
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE {}", namespace))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA {}", namespace))
         .expect("Failed to create namespace");
 
     let create_table_sql = format!(
@@ -121,5 +121,5 @@ fn smoke_security_disallowed_roles_cannot_impersonate_in_batch() {
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", service_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP USER {}", dba_user));
     let _ = execute_sql_as_root_via_client(&format!("DROP TABLE IF EXISTS {}", full_table));
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE IF EXISTS {}", namespace));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA IF EXISTS {}", namespace));
 }

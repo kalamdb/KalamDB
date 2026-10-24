@@ -68,7 +68,7 @@ pub use row_codec::{
     empty_storage_schema, storage_schema_for_table, storage_schema_for_table_with_arrow,
     SharedRowCodec, UserRowCodec,
 };
-pub use scalar_index_sync::sync_scalar_indexes;
+pub use scalar_index_sync::{sync_scalar_indexes, sync_scalar_indexes_with_arrow};
 pub use shared_tables::{
     pk_index::{create_shared_table_pk_index, SharedTablePkIndex},
     shared_table_store::{
@@ -97,3 +97,4 @@ pub use utils::{
     BaseTableProvider, KalamTableProvider, SharedTableProvider, StreamTableProvider,
     TableProviderCore, UserTableProvider,
 };
+pub use versioned::DeferredMutation;

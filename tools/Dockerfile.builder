@@ -1,7 +1,7 @@
 # Multi-platform Rust builder for KalamDB
 # Supports cross-compilation to Linux, macOS, and Windows
 
-FROM rust:1.92-bookworm
+FROM rust:1.99.1-bookworm
 
 # Install cross-compilation dependencies
 RUN apt-get update && apt-get install -y \
@@ -32,7 +32,7 @@ RUN git clone https://github.com/tpoechtrager/osxcross.git && \
 
 ENV PATH="/opt/osxcross/target/bin:$PATH"
 ENV LD_LIBRARY_PATH="/opt/osxcross/target/lib:$LD_LIBRARY_PATH"
-ENV RUSTUP_TOOLCHAIN=1.92.0
+ENV RUSTUP_TOOLCHAIN=1.99.1
 ENV CARGO_ENCODED_RUSTFLAGS=
 
 # Add Rust targets

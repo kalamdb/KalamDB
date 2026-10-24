@@ -690,7 +690,7 @@ export function EditTableForm({
           {isReadOnly && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
               <strong>Read-only:</strong> {draft.namespace} is a KalamDB-managed
-              namespace. You can browse the schema but not modify it.
+              schema. You can browse it but not modify it.
             </div>
           )}
 
@@ -707,7 +707,7 @@ export function EditTableForm({
 
           <section className="space-y-4">
             <div className="flex items-baseline gap-2">
-              <h3 className={sectionTitleClassName}>Namespace</h3>
+              <h3 className={sectionTitleClassName}>Schema</h3>
               <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                 {draft.namespace}
               </code>

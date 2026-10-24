@@ -205,7 +205,7 @@ impl TypedStatementHandler<CreateTableStatement> for CreateTableHandler {
 mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use kalamdb_commons::{
-        models::{NamespaceId, UserId},
+        models::{SchemaId, UserId},
         schemas::TableType,
         Role,
     };
@@ -251,7 +251,7 @@ mod tests {
         ]));
 
         CreateTableStatement {
-            namespace_id: NamespaceId::default(),
+            namespace_id: SchemaId::default(),
             table_name: format!("test_table_{}", chrono::Utc::now().timestamp_millis()).into(),
             table_type,
             schema,
@@ -278,7 +278,7 @@ mod tests {
     async fn test_create_table_if_not_exists_existing_table_skips_audit() {
         let app_ctx = test_app_context_simple();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
@@ -371,7 +371,7 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),
@@ -405,7 +405,7 @@ mod tests {
         // Ensure default storage and namespace exist
         ensure_default_storage();
         let namespaces_provider = app_ctx.system_tables().namespaces();
-        let namespace_id = NamespaceId::default();
+        let namespace_id = SchemaId::default();
         if namespaces_provider.get_namespace(&namespace_id).unwrap().is_none() {
             let namespace = kalamdb_system::Namespace {
                 namespace_id: namespace_id.clone(),

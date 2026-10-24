@@ -1,0 +1,61 @@
+{
+  "epoch": 1,
+  "description": "Canonical positive, negative, and adversarial vectors for Gate A and Gate S",
+  "scalar_vectors": [
+    {
+      "name": "int64_min_max",
+      "sql_type": "BIGINT",
+      "valid": ["-9223372036854775808", "0", "9007199254740993", "9223372036854775807"],
+      "invalid": ["9223372036854775808", "-9223372036854775809", "1.5", "not-an-int"]
+    },
+    {
+      "name": "numeric_exact",
+      "sql_type": "NUMERIC(18, 4)",
+      "valid": ["0.0000", "-12345678901234.5678", "99999999999999.9999"],
+      "invalid": ["123456789012345.0000", "0.12345", "NaN", "Infinity"]
+    },
+    {
+      "name": "timestamptz_microsecond",
+      "sql_type": "TIMESTAMPTZ",
+      "valid": ["1970-01-01T00:00:00.000000Z", "2026-10-23T22:13:45.123456Z"],
+      "invalid": ["not-a-timestamp", "2026-13-45T00:00:00Z"]
+    },
+    {
+      "name": "null_vs_json_null_vs_omitted",
+      "sql_type": "JSONB",
+      "states": ["omitted", "sql_null", "json_null", "json_object"]
+    }
+  ],
+  "adversarial_frames": [
+    {
+      "id": "ADV-01-huge-list-len-tiny-body",
+      "description": "TAG_LIST (14) followed by u32::MAX (0xFFFFFFFF) with 0 remaining bytes; must fail before Vec::with_capacity",
+      "hex": "0effffffff",
+      "expected_error": "exceeds"
+    },
+    {
+      "id": "ADV-02-negative-embedding-dim",
+      "description": "TAG_EMBEDDING (12) followed by -1 (0xFFFFFFFF) dimension; must fail before allocation",
+      "hex": "0cffffffff",
+      "expected_error": "embedding dimension"
+    },
+    {
+      "id": "ADV-03-deep-nested-skip",
+      "description": "64 nested 1-element lists in a dropped ordinal; must fail recursion depth budget in skip_value",
+      "nesting_depth": 64,
+      "expected_error": "nesting depth"
+    },
+    {
+      "id": "ADV-04-zero-sized-null-flood",
+      "description": "List of 2,000,000 TAG_NULL elements; must fail element/work budget before completing",
+      "null_count": 2000000,
+      "expected_error": "budget"
+    },
+    {
+      "id": "ADV-05-corrupt-gzip-magic-no-fallback",
+      "description": "Bytes starting with gzip magic 0x1f 0x8b followed by invalid payload; must return error, never raw bytes",
+      "hex": "1f8b0800000000000003deadbeef",
+      "expected_error": "Decompress"
+    }
+  ]
+}

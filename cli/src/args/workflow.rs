@@ -230,6 +230,11 @@ pub struct SchemaGenerateArgs {
     /// Limit generation to specific language targets (typescript, dart/flutter)
     #[arg(long = "languages", value_delimiter = ',')]
     pub languages: Option<Vec<String>>,
+
+    /// Verify that generated schema artifacts on disk match the current contract without writing
+    /// files
+    #[arg(long = "check")]
+    pub check: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -259,7 +259,7 @@ impl VirtualView for ColumnsView {
                     comments.append_null();
                 }
 
-                data_types.append_value(col.data_type.to_string());
+                data_types.append_value(col.data_type().to_string());
 
                 // Format default value
                 match &col.default_value {

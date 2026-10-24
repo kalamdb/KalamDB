@@ -452,6 +452,19 @@ impl ManifestAccessPlanner {
                     _table_id,
                     current_field.name()
                 )));
+            } else if let Some(default_json) =
+                kalamdb_commons::conversions::read_kalam_missing_default(current_field.as_ref())
+            {
+                let scalar = kalamdb_commons::conversions::json_value_to_scalar(&default_json);
+                let coerced = kalamdb_commons::conversions::coerce_scalar_to_field(
+                    scalar,
+                    current_field.as_ref(),
+                )
+                .map_err(KalamDbError::InvalidOperation)?;
+                let default_array = coerced
+                    .to_array_of_size(batch.num_rows())
+                    .into_arrow_error_ctx("Failed to materialize missing column default array")?;
+                projected_columns.push(default_array);
             } else if current_field.is_nullable() {
                 use datafusion::arrow::array::{new_null_array, ArrayRef};
                 let null_array: ArrayRef =
@@ -603,7 +616,7 @@ mod tests {
             rows::StoredScalarValue,
             schemas::{ColumnDefault, ColumnDefinition, TableDefinition},
         },
-        NamespaceId, StorageId, TableName,
+        SchemaId, StorageId, TableName,
     };
     use kalamdb_store::{test_utils::InMemoryBackend, StorageBackend};
     use kalamdb_system::{
@@ -707,7 +720,7 @@ mod tests {
 
     fn create_scan_test_table_def() -> TableDefinition {
         TableDefinition {
-            namespace_id:   NamespaceId::new("test"),
+            namespace_id:   SchemaId::new("test"),
             table_name:     TableName::new("events"),
             table_type:     TableType::Shared,
             table_options:  kalamdb_commons::schemas::TableOptions::Shared(Default::default()),
@@ -739,6 +752,7 @@ mod tests {
             schema_version: 1,
             table_comment:  None,
             scalar_indexes: Vec::new(),
+            foreign_keys:   Vec::new(),
             created_at:     chrono::Utc::now(),
             updated_at:     chrono::Utc::now(),
         }

@@ -28,6 +28,7 @@ pub fn diff_project_schema_files_for_draft(
         after_path,
         &DiffOptions {
             allow_destructive: true,
+            ..DiffOptions::default()
         },
     )
     .map_err(map_schema_diff_error)

@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, ffi::CStr, str::FromStr};
 use kalam_pg_common::KalamPgError;
 use kalam_pg_fdw::TableOptions;
 use kalamdb_commons::{
-    models::{NamespaceId, TableName},
+    models::{SchemaId, TableName},
     TableId, TableType,
 };
 use pgrx::pg_sys;
@@ -47,7 +47,7 @@ pub fn resolve_table_options_for_relation(
         .ok_or_else(|| KalamPgError::Validation("relation table name is required".to_string()))?;
 
     Ok(TableOptions {
-        table_id: TableId::new(NamespaceId::new(namespace), TableName::new(table_name)),
+        table_id: TableId::new(SchemaId::new(namespace), TableName::new(table_name)),
         table_type,
     })
 }

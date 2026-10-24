@@ -90,7 +90,7 @@ describe('kalamDriver', () => {
   });
 
   it('handles INSERT with server-side DEFAULT (SNOWFLAKE_ID)', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.items');
     await client.query(`
       CREATE TABLE test_orm_insert.items (
@@ -112,12 +112,12 @@ describe('kalamDriver', () => {
     assert.ok(rows[0].id > 0, 'auto-generated id should be positive');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.items');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
 
   it('handles INSERT with multiple server-side DEFAULTs', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_defaults');
     await client.query(`
       CREATE TABLE test_orm_insert.multi_defaults (
@@ -142,11 +142,11 @@ describe('kalamDriver', () => {
     assert.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(rows[0].created_at), 'created_at should be ISO 8601 format');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_defaults');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('maps TIMESTAMP columns to Date when the schema uses date mode', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.date_defaults');
     await client.query(`
       CREATE TABLE test_orm_insert.date_defaults (
@@ -170,11 +170,11 @@ describe('kalamDriver', () => {
     assert.ok(!Number.isNaN(rows[0].created_at.getTime()));
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.date_defaults');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('INSERT with explicit id still works alongside DEFAULT columns', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.explicit_id');
     await client.query(`
       CREATE TABLE test_orm_insert.explicit_id (
@@ -195,11 +195,11 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].name, 'explicit');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.explicit_id');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles multi-row INSERT with server-side DEFAULT', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_row');
     await client.query(`
       CREATE TABLE test_orm_insert.multi_row (
@@ -222,11 +222,11 @@ describe('kalamDriver', () => {
     assert.equal(ids.size, 3, 'each row should have a unique auto-generated id');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.multi_row');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles UPDATE via Drizzle', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.updatable');
     await client.query(`
       CREATE TABLE test_orm_insert.updatable (
@@ -251,11 +251,11 @@ describe('kalamDriver', () => {
     assert.equal(after[0].status, 'published');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.updatable');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('handles DELETE via Drizzle', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.deletable');
     await client.query(`
       CREATE TABLE test_orm_insert.deletable (
@@ -279,11 +279,11 @@ describe('kalamDriver', () => {
     assert.equal(after[0].name, 'keep');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.deletable');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('preserves SNOWFLAKE_ID precision when using text type', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.precision');
     await client.query(`
       CREATE TABLE test_orm_insert.precision (
@@ -308,7 +308,7 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].id, rawId, 'id should match raw query exactly (no precision loss)');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.precision');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 
   it('throws when querying a non-existent table', async () => {
@@ -322,7 +322,7 @@ describe('kalamDriver', () => {
   });
 
   it('handles FILE column with null value', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm');
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_orm.nullable_files (
         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -341,11 +341,12 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].doc, null);
 
     await client.query('DROP TABLE IF EXISTS test_orm.nullable_files');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('handles FILE column type with real data', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm');
+    await client.query('DROP TABLE IF EXISTS test_orm.docs');
     await client.query(`
       CREATE TABLE IF NOT EXISTS test_orm.docs (
         id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(),
@@ -354,11 +355,11 @@ describe('kalamDriver', () => {
       )
     `);
 
-    const fakeFile = JSON.stringify({
-      id: '99999', sub: 'f0001', name: 'report.pdf',
-      size: 8192, mime: 'application/pdf', sha256: 'deadbeef',
-    });
-    await client.query(`INSERT INTO test_orm.docs (title, attachment) VALUES ('quarterly', '${fakeFile}')`);
+    const pdfBytes = new Uint8Array(8192);
+    await client.queryWithFiles(
+      "INSERT INTO test_orm.docs (title, attachment) VALUES ('quarterly', FILE('doc'))",
+      { doc: new File([pdfBytes], 'report.pdf', { type: 'application/pdf' }) },
+    );
 
     const test_docs = kTable('test_orm.docs', {
       id: bigint('id', { mode: 'number' }),
@@ -373,14 +374,14 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].attachment.name, 'report.pdf');
     assert.equal(rows[0].attachment.size, 8192);
     assert.equal(rows[0].attachment.mime, 'application/pdf');
-    assert.ok(rows[0].attachment.getDownloadUrl('http://localhost:8088', 'test_orm', 'docs').includes('/f0001/99999'));
+    assert.ok(rows[0].attachment.getDownloadUrl('http://localhost:8088', 'test_orm', 'docs').includes(`/${rows[0].attachment.sub}/${rows[0].attachment.id}`));
 
     await client.query('DROP TABLE IF EXISTS test_orm.docs');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('uploads FILE bytes through db.insert with kalamFile()', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm');
     await client.query('DROP TABLE IF EXISTS test_orm.uploads');
     await client.query(`
       CREATE TABLE test_orm.uploads (
@@ -409,11 +410,11 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].attachment.name, 'driver-upload.txt');
 
     await client.query('DROP TABLE IF EXISTS test_orm.uploads');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm');
+    await client.query('DROP SCHEMA IF EXISTS test_orm');
   });
 
   it('executes Drizzle builders via executeAsUser', async () => {
-    await client.query('CREATE NAMESPACE IF NOT EXISTS test_orm_insert');
+    await client.query('CREATE SCHEMA IF NOT EXISTS test_orm_insert');
     await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');
     await client.query(`
       CREATE TABLE test_orm_insert.as_user (
@@ -433,6 +434,6 @@ describe('kalamDriver', () => {
     assert.equal(rows[0].name, 'executed-as-user');
 
     await client.query('DROP TABLE IF EXISTS test_orm_insert.as_user');
-    await client.query('DROP NAMESPACE IF EXISTS test_orm_insert');
+    await client.query('DROP SCHEMA IF EXISTS test_orm_insert');
   });
 });

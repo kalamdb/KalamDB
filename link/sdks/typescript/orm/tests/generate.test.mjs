@@ -12,7 +12,7 @@ before(async () => {
   client = createTestClient();
   await client.initialize();
 
-  await client.query('CREATE NAMESPACE IF NOT EXISTS test_gen');
+  await client.query('CREATE SCHEMA IF NOT EXISTS test_gen');
   await client.query('CREATE TABLE IF NOT EXISTS test_gen.uploads (id BIGINT PRIMARY KEY, doc FILE)');
   await client.query('CREATE TABLE IF NOT EXISTS test_gen.with_defaults (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), name TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW())');
   await client.query("CREATE TABLE IF NOT EXISTS test_gen.with_literal_default (id BIGINT PRIMARY KEY DEFAULT SNOWFLAKE_ID(), status TEXT DEFAULT 'pending' NOT NULL)");
@@ -24,7 +24,7 @@ after(async () => {
   await client.query('DROP TABLE IF EXISTS test_gen.uploads');
   await client.query('DROP TABLE IF EXISTS test_gen.with_defaults');
   await client.query('DROP TABLE IF EXISTS test_gen.with_literal_default');
-  await client.query('DROP NAMESPACE IF EXISTS test_gen');
+  await client.query('DROP SCHEMA IF EXISTS test_gen');
   await client?.disconnect();
 });
 

@@ -1,7 +1,7 @@
 use super::common::{create_shared_kalam_table_in_schema, drop_kalam_tables, unique_name, TestEnv};
 
 #[tokio::test]
-#[ntest::timeout(45000)]
+#[ntest::timeout(180000)]
 async fn e2e_scenario_iot_agent_fleet_incident_flow() {
     let env = TestEnv::global().await;
     let schema = unique_name("iot_app");

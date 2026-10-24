@@ -19,3 +19,8 @@ test('createRawSqlLiveDescriptor rejects unsupported raw SQL shapes', () => {
     LiveQueryDescriptorError,
   );
 });
+
+test('preserves literal whitespace and multiline filters', () => {
+  const query = "SELECT * FROM chat.messages\nWHERE body = 'a  b\nc'";
+  assert.ok(normalizeLiveSql(query).subscriptionSql.includes("'a  b\nc'"));
+});

@@ -20,6 +20,11 @@ impl RoutineGrantId {
         Self(format!("{}:{}", routine_id.as_str(), grantee.catalog_key()))
     }
 
+    /// RocksDB prefix scan key `{routine_id}:`.
+    pub fn scan_prefix(routine_id: &RoutineId) -> Self {
+        Self(format!("{}:", routine_id.as_str()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -73,7 +78,7 @@ mod tests {
     #[test]
     fn routine_grant_id_round_trips_role_grantee() {
         let id = RoutineGrantId::new(
-            &RoutineId::from_parts(Some(&crate::models::NamespaceId::new("api")), "create_order"),
+            &RoutineId::from_parts(Some(&crate::models::SchemaId::new("api")), "create_order"),
             &RoutineGrantee::Role("moderator".to_string()),
         );
         assert_eq!(id.as_str(), "api.create_order:role=moderator");

@@ -98,7 +98,7 @@ fn smoke_subscription_multi_reconnect_parallel() {
     let full_a = format!("{}.{}", ns, tbl_a);
     let full_b = format!("{}.{}", ns, tbl_b);
 
-    execute_sql_as_root_via_client(&format!("CREATE NAMESPACE IF NOT EXISTS {}", ns))
+    execute_sql_as_root_via_client(&format!("CREATE SCHEMA IF NOT EXISTS {}", ns))
         .expect("create namespace");
     execute_sql_as_root_via_client(&format!(
         "CREATE TABLE IF NOT EXISTS {} (id INT PRIMARY KEY, payload TEXT) WITH (TYPE='USER')",
@@ -216,5 +216,5 @@ fn smoke_subscription_multi_reconnect_parallel() {
         );
     });
 
-    let _ = execute_sql_as_root_via_client(&format!("DROP NAMESPACE {} CASCADE", ns));
+    let _ = execute_sql_as_root_via_client(&format!("DROP SCHEMA {} CASCADE", ns));
 }
