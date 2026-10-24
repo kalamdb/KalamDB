@@ -2,9 +2,17 @@
 
 **Feature directory:** `specs/038-unified-sdk-contracts`  
 **Created:** 2026-10-18  
-**Revised:** 2026-10-22 - research-backed fresh-start release, application readiness and database stability  
+**Revised:** 2026-10-24 - implementation audit and acceptance reconciliation  
 **Branch:** `feat/pg-dialect`, PR #402  
-**Status:** Completed (2026-10-24). All requirements, checklists, and tasks (`T001`..`T121`) are closed.
+**Status:** In progress. Blanket completion is withdrawn after source review at `81e5fb15dc600d268581c1b22ea25b74e25b77f1`. See [implementation audit](implementation-audit-2026-10-24.md).
+
+## Implementation status and acceptance
+
+Useful implementation exists: the KDOM domain codec, optional backend serialization dependencies, a direct binary HTTP function branch, richer catalog/query metadata, parsing budgets and native-handle remediation. These foundations must be reused, not replaced by another codec or executor.
+
+Actual WebSocket server/native Link/WASM paths still use MessagePack. Generated TS routines retain an optional invokeRoutine hook with SQL fallback, and generated Dart routines still call SQL. Owned generic/Raft values still use FlexBuffers/MessagePack. The codec comparison used handwritten Postcard/Prost-style helpers, not the actual named libraries under equivalent acceptance conditions. These facts prevent unification and release gates from being closed.
+
+Task checkboxes record whole-task acceptance, not the presence of an enum/helper or an assertion in a report. The audit distinguishes confirmed partial implementation from acceptance evidence not established; the latter does not imply code is absent. Twelve bounded historical/source-supported records remain checked, 109 task acceptances are reopened, including optional P2 T059/T092. Every reclosure needs a pinned implementation, actual production callers, focused tests, platform/configuration, raw evidence and limitations. Existing tests and valid work are retained. No runtime tests were executed by this documentation correction.
 
 ## Decision and precedence
 
@@ -22,7 +30,7 @@ Generate one checked application contract from the SQL catalog for TS and Dart, 
 
 Priority order: **P0 correctness/security/durability; P1 lower CPU, allocations and retained memory with higher measured throughput and less application boilerplate; P2 selective zero-copy.** Safe owned values and deliberate copies are acceptable. Fix existing native handle leaks/lifetime errors at P0; do not make new unsafe views a prerequisite.
 
-The architecture is selected, but no library is certified fastest by external benchmarks. Gate D compares the hardened Kalam schema-directed candidate against Postcard and Prost using identical SQL semantics and validation. Only one wins production use. Alternatives remain isolated benchmarks, not negotiated production serializers. [Research](research.md) explains the sources; [performance contract](contracts/serialization-performance.md) defines measurable selection and release gates.
+The architecture is selected, but no library is certified fastest by external benchmarks. Gate D compares the hardened Kalam schema-directed candidate against Postcard and Prost using identical SQL semantics and validation. Only one wins production use. Alternatives remain isolated benchmarks, not negotiated production serializers. [Research](research.md) explains the sources; [performance contract](contracts/serialization-performance.md) defines measurable selection and release gates. KDOM is the existing candidate, not a measured universal winner; real pinned library comparisons and integrated CPU/memory/throughput evidence remain required.
 
 ## User stories and acceptance
 
@@ -162,4 +170,4 @@ Harden current code (S) -> lean shared core plus measured codec decision (C0/D) 
 
 No arbitrary client workflow execution, new distributed transaction coordinator, TypeScript persistent sync package, general local relational engine or storage-engine replacement is added. Research from Kafka, TigerBeetle, Aeron/SBE, RocksDB, DuckDB and gRPC supplies scoped techniques, not a mandate to import their entire stacks. App/platform research adds ergonomic and testing patterns from Convex, Supabase, Firebase, Neon, SQLite, FoundationDB and SQLancer; no feature or superiority claim is inferred without corresponding evidence.
 
-Related contracts: [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance and security](contracts/serialization-performance.md), [data model](data-model.md), [plan](plan.md), [tasks](tasks.md), [quickstart](quickstart.md), [research](research.md), [app readiness](app-readiness.md), [app development](contracts/application-development.md), [stability tests](contracts/database-stability.md), [app/platform research](research-app-platforms.md), [application tasks](tasks-app-stability.md).
+Related contracts: [API](contracts/public-api.md), [protocol](contracts/protocol.md), [performance and security](contracts/serialization-performance.md), [data model](data-model.md), [plan](plan.md), [tasks](tasks.md), [quickstart](quickstart.md), [research](research.md), [app readiness](app-readiness.md), [app development](contracts/application-development.md), [stability tests](contracts/database-stability.md), [app/platform research](research-app-platforms.md), [application tasks](tasks-app-stability.md), [implementation audit](implementation-audit-2026-10-24.md).
