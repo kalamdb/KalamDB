@@ -155,3 +155,4 @@ rust-toolchain.toml
 /cli/kalam-cli-e2e/logs
 /cli/kalam-cli-e2e/logs
 /cli/kalam-cli-e2e/logs
+/scripts/__pycache__
