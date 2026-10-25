@@ -36,12 +36,23 @@ fn raise_fd_limit() {
 }
 
 fn main() -> Result<()> {
-    kalamdb_observability::apply_process_memory_policy();
-
-    #[cfg(unix)]
-    raise_fd_limit();
-
-    kalamdb_server::process::run_process(std::env::args())
+    // Linux CI's main thread is smaller than the startup future. Run the process on an
+    // explicit stack so config load and the first runtime build do not overflow.
+    let args: Vec<String> = std::env::args().collect();
+    let handle = std::thread::Builder::new()
+        .name("kalamdb-main".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            kalamdb_observability::apply_process_memory_policy();
+            #[cfg(unix)]
+            raise_fd_limit();
+            kalamdb_server::process::run_process(args)
+        })
+        .expect("failed to start the server thread");
+    match handle.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 #[cfg(test)]
