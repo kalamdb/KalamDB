@@ -59,6 +59,7 @@ where
     let worker_threads = resolve_tokio_worker_threads(&config);
     let max_blocking_threads =
         effective_max_blocking_threads(config.performance.worker_max_blocking_threads);
+    eprintln!("startup: building tokio runtime");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("kalamdb-tokio")
         .worker_threads(worker_threads)
@@ -66,6 +67,7 @@ where
         .enable_all()
         .build()
         .context("failed to build Tokio runtime")?;
+    eprintln!("startup: tokio runtime ready");
 
     let result = runtime.block_on(start_server(config, worker_threads, max_blocking_threads));
     // A timed-out blocking storage operation cannot be cancelled by Tokio. Do not let such an
@@ -134,7 +136,9 @@ fn load_server_config(config_path: &Path) -> Result<ServerConfig> {
             .display()
     );
     config.apply_env_overrides().context("failed to apply environment overrides")?;
+    eprintln!("startup: environment overrides applied");
     config.finalize().context("invalid configuration after overrides")?;
+    eprintln!("startup: configuration finalized");
 
     if config.should_warn_on_non_local_http_wildcard_cors() {
         eprintln!(
@@ -144,6 +148,7 @@ fn load_server_config(config_path: &Path) -> Result<ServerConfig> {
     }
 
     validate_startup_addresses(&config)?;
+    eprintln!("startup: bind addresses checked");
     Ok(config)
 }
 
@@ -273,8 +278,10 @@ async fn start_server(
     worker_threads: usize,
     max_blocking_threads: usize,
 ) -> Result<()> {
+    eprintln!("startup: server task entered");
     let main_start = std::time::Instant::now();
     configure_auth_runtime(&config)?;
+    eprintln!("startup: auth runtime configured");
     validate_jwt_secret(&config.server.host, &config.auth.jwt_secret)?;
 
     let log_extension = if config.logging.format.eq_ignore_ascii_case("json") {
@@ -292,6 +299,7 @@ async fn start_server(
         &config.logging.otlp,
     )
     .with_context(|| format!("failed to initialize logging at '{server_log_path}'"))?;
+    eprintln!("startup: logging initialized");
     let _telemetry = TelemetryGuard;
 
     initialize_activity_now();
@@ -301,7 +309,9 @@ async fn start_server(
     );
     info!("KalamDB Server v{:<10} | Build: {}", SERVER_VERSION, BUILD_DATE);
 
+    eprintln!("startup: bootstrapping application");
     let (components, app_context) = bootstrap(&config).await?;
+    eprintln!("startup: application ready");
     run(&config, components, app_context, main_start).await
 }
 
