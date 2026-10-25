@@ -30,6 +30,7 @@ tempfile = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
 sysinfo = { workspace = true }
+libc = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 async-trait = { workspace = true }
 

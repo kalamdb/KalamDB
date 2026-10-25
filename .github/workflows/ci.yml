@@ -14,7 +14,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: "1.99.1"
   WASM_PACK_VERSION: "0.15.0"
-  CARGO_ENCODED_RUSTFLAGS: ""
+  CARGO_ENCODED_RUSTFLAGS: "-Clink-arg=-Wl,--export-dynamic"
   CARGO_INCREMENTAL: "0"
   # The runner disk is 145G. Unpacked split debuginfo grew `target/` past 100G
   # and the linker then SIGBUS'd. CI keeps no debuginfo and does not split it.
@@ -194,6 +194,22 @@ jobs:
         with:
           shared-key: ci-test-suite
 
+      # Cargo does not rebuild librocksdb-sys when only CXX changes if an older
+      # fingerprint never listed that variable. Drop the cached objects so the
+      # wrapper below compiles RocksDB at -O3.
+      - name: Drop cached RocksDB objects
+        run: |
+          set -euo pipefail
+          rm -rf \
+            target/debug/build/librocksdb-sys-* \
+            target/debug/.fingerprint/librocksdb-sys-* \
+            target/debug/.fingerprint/rocksdb-* \
+            target/debug/deps/liblibrocksdb_sys-* \
+            target/debug/deps/librocksdb-* \
+            target/debug/incremental/librocksdb_sys-* \
+            target/debug/incremental/rocksdb-*
+          echo "dropped cached rocksdb artifacts"
+
       - name: Repair stale rusty_v8 cache
         shell: bash
         run: bash scripts/repair-rusty-v8-cache.sh
@@ -219,6 +235,9 @@ jobs:
           wasm-pack --version
 
       - name: Build unpublished TypeScript SDKs for CLI template e2e
+        env:
+          # Host-only. wasm-pack rejects --export-dynamic.
+          CARGO_ENCODED_RUSTFLAGS: ""
         run: |
           set -euo pipefail
           for pkg in client orm consumer react; do

@@ -5689,6 +5689,7 @@ dependencies = [
  "kalamdb-serialization",
  "kalamdb-sharding",
  "kalamdb-system",
+ "libc",
  "log",
  "rocksdb",
  "serde",

@@ -5,6 +5,9 @@
 
 use std::{path::Path, sync::Arc};
 
+#[cfg(target_os = "linux")]
+use libc::{sigaction, SA_ONSTACK, SA_SIGINFO, SIGSEGV};
+
 use anyhow::Result;
 use kalamdb_configs::RocksDbSettings;
 use rocksdb::{
@@ -54,6 +57,65 @@ fn log_open_thread_stack() {
 #[cfg(not(target_os = "linux"))]
 fn log_open_thread_stack() {}
 
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    fn backtrace(buffer: *mut *mut libc::c_void, size: libc::c_int) -> libc::c_int;
+    fn backtrace_symbols_fd(buffer: *const *mut libc::c_void, size: libc::c_int, fd: libc::c_int);
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" fn open_segfault_trace(
+    sig: libc::c_int,
+    _info: *mut libc::siginfo_t,
+    _context: *mut libc::c_void,
+) {
+    let mut frames = [std::ptr::null_mut::<libc::c_void>(); 48];
+    // SAFETY: `frames` is a valid buffer and `backtrace` only writes pointers into it.
+    // This runs on the alternate signal stack after DB::Open faults.
+    let count = unsafe { backtrace(frames.as_mut_ptr(), frames.len() as libc::c_int) };
+    let banner = b"startup: rocksdb SIGSEGV backtrace follows\n";
+    unsafe {
+        libc::write(libc::STDERR_FILENO, banner.as_ptr().cast(), banner.len());
+        backtrace_symbols_fd(frames.as_ptr(), count, libc::STDERR_FILENO);
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
+/// Record C++ frames if `DB::Open` faults, then put the previous handler back.
+#[cfg(target_os = "linux")]
+fn install_open_segfault_trace() -> libc::sigaction {
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = open_segfault_trace as libc::sighandler_t;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    // SAFETY: `action.sa_mask` is a valid sigset_t from the zeroed struct.
+    unsafe {
+        libc::sigemptyset(&mut action.sa_mask);
+    }
+    let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+    // SAFETY: `action` and `previous` are valid sigaction values. The handler
+    // only runs if this thread faults, and it restores SIG_DFL before re-raising.
+    let rc = unsafe { sigaction(SIGSEGV, &action, &mut previous) };
+    if rc != 0 {
+        eprintln!("startup: rocksdb sigaction failed: {rc}");
+    }
+    previous
+}
+
+#[cfg(target_os = "linux")]
+fn restore_open_segfault_trace(previous: libc::sigaction) {
+    // SAFETY: `previous` is the handler installed before `DB::Open`.
+    unsafe {
+        sigaction(SIGSEGV, &previous, std::ptr::null_mut::<libc::sigaction>());
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_open_segfault_trace() {}
+
+#[cfg(not(target_os = "linux"))]
+fn restore_open_segfault_trace(_previous: ()) {}
+
 fn spawn_rocksdb_open(
     stack_size: usize,
     db_path: String,
@@ -67,7 +129,10 @@ fn spawn_rocksdb_open(
         .spawn(move || {
             eprintln!("startup: rocksdb open thread entered (stack request {stack_size} bytes)");
             log_open_thread_stack();
-            RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here()
+            let previous_segfault_handler = install_open_segfault_trace();
+            let opened = RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here();
+            restore_open_segfault_trace(previous_segfault_handler);
+            opened
         })
 }
 
