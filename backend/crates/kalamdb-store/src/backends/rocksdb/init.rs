@@ -19,6 +19,58 @@ use super::{
     restore::apply_pending_rocksdb_restore,
 };
 
+/// Print the mapping that contains the open thread's stack pointer.
+///
+/// `pthread_attr_setstacksize` can succeed while glibc still installs the
+/// default 8MB stack. The map size is the stack DB::Open actually gets.
+#[cfg(target_os = "linux")]
+fn log_open_thread_stack() {
+    let here = 0u8;
+    let sp = &here as *const u8 as usize;
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+        eprintln!("startup: rocksdb stack map unavailable");
+        return;
+    };
+    for line in maps.lines() {
+        let Some((range, _)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some((start_hex, end_hex)) = range.split_once('-') else {
+            continue;
+        };
+        let (Ok(start), Ok(end)) =
+            (usize::from_str_radix(start_hex, 16), usize::from_str_radix(end_hex, 16))
+        else {
+            continue;
+        };
+        if (start..end).contains(&sp) {
+            eprintln!("startup: rocksdb stack map {line} ({} bytes)", end.saturating_sub(start));
+            return;
+        }
+    }
+    eprintln!("startup: rocksdb stack map not found for {sp:#x}");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn log_open_thread_stack() {}
+
+fn spawn_rocksdb_open(
+    stack_size: usize,
+    db_path: String,
+    settings: RocksDbSettings,
+) -> std::io::Result<
+    std::thread::JoinHandle<Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)>>,
+> {
+    std::thread::Builder::new()
+        .name("kalamdb-rocksdb-open".to_string())
+        .stack_size(stack_size)
+        .spawn(move || {
+            eprintln!("startup: rocksdb open thread entered (stack request {stack_size} bytes)");
+            log_open_thread_stack();
+            RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here()
+        })
+}
+
 /// RocksDB initializer for creating/opening a database with fixed physical CFs.
 pub struct RocksDbInit {
     db_path: String,
@@ -68,15 +120,15 @@ impl RocksDbInit {
         &self,
     ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
         // DB::Open on x86_64 uses more stack than the Linux main thread or the
-        // 32MB process thread. Give the open its own stack.
+        // 32MB process thread. The 128MB thread still hit its guard page on
+        // GitHub's glibc, so the open gets a 512MB stack and records the
+        // mapping actually installed.
         let db_path = self.db_path.clone();
         let settings = self.settings.clone();
-        let handle = std::thread::Builder::new()
-            .name("kalamdb-rocksdb-open".to_string())
-            .stack_size(128 * 1024 * 1024)
-            .spawn(move || {
-                eprintln!("startup: rocksdb open thread entered");
-                RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here()
+        let handle = spawn_rocksdb_open(512 * 1024 * 1024, db_path.clone(), settings.clone())
+            .or_else(|error| {
+                eprintln!("startup: rocksdb 512MB open thread failed: {error}");
+                spawn_rocksdb_open(128 * 1024 * 1024, db_path, settings)
             })
             .map_err(|error| anyhow::anyhow!("failed to start the rocksdb open thread: {error}"))?;
         match handle.join() {
@@ -118,6 +170,7 @@ impl RocksDbInit {
         let write_buffer_manager =
             install_write_buffer_manager(db_opts, &self.settings, cf_names.len());
 
+        eprintln!("startup: rocksdb building column family options");
         let cf_descriptors: Vec<_> = cf_names
             .iter()
             .map(|name| {
@@ -128,7 +181,9 @@ impl RocksDbInit {
             })
             .collect();
 
+        eprintln!("startup: rocksdb calling DB::open");
         let db = DB::open_cf_descriptors(&db_opts, path, cf_descriptors)?;
+        eprintln!("startup: rocksdb DB::open returned");
         let db = Arc::new(db);
 
         if self.settings.compact_on_startup {
