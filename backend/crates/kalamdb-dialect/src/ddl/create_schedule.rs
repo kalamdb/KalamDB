@@ -1,6 +1,7 @@
 //! KalamDB schedule extension, tokenized with PostgreSQL quoting and comments.
 use std::collections::HashSet;
 
+use kalamdb_commons::helpers::schedule_timing::next_schedule_run;
 use kalamdb_commons::models::{RoutineId, ScheduleId, SchemaId};
 use sqlparser::tokenizer::Token;
 
@@ -73,12 +74,7 @@ impl CreateScheduleStatement {
             p.expect(Token::RParen)?;
         }
         p.end()?;
-        kalamdb_system::providers::catalog::schedule_timing::next_schedule_run(
-            cron.as_deref(),
-            interval_ms,
-            &timezone,
-            0,
-        )?;
+        next_schedule_run(cron.as_deref(), interval_ms, &timezone, 0)?;
         Ok(Self {
             schedule_id,
             namespace_id,

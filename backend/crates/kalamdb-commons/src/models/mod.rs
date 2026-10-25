@@ -56,6 +56,8 @@ mod routine_security;
 mod routine_volatility;
 pub mod row_level_security;
 mod session_origin;
+mod storage_mode;
+mod storage_type;
 mod topic_op;
 mod transaction;
 mod vector_metric;
@@ -104,6 +106,8 @@ pub use row_level_security::{
 pub use rows::{KTableRow, SharedTableRow, StreamTableRow, SystemTableRow, UserTableRow};
 pub use schemas::{FieldFlag, FieldFlags, SchemaField, TableAccess, TableName};
 pub use session_origin::SessionOrigin;
+pub use storage_mode::StorageMode;
+pub use storage_type::StorageType;
 pub use topic_op::TopicOp;
 pub use transaction::{OperationKind, TransactionOrigin, TransactionState};
 pub use vector_metric::VectorMetric;

@@ -3,7 +3,7 @@
 //! Parses SQL statements targeting system tables using sqlparser-rs.
 
 use anyhow::{anyhow, Result};
-pub use kalamdb_system::SystemTable;
+pub use kalamdb_commons::SystemTable;
 use sqlparser::ast::Statement;
 
 use crate::parser::KalamParser;

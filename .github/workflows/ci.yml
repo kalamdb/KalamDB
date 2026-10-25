@@ -157,6 +157,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      # GitHub-hosted runners mount /tmp as an ~8G tmpfs. Workspace tests open
+      # a RocksDB database per case; once that tmpfs fills, DB::Open returns
+      # EDQUOT ("Disk quota exceeded") and the rest of the suite fails.
+      - name: Keep temporary files on the root disk
+        run: |
+          set -euo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.ci-tmp"
+          echo "TMPDIR=${GITHUB_WORKSPACE}/.ci-tmp" >> "$GITHUB_ENV"
+
       - name: Free disk space
         run: |
           set -euo pipefail
@@ -192,23 +201,11 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-test-suite
-
-      # Cargo does not rebuild librocksdb-sys when only CXX changes if an older
-      # fingerprint never listed that variable. Drop the cached objects so the
-      # wrapper below compiles RocksDB at -O3.
-      - name: Drop cached RocksDB objects
-        run: |
-          set -euo pipefail
-          rm -rf \
-            target/debug/build/librocksdb-sys-* \
-            target/debug/.fingerprint/librocksdb-sys-* \
-            target/debug/.fingerprint/rocksdb-* \
-            target/debug/deps/liblibrocksdb_sys-* \
-            target/debug/deps/librocksdb-* \
-            target/debug/incremental/librocksdb_sys-* \
-            target/debug/incremental/rocksdb-*
-          echo "dropped cached rocksdb artifacts"
+          # A new generation replaces the one-time purge of stale -O0 objects.
+          # Keep wrapper changes in the shared key so fallback restores cannot
+          # reuse native artifacts built under a different compiler policy.
+          shared-key: ci-test-suite-rocksdb-o3-v2-${{ hashFiles('scripts/ci-rocksdb-cxx.sh') }}
+          cache-on-failure: true
 
       - name: Repair stale rusty_v8 cache
         shell: bash
@@ -218,8 +215,21 @@ jobs:
         run: |
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
-      - name: Build kalam CLI binary for e2e tests
-        run: cargo build -p kalam-cli --bin kalam
+      - name: Check CLI dependency boundary
+        run: python3 scripts/check-cli-dependency-boundary.py
+
+      # Build normal executables and tests together so V8/bindgen and other
+      # shared dependencies have the same features as the nextest invocation.
+      - name: Build workspace binaries and tests
+        run: |
+          cargo build --locked --profile test --bins --tests --timings \
+            --workspace \
+            --exclude kalam-pg-extension \
+            --exclude kalam-link-wasm \
+            --exclude kalam-consumer-wasm \
+            --exclude kalam-link-dart \
+            --exclude kalamdb-python \
+            --exclude quickstart
 
       - name: Setup Node 24
         uses: actions/setup-node@v6
@@ -268,6 +278,7 @@ jobs:
         run: |
           mkdir -p ci-artifacts
           cargo nextest run \
+            --locked \
             --profile ci \
             --no-fail-fast \
             --workspace \
@@ -279,6 +290,15 @@ jobs:
             --exclude quickstart \
             --failure-output immediate-final
         continue-on-error: true
+
+      - name: Upload compilation timings
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cargo-timings
+          path: target/cargo-timings/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Report disk space after tests
         if: always()

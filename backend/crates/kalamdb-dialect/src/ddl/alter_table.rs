@@ -5,11 +5,11 @@
 //! - ALTER TABLE messages DROP COLUMN age
 //! - ALTER TABLE messages MODIFY COLUMN age BIGINT
 
+use kalamdb_commons::models::VectorMetric;
 use kalamdb_commons::{
     models::{datatypes::KalamDataType, SchemaId, StorageId, TableId, TableName},
     schemas::{policy::FlushPolicy, ColumnDefault, ForeignKeyAction, TableCompression},
 };
-use kalamdb_system::VectorMetric;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use sqlparser::ast::{

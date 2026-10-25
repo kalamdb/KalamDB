@@ -31,11 +31,15 @@ uuid = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+croner = { workspace = true, optional = true }
+chrono-tz = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 
 [features]
+# Pure schedule validation shared by the parser and catalog dispatcher.
+scheduling = ["dep:croner", "dep:chrono-tz", "dep:chrono"]
 # Feature to enable serde support for serialization
 serde = [
 	"dep:serde",

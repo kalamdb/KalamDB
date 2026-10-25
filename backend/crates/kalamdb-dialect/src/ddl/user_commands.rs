@@ -7,8 +7,8 @@
 //!
 //! Uses sqlparser-rs tokenizer for consistent identifier and string handling.
 
+use kalamdb_commons::models::StorageMode;
 use kalamdb_commons::{AuthType, Role, StorageId};
-use kalamdb_system::providers::storages::models::StorageMode;
 use serde::{Deserialize, Serialize};
 use sqlparser::tokenizer::Token;
 
