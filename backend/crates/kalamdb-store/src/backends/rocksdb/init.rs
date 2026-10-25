@@ -67,16 +67,40 @@ impl RocksDbInit {
     pub(crate) fn open_with_cf_names_and_cache(
         &self,
     ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
+        // DB::Open on x86_64 uses more stack than the Linux main thread or the
+        // 32MB process thread. Give the open its own stack.
+        let db_path = self.db_path.clone();
+        let settings = self.settings.clone();
+        let handle = std::thread::Builder::new()
+            .name("kalamdb-rocksdb-open".to_string())
+            .stack_size(128 * 1024 * 1024)
+            .spawn(move || {
+                eprintln!("startup: rocksdb open thread entered");
+                RocksDbInit::new(db_path, settings).open_with_cf_names_and_cache_here()
+            })
+            .map_err(|error| anyhow::anyhow!("failed to start the rocksdb open thread: {error}"))?;
+        match handle.join() {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    fn open_with_cf_names_and_cache_here(
+        &self,
+    ) -> Result<(Arc<DB>, Vec<String>, Cache, WriteBufferManager)> {
+        eprintln!("startup: rocksdb options");
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
         apply_db_settings(&mut db_opts, &self.settings);
 
+        eprintln!("startup: rocksdb cache");
         let cache = new_block_cache(self.settings.block_cache_size);
         let block_opts = create_block_options_with_cache(&cache);
         db_opts.set_block_based_table_factory(&block_opts);
 
         let (db, cf_names, write_buffer_manager) = self.open_internal(&mut db_opts, &cache)?;
+        eprintln!("startup: rocksdb open returned {} column families", cf_names.len());
         Ok((db, cf_names, cache, write_buffer_manager))
     }
 
@@ -86,8 +110,11 @@ impl RocksDbInit {
         cache: &Cache,
     ) -> Result<(Arc<DB>, Vec<String>, WriteBufferManager)> {
         let path = Path::new(&self.db_path);
+        eprintln!("startup: rocksdb restore check");
         apply_pending_rocksdb_restore(path)?;
+        eprintln!("startup: rocksdb listing column families");
         let cf_names = self.collect_column_family_names(db_opts, path);
+        eprintln!("startup: rocksdb opening {} column families", cf_names.len());
         let write_buffer_manager =
             install_write_buffer_manager(db_opts, &self.settings, cf_names.len());
 
