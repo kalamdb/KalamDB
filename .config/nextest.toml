@@ -324,9 +324,9 @@ junit.path = "junit.xml"
 # Show output for failed tests immediately
 failure-output = "immediate-final"
 
-# Temporarily off so one fresh-server failure does not hide the rest of the
-# workspace. Turn this back on after CI is green.
-fail-fast = false
+# Stop on the first unrecoverable failure instead of cascading against a dead
+# shared Fresh server for the remainder of the workspace suite.
+fail-fast = true
 
 # Retry flaky tests once
 retries = 1

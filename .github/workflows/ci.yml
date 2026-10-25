@@ -280,7 +280,6 @@ jobs:
           cargo nextest run \
             --locked \
             --profile ci \
-            --no-fail-fast \
             --workspace \
             --exclude kalam-pg-extension \
             --exclude kalam-link-wasm \
